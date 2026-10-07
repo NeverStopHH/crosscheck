@@ -96,6 +96,7 @@ const baseState = (): SessionState => ({
   hintCandidatesSeen: 0,
   flooredPromptCount: 0,
   harnessTurnCount: 0,
+  quietCallCount: 0,
 });
 
 describe("withRecordedIntent remembers who wrote the intent", () => {
@@ -122,6 +123,17 @@ describe("a SessionStart re-fire keeps the turns the prompt path stood down on (
     // Assert
     expect(next.flooredPromptCount).toBe(3);
     expect(next.harnessTurnCount).toBe(2);
+  });
+
+  test("the quiet calls survive it too (round 3, L5)", () => {
+    // Arrange
+    const previous = { ...baseState(), quietCallCount: 4 };
+
+    // Act
+    const next = withCarriedCapture(baseState(), previous);
+
+    // Assert
+    expect(next.quietCallCount).toBe(4);
   });
 });
 

@@ -17745,7 +17745,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the prompt flow reserves nothing for the trailers",
     file: `${CORE}/src/flows/hint.ts`,
-    from: "  const reserveChars = hintTrailerReserve(result.data.coverage, input.now);",
+    // RETARGETED (round 3, L5): the hub's answer is its own helper's argument now.
+    from: "  const reserveChars = hintTrailerReserve(answered.coverage, input.now);",
     to: "  const reserveChars = 0;",
     test: `${CORE}/test/hint-substance-flow.test.ts`,
     because: "the renderer budgets for trailers nobody tells it about, and the note is dropped again",
@@ -18362,8 +18363,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "status never says what the prompt path stood down on",
     file: `${CLI}/src/cli/status.ts`,
-    from: "${claims}${stoodDownPart(health)}`;",
-    to: "${claims}`;",
+    // RETARGETED (round 3, L5): the quiet calls follow it on the same line.
+    from: "${claims}${stoodDownPart(health)}${quietCallsPart(health)}`;",
+    to: "${claims}${quietCallsPart(health)}`;",
     test: `${CLI}/test/capture-health.test.ts`,
     because: "a quiet hints line cannot tell \"nothing was asked\" from \"nothing matched\" (M7)",
   },
@@ -19437,6 +19439,54 @@ export const MUTATIONS: readonly Mutation[
     because: "every hook classifies each prompt twice against its 800 ms budget (round 3, L4)",
   },
   {
+    label: "a call the hub answered with nothing goes uncounted",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "  if (text.length === 0) {\n    await bookStoodDown(input, \"quietCallCount\");\n  }\n",
+    to: "",
+    test: `${CORE}/test/hint-harness-turn.test.ts`,
+    because: "a quiet session cannot say whether it reached the hub and matched nothing (round 3, L5)",
+  },
+  {
+    label: "a call that delivered a hint is counted as quiet",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "  if (text.length === 0) {\n    await bookStoodDown(input, \"quietCallCount\");",
+    to: "  if (text.length >= 0) {\n    await bookStoodDown(input, \"quietCallCount\");",
+    test: `${CORE}/test/hint-harness-turn.test.ts`,
+    because: "the quiet-call count is every call, and says nothing about the ones that matched nothing (L5)",
+  },
+  {
+    label: "a SessionStart re-fire zeroes the quiet calls",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "        quietCallCount: previous.quietCallCount,\n",
+    to: "",
+    test: `${CORE}/test/session-state-transforms.test.ts`,
+    because: "every compact forgets the calls that came back empty (L5)",
+  },
+  {
+    label: "status reads every session's quiet calls as none",
+    file: `${CORE}/src/state/capture-health.ts`,
+    from: "        quietCallCount: state.quietCallCount,",
+    to: "        quietCallCount: 0,",
+    test: `${CLI}/test/capture-health.test.ts`,
+    because: "the counter is booked and never reaches a surface (L5)",
+  },
+  {
+    label: "status sums one session's quiet calls",
+    file: `${CORE}/src/state/capture-health.ts`,
+    from: "      quietCalls: total.quietCalls + session.quietCallCount,",
+    to: "      quietCalls: session.quietCallCount,",
+    test: `${CLI}/test/capture-health.test.ts`,
+    because: "two sessions' empty calls read as the last one's (L5)",
+  },
+  {
+    label: "the hints line hides the quiet calls",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "${stoodDownPart(health)}${quietCallsPart(health)}`;",
+    to: "${stoodDownPart(health)}`;",
+    test: `${CLI}/test/capture-health.test.ts`,
+    because: "`crosscheck status` never says how many prompts reached the hub and came back with nothing (L5)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     // RETARGETED (round 3, M7): the query is the prompt's window now.
@@ -19525,7 +19575,7 @@ interface Outcome {
  * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test,(m.get(x.test)??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
  * PRINTS: packages/cli/test/absence-cli.test.ts 11
  * PRINTS: packages/cli/test/agent-restart.test.ts 3
- * PRINTS: packages/cli/test/capture-health.test.ts 5
+ * PRINTS: packages/cli/test/capture-health.test.ts 8
  * PRINTS: packages/cli/test/ci-report-args.test.ts 2
  * PRINTS: packages/cli/test/ci-report-build.test.ts 3
  * PRINTS: packages/cli/test/ci-report-entry.test.ts 2
@@ -19693,7 +19743,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-best-match.test.ts 4
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 3
- * PRINTS: packages/connector-core/test/hint-harness-turn.test.ts 5
+ * PRINTS: packages/connector-core/test/hint-harness-turn.test.ts 7
  * PRINTS: packages/connector-core/test/hint-intent-fallback.test.ts 6
  * PRINTS: packages/connector-core/test/hint-old-hub-floor.test.ts 10
  * PRINTS: packages/connector-core/test/hint-query-window.test.ts 2
@@ -19752,7 +19802,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
- * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 4
+ * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 5
  * PRINTS: packages/connector-core/test/set-intent.test.ts 3
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 1

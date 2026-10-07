@@ -144,6 +144,7 @@ const freshState = (
   hintCandidatesSeen: 0,
   flooredPromptCount: 0,
   harnessTurnCount: 0,
+  quietCallCount: 0,
   ...overrides,
 });
 

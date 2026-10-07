@@ -100,6 +100,8 @@ export interface SessionCaptureHealth {
   readonly flooredPromptCount: number;
   /** Turns the harness wrote, stood down on before any call (M7). */
   readonly harnessTurnCount: number;
+  /** Calls the hub answered that ended in no hint (round 3, L5). */
+  readonly quietCallCount: number;
   /** Hints delivered to this session (the seen-set's length). */
   readonly hintsDelivered: number;
 }
@@ -137,6 +139,8 @@ export interface CaptureHealth {
    */
   readonly flooredPrompts: number;
   readonly harnessTurns: number;
+  /** The calls that did reach the hub and came back with nothing (round 3, L5). */
+  readonly quietCalls: number;
 }
 
 const NO_HEALTH: CaptureHealth = {
@@ -154,6 +158,7 @@ const NO_HEALTH: CaptureHealth = {
   hintCandidatesSeen: 0,
   flooredPrompts: 0,
   harnessTurns: 0,
+  quietCalls: 0,
 };
 
 const newerIso = (a: string | null, b: string | null): string | null => {
@@ -281,6 +286,7 @@ export const readCaptureHealth = async (
         hintCandidatesSeen: state.hintCandidatesSeen,
         flooredPromptCount: state.flooredPromptCount,
         harnessTurnCount: state.harnessTurnCount,
+        quietCallCount: state.quietCallCount,
         hintsDelivered: state.deliveredHintRefs.length,
       };
     })
@@ -298,6 +304,7 @@ export const readCaptureHealth = async (
       hintCandidatesSeen: total.hintCandidatesSeen + session.hintCandidatesSeen,
       flooredPrompts: total.flooredPrompts + session.flooredPromptCount,
       harnessTurns: total.harnessTurns + session.harnessTurnCount,
+      quietCalls: total.quietCalls + session.quietCallCount,
     }),
     {
       ...NO_HEALTH,

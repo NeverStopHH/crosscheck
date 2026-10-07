@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1786
+    # PRINTS: 1792
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -197,7 +197,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/pin.ts 9
     # PRINTS: packages/cli/src/cli/project-copy.ts 9
     # PRINTS: packages/cli/src/cli/revalidate.ts 2
-    # PRINTS: packages/cli/src/cli/status.ts 10
+    # PRINTS: packages/cli/src/cli/status.ts 11
     # PRINTS: packages/cli/src/cli/suspect-render.ts 3
     # PRINTS: packages/cli/src/cli/terminal.ts 3
     # PRINTS: packages/cli/src/cli/verdict-render.ts 3
@@ -281,7 +281,7 @@ jobs:
     # PRINTS: flows/claim-surface.ts 1
     # PRINTS: flows/end-session.ts 3
     # PRINTS: flows/heartbeat.ts 1
-    # PRINTS: flows/hint.ts 28
+    # PRINTS: flows/hint.ts 30
     # PRINTS: flows/register-session.ts 4
     # PRINTS: flows/solved-hint.ts 4
     # PRINTS: git/check-ignore.ts 1
@@ -338,14 +338,14 @@ jobs:
     # PRINTS: spool/loss-report.ts 14
     # PRINTS: spool/reap.ts 1
     # PRINTS: state/capture-bookkeeping.ts 6
-    # PRINTS: state/capture-health.ts 4
+    # PRINTS: state/capture-health.ts 6
     # PRINTS: state/conference-cost.ts 1
     # PRINTS: state/git-lane-cost.ts 2
     # PRINTS: state/loss-ledger.ts 10
     # PRINTS: state/loss-refusals.ts 1
     # PRINTS: state/seq-cost.ts 8
     # PRINTS: state/session-scan.ts 2
-    # PRINTS: state/session-state.ts 22
+    # PRINTS: state/session-state.ts 23
     # PRINTS: state/tool-window-key.ts 2
     # PRINTS: packages/connector-core/test/intent-budget.test.ts 1
     # PRINTS: packages/connector-core/test/render-surface-registry.test.ts 1
@@ -489,7 +489,7 @@ jobs:
     # PRINTS: capabilities.ts 6
     # PRINTS: capture-bookkeeping.ts 6
     # PRINTS: capture-git-touches.ts 1
-    # PRINTS: capture-health.ts 4
+    # PRINTS: capture-health.ts 6
     # PRINTS: capture-latency.test.ts 1
     # PRINTS: capture-targets.ts 5
     # PRINTS: capture-touched-files.ts 3
@@ -570,7 +570,7 @@ jobs:
     # PRINTS: harness-turn.ts 16
     # PRINTS: heartbeat.ts 1
     # PRINTS: hint-deliveries.ts 5
-    # PRINTS: hint.ts 32
+    # PRINTS: hint.ts 34
     # PRINTS: hints.ts 47
     # PRINTS: hook-budget.ts 2
     # PRINTS: hub.ts 14
@@ -680,7 +680,7 @@ jobs:
     # PRINTS: session-order.ts 9
     # PRINTS: session-scan.ts 2
     # PRINTS: session-start.ts 6
-    # PRINTS: session-state.ts 22
+    # PRINTS: session-state.ts 23
     # PRINTS: session.ts 4
     # PRINTS: sessions.ts 15
     # PRINTS: set-intent.ts 5
@@ -696,7 +696,7 @@ jobs:
     # PRINTS: spawn.ts 2
     # PRINTS: ssh-hostname.ts 2
     # PRINTS: stats.ts 1
-    # PRINTS: status.ts 10
+    # PRINTS: status.ts 11
     # PRINTS: stop-words.ts 2
     # PRINTS: stop.ts 3
     # PRINTS: stream.ts 3

@@ -160,6 +160,14 @@ const stoodDownPart = (health: CaptureHealth): string =>
     : ` · stood down on ${plural(health.flooredPrompts, "content-free prompt")}, ${plural(health.harnessTurns, "harness turn")}`;
 
 /**
+ * The calls that DID reach the hub and came back with nothing (hold-out
+ * review round 3, L5), above zero only: beside the turns never asked, this
+ * is "asked, and nothing matched" — the reach of a quiet session, counted.
+ */
+const quietCallsPart = (health: CaptureHealth): string =>
+  health.quietCalls === 0 ? "" : ` · ${plural(health.quietCalls, "hub call")} returned no hint`;
+
+/**
  * Hint visibility (#19/#20/M1): delivered = the live sessions' seen-sets here;
  * the hub's delivered/pulled over its bounded window when it answers (an
  * older hub has no /api/hints/stats — "not measured", never a guess);
@@ -180,7 +188,7 @@ const hintsLine = (health: CaptureHealth, stats: HubResult<HintStats>): string =
     stats.ok && stats.data.claims !== undefined
       ? ` · claims on this repo ${String(stats.data.claims)}`
       : "";
-  return `hints: delivered ${String(health.hintsDelivered)} (${hubPart}), candidates ${String(health.hintCandidatesSeen)}${claims}${stoodDownPart(health)}`;
+  return `hints: delivered ${String(health.hintsDelivered)} (${hubPart}), candidates ${String(health.hintCandidatesSeen)}${claims}${stoodDownPart(health)}${quietCallsPart(health)}`;
 };
 
 /** The Q2 knob, visible: which PreToolUse decision this machine's hooks emit. */

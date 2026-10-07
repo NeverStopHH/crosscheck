@@ -270,6 +270,7 @@ describe("fail-open within budget", () => {
         hintCandidatesSeen: 0,
         flooredPromptCount: 0,
         harnessTurnCount: 0,
+        quietCallCount: 0,
       } satisfies SessionState);
       const ctx = await prepareCursorHook(
         "postToolUse",
@@ -412,6 +413,7 @@ describe("fail-open within budget", () => {
         hintCandidatesSeen: 0,
         flooredPromptCount: 0,
         harnessTurnCount: 0,
+        quietCallCount: 0,
       } satisfies SessionState);
       const ctx = await prepareCursorHook(
         "postToolUse",
@@ -611,6 +613,7 @@ describe("fail-open within budget", () => {
         hintCandidatesSeen: 0,
         flooredPromptCount: 0,
         harnessTurnCount: 0,
+        quietCallCount: 0,
       } satisfies SessionState);
 
       // Act

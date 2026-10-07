@@ -43,11 +43,11 @@ import type { DeliveryMatching, HintRefKind } from "../capture/records.ts";
 import { resolveCommitDrift } from "../git/commit-drift.ts";
 import type { CommitDrift } from "../git/commit-drift.ts";
 import { getHintCandidates } from "../http/hub.ts";
-import type { AnsweredQuestion, HubContext, LandedNotice } from "../http/hub.ts";
+import type { AnsweredQuestion, HintCandidatesResult, HubContext, LandedNotice } from "../http/hub.ts";
 import { rememberHintDelivery, rememberLandedNoticeDelivery } from "../hints/delivery.ts";
 import { hintBodyHash } from "../hints/echo.ts";
 import { classifyPrompt, isHarnessTurn, shownSubstance } from "@crosscheck/schema";
-import type { ClassifiedPrompt } from "@crosscheck/schema";
+import type { ClassifiedPrompt, PromptTerms } from "@crosscheck/schema";
 import {
   hintTrailerReserve,
   renderAnswerHint,
@@ -293,8 +293,11 @@ const queryWindow = (text: string): string => {
   return `${head}${QUERY_WINDOW_JOIN}${tail}`;
 };
 
-/** The counters a turn the prompt path stood down on is booked under (M7). */
-type StoodDownCounter = "flooredPromptCount" | "harnessTurnCount";
+/**
+ * The counters a turn the prompt path stood down on is booked under (M7) —
+ * and, after the call, a call the hub answered that ended in no hint (L5).
+ */
+type StoodDownCounter = "flooredPromptCount" | "harnessTurnCount" | "quietCallCount";
 
 /**
  * One more turn stood down on — the count and nothing else. Best effort, one
@@ -368,22 +371,39 @@ export const selectAndRenderHint = async (
   if (!result.ok) {
     return "";
   }
+  const text = await hintFromAnswer(input, state, result.data, terms);
+  // A CALL THE HUB ANSWERED THAT ENDED IN NO HINT is counted, and only
+  // counted (hold-out review round 3, L5): with the turns stood down on, it
+  // says whether a quiet session was never asked or asked and matched nothing.
+  if (text.length === 0) {
+    await bookStoodDown(input, "quietCallCount");
+  }
+  return text;
+};
+
+/** What the hub's answer to THIS prompt yields: one hint, or "" (silence). */
+const hintFromAnswer = async (
+  input: SelectAndRenderHintInput,
+  state: SessionState,
+  answered: HintCandidatesResult,
+  terms: PromptTerms,
+): Promise<string> => {
   // #20 observability: book that the hub returned candidates for THIS repo, so
   // `doctor` can tell "no hint ever fired because nothing matched" apart from
   // "a match was possible but the selector chose silence". Only on a non-empty
-  // result — the common no-match prompt writes nothing (a monotonic counter,
-  // one bounded write inside the 800 ms budget).
-  if (result.data.candidates.length > 0) {
+  // result — a no-match prompt books its quiet call instead (L5), so either
+  // way one monotonic counter, one bounded write inside the 800 ms budget.
+  if (answered.candidates.length > 0) {
     await updateSessionState(input.home, input.hostSessionKey, (fresh) => ({
       ...fresh,
-      hintCandidatesSeen: fresh.hintCandidatesSeen + result.data.candidates.length,
+      hintCandidatesSeen: fresh.hintCandidatesSeen + answered.candidates.length,
     }));
   }
   // Room for the lines appended after whichever hint goes out — the answer's
   // the same as a teammate's (review 1006b, L3).
-  const reserveChars = hintTrailerReserve(result.data.coverage, input.now);
+  const reserveChars = hintTrailerReserve(answered.coverage, input.now);
   // The solicited pass FIRST — see selectAnswer for why it outranks.
-  const answer = selectAnswer(result.data.answers, state.deliveredHintRefs);
+  const answer = selectAnswer(answered.answers, state.deliveredHintRefs);
   if (answer !== undefined) {
     const text = renderAnswerHint(answer, input.now, reserveChars);
     if (text.length > 0) {
@@ -403,7 +423,7 @@ export const selectAndRenderHint = async (
       // delivery record is what dedup and the echo-loop exclusion hash, and a
       // caveat that changed from day to day would defeat both.
       return (await rememberHintDelivery(input, state, delivery, true))
-        ? withCoverageNote(text, result.data.coverage, input.now)
+        ? withCoverageNote(text, answered.coverage, input.now)
         : "";
     }
   }
@@ -415,7 +435,7 @@ export const selectAndRenderHint = async (
   const notice =
     spareMs === undefined || spareMs() < LANDED_NOTICE_MIN_SPARE_MS
       ? undefined
-      : selectNotice(result.data.notices, state.shownLandedNoticeIds);
+      : selectNotice(answered.notices, state.shownLandedNoticeIds);
   const told = notice === undefined ? null : renderLandedNoticeHint(notice, input.now);
   const firstCommit = told?.commitIds[0];
   if (spareMs !== undefined && told !== null && firstCommit !== undefined) {
@@ -435,7 +455,7 @@ export const selectAndRenderHint = async (
     // solved tree's evidence-backed claims stay deliverable as substance
     // (the seen-set suppresses pointers to a seen context, never unseen
     // claims inside it — hints/select.ts).
-    candidates: result.data.candidates,
+    candidates: answered.candidates,
     seenRefIds: [...state.deliveredHintRefs, ...state.briefingSolvedRefs],
     deliveredCount: state.deliveredHintRefs.length,
     selfDeveloperId: state.developerId,
@@ -449,7 +469,7 @@ export const selectAndRenderHint = async (
       now: input.now,
       intentProvenance: state.workContextIntentProvenance ?? null,
       reserveChars,
-      substanceChannel: substanceChannelOf(result.data.deliveryChannels),
+      substanceChannel: substanceChannelOf(answered.deliveryChannels),
     },
     selection,
   );
@@ -462,5 +482,5 @@ export const selectAndRenderHint = async (
   if (!remembered) {
     return "";
   }
-  return withCoverageNote(delivery.text, result.data.coverage, input.now);
+  return withCoverageNote(delivery.text, answered.coverage, input.now);
 };

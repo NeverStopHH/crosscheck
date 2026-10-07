@@ -269,6 +269,14 @@ const SessionStateObjectSchema = z.looseObject({
   flooredPromptCount: z.number().int().min(0).default(0),
   harnessTurnCount: z.number().int().min(0).default(0),
   /**
+   * The prompt path's calls the hub ANSWERED that ended in no hint (hold-out
+   * review round 3, L5) — a count only, beside the turns stood down on before
+   * any call, so "reached the hub, nothing matched" reads apart from "never
+   * asked". A call that failed is not one of them. Booked in flows/hint.ts;
+   * default 0 keeps every older state file parsing.
+   */
+  quietCallCount: z.number().int().min(0).default(0),
+  /**
    * True when registration happened OUTSIDE SessionStart — PostToolUse's
    * state-less recovery, the parent-workspace/finding-#9 shape — so this
    * session has never seen its briefing. The next UserPromptSubmit pays the
@@ -798,6 +806,7 @@ export const withCarriedCapture = (
         hintCandidatesSeen: previous.hintCandidatesSeen,
         flooredPromptCount: previous.flooredPromptCount,
         harnessTurnCount: previous.harnessTurnCount,
+        quietCallCount: previous.quietCallCount,
         // The #17 root cache is the session's, not the fire's: dropping it
         // makes the next tool call pay git again for a root already judged.
         knownWorktreeRoots: previous.knownWorktreeRoots,
@@ -1480,6 +1489,7 @@ export const deriveSessionState = (
     hintCandidatesSeen: 0,
     flooredPromptCount: 0,
     harnessTurnCount: 0,
+    quietCallCount: 0,
     briefingPending: false,
     stopTurnCount: 0,
     summarizerFireCount: 0,

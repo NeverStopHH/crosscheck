@@ -163,6 +163,37 @@ describe("each turn the prompt path stood down on is counted, and only counted (
     expect(state?.harnessTurnCount).toBe(0);
   });
 
+  test("a call the hub answered with nothing books one quiet call (round 3, L5)", async () => {
+    // Arrange — the hub knows nothing that matches
+    const f = await fixture("ht-count-quiet");
+    f.hub.setCandidates([]);
+
+    // Act
+    const text = await hintFor(f, "why does the refresh handler 500 after the key rotation");
+
+    // Assert — the call was made and came back empty, and that is what is counted
+    const state = await readSessionState(f.home, HOST_KEY);
+    expect(text).toBe("");
+    expect(f.hub.calls.candidates).toBe(1);
+    expect(state?.quietCallCount).toBe(1);
+    expect(state?.flooredPromptCount).toBe(0);
+  });
+
+  test("a call that delivered a hint, and a turn that made no call, book no quiet call (L5)", async () => {
+    // Arrange
+    const f = await fixture("ht-count-not-quiet");
+
+    // Act
+    const delivered = await hintFor(f, "why does the refresh handler 500 after the key rotation");
+    await hintFor(f, "mache weiter bitte");
+    await hintFor(f, TASK_NOTIFICATION);
+
+    // Assert
+    const state = await readSessionState(f.home, HOST_KEY);
+    expect(delivered.length).toBeGreaterThan(0);
+    expect(state?.quietCallCount).toBe(0);
+  });
+
   test("PRIVACY: the counts are all that is kept — no word of either turn reaches the state", async () => {
     // Arrange
     const f = await fixture("ht-count-private");

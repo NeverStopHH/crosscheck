@@ -123,6 +123,7 @@ const sessionState = (repo: string, hubUrl: string): SessionState => ({
   hintCandidatesSeen: 0,
   flooredPromptCount: 0,
   harnessTurnCount: 0,
+  quietCallCount: 0,
 });
 
 interface Fixture {
