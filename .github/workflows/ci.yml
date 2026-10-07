@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 2308
+    # PRINTS: 2313
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -421,7 +421,7 @@ jobs:
     # PRINTS: packages/server/src/db/bootstrap.sql 44
     # PRINTS: packages/server/src/db/client.ts 8
     # PRINTS: packages/server/src/db/schema.ts 1
-    # PRINTS: packages/server/src/http/forwarded.ts 4
+    # PRINTS: packages/server/src/http/forwarded.ts 5
     # PRINTS: packages/server/src/http/listen.ts 6
     # PRINTS: packages/server/src/http/schemas.ts 1
     # PRINTS: packages/server/src/index.ts 4
@@ -442,7 +442,7 @@ jobs:
     # PRINTS: packages/server/src/routes/solved-matches.ts 1
     # PRINTS: packages/server/src/routes/suspect.ts 5
     # PRINTS: packages/server/src/routes/team-settings.ts 1
-    # PRINTS: packages/server/src/routes/ui-ceremony.ts 5
+    # PRINTS: packages/server/src/routes/ui-ceremony.ts 8
     # PRINTS: packages/server/src/routes/ui-pages.tsx 2
     # PRINTS: packages/server/src/routes/ui-passkeys.tsx 1
     # PRINTS: packages/server/src/routes/ui.tsx 1
@@ -519,7 +519,7 @@ jobs:
     # PRINTS: packages/server/src/services/waiver-requests.ts 4
     # PRINTS: packages/server/src/services/waiver-terminations.ts 4
     # PRINTS: packages/server/src/services/waivers.ts 5
-    # PRINTS: packages/server/src/services/webauthn.ts 11
+    # PRINTS: packages/server/src/services/webauthn.ts 12
     # PRINTS: packages/server/src/ui/pages/feed.tsx 1
     # PRINTS: packages/server/src/ui/pages/passkeys.tsx 1
     # PRINTS: packages/server/src/ui/pages/waivers.tsx 2
@@ -623,7 +623,7 @@ jobs:
     # PRINTS: fix-diff.ts 7
     # PRINTS: fixture.ts 1
     # PRINTS: flush.ts 3
-    # PRINTS: forwarded.ts 4
+    # PRINTS: forwarded.ts 5
     # PRINTS: gate.ts 9
     # PRINTS: gates.ts 1
     # PRINTS: get-diagnosis.ts 2
@@ -799,7 +799,7 @@ jobs:
     # PRINTS: touched-root.ts 5
     # PRINTS: transcript.ts 4
     # PRINTS: triggers.ts 6
-    # PRINTS: ui-ceremony.ts 5
+    # PRINTS: ui-ceremony.ts 8
     # PRINTS: ui-pages.tsx 2
     # PRINTS: ui-passkeys.tsx 1
     # PRINTS: ui.tsx 1
@@ -813,7 +813,7 @@ jobs:
     # PRINTS: waiver-terminations.ts 4
     # PRINTS: waivers.ts 5
     # PRINTS: waivers.tsx 2
-    # PRINTS: webauthn.ts 11
+    # PRINTS: webauthn.ts 12
     # PRINTS: wiring-lookalikes.ts 2
     # PRINTS: wiring-removal.ts 7
     # PRINTS: wiring-scope.ts 3

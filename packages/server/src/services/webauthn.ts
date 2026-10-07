@@ -47,6 +47,8 @@ import type {
 } from "@simplewebauthn/server";
 import { isoBase64URL } from "@simplewebauthn/server/helpers";
 
+import { isLoopbackAddress } from "../http/peer.ts";
+
 /** How long a person has between "show me" and "I signed" — 04a §5. */
 export const CEREMONY_TTL_MS = 5 * 60_000;
 
@@ -144,6 +146,27 @@ const challengeOf = (
  */
 export const isLocalhostName = (hostname: string): boolean =>
   hostname === "localhost" || hostname.endsWith(".localhost");
+
+/**
+ * An origin that names "this machine" rather than one host: `localhost`,
+ * `*.localhost`, or a loopback IP (`127.0.0.1`, `[::1]`). Every browser that
+ * types one reaches a different machine, its own. Not a URL: false, because
+ * no configured origin matches it either.
+ */
+export const isLocalOrigin = (origin: string): boolean => {
+  let hostname: string;
+  try {
+    hostname = new URL(origin).hostname;
+  } catch {
+    return false;
+  }
+  const unbracketed = hostname.startsWith("[") ? hostname.slice(1, -1) : hostname;
+  return isLocalhostName(hostname) || isLoopbackAddress(unbracketed);
+};
+
+/** Whether people are meant to reach this hub over https: any configured https origin says so. */
+export const hasHttpsOrigin = (origins: readonly string[]): boolean =>
+  origins.some((origin) => origin.startsWith("https:"));
 
 /** `127.0.0.1`, `[::1]`, `100.64.0.7` — `URL` has already normalised the spelling. */
 const isIpLiteral = (hostname: string): boolean =>

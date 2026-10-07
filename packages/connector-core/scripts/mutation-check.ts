@@ -24052,6 +24052,47 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/forwarded-trust.test.ts`,
     because: "isSecureTransport says https for a header any LAN peer can write, and the name invites reuse as a gate",
   },
+  // A localhost ceremony was believed behind a proxy (hub hardening, review H6).
+  {
+    label: "a localhost ceremony runs on a hub served over https",
+    file: `${SERVER}/src/routes/ui-ceremony.ts`,
+    from: "  return hasHttpsOrigin(deps.webauthnOrigins) || isTrustedProxied(c, deps);",
+    to: "  return isTrustedProxied(c, deps);",
+    test: `${SERVER}/test/ui-ceremony-localhost.test.ts`,
+    because: "an agent on the person's other Mac gets a signature whose prompt said only localhost",
+  },
+  {
+    label: "a localhost ceremony runs through tailscale serve",
+    file: `${SERVER}/src/routes/ui-ceremony.ts`,
+    from: "  return hasHttpsOrigin(deps.webauthnOrigins) || isTrustedProxied(c, deps);",
+    to: "  return hasHttpsOrigin(deps.webauthnOrigins);",
+    test: `${SERVER}/test/ui-ceremony-localhost.test.ts`,
+    because: "behind serve every remote request has a loopback peer, so the remote localhost ceremony is open again",
+  },
+  {
+    label: "a localhost ceremony is never switched off",
+    file: `${SERVER}/src/routes/ui-ceremony.ts`,
+    from: "  if (isLocalOriginSwitchedOff(c, deps, origin)) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/ui-ceremony-localhost.test.ts`,
+    because: "options and verify both take localhost from anybody tailscale serve forwards",
+  },
+  {
+    label: "a loopback-IP origin is not taken for localhost",
+    file: `${SERVER}/src/services/webauthn.ts`,
+    from: "  return isLocalhostName(hostname) || isLoopbackAddress(unbracketed);",
+    to: "  return isLocalhostName(hostname);",
+    test: `${SERVER}/test/ui-ceremony-localhost.test.ts`,
+    because: "http://127.0.0.1 names this machine as much as localhost does and slips past the switch",
+  },
+  {
+    label: "a proxied request is recognised only by RFC 7239 Forwarded",
+    file: `${SERVER}/src/http/forwarded.ts`,
+    from: "    (name) => name.startsWith(FORWARDED_HEADER_PREFIX) || name === RFC7239_FORWARDED_HEADER,",
+    to: "    (name) => name === RFC7239_FORWARDED_HEADER,",
+    test: `${SERVER}/test/ui-ceremony-localhost.test.ts`,
+    because: "tailscale serve sends X-Forwarded-For, never Forwarded, so its requests read as the hub's own browser",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -24496,6 +24537,7 @@ interface Outcome {
  * PRINTS: packages/server/test/suspect.test.ts 9
  * PRINTS: packages/server/test/target-last-seen.test.ts 1
  * PRINTS: packages/server/test/team-settings.test.ts 9
+ * PRINTS: packages/server/test/ui-ceremony-localhost.test.ts 5
  * PRINTS: packages/server/test/ui-feed.test.ts 3
  * PRINTS: packages/server/test/ui-passkeys.test.ts 9
  * PRINTS: packages/server/test/ui-work-context.test.ts 2

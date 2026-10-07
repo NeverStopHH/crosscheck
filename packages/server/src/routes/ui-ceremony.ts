@@ -40,8 +40,9 @@ import {
 import { amendWaiver, approveRequest, readPendingRequest } from "../services/waiver-requests.ts";
 import type { WaiverRequestRefusal } from "../services/waiver-requests.ts";
 import { readLiveWaiver, revokeWaiver } from "../services/waivers.ts";
-import { isLocalhostName } from "../services/webauthn.ts";
+import { hasHttpsOrigin, isLocalOrigin, isLocalhostName } from "../services/webauthn.ts";
 import type { CeremonyOwner, CeremonyPurpose, CeremonyTerms, WebAuthn } from "../services/webauthn.ts";
+import { isTrustedProxied } from "../http/forwarded.ts";
 import { isLoopbackAddress } from "../http/peer.ts";
 import { isCsrfValid } from "../ui/session.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
@@ -82,6 +83,8 @@ const CEREMONY_SENTENCE = {
   missing_origin: "the request carried no Origin — open the page in a browser",
   origin_not_local:
     "a passkey at a localhost address only works from the hub's own machine — from anywhere else, use the hub's https address",
+  localhost_origin_off:
+    "this hub is reached over https or through a proxy, so it takes no passkey at a localhost address: a localhost prompt cannot say which machine asked. Open the hub at its https address",
   origin_not_configured:
     "this hub does not accept passkeys at this address — use one listed in CROSSCHECK_WEBAUTHN_ORIGINS",
   no_passkey_for_origin:
@@ -181,6 +184,32 @@ const isLocalOriginFromElsewhere = (c: Context<AppEnv>, deps: AppDeps, origin: s
   return peer === null || !isLoopbackAddress(peer);
 };
 
+/**
+ * A LOCALHOST CEREMONY IS OFF ON A HUB PEOPLE REACH REMOTELY (review H6).
+ *
+ * The rule above believes a localhost origin from a loopback peer. Behind
+ * `tailscale serve`, or any proxy on the hub's machine, EVERY request has a
+ * loopback peer, the remote ones included. An agent on the person's other
+ * Mac could then ask for a ceremony at RP ID `localhost` through the ts.net
+ * name, serve its own page at that Mac's localhost, and collect a touch on a
+ * prompt that says only "localhost". So a localhost or loopback-IP origin is
+ * refused, options and verify alike, whenever:
+ *
+ *   - any https origin is configured. People reach this hub over https, so
+ *     localhost has no job left there that a stranger could not borrow;
+ *   - or the request came through a trusted proxy (http/forwarded.ts): a
+ *     proxied request is by definition not the hub's own browser.
+ *
+ * What stays is a hub with no https origin and no proxy: the browser on the
+ * hub's own machine, exactly what localhost names there.
+ */
+const isLocalOriginSwitchedOff = (c: Context<AppEnv>, deps: AppDeps, origin: string): boolean => {
+  if (!isLocalOrigin(origin)) {
+    return false;
+  }
+  return hasHttpsOrigin(deps.webauthnOrigins) || isTrustedProxied(c, deps);
+};
+
 /** CSRF, then the fields, then the origin: what both endpoints refuse before any ceremony logic. */
 const readCeremonyRequest = async (
   c: Context<AppEnv>,
@@ -199,6 +228,9 @@ const readCeremonyRequest = async (
   const origin = c.req.header("origin");
   if (origin === undefined) {
     return refuse(c, "missing_origin");
+  }
+  if (isLocalOriginSwitchedOff(c, deps, origin)) {
+    return refuse(c, "localhost_origin_off");
   }
   if (isLocalOriginFromElsewhere(c, deps, origin)) {
     return refuse(c, "origin_not_local");
