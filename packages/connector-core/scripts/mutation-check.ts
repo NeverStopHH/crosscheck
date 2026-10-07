@@ -19679,6 +19679,14 @@ export const MUTATIONS: readonly Mutation[
     because: "any branch checked out in the worktree descends from anything, and unrelated work is folded into the topic",
   },
   {
+    label: "a rebasing pull reads as descent",
+    file: `${CORE}/src/git/head-history.ts`,
+    from: "\"pull:\", \"cherry-pick:\"] as const;",
+    to: "\"pull\", \"cherry-pick\"] as const;",
+    test: `${CORE}/test/head-history.test.ts`,
+    because: "a `pull --rebase` moves HEAD onto the upstream it diverged from, and the rules fold the next branch into a topic it holds none of",
+  },
+  {
     // Found by the topics sweep (seed 416), an L7 shape: set_intent's post went
     // unanswered, a later one failed back to the acknowledged status.
     label: "an unanswered set_intent post leaves the acknowledgement telling",
@@ -20087,6 +20095,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/git-timeout.test.ts 4
  * PRINTS: packages/connector-core/test/guarantee-declarations.test.ts 28
  * PRINTS: packages/connector-core/test/guarantee-doctor.test.ts 3
+ * PRINTS: packages/connector-core/test/head-history.test.ts 1
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 2
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4

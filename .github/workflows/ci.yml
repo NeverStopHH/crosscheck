@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1842
+    # PRINTS: 1843
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -299,7 +299,7 @@ jobs:
     # PRINTS: git/claim-drift.ts 5
     # PRINTS: git/fix-diff.ts 7
     # PRINTS: git/git.ts 4
-    # PRINTS: git/head-history.ts 2
+    # PRINTS: git/head-history.ts 3
     # PRINTS: git/pin-paths.ts 8
     # PRINTS: git/pin-sweep.ts 2
     # PRINTS: git/repo-identity.ts 1
@@ -587,7 +587,7 @@ jobs:
     # PRINTS: git-lane.ts 8
     # PRINTS: git-queries.ts 15
     # PRINTS: git.ts 4
-    # PRINTS: head-history.ts 2
+    # PRINTS: head-history.ts 3
     # PRINTS: heal-session.ts 22
     # PRINTS: heartbeat.ts 3
     # PRINTS: hint-deliveries.ts 3

@@ -9,11 +9,12 @@
  * per question on the hook's hot path. The worktree's HEAD log
  * (`<gitdir>/logs/HEAD`) already records every move HEAD made in it, so the
  * question becomes: is there a chain of FORWARD moves from the one commit to
- * the other — a commit, a merge, a pull, a cherry-pick — in the newest
- * MAX_HEAD_LOG_BYTES of it.
+ * the other — a commit, a merge, a pull that fast-forwards or merges, a
+ * cherry-pick — in the newest MAX_HEAD_LOG_BYTES of it.
  *
  * DETERMINISTIC, AND CONSERVATIVE BY CONSTRUCTION. An amend, a reset, a
- * rebase and a checkout of another commit are not forward moves, so a history
+ * rebase (a rebasing pull too) and a checkout of another commit are not
+ * forward moves, so a history
  * rewritten in the worktree reads as "does not descend" and the rules open a
  * new topic — the safe answer, because a topic that merges two pieces of work
  * hides a collision, and two topics for one piece of work only split its
@@ -25,8 +26,12 @@ import { join } from "node:path";
 
 import { MAX_HEAD_LOG_BYTES } from "../constants.ts";
 
-/** The reflog messages of a move that keeps the previous commit as an ancestor. */
-const FORWARD_MESSAGES = ["commit:", "commit (initial):", "commit (merge):", "merge ", "pull", "cherry-pick"] as const;
+/**
+ * The reflog messages of a move that keeps the previous commit as an ancestor.
+ * `pull:` and `cherry-pick:` WITH their colon: a `pull --rebase (start)` or a
+ * sequencer step moves HEAD onto a commit that is not on top of it.
+ */
+const FORWARD_MESSAGES = ["commit:", "commit (initial):", "commit (merge):", "merge ", "pull:", "cherry-pick:"] as const;
 
 const isForward = (message: string): boolean => FORWARD_MESSAGES.some((prefix) => message.startsWith(prefix));
 
