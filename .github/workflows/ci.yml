@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 2271
+    # PRINTS: 2275
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -453,7 +453,7 @@ jobs:
     # PRINTS: packages/server/src/services/claim-validity.ts 9
     # PRINTS: packages/server/src/services/cloud-agent-identity.ts 1
     # PRINTS: packages/server/src/services/commit-evidence.ts 3
-    # PRINTS: packages/server/src/services/conference.ts 8
+    # PRINTS: packages/server/src/services/conference.ts 12
     # PRINTS: packages/server/src/services/contradictions.ts 1
     # PRINTS: packages/server/src/services/coverage-order.ts 5
     # PRINTS: packages/server/src/services/coverage.ts 44
@@ -559,7 +559,7 @@ jobs:
     # PRINTS: cloud-agent-identity.ts 1
     # PRINTS: commit-evidence.ts 6
     # PRINTS: conference-cost.ts 1
-    # PRINTS: conference.ts 23
+    # PRINTS: conference.ts 27
     # PRINTS: config.ts 4
     # PRINTS: connected-repo.ts 3
     # PRINTS: constants.ts 15

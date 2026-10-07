@@ -22393,7 +22393,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the conference windows an opted-out teammate's work by her last touch",
     file: `${SERVER}/src/services/conference.ts`,
-    from: "    gte(activitySeenByReader(viewerDeveloperId), cutoff),\n",
+    from: "    gte(activitySeenByReader(viewerDeveloperId), window.cutoff),\n",
     to: "",
     test: `${SERVER}/test/live-location-surfaces.test.ts`,
     because:
@@ -22403,8 +22403,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the conference ranks an opted-out teammate's work by her last touch",
     file: `${SERVER}/src/services/conference.ts`,
-    from: "    .orderBy(desc(activitySeenByReader(viewerDeveloperId)), asc(workContexts.id))",
-    to: "    .orderBy(desc(activityExpression), asc(workContexts.id))",
+    from: "      desc(activitySeenByReader(viewerDeveloperId)),\n      asc(workContexts.id),\n    )\n    .limit(CONFERENCE_MAX_CONTEXTS);",
+    to: "      desc(activityExpression),\n      asc(workContexts.id),\n    )\n    .limit(CONFERENCE_MAX_CONTEXTS);",
     test: `${SERVER}/test/live-location-surfaces.test.ts`,
     because:
       "the report's first context of hers is the one she is on now",
@@ -23749,6 +23749,39 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/landed.test.ts`,
     because: "the documented bound (no more than 24 hours) and the rule disagree at its edge",
   },
+  // The conference's page: open work first, ended work only within the grace.
+  {
+    label: "a page of ended work pushes the live collision out of the conference",
+    file: `${SERVER}/src/services/conference.ts`,
+    from: "      desc(openSeenByReader(viewerDeveloperId)),\n",
+    to: "",
+    test: `${SERVER}/test/conference.test.ts`,
+    because: "twelve contexts that ended an hour ago fill the page and the one open session is not read",
+  },
+  {
+    label: "the conference reads work that ended a fortnight ago",
+    file: `${SERVER}/src/services/conference.ts`,
+    from: "    withinEndedGrace(viewerDeveloperId, window.endedSince),\n",
+    to: "",
+    test: `${SERVER}/test/conference.test.ts`,
+    because: "with landed rarely firing, the window fills with finished work, 19 to 246 contexts on the pilot hub",
+  },
+  {
+    label: "the conference drops an opted-out teammate's work by when her session ended",
+    file: `${SERVER}/src/services/conference.ts`,
+    from: "then (${agentSessions.endedAt} is null or ${agentSessions.endedAt} >= ${endedSince.toISOString()}::timestamptz) else true end)`;",
+    to: "then (${agentSessions.endedAt} is null or ${agentSessions.endedAt} >= ${endedSince.toISOString()}::timestamptz) else ${agentSessions.endedAt} >= ${endedSince.toISOString()}::timestamptz end)`;",
+    test: `${SERVER}/test/conference.test.ts`,
+    because: "whether her context is in the report says when her session ended, an instant of hers",
+  },
+  {
+    label: "the conference ranks an opted-out teammate's work by whether her session is open",
+    file: `${SERVER}/src/services/conference.ts`,
+    from: "then ${agentSessions.endedAt} is null else false end)`;",
+    to: "then ${agentSessions.endedAt} is null else ${agentSessions.endedAt} is null end)`;",
+    test: `${SERVER}/test/conference.test.ts`,
+    because: "her context leading the page says her session is live, which her opt-out withholds",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -24086,7 +24119,7 @@ interface Outcome {
  * PRINTS: packages/server/test/claim-revalidations.test.ts 10
  * PRINTS: packages/server/test/claim-validity.test.ts 2
  * PRINTS: packages/server/test/commit-evidence-opt-out.test.ts 3
- * PRINTS: packages/server/test/conference.test.ts 6
+ * PRINTS: packages/server/test/conference.test.ts 10
  * PRINTS: packages/server/test/coverage-answer-sessions.test.ts 10
  * PRINTS: packages/server/test/coverage-compat-0.10.test.ts 2
  * PRINTS: packages/server/test/coverage-instant-privacy.test.ts 8

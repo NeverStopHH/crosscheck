@@ -597,6 +597,23 @@ export type EventKind = (typeof EVENT_KINDS)[keyof typeof EVENT_KINDS];
 export const CONFERENCE_ACTIVE_WINDOW_DAYS = 14;
 
 /**
+ * How long work whose session ENDED stays in a conference, and it ranks
+ * after every open session's (pilot finding, 2026-10-07). The window holds
+ * ended work on purpose — VISION §2's conference runs overnight, when nobody
+ * is live — but with landed rarely firing, ended contexts filled it: 19 to
+ * 246 on a copy of the pilot hub, and ranked by activity alone they pushed
+ * live collisions off a twelve-context page.
+ *
+ * SEVENTY-TWO HOURS, from the purpose: the overnight run reads yesterday's
+ * work, and an investigation paused over a weekend — the case the
+ * fourteen-day window above exists for — ended Friday evening and is read
+ * Monday morning, about 64 hours on. Older ended work is history that
+ * `search` still finds; the window keeps holding OPEN work for the full
+ * fortnight.
+ */
+export const CONFERENCE_ENDED_GRACE_HOURS = 72;
+
+/**
  * Work contexts one conference may read, freshest first.
  *
  * Twelve is what a report a human reads in a minute can name, and it is also
