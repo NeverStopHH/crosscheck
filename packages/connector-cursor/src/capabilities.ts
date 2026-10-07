@@ -75,6 +75,14 @@ export const CURSOR_CAPABILITY_MANIFEST: DeriveCapabilityManifest = {
       sentence:
         "never fed from this host: with no pre-edit ask there is no ask to count, so the pilot report's tripwire figure counts only sessions on hosts that can ask — a low figure on a team working here means fewer sessions that could have asked, not fewer collisions",
     },
+    // Pilot, 2026-10-07: collisions must be visible to the PERSON. Claude
+    // Code has `systemMessage`; this host has nothing to fake it with
+    // (docs/RESEARCH.md §7), so the gap is printed rather than papered over.
+    {
+      name: "person-facing collision notice",
+      sentence:
+        "no event this connector registers has an output Cursor shows the person without blocking — user_message appears only when an action is denied or a prompt blocked (sessionStart accepts it but does not enforce it), so a teammate's overlap from the briefing's ghost rows reaches the agent's additional_context only, and the person learns of it when the agent says so",
+    },
     {
       name: "draft review nudge",
       sentence:

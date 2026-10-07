@@ -108,6 +108,14 @@ export const ACP_CAPABILITY_MANIFEST: DeriveCapabilityManifest = {
       sentence:
         "never fed from this host: the proxy forwards permission traffic untouched and asks nothing before an edit, so the pilot report's tripwire figure counts only sessions on hosts that can ask — a low figure on a team working here means fewer sessions that could have asked, not fewer collisions",
     },
+    // Pilot, 2026-10-07: collisions must be visible to the PERSON. ACP v1 has
+    // no notice update (docs/RESEARCH.md §7), and forging agent text is the
+    // spoofing line the proxy does not cross, so the gap is printed instead.
+    {
+      name: "person-facing collision notice",
+      sentence:
+        "stable ACP v1 has no session update a client shows the person as a notice: the only visible text is agent_message_chunk, which the proxy will not forge, and the Session Notices RFD's notice update is an unstable Preview a client must opt into — so a teammate's overlap from the briefing's ghost rows reaches the agent's appended prompt block only, and the person learns of it when the agent says so",
+    },
     {
       name: "agent reasoning capture",
       sentence:
