@@ -802,6 +802,17 @@ export const withCarriedCapture = (
         // reason: a number that restarts on every compact cannot say whether
         // this machine is losing them.
         toolWindowMisses: previous.toolWindowMisses,
+        // A RE-FIRE ON THE SAME LIFE KEEPS ITS WORK CONTEXT'S TITLE AND STATUS
+        // (review-2 round 8, L1): set_intent writes the status into this file
+        // first, and one that ran while this fire's register was out would
+        // otherwise be put back to the status the fire read before it. Read
+        // here, under the lock, from the file as it is now.
+        ...(previous.crosscheckSessionId === state.crosscheckSessionId
+          ? {
+              workContextTitle: previous.workContextTitle ?? state.workContextTitle,
+              workContextStatus: previous.workContextStatus ?? state.workContextStatus,
+            }
+          : {}),
       };
 
 /**

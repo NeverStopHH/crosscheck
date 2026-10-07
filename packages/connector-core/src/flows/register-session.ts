@@ -365,10 +365,14 @@ export const registerSessionFlow = async (
   // A RE-FIRE ON THE LIFE IT IS IN KEEPS THAT LIFE'S STATUS (review-2 round 7,
   // found by the spool simulation): set_intent may have moved it since the
   // first SessionStart, and the work context this register spools would put
-  // the host's starting status back over it.
+  // the host's starting status back over it. Read AFTER the register POST
+  // (review-2 round 8, L1): a set_intent that ran while it was out wrote its
+  // status into the state, and the read before the POST had the old one —
+  // the published state takes it under the lock (withCarriedCapture).
+  const current = await readSessionState(input.home, input.hostSessionKey);
   const status =
-    previous !== null && previous.crosscheckSessionId === crosscheckSessionId
-      ? (previous.workContextStatus ?? input.status)
+    current !== null && current.crosscheckSessionId === crosscheckSessionId
+      ? (current.workContextStatus ?? input.status)
       : input.status;
   if (registration !== null) {
     // A register that landed answers the last failed walk's verdict: the hub

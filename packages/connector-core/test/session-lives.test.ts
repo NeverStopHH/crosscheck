@@ -32,7 +32,13 @@ import { flushSpool } from "../src/spool/flush.ts";
 import type { SessionRefusal } from "../src/spool/flush-heal.ts";
 import { reapSpool } from "../src/spool/reap.ts";
 import { readUnclosedSummary } from "../src/spool/unclosed.ts";
-import { allocateSeq, readSessionState, sessionStateLockPath, updateSessionState } from "../src/state/session-state.ts";
+import {
+  allocateSeq,
+  readSessionState,
+  sessionStateLockPath,
+  updateSessionState,
+  writeSessionState,
+} from "../src/state/session-state.ts";
 import { readSessionSpool } from "../src/spool/files.ts";
 import { withLock } from "../src/spool/lock.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
@@ -200,6 +206,13 @@ const isEnded = async (sessionId: string): Promise<boolean | undefined> =>
     ?.ended;
 
 const stateOf = (fx: Fixture) => readSessionState(fx.home, fx.hostSessionKey);
+
+/** The statuses of the work-context records waiting in the conversation's spool. */
+const spooledStatuses = async (fx: Fixture): Promise<readonly unknown[]> =>
+  (await readSessionSpool(fx.home, fx.key, sessionSlug(fx.hostSessionKey))).lines
+    .map((line) => JSON.parse(line) as { kind: string; body: { status?: unknown } })
+    .filter((record) => record.kind === "work_context")
+    .map((record) => record.body.status);
 
 beforeAll(async () => {
   db = await createDb();
@@ -1099,6 +1112,62 @@ describe("a SessionStart that re-fires inside a live conversation", () => {
     const rows = await raw<{ status: string }>("select status from work_contexts where id = $1", [life.workContextId]);
     expect(rows).toEqual([{ status: "blocked" }]);
     expect((await stateOf(fx))?.workContextStatus).toBe("blocked");
+  });
+
+  test("keeps a status set_intent writes while its register is in flight (review-2 round 8, L1)", async () => {
+    // Arrange: a live life; the re-fire's register is slow
+    const fx = await fixture("refire-status-in-flight");
+    const life = await register(fx, fx.proxied);
+    await flushAsHook(fx, fx.proxied);
+    registerDelayMs = WALK_DELAY_MS;
+
+    // Act: SessionStart fires again; set_intent writes `blocked` while its register is out
+    const refire = register(fx, fx.proxied);
+    await Bun.sleep(WALK_HEAD_START_MS);
+    await updateSessionState(fx.home, fx.hostSessionKey, (fresh) => ({
+      ...fresh,
+      workContextTitle: "Set by intent",
+      workContextStatus: "blocked",
+    }));
+    await refire;
+    registerDelayMs = 0;
+    const spooled = await spooledStatuses(fx);
+    await flushAsHook(fx, fx.proxied);
+
+    // Assert: the re-fire's state, the work context it spooled — the copy a
+    // send without the life's state files as-is — and the hub carry it
+    expect(spooled).toEqual(["blocked"]);
+    const rows = await raw<{ status: string }>("select status from work_contexts where id = $1", [life.workContextId]);
+    expect(rows).toEqual([{ status: "blocked" }]);
+    expect((await stateOf(fx))?.workContextStatus).toBe("blocked");
+    expect((await stateOf(fx))?.workContextTitle).toBe("Set by intent");
+  });
+
+  test("keeps a status set_intent writes after its register is back, before it publishes (review-2 round 8, L1)", async () => {
+    // Arrange: a live life; the re-fire's register is slow
+    const fx = await fixture("refire-status-at-publish");
+    await register(fx, fx.proxied);
+    await flushAsHook(fx, fx.proxied);
+    registerDelayMs = WALK_DELAY_MS;
+
+    // Act: SessionStart fires again; set_intent holds the state lock across
+    // the register's return, and writes `blocked` under it
+    const refire = register(fx, fx.proxied);
+    await Bun.sleep(WALK_HEAD_START_MS);
+    await withLock(sessionStateLockPath(fx.home, fx.hostSessionKey), false, async () => {
+      await Bun.sleep(WALK_DELAY_MS + RACE_DELAY_MS);
+      const held = await stateOf(fx);
+      if (held !== null) {
+        await writeSessionState(fx.home, { ...held, workContextTitle: "Set by intent", workContextStatus: "blocked" });
+      }
+      return true;
+    });
+    await refire;
+    registerDelayMs = 0;
+
+    // Assert: the publish took what the file held under its lock
+    expect((await stateOf(fx))?.workContextStatus).toBe("blocked");
+    expect((await stateOf(fx))?.workContextTitle).toBe("Set by intent");
   });
 
   test("withholds the records of a life the hub ended, never filing them into it past its end", async () => {

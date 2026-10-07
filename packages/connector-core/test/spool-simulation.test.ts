@@ -106,23 +106,10 @@ const said = (verdicts: readonly Verdict[]): readonly string[] =>
  */
 const OPEN: ReadonlyMap<number, string> = new Map<number, string>([
   [134, "L2"],
-  [184, "L1"],
-  [1255, "L1"],
-  [1384, "L1"],
-  [1605, "L1"],
-  [1715, "L1"],
   [1933, "L2"],
-  // At production timing the sweep found more of L1's and L2's classes, each racy: par[intent ‖ start], par[start ‖ end].
-  [1035, "L1"],
-  [1501, "L1"],
-  [10102, "L1"],
-  [11955, "L1"],
+  // At production timing the sweep found more of L2's class, each racy: par[start ‖ start], par[start ‖ end].
   [11974, "L2"],
-  [11151, "L1"],
-  [11274, "L1"],
   [11285, "L2"],
-  [11362, "L1"],
-  [11645, "L1"],
   [11683, "L2"],
 ]);
 
@@ -317,8 +304,7 @@ interface Found extends Probe {
   readonly racy?: boolean;
 }
 
-const L1 = "L1 (a re-fire keeps the status set_intent wrote)";
-const L2 = "L2 (concurrent SessionStarts share one epoch)";
+const L2 ="L2 (concurrent SessionStarts share one epoch)";
 
 /**
  * WHAT THE ROUND-7 REVIEW'S EXTENDED SWEEP FOUND, shrunk: each named by its
@@ -364,56 +350,38 @@ const ROUND_7: readonly Found[] = [
   {
     name: "seed 184 (I4, L1): set_intent beside a SessionStart re-fire",
     events: [start(0), par(intent(0, "implementing"), start(0))],
-    open: L1,
-    racy: true,
   },
   {
     name: "seed 1255 (I4, L1): the same, the other way round",
     events: [start(1), { kind: "refuseWc", c: 0 }, par(intent(1, "blocked"), start(1))],
-    open: L1,
-    racy: true,
   },
   {
     name: "seed 1384 (I4, L1): a re-fire beside set_intent",
     events: [start(0), par(start(0), intent(0, "implementing"))],
-    open: L1,
-    racy: true,
   },
   {
     name: "seed 1605 (I4, L1): the same on a second conversation",
     events: [start(1), par(start(1), intent(1, "implementing"))],
-    open: L1,
-    racy: true,
   },
   {
     name: "seed 1715 (I4, L1): a re-fire beside set_intent blocked",
     events: [start(0), par(start(0), intent(0, "blocked"))],
-    open: L1,
-    racy: true,
   },
   {
     name: "seed 11151 (I4, L1): set_intent beside a re-fire, then a crash",
     events: [start(0), par(intent(0, "blocked"), start(0)), crash(7, "before")],
-    open: L1,
-    racy: true,
   },
   {
     name: "seed 11274 (I4, L1): a re-fire beside set_intent, another re-fire, a crash",
     events: [start(1), par(start(1), intent(1, "blocked")), start(1), crash(4, "after")],
-    open: L1,
-    racy: true,
   },
   {
     name: "seed 11362 (I4, L1): set_intent done beside a re-fire",
     events: [start(0), par(intent(0, "done"), start(0))],
-    open: L1,
-    racy: true,
   },
   {
     name: "seed 11645 (I4, L1): a re-fire beside set_intent implementing",
     events: [start(0), par(start(0), intent(0, "implementing"))],
-    open: L1,
-    racy: true,
   },
   {
     name: "seed 134 (I3, L2): two SessionStarts of one host session at once, a register refused",
@@ -464,14 +432,30 @@ const ROUND_7: readonly Found[] = [
   {
     name: "seed 10102 (I4, L1, production timing): set_intent beside a re-fire",
     events: [start(1), par(intent(1, "implementing"), start(1))],
-    open: L1,
-    racy: true,
   },
   {
     name: "seed 11955 (I4, L1, production timing): set_intent done beside a re-fire",
     events: [start(1), par(intent(1, "done"), start(1))],
-    open: L1,
-    racy: true,
+  },
+  {
+    name: "seed 1035 (I4, L1, production timing): set_intent beside a re-fire, a second conversation open",
+    events: [start(0), start(1), edit(0), par(intent(0, "done"), start(0))],
+  },
+  {
+    name: "seed 1501 (I4, L1, production timing): set_intent blocked beside a re-fire after an edit",
+    events: [start(0), edit(0), par(intent(0, "blocked"), start(0))],
+  },
+  {
+    name: "seed 912 (I4, L1, production timing): a re-fire beside set_intent behind a slow hub",
+    events: [start(0), edit(0), slow(1700, 1, 1), edit(0), par(start(0), intent(0, "blocked"))],
+  },
+  {
+    name: "seed 1494 (I4, L1, production timing): a re-fire beside set_intent after a crashed start",
+    events: [start(0), crash(1, "before"), edit(0), par(start(0), intent(0, "done"))],
+  },
+  {
+    name: "seed 11268 (I4, L1, production timing): a re-fire beside set_intent, then a flush beside an edit",
+    events: [start(0), par(start(0), intent(0, "blocked")), par(edit(0), { kind: "flush", c: 0 })],
   },
   {
     name: "seed 11974 (I3, L2, production timing): a resume beside SessionEnd behind a slow hub",

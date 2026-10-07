@@ -18298,10 +18298,35 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a SessionStart re-fire puts the host's starting status back",
     file: `${CORE}/src/flows/register-session.ts`,
-    from: "      ? (previous.workContextStatus ?? input.status)",
+    from: "      ? (current.workContextStatus ?? input.status)",
     to: "      ? input.status",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review-2 round 7, simulation seed 10 (I4): compact, resume or clear reverts the status set_intent set",
+  },
+  {
+    label: "a SessionStart re-fire spools the status it read before its register went out",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "  const current = await readSessionState(input.home, input.hostSessionKey);",
+    to: "  const current = previous;",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because:
+      "review-2 round 8, L1 (seeds 184, 1255, 1384): set_intent's status, written while the re-fire's register was out, is put back on the hub",
+  },
+  {
+    label: "a re-fire's state drops the status set_intent wrote while its register was out",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "              workContextStatus: previous.workContextStatus ?? state.workContextStatus,",
+    to: "              workContextStatus: state.workContextStatus,",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 8, L1 (seeds 1605, 1715): the published state reverts the status set_intent wrote under the lock",
+  },
+  {
+    label: "a re-fire's state drops the title set_intent wrote while its register was out",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "              workContextTitle: previous.workContextTitle ?? state.workContextTitle,",
+    to: "              workContextTitle: state.workContextTitle,",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 8, L1: the intent writers re-send the title the state holds, and the fire's would replace set_intent's",
   },
   {
     label: "a ladder that climbs past an ended life leaves its records deliverable into it",
@@ -18965,7 +18990,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
  * PRINTS: packages/connector-core/test/session-heal.test.ts 31
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 2
- * PRINTS: packages/connector-core/test/session-lives.test.ts 35
+ * PRINTS: packages/connector-core/test/session-lives.test.ts 38
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2

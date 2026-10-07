@@ -607,6 +607,19 @@ The fix is an installation discriminator in the life id: a per-machine id minted
 folded into `cc_<key>`. Two machines would then register two lives of one conversation, never one life twice.
 Alternatively, the hub could refuse a live re-register that comes from another installation.
 
+**A SessionStart re-fire keeps the status set_intent writes beside it** (review-2 round 8, L1). The re-fire read
+the life's status before its register POST and published it after. A `set_intent` that ran in between was put back,
+in the state and in the work context the register spools. The extended sweep found it on 13 seeds, plus 912, 1494
+and 11268 at production timing, all `par[intent ‖ start]`. Two reads close it:
+
+- the register reads the status AFTER its POST, so the work context it spools carries what `set_intent` wrote while
+  it was out;
+- the publish carries the file's title and status under the state lock (`withCarriedCapture`), so a `set_intent`
+  between that read and the publish is kept too.
+
+Before the fix, 97 of 128 replays of the 16 seeds broke I4; after it, none did. The fixed scenarios are ordinary tests
+now, and `session-lives.test.ts` pins both windows.
+
 **The hub's author-side refusals have a word, and a cooldown sends nothing** (review-2 LOW-5). A record whose own
 session or work context the hub never saw is refused with `sessionId: session "…" not found` (also
 `authorSessionId:`) or `workContextId: work context "…" not found` — the body's session, not the producer's — and
