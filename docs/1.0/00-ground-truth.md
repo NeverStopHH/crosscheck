@@ -192,10 +192,11 @@ the honest age"; a pre-column row reads null and the pointer says *age unknown*
 rather than fabricating `now()` (`schema.ts:218-225`). **`last_seen_at`**
 NULLABLE is the honest RECENCY beside it (pilot finding, 2026-10-05): every
 duplicate touch sets it to now, so a long-lived session re-editing a file
-today reads as today. Windows that ask "what was touched lately" — `suspect`'s
-and the ghost/conference sweep test — read `greatest(created_at,
-last_seen_at)` (`live-location.ts targetTouchedAt`), and only for an owner
-whose location the reader may see: both are her instants.
+today reads as today. Reads that ask "what was touched lately" — `suspect`'s
+window, the ghost/conference large-change count and the newest-first probe —
+read `greatest(created_at, last_seen_at)` (`live-location.ts
+targetTouchedAt`), and only for an owner whose location the reader may see:
+both are her instants.
 Index `work_context_targets_kind_value_idx (kind, value)` (`:233`) — this is the
 index the suspect intersection in PR #50 rides.
 

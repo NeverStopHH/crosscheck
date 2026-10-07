@@ -18,6 +18,8 @@ import {
   CONFERENCE_MAX_CLAIMS_PER_CONTEXT,
   CONFERENCE_MAX_CONTEXTS,
   GHOST_HOT_TARGET_MAX_CONTEXTS,
+  GHOST_MAX_CONTEXT_TARGETS,
+  GHOST_MAX_PROBE_VALUES,
 } from "../src/constants.ts";
 import {
   agentSessions,
@@ -82,14 +84,28 @@ interface ConferenceQuestionView {
   readonly body?: unknown;
 }
 
+interface OverlapView {
+  readonly workContextIdA: string;
+  readonly workContextIdB: string;
+  readonly sharedTargetCount: number;
+  readonly sharedTargets: readonly { kind: string; value: string }[];
+  readonly largeChangeFilesA?: number | null;
+  readonly largeChangeFilesB?: number | null;
+}
+
+/** The pair of two contexts, in either order, or undefined. */
+const pairOf = (view: ConferenceView, one: string, other: string): OverlapView | undefined =>
+  view.overlaps.find((pair) =>
+    [pair.workContextIdA, pair.workContextIdB].sort().join(" ") === [one, other].sort().join(" "),
+  );
+
+/** The large-change qualifier a pair carries for one of its contexts. */
+const largeChangeIn = (pair: OverlapView | undefined, contextId: string): number | null =>
+  (pair?.workContextIdA === contextId ? pair.largeChangeFilesA : pair?.largeChangeFilesB) ?? null;
+
 interface ConferenceView {
   readonly contexts: readonly ConferenceContextView[];
-  readonly overlaps: readonly {
-    readonly workContextIdA: string;
-    readonly workContextIdB: string;
-    readonly sharedTargetCount: number;
-    readonly sharedTargets: readonly { kind: string; value: string }[];
-  }[];
+  readonly overlaps: readonly OverlapView[];
   readonly questions: readonly ConferenceQuestionView[];
   readonly contradictions: readonly { readonly id: string }[];
   readonly contextsInWindow: number;
@@ -327,7 +343,7 @@ describe("the conference corpus", () => {
     ).toEqual([THEIR_CONTEXT]);
   });
 
-  test("a long-lived context's old touches do not make it a sweep; an opted-out owner's are judged by count alone", async () => {
+  test("a long-lived context's old touches do not make it a large change; an opted-out owner's is judged by count alone", async () => {
     // Arrange: Ken's long-lived context touched 178 files twenty days ago and
     // the two I touch today. Twenty days is past the conference's window.
     const { harness, me, them } = await setup();
@@ -350,18 +366,79 @@ describe("the conference corpus", () => {
       recordEnvelope("target", { workContextId: THEIR_CONTEXT, kind: "file", value }, { sessionId: THEIR_SESSION }),
     ));
     await seed(harness, me, contextRecords(MY_CONTEXT, MY_SESSION, "Token refresh rework", files(shared), undefined, opened));
-    const pairsWithKen = (view: ConferenceView): number =>
-      view.overlaps.filter((pair) => [pair.workContextIdA, pair.workContextIdB].includes(THEIR_CONTEXT)).length;
 
     // Act
     const visible = await fetchConference(harness, me.apiKey);
     await setPresenceOptOutViaApi(harness, them.apiKey, true);
     const hidden = await fetchConference(harness, me.apiKey);
 
-    // Assert: duplicated work while Ken's times may be read; once he opts
-    // out, his touch times are not read, and 180 files are a sweep again.
-    expect(pairsWithKen(visible)).toBe(1);
-    expect(pairsWithKen(hidden)).toBe(0);
+    // Assert: duplicated work either way. While Ken's times may be read, his
+    // context is the two files he touched this fortnight; once he opts out
+    // they are not read, so all 180 count and the pair says so — qualified,
+    // never dropped.
+    const total = LONG_LIVED_OLD_TOUCHES + shared.length;
+    expect(total).toBeGreaterThan(GHOST_MAX_CONTEXT_TARGETS);
+    expect(largeChangeIn(pairOf(visible, MY_CONTEXT, THEIR_CONTEXT), THEIR_CONTEXT)).toBeNull();
+    expect(pairOf(visible, MY_CONTEXT, THEIR_CONTEXT)?.sharedTargetCount).toBe(shared.length);
+    expect(largeChangeIn(pairOf(hidden, MY_CONTEXT, THEIR_CONTEXT), THEIR_CONTEXT)).toBe(total);
+    expect(pairOf(hidden, MY_CONTEXT, THEIR_CONTEXT)?.sharedTargetCount).toBe(shared.length);
+  });
+
+  test("a large change is never dropped from duplicated work: it pairs, qualified, after the focused pairs", async () => {
+    // Arrange: Ken's rename holds three of my files, Mike's focused plan two
+    // of them.
+    const { harness, me, them } = await setup();
+    const shared = ["src/auth/token.ts", "src/auth/session.ts", "src/auth/store.ts"];
+    const files = (values: readonly string[]) => values.map((value) => ({ kind: "file", value }));
+    await seed(harness, me, contextRecords(MY_CONTEXT, MY_SESSION, "Token refresh rework", files(shared)));
+    const renamed = [
+      ...shared,
+      ...Array.from({ length: GHOST_MAX_CONTEXT_TARGETS }, (_unused, index) => `src/generated/file-${String(index)}.ts`),
+    ];
+    await seed(harness, them, contextRecords(THEIR_CONTEXT, THEIR_SESSION, "Rename the whole module", files(renamed)));
+    const mike = await addTestDeveloperWithSession(harness, "Mike", "mike@example.com", { id: "ses_mike" });
+    await seed(harness, mike, contextRecords("wc_mike", "ses_mike", "Session store migration", files(shared.slice(0, 2))));
+
+    // Act
+    const view = await fetchConference(harness, me.apiKey);
+
+    // Assert: all three pairs; the focused one first although Ken shares more
+    // with me, and each of Ken's pairs says how large his side is.
+    const ids = (pair: OverlapView): string => [pair.workContextIdA, pair.workContextIdB].sort().join(" ");
+    expect(view.overlaps.map(ids)).toEqual([
+      [MY_CONTEXT, "wc_mike"].sort().join(" "),
+      [MY_CONTEXT, THEIR_CONTEXT].sort().join(" "),
+      [THEIR_CONTEXT, "wc_mike"].sort().join(" "),
+    ]);
+    expect(largeChangeIn(pairOf(view, MY_CONTEXT, THEIR_CONTEXT), THEIR_CONTEXT)).toBe(renamed.length);
+    expect(largeChangeIn(pairOf(view, MY_CONTEXT, THEIR_CONTEXT), MY_CONTEXT)).toBeNull();
+    expect(largeChangeIn(pairOf(view, THEIR_CONTEXT, "wc_mike"), THEIR_CONTEXT)).toBe(renamed.length);
+    expect(largeChangeIn(pairOf(view, MY_CONTEXT, "wc_mike"), "wc_mike")).toBeNull();
+  });
+
+  test("a file a large change touched first still pairs it — its size never decides what is compared", async () => {
+    // Arrange: Ken touched my two files FIRST, then more files than one
+    // context's probe holds; I am in those two now.
+    const { harness, me, them } = await setup();
+    const shared = ["src/auth/token.ts", "src/auth/session.ts"];
+    const files = (values: readonly string[]) => values.map((value) => ({ kind: "file", value }));
+    await seed(harness, them, contextRecords(THEIR_CONTEXT, THEIR_SESSION, "Orchestration worktree", files(shared)));
+    harness.clock.advanceSeconds(60);
+    const later = Array.from({ length: GHOST_MAX_PROBE_VALUES + 10 }, (_unused, i) =>
+      recordEnvelope("target", { workContextId: THEIR_CONTEXT, kind: "file", value: `src/aaa-later/f${String(i)}.ts` }, { sessionId: THEIR_SESSION }),
+    );
+    for (let start = 0; start < later.length; start += INGEST_CHUNK) {
+      await seed(harness, them, later.slice(start, start + INGEST_CHUNK));
+    }
+    await seed(harness, me, contextRecords(MY_CONTEXT, MY_SESSION, "Token refresh rework", files(shared)));
+
+    // Act
+    const pair = pairOf(await fetchConference(harness, me.apiKey), MY_CONTEXT, THEIR_CONTEXT);
+
+    // Assert: Ken's probe holds only his newest values, and the pair is found
+    // anyway — through MY values, looked up in his.
+    expect(pair?.sharedTargetCount).toBe(shared.length);
+    expect(largeChangeIn(pair, THEIR_CONTEXT)).toBe(shared.length + later.length);
   });
 
   test("open sessions fill the page first, and work ended more than the grace ago is out", async () => {

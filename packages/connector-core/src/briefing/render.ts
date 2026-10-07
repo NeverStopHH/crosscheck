@@ -403,9 +403,10 @@ const renderLandedNoticeSection = (input: BriefingInput): Section => {
  * Bounded TWICE, exactly as the questions block above is: at
  * MAX_GHOST_POINTERS items and at MAX_BRIEFING_GHOST_CHARS characters. The
  * second bound is not belt-and-braces — a ghost line composes a name, an
- * intent, up to three of the reader's own paths and an id, and the two
- * longest ones the formatter can produce measured 983 characters, half the
- * briefing, which the item bound admits and every section below pays for.
+ * intent, up to three of the reader's own paths, a large change's size and
+ * an id, and the two longest ones the formatter can produce measured 1073
+ * characters, half the briefing, which the item bound admits and every
+ * section below pays for.
  * Rows are dropped WHOLE (briefing/fit.ts) and the count of them is reported
  * by appendSection's own "+N more not shown", because a truncated ghost line
  * loses the `get_diagnosis` id that is its entire next action.

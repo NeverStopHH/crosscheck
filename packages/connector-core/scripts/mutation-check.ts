@@ -3072,17 +3072,16 @@ export const MUTATIONS: readonly Mutation[
       "with them, on every file the two share",
   },
   {
-    // The sweep rule as the DATABASE's, not a filter over what came back.
-    // With sweeps admitted, one renaming worktree of the reader's own holds
-    // more targets than the whole window their contexts share, and the window
-    // is spent in id order.
-    label: "one sweep of mine spends my other context's read window",
+    // The probe ranked WITHIN each context, in the database. Ranked across
+    // the set, one renaming worktree of the reader's own holds more values
+    // than the whole probe, and its newer touches take every slot.
+    label: "one large change of mine spends my other context's probe",
     file: `${SERVER}/src/services/ghost-overlap.ts`,
-    from: "        targetInWindowSeenBy(viewerDeveloperId, sql`${viewerDeveloperId}`, workContextTargets, cutoff),\n        notASweepCondition(workContextTargets.workContextId, viewerDeveloperId, cutoff),",
-    to: "        targetInWindowSeenBy(viewerDeveloperId, sql`${viewerDeveloperId}`, workContextTargets, cutoff),",
+    from: "row_number() over (partition by ${workContextTargets.workContextId} order by",
+    to: "row_number() over (order by",
     test: `${SERVER}/test/ghost-overlap.test.ts`,
     because:
-      "a mass rename in one of my worktrees takes the read budget and the " +
+      "a mass rename in one of my worktrees takes the probe and the " +
       "context beside it, so the surface goes silent for me on the plan I " +
       "am actually working on",
   },
@@ -23632,40 +23631,157 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/suspect.test.ts`,
     because: "the session that edited the break's files again today is never named",
   },
-  // The sweep rule counts what a context touched in the window, not ever.
+  // The large-change count reads what a context touched in the window, not ever.
   {
-    label: "a long-lived context is a sweep by its old touches, and ghost checks lose it",
+    label: "a long-lived context is called a large change by its old touches, on ghost checks",
     file: `${SERVER}/src/services/ghost-overlap.ts`,
-    from: "       AND ${targetInWindowSeenBy(viewerDeveloperId, sql`sweep_sessions.developer_id`, SWEEP_TARGET_TIMES, cutoff)}\n",
+    from: "        targetInWindowSeenBy(viewerDeveloperId, agentSessions.developerId, workContextTargets, cutoff),\n",
     to: "",
     test: `${SERVER}/test/ghost-overlap.test.ts`,
     because:
-      "the pilot owner's 180-file worktree context reads as a formatter run and drops out " +
-      "of every ghost check while a teammate edits two of its files",
+      "the pilot owner's 180-file worktree context reads as a formatter run, and the teammate " +
+      "editing two of its files today is ranked and worded as a rename's bystander",
   },
   {
-    label: "a long-lived context is a sweep by its old touches, and the conference loses it",
+    label: "a long-lived context is called a large change by its old touches, on the conference page",
     file: `${SERVER}/src/services/ghost-overlap.ts`,
-    from: "       AND ${targetInWindowSeenBy(viewerDeveloperId, sql`sweep_sessions.developer_id`, SWEEP_TARGET_TIMES, cutoff)}\n",
+    from: "        targetInWindowSeenBy(viewerDeveloperId, agentSessions.developerId, workContextTargets, cutoff),\n",
     to: "",
     test: `${SERVER}/test/conference.test.ts`,
-    because: "the duplicated work of a long-lived session and a teammate never reaches the case file",
+    because: "the duplicated work of a long-lived session and a teammate reaches the case file as a rename's",
   },
   {
-    label: "my own old touches spend the ghost check's read bound",
+    label: "my own oldest touches take the probe from today's",
     file: `${SERVER}/src/services/ghost-overlap.ts`,
-    from: "        targetInWindowSeenBy(viewerDeveloperId, sql`${viewerDeveloperId}`, workContextTargets, cutoff),\n",
-    to: "",
+    from: "order by ${touched} desc nulls last",
+    to: "order by ${touched} asc nulls last",
     test: `${SERVER}/test/ghost-overlap.test.ts`,
-    because: "a long-lived context of mine fills the read window with weeks-old files and today's collision goes unread",
+    because: "a long-lived context of mine fills its probe with weeks-old files and today's collision goes unread",
   },
   {
-    label: "the sweep window reads an opted-out owner's touch times",
+    label: "the large-change count reads an opted-out owner's touch times",
     file: `${SERVER}/src/services/live-location.ts`,
     from: "  sql`(case when ${visiblePresenceCondition(viewerDeveloperId, ownerDeveloperId)} then coalesce(${targetTouchedAt(target)} >= ${cutoff.toISOString()}::timestamptz, false) else true end)`;",
     to: "  sql`coalesce(${targetTouchedAt(target)} >= ${cutoff.toISOString()}::timestamptz, false)`;",
     test: `${SERVER}/test/conference.test.ts`,
-    because: "whether her context counts as a sweep, and so whether it pairs, says when she touched its files",
+    because: "whether her context is qualified as a large change says when she touched its files",
+  },
+  // Sweep is not ignore (owner's reviewer, 2026-10-07): a large change is
+  // QUALIFIED and ranked lower, never excluded. Each of these re-adds the
+  // exclusion somewhere it could come back, or drops the qualifier.
+  {
+    label: "a teammate's large change is excluded from the ghost check's pair rows again",
+    file: `${SERVER}/src/services/ghost-overlap.ts`,
+    from: "        gte(activityExpression, cutoff),\n        ...liveWorkConditions(),\n        // A ghost line says",
+    to: "        gte(activityExpression, cutoff),\n        ...liveWorkConditions(),\n        sql`(select count(*) from work_context_targets size_targets where size_targets.work_context_id = ${workContextTargets.workContextId}) <= ${GHOST_MAX_CONTEXT_TARGETS}`,\n        // A ghost line says",
+    test: `${SERVER}/test/ghost-overlap.test.ts`,
+    because:
+      "the pilot owner's 180-file context drops out of every ghost check while a teammate " +
+      "edits two of its files — a large surface read as not collision-relevant",
+  },
+  {
+    label: "a teammate's large change is dropped from ghost checks after it was found",
+    file: `${SERVER}/src/services/ghost-overlap.ts`,
+    from: "      return row === undefined ? [] : [{ candidate, row, largeChangeFiles: large.get(candidate.id) ?? null }];",
+    to: "      return row === undefined || large.has(candidate.id) ? [] : [{ candidate, row, largeChangeFiles: null }];",
+    test: `${SERVER}/test/ghost-overlap.test.ts`,
+    because: "every file a large change shares with the reader stops producing the overlap",
+  },
+  {
+    label: "my own large change is excluded from what my ghost check compares again",
+    file: `${SERVER}/src/services/ghost-overlap.ts`,
+    from: "        inArray(workContextTargets.kind, [...OVERLAP_TARGET_KINDS]),\n",
+    to: "        inArray(workContextTargets.kind, [...OVERLAP_TARGET_KINDS]),\n        sql`(select count(*) from work_context_targets size_targets where size_targets.work_context_id = ${workContextTargets.workContextId}) <= ${GHOST_MAX_CONTEXT_TARGETS}`,\n",
+    test: `${SERVER}/test/ghost-overlap.test.ts`,
+    because: "the reader doing a large change is told nobody is in their files while a teammate edits two of them",
+  },
+  {
+    label: "a large change is dropped from the conference's duplicated work again",
+    file: `${SERVER}/src/services/conference.ts`,
+    from: "      if (owner.get(idA) === owner.get(idB)) {\n        continue;\n      }",
+    to: "      if (owner.get(idA) === owner.get(idB) || large.has(idA) || large.has(idB)) {\n        continue;\n      }",
+    test: `${SERVER}/test/conference.test.ts`,
+    because: "two people in the same files never reach the case file when one of them is in a large change",
+  },
+  {
+    label: "a conference pair is found only through both sides' probes",
+    file: `${SERVER}/src/services/conference.ts`,
+    from: "    overlaps: pairOverlaps(contexts, members, large),",
+    to: "    overlaps: pairOverlaps(contexts, probes, large),",
+    test: `${SERVER}/test/conference.test.ts`,
+    because: "a file a large change touched before its newest two hundred never pairs it with the teammate in it now",
+  },
+  {
+    label: "a teammate's large change outranks a focused plan on ghost checks",
+    file: `${SERVER}/src/services/ghost-overlap.ts`,
+    from: "  Number(left.largeChangeFiles !== null) - Number(right.largeChangeFiles !== null) ||\n",
+    to: "",
+    test: `${SERVER}/test/ghost-overlap.test.ts`,
+    because: "a rename through three of the reader's files pushes the teammate whose plan meets theirs down the block",
+  },
+  {
+    label: "a large change outranks a focused pair on the conference page",
+    file: `${SERVER}/src/services/conference.ts`,
+    from: "        Number(one.isLarge) - Number(other.isLarge) ||\n",
+    to: "",
+    test: `${SERVER}/test/conference.test.ts`,
+    because: "a rename's pairs fill the duplicated-work section ahead of two people working the same plan",
+  },
+  {
+    label: "the ghost row forgets how large the change it overlaps is",
+    file: `${SERVER}/src/services/ghost-overlap.ts`,
+    from: "      largeChangeFiles,\n    }));",
+    to: "      largeChangeFiles: null,\n    }));",
+    test: `${SERVER}/test/ghost-overlap.test.ts`,
+    because: "the reader is shown a rename's share of their files as if it were a focused plan's",
+  },
+  {
+    label: "an intent match is qualified by the size of a change it shares no file with",
+    file: `${SERVER}/src/services/ghost-overlap.ts`,
+    from: "      candidates.filter((candidate) => candidate.shared.length > 0).map((candidate) => candidate.id),",
+    to: "      candidates.map((candidate) => candidate.id),",
+    test: `${SERVER}/test/ghost-overlap.test.ts`,
+    because: "VISION §3's flagship case — two plans sharing no file — ranks last for the size of an implementation",
+  },
+  {
+    label: "the conference pair forgets which side is a large change",
+    file: `${SERVER}/src/services/conference.ts`,
+    from: "          largeChangeFilesB: large.get(idB) ?? null,",
+    to: "          largeChangeFilesB: null,",
+    test: `${SERVER}/test/conference.test.ts`,
+    because: "the case file shows a rename's share of two people's files as duplicated planning",
+  },
+  {
+    label: "the ghost line drops the large-change qualifier",
+    file: `${CORE}/src/briefing/ghost.ts`,
+    from: "  return [...failure, ...values, ...large, ...words];",
+    to: "  return [...failure, ...values, ...words];",
+    test: `${CORE}/test/ghost-render.test.ts`,
+    because: "the hub says the overlap is a rename's and the reader is never told",
+  },
+  {
+    label: "a change's size alone becomes a reason for a ghost line",
+    file: `${CORE}/src/briefing/ghost.ts`,
+    from: "    size === null || failure.length + values.length === 0 ? [] : [largeChangeClause(size)];",
+    to: "    size === null ? [] : [largeChangeClause(size)];",
+    test: `${CORE}/test/ghost-render.test.ts`,
+    because: "a row with nothing checkable in it prints a name and a size as if they were a collision",
+  },
+  {
+    label: "a size the connector cannot read fails the whole ghost row",
+    file: `${CORE}/src/http/hub.ts`,
+    from: "  largeChangeFiles: z.number().int().min(0).nullable().optional().catch(undefined),",
+    to: "  largeChangeFiles: z.number().int().min(0).nullable().optional(),",
+    test: `${CORE}/test/ghost-render.test.ts`,
+    because: "a newer hub's size field hides the collision it qualifies",
+  },
+  {
+    label: "the conference page drops which side is a large change",
+    file: `${CORE}/src/conference/report.ts`,
+    from: "${[clauses.join(\", \"), ...qualifiers].join(\"; \")}`,",
+    to: "${clauses.join(\", \")}`,",
+    test: `${CORE}/test/conference-report.test.ts`,
+    because: "the hub says one side is a rename and the report reads it as two people's plan",
   },
   // A base already on the default branch, however it got there.
   {
@@ -24144,7 +24260,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/claim-validity-render.test.ts 2
  * PRINTS: packages/connector-core/test/commit-evidence.test.ts 1
  * PRINTS: packages/connector-core/test/conference-cost.test.ts 1
- * PRINTS: packages/connector-core/test/conference-report.test.ts 3
+ * PRINTS: packages/connector-core/test/conference-report.test.ts 4
  * PRINTS: packages/connector-core/test/confidence-gates-nothing.test.ts 1
  * PRINTS: packages/connector-core/test/config-parse.test.ts 1
  * PRINTS: packages/connector-core/test/connected-repo.test.ts 3
@@ -24163,7 +24279,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1
  * PRINTS: packages/connector-core/test/fix-diff.test.ts 7
  * PRINTS: packages/connector-core/test/ghost-declare.test.ts 1
- * PRINTS: packages/connector-core/test/ghost-render.test.ts 2
+ * PRINTS: packages/connector-core/test/ghost-render.test.ts 5
  * PRINTS: packages/connector-core/test/git-lane-cost.test.ts 1
  * PRINTS: packages/connector-core/test/git-timeout.test.ts 4
  * PRINTS: packages/connector-core/test/guarantee-declarations.test.ts 28
@@ -24273,7 +24389,7 @@ interface Outcome {
  * PRINTS: packages/server/test/claim-revalidations.test.ts 10
  * PRINTS: packages/server/test/claim-validity.test.ts 2
  * PRINTS: packages/server/test/commit-evidence-opt-out.test.ts 3
- * PRINTS: packages/server/test/conference.test.ts 10
+ * PRINTS: packages/server/test/conference.test.ts 14
  * PRINTS: packages/server/test/coverage-answer-sessions.test.ts 10
  * PRINTS: packages/server/test/coverage-compat-0.10.test.ts 2
  * PRINTS: packages/server/test/coverage-instant-privacy.test.ts 8
@@ -24303,7 +24419,7 @@ interface Outcome {
  * PRINTS: packages/server/test/drafts.test.ts 4
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/fence-waivers.test.ts 1
- * PRINTS: packages/server/test/ghost-overlap.test.ts 7
+ * PRINTS: packages/server/test/ghost-overlap.test.ts 13
  * PRINTS: packages/server/test/hint-content-floor.test.ts 6
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-outcome-retention.test.ts 4

@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 2293
+    # PRINTS: 2307
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -259,7 +259,7 @@ jobs:
     # PRINTS: packages/connector-claude/test/capture-latency.test.ts 1
     # PRINTS: briefing/draft-backlog.ts 8
     # PRINTS: briefing/draft-nudge.ts 10
-    # PRINTS: briefing/ghost.ts 2
+    # PRINTS: briefing/ghost.ts 4
     # PRINTS: briefing/intent.ts 1
     # PRINTS: briefing/landed-notices.ts 5
     # PRINTS: briefing/questions.ts 2
@@ -272,7 +272,7 @@ jobs:
     # PRINTS: capture/target-paths.ts 1
     # PRINTS: capture/touched-root.ts 5
     # PRINTS: claim-validity.ts 2
-    # PRINTS: conference/report.ts 2
+    # PRINTS: conference/report.ts 3
     # PRINTS: config/config.ts 4
     # PRINTS: config/connected-repo.ts 3
     # PRINTS: config/hook-budget.ts 2
@@ -325,7 +325,7 @@ jobs:
     # PRINTS: http/client.ts 4
     # PRINTS: http/coverage.ts 5
     # PRINTS: http/hint-outcomes.ts 4
-    # PRINTS: http/hub.ts 17
+    # PRINTS: http/hub.ts 18
     # PRINTS: http/latency.ts 1
     # PRINTS: http/pilot.ts 8
     # PRINTS: http/verdict.ts 4
@@ -453,7 +453,7 @@ jobs:
     # PRINTS: packages/server/src/services/claim-validity.ts 9
     # PRINTS: packages/server/src/services/cloud-agent-identity.ts 1
     # PRINTS: packages/server/src/services/commit-evidence.ts 3
-    # PRINTS: packages/server/src/services/conference.ts 12
+    # PRINTS: packages/server/src/services/conference.ts 16
     # PRINTS: packages/server/src/services/contradictions.ts 1
     # PRINTS: packages/server/src/services/coverage-order.ts 5
     # PRINTS: packages/server/src/services/coverage.ts 44
@@ -466,7 +466,7 @@ jobs:
     # PRINTS: packages/server/src/services/drafts.ts 3
     # PRINTS: packages/server/src/services/embedding-backfill.ts 5
     # PRINTS: packages/server/src/services/evidence-axes.ts 2
-    # PRINTS: packages/server/src/services/ghost-overlap.ts 7
+    # PRINTS: packages/server/src/services/ghost-overlap.ts 13
     # PRINTS: packages/server/src/services/hint-deliveries.ts 4
     # PRINTS: packages/server/src/services/hint-outcome-view.ts 16
     # PRINTS: packages/server/src/services/hint-outcomes.ts 23
@@ -559,7 +559,7 @@ jobs:
     # PRINTS: cloud-agent-identity.ts 1
     # PRINTS: commit-evidence.ts 6
     # PRINTS: conference-cost.ts 1
-    # PRINTS: conference.ts 27
+    # PRINTS: conference.ts 31
     # PRINTS: config.ts 4
     # PRINTS: connected-repo.ts 3
     # PRINTS: constants.ts 15
@@ -623,8 +623,8 @@ jobs:
     # PRINTS: gate.ts 9
     # PRINTS: gates.ts 1
     # PRINTS: get-diagnosis.ts 2
-    # PRINTS: ghost-overlap.ts 7
-    # PRINTS: ghost.ts 2
+    # PRINTS: ghost-overlap.ts 13
+    # PRINTS: ghost.ts 4
     # PRINTS: git-lane-cost.ts 2
     # PRINTS: git-queries.ts 15
     # PRINTS: git.ts 4
@@ -638,7 +638,7 @@ jobs:
     # PRINTS: hints.ts 20
     # PRINTS: hook-budget.ts 2
     # PRINTS: hub-status.ts 1
-    # PRINTS: hub.ts 17
+    # PRINTS: hub.ts 18
     # PRINTS: index.ts 7
     # PRINTS: init-global.ts 2
     # PRINTS: init-io.ts 10
@@ -735,7 +735,7 @@ jobs:
     # PRINTS: render-surfaces.ts 2
     # PRINTS: render.ts 116
     # PRINTS: repo-path.ts 1
-    # PRINTS: report.ts 10
+    # PRINTS: report.ts 11
     # PRINTS: retention-registry.ts 11
     # PRINTS: retention.ts 24
     # PRINTS: revalidate.ts 2

@@ -1106,10 +1106,11 @@ export const MAX_GHOST_POINTERS = 2;
  * because a ghost line is a composition and its worst case is not the sum of
  * its caps. Two MAXIMAL rows — a name and an intent at their render caps, a
  * shared fingerprint, GHOST_MAX_SHARED_SHOWN paths at
- * GHOST_SHARED_VALUE_MAX_CHARS each, a "+N more of yours" tail, the word
- * count and a full-length id — compose 491 characters each, so the block
- * measured 983 characters of lines under a 114-character header: 1098 of
- * MAX_BRIEFING_CHARS, HALF the briefing, for two pointer lines. The five
+ * GHOST_SHARED_VALUE_MAX_CHARS each, a "+N more of yours" tail, a large
+ * change's size, the word count and a full-length id — compose 536
+ * characters each, so the block measured 1073 characters of lines under a
+ * 114-character header: 1188 of MAX_BRIEFING_CHARS, OVER HALF the briefing,
+ * for two pointer lines. The five
  * sections below it (teammate contexts, contradictions, solved-before,
  * draft reminders, absences) give way whole to that, which is the ordering
  * appendSection enforces and not one anybody chose.
