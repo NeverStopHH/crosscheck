@@ -20,10 +20,10 @@ import {
   SUBAGENT_RELAY_HEADER,
 } from "@crosscheck/connector-core/hints/collision-notice.ts";
 import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
-import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 import { activeTeammateSession } from "../../connector-core/test/fixtures/hint-hub.ts";
 import { assertUntrustedCharacters } from "../../connector-core/test/fixtures/untrusted-invariants.ts";
 import {
+  MIKE_FILES,
   NICK_NOTICE,
   OVERLAP_FILE,
   SECOND_FILE,
@@ -32,14 +32,13 @@ import {
   cleanupCollisionFixtures,
   collisionFixture as fixture,
   editPayload,
+  ghostFixture,
+  mikeGhostRow,
   parsed,
   promptPayload,
-  trackForCleanup,
+  sessionStartPayload,
 } from "./fixtures/collision-fixture.ts";
 import type { HookOutput } from "./fixtures/collision-fixture.ts";
-
-const DAY_MS = 86_400_000;
-const HOUR_MS = 3_600_000;
 
 afterEach(cleanupCollisionFixtures);
 
@@ -227,73 +226,10 @@ describe("a SUBAGENT's hit reaches the main thread", () => {
   });
 });
 
-interface GhostHub {
-  readonly url: string;
-  readonly stop: () => void;
-}
-
-/** A hub that answers SessionStart's fetch block with ONE ghost row. */
-const startGhostHub = (ghostChecks: readonly unknown[]): GhostHub => {
-  const server = Bun.serve({
-    port: 0,
-    fetch: (request) => {
-      const { pathname } = new URL(request.url);
-      if (pathname === "/api/ghost-checks") {
-        return Response.json({ ok: true, data: { ghostChecks } });
-      }
-      if (pathname === "/api/records") {
-        return Response.json({ ok: true, data: { accepted: 1, duplicates: 0, ignored: 0, rejected: 0 } });
-      }
-      if (pathname === "/api/presence") {
-        return Response.json({ ok: true, data: { sessions: [] } });
-      }
-      if (pathname === "/api/work-contexts") {
-        return Response.json({ ok: true, data: { workContexts: [] } });
-      }
-      return Response.json({ ok: true, data: { session: { id: "cc_x", developerId: "dev_self" } } });
-    },
-  });
-  return { url: `http://127.0.0.1:${String(server.port)}`, stop: () => server.stop(true) };
-};
-
-const mikeGhostRow = (sharedTargets: readonly unknown[], sharedTargetCount: number): Record<string, unknown> => ({
-  workContextId: "wc_cc_mike",
-  title: "Practice mapping grid",
-  developerId: "dev_mike",
-  developerName: "Mike",
-  lastActiveAt: new Date(Date.now() - 2 * DAY_MS - HOUR_MS).toISOString(),
-  sharedTargets,
-  sharedTargetCount,
-  intentTokenHits: 0,
-});
-
-const MIKE_FILES = [
-  { kind: "file", value: "apps/web/src/practice/PlayerMappingGrid.tsx" },
-  { kind: "file", value: "apps/web/src/practice/MappingRow.tsx" },
-  { kind: "file", value: "apps/web/src/practice/mapping-api.ts" },
-];
-
 const sessionStart = async (label: string, ghostChecks: readonly unknown[]): Promise<{ readonly run: (source: string) => Promise<HookOutput> }> => {
-  const hub = startGhostHub(ghostChecks);
-  const repo = await makeRepo(label, { remote: "git@github.com:acme/api.git" });
-  const home = await makeHome(label);
-  trackForCleanup(repo, hub.stop);
-  trackForCleanup(home);
-  const env: Env = {
-    CROSSCHECK_HOME: home,
-    CROSSCHECK_HUB_URL: hub.url,
-    CROSSCHECK_API_KEY: "test-key",
-    CROSSCHECK_TIMEOUT_MS: "2000",
-  };
+  const { repo, env } = await ghostFixture(label, ghostChecks);
   return {
-    run: async (source) =>
-      parsed(
-        await runHook(
-          "session-start",
-          JSON.stringify({ session_id: SESSION_ID, cwd: repo, hook_event_name: "SessionStart", source }),
-          env,
-        ),
-      ),
+    run: async (source) => parsed(await runHook("session-start", sessionStartPayload(repo, source), env)),
   };
 };
 

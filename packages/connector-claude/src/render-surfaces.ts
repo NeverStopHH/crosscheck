@@ -59,7 +59,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     name: "claude-tripwire-ask",
     delivery: "unsolicited",
     module: "src/hooks/pre-tool-use.ts",
-    note: "emits renderTripwireReason output verbatim as both permissionDecisionReason and additionalContext (the same rendered string, #25), plus appendOutcomeClause where the hub records outcomes; for a teammate group new to the session, renderCollisionNotice output verbatim as systemMessage and the renderer-owned COLLISION_RELAY_SENTENCE after the model's copy only; all registered core surfaces, covered in test/tripwire-hook.test.ts and test/collision-notice-hook.test.ts",
+    note: "emits renderTripwireReason output verbatim as both permissionDecisionReason and additionalContext (the same rendered string, #25), plus appendOutcomeClause where the hub records outcomes; for the teammate groups new to the session, renderCollisionNotices output verbatim as systemMessage and the renderer-owned COLLISION_RELAY_SENTENCE after the model's copy only — or, on an edit with no ask left to state, the same notices and sentence as the model's copy; all registered core surfaces, covered in test/tripwire-hook.test.ts, test/collision-notice-hook.test.ts and test/collision-order-hook.test.ts",
   },
   {
     kind: "composite",

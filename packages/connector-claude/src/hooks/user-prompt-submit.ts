@@ -137,9 +137,12 @@ const serialize = (output: PromptOutput | "", relay: string): string => {
  * leaves the queue for the main thread. Fail open: a busy lock relays next
  * prompt, never twice.
  */
-const relaySubagentCollisions = async (ctx: HookContext): Promise<string> => {
+const relaySubagentCollisions = async (ctx: HookContext, budget: HookBudget): Promise<string> => {
   try {
-    if (ctx.payload.agent_id !== undefined) {
+    // Drained only while the spare budget lasts (review L3): a queue left
+    // alone waits for the next prompt, a queue drained into an abandoned
+    // hook is lost.
+    if (ctx.payload.agent_id !== undefined || budget.spareMs() <= 0) {
       return "";
     }
     const state = await readSessionState(ctx.config.home, ctx.payload.session_id);
@@ -330,12 +333,14 @@ export const handleUserPromptSubmit = async (
   ctx: HookContext,
   budget: HookBudget,
 ): Promise<string> => {
-  // A subagent's collision first: taken from the queue before anything else
-  // reads state, so what the main thread is handed is what was waiting.
-  const relay = await relaySubagentCollisions(ctx);
   // Delivers nothing, like the two fires above: the background fetch of the
   // landing branches (hooks/landing-fetch.ts), beside the prompt's own work so
   // it adds no wall clock of its own.
   const [output] = await Promise.all([deliverPromptContext(ctx, budget), requestLandingFetchFor(ctx)]);
+  // A subagent's collision LAST (review L3): the queue is drained only once
+  // everything else this prompt carries is in hand, so nothing slow sits
+  // between emptying it and the relay leaving the hook. It still LEADS the
+  // emitted text.
+  const relay = await relaySubagentCollisions(ctx, budget);
   return serialize(output, relay);
 };

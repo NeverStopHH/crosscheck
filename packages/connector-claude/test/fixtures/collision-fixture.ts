@@ -113,6 +113,72 @@ export interface HookOutput {
 export const parsed = (stdout: string): HookOutput =>
   stdout.length === 0 ? {} : (JSON.parse(stdout) as HookOutput);
 
+const DAY_MS = 86_400_000;
+const HOUR_MS = 3_600_000;
+
+/** Three files Mike's live work shares with this session, as a ghost row carries them. */
+export const MIKE_FILES = [
+  { kind: "file", value: "apps/web/src/practice/PlayerMappingGrid.tsx" },
+  { kind: "file", value: "apps/web/src/practice/MappingRow.tsx" },
+  { kind: "file", value: "apps/web/src/practice/mapping-api.ts" },
+];
+
+/** Mike's ghost row, last active two days ago. */
+export const mikeGhostRow = (sharedTargets: readonly unknown[], sharedTargetCount: number): Record<string, unknown> => ({
+  workContextId: "wc_cc_mike",
+  title: "Practice mapping grid",
+  developerId: "dev_mike",
+  developerName: "Mike",
+  lastActiveAt: new Date(Date.now() - 2 * DAY_MS - HOUR_MS).toISOString(),
+  sharedTargets,
+  sharedTargetCount,
+  intentTokenHits: 0,
+});
+
+/** A hub that answers SessionStart's fetch block with the given ghost rows. */
+const startGhostHub = (ghostChecks: readonly unknown[]): { readonly url: string; readonly stop: () => void } => {
+  const server = Bun.serve({
+    port: 0,
+    fetch: (request) => {
+      const { pathname } = new URL(request.url);
+      if (pathname === "/api/ghost-checks") {
+        return Response.json({ ok: true, data: { ghostChecks } });
+      }
+      if (pathname === "/api/records") {
+        return Response.json({ ok: true, data: { accepted: 1, duplicates: 0, ignored: 0, rejected: 0 } });
+      }
+      if (pathname === "/api/presence") {
+        return Response.json({ ok: true, data: { sessions: [] } });
+      }
+      if (pathname === "/api/work-contexts") {
+        return Response.json({ ok: true, data: { workContexts: [] } });
+      }
+      return Response.json({ ok: true, data: { session: { id: "cc_x", developerId: "dev_self" } } });
+    },
+  });
+  return { url: `http://127.0.0.1:${String(server.port)}`, stop: () => server.stop(true) };
+};
+
+/** A fresh repo and home whose hub answers SessionStart with `ghostChecks`; no session state yet. */
+export const ghostFixture = async (
+  label: string,
+  ghostChecks: readonly unknown[],
+): Promise<{ readonly repo: string; readonly home: string; readonly env: Env }> => {
+  const hub = startGhostHub(ghostChecks);
+  const repo = await makeRepo(label, { remote: "git@github.com:acme/api.git" });
+  const home = await makeHome(label);
+  trackForCleanup(repo, hub.stop);
+  trackForCleanup(home);
+  return {
+    repo,
+    home,
+    env: { CROSSCHECK_HOME: home, CROSSCHECK_HUB_URL: hub.url, CROSSCHECK_API_KEY: "test-key", CROSSCHECK_TIMEOUT_MS: "2000" },
+  };
+};
+
+export const sessionStartPayload = (repo: string, source: string): string =>
+  JSON.stringify({ session_id: SESSION_ID, cwd: repo, hook_event_name: "SessionStart", source });
+
 /** A second live teammate, Ken, on his own work context. */
 export const kenSession = (): Record<string, unknown> => ({
   ...activeTeammateSession(),

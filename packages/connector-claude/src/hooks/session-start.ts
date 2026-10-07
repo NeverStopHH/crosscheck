@@ -457,8 +457,6 @@ export const handleSessionStart = async (
     shownLandedNoticeIds: assembled.shownLandedNoticeIds,
     now,
   });
-  // What the PERSON sees, decided before any maintenance like the briefing.
-  const notice = await tellPersonOfGhosts(ctx, assembled.shownGhosts);
 
   // Maintenance last, on the leftover budget: the briefing above is what this
   // hook exists for, and it is already in hand when the drain starts.
@@ -516,6 +514,12 @@ export const handleSessionStart = async (
   if (briefing.length === 0) {
     return "";
   }
+  // What the PERSON sees is claimed LAST (review L3), after the maintenance:
+  // a group marked told is then one lock write away from the hook's output,
+  // inside the reserve every maintenance step above leaves for carrying the
+  // briefing out. Not gated on the spare — maintenance spends it on purpose,
+  // and this is the hook's own step, not maintenance.
+  const notice = await tellPersonOfGhosts(ctx, assembled.shownGhosts);
   return JSON.stringify({
     ...(notice.length === 0 ? {} : { systemMessage: notice }),
     hookSpecificOutput: {

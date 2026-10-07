@@ -23413,16 +23413,16 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a tripwire hit tells the agent and never the person again",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "return askOutput(ctx, reason, won.notices.length === 0 ? null : renderCollisionNotices(won.notices, ctx.now()));",
-    to: "return askOutput(ctx, reason, null);",
+    from: "  return askOutput(ctx, reason, notices.length === 0 ? null : renderCollisionNotices(notices, ctx.now()));",
+    to: "  return askOutput(ctx, reason, null);",
     test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
     because: "the ask reaches the agent's context and the person, in notice mode or a subagent, reads nothing at all — the pilot's failure",
   },
   {
     label: "the person is told about the same teammate's work on every file",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "won.value = { teammate, landed, notices: teammate === null ? [] : groups.filter((group) => told.includes(group.key)) };",
-    to: "won.value = { teammate, landed, notices: teammate === null ? [] : groups };",
+    from: "    told.value = groups.filter((group) => fresher.includes(group.key));",
+    to: "    told.value = groups;",
     test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
     because: "one teammate on eleven files is eleven warnings, and a notice that nags is a notice that gets ignored",
   },
@@ -23700,16 +23700,16 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "only the first teammate on a file is told to the person",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "    const groups = found.sessions.map((session) => tripwireCollision(session, file, found.coverage));",
-    to: "    const groups = teammate === null ? [] : [tripwireCollision(teammate, file, found.coverage)];",
+    from: "  const groups = found.sessions.map((session) => tripwireCollision(session, file, found.coverage));",
+    to: "  const groups = won.teammate === null ? [] : [tripwireCollision(won.teammate, file, found.coverage)];",
     test: `${CONNECTOR}/test/collision-teammates-hook.test.ts`,
     because: "two teammates on the file, and the person hears about one",
   },
   {
     label: "the same teammate on the same file is asked about on every edit",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "        : withTripwireGroupAsked(withTripwireAsked(rememberGroups(ctx, fresh, groups, told), file), liveAskKey(file, teammate));",
-    to: "        : withTripwireAsked(rememberGroups(ctx, fresh, groups, told), file);",
+    from: "      teammate === null ? fresh : withTripwireGroupAsked(withTripwireAsked(fresh, file), liveAskKey(file, teammate));",
+    to: "      teammate === null ? fresh : withTripwireAsked(fresh, file);",
     test: `${CONNECTOR}/test/collision-teammates-hook.test.ts`,
     because: "the permission prompt comes back on every save of a file the person already chose to edit",
   },
@@ -23720,6 +23720,39 @@ export const MUTATIONS: readonly Mutation[
     to: "",
     test: `${SERVER}/test/tripwire-rows.test.ts`,
     because: "which teammate the ask names and the order the person reads them in depend on insertion order, and the bound can drop the freshest",
+  },
+  // ── Review of feat/collision-visible, L3: told only when it can be said ──
+  {
+    label: "the tripwire marks a group told with no time left to say it",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "  if (groups.length === 0 || budget.spareMs() <= 0) {",
+    to: "  if (groups.length === 0) {",
+    test: `${CONNECTOR}/test/collision-order-hook.test.ts`,
+    because: "the race abandons the hook after the marker is written, and the person is never told about that teammate",
+  },
+  {
+    label: "a group the tripwire could not tell in time is never told",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "  if (reason === null && notices.length === 0) {",
+    to: "  if (reason === null) {",
+    test: `${CONNECTOR}/test/collision-order-hook.test.ts`,
+    because: "an edit whose pairs were all asked before says nothing, so a line skipped once is skipped for the session",
+  },
+  {
+    label: "a late collision line reaches the agent without its facts",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "          hookSpecificOutput: { hookEventName: \"PreToolUse\", additionalContext: `${notice}\\n${COLLISION_RELAY_SENTENCE}` },",
+    to: "          hookSpecificOutput: { hookEventName: \"PreToolUse\", additionalContext: COLLISION_RELAY_SENTENCE },",
+    test: `${CONNECTOR}/test/collision-order-hook.test.ts`,
+    because: "the agent is asked to mention an overlap it was never shown",
+  },
+  {
+    label: "a subagent relay drains into a prompt hook with no time left",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    from: "    if (ctx.payload.agent_id !== undefined || budget.spareMs() <= 0) {",
+    to: "    if (ctx.payload.agent_id !== undefined) {",
+    test: `${CONNECTOR}/test/collision-order-hook.test.ts`,
+    because: "the queue is emptied into an output the budget race throws away, and the main thread never hears of the overlap",
   },
 ];
 
@@ -23868,6 +23901,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-claude/test/capture-latency.test.ts 1
  * PRINTS: packages/connector-claude/test/collision-notice-hook.test.ts 7
+ * PRINTS: packages/connector-claude/test/collision-order-hook.test.ts 4
  * PRINTS: packages/connector-claude/test/collision-teammates-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/conclusion-corpus.test.ts 6
  * PRINTS: packages/connector-claude/test/conference-prompt.test.ts 1

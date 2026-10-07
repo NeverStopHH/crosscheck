@@ -236,16 +236,37 @@ const askBeforeEdit = async (ctx: HookContext, budget: HookBudget): Promise<stri
     return "";
   }
   const won = await claimReasons(ctx, file, found);
-  if (won.teammate === null && won.landed === null) {
-    // A sibling hook booked both: nothing to say, and no why to wait for.
+  // A sibling hook may have booked both reasons: then there is no ask to
+  // state and no why to wait for — but a teammate group untold so far may
+  // still be told below.
+  const reason = won.teammate === null && won.landed === null ? null : await statedReason(ctx, state, file, found, won);
+  // THE PERSON'S LINE IS CLAIMED LAST (review L3): everything the output
+  // needs is in hand, so no slow step sits between marking a group told and
+  // the line leaving the hook.
+  const groups = found.sessions.map((session) => tripwireCollision(session, file, found.coverage));
+  const notices = await tellPerson(ctx, budget, groups);
+  if (reason === null && notices.length === 0) {
     return "";
   }
-  // The ask reason states what a teammate is doing and what landed; the
-  // record states how far the archive the live claim came from reaches
-  // (03 §5.1). It annotates only on a positively observed gap, so an
-  // un-upgraded hub leaves the live lines byte-identical to what they were.
-  // Only a WON landed stop waits for its why (already under way since git
-  // answered); the hook's process ends a why nobody waits for.
+  return askOutput(ctx, reason, notices.length === 0 ? null : renderCollisionNotices(notices, ctx.now()));
+};
+
+/**
+ * The ask's reason for the reasons this call WON, and the records that go
+ * with it. The reason states what a teammate is doing and what landed; the
+ * record states how far the archive the live claim came from reaches (03
+ * §5.1). It annotates only on a positively observed gap, so an un-upgraded
+ * hub leaves the live lines byte-identical to what they were. Only a WON
+ * landed stop waits for its why (already under way since git answered); the
+ * hook's process ends a why nobody waits for.
+ */
+const statedReason = async (
+  ctx: HookContext,
+  state: SessionState,
+  file: string,
+  found: FoundReasons,
+  won: Reasons,
+): Promise<string> => {
   const answer = won.landed === null ? NO_LANDED_ANSWER : await found.why;
   // Recorded BEFORE it is rendered: a name the stop prints is a name the hub
   // will tell (step 4, decision 11), so only what reached the spool is said.
@@ -273,7 +294,32 @@ const askBeforeEdit = async (ctx: HookContext, budget: HookBudget): Promise<stri
   if (won.teammate !== null) {
     await recordTripwireAsk(ctx, state, won.teammate);
   }
-  return askOutput(ctx, reason, won.notices.length === 0 ? null : renderCollisionNotices(won.notices, ctx.now()));
+  return reason;
+};
+
+/**
+ * Every group the hub named is recorded — a new file of a told group grows
+ * it, which is what the statusline counts — and the groups new to this
+ * session are returned as the ones to tell, in ONE locked check-and-set, so
+ * two racing hooks never both tell the same group. Made only while the spare
+ * budget lasts (review L3): a group not claimed now is still untold, and the
+ * hub is asked again on the next edit of the file.
+ */
+const tellPerson = async (
+  ctx: HookContext,
+  budget: HookBudget,
+  groups: readonly CollisionNotice[],
+): Promise<readonly CollisionNotice[]> => {
+  if (groups.length === 0 || budget.spareMs() <= 0) {
+    return [];
+  }
+  const told: { value: readonly CollisionNotice[] } = { value: [] };
+  const isWritten = await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => {
+    const fresher = newCollisionKeys(fresh, groups);
+    told.value = groups.filter((group) => fresher.includes(group.key));
+    return rememberGroups(ctx, fresh, groups, fresher);
+  });
+  return isWritten ? told.value : [];
 };
 
 export const handlePreToolUse = async (ctx: HookContext, budget: HookBudget): Promise<string> => {
@@ -312,13 +358,6 @@ interface FoundReasons {
 }
 
 const NO_REASONS: Reasons = { teammate: null, landed: null };
-
-/** What a claim won, plus the teammate groups the PERSON is told about for the first time. */
-interface ClaimedReasons extends Reasons {
-  readonly notices: readonly CollisionNotice[];
-}
-
-const NO_CLAIM: ClaimedReasons = { ...NO_REASONS, notices: [] };
 
 /** The live half's once-per key: this file, this teammate's work context. */
 const liveAskKey = (file: string, session: TripwireSession): string =>
@@ -394,33 +433,26 @@ const rememberClean = async (ctx: HookContext, key: string): Promise<void> => {
  * The LIVE half is won by the first session in the hub's order whose (file,
  * work context) pair this session has not asked about yet (review M4) — the
  * ask names one teammate, as it always did, and the next edit of the file
- * asks about the next one. The PERSON'S notices are claimed in the same
- * transform, on the same fresh state: EVERY session the hub named is a group,
- * each records this file (a second file of a told group only grows it — what
- * the statusline counts), and the groups new to this session are the ones
- * stated. From a subagent, the new groups are queued for the main thread too.
+ * asks about the next one. The PERSON'S notice is claimed separately and
+ * last (`tellPerson`).
  */
-const claimReasons = async (ctx: HookContext, file: string, found: FoundReasons): Promise<ClaimedReasons> => {
+const claimReasons = async (ctx: HookContext, file: string, found: FoundReasons): Promise<Reasons> => {
   // A holder rather than a plain `let`, so the assignment inside the
   // callback is visible after it.
-  const won: { value: ClaimedReasons } = { value: NO_CLAIM };
+  const won: { value: Reasons } = { value: NO_REASONS };
   const isWritten = await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => {
     const askedGroups = fresh.tripwireAskedGroups ?? [];
     const teammate = found.sessions.find((session) => !askedGroups.includes(liveAskKey(file, session))) ?? null;
     const landed = found.landed !== null && !fresh.landedAskedFiles.includes(file) ? found.landed : null;
-    const groups = found.sessions.map((session) => tripwireCollision(session, file, found.coverage));
-    const told = newCollisionKeys(fresh, groups);
-    won.value = { teammate, landed, notices: teammate === null ? [] : groups.filter((group) => told.includes(group.key)) };
+    won.value = { teammate, landed };
     if (teammate === null && landed === null) {
       return null;
     }
     const withLive =
-      teammate === null
-        ? fresh
-        : withTripwireGroupAsked(withTripwireAsked(rememberGroups(ctx, fresh, groups, told), file), liveAskKey(file, teammate));
+      teammate === null ? fresh : withTripwireGroupAsked(withTripwireAsked(fresh, file), liveAskKey(file, teammate));
     return landed === null ? withLive : withLandedAsked(withLive, file);
   });
-  return isWritten ? won.value : NO_CLAIM;
+  return isWritten ? won.value : NO_REASONS;
 };
 
 /**
@@ -588,8 +620,21 @@ const recordLandedStop = async (
  * no permission prompt ever shows the person the reason — and the relay
  * sentence after the model's copy only, never inside the reason the person
  * reads in the prompt.
+ *
+ * With NO ask to state — this edit's (file, group) pairs were all asked
+ * before, but a group's line could not be claimed then (review L3) — the
+ * person gets the line now, and the model gets the same facts with the one
+ * request: no decision, nothing blocked.
  */
-const askOutput = (ctx: HookContext, reason: string, notice: string | null): string => {
+const askOutput = (ctx: HookContext, reason: string | null, notice: string | null): string => {
+  if (reason === null) {
+    return notice === null
+      ? ""
+      : JSON.stringify({
+          systemMessage: notice,
+          hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: `${notice}\n${COLLISION_RELAY_SENTENCE}` },
+        });
+  }
   const hookSpecificOutput =
     resolveTripwireMode(ctx.env) === TRIPWIRE_MODE_NOTICE
       ? { hookEventName: "PreToolUse", additionalContext: reason }
