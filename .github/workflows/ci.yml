@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 2230
+    # PRINTS: 2248
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -249,11 +249,12 @@ jobs:
     # PRINTS: hooks/landed-why.ts 2
     # PRINTS: hooks/post-tool-use-failure.ts 5
     # PRINTS: hooks/post-tool-use.ts 10
-    # PRINTS: hooks/pre-tool-use.ts 19
+    # PRINTS: hooks/pre-tool-use.ts 23
     # PRINTS: hooks/runner.ts 7
-    # PRINTS: hooks/session-start.ts 8
+    # PRINTS: hooks/session-start.ts 9
     # PRINTS: hooks/stop.ts 3
-    # PRINTS: hooks/user-prompt-submit.ts 6
+    # PRINTS: hooks/user-prompt-submit.ts 7
+    # PRINTS: statusline/statusline.ts 1
     # PRINTS: summarizer/probe.ts 1
     # PRINTS: summarizer/transcript.ts 3
     # PRINTS: packages/connector-claude/test/capture-latency.test.ts 1
@@ -316,6 +317,7 @@ jobs:
     # PRINTS: guarantees/check.ts 17
     # PRINTS: guarantees/declarations.ts 5
     # PRINTS: guarantees/doctor.ts 3
+    # PRINTS: hints/collision-notice.ts 9
     # PRINTS: hints/delivery.ts 7
     # PRINTS: hints/outcome-clause.ts 2
     # PRINTS: hints/precision.ts 2
@@ -373,7 +375,7 @@ jobs:
     # PRINTS: state/loss-refusals.ts 1
     # PRINTS: state/seq-cost.ts 8
     # PRINTS: state/session-scan.ts 2
-    # PRINTS: state/session-state.ts 25
+    # PRINTS: state/session-state.ts 27
     # PRINTS: state/temp-sweep.ts 15
     # PRINTS: state/tool-window-key.ts 2
     # PRINTS: packages/connector-core/test/intent-budget.test.ts 1
@@ -551,6 +553,7 @@ jobs:
     # PRINTS: claim-validity.ts 11
     # PRINTS: client.ts 12
     # PRINTS: cloud-agent-identity.ts 1
+    # PRINTS: collision-notice.ts 9
     # PRINTS: commit-evidence.ts 6
     # PRINTS: conference-cost.ts 1
     # PRINTS: conference.ts 23
@@ -700,7 +703,7 @@ jobs:
     # PRINTS: post-tool-use-failure.ts 5
     # PRINTS: post-tool-use.ts 11
     # PRINTS: post.ts 1
-    # PRINTS: pre-tool-use.ts 19
+    # PRINTS: pre-tool-use.ts 23
     # PRINTS: precision.ts 2
     # PRINTS: presence.ts 1
     # PRINTS: probe.ts 39
@@ -745,8 +748,8 @@ jobs:
     # PRINTS: session-events.ts 9
     # PRINTS: session-order.ts 9
     # PRINTS: session-scan.ts 2
-    # PRINTS: session-start.ts 12
-    # PRINTS: session-state.ts 25
+    # PRINTS: session-start.ts 13
+    # PRINTS: session-state.ts 27
     # PRINTS: session.ts 4
     # PRINTS: sessions.ts 18
     # PRINTS: set-intent.ts 5
@@ -767,6 +770,7 @@ jobs:
     # PRINTS: startup-upgrades.ts 5
     # PRINTS: stats.ts 1
     # PRINTS: status.ts 15
+    # PRINTS: statusline.ts 1
     # PRINTS: stop.ts 4
     # PRINTS: stream.ts 3
     # PRINTS: suspect-render.ts 4
@@ -788,7 +792,7 @@ jobs:
     # PRINTS: ui-ceremony.ts 5
     # PRINTS: ui-pages.tsx 2
     # PRINTS: ui-passkeys.tsx 1
-    # PRINTS: user-prompt-submit.ts 6
+    # PRINTS: user-prompt-submit.ts 7
     # PRINTS: v1.ts 2
     # PRINTS: verdict-latency.test.ts 1
     # PRINTS: verdict-render.ts 3

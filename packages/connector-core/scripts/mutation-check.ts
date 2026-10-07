@@ -23404,6 +23404,156 @@ export const MUTATIONS: readonly Mutation[
       "a teammate's tree found only by a machine guess nobody vouched for is pushed " +
       "into a colleague's prompt, its draft counted toward the content floor",
   },
+  // ── Collisions reach the PERSON (pilot, 2026-10-07) ────────────────────
+  // Two teammates edited 11 of the same files over three days and every
+  // collision crosscheck saw went into an agent's context only. Each anchor
+  // below re-opens one way the person goes back to seeing nothing, or sees
+  // something they must not. Guards shell out to git (makeRepo) where they
+  // drive the real hooks — the assertGuardIsGreen caveat.
+  {
+    label: "a tripwire hit tells the agent and never the person again",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "return askOutput(ctx, reason, won.notice === null ? null : renderCollisionNotice(won.notice, ctx.now()));",
+    to: "return askOutput(ctx, reason, null);",
+    test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
+    because: "the ask reaches the agent's context and the person, in notice mode or a subagent, reads nothing at all — the pilot's failure",
+  },
+  {
+    label: "the person is told about the same teammate's work on every file",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "won.value = { teammate, landed, notice: told.length > 0 ? group : null };",
+    to: "won.value = { teammate, landed, notice: group };",
+    test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
+    because: "one teammate on eleven files is eleven warnings, and a notice that nags is a notice that gets ignored",
+  },
+  {
+    label: "the agent is never asked to tell the person",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: ": { ...output, additionalContext: `${output.additionalContext}\\n${COLLISION_RELAY_SENTENCE}` };",
+    to: ": output;",
+    test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
+    because: "the facts reach the model as before and nothing asks it to say them, which is exactly how no agent relayed one in the pilot",
+  },
+  {
+    label: "a subagent's collision never reaches the main thread",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "return ctx.payload.agent_id === undefined || told.length === 0",
+    to: "return true || told.length === 0",
+    test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
+    because: "the hit stays in the subagent's context, where 91% of the pilot owner's edits were made and nobody reads",
+  },
+  {
+    label: "a subagent's collision is relayed to the main thread on every prompt",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    from: "      return withDrainedCollisionRelays(fresh);",
+    to: "      return fresh;",
+    test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
+    because: "the queue is never emptied, so every later prompt hands the agent the same overlap again",
+  },
+  {
+    label: "a briefing's ghost row is told to the agent and never the person",
+    file: `${CONNECTOR}/src/hooks/session-start.ts`,
+    from: "  const notice = await tellPersonOfGhosts(ctx, assembled.shownGhosts);",
+    to: "  const notice = \"\";",
+    test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
+    because: "the multi-day overlap the live tripwire cannot see stays inside additionalContext, which shows no chat message",
+  },
+  {
+    label: "the statusline hides an overlap the session has",
+    file: `${CONNECTOR}/src/statusline/statusline.ts`,
+    from: "    const line = `${overlap}${presence}`;",
+    to: "    const line = presence;",
+    test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
+    because: "the one surface a person glances at while working says nothing of a teammate on their files",
+  },
+  {
+    label: "a branch withheld for presence opt-out is printed in the person's notice",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  if (raw === LOCATION_WITHHELD || isDetachedBranch(raw)) {",
+    to: "  if (isDetachedBranch(raw)) {",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "the projection's marker is printed as a branch, and the notice tells the reader the teammate opted out",
+  },
+  {
+    label: "a teammate's raw display name reaches the person's notice",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  const name = raw === undefined ? \"\" : bareUntrusted(raw, COLLISION_NOTICE_NAME_CHARS);",
+    to: "  const name = raw === undefined ? \"\" : raw;",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "a name carrying a newline, a separator or a bidi override forges a second line or verdict in what the person reads",
+  },
+  {
+    label: "a teammate's raw branch reaches the person's notice",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  const branch = bareUntrusted(raw, COLLISION_NOTICE_BRANCH_CHARS);",
+    to: "  const branch = raw;",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "the branch field is the teammate's own text, printed outside any frame",
+  },
+  {
+    label: "the session state keeps a hub-sent path unsanitized and unbounded",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "const storedPath = (path: string): string => bareUntrusted(path, COLLISION_NOTICE_PATH_CHARS);",
+    to: "const storedPath = (path: string): string => path;",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "a ghost row's shared value is written into the state file as the hub sent it, at any length",
+  },
+  {
+    label: "a file name read back from the state file is printed unsanitized",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  const shown = first === undefined ? \"\" : bareUntrusted(basename(first), COLLISION_NOTICE_FILE_CHARS);",
+    to: "  const shown = first === undefined ? \"\" : basename(first);",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "a tampered or older state file is trusted more than a hub row, and its path forges structure",
+  },
+  {
+    label: "a ghost row with no shared file is told to the person as a collision",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "    if (files.length === 0) {",
+    to: "    if (false) {",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "an overlap of a failure or of intent words reads 'is working on a file you touched' — a collision that is not one",
+  },
+  {
+    label: "the files a ghost row's sample held back are not counted",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  return entry.sharedTargets.at(-1)?.kind === FILE_KIND ? files + hidden : files;",
+    to: "  return files;",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "a teammate on nine of your files is reported as one, from the hub's bounded sample",
+  },
+  {
+    label: "a partial record behind the person's notice goes unsaid",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "    ...(coverage !== undefined && hasIncompleteRung(coverage) ? { partial: true } : {}),",
+    to: "    ...({}),",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "COV-9: the person learns only from doctor that the overlap rests on an incomplete record and may be wider",
+  },
+  {
+    label: "the overlap indicator grows past its bound",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  return capped(`⚠ overlap: ${shown}${rest > 0 ? ` +${String(rest)}` : \"\"}`, COLLISION_INDICATOR_MAX_CHARS);",
+    to: "  return `⚠ overlap: ${shown}${rest > 0 ? ` +${String(rest)}` : \"\"}`;",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "long names push the statusline's capture-health indicator off a ninety-character line",
+  },
+  {
+    label: "a compact tells the person about the same teammate's work again",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "        ...(previous.collisionNotices === undefined ? {} : { collisionNotices: previous.collisionNotices }),",
+    to: "        ...({}),",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "every compact and resume re-fires SessionStart inside the same session and repeats the ghost notice",
+  },
+  {
+    label: "a group already told is new again",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  const told = new Set((state.collisionNotices ?? []).map((notice) => notice.key));",
+    to: "  const told = new Set<string>();",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "the once-per-(teammate, file group) rule is gone and the person is told on every hook",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -23550,6 +23700,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/at7-stream.test.ts 3
  * PRINTS: packages/connector-claude/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-claude/test/capture-latency.test.ts 1
+ * PRINTS: packages/connector-claude/test/collision-notice-hook.test.ts 7
  * PRINTS: packages/connector-claude/test/conclusion-corpus.test.ts 6
  * PRINTS: packages/connector-claude/test/conference-prompt.test.ts 1
  * PRINTS: packages/connector-claude/test/derive-doctor.test.ts 1
@@ -23611,6 +23762,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/claim-surface.test.ts 1
  * PRINTS: packages/connector-core/test/claim-validity-parity.test.ts 2
  * PRINTS: packages/connector-core/test/claim-validity-render.test.ts 2
+ * PRINTS: packages/connector-core/test/collision-notice.test.ts 11
  * PRINTS: packages/connector-core/test/commit-evidence.test.ts 1
  * PRINTS: packages/connector-core/test/conference-cost.test.ts 1
  * PRINTS: packages/connector-core/test/conference-report.test.ts 3
