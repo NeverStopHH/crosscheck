@@ -552,6 +552,20 @@ good. Probe H1 dropped one record that way.
 
 Probe H1 now drops nothing.
 
+**A refused-lives entry that owns leftovers is never evicted** (review-2 round 9, H2). Every SessionEnd writes its life
+down too (round 8, M1), and the note keeps `REFUSED_LIVES_MAX` (64) entries. With 64 later SessionEnds, young and
+owning nothing, the oldest entry was pushed out: the one still withholding a straggler, which a successor then filed into
+its ended session (probe C1). Two rules now apply:
+
+- over the cap, the oldest entries that own nothing go first, and an entry whose host session still has records or a
+  debt on disk never goes;
+- a SessionEnd's own entry, marked `by: "end"`, goes once its spool is empty and `REFUSED_END_GRACE_MS` (10 minutes)
+  has passed, the most a hook still in flight beside the end can take to append.
+
+The note is read on every drain. The review's bench, against this code: 64 young entries read in 0.1 ms (p50); 64 past
+the keep bound, each owning a 2000-line spool, in 11 ms (p50) and 15 ms (p95); a full note's write in 0.4 ms. The
+past-bound read grows with the cap, so the cap stays 64.
+
 **Three clocks that were one** (review-2 round 8, H1 and H2). The refused-lives note dropped an entry
 `MAX_SPOOL_AGE_DAYS` after it was written. A flush reads a silent host session as abandoned after the same span. Reap
 expired a spool whose data file was that old. So when a host died:

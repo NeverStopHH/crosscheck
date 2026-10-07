@@ -1685,6 +1685,15 @@ export const REFUSED_LIVES_MAX = 64;
  * PRINTS: true
  */
 export const REFUSED_LIFE_KEEP_DAYS = 2 * MAX_SPOOL_AGE_DAYS;
+/**
+ * How long a SessionEnd's own refused-lives entry outlives an empty spool
+ * (review-2 round 9, H2). Every SessionEnd writes one (round 8, M1), and kept
+ * the full REFUSED_LIFE_KEEP_DAYS they filled the note and evicted the one
+ * entry still withholding a straggler. What such an entry guards is a record a
+ * hook still in flight beside the end appends — within its host's hook
+ * timeout, Claude Code's default being 60 s — so ten minutes outlasts any.
+ */
+export const REFUSED_END_GRACE_MS = 10 * SECONDS_PER_MINUTE * MS_PER_SECOND;
 /** A deferred end whose session the hub has never heard of (trial finding M6). */
 export const HTTP_NOT_FOUND = 404;
 /** A session the hub holds as ended, or an id somebody else owns. */

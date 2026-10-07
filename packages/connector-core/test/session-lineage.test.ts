@@ -5,16 +5,24 @@
  * and ACP twins; this file pins the pieces those runs cannot isolate.
  */
 import { afterAll, describe, expect, test } from "bun:test";
-import { rm, utimes, writeFile } from "node:fs/promises";
+import { mkdir, rm, utimes, writeFile } from "node:fs/promises";
 
 import {
   MAX_SPOOL_AGE_DAYS,
   MS_PER_DAY,
+  REFUSED_END_GRACE_MS,
   REFUSED_LIFE_KEEP_DAYS,
   REFUSED_LIVES_MAX,
   REGISTER_LADDER_MAX_ATTEMPTS,
 } from "../src/constants.ts";
-import { readTextOrNull, sessionLineagePathForSlug, sessionSlug, spoolRefusedLivesPath } from "../src/config/paths.ts";
+import {
+  readTextOrNull,
+  sessionLineagePathForSlug,
+  sessionSlug,
+  spoolDataPath,
+  spoolDir,
+  spoolRefusedLivesPath,
+} from "../src/config/paths.ts";
 import { readRefusedLives, recordRefusedLife } from "../src/spool/refused-lives.ts";
 import {
   ladderRungs,
@@ -160,5 +168,40 @@ describe("the refused-lives note", () => {
     expect(await linesOf(dir)).toHaveLength(REFUSED_LIVES_MAX);
     expect(lives.has("cc_newest")).toBe(true);
     expect(lives.has("cc_life-0")).toBe(false);
+  });
+
+  test("a full note never evicts a life that still owns records on disk: the oldest without any go first (review-2 round 9, H2)", async () => {
+    // Arrange: the oldest entry's host session still has a straggler on disk; the rest own nothing
+    const dir = await home("refused-owning");
+    const now = new Date();
+    await recordRefusedLife(dir, KEY, "cc_owner", now);
+    await mkdir(spoolDir(dir, KEY), { recursive: true });
+    await writeFile(spoolDataPath(dir, KEY, sessionSlug("owner")), `${JSON.stringify({ id: "env_straggler" })}\n`);
+    for (let index = 1; index < REFUSED_LIVES_MAX; index += 1) {
+      await recordRefusedLife(dir, KEY, `cc_life-${String(index)}`, now);
+    }
+
+    // Act
+    await recordRefusedLife(dir, KEY, "cc_newest", now);
+
+    // Assert
+    const lives = await readRefusedLives(dir, KEY, now);
+    expect(lives.has("cc_owner")).toBe(true);
+    expect(lives.has("cc_newest")).toBe(true);
+    expect(lives.has("cc_life-1")).toBe(false);
+  });
+
+  test("a SessionEnd's entry goes once its spool is empty and its grace is over (review-2 round 9, H2)", async () => {
+    // Arrange: an end written down past the grace a hook still in flight has, nothing on disk
+    const dir = await home("refused-end");
+    const now = new Date();
+    await recordRefusedLife(dir, KEY, "cc_ended", new Date(now.getTime() - REFUSED_END_GRACE_MS - MS_PER_DAY / 24), "end");
+    await recordRefusedLife(dir, KEY, "cc_ended-recently", now, "end");
+
+    // Act
+    await recordRefusedLife(dir, KEY, "cc_healed", now);
+
+    // Assert: the old end gone, the recent one and the heal's kept
+    expect([...(await readRefusedLives(dir, KEY, now))].sort()).toEqual(["cc_ended-recently", "cc_healed"]);
   });
 });

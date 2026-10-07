@@ -563,7 +563,7 @@ const endDeferredSession = async (
   if (outcome === "ended") {
     // Ended now: a record of it a parallel process appends later is withheld,
     // never filed into the ended session (review-2 round 8, M1).
-    await recordRefusedLife(home, key, parsed.data.crosscheckSessionId, now);
+    await recordRefusedLife(home, key, parsed.data.crosscheckSessionId, now, "end");
   }
   // "ended" and "gone" both spend the marker, and for the same reason: the
   // hub will never hear about this session again from this marker. The

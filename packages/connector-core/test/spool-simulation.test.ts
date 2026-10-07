@@ -509,7 +509,6 @@ const manyEnds = (count: number): readonly SimEvent[] => Array.from({ length: co
 const noDrops = (run: Run): boolean => run.drops.length === 0;
 const counted = (run: Run): boolean => run.uncountable.count > 0;
 
-const H2 = "H2 (refused-lives never evicts an entry that owns leftovers)";
 const EPOCHS = "M1+M2+L4 (epochs across a reap, a recovery and a resume)";
 const M3 = "M3 (the refused life written down before the end goes out)";
 const L1 = "L1 (two concurrent set_intents on one conversation)";
@@ -562,7 +561,6 @@ const ROUND_8: readonly Found[] = [
   {
     name: "probe C1: a refused life's straggler, 64 later session ends, then a week",
     events: [start(0), edit(0), hubEnd(0), edit(0), straggle(0), ...manyEnds(64), age(0), start(2)],
-    open: H2,
   },
   {
     name: "probe C0 (control for C1): the same with 8 later session ends",

@@ -14,7 +14,7 @@ import { dirname, join } from "node:path";
 import { createDb, createServer, readSessionCausalOrder } from "@crosscheck/server";
 import type { Db } from "@crosscheck/server";
 
-import { MAX_SPOOL_AGE_DAYS, MS_PER_DAY } from "../src/constants.ts";
+import { MAX_SPOOL_AGE_DAYS, MS_PER_DAY, MS_PER_SECOND, REFUSED_END_GRACE_MS, SECONDS_PER_MINUTE } from "../src/constants.ts";
 import {
   repoKey,
   sessionEpochPathForSlug,
@@ -35,6 +35,7 @@ import { fallbackWorkContextTitle, registerSessionFlow } from "../src/flows/regi
 import { ACP_CONNECTOR, guaranteeDeclarationFor } from "../src/guarantees/declarations.ts";
 import { appendRecords } from "../src/spool/append.ts";
 import { readDropDetail } from "../src/spool/drops.ts";
+import { readRefusedLives } from "../src/spool/refused-lives.ts";
 import { flushSpool } from "../src/spool/flush.ts";
 import type { SessionRefusal } from "../src/spool/flush-heal.ts";
 import { reapSpool } from "../src/spool/reap.ts";
@@ -60,6 +61,7 @@ const BUDGET_MS = 3000;
 const OLDER_MS = 60_000;
 /** A walk slow enough that a parallel flush lands while it is in flight. */
 const WALK_DELAY_MS = 300;
+const MINUTE_MS = SECONDS_PER_MINUTE * MS_PER_SECOND;
 /** How long the slow walk is given to stamp its attempt before the flush. */
 const WALK_HEAD_START_MS = 30;
 /** Enough delay that two concurrent healers overlap. */
@@ -1421,6 +1423,43 @@ describe("a life SessionEnd ended (review-2 round 8, M1)", () => {
     expect(await isEnded(life.crosscheckSessionId)).toBe(true);
     expect(await targetsOf(life.workContextId)).toEqual(["src/late.ts"]);
     expect((await readDropDetail(fx.home, fx.key)).byReason).toEqual({ withheld: 1 });
+  });
+
+  test("goes from the note once its spool is empty and its grace is over, not a fortnight later (review-2 round 9, H2)", async () => {
+    // Arrange: a life that ends cleanly, nothing of it left on disk
+    const fx = await fixture("own-end-grace");
+    const life = await register(fx);
+    await flushAsHook(fx);
+    await endViaFlow(fx);
+
+    // Act: past the grace a hook in flight has
+    const later = new Date(Date.now() + REFUSED_END_GRACE_MS + MINUTE_MS);
+
+    // Assert
+    expect((await readRefusedLives(fx.home, fx.key, new Date())).has(life.crosscheckSessionId)).toBe(true);
+    expect((await readRefusedLives(fx.home, fx.key, later)).has(life.crosscheckSessionId)).toBe(false);
+  });
+
+  test("and so does the entry its deferred end writes from reap (review-2 round 9, H2)", async () => {
+    // Arrange: SessionEnd deferred while the hub refused records; a successor
+    // delivers the backlog and its SessionStart's reap ends the life
+    const fx = await fixture("deferred-end-grace");
+    const life = await register(fx);
+    await flushAsHook(fx);
+    await captureTarget(fx, "src/late.ts");
+    refuseRecords = true;
+    await endViaFlow(fx, fx.proxied);
+    refuseRecords = false;
+    const other = await register(fx, fx.hub, `${fx.hostSessionKey}-other`);
+    await flushSpool(fx.hub, { sessionId: other.crosscheckSessionId, developerId }, BUDGET_MS);
+
+    // Act
+    await reapAsSessionStart(fx);
+    const later = new Date(Date.now() + REFUSED_END_GRACE_MS + MINUTE_MS);
+
+    // Assert
+    expect((await readRefusedLives(fx.home, fx.key, new Date())).has(life.crosscheckSessionId)).toBe(true);
+    expect((await readRefusedLives(fx.home, fx.key, later)).has(life.crosscheckSessionId)).toBe(false);
   });
 });
 

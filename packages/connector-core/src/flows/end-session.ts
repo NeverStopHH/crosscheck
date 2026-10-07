@@ -126,7 +126,7 @@ const endOnHub = async (
   const result = await endSession(input.hub, end.sessionId, end.seq, losses);
   if (result.ok) {
     await removeFile(end.markerPath);
-    await recordRefusedLife(input.home, input.repoKey, end.sessionId, input.now());
+    await recordRefusedLife(input.home, input.repoKey, end.sessionId, input.now(), "end");
   }
   return result.ok;
 };

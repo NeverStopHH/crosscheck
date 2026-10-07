@@ -18563,7 +18563,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a life refused again is written down again",
     file: `${CORE}/src/spool/refused-lives.ts`,
-    from: "  if (kept.some((line) => parse(line)?.sessionId === sessionId)) {",
+    from: "  if (kept.some((entry) => entry.sessionId === sessionId)) {",
     to: "  if (false) {",
     test: `${CORE}/test/owed-debt-rules.test.ts`,
     because: "review-2 round 7: one life refused on every hook pushes older refused lives out of the window, and their stragglers are delivered",
@@ -18651,8 +18651,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a refused life's note ages out while its host session still has records on disk",
     file: `${CORE}/src/spool/refused-lives.ts`,
-    from: "  isYoung(life, cutoffMs) || (await ownsLeftovers(home, key, life.sessionId));",
-    to: "  isYoung(life, cutoffMs);",
+    from: "  return isWithinBound || (await ownsLeftovers(home, key, life.sessionId))",
+    to: "  return isWithinBound",
     test: `${CORE}/test/release-clock.test.ts`,
     because: "review-2 round 8 H1: a released spool waits up to a bound past its release, and its stragglers outlive the note",
   },
@@ -18691,7 +18691,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "SessionEnd's own end leaves its life deliverable into (M1)",
     file: `${CORE}/src/flows/end-session.ts`,
-    from: "    await removeFile(end.markerPath);\n    await recordRefusedLife(input.home, input.repoKey, end.sessionId, input.now());\n",
+    from: '    await removeFile(end.markerPath);\n    await recordRefusedLife(input.home, input.repoKey, end.sessionId, input.now(), "end");\n',
     to: "    await removeFile(end.markerPath);\n",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review-2 round 8 M1, seed 782: a reload's re-fire beside SessionEnd spools a record a successor files into the ended session",
@@ -18699,7 +18699,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a deferred end that lands leaves its life deliverable into (M1)",
     file: `${CORE}/src/spool/reap.ts`,
-    from: "    await recordRefusedLife(home, key, parsed.data.crosscheckSessionId, now);\n",
+    from: '    await recordRefusedLife(home, key, parsed.data.crosscheckSessionId, now, "end");\n',
     to: "",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review-2 round 8 M1: a record of the life appended after reap ended it is filed into the ended session",
@@ -19016,6 +19016,38 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/session-heal.test.ts`,
     because: "review-2 round 9, H1: on hubs up to 0.10 a reaped session's heartbeat moves the conversation to its next life, and its stragglers are withheld",
   },
+  {
+    label: "a full refused-lives note evicts a life that still owns records (H2)",
+    file: `${CORE}/src/spool/refused-lives.ts`,
+    from: "    if (entry.isWithinBound && !(await ownsLeftovers(home, key, entry.sessionId))) {",
+    to: "    if (true) {",
+    test: `${CORE}/test/session-lineage.test.ts`,
+    because: "review-2 round 9, H2 (probe C1): 64 SessionEnds push out the entry withholding a straggler, and a successor files it into the ended session",
+  },
+  {
+    label: "a SessionEnd's refused-lives entry stays a fortnight (H2)",
+    file: `${CORE}/src/spool/refused-lives.ts`,
+    from: '  const isWithinBound = life.by === "end" ? isInGrace(life, now) : isYoung(life, cutoffOf(now));',
+    to: "  const isWithinBound = isYoung(life, cutoffOf(now));",
+    test: `${CORE}/test/session-lineage.test.ts`,
+    because: "review-2 round 9, H2: every SessionEnd's entry crowds the note for REFUSED_LIFE_KEEP_DAYS",
+  },
+  {
+    label: "SessionEnd writes its life down as a heal would (H2)",
+    file: `${CORE}/src/flows/end-session.ts`,
+    from: '    await recordRefusedLife(input.home, input.repoKey, end.sessionId, input.now(), "end");',
+    to: "    await recordRefusedLife(input.home, input.repoKey, end.sessionId, input.now());",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 9, H2: the end's entry outlives its empty spool by a fortnight",
+  },
+  {
+    label: "a deferred end writes its life down as a heal would (H2)",
+    file: `${CORE}/src/spool/reap.ts`,
+    from: '    await recordRefusedLife(home, key, parsed.data.crosscheckSessionId, now, "end");',
+    to: "    await recordRefusedLife(home, key, parsed.data.crosscheckSessionId, now);",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 9, H2: the deferred end's entry outlives its empty spool by a fortnight",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19278,8 +19310,8 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
  * PRINTS: packages/connector-core/test/session-heal.test.ts 33
- * PRINTS: packages/connector-core/test/session-lineage.test.ts 2
- * PRINTS: packages/connector-core/test/session-lives.test.ts 51
+ * PRINTS: packages/connector-core/test/session-lineage.test.ts 4
+ * PRINTS: packages/connector-core/test/session-lives.test.ts 53
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2

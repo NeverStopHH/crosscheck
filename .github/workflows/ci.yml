@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1740
+    # PRINTS: 1744
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -278,7 +278,7 @@ jobs:
     # PRINTS: flows/capture-touched-files.ts 3
     # PRINTS: flows/claim-revalidation.ts 2
     # PRINTS: flows/claim-surface.ts 1
-    # PRINTS: flows/end-session.ts 11
+    # PRINTS: flows/end-session.ts 12
     # PRINTS: flows/heal-session.ts 21
     # PRINTS: flows/heartbeat.ts 3
     # PRINTS: flows/hint.ts 5
@@ -343,8 +343,8 @@ jobs:
     # PRINTS: spool/loss-report.ts 17
     # PRINTS: spool/owed-work-context.ts 16
     # PRINTS: spool/ownership.ts 16
-    # PRINTS: spool/reap.ts 13
-    # PRINTS: spool/refused-lives.ts 5
+    # PRINTS: spool/reap.ts 14
+    # PRINTS: spool/refused-lives.ts 7
     # PRINTS: spool/reject-cause.ts 3
     # PRINTS: spool/release.ts 1
     # PRINTS: spool/work-context-ack.ts 3
@@ -539,7 +539,7 @@ jobs:
     # PRINTS: driver.ts 2
     # PRINTS: drops.ts 11
     # PRINTS: end-marker.ts 2
-    # PRINTS: end-session.ts 11
+    # PRINTS: end-session.ts 12
     # PRINTS: engine.ts 24
     # PRINTS: entry.ts 1
     # PRINTS: enums.ts 2
@@ -648,12 +648,12 @@ jobs:
     # PRINTS: publish.yml 2
     # PRINTS: pump.ts 1
     # PRINTS: questions.ts 10
-    # PRINTS: reap.ts 13
+    # PRINTS: reap.ts 14
     # PRINTS: record-handlers.ts 22
     # PRINTS: records.ts 5
     # PRINTS: recover.ts 4
     # PRINTS: refusal.ts 3
-    # PRINTS: refused-lives.ts 5
+    # PRINTS: refused-lives.ts 7
     # PRINTS: register-session.ts 23
     # PRINTS: reject-cause.ts 3
     # PRINTS: release-preflight.ts 5
