@@ -14,6 +14,7 @@ describe("the slips a hand makes are recognised", () => {
     ["contnue", "continue", "a letter left out"],
     ["conitnue", "continue", "a swapped pair, earlier"],
     ["weiterr", "weiter", "a letter doubled"],
+    ["mmache", "mache", "the first letter doubled — the first letter is still right (round 3, L6)"],
     ["wieter", "weiter", "a swapped pair at the second letter"],
     ["goin", "going", "the last letter left out"],
     ["mahce", "mache", "a swapped pair"],

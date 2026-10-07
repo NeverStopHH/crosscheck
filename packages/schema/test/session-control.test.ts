@@ -45,6 +45,7 @@ describe("as written, folded", () => {
     ["mache", "trigger"],
     ["BITTE", "steering"],
     ["nächsten", "steering"],
+    ["paßt", "steering"],
     ["limit", "meta"],
     ["Zurückgesetzt", "meta"],
     ["Kontingent", "meta"],

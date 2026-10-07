@@ -102,6 +102,7 @@ describe("content terms are the words left after the stop lists", () => {
   test.each([
     ["mache weiter", "nothing but steering"],
     ["passt scho", "nothing but steering"],
+    ["paßt scho", "nothing but steering, ß folded to ss (round 3, L6)"],
     ["mach weiter bitet", "steering with a swapped pair"],
     ["please continue", "a trigger alone"],
     ["mach weiter, usage limit ist wieder da", "a trigger beside meta words (a)"],

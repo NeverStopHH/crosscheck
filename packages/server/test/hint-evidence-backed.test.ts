@@ -8,6 +8,9 @@
  * treats its absence (an older hub) as a pointer.
  */
 import { describe, expect, test } from "bun:test";
+import { REVISION_MAX_DEPTH } from "@crosscheck/schema";
+
+import { resolvedEvidenceCounts } from "../src/services/evidence-resolution.ts";
 
 import {
   addTestDeveloperWithSession,
@@ -132,6 +135,16 @@ describe("only a standing, vouched observation with content in the same repo is 
       cause("clm_rev_old", ["clm_trivial"]),
       cause("clm_rev_new", ["clm_rev_old"]),
       recordEnvelope("claim_edge", validClaimEdgeBody({ id: "edge_rev", fromClaimId: "clm_rev_new", toClaimId: "clm_rev_old", kind: "supersedes" })),
+      // L6: a hypothesis that SUPPORTS the cited observation revises nothing
+      recordEnvelope("claim", validClaimBody({ id: "clm_obs_supported", kind: "observation", body: "The kid cache keeps the old key after every rotation" })),
+      recordEnvelope("claim", validClaimBody({ id: "clm_hyp_supporting", kind: "hypothesis", body: "Maybe the rotation never clears the kid cache" })),
+      recordEnvelope("claim_edge", validClaimEdgeBody({ id: "edge_supports_obs", fromClaimId: "clm_hyp_supporting", toClaimId: "clm_obs_supported", kind: "supports" })),
+      cause("clm_cites_supported", ["clm_obs_supported"]),
+      // and an observation that supports a cited hypothesis is not what was cited
+      recordEnvelope("claim", validClaimBody({ id: "clm_hyp_cited", kind: "hypothesis", body: "Maybe the kid cache is keyed per region" })),
+      recordEnvelope("claim", validClaimBody({ id: "clm_obs_for_hyp", kind: "observation", body: "The kid cache has one entry per region in production" })),
+      recordEnvelope("claim_edge", validClaimEdgeBody({ id: "edge_supports_hyp", fromClaimId: "clm_obs_for_hyp", toClaimId: "clm_hyp_cited", kind: "supports" })),
+      cause("clm_cites_supported_hyp", ["clm_hyp_cited"]),
     ];
     const seeded = await postRecords(harness, nick, { records });
     expect(seeded.data?.accepted).toBe(records.length);
@@ -153,6 +166,8 @@ describe("only a standing, vouched observation with content in the same repo is 
     ["the claim its own revision retracts", "clm_rev_new", false],
     ["itself, from an observation", "clm_obs_self", false],
     ["the observation its own revision revises", "clm_obs_rev_new", false],
+    ["an observation a hypothesis supports — a supporting edge revises nothing (round 3, L6)", "clm_cites_supported", true],
+    ["a hypothesis an observation supports — the support is not what was cited (L6)", "clm_cites_supported_hyp", false],
   ])("a ref to %s → evidenceBacked %p", async (_, claimId, backed) => {
     // Arrange
     const { harness, robin } = await probeWorld();
@@ -189,5 +204,65 @@ describe("only a standing, vouched observation with content in the same repo is 
     // Assert
     expect(before).toBe(true);
     expect(after).toBe(false);
+  });
+});
+
+describe("a dense revision graph resolves in bounded time (round 3, L6)", () => {
+  /** Two claims per layer, every one revising both of the layer below, the top layer revising the bottom: a cycle. */
+  const LADDER_WIDTH = 2;
+  /** As many layers as the walk takes steps, so every path reaches its bound. */
+  const LADDER_LAYERS = REVISION_MAX_DEPTH;
+  /** How many of the ladder's claims one root cause cites. */
+  const CITED_REFS = 16;
+  /**
+   * Generous against the ~tens of ms the walk takes: a walk that keeps every
+   * PATH instead of every (node, depth) multiplies 2^16 rows per cited claim
+   * and takes seconds — the denial of service the review named.
+   */
+  const RESOLUTION_BUDGET_MS = 1_000;
+
+  const node = (layer: number, slot: number): string => `clm_rung_${String(layer)}_${String(slot)}`;
+
+  test("every path through a cyclic ladder is walked once per step, never once per route", async () => {
+    // Arrange
+    const { harness, developer: nick } = await createHarnessWithSession();
+    const layers = Array.from({ length: LADDER_LAYERS }, (_, layer) => layer);
+    const slots = Array.from({ length: LADDER_WIDTH }, (_, slot) => slot);
+    const claims = layers.flatMap((layer) =>
+      slots.map((slot) =>
+        recordEnvelope("claim", validClaimBody({ id: node(layer, slot), kind: "observation", body: `The kid cache keeps rung ${String(layer)}, slot ${String(slot)} of the key` })),
+      ),
+    );
+    const edges = layers.flatMap((layer) =>
+      slots.flatMap((from) =>
+        slots.map((to) =>
+          recordEnvelope(
+            "claim_edge",
+            validClaimEdgeBody({
+              id: `edge_rung_${String(layer)}_${String(from)}_${String(to)}`,
+              fromClaimId: node((layer + 1) % LADDER_LAYERS, from),
+              toClaimId: node(layer, to),
+              kind: "supersedes",
+            }),
+          ),
+        ),
+      ),
+    );
+    const refs = Array.from({ length: CITED_REFS }, (_, index) => node(index % LADDER_LAYERS, Math.floor(index / LADDER_LAYERS) % LADDER_WIDTH));
+    const seededClaims = await postRecords(harness, nick, {
+      records: [recordEnvelope("work_context", validWorkContextBody({ title: "Kid cache ladder" })), ...claims, cause("clm_cites_ladder", refs)],
+    });
+    const seededEdges = await postRecords(harness, nick, { records: edges });
+    expect(seededClaims.data?.accepted).toBe(claims.length + 2);
+    expect(seededEdges.data?.accepted).toBe(edges.length);
+
+    // Act
+    const started = performance.now();
+    const counts = await resolvedEvidenceCounts(harness.db, ["clm_cites_ladder"]);
+    const elapsed = performance.now() - started;
+
+    // Assert — every claim on the ladder is revised, so nothing backs it, and quickly
+    expect(counts.get("clm_cites_ladder")).toBeUndefined();
+    expect(elapsed).toBeLessThan(RESOLUTION_BUDGET_MS);
   });
 });

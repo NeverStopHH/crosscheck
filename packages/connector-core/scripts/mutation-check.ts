@@ -19487,6 +19487,54 @@ export const MUTATIONS: readonly Mutation[
     because: "`crosscheck status` never says how many prompts reached the hub and came back with nothing (L5)",
   },
   {
+    label: "the hub follows a supporting edge as a revision",
+    file: `${SERVER}/src/services/evidence-resolution.ts`,
+    from: " AND revision.kind = ${SUPERSEDES_EDGE_KIND}",
+    to: "",
+    test: `${SERVER}/test/hint-evidence-backed.test.ts`,
+    because: "a root cause citing a bare hypothesis is backed by whatever observation supports that hypothesis (round 3, L6)",
+  },
+  {
+    label: "a supporting edge into a cited observation revises it away",
+    file: `${SERVER}/src/services/evidence-resolution.ts`,
+    from: " AND later.kind = ${SUPERSEDES_EDGE_KIND}",
+    to: "",
+    test: `${SERVER}/test/hint-evidence-backed.test.ts`,
+    because: "a teammate's hypothesis that agrees with an observation takes the backing of every cause citing it (L6)",
+  },
+  {
+    label: "the hub walks every route of a revision graph",
+    file: `${SERVER}/src/services/evidence-resolution.ts`,
+    from: "      UNION\n",
+    to: "      UNION ALL\n",
+    test: `${SERVER}/test/hint-evidence-backed.test.ts`,
+    because: "a dense or cyclic supersedes graph multiplies the walk per route, and one root cause stalls every hint read (L6)",
+  },
+  {
+    label: "\"expired\" is a content word",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "\"voll\", \"expired\", \"expire\",",
+    to: "\"voll\", \"expire\",",
+    test: `${SCHEMA}/test/substance-sentence.test.ts`,
+    because: "\"Usage limit expired, retry.\" counts as a sentence about something and is shown as substance (L6)",
+  },
+  {
+    label: "a doubled first letter is no slip",
+    file: `${SCHEMA}/src/typing-slip.ts`,
+    from: "return stray === previous || stray === next ||",
+    to: "return stray === next ||",
+    test: `${SCHEMA}/test/typing-slip.test.ts`,
+    because: "\"mmache weiter\" stops being steering, though its first letter is right (L6)",
+  },
+  {
+    label: "ß stays ß",
+    file: `${SCHEMA}/src/session-control.ts`,
+    from: ".replace(/ß/g, \"ss\")",
+    to: "",
+    test: `${SCHEMA}/test/session-control.test.ts`,
+    because: "\"paßt scho\" — the old spelling — is a task word and earns a hint (L6)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     // RETARGETED (round 3, M7): the query is the prompt's window now.
@@ -19832,13 +19880,13 @@ interface Outcome {
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1
  * PRINTS: packages/schema/test/prompt-terms.test.ts 24
- * PRINTS: packages/schema/test/session-control.test.ts 6
+ * PRINTS: packages/schema/test/session-control.test.ts 7
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/schema/test/slash-command.test.ts 4
  * PRINTS: packages/schema/test/substance-match.test.ts 1
- * PRINTS: packages/schema/test/substance-sentence.test.ts 12
+ * PRINTS: packages/schema/test/substance-sentence.test.ts 13
  * PRINTS: packages/schema/test/telemetry-loss.test.ts 2
- * PRINTS: packages/schema/test/typing-slip.test.ts 10
+ * PRINTS: packages/schema/test/typing-slip.test.ts 11
  * PRINTS: packages/server/test/absences.test.ts 7
  * PRINTS: packages/server/test/calibration.test.ts 1
  * PRINTS: packages/server/test/causal-guarantees.test.ts 23
@@ -19871,7 +19919,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-content-terms.test.ts 3
  * PRINTS: packages/server/test/hint-deliveries.test.ts 10
  * PRINTS: packages/server/test/hint-draft-visibility.test.ts 2
- * PRINTS: packages/server/test/hint-evidence-backed.test.ts 10
+ * PRINTS: packages/server/test/hint-evidence-backed.test.ts 13
  * PRINTS: packages/server/test/hint-floor-integrity.test.ts 4
  * PRINTS: packages/server/test/hint-harness-turn.test.ts 2
  * PRINTS: packages/server/test/hint-long-prompt.test.ts 4

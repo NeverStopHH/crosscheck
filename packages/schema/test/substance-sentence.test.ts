@@ -70,6 +70,7 @@ describe("content words are DISTINCT, and of no closed class (round 3, M1)", () 
     ["asdf asdf asdf", 1, "one word, three times"],
     ["Confirmed, works fine.", 2, "fine steers"],
     ["Retry the session after the limit reset.", 0, "the session's machinery"],
+    ["Usage limit expired, retry.", 0, "an expiry is the session's machinery too (round 3, L6)"],
     ["The worker drops the cache key every time.", 5, "every is a function word"],
   ])("%p carries %p content words — %s", (text, count) => {
     expect(contentWordCount(text)).toBe(count);

@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1792
+    # PRINTS: 1798
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -380,17 +380,17 @@ jobs:
     # PRINTS: packages/schema/src/pilot-mark.ts 5
     # PRINTS: packages/schema/src/pin.ts 2
     # PRINTS: packages/schema/src/prompt-terms.ts 27
-    # PRINTS: packages/schema/src/prompt-vocabulary.ts 8
+    # PRINTS: packages/schema/src/prompt-vocabulary.ts 9
     # PRINTS: packages/schema/src/repo-path.ts 1
     # PRINTS: packages/schema/src/secret-scan.ts 1
-    # PRINTS: packages/schema/src/session-control.ts 8
+    # PRINTS: packages/schema/src/session-control.ts 9
     # PRINTS: packages/schema/src/session.ts 2
     # PRINTS: packages/schema/src/slash-command.ts 4
     # PRINTS: packages/schema/src/stop-words.ts 2
     # PRINTS: packages/schema/src/substance-sentence.ts 15
     # PRINTS: packages/schema/src/substance-trust.ts 5
     # PRINTS: packages/schema/src/telemetry-loss.ts 6
-    # PRINTS: packages/schema/src/typing-slip.ts 10
+    # PRINTS: packages/schema/src/typing-slip.ts 11
     # PRINTS: packages/schema/src/untrusted-text.ts 6
     # PRINTS: packages/server/src/constants.ts 1
     # PRINTS: packages/server/src/db/bootstrap.sql 19
@@ -429,7 +429,7 @@ jobs:
     # PRINTS: packages/server/src/services/developers.ts 13
     # PRINTS: packages/server/src/services/diagnosis.ts 6
     # PRINTS: packages/server/src/services/evidence-axes.ts 2
-    # PRINTS: packages/server/src/services/evidence-resolution.ts 7
+    # PRINTS: packages/server/src/services/evidence-resolution.ts 10
     # PRINTS: packages/server/src/services/ghost-overlap.ts 4
     # PRINTS: packages/server/src/services/hint-deliveries.ts 5
     # PRINTS: packages/server/src/services/hints.ts 44
@@ -544,7 +544,7 @@ jobs:
     # PRINTS: envelope.ts 1
     # PRINTS: events.ts 1
     # PRINTS: evidence-axes.ts 3
-    # PRINTS: evidence-resolution.ts 19
+    # PRINTS: evidence-resolution.ts 22
     # PRINTS: exec.ts 1
     # PRINTS: exempt-surfaces.ts 2
     # PRINTS: fd-io.ts 1
@@ -638,7 +638,7 @@ jobs:
     # PRINTS: profile.ts 2
     # PRINTS: project-copy.ts 9
     # PRINTS: prompt-terms.ts 27
-    # PRINTS: prompt-vocabulary.ts 8
+    # PRINTS: prompt-vocabulary.ts 9
     # PRINTS: prompt.ts 2
     # PRINTS: proxy.ts 1
     # PRINTS: publish-claim.ts 2
@@ -675,7 +675,7 @@ jobs:
     # PRINTS: secret-scan.ts 1
     # PRINTS: select.ts 37
     # PRINTS: seq-cost.ts 8
-    # PRINTS: session-control.ts 8
+    # PRINTS: session-control.ts 9
     # PRINTS: session-events.ts 9
     # PRINTS: session-order.ts 9
     # PRINTS: session-scan.ts 2
@@ -716,7 +716,7 @@ jobs:
     # PRINTS: touched-root.ts 5
     # PRINTS: transcript.ts 4
     # PRINTS: triggers.ts 2
-    # PRINTS: typing-slip.ts 10
+    # PRINTS: typing-slip.ts 11
     # PRINTS: ui-ceremony.ts 5
     # PRINTS: ui-passkeys.tsx 1
     # PRINTS: untrusted-text.ts 6
