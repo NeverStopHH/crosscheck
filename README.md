@@ -111,7 +111,17 @@ cx 2 · Alice(implementing), Sam(analyzing) · capture 12s
 cx 0 · no teammates on this repo · Alice last seen 10h ago · capture 3m
 cx ! hub unreachable · last capture 14m
 cx ! key rejected · crosscheck login · last capture 2h
+⚠ overlap: Mike · 3 files · cx 1 · Mike(implementing) · capture 8s
 ```
+
+**When your work collides with a teammate's, YOU are told — not only your agent.** Claude Code shows a hook's `systemMessage` to the person ("Warning message shown to the user"), and crosscheck uses it for exactly one thing: the moment an edit lands on a file a teammate's live session is working on, or a SessionStart briefing finds a teammate whose live work shares files with yours, one line appears in your session:
+
+```
+crosscheck: Mike is working on PlayerMappingGrid.tsx on branch feat/streaming-practice-beta (last active 3m ago) — talk before you both change it
+crosscheck: Mike is working on 3 files you also touched, e.g. PlayerMappingGrid.tsx (last active 2d ago) — talk before you both change them
+```
+
+Once per teammate and piece of their work per session — a second file of the same work is counted, not announced — and the statusline's `⚠ overlap` segment (above) keeps the tally while the session runs. The agent is asked, in one sentence after its own copy of the facts, to mention the overlap in its next reply; when the edit happened inside a SUBAGENT, the main conversation is handed the same line at its next prompt, because a subagent's context is not the conversation you read. Names come only from what the hub already lets you see: a teammate who turned presence off or whom you muted is never named, and a withheld branch is never printed. Cursor and ACP clients have no hook field shown to the person without blocking, so there the overlap reaches the agent only and `crosscheck doctor` says so (`docs/RESEARCH.md` §7).
 
 The statusline is a terminal-TUI feature: **headless and VS Code-extension
 sessions have no statusline at all**, so in those the whole of the above simply
@@ -382,6 +392,7 @@ fourth one that forgets it fails CI rather than losing edits quietly.
 | **Drop counters** — a touch that could not be captured | `foreign-repo` and `outside-root`, split and counted | same | same |
 | **Capture health** in `crosscheck status` / `doctor` | `N edit-tool fires → M targets`, last tool, last edited path + the root it resolved against, WARN at 3 fires with 0 targets on a session still being heard from | same, with the event name `afterFileEdit` as the tool | same, with the ACP tool-call `kind` (or `fs/write_text_file`) as the tool. One edit an agent signals BOTH ways reads `2 fires → 1 target`: both are honest edit signals, dropping either would leave some real agent permanently at `0 → 0` and unable to WARN, and the doubling can never cause a FALSE warn because the first signal captures the target (pinned in `connector-acp/test/worktree-capture.test.ts`) |
 | **Before-edit tripwire** — telling the model about an overlap *before* it edits | yes — `PreToolUse`, `permissionDecision: "ask"` plus the facts as `additionalContext` | **not possible on this host today** | **not possible on this host today** |
+| **Person-facing collision notice** — telling the PERSON, not only the agent | yes — one `systemMessage` line on `PreToolUse` and `SessionStart`, once per teammate's work per session; a subagent's hit handed to the main thread at its next prompt; `⚠ overlap` on the statusline | **no channel on this host** — `user_message` shows only when an action is denied or a prompt blocked, so the agent is told and `doctor` prints the gap | **no channel in stable ACP v1** — the Session Notices RFD is an unstable Preview, so the agent is told and `doctor` prints the gap |
 
 The last row is a limitation we document rather than a gap we forgot, and each
 of those two connectors' module headers carries the same sentences with its

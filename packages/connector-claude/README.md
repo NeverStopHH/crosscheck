@@ -37,7 +37,11 @@ Use `--command-prefix <p>` to control how the hooks invoke the CLI. The default 
 | `SessionStart` | `crosscheck hook session-start` | sync, ≤1000 ms | Registers the session, creates the work context, flushes the spool, reaps the spool files of sessions that are gone, and injects the briefing via `additionalContext`. |
 | `PostToolUse` | `crosscheck hook post-tool-use` | `"async": true` | Records file targets and error fingerprints; doubles as a heartbeat (≤1 per 20 s). |
 | `SessionEnd` | `crosscheck hook session-end` | sync, ≤800 ms | Flushes the spool **first** (ingest rejects an ended producer session), then closes the session. |
-| statusline | `crosscheck statusline` | per render | One line of presence + sync health. Zero token cost. |
+| `PreToolUse` | `crosscheck hook pre-tool-use` | sync, edit tools | The tripwire: an edit of a file a teammate's live session targeted (or a landed change touched) gets a factual `ask`, and the same facts as `additionalContext`. The first hit on a teammate's work in a session also prints ONE line to you as `systemMessage` and asks the agent, in one sentence, to mention it in its next reply; inside a subagent (`agent_id` on the payload) the line is queued for the main thread too. |
+| `UserPromptSubmit` | `crosscheck hook user-prompt-submit` | sync, ≤800 ms | One hint at most, the deferred briefing, or the draft nudge — and, ahead of any of them, the collision lines a subagent ran into, handed to the main thread exactly once. |
+| statusline | `crosscheck statusline` | per render | One line of presence + sync health, led by `⚠ overlap: Mike · 3 files` while this session has told you about a teammate collision. Zero token cost. |
+
+The person-facing line is the only thing crosscheck prints as `systemMessage` — Claude Code's "Warning message shown to the user" — and it is printed once per teammate and piece of their work per session, also at `SessionStart` when the briefing's "Teammates working where you are" block shares files with you. Async hooks (`PostToolUse`, `Stop`) never carry it: Claude Code shows an async hook's `systemMessage` to nobody.
 
 The `PostToolUse` matcher is `Edit|Write|MultiEdit|NotebookEdit|Bash`.
 
