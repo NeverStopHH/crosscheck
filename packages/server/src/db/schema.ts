@@ -238,6 +238,32 @@ export const agentSessions = pgTable(
   ],
 );
 
+/**
+ * EVERY BRANCH A DEVELOPER'S SESSIONS EVER REPORTED (review round 5, H3).
+ *
+ * The live-location projection withholds an unmarked title that equals ANY
+ * branch of an opted-out owner's (review round 4, L2), and it learned those
+ * branches by scanning the events table — unindexed and unpruned — on every
+ * read, every record of her ingest and every context of a toggle. Written
+ * here as sessions register (and re-register on another branch)
+ * (services/developer-branches.ts), backfilled at every boot from the
+ * sessions and events a hub already holds (db/bootstrap.sql, idempotent),
+ * read by developer. The memory outlives
+ * the events table's retention, which is the point. Mirrored in
+ * db/bootstrap.sql.
+ */
+export const developerBranches = pgTable(
+  "developer_branches",
+  {
+    developerId: text("developer_id")
+      .notNull()
+      .references(() => developers.id),
+    branch: text("branch").notNull(),
+    firstSeen: timestamptz("first_seen").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.developerId, table.branch] })],
+);
+
 export const workContexts = pgTable("work_contexts", {
   id: text("id").primaryKey(),
   sessionId: text("session_id")

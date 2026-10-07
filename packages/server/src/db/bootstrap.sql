@@ -31,6 +31,18 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   ended_at timestamptz
 );
 
+-- Every branch a developer's sessions ever reported (review round 5, H3):
+-- what the live-location projection judges an opted-out owner's unmarked
+-- titles against, without scanning the events table per read. Written as
+-- sessions register (services/developer-branches.ts); backfilled at boot
+-- below the events table.
+CREATE TABLE IF NOT EXISTS developer_branches (
+  developer_id text NOT NULL REFERENCES developers(id),
+  branch text NOT NULL,
+  first_seen timestamptz NOT NULL,
+  PRIMARY KEY (developer_id, branch)
+);
+
 -- Reap bookkeeping (review finding B2-01): tells a hub-inferred end from a
 -- connector-reported one, so the inferred one can be revoked when a record
 -- from that session proves it wrong. ALTER so one statement covers fresh
@@ -143,6 +155,25 @@ CREATE TABLE IF NOT EXISTS events (
   payload jsonb NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- THE BRANCHES A HUB KNEW BEFORE developer_branches EXISTED (review round 5,
+-- H3): every session's current branch, and the branch every session_started
+-- event recorded (a re-registration moves the session's branch, and only the
+-- event still names the old one). Here, at boot, before the hub serves a read:
+-- an opted-out developer's unmarked title on such a branch is withheld from
+-- the first answer on. Idempotent (ON CONFLICT), and a re-run at every boot
+-- also catches up anything a release without the table registered. Only
+-- developers the hub still has: an event may name one since removed.
+INSERT INTO developer_branches (developer_id, branch, first_seen)
+SELECT developer_id, branch, min(seen) FROM (
+  SELECT developer_id, branch, started_at AS seen FROM agent_sessions
+  UNION ALL
+  SELECT payload->>'developerId', payload->>'branch', created_at FROM events
+   WHERE kind = 'session_started' AND payload->>'branch' IS NOT NULL
+) AS reported
+WHERE developer_id IN (SELECT id FROM developers)
+GROUP BY developer_id, branch
+ON CONFLICT DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS hint_deliveries (
   id text PRIMARY KEY,

@@ -41,14 +41,16 @@ import type { TitleFacts, WorkContextTitleSource } from "@crosscheck/schema";
 
 import { agentSessions, developers, workContexts } from "../db/schema.ts";
 import type { Db, DbExecutor } from "../db/client.ts";
+import { branchesOf } from "./developer-branches.ts";
 import { visiblePresenceCondition } from "./visibility.ts";
 
 /**
  * Developers whose live location THIS viewer may not be told, each with
- * every branch their sessions ever reported — the current branch of every
- * session, and the branch each `session_started` row recorded (a session
- * that re-registered moved its branch, and an unmarked bare-branch title
- * still names the old one; review round 4, L2).
+ * every branch their sessions ever reported (a session that re-registered
+ * moved its branch, and an unmarked bare-branch title still names the old
+ * one; review round 4, L2) — read from developer_branches by developer
+ * (services/developer-branches.ts), never by scanning the events table
+ * (review round 5, H3).
  */
 export type HiddenLocations = ReadonlyMap<string, readonly string[]>;
 
@@ -68,23 +70,7 @@ export const locationHiddenFrom = async (
   if (rows.length === 0) {
     return new Map();
   }
-  return reportedBranchesOf(db, rows.map((row) => row.id));
-};
-
-/** Every branch each of these developers' sessions ever reported (HiddenLocations). */
-const reportedBranchesOf = async (
-  db: DbExecutor,
-  ids: readonly string[],
-): Promise<HiddenLocations> => {
-  const branches = await db.execute<{ developer_id: string; branch: string }>(sql`
-    SELECT developer_id, branch FROM agent_sessions WHERE developer_id IN ${ids}
-    UNION
-    SELECT payload->>'developerId', payload->>'branch' FROM events
-     WHERE kind = 'session_started' AND payload->>'developerId' IN ${ids}
-       AND payload->>'branch' IS NOT NULL`);
-  return new Map(
-    ids.map((id) => [id, branches.rows.filter((row) => row.developer_id === id).map((row) => row.branch)]),
-  );
+  return branchesOf(db, rows.map((row) => row.id));
 };
 
 /**
@@ -120,10 +106,14 @@ export const isTitleWithheldFromIndex = async (
   if (row === undefined || !row.optedOut) {
     return false;
   }
-  const branches = await reportedBranchesOf(db, [row.developerId]);
+  const titleSource = titleSourceOf(row.titleSource);
+  // The connector's marker decides on its own (fallback goes, host and
+  // person stay): only an unmarked title needs her branches, and the lookup
+  // runs inside every record of her ingest (review round 5, H3).
+  const branches = titleSource === null ? await branchesOf(db, [row.developerId]) : new Map<string, readonly string[]>();
   return isLocationTitle({
     title: row.title,
-    titleSource: titleSourceOf(row.titleSource),
+    titleSource,
     branch: row.branch,
     branches: branches.get(row.developerId) ?? [],
     repo: row.repo,

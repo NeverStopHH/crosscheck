@@ -47,6 +47,7 @@ import {
   projectRow,
   updatedAtSeenBy,
 } from "./live-location.ts";
+import type { HiddenLocations } from "./live-location.ts";
 import { listSolvedInfo, listSolvedRootCauses } from "./solved.ts";
 import { notMutedCondition } from "./visibility.ts";
 import type { Db } from "../db/client.ts";
@@ -297,6 +298,13 @@ export interface SearchQuery {
    * could only fail open.
    */
   readonly viewerDeveloperId: string;
+  /**
+   * The hidden owners for `viewerDeveloperId`, when the caller already holds
+   * them (services/live-location.ts locationHiddenFrom): computed ONCE per
+   * request, so a caller that projects rows of its own does not pay for the
+   * lookup twice (review round 5, H3 — hint candidates did).
+   */
+  readonly hidden?: HiddenLocations | undefined;
   readonly limit: number;
 }
 
@@ -665,11 +673,12 @@ const hydrate = async (
   entries: readonly FusedEntry[],
   solvedInfo: ReadonlyMap<string, Date>,
   viewerDeveloperId: string,
+  known: HiddenLocations | undefined,
 ): Promise<readonly SearchResultView[]> => {
   if (entries.length === 0) {
     return [];
   }
-  const hidden = await locationHiddenFrom(db, viewerDeveloperId);
+  const hidden = known ?? (await locationHiddenFrom(db, viewerDeveloperId));
   const ids = entries.map((entry) => entry.row.id);
   const rows = await db
     .select({
@@ -823,6 +832,7 @@ export const searchWorkContexts = async (
         fused.slice(0, limit),
         solvedInfo,
         input.viewerDeveloperId,
+        input.hidden,
       ),
       vectorTierActive: false,
     };
@@ -860,6 +870,7 @@ export const searchWorkContexts = async (
       fused.slice(0, limit),
       solvedInfo,
       input.viewerDeveloperId,
+      input.hidden,
     ),
     vectorTierActive: vector.active,
   };

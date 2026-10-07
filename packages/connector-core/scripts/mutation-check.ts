@@ -18409,8 +18409,11 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the hub forgets the branches her sessions reported before",
     file: `${SERVER}/src/services/live-location.ts`,
-    from: "     WHERE kind = 'session_started' AND payload->>'developerId' IN ${ids}",
-    to: "     WHERE kind = 'never' AND payload->>'developerId' IN ${ids}",
+    from: "  return branchesOf(db, rows.map((row) => row.id));",
+    to:
+      "  const ids = rows.map((row) => row.id);\n" +
+      "  const current = await db.execute<{ developer_id: string; branch: string }>(sql`SELECT developer_id, branch FROM agent_sessions WHERE developer_id IN ${ids}`);\n" +
+      "  return new Map(ids.map((id) => [id, current.rows.filter((row) => row.developer_id === id).map((row) => row.branch)]));",
     test: `${SERVER}/test/live-location-surfaces.test.ts`,
     because:
       "only her sessions' CURRENT branches are known, so a local repo's bare " +
@@ -18860,6 +18863,79 @@ export const MUTATIONS: readonly Mutation[
       "solvedAtFromTree counts evidence refs: with the bisected sha gone the " +
       "connector says open while the hub says solved (solved parity)",
   },
+  // ── Review round 5, H3: opting out costs colleagues nothing ───────────
+  {
+    label: "a hidden owner's branches are scanned from the events table on every read again",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  return branchesOf(db, rows.map((row) => row.id));",
+    to:
+      "  const ids = rows.map((row) => row.id);\n" +
+      "  const scanned = await db.execute<{ developer_id: string; branch: string }>(sql`SELECT developer_id, branch FROM agent_sessions WHERE developer_id IN ${ids} UNION SELECT payload->>'developerId', payload->>'branch' FROM events WHERE kind = 'session_started' AND payload->>'developerId' IN ${ids} AND payload->>'branch' IS NOT NULL`);\n" +
+      "  return new Map(ids.map((id) => [id, scanned.rows.filter((row) => row.developer_id === id).map((row) => row.branch)]));",
+    test: `${SERVER}/test/live-location-cost.test.ts`,
+    because:
+      "every colleague read pays a scan of the events table (hint candidates " +
+      "p50 107 ms against 10 at 500k events), and once retention prunes the " +
+      "events her title on a branch she left reaches colleagues",
+  },
+  {
+    label: "a colleague's hint candidates look her branches up twice",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "      viewerDeveloperId: callerDeveloperId,\n      hidden,\n    },",
+    to: "      viewerDeveloperId: callerDeveloperId,\n    },",
+    test: `${SERVER}/test/live-location-cost.test.ts`,
+    because: "the search computes the hidden owners again inside the UserPromptSubmit hook's 400 ms budget",
+  },
+  {
+    label: "her ingest reads her branches for a title the connector already marked",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  const branches = titleSource === null ? await branchesOf(db, [row.developerId]) : new Map<string, readonly string[]>();",
+    to: "  const branches = await branchesOf(db, [row.developerId]);",
+    test: `${SERVER}/test/live-location-cost.test.ts`,
+    because: "every record of her ingest pays a lookup whose answer the marker already decided",
+  },
+  {
+    label: "a registration does not remember its branch",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "    await recordDeveloperBranch(deps.db, developerId, insertedRow.branch, timestamp);\n",
+    to: "",
+    test: `${SERVER}/test/developer-branches.test.ts`,
+    because: "her unmarked title on that branch reaches colleagues as soon as the session moves on",
+  },
+  {
+    label: "a re-registration that moves the branch does not remember the new one",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "  await recordDeveloperBranch(deps.db, developerId, input.branch, timestamp);\n",
+    to: "",
+    test: `${SERVER}/test/developer-branches.test.ts`,
+    because: "a title naming the branch a session moved to is judged against branches that never include it",
+  },
+  {
+    label: "the boot backfill forgets the branches only the events remember",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from:
+      "  UNION ALL\n  SELECT payload->>'developerId', payload->>'branch', created_at FROM events\n" +
+      "   WHERE kind = 'session_started' AND payload->>'branch' IS NOT NULL\n) AS reported",
+    to: ") AS reported",
+    test: `${SERVER}/test/developer-branches.test.ts`,
+    because: "on an upgraded hub her title on a branch her session left reaches colleagues",
+  },
+  {
+    label: "the boot backfill forgets the sessions' current branches",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "  SELECT developer_id, branch, started_at AS seen FROM agent_sessions\n  UNION ALL\n",
+    to: "",
+    test: `${SERVER}/test/developer-branches.test.ts`,
+    because: "on an upgraded hub her title on the branch she is on now reaches colleagues",
+  },
+  {
+    label: "the boot backfill copies events naming a developer the hub no longer has",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "WHERE developer_id IN (SELECT id FROM developers)\nGROUP BY developer_id, branch",
+    to: "GROUP BY developer_id, branch",
+    test: `${SERVER}/test/developer-branches.test.ts`,
+    because: "the foreign key refuses the row and the hub does not boot",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19178,6 +19254,7 @@ interface Outcome {
  * PRINTS: packages/server/test/ddl-sync-waiver-authority.test.ts 5
  * PRINTS: packages/server/test/ddl-sync-work-context-updater.test.ts 1
  * PRINTS: packages/server/test/ddl-sync.test.ts 11
+ * PRINTS: packages/server/test/developer-branches.test.ts 5
  * PRINTS: packages/server/test/developer-emails.test.ts 5
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/developer-settings.test.ts 1
@@ -19193,6 +19270,7 @@ interface Outcome {
  * PRINTS: packages/server/test/key-rotation.test.ts 6
  * PRINTS: packages/server/test/landed-context.test.ts 22
  * PRINTS: packages/server/test/landed-notices.test.ts 34
+ * PRINTS: packages/server/test/live-location-cost.test.ts 3
  * PRINTS: packages/server/test/live-location-differential.test.ts 3
  * PRINTS: packages/server/test/live-location-privacy.test.ts 27
  * PRINTS: packages/server/test/live-location-projection.test.ts 7

@@ -117,7 +117,8 @@
  *                                   wrote one (`titleSource`: fallback,
  *                                   host, person) and only `fallback` goes;
  *                                   an unmarked row (an older connector's)
- *                                   goes when it is the session's branch,
+ *                                   goes when it is a branch any of her
+ *                                   sessions reported (developer_branches),
  *                                   `<branch> @ <label>`, or opens with
  *                                   `detached@<hex>` (@crosscheck/schema
  *                                   isLocationTitle). A title a person or

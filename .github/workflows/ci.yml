@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1679
+    # PRINTS: 1687
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -382,7 +382,7 @@ jobs:
     # PRINTS: packages/schema/src/session.ts 2
     # PRINTS: packages/schema/src/telemetry-loss.ts 6
     # PRINTS: packages/server/src/constants.ts 1
-    # PRINTS: packages/server/src/db/bootstrap.sql 17
+    # PRINTS: packages/server/src/db/bootstrap.sql 20
     # PRINTS: packages/server/src/db/client.ts 8
     # PRINTS: packages/server/src/db/schema.ts 1
     # PRINTS: packages/server/src/http/schemas.ts 1
@@ -420,12 +420,12 @@ jobs:
     # PRINTS: packages/server/src/services/evidence-axes.ts 2
     # PRINTS: packages/server/src/services/ghost-overlap.ts 4
     # PRINTS: packages/server/src/services/hint-deliveries.ts 3
-    # PRINTS: packages/server/src/services/hints.ts 6
+    # PRINTS: packages/server/src/services/hints.ts 7
     # PRINTS: packages/server/src/services/intent-ledger.ts 12
     # PRINTS: packages/server/src/services/landed-context.ts 22
     # PRINTS: packages/server/src/services/landed-notices.ts 28
     # PRINTS: packages/server/src/services/landed.ts 1
-    # PRINTS: packages/server/src/services/live-location.ts 28
+    # PRINTS: packages/server/src/services/live-location.ts 30
     # PRINTS: packages/server/src/services/normalized-doc.ts 3
     # PRINTS: packages/server/src/services/passkeys.ts 7
     # PRINTS: packages/server/src/services/pilot-candidates.ts 16
@@ -446,7 +446,7 @@ jobs:
     # PRINTS: packages/server/src/services/search.ts 13
     # PRINTS: packages/server/src/services/session-events.ts 9
     # PRINTS: packages/server/src/services/session-order.ts 9
-    # PRINTS: packages/server/src/services/sessions.ts 14
+    # PRINTS: packages/server/src/services/sessions.ts 16
     # PRINTS: packages/server/src/services/skeleton-identity.ts 8
     # PRINTS: packages/server/src/services/solved-counts.ts 1
     # PRINTS: packages/server/src/services/solved-matches.ts 12
@@ -473,7 +473,7 @@ jobs:
     # PRINTS: ask-teammate.ts 1
     # PRINTS: attempt.ts 5
     # PRINTS: before-submit-prompt.ts 1
-    # PRINTS: bootstrap.sql 17
+    # PRINTS: bootstrap.sql 20
     # PRINTS: briefing.ts 5
     # PRINTS: calibration.ts 1
     # PRINTS: capabilities.ts 6
@@ -560,7 +560,7 @@ jobs:
     # PRINTS: heartbeat.ts 1
     # PRINTS: hint-deliveries.ts 3
     # PRINTS: hint.ts 6
-    # PRINTS: hints.ts 8
+    # PRINTS: hints.ts 9
     # PRINTS: hook-budget.ts 2
     # PRINTS: hub.ts 13
     # PRINTS: index.ts 4
@@ -587,7 +587,7 @@ jobs:
     # PRINTS: landing-branches.ts 7
     # PRINTS: latency.ts 1
     # PRINTS: ledger-read.ts 2
-    # PRINTS: live-location.ts 28
+    # PRINTS: live-location.ts 30
     # PRINTS: lock.ts 2
     # PRINTS: loss-ledger.ts 10
     # PRINTS: loss-refusals.ts 1
@@ -669,7 +669,7 @@ jobs:
     # PRINTS: session-start.ts 8
     # PRINTS: session-state.ts 20
     # PRINTS: session.ts 4
-    # PRINTS: sessions.ts 16
+    # PRINTS: sessions.ts 18
     # PRINTS: set-intent.ts 5
     # PRINTS: settings-merge.ts 2
     # PRINTS: shared.ts 2

@@ -386,6 +386,9 @@ export const listHintCandidates = async (
   callerDeveloperId: string,
   input: HintCandidatesQuery,
 ): Promise<readonly HintContextCandidate[]> => {
+  // ONCE per request: the search projects its rows with it, and so does this
+  // (review round 5, H3 — the hook's budget is 400 ms).
+  const hidden = await locationHiddenFrom(deps.db, callerDeveloperId);
   const searched = await searchWorkContexts(
     // Lexical by construction — see the header. The hub's real embedder must
     // not be reachable from this path.
@@ -402,6 +405,7 @@ export const listHintCandidates = async (
       excludeMutedForDeveloperId: callerDeveloperId,
       limit: SEARCH_POOL_LIMIT,
       viewerDeveloperId: callerDeveloperId,
+      hidden,
     },
   );
   const eligible = searched.results
@@ -410,11 +414,10 @@ export const listHintCandidates = async (
     .filter((row) => row.developerId !== callerDeveloperId)
     .slice(0, HINT_MAX_CONTEXTS);
   const ids = eligible.map((row) => row.id);
-  const [claimsByContext, baseCommits, matchedTargets, hidden] = await Promise.all([
+  const [claimsByContext, baseCommits, matchedTargets] = await Promise.all([
     listContextClaims(deps.db, deps.now(), callerDeveloperId, ids, input.repo),
     listBaseCommits(deps.db, ids),
     listMatchedTargets(deps.db, ids, exactTokens(input.query)),
-    locationHiddenFrom(deps.db, callerDeveloperId),
   ]);
   return eligible.map((row) => ({
     workContext: {

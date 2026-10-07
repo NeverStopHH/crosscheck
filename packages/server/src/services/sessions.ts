@@ -27,6 +27,7 @@ import { recordSessionEvent } from "./session-events.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 import type { RegisterSessionBody } from "../http/schemas.ts";
+import { recordDeveloperBranch } from "./developer-branches.ts";
 import { sweepSkeleton } from "./retention.ts";
 import { visiblePresenceCondition } from "./visibility.ts";
 import type { RetentionRelation } from "./retention-registry.ts";
@@ -179,6 +180,10 @@ export const registerSession = async (
     .returning();
   const insertedRow = inserted[0];
   if (insertedRow !== undefined) {
+    // Every branch a session reports is remembered for its developer
+    // (services/developer-branches.ts): what an opted-out owner's unmarked
+    // titles are judged against (services/live-location.ts).
+    await recordDeveloperBranch(deps.db, developerId, insertedRow.branch, timestamp);
     await appendEvent(deps, EVENT_KINDS.SESSION_STARTED, {
       sessionId: insertedRow.id,
       developerId,
@@ -244,6 +249,9 @@ export const registerSession = async (
     })
     .where(eq(agentSessions.id, input.id))
     .returning();
+  // A re-registration may have MOVED the branch: the old one stays known
+  // (it is already a row), the new one joins it.
+  await recordDeveloperBranch(deps.db, developerId, input.branch, timestamp);
   // A RE-REGISTER ONLY WEAKENS (01a §3.6): the rows already stored were
   // produced under the first declaration.
   await weakenDeclaredGuarantees(deps.db, input.id, input.guarantees);
