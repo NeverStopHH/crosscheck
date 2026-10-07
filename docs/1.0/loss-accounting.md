@@ -707,6 +707,18 @@ down has no producer to send it under.
 Only `accepted` counts, never `duplicate`, and only the flusher's own state is written. Another conversation's state
 file is its liveness, and a write there revived an abandoned host and held its backlog from every successor (the
 release-clock probe caught it).
+
+**Doctor's waiting-records line says how long, and until when** (review-2 round 8, L9). "N records wait for their own
+conversation (another live session)" told a developer to wait, even for a process that was gone, whose records then
+waited a week for the reap bound. The line now gives:
+
+- the oldest waiting record's age;
+- the day the records go to any flusher if no owner is heard from again (the reap bound past the most recent sign of
+  life).
+
+An owner silent past the hour doctor calls a state a zombie is named as a conversation that may have crashed, with that
+release day. A conversation re-bound to another repo (M2) is now its own owner, `rebound`. Like an ended one it is
+sendable by any flusher of this repo, and doctor says its records wait for this repo's next session.
  `owed-work-context.test.ts` replays the probe, and all 11
 records land.
 

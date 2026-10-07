@@ -18042,32 +18042,32 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a flusher sends another live conversation's spool",
     file: `${CORE}/src/spool/ownership.ts`,
-    from: '  return isPastReapBound(stamps, wroteAtMs, now.getTime()) ? "abandoned" : "live-elsewhere";',
-    to: '  return "abandoned";',
+    from: '    : { owner: "live-elsewhere", silentMs: sessionSilentForMs(stamps, wroteAtMs, now.getTime()) };',
+    to: '    : sighted("abandoned");',
     test: `${CORE}/test/spool-ownership.test.ts`,
     because: "review-2 round 7 (H1, M2, P3): another conversation spends a live life's records — before its register, or without the work context it is owed",
   },
   {
     label: "an ended conversation's spool waits for an owner that never comes",
     file: `${CORE}/src/spool/ownership.ts`,
-    from: '  if (wroteAtMs === null) {\n    return "ended";',
-    to: '  if (wroteAtMs === null) {\n    return "live-elsewhere";',
+    from: '  if (wroteAtMs === null) {\n    return sighted("ended");',
+    to: '  if (wroteAtMs === null) {\n    return sighted("live-elsewhere");',
     test: `${CORE}/test/spool-ownership.test.ts`,
     because: "review-2 round 7: what a conversation left on disk at its end is delivered by nobody and expires",
   },
   {
     label: "an abandoned conversation's spool waits for an owner that never comes",
     file: `${CORE}/src/spool/ownership.ts`,
-    from: '? "abandoned" : "live-elsewhere";',
-    to: '? "live-elsewhere" : "live-elsewhere";',
+    from: '    ? sighted("abandoned")\n',
+    to: '    ? sighted("live-elsewhere")\n',
     test: `${CORE}/test/spool-ownership.test.ts`,
     because: "review-2 round 7: a host that died without SessionEnd leaves its backlog to expire, its state past the reap bound",
   },
   {
     label: "a flusher's own spool reads as another conversation's",
     file: `${CORE}/src/spool/ownership.ts`,
-    from: '  if (state?.crosscheckSessionId === flusherSessionId) {\n    return "own";',
-    to: '  if (state?.crosscheckSessionId === flusherSessionId) {\n    return "live-elsewhere";',
+    from: '  if (state?.crosscheckSessionId === flusherSessionId) {\n    return sighted("own");',
+    to: '  if (state?.crosscheckSessionId === flusherSessionId) {\n    return sighted("live-elsewhere");',
     test: `${CORE}/test/spool-ownership.test.ts`,
     because: "review-2 round 7: a conversation never delivers its own records",
   },
@@ -18090,24 +18090,24 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "doctor counts no live session's waiting records",
     file: `${CORE}/src/spool/ownership.ts`,
-    from: '  return { records: recordsOf("live-elsewhere"), unreadableRecords: recordsOf("unreadable") };',
-    to: '  return { records: recordsOf("own"), unreadableRecords: recordsOf("unreadable") };',
+    from: '    records: recordsOf("live-elsewhere"),',
+    to: '    records: recordsOf("own"),',
     test: `${CLI}/test/doctor.test.ts`,
     because: "review-2 round 7: records that wait for their own conversation show nowhere",
   },
   {
     label: "doctor counts no record held for a state file it cannot look at",
     file: `${CORE}/src/spool/ownership.ts`,
-    from: '  return { records: recordsOf("live-elsewhere"), unreadableRecords: recordsOf("unreadable") };',
-    to: '  return { records: recordsOf("live-elsewhere"), unreadableRecords: 0 };',
+    from: '    unreadableRecords: recordsOf("unreadable"),',
+    to: "    unreadableRecords: 0,",
     test: `${CLI}/test/doctor.test.ts`,
     because: "review-2 round 8, L4: records held for good, until the file can be read again, show nowhere",
   },
   {
     label: "doctor says nothing while only an unreadable state's records wait",
     file: `${CLI}/src/cli/doctor.ts`,
-    from: "  if (records === 0 && unreadableRecords === 0) {",
-    to: "  if (records === 0) {",
+    from: "  if (records === 0 && reboundRecords === 0 && unreadableRecords === 0) {",
+    to: "  if (records === 0 && reboundRecords === 0) {",
     test: `${CLI}/test/doctor.test.ts`,
     because: "review-2 round 8, L4: the one line that says why a spool stopped draining is never printed",
   },
@@ -18122,7 +18122,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a flusher sends the records of a conversation whose state it cannot look at",
     file: `${CORE}/src/spool/ownership.ts`,
-    from: '  return owner === "own" || owner === "ended" || owner === "abandoned";',
+    from: '  return owner === "own" || owner === "ended" || owner === "rebound" || owner === "abandoned";',
     to: '  return owner !== "live-elsewhere";',
     test: `${CORE}/test/spool-ownership.test.ts`,
     because: "review-2 round 8, L4: held for a writer that may be live, its records are spent under another life",
@@ -18595,16 +18595,16 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an unreadable state file hands its records to the next flusher (U19)",
     file: `${CORE}/src/spool/ownership.ts`,
-    from: '  if (state?.crosscheckSessionId === flusherSessionId) {\n    return "own";\n  }\n',
-    to: '  if (state?.crosscheckSessionId === flusherSessionId) {\n    return "own";\n  }\n  if (state === null) {\n    return "ended";\n  }\n',
+    from: '  if (state?.crosscheckSessionId === flusherSessionId) {\n    return sighted("own");\n  }\n',
+    to: '  if (state?.crosscheckSessionId === flusherSessionId) {\n    return sighted("own");\n  }\n  if (state === null) {\n    return sighted("ended");\n  }\n',
     test: `${CORE}/test/spool-ownership.test.ts`,
     because: "review-2 round 6 survivor U19: a state file a reader could not parse gives a live conversation's records to another, refused for want of their own life",
   },
   {
     label: "an unreadable state file is never read as abandoned (U19)",
     file: `${CORE}/src/spool/ownership.ts`,
-    from: "  return isPastReapBound(stamps, wroteAtMs, now.getTime()) ?",
-    to: "  return isPastReapBound(stamps, state === null ? null : wroteAtMs, now.getTime()) ?",
+    from: "  return isPastReapBound(stamps, wroteAtMs, now.getTime())\n",
+    to: "  return isPastReapBound(stamps, state === null ? null : wroteAtMs, now.getTime())\n",
     test: `${CORE}/test/spool-ownership.test.ts`,
     because: "review-2 round 6 survivor U19: a conversation that died with an undatable state leaves its records to expire unsent",
   },
@@ -18707,10 +18707,50 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a conversation re-bound to another repo still owns its spool here (M2)",
     file: `${CORE}/src/spool/ownership.ts`,
-    from: "  if (isBoundElsewhere(state, key)) {\n    return \"ended\";\n  }\n",
+    from: "  if (isBoundElsewhere(state, key)) {\n    return sighted(\"rebound\");\n  }\n",
     to: "",
     test: `${CORE}/test/spool-ownership.test.ts`,
     because: "review-2 round 8 M2: resumed from another checkout, it never flushes this repo again, and reap expires nothing while its state exists",
+  },
+  {
+    label: "a flusher holds a re-bound conversation's records like a live one's",
+    file: `${CORE}/src/spool/ownership.ts`,
+    from: '  return owner === "own" || owner === "ended" || owner === "rebound" || owner === "abandoned";',
+    to: '  return owner === "own" || owner === "ended" || owner === "abandoned";',
+    test: `${CORE}/test/spool-ownership.test.ts`,
+    because: "review-2 round 8, L9: told apart for doctor, the re-bound owner lost its M2 fix — its records wait for good",
+  },
+  {
+    label: "doctor counts no re-bound conversation's waiting records",
+    file: `${CORE}/src/spool/ownership.ts`,
+    from: '    reboundRecords: recordsOf("rebound"),',
+    to: "    reboundRecords: 0,",
+    test: `${CLI}/test/doctor.test.ts`,
+    because: "review-2 round 8, L9: records only this repo's next session sends show nowhere",
+  },
+  {
+    label: "doctor gives no age for the oldest waiting record",
+    file: `${CORE}/src/spool/ownership.ts`,
+    from: '    oldestAtMs: minOf(ownedBy("live-elsewhere").map(writtenAt)),',
+    to: "    oldestAtMs: null,",
+    test: `${CLI}/test/doctor.test.ts`,
+    because: "review-2 round 8, L9: a week-old backlog reads like one written a minute ago",
+  },
+  {
+    label: "doctor dates a waiting record's release from now, not from its owner's last sign",
+    file: `${CORE}/src/spool/ownership.ts`,
+    from: "now.getTime() - silentMs + MAX_SPOOL_AGE_DAYS * MS_PER_DAY",
+    to: "now.getTime() + MAX_SPOOL_AGE_DAYS * MS_PER_DAY",
+    test: `${CLI}/test/doctor.test.ts`,
+    because: "review-2 round 8, L9: a crashed owner's records are promised days later than they go",
+  },
+  {
+    label: "doctor calls a silent owner another live session",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "silentMs > DOCTOR_ZOMBIE_STATE_WARN_HOURS * MS_PER_HOUR",
+    to: "silentMs > Number.POSITIVE_INFINITY",
+    test: `${CLI}/test/doctor.test.ts`,
+    because: "review-2 round 8, L9: the developer waits for a process that is gone, for a week",
   },
   {
     label: "session-reap deletes a state without leaving its life's last title and status (M3)",
@@ -19014,7 +19054,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-pilot.test.ts 6
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
  * PRINTS: packages/cli/test/doctor-verdict-legality.test.ts 2
- * PRINTS: packages/cli/test/doctor.test.ts 8
+ * PRINTS: packages/cli/test/doctor.test.ts 12
  * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
  * PRINTS: packages/cli/test/gitignored-advice.test.ts 10
@@ -19216,7 +19256,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 2
  * PRINTS: packages/connector-core/test/spool-ignored.test.ts 2
  * PRINTS: packages/connector-core/test/spool-lock.test.ts 2
- * PRINTS: packages/connector-core/test/spool-ownership.test.ts 11
+ * PRINTS: packages/connector-core/test/spool-ownership.test.ts 12
  * PRINTS: packages/connector-core/test/spool-simulation.test.ts 7
  * PRINTS: packages/connector-core/test/staleness-axis.test.ts 1
  * PRINTS: packages/connector-core/test/target-paths.test.ts 1

@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1731
+    # PRINTS: 1736
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -177,7 +177,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/doctor-landing-fetch.ts 6
     # PRINTS: packages/cli/src/cli/doctor-losses.ts 6
     # PRINTS: packages/cli/src/cli/doctor-retention.ts 3
-    # PRINTS: packages/cli/src/cli/doctor.ts 56
+    # PRINTS: packages/cli/src/cli/doctor.ts 57
     # PRINTS: packages/cli/src/cli/index.ts 4
     # PRINTS: packages/cli/src/cli/init-global.ts 2
     # PRINTS: packages/cli/src/cli/init-io.ts 5
@@ -342,7 +342,7 @@ jobs:
     # PRINTS: spool/lock.ts 2
     # PRINTS: spool/loss-report.ts 17
     # PRINTS: spool/owed-work-context.ts 14
-    # PRINTS: spool/ownership.ts 12
+    # PRINTS: spool/ownership.ts 16
     # PRINTS: spool/reap.ts 13
     # PRINTS: spool/refused-lives.ts 5
     # PRINTS: spool/reject-cause.ts 3
@@ -535,7 +535,7 @@ jobs:
     # PRINTS: doctor-landing-fetch.ts 6
     # PRINTS: doctor-losses.ts 6
     # PRINTS: doctor-retention.ts 3
-    # PRINTS: doctor.ts 72
+    # PRINTS: doctor.ts 73
     # PRINTS: driver.ts 2
     # PRINTS: drops.ts 11
     # PRINTS: end-marker.ts 2
@@ -610,7 +610,7 @@ jobs:
     # PRINTS: normalized-doc.ts 2
     # PRINTS: output.ts 1
     # PRINTS: owed-work-context.ts 14
-    # PRINTS: ownership.ts 12
+    # PRINTS: ownership.ts 16
     # PRINTS: parse.ts 2
     # PRINTS: passkey-status.ts 4
     # PRINTS: passkeys.ts 8

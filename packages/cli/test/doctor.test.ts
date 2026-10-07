@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import {
   DOCTOR_FLUSH_LOCK_WARN_MS,
+  MAX_SPOOL_AGE_DAYS,
   MS_PER_DAY,
   recordUnclosedSession,
   repoKey,
@@ -32,6 +33,8 @@ import { makeHome, makeRepo, spawnZombie } from "../../connector-core/test/helpe
 /** Unreachable on purpose: the spool checks run whether the hub answers or not. */
 const HUB_URL = "http://127.0.0.1:9";
 const REPO_ID = "github.com/acme/api";
+const HOUR_MS = MS_PER_DAY / 24;
+const HALF_HOUR_MS = HOUR_MS / 2;
 
 const doctorEnv = (home: string) => ({
   CROSSCHECK_HOME: home,
@@ -506,6 +509,86 @@ describe("crosscheck doctor owed work contexts check (review-2 round 7, L4)", ()
 });
 
 describe("crosscheck doctor waiting records check (review-2 round 7)", () => {
+  /** The day a record waiting since `lastSignMs` goes to any flusher: the reap bound past it. */
+  const releaseDay = (lastSignMs: number): string =>
+    new Date(lastSignMs + MAX_SPOOL_AGE_DAYS * MS_PER_DAY).toISOString().slice(0, 10);
+
+  /** A conversation last heard from at `heardAt`, with `count` of its edits written at `writtenAt`. */
+  const waitingConversation = async (
+    home: string,
+    repo: string,
+    host: string,
+    heardAt: Date,
+    writtenAt: Date,
+    count: number,
+    repoId: string = REPO_ID,
+  ): Promise<void> => {
+    const state = deriveSessionState({
+      hostSessionKey: host,
+      repoId,
+      repoRoot: repo,
+      hubUrl: HUB_URL,
+      developerId: null,
+      startedAt: heardAt.toISOString(),
+    });
+    await writeSessionState(home, { ...state, lastHeartbeatAt: heardAt.toISOString() });
+    await utimes(sessionStatePath(home, host), heardAt, heardAt);
+    const producer = { developerId: "d", agentKind: "claude-code", sessionId: state.crosscheckSessionId };
+    await appendRecords(
+      home,
+      repoKey(HUB_URL, REPO_ID),
+      host,
+      Array.from({ length: count }, (_, index) =>
+        targetRecord(state.workContextId, "file", `src/${String(index)}.ts`, producer, writtenAt),
+      ),
+      writtenAt,
+    );
+  };
+
+  test("gives the oldest waiting record's age and the day they go to any flusher (review-2 round 8, L9)", async () => {
+    // Arrange: a session heard from half an hour ago, its edits three hours old
+    const { repo, home } = await fixture();
+    const heardAt = new Date(Date.now() - HALF_HOUR_MS);
+    await waitingConversation(home, repo, "doctor-oldest", heardAt, new Date(Date.now() - 3 * HOUR_MS), 2);
+
+    // Act
+    const result = await runCli(["doctor"], doctorEnv(home), repo);
+
+    // Assert
+    expect(result.stdout).toContain(
+      `2 records wait for their own conversation (another live session); the oldest is 3h old; released to any flusher on ${releaseDay(heardAt.getTime())} unless that session is heard from again`,
+    );
+  });
+
+  test("says a silent owner may have crashed, and when its records are released (review-2 round 8, L9)", async () => {
+    // Arrange: a session silent for three days, its edit four days old
+    const { repo, home } = await fixture();
+    const heardAt = new Date(Date.now() - 3 * MS_PER_DAY);
+    await waitingConversation(home, repo, "doctor-crashed", heardAt, new Date(Date.now() - 4 * MS_PER_DAY), 1);
+
+    // Act
+    const result = await runCli(["doctor"], doctorEnv(home), repo);
+
+    // Assert: released a week after it was last heard from, not a week from now
+    expect(result.stdout).toContain(
+      `1 record waits for a conversation silent for 3d — if it crashed, it is released to any flusher on ${releaseDay(heardAt.getTime())}; the oldest is 4d old`,
+    );
+  });
+
+  test("names the records of a conversation now bound to another repo (review-2 round 8, L9)", async () => {
+    // Arrange: a conversation resumed from another checkout, its edit still here
+    const { repo, home } = await fixture();
+    await waitingConversation(home, repo, "doctor-rebound", new Date(), new Date(), 1, "github.com/acme/other");
+
+    // Act
+    const result = await runCli(["doctor"], doctorEnv(home), repo);
+
+    // Assert
+    expect(result.stdout).toContain(
+      "1 record of a conversation now bound to another repo waits for this repo's next session to send it",
+    );
+  });
+
   test("names the records that wait for their own conversation, another live session", async () => {
     // Arrange: a live session, two of its edits on disk
     const { repo, home } = await fixture();

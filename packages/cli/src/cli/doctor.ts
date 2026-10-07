@@ -191,6 +191,7 @@ import { readLockHolder } from "@crosscheck/connector-core/spool/lock.ts";
 import { readUnclosedSummary } from "@crosscheck/connector-core/spool/unclosed.ts";
 import { readAllSessionSpools } from "@crosscheck/connector-core/spool/files.ts";
 import { countRecordsAwaitingOwners } from "@crosscheck/connector-core/spool/ownership.ts";
+import type { AwaitingOwners } from "@crosscheck/connector-core/spool/ownership.ts";
 import { readDebtFile } from "@crosscheck/connector-core/spool/owed-work-context.ts";
 import type { DebtFile } from "@crosscheck/connector-core/spool/owed-work-context.ts";
 import {
@@ -1436,37 +1437,54 @@ const debtChecks = async (home: string, key: string): Promise<readonly Check[]> 
   return [check("WARN", "owed work contexts", parts.join("; "))];
 };
 
+/** The UTC day doctor names for a moment to come. */
+const dayOf = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
+
+/**
+ * Another live session's records, with how old the oldest is and the day they
+ * are released to any flusher if that session is never heard from again
+ * (review-2 round 8, L9). An owner silent past the hour doctor calls a state
+ * a zombie may have crashed, and is named so: "another live session" told the
+ * developer to wait for a process that was gone, for a week.
+ */
+const liveOwnerPart = (awaiting: AwaitingOwners, now: Date): string => {
+  const { records, releaseAtMs, silentMs } = awaiting;
+  const oldest = awaiting.oldestAtMs === null ? "" : `; the oldest is ${formatAge(now.getTime() - awaiting.oldestAtMs)} old`;
+  const released = releaseAtMs === null ? "" : `released to any flusher on ${dayOf(releaseAtMs)}`;
+  if (silentMs !== null && releaseAtMs !== null && silentMs > DOCTOR_ZOMBIE_STATE_WARN_HOURS * MS_PER_HOUR) {
+    return `${records === 1 ? "1 record waits" : `${String(records)} records wait`} for a conversation silent for ${formatAge(silentMs)} — if it crashed, ${records === 1 ? "it is" : "they are"} ${released}${oldest}`;
+  }
+  const own = `${records === 1 ? "1 record waits for its" : `${String(records)} records wait for their`} own conversation (another live session)${oldest}`;
+  return released === "" ? own : `${own}; ${released} unless that session is heard from again`;
+};
+
+/** A conversation now bound to another repo (M2): any flush of this repo sends its records here. */
+const reboundPart = (records: number): string =>
+  `${records === 1 ? "1 record" : `${String(records)} records`} of a conversation now bound to another repo ${records === 1 ? "waits" : "wait"} for this repo's next session to send ${records === 1 ? "it" : "them"}`;
+
+/**
+ * A STATE FILE NO FLUSHER CAN LOOK AT (review-2 round 8, L4) is a live
+ * writer's for all a flush knows, so its records are held — for good, until
+ * someone can read the file again. Nothing else would say why.
+ */
+const unreadablePart = (records: number): string =>
+  `${String(records)} ${records === 1 ? "record is" : "records are"} held for a conversation whose session state file cannot be read (check its permissions); nothing sends ${records === 1 ? "it" : "them"} until it can`;
+
 /**
  * Records no flusher but their own conversation's sends — another live
  * session's (core spool/ownership.ts, review-2 round 7) — said while there
  * are any. Nothing while there are none.
  */
 const waitingChecks = async (home: string, key: string, now: Date): Promise<readonly Check[]> => {
-  const { records, unreadableRecords } = await countRecordsAwaitingOwners(
-    home,
-    key,
-    await readAllSessionSpools(home, key),
-    now,
-  );
-  if (records === 0 && unreadableRecords === 0) {
+  const awaiting = await countRecordsAwaitingOwners(home, key, await readAllSessionSpools(home, key), now);
+  const { records, reboundRecords, unreadableRecords } = awaiting;
+  if (records === 0 && reboundRecords === 0 && unreadableRecords === 0) {
     return [];
   }
   const parts = [
-    ...(records === 0
-      ? []
-      : [
-          records === 1
-            ? "1 record waits for its own conversation (another live session)"
-            : `${String(records)} records wait for their own conversation (another live session)`,
-        ]),
-    // A STATE FILE NO FLUSHER CAN LOOK AT (review-2 round 8, L4) is a live
-    // writer's for all a flush knows, so its records are held — for good,
-    // until someone can read the file again. Nothing else would say why.
-    ...(unreadableRecords === 0
-      ? []
-      : [
-          `${String(unreadableRecords)} ${unreadableRecords === 1 ? "record is" : "records are"} held for a conversation whose session state file cannot be read (check its permissions); nothing sends ${unreadableRecords === 1 ? "it" : "them"} until it can`,
-        ]),
+    ...(records === 0 ? [] : [liveOwnerPart(awaiting, now)]),
+    ...(reboundRecords === 0 ? [] : [reboundPart(reboundRecords)]),
+    ...(unreadableRecords === 0 ? [] : [unreadablePart(unreadableRecords)]),
   ];
   return [check("WARN", "waiting records", parts.join("; "))];
 };
