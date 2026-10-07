@@ -19699,6 +19699,23 @@ export const MUTATIONS: readonly Mutation[
     test: `${CONNECTOR}/test/topic-git-lane.test.ts`,
     because: "SubagentStop sweeps only its cwd, and a subagent whose shell worked elsewhere has its work wait for a Stop",
   },
+  {
+    // DESIGN.md "One session, many topics", item 5.
+    label: "a report window holds only the sessions that started in it",
+    file: `${SERVER}/src/services/session-window.ts`,
+    from: "    OR EXISTS (",
+    to: "    OR FALSE AND EXISTS (",
+    test: `${SERVER}/test/pilot-report-window.test.ts`,
+    because: "one long-lived session's every week of work reads as no sessions at all in every report after its first week",
+  },
+  {
+    label: "a target sighted again keeps its first-seen time as its last",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "      .set({ lastSeenAt: deps.now() })",
+    to: "      .set({ lastSeenAt: sql`last_seen_at` })",
+    test: `${SERVER}/test/pilot-report-window.test.ts`,
+    because: "an old file re-touched this week dates its session to the week it was first touched",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -20053,6 +20070,7 @@ interface Outcome {
  * PRINTS: packages/server/test/pilot-mark-candidates.test.ts 15
  * PRINTS: packages/server/test/pilot-marks.test.ts 16
  * PRINTS: packages/server/test/pilot-repairs.test.ts 5
+ * PRINTS: packages/server/test/pilot-report-window.test.ts 2
  * PRINTS: packages/server/test/pilot-report.test.ts 34
  * PRINTS: packages/server/test/pilot-retention.test.ts 4
  * PRINTS: packages/server/test/pilot-sessions.test.ts 11

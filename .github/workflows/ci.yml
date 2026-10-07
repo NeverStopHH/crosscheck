@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1821
+    # PRINTS: 1823
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -458,7 +458,7 @@ jobs:
     # PRINTS: packages/server/src/services/pins.ts 9
     # PRINTS: packages/server/src/services/presence.ts 1
     # PRINTS: packages/server/src/services/questions.ts 8
-    # PRINTS: packages/server/src/services/record-handlers.ts 25
+    # PRINTS: packages/server/src/services/record-handlers.ts 26
     # PRINTS: packages/server/src/services/record-receipts.ts 8
     # PRINTS: packages/server/src/services/records.ts 9
     # PRINTS: packages/server/src/services/refusal.ts 3
@@ -468,6 +468,7 @@ jobs:
     # PRINTS: packages/server/src/services/search.ts 11
     # PRINTS: packages/server/src/services/session-events.ts 9
     # PRINTS: packages/server/src/services/session-order.ts 9
+    # PRINTS: packages/server/src/services/session-window.ts 1
     # PRINTS: packages/server/src/services/sessions.ts 17
     # PRINTS: packages/server/src/services/skeleton-identity.ts 8
     # PRINTS: packages/server/src/services/solved-counts.ts 1
@@ -664,7 +665,7 @@ jobs:
     # PRINTS: pump.ts 1
     # PRINTS: questions.ts 10
     # PRINTS: reap.ts 15
-    # PRINTS: record-handlers.ts 25
+    # PRINTS: record-handlers.ts 26
     # PRINTS: record-receipts.ts 8
     # PRINTS: records.ts 10
     # PRINTS: recover.ts 4
@@ -704,6 +705,7 @@ jobs:
     # PRINTS: session-scan.ts 2
     # PRINTS: session-start.ts 8
     # PRINTS: session-state.ts 26
+    # PRINTS: session-window.ts 1
     # PRINTS: session.ts 4
     # PRINTS: sessions.ts 19
     # PRINTS: set-intent.ts 4

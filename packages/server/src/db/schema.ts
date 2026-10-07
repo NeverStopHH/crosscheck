@@ -333,6 +333,16 @@ export const workContextTargets = pgTable(
      * age.
      */
     createdAt: timestamptz("created_at"),
+    /**
+     * When this target was last SIGHTED — set on the first ingest and moved
+     * by every duplicate (a lane sighting the file again). The pilot and its
+     * report window a session by its targets' times, created or last seen, so
+     * a long-lived session's recent work counts in the week it was done
+     * rather than in the week the session began (DESIGN.md "One session,
+     * many topics"). `created_at` stays first-seen, the honest age. Null on
+     * a row older than the column, read as its `created_at`.
+     */
+    lastSeenAt: timestamptz("last_seen_at"),
   },
   (table) => [
     primaryKey({ columns: [table.workContextId, table.kind, table.value] }),

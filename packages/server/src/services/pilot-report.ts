@@ -93,6 +93,7 @@ import {
 } from "./pilot-label-figures.ts";
 import type { CohortFigures, LabelFigures, LabelReason } from "./pilot-label-figures.ts";
 import { readTeamSettings } from "./team-settings.ts";
+import { sessionActiveIn } from "./session-window.ts";
 import type { PilotAnswerSurface } from "./pilot.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
@@ -662,9 +663,10 @@ const readPrecision = async (
   // are comparable with the first pilot's — while the four labelled figures
   // count INTERVENTIONS from when labels existed (07 §12, second review).
   const { since, until } = window;
-  const windowSessions = sql`s.repo = ${repo}
-    AND s.started_at >= ${since.toISOString()}::timestamptz
-    AND s.started_at < ${until.toISOString()}::timestamptz`;
+  // A session is in the window when it started in it OR did work in it — a
+  // target created or last seen there (services/session-window.ts): one
+  // long-lived session's last week counts in the last week.
+  const windowSessions = sql`s.repo = ${repo} AND ${sessionActiveIn(since, until)}`;
   const [labelled, sessions, opened, noisy, surfaceOk] = await Promise.all([
     readLabelledWindow(deps, repo, window, labelsSince),
     deps.db.execute<{ n: number }>(sql`

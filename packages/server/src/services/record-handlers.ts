@@ -694,10 +694,24 @@ export const ingestTarget = async (
       // First-seen age for the targets-only pointer (#19). onConflictDoNothing
       // below means a duplicate touch never bumps it — the honest age.
       createdAt: deps.now(),
+      lastSeenAt: deps.now(),
     })
     .onConflictDoNothing()
     .returning({ workContextId: workContextTargets.workContextId });
   if (inserted[0] === undefined) {
+    // SIGHTED AGAIN (DESIGN.md "One session, many topics"): the pilot windows
+    // a session by when its work was last seen, so a long-lived session's
+    // re-touch of an old file counts in the week it happened.
+    await deps.db
+      .update(workContextTargets)
+      .set({ lastSeenAt: deps.now() })
+      .where(
+        and(
+          eq(workContextTargets.workContextId, body.workContextId),
+          eq(workContextTargets.kind, body.kind),
+          eq(workContextTargets.value, value),
+        ),
+      );
     // The row exists. If the OTHER lane saw this file too, the label is
     // upgraded to "both" — the primary key collapses the two observations
     // into one row, and without this the lane that arrived first would

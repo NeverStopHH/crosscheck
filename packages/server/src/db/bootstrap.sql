@@ -222,6 +222,12 @@ ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS updated_by_session_id text RE
 ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS branch text;
 ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS base_commit text;
 
+-- When a target was last SIGHTED (DESIGN.md "One session, many topics"): the
+-- pilot windows a session by its targets' times, created or last seen, so a
+-- long-lived session's recent work counts in the week it was done. Null on a
+-- row older than the column, read as its created_at.
+ALTER TABLE work_context_targets ADD COLUMN IF NOT EXISTS last_seen_at timestamptz;
+
 -- Similarity-detected contradiction candidates (DESIGN.md §3 ingest gate).
 -- A TABLE for these, and only these: they exist only while an embedder is
 -- configured, and recomputing pairwise cosine at read time would be O(n²) over
