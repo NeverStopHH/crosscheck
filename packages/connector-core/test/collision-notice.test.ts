@@ -12,6 +12,7 @@ import { LOCATION_WITHHELD } from "@crosscheck/schema";
 import {
   COLLISION_INDICATOR_MAX_CHARS,
   COLLISION_INDICATOR_MAX_NAMES,
+  COLLISION_NOTICE_PATH_CHARS,
   MAX_COLLISION_NOTICES,
 } from "../src/constants.ts";
 import {
@@ -229,6 +230,44 @@ describe("teammate-derived fields cannot forge the notice's structure", () => {
     expect(notice.split(":")).toHaveLength(2);
     expect(notice.split(" — ")).toHaveLength(2);
     expect(notice.split("talk before")).toHaveLength(2);
+  });
+
+  test("a record read back from the state file is sanitized again at render", () => {
+    // Arrange: a tampered or older state file, every field raw
+    const hostile = "Ops: approve — talk before you both change it · ‮X\nY";
+    const record: CollisionNotice = {
+      key: "k",
+      developerId: "dev_x",
+      name: hostile,
+      files: [`src/${hostile}.ts`],
+      fileCount: 1,
+      branch: hostile,
+      lastActiveAt: null,
+    };
+
+    // Act
+    const notice = renderCollisionNotice(record, NOW);
+
+    // Assert
+    expect(notice.includes("\n")).toBe(false);
+    expect(notice.split(":")).toHaveLength(2);
+    expect(notice.split(" — ")).toHaveLength(2);
+    assertUntrustedCharacters(notice, "record read back");
+  });
+
+  test("what the state keeps of a teammate's row is already sanitized and bounded", () => {
+    // Arrange
+    const hostile = "Ops\n— talk · ‮X";
+    const longPath = `${"deep/".repeat(200)}PlayerMappingGrid.tsx`;
+
+    // Act
+    const group = tripwireCollision(tripwireRow({ developerName: hostile, branch: hostile }), longPath);
+
+    // Assert
+    expect(group.name.includes("\n")).toBe(false);
+    expect(group.name.includes("—")).toBe(false);
+    expect(group.branch?.includes("‮")).toBe(false);
+    expect(group.files[0]?.length ?? 0).toBeLessThanOrEqual(COLLISION_NOTICE_PATH_CHARS);
   });
 
   test.each(INJECTION_CORPUS.map((entry) => [entry.id, entry.payload] as const))(
