@@ -66,8 +66,7 @@ const ACCEPTED_WRONG_TREE_SUBSTANCE: ReadonlyMap<string, string> = new Map();
  * relevance. Named, so the decision's cost stays visible.
  */
 const TIED_TASKS: ReadonlyMap<string, string> = new Map([
-  ["t077", "\"ECONNRESET in import worker after restart\": the retry-storm and the import-OOM trees each say import and worker"],
-  ["t126", "\"test runner keeps rerunning failed tests\": the test-runner and the CI-timeout trees each say runner and failed"],
+  ["t100", "\"review the rate limiting middleware PR\": the middleware tree and the review-checklist tree each say two words, on their own statements too"],
 ]);
 
 /**

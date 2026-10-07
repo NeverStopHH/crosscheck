@@ -88,15 +88,24 @@ export const isStrongSubstanceMatch = (match: SubstanceMatch): boolean =>
 /**
  * A TREE'S STRENGTH (round 3, H3 + M6): an exact target first — the prompt
  * named something the tree touched, a fact — then the most topical query
- * words one of its statements shares.
+ * words one of its statements shares, then (round 4, M1) the topical words
+ * its OWN statement shares: of two trees a claim each ties on, the one whose
+ * title and intent say the prompt is the one about it. Since M1 counts a
+ * task's meta words, "Retry-Limit im Checkout erhöhen" shares two words with
+ * four trees, and only the checkout-retries tree's title says both.
  */
 export interface TreeStrength {
   readonly isExact: boolean;
   readonly topical: number;
+  readonly own: number;
 }
 
+/** Stronger first: negative when `left` is the stronger tree, zero on a tie. */
+export const compareTreeStrength = (left: TreeStrength, right: TreeStrength): number =>
+  Number(right.isExact) - Number(left.isExact) || right.topical - left.topical || right.own - left.own;
+
 export const isAtLeastAsStrongTree = (strength: TreeStrength, than: TreeStrength): boolean =>
-  strength.isExact === than.isExact ? strength.topical >= than.topical : strength.isExact;
+  compareTreeStrength(strength, than) <= 0;
 
 /**
  * THE ONE STRONGEST TREE, or none (round 4, C2): the index of the tree no

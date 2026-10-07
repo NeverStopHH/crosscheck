@@ -266,18 +266,36 @@ describe("a prompt of session-steering words only matches nothing, typos or not 
   });
 
   test.each([["why does the usage limit reset"], ["reset the limits please"], ["when does the limit reset?"]])(
-    "M3 + C1: %p is a task, but meta words alone never qualify a tree",
+    "round 4, M1: %p is a task, and its meta words reach the tree that says them",
     async (prompt) => {
-      // Arrange — the tree's claim says limit and reset, and nothing topical the prompt says
+      // Arrange — the tree's claim says limit and reset
       const { harness, robin } = await englishLimitTree();
 
       // Act
       const candidates = await fetchCandidates(harness, robin, { query: prompt });
 
-      // Assert — round 3, C1: two meta words agreeing are the session's machinery
-      expect(candidates).toEqual([]);
+      // Assert — round 3 (C1) counted two meta words for nothing; the closed
+      // classes decide content-freeness only, and a task about the limit's
+      // reset is about the limit's reset
+      expect(ids(candidates)).toEqual([WORK_CONTEXT_ID]);
     },
   );
+
+  test.each([
+    ["token refresh broken", "JWT token refresh fails after signing key rotation"],
+    ["rate limit not enforced", "Rate limit for the public API"],
+  ])("round 4, M1: %p reaches the tree titled %p", async (prompt, title) => {
+    // Arrange
+    const { harness, robin } = await seedTree({ title, description: "Platform" }, [
+      { id: "clm_m1", body: "The batch endpoint was left out of the middleware." },
+    ]);
+
+    // Act
+    const candidates = await fetchCandidates(harness, robin, { query: prompt });
+
+    // Assert
+    expect(ids(candidates)).toEqual([WORK_CONTEXT_ID]);
+  });
 
   test("C1, the control: one topical word beside the meta words finds the tree about it", async () => {
     // Arrange

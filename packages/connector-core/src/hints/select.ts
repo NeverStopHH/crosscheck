@@ -144,9 +144,10 @@ export interface SelectHintInput {
    */
   readonly promptTerms: readonly string[];
   /**
-   * Those of the terms that belong to no closed class (promptTerms().topical,
-   * hold-out review round 3, C1): the recount needs one of them on the same
-   * statement as the second shared word. Required for the same reason.
+   * Those of the terms that can name a topic (promptTerms().topical: hold-out
+   * review round 3, C1; every class but steering since round 4, M1): the
+   * recount needs one of them on the same statement as the second shared
+   * word. Required for the same reason.
    */
   readonly promptTopicalTerms: readonly string[];
 }
@@ -236,6 +237,8 @@ const strengthOf = (context: HintContextCandidate, selfDeveloperId: string | nul
   topical:
     context.topicalTerms ??
     Math.max(0, ...[wireStatementOf(context), ...recountBodies(context, selfDeveloperId)].map((statement) => statementMatch(recount, statement).topical)),
+  // The tree's own statement breaks a tie on the count (round 4, M1).
+  own: context.workContext.matchedTerms ?? statementMatch(recount, wireStatementOf(context)).topical,
 });
 
 /**

@@ -76,16 +76,10 @@ const CONTINUATION_TASKS: ReadonlySet<string> = new Set([
  * finding or pointer — the hub's order between equals is search rank, not
  * relevance. The corpus seeds sibling trees on purpose (two JWT trees, two
  * migration trees, two worker trees), and these rows share as many topical
- * words with each. Named, so the decision's cost stays visible.
+ * words with each — on the best statement AND on the tree's own one, which
+ * breaks a tie since M1. Named, so the decision's cost stays visible.
  */
-const TIED_TASKS: ReadonlySet<string> = new Set([
-  "login session läuft zu früh ab",
-  "refresh token race",
-  "migration waits on lock",
-  "flaky tests again",
-  "worker hängt beim SIGTERM",
-  "Worker stoppt nicht bei SIGTERM",
-]);
+const TIED_TASKS: ReadonlySet<string> = new Set(["flaky tests again"]);
 
 const REPO_ID = CORPUS_REPO_ID;
 const NOW = CORPUS_NOW;

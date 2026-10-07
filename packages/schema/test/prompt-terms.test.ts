@@ -90,8 +90,24 @@ describe("content terms are the words left after the stop lists", () => {
     ["run the checkout e2e tests", ["checkout", "e2e"]],
     ["the usage limit banner shows wrong numbers", ["banner", "shows", "wrong", "numbers"]],
     ["why does the usage limit reset", []],
-  ])("the TOPICAL terms of %p are its content terms of no closed class (C1)", (prompt, topical) => {
+  ])("the UNCLASSED terms of %p are its content terms of no closed class (round 3, C1)", (prompt, unclassed) => {
+    expect(promptTerms(prompt).unclassed).toEqual(unclassed);
+  });
+
+  test.each([
+    ["token refresh broken", ["token", "refresh", "broken"]],
+    ["rate limit not enforced", ["rate", "limit", "enforced"]],
+    ["token refresh fails after key rotation", ["token", "refresh", "fails", "key", "rotation"]],
+    ["run the checkout e2e tests", ["run", "checkout", "e2e", "tests"]],
+    ["why does the usage limit reset", ["usage", "limit", "reset"]],
+    ["deploy logs show nothing after the cutover", ["deploy", "logs", "show", "cutover"]],
+  ])("in a TASK, the topical terms of %p are its content terms of every class but steering (round 4, M1)", (prompt, topical) => {
     expect(promptTerms(prompt).topical).toEqual(topical);
+  });
+
+  test("a slip of a steering word is never topical, in a task or not (M1)", () => {
+    // "contineu" is the hand's "continue"; the task words are topical
+    expect(promptTerms("contineu the checkout migration").topical).toEqual(["checkout", "migration"]);
   });
 
   test("meta, conversation and operation words stay terms in a task prompt", () => {

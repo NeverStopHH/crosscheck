@@ -136,6 +136,16 @@ describe("a finding only from the one strongest tree, on a word only it says (C2
     expect(pickedId([first, second])).toBe("silence");
   });
 
+  test("round 4, M1: on equal counts, the tree whose own statement shares more is the one strongest", () => {
+    // Arrange — "Retry-Limit im Checkout erhöhen": a claim of each tree shares
+    // two words, the checkout-retries tree's own title both of them
+    const usage = tree("wc_usage", [observation("clm_u", "wc_usage", 2)], { treeTerms: 1, topicalTerms: 2 });
+    const checkout = tree("wc_checkout", [decision("clm_c", "wc_checkout", 2)], { treeTerms: 2, topicalTerms: 2 });
+
+    // Act + Assert
+    expect(pickedId([usage, checkout])).toBe("clm_c");
+  });
+
   test("a tie below the top is no tie", () => {
     const top = tree("wc_top", [decision("clm_top", "wc_top", 3)], { treeTerms: 3, topicalTerms: 4 });
     const first = tree("wc_a", [observation("clm_a", "wc_a", 2)], { treeTerms: 2, topicalTerms: 2 });
@@ -196,9 +206,14 @@ describe("the pointer names the strongest tree, or nothing (H3 + M6)", () => {
   });
 
   test("a hub too old to send the strength: trees the recount finds equally strong are a tie, and a tie says nothing (C2)", () => {
-    // Arrange — no topicalTerms on either, and no prompt word to recount on
-    const { topicalTerms: _first, ...first } = tree("wc_a", [observation("clm_a", "wc_a", 1)], { treeTerms: 1, topicalTerms: 1 });
-    const { topicalTerms: _second, ...second } = tree("wc_b", [observation("clm_b", "wc_b", 3)], { treeTerms: 3, topicalTerms: 3 });
+    // Arrange — no counts on either, as a 0.10.0 hub sends them, and no prompt word to recount on
+    const oldHub = (candidate: HintContextCandidate): HintContextCandidate => {
+      const { topicalTerms: _strength, ...rest } = candidate;
+      const { matchedTerms: _own, ...workContext } = candidate.workContext;
+      return { ...rest, workContext };
+    };
+    const first = oldHub(tree("wc_a", [observation("clm_a", "wc_a", 1)], { treeTerms: 1, topicalTerms: 1 }));
+    const second = oldHub(tree("wc_b", [observation("clm_b", "wc_b", 3)], { treeTerms: 3, topicalTerms: 3 }));
 
     // Act + Assert
     expect(pickedId([first, second])).toBe("silence");

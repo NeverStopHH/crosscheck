@@ -138,10 +138,11 @@ describe("an old hub's candidate is recounted, and refused unless it clears the 
   });
 
   test.each([
-    ["The session limit resets at midnight for every usage window", "silence"],
+    ["The session limit resets at midnight for every usage window", "pointer"],
     ["The zebrafrobnicator session limit is counted twice", "pointer"],
-  ] as const)("a body sharing only meta words is not the floor; one topical word beside them is (C1): %p", (body, kind) => {
-    // Arrange — session, limit, resets, usage are the session's machinery
+    ["The usage window closes at midnight", "silence"],
+  ] as const)("round 4, M1: a task's meta words are its topic on the recount too, and one shared word is still none: %p", (body, kind) => {
+    // Arrange — session, limit, resets, usage: round 3 (C1) counted them for nothing
     const context = oldHubContext([claim({ body })]);
     const terms = promptTerms("the session limit resets during the zebrafrobnicator usage report");
 
@@ -262,14 +263,14 @@ describe("the flow recounts on the prompt's own content terms", () => {
     expect(hint).not.toContain("crosscheck hint:");
   });
 
-  test("a body sharing only the prompt's meta words is not, however many (C1)", async () => {
+  test("round 4, M1: a body sharing a task's meta words is pointed at, as the tip hub points", async () => {
     expect(
       await hintFor(
         "ohf-meta",
         "the session limit resets during the zebrafrobnicator usage report",
         "The session limit resets at midnight for every usage window",
       ),
-    ).toBe("");
+    ).toContain("crosscheck pointer");
   });
 
   test("a body sharing the prompt's steering words and one task word is not", async () => {
@@ -305,9 +306,9 @@ describe("the flow recounts on the prompt's own content terms", () => {
       expect(hint).toBe("");
     });
 
-    test("a closed word's inflection is no topic: \"shows\" beside a meta word clears nothing (L1)", async () => {
-      const wire = treeWire("Usage dashboard shows wrong monthly totals");
-      expect(await hintFor("ohf-shows", "the weekly export shows usage", "Tracked minutes are summed per tenant.", wire)).toBe("");
+    test("a closed word's inflection is no topic: \"shows\" beside \"stopped\" clears nothing (L1, M1)", async () => {
+      const wire = treeWire("Usage dashboard shows totals, then stopped");
+      expect(await hintFor("ohf-shows", "the weekly export shows it, then stopped", "Tracked minutes are summed per tenant.", wire)).toBe("");
     });
 
     test("an intent on the wire is part of the tree's own statement, as on the hub", async () => {

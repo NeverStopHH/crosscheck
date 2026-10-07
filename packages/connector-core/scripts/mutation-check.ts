@@ -18098,8 +18098,9 @@ export const MUTATIONS: readonly Mutation[
     label: "a content-free prompt spends the session's one intent fire",
     // RETARGETED (round 3, H2): the topical floor is the content-free rule here.
     // RETARGETED (round 3, L4): on the hook's one classification.
+    // RETARGETED (round 4, M1): the fire reads the unclassed words.
     file: `${CORE}/src/derive/intent/gate.ts`,
-    from: "  return classified.terms.topical.length >= INTENT_MIN_TOPICAL_WORDS ? human : null;",
+    from: "  return classified.terms.unclassed.length >= INTENT_MIN_TOPICAL_WORDS ? human : null;",
     to: "  return human;",
     test: `${CONNECTOR}/test/content-free-prompt.test.ts`,
     because: "\"mache weiter, limit zuruckgesetzt, bitte …\" is long enough to be summarised as the session's task, and the real task after it gets no fire",
@@ -18226,8 +18227,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the pool is cut to the bound before the floor runs",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "    .filter(({ row, sharedTerms }) => clearsFloor(row.tier, sharedTerms))\n    .slice(0, HINT_MAX_CONTEXTS);",
-    to: "    .slice(0, HINT_MAX_CONTEXTS)\n    .filter(({ row, sharedTerms }) => clearsFloor(row.tier, sharedTerms));",
+    // RETARGETED (round 4, M1): the bound keeps the strongest of those that clear the floor.
+    from: "    .filter(({ row, sharedTerms }) => clearsFloor(row.tier, sharedTerms))\n    .toSorted((left, right) => compareTreeStrength(strengthOfCandidate(left), strengthOfCandidate(right)))\n    .slice(0, HINT_MAX_CONTEXTS);",
+    to: "    .slice(0, HINT_MAX_CONTEXTS)\n    .filter(({ row, sharedTerms }) => clearsFloor(row.tier, sharedTerms))\n    .toSorted((left, right) => compareTreeStrength(strengthOfCandidate(left), strengthOfCandidate(right)));",
     test: `${SERVER}/test/hint-floor-integrity.test.ts`,
     because: "three trees that repeat one stray word crowd out the one tree that shares three (M5)",
   },
@@ -19029,8 +19031,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the topical terms keep closed-class words",
     file: `${SCHEMA}/src/prompt-terms.ts`,
-    from: "  const topical = content.filter((_, index) => classes[index] === null);",
-    to: "  const topical = content;",
+    // RETARGETED (round 4, M1): the round-3 set, words of no closed class, is the intent fire's `unclassed` now.
+    from: "    unclassed: content.filter((_, index) => classes[index] === null),",
+    to: "    unclassed: content,",
     test: `${SCHEMA}/test/prompt-terms.test.ts`,
     because: "\"why does the usage limit reset\" carries three topics, and the floor's topical half is the floor's other half again (C1)",
   },
@@ -19132,9 +19135,10 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an exact target counts no more than words",
     // RETARGETED (round 4, C2): the comparison is the schema's, for the hub and the selector.
+    // RETARGETED (round 4, M1): one comparison, the own statement third.
     file: `${SCHEMA}/src/substance-trust.ts`,
-    from: "  strength.isExact === than.isExact ? strength.topical >= than.topical : strength.isExact;",
-    to: "  strength.topical >= than.topical;",
+    from: "  Number(right.isExact) - Number(left.isExact) || right.topical - left.topical || right.own - left.own;",
+    to: "  right.topical - left.topical || right.own - left.own;",
     test: `${CORE}/test/hint-best-match.test.ts`,
     because: "a tree that touched the file the prompt named loses to one that merely shares its words (H3 + M6)",
   },
@@ -19150,8 +19154,9 @@ export const MUTATIONS: readonly Mutation[
     label: "the intent fire is spent on a prompt of machinery",
     file: `${CORE}/src/derive/intent/gate.ts`,
     // RETARGETED (round 3, L4): on the hook's one classification.
-    from: "  return classified.terms.topical.length >= INTENT_MIN_TOPICAL_WORDS ? human : null;",
-    to: "  return classified.terms.topical.length >= 1 ? human : null;",
+    // RETARGETED (round 4, M1): the fire reads the unclassed words.
+    from: "  return classified.terms.unclassed.length >= INTENT_MIN_TOPICAL_WORDS ? human : null;",
+    to: "  return classified.terms.unclassed.length >= 1 ? human : null;",
     test: `${CONNECTOR}/test/intent-gate.test.ts`,
     because: "\"fix the session limit reset handling once more please\" parks a sentence the model can only answer with machinery (round 3, H2)",
   },
@@ -19314,9 +19319,10 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the closed-stem check compares words as written",
     // RETARGETED (round 3, follow-up): the shared rule compares lexemes.
+    // RETARGETED (round 4, M1): only for an inflected word that is no class word as written.
     file: `${SCHEMA}/src/content-floor.ts`,
-    from: "CLOSED_LEXEMES.has(termLexeme(foldWord(term)));",
-    to: "CLOSED_CLASS_WORDS.includes(foldWord(term));",
+    from: "  return lexeme !== folded && exactClassOf(folded) === null && CLOSED_LEXEMES.has(lexeme);",
+    to: "  return lexeme !== folded && exactClassOf(folded) === null && CLOSED_CLASS_WORDS.includes(folded);",
     test: `${SERVER}/test/hint-closed-stems.test.ts`,
     because: "\"shows\" is never \"show\", and the dashboard tree is pointed at for a limit report (L1)",
   },
@@ -19859,6 +19865,102 @@ export const MUTATIONS: readonly Mutation[
     because: "a word the runner-up says only in a claim tells the trees apart, and a finding on it ships (round 4, C2)",
   },
   {
+    label: "a task's meta words are no topic again",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "    topical: content.filter((_, index) => !isSteeringClass(classes[index] ?? null)),",
+    to: "    topical: content.filter((_, index) => classes[index] === null),",
+    test: `${SERVER}/test/hint-candidate-floor.test.ts`,
+    because: "\"token refresh broken\" and \"rate limit not enforced\" reach no tree, since token, rate and limit count for nothing (round 4, M1)",
+  },
+  {
+    label: "a slip of a steering word is topical",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "    topical: content.filter((_, index) => !isSteeringClass(classes[index] ?? null)),",
+    to: "    topical: content,",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"contineu\" agrees with a tree that says \"continue\" as if it were a topic (round 4, M1)",
+  },
+  {
+    label: "the intent fire reads a task's meta words as its topic",
+    file: `${CORE}/src/derive/intent/gate.ts`,
+    from: "  return classified.terms.unclassed.length >= INTENT_MIN_TOPICAL_WORDS ? human : null;",
+    to: "  return classified.terms.topical.length >= INTENT_MIN_TOPICAL_WORDS ? human : null;",
+    test: `${CONNECTOR}/test/intent-gate.test.ts`,
+    because: "\"fix the session limit reset handling once more please\" parks a sentence of machinery as the session's intent (round 4, M1)",
+  },
+  {
+    label: "a derived intent of machinery has a topic again",
+    file: `${CORE}/src/derive/intent/gate.ts`,
+    from: "export const hasTopic = (sentence: string): boolean => promptTerms(sentence).unclassed.length > 0;",
+    to: "export const hasTopic = (sentence: string): boolean => promptTerms(sentence).topical.length > 0;",
+    test: `${CONNECTOR}/test/intent-worker.test.ts`,
+    because: "\"Continue the session after the usage limit reset\" becomes the session's intent, the round-3 magnet (round 4, M1)",
+  },
+  {
+    label: "an uninflected word is read as a closed word's inflection",
+    file: `${SCHEMA}/src/content-floor.ts`,
+    from: "  return lexeme !== folded && exactClassOf(folded) === null && CLOSED_LEXEMES.has(lexeme);",
+    to: "  return exactClassOf(folded) === null && CLOSED_LEXEMES.has(lexeme);",
+    test: `${SCHEMA}/test/content-floor.test.ts`,
+    because: "\"refresh\" is no topic because the meta word \"refreshed\" stems to it (round 4, M1)",
+  },
+  {
+    label: "a class word as written is read as its own inflection",
+    file: `${SCHEMA}/src/content-floor.ts`,
+    from: "  return lexeme !== folded && exactClassOf(folded) === null && CLOSED_LEXEMES.has(lexeme);",
+    to: "  return lexeme !== folded && CLOSED_LEXEMES.has(lexeme);",
+    test: `${SCHEMA}/test/content-floor.test.ts`,
+    because: "\"usage\" and \"limits\" are no topic in a task, since the stemmer cuts them (round 4, M1)",
+  },
+  {
+    label: "the tree's own statement breaks no tie",
+    file: `${SCHEMA}/src/substance-trust.ts`,
+    from: "  Number(right.isExact) - Number(left.isExact) || right.topical - left.topical || right.own - left.own;",
+    to: "  Number(right.isExact) - Number(left.isExact) || right.topical - left.topical;",
+    test: `${CORE}/test/hint-best-match.test.ts`,
+    because: "\"Retry-Limit im Checkout erhöhen\" ties four trees and gets nothing, though only one tree's title says checkout (round 4, M1)",
+  },
+  {
+    label: "the selector counts no tree's own statement",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  own: context.workContext.matchedTerms ?? statementMatch(recount, wireStatementOf(context)).topical,",
+    to: "  own: 0,",
+    test: `${CORE}/test/hint-best-match.test.ts`,
+    because: "the checkout-retries tree ties the usage tree on a claim each, and the retry-limit prompt gets nothing (round 4, M1)",
+  },
+  {
+    label: "the hub counts no tree's own statement for its strength",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  own: candidate.ownTerms,",
+    to: "  own: 0,",
+    test: `${SERVER}/test/hint-strong-match.test.ts`,
+    because: "the render tree ties a scratch tree on a claim each, and a 0.10.0 connector gets no finding at all (round 4, M1)",
+  },
+  {
+    label: "the hub's bound keeps the search's first, not the strongest",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    .toSorted((left, right) => compareTreeStrength(strengthOfCandidate(left), strengthOfCandidate(right)))\n",
+    to: "",
+    test: `${SERVER}/test/hint-strong-match.test.ts`,
+    because: "\"limit ist wieder da … session timeout im workbench fixen\" loses the session-timeout tree to three that ranked above it (round 4, M1)",
+  },
+  {
+    label: "a continuation phrase is read on its first two words",
+    file: `${SCHEMA}/src/continuation.ts`,
+    from: "  CONTINUATION_PHRASES.some((phrase) => phrase.every((word, offset) => words[index + offset] === word));",
+    to: "  CONTINUATION_PHRASES.some((phrase) => phrase.slice(0, 2).every((word, offset) => words[index + offset] === word));",
+    test: `${SCHEMA}/test/continuation.test.ts`,
+    because: "\"pick up the new signing key from the vault\" loses its hint to \"pick up where you stopped\" (round 4, M1)",
+  },
+  {
+    label: "try again is no continuation",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "  [\"try\", \"again\"], [\"try\", \"it\", \"again\"], ",
+    to: "  ",
+    test: `${SCHEMA}/test/continuation.test.ts`,
+    because: "\"rate limited again lol, try again\" reaches the rate-limit tree now that a task's meta words count (round 4, M1)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     // RETARGETED (round 3, M7): the query is the prompt's window now.
@@ -20057,8 +20159,8 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/hook-window-pairing.test.ts 11
  * PRINTS: packages/connector-claude/test/hook-window.test.ts 4
  * PRINTS: packages/connector-claude/test/hooks-fired-marker.test.ts 1
- * PRINTS: packages/connector-claude/test/intent-gate.test.ts 2
- * PRINTS: packages/connector-claude/test/intent-worker.test.ts 5
+ * PRINTS: packages/connector-claude/test/intent-gate.test.ts 3
+ * PRINTS: packages/connector-claude/test/intent-worker.test.ts 6
  * PRINTS: packages/connector-claude/test/landed-change-hook.test.ts 4
  * PRINTS: packages/connector-claude/test/landed-notice-author-hook.test.ts 1
  * PRINTS: packages/connector-claude/test/landed-notice-hook.test.ts 6
@@ -20114,7 +20216,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/git-timeout.test.ts 4
  * PRINTS: packages/connector-core/test/guarantee-declarations.test.ts 28
  * PRINTS: packages/connector-core/test/guarantee-doctor.test.ts 3
- * PRINTS: packages/connector-core/test/hint-best-match.test.ts 7
+ * PRINTS: packages/connector-core/test/hint-best-match.test.ts 9
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 2
  * PRINTS: packages/connector-core/test/hint-harness-turn.test.ts 7
@@ -20198,8 +20300,8 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/causal-guarantees.test.ts 7
  * PRINTS: packages/schema/test/claim.test.ts 1
- * PRINTS: packages/schema/test/content-floor.test.ts 3
- * PRINTS: packages/schema/test/continuation.test.ts 10
+ * PRINTS: packages/schema/test/content-floor.test.ts 5
+ * PRINTS: packages/schema/test/continuation.test.ts 12
  * PRINTS: packages/schema/test/english-stem.test.ts 4
  * PRINTS: packages/schema/test/evidence-resolution.test.ts 8
  * PRINTS: packages/schema/test/file-ref.test.ts 5
@@ -20207,7 +20309,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1
- * PRINTS: packages/schema/test/prompt-terms.test.ts 24
+ * PRINTS: packages/schema/test/prompt-terms.test.ts 25
  * PRINTS: packages/schema/test/session-control.test.ts 7
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/schema/test/slash-command.test.ts 4
@@ -20241,7 +20343,7 @@ interface Outcome {
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/fence-waivers.test.ts 1
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
- * PRINTS: packages/server/test/hint-candidate-floor.test.ts 8
+ * PRINTS: packages/server/test/hint-candidate-floor.test.ts 9
  * PRINTS: packages/server/test/hint-closed-stems.test.ts 2
  * PRINTS: packages/server/test/hint-content-floor.test.ts 7
  * PRINTS: packages/server/test/hint-content-terms.test.ts 3
@@ -20252,7 +20354,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-harness-turn.test.ts 2
  * PRINTS: packages/server/test/hint-long-prompt.test.ts 4
  * PRINTS: packages/server/test/hint-pushable-ranking.test.ts 5
- * PRINTS: packages/server/test/hint-strong-match.test.ts 9
+ * PRINTS: packages/server/test/hint-strong-match.test.ts 11
  * PRINTS: packages/server/test/hint-topical-floor.test.ts 4
  * PRINTS: packages/server/test/hint-withheld-bodies.test.ts 5
  * PRINTS: packages/server/test/hints.test.ts 6

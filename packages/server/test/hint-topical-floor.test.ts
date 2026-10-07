@@ -8,8 +8,13 @@
  * prompts at an intent-only tree that said nothing else.
  *
  * ON ONE STATEMENT: the topical word and the second word agree on the same
- * statement — a title of two meta words beside a claim that shares one stray
- * topical word is two weak statements, not one strong one.
+ * statement — a title that shares one word beside a claim that shares
+ * another is two weak statements, not one strong one.
+ *
+ * REVISED IN ROUND 4 (M1): the closed classes decide content-freeness only.
+ * In a prompt that IS a task a meta word is topical — "token refresh
+ * broken" is about tokens — while a content-free prompt, or one that carries
+ * the session on (C1), never reaches the hub at all.
  */
 import { describe, expect, test } from "bun:test";
 
@@ -62,7 +67,7 @@ const seedTree = async (
   return { harness, robin };
 };
 
-describe("two meta words are never a topic (C1)", () => {
+describe("meta words: no topic in a prompt that carries the session on, a topic in a task (C1; round 4, M1)", () => {
   test("a prompt that shares only session and limit with an intent-only tree reaches no candidate", async () => {
     // Arrange — the round-3 magnet: an intent made of the session's machinery
     const { harness, robin } = await seedTree(
@@ -95,29 +100,29 @@ describe("two meta words are never a topic (C1)", () => {
     expect(candidates[0]?.sharedTerms).toBe(2);
   });
 
-  test("a claim that shares only meta words qualifies no tree", async () => {
+  test("round 4, M1: a task's meta words, agreeing on a claim, qualify its tree", async () => {
     // Arrange
     const { harness, robin } = await seedTree({ title: "Nightly report formatting", description: "Columns" }, [
       { id: "clm_meta", body: "The usage limit resets every session window." },
     ]);
 
-    // Act
+    // Act — a task: "went wrong somehow" is no command to the session
     const candidates = await fetchCandidates(harness, robin, "usage limit reset for the session went wrong somehow");
 
-    // Assert
-    expect(candidates).toEqual([]);
+    // Assert — round 3 (C1) counted the four for nothing
+    expect(candidates.map((candidate) => candidate.workContext.id)).toEqual([WORK_CONTEXT_ID]);
   });
 });
 
 describe("the topical word stands on the floor statement itself (C1, generalised)", () => {
-  test("a title of two meta words beside a claim sharing one topical word is no candidate", async () => {
-    // Arrange — title: usage, limit; claim: banner alone
-    const { harness, robin } = await seedTree({ title: "Usage limit notes", description: "Scratch" }, [
-      { id: "clm_banner", body: "The banner colour was changed last sprint." },
+  test("a title sharing one word beside a claim sharing another is no candidate", async () => {
+    // Arrange — title: banner alone; claim: flickers alone
+    const { harness, robin } = await seedTree({ title: "Banner notes", description: "Scratch" }, [
+      { id: "clm_banner", body: "Something flickers in the colour picker." },
     ]);
 
     // Act
-    const candidates = await fetchCandidates(harness, robin, "the usage limit banner flickers");
+    const candidates = await fetchCandidates(harness, robin, "the usage banner flickers");
 
     // Assert
     expect(candidates).toEqual([]);
@@ -125,10 +130,10 @@ describe("the topical word stands on the floor statement itself (C1, generalised
 
   test("the control: the same words on one statement are a candidate", async () => {
     // Arrange
-    const { harness, robin } = await seedTree({ title: "Usage limit banner notes", description: "Scratch" }, []);
+    const { harness, robin } = await seedTree({ title: "Banner flickers notes", description: "Scratch" }, []);
 
     // Act
-    const candidates = await fetchCandidates(harness, robin, "the usage limit banner flickers");
+    const candidates = await fetchCandidates(harness, robin, "the usage banner flickers");
 
     // Assert
     expect(candidates.map((candidate) => candidate.workContext.id)).toEqual([WORK_CONTEXT_ID]);

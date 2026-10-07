@@ -68,7 +68,9 @@ export const intentPromptFrom = (classified: ClassifiedPrompt): string | null =>
   if (!isSubstantivePrompt(human)) {
     return null;
   }
-  return classified.terms.topical.length >= INTENT_MIN_TOPICAL_WORDS ? human : null;
+  // UNCLASSED, not topical (round 4, M1): in a task a meta word is a topic
+  // for the hint floor, but a turn of nothing but machinery still parks none.
+  return classified.terms.unclassed.length >= INTENT_MIN_TOPICAL_WORDS ? human : null;
 };
 
 /** The same, for a caller that has not classified the prompt yet (the worker's re-read). */
@@ -80,7 +82,7 @@ export const intentPromptOf = (prompt: string): string | null => intentPromptFro
  * reset" is all machinery, and such an intent pulled limit chatter onto an
  * intent-only tree on every teammate's prompt.
  */
-export const hasTopic = (sentence: string): boolean => promptTerms(sentence).topical.length > 0;
+export const hasTopic = (sentence: string): boolean => promptTerms(sentence).unclassed.length > 0;
 
 /** One fire, booked BEFORE the spawn (the Stop hook's ordering contract). */
 export const withIntentFire = (state: SessionState): SessionState => ({

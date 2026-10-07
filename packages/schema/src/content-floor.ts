@@ -25,7 +25,7 @@
  */
 import { englishStem } from "./english-stem.ts";
 import type { PromptTerms } from "./prompt-terms.ts";
-import { CLOSED_CLASS_WORDS, foldWord } from "./session-control.ts";
+import { CLOSED_CLASS_WORDS, exactClassOf, foldWord } from "./session-control.ts";
 import { ENGLISH_STOP_WORDS } from "./stop-words.ts";
 
 /** Shared words one statement needs: two agreeing on the same statement are a topic, one is a stray word. */
@@ -65,8 +65,17 @@ const CLOSED_LEXEMES: ReadonlySet<string> = new Set(
  * classes a word as written, and the match is on lexemes, so "stopped" — no
  * class word as written — matched "stops" as the conversation word "stop".
  * Compared folded, the form the class words are kept in.
+ *
+ * ONLY AN INFLECTED PROMPT WORD (round 4, M1): one whose lexeme is not the
+ * word itself, and that is no class word as written — those are topical in a
+ * task now. "refresh" is its own lexeme, so it is a topic though the meta
+ * word "refreshed" shares it; "shows", "stopped" and "deploys" stay none.
  */
-export const isClosedInflection = (term: string): boolean => CLOSED_LEXEMES.has(termLexeme(foldWord(term)));
+export const isClosedInflection = (term: string): boolean => {
+  const folded = foldWord(term);
+  const lexeme = termLexeme(folded);
+  return lexeme !== folded && exactClassOf(folded) === null && CLOSED_LEXEMES.has(lexeme);
+};
 
 /** The lexemes a text says: its words, lower-cased, less the database's English stop words. */
 export const textLexemes = (text: string): ReadonlySet<string> =>

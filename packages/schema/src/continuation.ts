@@ -57,9 +57,9 @@ const isClauseWord = (word: string): boolean =>
 const isSilentWord = (word: string): boolean =>
   word.length < MIN_SAYING_CHARS || ENGLISH_FUNCTION_WORDS.has(word) || GERMAN_FUNCTION_WORDS.has(word) || wordClassOf(word) !== null;
 
-/** Two words in a row that carry the session on: "carry on", "go ahead". */
+/** Words in a row that carry the session on: "carry on", "go ahead", "where you left off". */
 const isSignalPhrase = (words: readonly string[], index: number): boolean =>
-  CONTINUATION_PHRASES.some(([first, second]) => words[index] === first && words[index + 1] === second);
+  CONTINUATION_PHRASES.some((phrase) => phrase.every((word, offset) => words[index + offset] === word));
 
 /** A clause of nothing but a clause word and silent words: "…, next", "passt so". */
 const isClauseSignal = (clause: readonly string[]): boolean =>

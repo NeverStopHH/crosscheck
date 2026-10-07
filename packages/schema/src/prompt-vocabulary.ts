@@ -43,9 +43,21 @@ export const CONTINUATION_SIGNAL_WORDS: readonly string[] = [
   "wiiter", "weitermachen", "weitergehen", "weiterarbeiten", "fortfahren", "fortsetzen",
 ];
 export const CONTINUATION_CLAUSE_WORDS: readonly string[] = ["next", "los", "passt"];
-export const CONTINUATION_PHRASES: readonly (readonly [string, string])[] = [
+/**
+ * Words in a row that carry the session on, folded. Round 4 (M1) added the
+ * point the work stopped at — "pick up where you stopped", "mach da weiter
+ * wo du aufgehört hast" — and the retry — "try again", "nochmal versuchen" —
+ * since a task's meta words count now: "ok limit reset, pick up where you
+ * stopped" and "rate limited again lol, try again" reached the rate-limit
+ * trees on "limit" and "rate".
+ */
+export const CONTINUATION_PHRASES: readonly (readonly string[])[] = [
   ["carry", "on"], ["go", "ahead"], ["go", "on"], ["keep", "going"], ["keep", "at"], ["fahr", "fort"],
   ["leg", "los"], ["los", "gehts"], ["los", "geht"],
+  ["pick", "up", "where"], ["where", "you", "stopped"], ["where", "you", "left", "off"], ["where", "we", "left", "off"],
+  ["where", "we", "left", "it", "off"], ["where", "you", "were"], ["where", "we", "were"], ["wo", "du", "aufgehort"],
+  ["wo", "wir", "aufgehort"], ["wo", "du", "warst"], ["wo", "wir", "waren"], ["wo", "wir", "stehengeblieben"],
+  ["try", "again"], ["try", "it", "again"], ["nochmal", "versuchen"], ["versuch", "es", "nochmal"], ["versuchs", "nochmal"],
 ];
 
 /**

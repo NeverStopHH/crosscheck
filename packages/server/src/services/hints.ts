@@ -58,6 +58,7 @@ import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
 import {
   HINT_MAX_EXAMINED_TERMS,
   HINT_MIN_SHARED_TERMS,
+  compareTreeStrength,
   floorTermsOf,
   humanPromptText,
   isStrongSubstanceMatch,
@@ -69,7 +70,7 @@ import {
   strongestTreeIndex,
   textLexemes,
 } from "@crosscheck/schema";
-import type { ClaimValidity, FloorTerms, PromptTerms, StatementMatch } from "@crosscheck/schema";
+import type { ClaimValidity, FloorTerms, PromptTerms, StatementMatch, TreeStrength } from "@crosscheck/schema";
 import type { SearchResultKind, SearchTier } from "./search.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
@@ -803,6 +804,13 @@ export const contentFloorOf = async (
 export const hubFloorTermsOf = async (db: Db, repo: string, terms: PromptTerms): Promise<FloorTerms> =>
   floorTermsOf(terms, await listKnownTerms(db, repo, terms.ranked));
 
+/** A candidate's strength by the one rule (`@crosscheck/schema` TreeStrength): exact, best statement, own statement. */
+const strengthOfCandidate = (candidate: { readonly row: { readonly tier: SearchTier } } & CandidateFloor): TreeStrength => ({
+  isExact: candidate.row.tier === "exact",
+  topical: candidate.topicalTerms,
+  own: candidate.ownTerms,
+});
+
 /** One query's candidates, each of which clears the floor on its own. */
 const matchCandidates = async (
   deps: Deps,
@@ -841,10 +849,14 @@ const matchCandidates = async (
   // THE FLOOR, PER CANDIDATE: every tree a hint may name must itself share
   // HINT_MIN_SHARED_TERMS words on ONE of its statements — its own, or one
   // visible claim — one of them TOPICAL (C1), or hold a target the query
-  // named. Decided over the whole pool, then cut to the bound.
+  // named. Decided over the whole pool, then cut to the bound — the
+  // STRONGEST first (round 4, M1), the search's order among equals: since a
+  // task's meta words count, more trees qualify, and the search's first three
+  // left the one strongest out.
   const qualified = pool
     .map((row) => ({ row, ...(floors.get(row.id) ?? NO_FLOOR) }))
     .filter(({ row, sharedTerms }) => clearsFloor(row.tier, sharedTerms))
+    .toSorted((left, right) => compareTreeStrength(strengthOfCandidate(left), strengthOfCandidate(right)))
     .slice(0, HINT_MAX_CONTEXTS);
   const ids = qualified.map(({ row }) => row.id);
   const [claimsByContext, baseCommits, matchedTargets] = await Promise.all([
@@ -857,7 +869,7 @@ const matchCandidates = async (
   ]);
   // THE ONE STRONGEST CANDIDATE, or none on a tie (round 4, C2): only its
   // findings may ship a body, by the rule the selector applies too.
-  const strongest = strongestTreeIndex(qualified.map(({ row, topicalTerms }) => ({ isExact: row.tier === "exact", topical: topicalTerms })));
+  const strongest = strongestTreeIndex(qualified.map(strengthOfCandidate));
   return qualified.map(({ row, ownTerms, sharedTerms, topicalTerms }, index) => ({
     workContext: {
       id: row.id,

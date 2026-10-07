@@ -350,6 +350,7 @@ export {
   SUBSTANCE_MIN_DISTINCT_TERMS,
   SUBSTANCE_MIN_MATCHED_TERMS,
   SUBSTANCE_MIN_TREE_TERMS,
+  compareTreeStrength,
   isAtLeastAsStrongTree,
   isStrongSubstanceMatch,
   isSubstanceShape,

@@ -7,6 +7,11 @@
  * — and carried "weekly limit reset, pick up where you stopped" to the
  * StatsBomb rate-limit tree. So a term whose lexeme is a closed-class word's
  * lexeme is not topical, on the hub that stems.
+ *
+ * ONLY AN INFLECTED PROMPT WORD (round 4, M1): in a task a class word as
+ * written is topical, and so is a word that is its own lexeme ("refresh");
+ * "stopped" and "shows" still lend none. That prompt now carries the session
+ * on ("pick up where you stopped", C1) and never reaches the hub.
  */
 import { describe, expect, test } from "bun:test";
 
@@ -45,26 +50,26 @@ const candidateIds = async (harness: TestHarness, robin: TestDeveloper, query: s
 };
 
 describe("an inflected closed-class word lends no topic (L1)", () => {
-  test("\"stopped\" is the conversation word \"stop\" to a hub that stems", async () => {
-    // Arrange — the title shares "limit" and, as a lexeme, "stop"
-    const { harness, robin } = await seedTree("Bulk extraction stops at the rate limit", "Bulk extraction halts with HTTP 429 after sixty requests.");
+  test("\"stopped\" and \"shows\" are the conversation word \"stop\" and the operation word \"show\" to a hub that stems", async () => {
+    // Arrange — the title shares, as lexemes, "stop" and "show", and nothing else
+    const { harness, robin } = await seedTree("Bulk extraction stops and shows a blank page", "Bulk extraction halts with HTTP 429 after sixty requests.");
 
-    // Act
-    const ids = await candidateIds(harness, robin, "weekly limit reset, pick up where you stopped");
+    // Act — a task: "export" is no class word
+    const ids = await candidateIds(harness, robin, "the export stopped and shows it twice");
 
     // Assert
     expect(ids).toEqual([]);
   });
 
-  test("\"shows\" is the operation word \"show\"", async () => {
+  test("round 4, M1: beside a task's meta word, the inflected one is the second shared word", async () => {
     // Arrange
     const { harness, robin } = await seedTree("Dashboard shows the limit", "The dashboard renders the plan limit in the header.");
 
-    // Act
+    // Act — "limit" is what the task is about; "shows" lends no topic, only a word
     const ids = await candidateIds(harness, robin, "the counter shows the limit again");
 
     // Assert
-    expect(ids).toEqual([]);
+    expect(ids).toEqual([WORK_CONTEXT_ID]);
   });
 
   test("the control: a topical word beside the inflected one still finds the tree", async () => {

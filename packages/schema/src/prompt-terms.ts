@@ -56,10 +56,19 @@ export interface PromptTerms {
   /** Distinct content words, in order of first appearance. */
   readonly content: readonly string[];
   /**
-   * The content words of NO closed class (hold-out review round 3, C1): the
-   * words that can name a topic. A candidate tree must share one of them on
-   * the statement that clears the content floor — two meta words agreeing
-   * ("session", "limit") are the session's machinery, never a topic.
+   * The content words of NO closed class (hold-out review round 3, C1): what
+   * the session's intent fire needs before it spends itself — a turn made of
+   * the session's machinery parks no intent (connector derive/intent/gate.ts).
+   */
+  readonly unclassed: readonly string[];
+  /**
+   * The words that can name a topic: the content words of every class but
+   * the steering ones — triggers, steering and filler, also as slips — since
+   * the CLOSED CLASSES DECIDE CONTENT-FREENESS ONLY (round 4, M1). In a
+   * prompt that is a task, "token refresh broken" and "rate limit not
+   * enforced" are about tokens and rate limits; round 3 made a meta word no
+   * topic anywhere, and those prompts could reach no tree. A candidate tree
+   * must share one of them on the statement that clears the content floor.
    */
   readonly topical: readonly string[];
   /**
@@ -166,10 +175,10 @@ export const promptTerms = (text: string): PromptTerms => {
   const classByWord: ReadonlyMap<string, WordClass | null> = new Map(content.map((term) => [term, wordClassOf(term)]));
   const classOf = (term: string): WordClass | null => (classByWord.has(term) ? (classByWord.get(term) ?? null) : wordClassOf(term));
   const classes = content.map(classOf);
-  const topical = content.filter((_, index) => classes[index] === null);
   return {
     content,
-    topical,
+    unclassed: content.filter((_, index) => classes[index] === null),
+    topical: content.filter((_, index) => !isSteeringClass(classes[index] ?? null)),
     ranked: rankedTerms(scored, termsOf, classOf),
     isGerman,
     isContentFree: isSessionCommand(tokens, content, classes),

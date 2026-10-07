@@ -28,6 +28,12 @@ describe("a continuation signal, anywhere in the prompt", () => {
     ["go ahead."],
     ["leg los"],
     ["ok thanks, next: the usage dashboard monthly totals are wrong"],
+    ["ok limit reset, pick up where you stopped"],
+    ["continue where you left off"],
+    ["Kontingent ist wieder frei, mach da weiter wo du aufgehört hast"],
+    ["Ich weiß nicht mehr genau where we left off"],
+    ["rate limited again lol, try again"],
+    ["overloaded wieder, nochmal versuchen"],
   ])("%p carries the session on", (prompt) => {
     expect(hasContinuationSignal(prompt)).toBe(true);
   });
@@ -54,6 +60,9 @@ describe("a continuation signal, anywhere in the prompt", () => {
     ["arregla el bug del login en Safari, los usuarios pierden la sesión", "Spanish los is an article"],
     ["die Größe passt nicht", "passt beside a word of the task"],
     ["the pdf writer drops the footer", "one slip from weiter is a word of its own"],
+    ["pick up the new signing key from the vault", "pick up beside no point the work stopped at"],
+    ["the export left off the header row", "left off without where"],
+    ["try the retry button with a slow network", "try beside no again"],
   ])("%p does not — %s", (prompt) => {
     expect(hasContinuationSignal(prompt)).toBe(false);
   });

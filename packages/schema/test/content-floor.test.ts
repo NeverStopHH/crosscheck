@@ -45,25 +45,42 @@ describe("words match on their english lexemes, as the hub's database matches th
   });
 });
 
-describe("a closed-class word's inflection is no topic (L1)", () => {
-  test.each([["shows"], ["stopped"], ["runs"], ["refresh"]])("%p is the inflection of a closed-class word", (word) => {
+describe("a closed-class word's inflection is no topic (L1) — only an INFLECTED prompt word (round 4, M1)", () => {
+  test.each([["shows"], ["stopped"], ["runs"], ["deploys"], ["updated"]])("%p is the inflection of a closed-class word", (word) => {
     expect(isClosedInflection(word)).toBe(true);
   });
 
-  test.each([["dashboard"], ["wrong"], ["cache"]])("%p is no closed word's inflection", (word) => {
+  test.each([
+    ["dashboard", "no closed word's"],
+    ["wrong", "no closed word's"],
+    ["cache", "no closed word's"],
+    ["refresh", "its own lexeme, though \"refreshed\" is a meta word"],
+    ["limits", "a closed word as written"],
+    ["usage", "a closed word as written, however the stemmer cuts it"],
+  ])("%p is not — %s", (word) => {
     expect(isClosedInflection(word)).toBe(false);
   });
 
-  test("so \"shows\" and a meta word clear nothing on a title they share", () => {
-    // Arrange — "usage" is meta, "shows" the inflection of the conversation word "show"
-    const floor = floorOf("the counter shows plenty of usage");
+  test("so two inflections of closed words clear nothing on a statement they share", () => {
+    // Arrange — "shows" is the conversation word "show", "stopped" the conversation word "stop"
+    const floor = floorOf("the counter shows it and then stopped");
 
     // Act
-    const match = statementMatch(floor, "Usage dashboard shows wrong monthly totals");
+    const match = statementMatch(floor, "The importer shows progress and then stopped");
 
     // Assert
-    expect(floor.topical).not.toContain("shows");
+    expect(floor.topical).toEqual(["counter"]);
     expect(match.floor).toBe(0);
+  });
+});
+
+describe("in a task, a meta word is topical (round 4, M1)", () => {
+  test("\"token refresh broken\" shares token and refresh with the JWT tree's title", () => {
+    expect(statementMatch(floorOf("token refresh broken"), "JWT token refresh fails after signing key rotation")).toEqual({ floor: 2, topical: 2 });
+  });
+
+  test("\"rate limit not enforced\" shares rate and limit with the rate-limit tree's title", () => {
+    expect(clearsFloorOn(floorOf("rate limit not enforced"), "Rate limit for the public API")).toBe(true);
   });
 });
 
@@ -128,8 +145,10 @@ describe("the floor of one statement (C1)", () => {
     expect(statementMatch(floorOf("why does the checkout cache drop entries"), "The checkout cache drops entries").floor).toBeGreaterThanOrEqual(2);
   });
 
-  test("two meta words alone share nothing that counts", () => {
-    expect(statementMatch(floorOf("session limit"), "Session limit reset").floor).toBe(0);
+  test("round 4, M1: two meta words of a task agree on a statement — the task is about them", () => {
+    // Round 3 (C1) counted them for nothing; a question about the session's
+    // limit is a task, and the tree about that limit is its answer.
+    expect(statementMatch(floorOf("session limit"), "Session limit reset").floor).toBe(2);
   });
 
   test("two spellings of one word are one shared word", () => {

@@ -18,6 +18,7 @@ import {
   SUBSTANCE_MIN_DISTINCT_TERMS,
   SUBSTANCE_MIN_MATCHED_TERMS,
   SUBSTANCE_MIN_TREE_TERMS,
+  compareTreeStrength,
   isAtLeastAsStrongTree,
   isStrongSubstanceMatch,
   strongestTreeIndex,
@@ -44,8 +45,21 @@ describe("a strong match for substance", () => {
 });
 
 describe("the one strongest tree (C2)", () => {
-  const words = (topical: number): TreeStrength => ({ isExact: false, topical });
-  const exact = (topical: number): TreeStrength => ({ isExact: true, topical });
+  const words = (topical: number, own = 0): TreeStrength => ({ isExact: false, topical, own });
+  const exact = (topical: number): TreeStrength => ({ isExact: true, topical, own: 0 });
+
+  test.each([
+    [[words(2, 1), words(2, 2), words(2, 1)], 1, "on equal counts, the tree whose own statement shares more (M1)"],
+    [[words(2, 2), words(2, 2)], null, "equal on both counts: a tie"],
+    [[words(3, 0), words(2, 2)], 0, "the count first, the own statement second"],
+  ] as const)("%o: %p — %s", (strengths, index) => {
+    expect(strongestTreeIndex(strengths)).toBe(index);
+  });
+
+  test("stronger first: the comparison sorts the bound's candidates (M1)", () => {
+    const sorted = [words(1, 1), exact(0), words(3, 1), words(3, 2)].toSorted(compareTreeStrength);
+    expect(sorted).toEqual([exact(0), words(3, 2), words(3, 1), words(1, 1)]);
+  });
 
   test.each([
     [[words(2), words(4), words(3)], 1, "the most topical words, wherever the hub ranked it"],

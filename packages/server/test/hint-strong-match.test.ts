@@ -11,6 +11,11 @@
  * what a pointer's strength is compared on) — and the hub WITHHOLDS a body
  * whose own strong-match test fails, so a connector older than the selector's
  * best-match rule (0.10.0) has no wrong-tree finding to inline.
+ *
+ * SINCE ROUND 4 (M1) a meta word of a task IS topical — "token" is what the
+ * prompt is about — and what keeps the rate-limit decision out is C2: the
+ * JWT tree is the one strongest, and every word the rate decision shares,
+ * the JWT tree says too.
  */
 import { describe, expect, test } from "bun:test";
 
@@ -84,23 +89,23 @@ const candidates = async (withNotes = true): Promise<ReadonlyMap<string, WireCan
 const claimOf = (candidate: WireCandidate | undefined, id: string): WireClaim | undefined =>
   candidate?.claims.find((claim) => claim.id === id);
 
-describe("every relevance count is topical (H3 + M6)", () => {
-  test("a claim's count leaves out the meta words it shares", async () => {
+describe("every relevance count is topical (H3 + M6) — a task's meta words included (round 4, M1)", () => {
+  test("a claim's count takes the meta words a task shares", async () => {
     // Arrange + Act
     const byTree = await candidates();
 
-    // Assert — "token" and "minute" are meta; the rate decision shares "key" alone
-    expect(claimOf(byTree.get(RATE_TREE), "clm_rate_dec")?.matchedTerms).toBe(1);
+    // Assert — the rate decision shares token and key, the JWT decision key and rotation
+    expect(claimOf(byTree.get(RATE_TREE), "clm_rate_dec")?.matchedTerms).toBe(2);
     expect(claimOf(byTree.get(JWT_TREE), "clm_jwt_dec")?.matchedTerms).toBe(2);
   });
 
-  test("a tree's own count leaves them out too", async () => {
+  test("a tree's own count takes them too", async () => {
     // Arrange + Act
     const byTree = await candidates();
 
-    // Assert — fails, key, rotation; never token, nor refresh, which shares
-    // its lexeme with the meta word "refreshed" (round 3, L1)
-    expect(byTree.get(JWT_TREE)?.workContext.matchedTerms).toBe(3);
+    // Assert — token, refresh, fails, key, rotation: "refresh" is its own
+    // lexeme, no inflection of the meta word "refreshed" (M1)
+    expect(byTree.get(JWT_TREE)?.workContext.matchedTerms).toBe(5);
     expect(byTree.get(RATE_TREE)?.workContext.matchedTerms).toBe(1);
   });
 
@@ -109,17 +114,17 @@ describe("every relevance count is topical (H3 + M6)", () => {
     const byTree = await candidates();
 
     // Assert
-    expect(byTree.get(JWT_TREE)?.topicalTerms).toBe(3);
-    expect(byTree.get(RATE_TREE)?.topicalTerms).toBe(1);
+    expect(byTree.get(JWT_TREE)?.topicalTerms).toBe(5);
+    expect(byTree.get(RATE_TREE)?.topicalTerms).toBe(2);
   });
 
   test("a tree's strength counts its claims too, not only its own statement", async () => {
     // Arrange + Act
     const byTree = await candidates();
 
-    // Assert — "Investigation notes" shares nothing; its claim shares fails, key, rotation
+    // Assert — "Investigation notes" shares nothing; its claim shares refresh, fails, key, rotation
     expect(byTree.get(NOTES_TREE)?.workContext.matchedTerms).toBe(0);
-    expect(byTree.get(NOTES_TREE)?.topicalTerms).toBe(3);
+    expect(byTree.get(NOTES_TREE)?.topicalTerms).toBe(4);
   });
 });
 
@@ -141,12 +146,14 @@ describe("the hub withholds a body its own strong-match test refuses (H3 + M6)",
     expect(claimOf(byTree.get(JWT_TREE), "clm_jwt_dec")?.body.length ?? 0).toBeGreaterThan(0);
   });
 
-  test("C2: the notes tree ties the JWT tree at the top, and a tie ships no body", async () => {
-    // Arrange + Act — both say fails, key and rotation on one statement
+  test("C2: beside the notes tree, which says key and rotation too, the JWT decision ships no body", async () => {
+    // Arrange + Act
     const byTree = await candidates();
 
-    // Assert
-    expect(byTree.get(JWT_TREE)?.topicalTerms).toBe(byTree.get(NOTES_TREE)?.topicalTerms);
+    // Assert — the JWT tree is still the one strongest, but the decision says
+    // no word the other candidates do not
+    expect(byTree.get(JWT_TREE)?.topicalTerms).toBeGreaterThan(byTree.get(NOTES_TREE)?.topicalTerms ?? 0);
+    expect(claimOf(byTree.get(JWT_TREE), "clm_jwt_dec")?.distinctTerms).toBe(0);
     expect(claimOf(byTree.get(JWT_TREE), "clm_jwt_dec")?.body).toBe("");
   });
 
@@ -172,6 +179,71 @@ describe("the hub withholds a body its own strong-match test refuses (H3 + M6)",
     // Assert
     expect(claimOf(crash, "clm_crash_dec")?.matchedTerms).toBe(0);
     expect(claimOf(crash, "clm_crash_dec")?.body.length ?? 0).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * THE BOUND KEEPS THE STRONGEST (round 4, M1): since a task's meta words
+ * count, more trees clear the floor, and the hub cut the qualified pool to
+ * HINT_MAX_CONTEXTS in SEARCH order — so "limit ist wieder da. Kannst du
+ * jetzt den session timeout im workbench fixen?" lost the session-timeout
+ * tree, the one strongest, to three trees that ranked above it on a word
+ * repeated. The bound now keeps the strongest candidates.
+ */
+describe("the hub's bound keeps the strongest candidates, not the search's first (M1)", () => {
+  /** Long enough ago for the search's 14-day half-life to rank a tree below any fresh one. */
+  const OLD_ISO = new Date(Date.now() - 200 * 24 * 3_600_000).toISOString();
+
+  test("a tree sharing three words outlives three that repeat two", async () => {
+    // Arrange — three trees whose claim repeats two of the words, one that says all three once
+    const { harness, developer: nick } = await createHarnessWithSession();
+    const repeat = "Zebra quokka zebra quokka zebra quokka zebra quokka zebra quokka.";
+    const records = [
+      ...["wc_rep_a", "wc_rep_b", "wc_rep_c"].flatMap((id) => [
+        recordEnvelope("work_context", validWorkContextBody({ id, title: `Notes ${id}`, description: "Scratch" })),
+        recordEnvelope("claim", validClaimBody({ id: `clm_${id}`, workContextId: id, body: repeat })),
+      ]),
+      // … and older by far, so the search's freshness decay ranks it last
+      recordEnvelope("work_context", validWorkContextBody({ id: "wc_all_three", title: "Notes on the enclosure", description: "Scratch", createdAt: OLD_ISO })),
+      recordEnvelope("claim", validClaimBody({ id: "clm_all_three", workContextId: "wc_all_three", body: "The zebra, the quokka and the narwhal share one enclosure.", createdAt: OLD_ISO })),
+    ];
+    const seeded = await postRecords(harness, nick, { records });
+    expect(seeded.data?.accepted).toBe(records.length);
+    const robin = await addTestDeveloperWithSession(harness, "Robin", "robin@example.com", { id: "ses_02" });
+    const search = new URLSearchParams({ repo: VALID_SESSION_BODY.repo, query: "zebra quokka narwhal" });
+
+    // Act
+    const response = await harness.app.request(`/api/hints/candidates?${search.toString()}`, jsonRequest("GET", robin.apiKey));
+    const body = (await response.json()) as { data: { candidates: readonly WireCandidate[] } };
+
+    // Assert — the strongest first, and kept
+    expect(body.data.candidates.map((candidate) => candidate.workContext.id)[0]).toBe("wc_all_three");
+    expect(body.data.candidates).toHaveLength(3);
+  });
+
+  test("on equal counts, the tree whose own statement says the prompt is the one strongest, and its finding ships", async () => {
+    // Arrange — a claim of each shares three words; only the render tree's title says any
+    const { harness, developer: nick } = await createHarnessWithSession();
+    const records = [
+      recordEnvelope("work_context", validWorkContextBody({ id: "wc_render", title: "Invoice PDF rendering", description: "Billing" })),
+      recordEnvelope("claim", validClaimBody({ id: "clm_render_obs", workContextId: "wc_render", body: "Puppeteer stalls on the first page." })),
+      recordEnvelope("claim", validClaimBody({ id: "clm_render_dec", workContextId: "wc_render", kind: "decision", evidenceRefs: ["clm_render_obs"], body: "Rendering fails when the PDF font is missing." })),
+      recordEnvelope("work_context", validWorkContextBody({ id: "wc_scratch", title: "Scratch notes", description: "Misc" })),
+      recordEnvelope("claim", validClaimBody({ id: "clm_scratch", workContextId: "wc_scratch", body: "Dutch customers see the invoice twice." })),
+    ];
+    const seeded = await postRecords(harness, nick, { records });
+    expect(seeded.data?.accepted).toBe(records.length);
+    const robin = await addTestDeveloperWithSession(harness, "Robin", "robin@example.com", { id: "ses_02" });
+    const search = new URLSearchParams({ repo: VALID_SESSION_BODY.repo, query: "invoice pdf rendering fails for dutch customers" });
+
+    // Act
+    const response = await harness.app.request(`/api/hints/candidates?${search.toString()}`, jsonRequest("GET", robin.apiKey));
+    const body = (await response.json()) as { data: { candidates: readonly WireCandidate[] } };
+    const byTree = new Map(body.data.candidates.map((candidate) => [candidate.workContext.id, candidate]));
+
+    // Assert — three each on the best statement; the render tree's title says three, the scratch tree's none
+    expect(byTree.get("wc_render")?.topicalTerms).toBe(byTree.get("wc_scratch")?.topicalTerms);
+    expect(claimOf(byTree.get("wc_render"), "clm_render_dec")?.body.length ?? 0).toBeGreaterThan(0);
   });
 });
 
