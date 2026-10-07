@@ -93,9 +93,11 @@ export const resolvedEvidenceCounts = async (
       isContradicted: row.is_contradicted,
     }),
   );
-  const refsByClaim = resolved.reduce<ReadonlyMap<string, ReadonlySet<string>>>(
-    (byClaim, row) => new Map([...byClaim, [row.citing_id, new Set([...(byClaim.get(row.citing_id) ?? []), row.cited_id])]]),
+  // DISTINCT HEADS, not distinct refs (round 3, L2): an observation cited by
+  // its old id, its revision and its old id again is one piece of evidence.
+  const headsByClaim = resolved.reduce<ReadonlyMap<string, ReadonlySet<string>>>(
+    (byClaim, row) => new Map([...byClaim, [row.citing_id, new Set([...(byClaim.get(row.citing_id) ?? []), row.head_id])]]),
     new Map(),
   );
-  return new Map([...refsByClaim].map(([claimId, refs]) => [claimId, refs.size]));
+  return new Map([...headsByClaim].map(([claimId, heads]) => [claimId, heads.size]));
 };

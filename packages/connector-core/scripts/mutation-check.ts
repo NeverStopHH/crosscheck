@@ -19363,6 +19363,14 @@ export const MUTATIONS: readonly Mutation[
     because: "the connector's mirror reaches a head the hub's walk never does, and the two disagree on solved (M4)",
   },
   {
+    label: "refs to one head count as many pieces of evidence",
+    file: `${SERVER}/src/services/evidence-resolution.ts`,
+    from: "new Set([...(byClaim.get(row.citing_id) ?? []), row.head_id])",
+    to: "new Set([...(byClaim.get(row.citing_id) ?? []), row.cited_id])",
+    test: `${SERVER}/test/hint-withheld-bodies.test.ts`,
+    because: "a cause citing one observation by its old id and its revision reports two resolved refs on the wire (round 3, L2)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     // RETARGETED (round 3, M7): the query is the prompt's window now.
@@ -19753,7 +19761,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-pushable-ranking.test.ts 5
  * PRINTS: packages/server/test/hint-strong-match.test.ts 5
  * PRINTS: packages/server/test/hint-topical-floor.test.ts 4
- * PRINTS: packages/server/test/hint-withheld-bodies.test.ts 4
+ * PRINTS: packages/server/test/hint-withheld-bodies.test.ts 5
  * PRINTS: packages/server/test/hints.test.ts 6
  * PRINTS: packages/server/test/in-memory-db.test.ts 2
  * PRINTS: packages/server/test/intent-ladder.test.ts 7

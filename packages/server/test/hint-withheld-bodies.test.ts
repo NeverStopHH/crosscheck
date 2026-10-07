@@ -17,6 +17,7 @@ import {
   postRecords,
   recordEnvelope,
   validClaimBody,
+  validClaimEdgeBody,
   validWorkContextBody,
   VALID_SESSION_BODY,
 } from "./helpers.ts";
@@ -40,6 +41,11 @@ const wireClaims = async (): Promise<ReadonlyMap<string, WireClaim>> => {
     recordEnvelope("claim", validClaimBody({ id: "clm_theory", kind: "root_cause", status: "proposed", evidenceRefs: ["clm_obs"], body: "Maybe the refresh token cache never drops the key." })),
     recordEnvelope("claim", validClaimBody({ id: "clm_decision", kind: "decision", evidenceRefs: ["clm_obs"], body: "Drop the rotated key from the refresh token cache on rotation." })),
     recordEnvelope("claim", validClaimBody({ id: "clm_rejected", kind: "rejected_approach", status: "rejected", evidenceRefs: ["clm_obs"], body: "Pinning the refresh token cache in the CDN does not drop the key." })),
+    // L2: one observation cited three ways — by its old id, its revision, its old id again
+    recordEnvelope("claim", validClaimBody({ id: "clm_obs_old", kind: "observation", body: "The token cache keeps the rotated key past the rotation" })),
+    recordEnvelope("claim", validClaimBody({ id: "clm_obs_new", kind: "observation", body: "The token cache keeps the rotated key for an hour past the rotation" })),
+    recordEnvelope("claim_edge", validClaimEdgeBody({ id: "edge_obs_new", fromClaimId: "clm_obs_new", toClaimId: "clm_obs_old", kind: "supersedes" })),
+    recordEnvelope("claim", validClaimBody({ id: "clm_thrice", kind: "root_cause", status: "likely_root_cause", evidenceRefs: ["clm_obs_old", "clm_obs_new", "clm_obs_old"], body: "The refresh token cache never drops the rotated key on rotation." })),
   ];
   const seeded = await postRecords(harness, nick, { records });
   expect(seeded.data?.accepted).toBe(records.length);
@@ -83,5 +89,13 @@ describe("a body travels only where a hint may show it (hold-out review, M1)", (
     // Assert — three stored refs, one resolves
     expect(claims.get("clm_settled")?.evidenceRefCount).toBe(1);
     expect(claims.get("clm_unbacked")?.evidenceRefCount).toBe(0);
+  });
+
+  test("refs that resolve to the same head count once (round 3, L2)", async () => {
+    // Arrange + Act
+    const claims = await wireClaims();
+
+    // Assert — an observation, its revision and the observation again: one piece of evidence
+    expect(claims.get("clm_thrice")?.evidenceRefCount).toBe(1);
   });
 });
