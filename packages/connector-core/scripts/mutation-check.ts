@@ -3078,9 +3078,8 @@ export const MUTATIONS: readonly Mutation[
     // is spent in id order.
     label: "one sweep of mine spends my other context's read window",
     file: `${SERVER}/src/services/ghost-overlap.ts`,
-    from: `        inArray(workContextTargets.kind, [...OVERLAP_TARGET_KINDS]),
-        notASweepCondition(workContextTargets.workContextId),`,
-    to: "        inArray(workContextTargets.kind, [...OVERLAP_TARGET_KINDS]),",
+    from: "        targetInWindowSeenBy(viewerDeveloperId, sql`${viewerDeveloperId}`, workContextTargets, cutoff),\n        notASweepCondition(workContextTargets.workContextId, viewerDeveloperId, cutoff),",
+    to: "        targetInWindowSeenBy(viewerDeveloperId, sql`${viewerDeveloperId}`, workContextTargets, cutoff),",
     test: `${SERVER}/test/ghost-overlap.test.ts`,
     because:
       "a mass rename in one of my worktrees takes the read budget and the " +
@@ -17606,7 +17605,7 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "detached sessions are one topic per sha again",
-    file: `${CORE}/src/git/detached-branch.ts`,
+    file: `${SCHEMA}/src/detached-branch.ts`,
     from: "  branch === UNNAMED_HEAD_BRANCH || DETACHED_REF_PATTERN.test(branch);",
     to: "  false;",
     test: `${CORE}/test/briefing-contexts.test.ts`,
@@ -22142,7 +22141,7 @@ export const MUTATIONS: readonly Mutation[
   {
     // Review L3: `detached@<hex sha>` exactly, never a prefix.
     label: "a branch named detached@release folds into the detached-HEAD topic",
-    file: `${CORE}/src/git/detached-branch.ts`,
+    file: `${SCHEMA}/src/detached-branch.ts`,
     from: "  branch === UNNAMED_HEAD_BRANCH || DETACHED_REF_PATTERN.test(branch);",
     to: "  branch === UNNAMED_HEAD_BRANCH || branch.startsWith(DETACHED_BRANCH_PREFIX);",
     test: `${CORE}/test/briefing-contexts.test.ts`,
@@ -22394,7 +22393,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the conference windows an opted-out teammate's work by her last touch",
     file: `${SERVER}/src/services/conference.ts`,
-    from: "    gte(activitySeenByReader(viewerDeveloperId), cutoff),\n",
+    from: "    gte(activitySeenByReader(viewerDeveloperId), window.cutoff),\n",
     to: "",
     test: `${SERVER}/test/live-location-surfaces.test.ts`,
     because:
@@ -22404,8 +22403,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the conference ranks an opted-out teammate's work by her last touch",
     file: `${SERVER}/src/services/conference.ts`,
-    from: "    .orderBy(desc(activitySeenByReader(viewerDeveloperId)), asc(workContexts.id))",
-    to: "    .orderBy(desc(activityExpression), asc(workContexts.id))",
+    from: "      desc(activitySeenByReader(viewerDeveloperId)),\n      asc(workContexts.id),\n    )\n    .limit(CONFERENCE_MAX_CONTEXTS);",
+    to: "      desc(activityExpression),\n      asc(workContexts.id),\n    )\n    .limit(CONFERENCE_MAX_CONTEXTS);",
     test: `${SERVER}/test/live-location-surfaces.test.ts`,
     because:
       "the report's first context of hers is the one she is on now",
@@ -22536,7 +22535,7 @@ export const MUTATIONS: readonly Mutation[
   {
     // Review round 3, L4: SHA-256 repositories name commits in 64 hex digits.
     label: "a SHA-256 repository's detached HEAD is read as a branch",
-    file: `${CORE}/src/git/detached-branch.ts`,
+    file: `${SCHEMA}/src/detached-branch.ts`,
     from: "const FULL_SHA_HEX = 64;",
     to: "const FULL_SHA_HEX = 40;",
     test: `${CORE}/test/detached-branch.test.ts`,
@@ -23404,6 +23403,525 @@ export const MUTATIONS: readonly Mutation[
       "a teammate's tree found only by a machine guess nobody vouched for is pushed " +
       "into a colleague's prompt, its draft counted toward the content floor",
   },
+  // ── Pilot finding 2026-10-05: false landed stamps hid a collision ─────
+  {
+    label: "a teammate's report stamps a detached session's context landed",
+    file: `${SERVER}/src/services/landed.ts`,
+    from: "  if (isDetachedBranch(candidate.branch)) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/landed.test.ts`,
+    because:
+      "a long-lived worktree detached at an old main commit reads landed the moment a " +
+      "teammate's SessionStart reports that commit, and its files leave every collision check",
+  },
+  {
+    label: "a base the connector said was already on main is stamped landed",
+    file: `${SERVER}/src/services/landed.ts`,
+    from: "    return !candidate.baseOnDefault;",
+    to: "    return true;",
+    test: `${SERVER}/test/landed.test.ts`,
+    because:
+      "a branch cut from main with nothing of its own yet reads merged before any work exists",
+  },
+  {
+    label: "an old connector's stale base is stamped landed",
+    file: `${SERVER}/src/services/landed.ts`,
+    from: "  return baseCommittedAt !== undefined && !isStaleBase(baseCommittedAt, candidate.baseAdoptedAt);",
+    to: "  return baseCommittedAt !== undefined;",
+    test: `${SERVER}/test/landed.test.ts`,
+    because:
+      "a session from a connector that never said where its base was is stamped landed " +
+      "for a checkout six weeks old",
+  },
+  {
+    label: "an old connector's undated base is stamped landed",
+    file: `${SERVER}/src/services/landed.ts`,
+    from: "  return baseCommittedAt !== undefined && !isStaleBase(baseCommittedAt, candidate.baseAdoptedAt);",
+    to: "  return baseCommittedAt === undefined || !isStaleBase(baseCommittedAt, candidate.baseAdoptedAt);",
+    test: `${SERVER}/test/landed.test.ts`,
+    because:
+      "a report that cannot date the base stamps it anyway — unknown age read as new work",
+  },
+  {
+    label: "every base on the default branch stamps its context again, and ghost checks lose it",
+    file: `${SERVER}/src/services/landed.ts`,
+    from: "    .filter((row) => ancestryLandsContext(row, committedAt.get(row.baseCommit), report))",
+    to: "    .filter(() => true)",
+    test: `${SERVER}/test/ghost-overlap.test.ts`,
+    because:
+      "the pilot incident: a teammate edits the files of a live session the hub calls merged, " +
+      "and no ghost line names it",
+  },
+  {
+    label: "every base on the default branch stamps its context again, and the conference loses it",
+    file: `${SERVER}/src/services/landed.ts`,
+    from: "    .filter((row) => ancestryLandsContext(row, committedAt.get(row.baseCommit), report))",
+    to: "    .filter(() => true)",
+    test: `${SERVER}/test/conference.test.ts`,
+    because: "unfinished work drops out of the case file as if it had merged",
+  },
+  {
+    label: "the hub drops what the connector said about its base",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "      baseOnDefault: input.baseOnDefault ?? null,",
+    to: "      baseOnDefault: null,",
+    test: `${SERVER}/test/landed.test.ts`,
+    because:
+      "every session reads as an older connector's, and a base already on main lands on a fresh date",
+  },
+  {
+    label: "a re-register of the same base forgets what the connector said",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "  (existing.baseCommit === input.baseCommit ? existing.baseOnDefault : null);",
+    to: "  null;",
+    test: `${SERVER}/test/landed.test.ts`,
+    because: "a recovery path that does not probe git demotes the session to never-said",
+  },
+  {
+    label: "a re-register on a new base keeps the old base's answer",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "  (existing.baseCommit === input.baseCommit ? existing.baseOnDefault : null);",
+    to: "  existing.baseOnDefault;",
+    test: `${SERVER}/test/landed.test.ts`,
+    because: "an answer about one commit is read as an answer about another",
+  },
+  {
+    label: "the register never says whether its base was already on main",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "      ...(input.baseOnDefault === undefined ? {} : { baseOnDefault: input.baseOnDefault }),",
+    to: "",
+    test: `${CORE}/test/register-base-on-default.test.ts`,
+    because: "every session reads as an older connector's, and the hub can only guess from dates",
+  },
+  {
+    label: "the Claude SessionStart probes its base and never sends the answer",
+    file: `${CONNECTOR}/src/hooks/session-start.ts`,
+    from: "      baseOnDefault,\n      hubUrl: ctx.config.hubUrl,",
+    to: "      hubUrl: ctx.config.hubUrl,",
+    test: `${CONNECTOR}/test/solved-hook.test.ts`,
+    because: "the pilot owner's detached worktree registers as if it might hold new work",
+  },
+  {
+    label: "a flag-shaped base reaches git on the register probe",
+    file: `${CORE}/src/capture/landed.ts`,
+    from: "  if (defaultRef === null || !COMMIT_SHA_PATTERN.test(baseCommit)) {",
+    to: "  if (defaultRef === null) {",
+    test: `${CORE}/test/landed-capture.test.ts`,
+    because: "`--all` is handed to rev-list as the base, and its answer is sent as a fact",
+  },
+  {
+    label: "a landed report drops the commits' dates",
+    file: `${CORE}/src/capture/landed.ts`,
+    from: "      ...(reading.commitDates.length === 0 ? {} : { commitDates: reading.commitDates }),",
+    to: "",
+    test: `${CORE}/test/landed-capture.test.ts`,
+    because: "a hub can no longer land an older connector's genuine branch tip at all",
+  },
+  {
+    label: "a landed report dates commits that did not land",
+    file: `${CORE}/src/capture/landed.ts`,
+    from: "    commitDates: dates.filter((entry) => landed.includes(entry.sha)),",
+    to: "    commitDates: dates,",
+    test: `${CORE}/test/landed-capture.test.ts`,
+    because: "the report carries facts about commits it never proved were on the default branch",
+  },
+  {
+    label: "a landed report dates commits by their author",
+    file: `${CORE}/src/capture/landed.ts`,
+    from: "    [\"log\", \"--no-walk=unsorted\", \"--ignore-missing\", \"--format=%H%x09%cI\", ...wanted],",
+    to: "    [\"log\", \"--no-walk=unsorted\", \"--ignore-missing\", \"--format=%H%x09%aI\", ...wanted],",
+    test: `${CORE}/test/landed-capture.test.ts`,
+    because: "every rebased branch reads as a stale checkout, and its real landing is refused",
+  },
+  {
+    label: "a dated landed report fails the schema's commit cap",
+    file: `${SCHEMA}/src/landed-evidence.ts`,
+    from: "  commitDates: z.array(LandedCommitDateSchema).max(MAX_LANDED_COMMITS).optional(),",
+    to: "  commitDates: z.array(LandedCommitDateSchema).optional(),",
+    test: `${SCHEMA}/test/landed-evidence.test.ts`,
+    because: "one report carries an unbounded list into the hub's ingest",
+  },
+  // The operator's repair for the stamps an older hub made.
+  {
+    label: "the landed repair writes on a dry run",
+    file: `${SERVER}/scripts/unland-false-landed.ts`,
+    from: "  if (!options.apply) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "an operator's look at the hub un-lands contexts it was only asked to count",
+  },
+  {
+    label: "the landed repair prints the contexts it counts",
+    file: `${SERVER}/scripts/unland-false-landed.ts`,
+    from: "  deps.write(`landed contexts: ${String(plan.landed)}`);",
+    to: "  deps.write(`landed contexts: ${String(plan.landed)} ${plan.unland.join(\",\")}`);",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "counts-only output carries ids an operator would paste into a channel",
+  },
+  {
+    label: "the landed repair opens a hub nobody named",
+    file: `${SERVER}/scripts/unland-false-landed.ts`,
+    from: "  if (dataDir === undefined) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "an opt-in repair runs against whatever data dir a default would pick",
+  },
+  {
+    label: "the landed repair keeps a detached session's false stamp",
+    file: `${SERVER}/src/services/landed-repair.ts`,
+    from: "    return \"detached\";",
+    to: "    return null;",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "the incident's own context stays out of collision checks after the repair",
+  },
+  {
+    label: "the landed repair un-lands a session that said its base was new, on its date",
+    file: `${SERVER}/src/services/landed-repair.ts`,
+    from: "  if (row.baseOnDefault === null && committedAt !== undefined && isStaleBase(committedAt, row.baseAdoptedAt)) {",
+    to: "  if (committedAt !== undefined && isStaleBase(committedAt, row.baseAdoptedAt)) {",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "a real landing is undone on a heuristic its connector's own word contradicts",
+  },
+  {
+    label: "the landed repair's --apply un-lands nothing",
+    file: `${SERVER}/src/services/landed-repair.ts`,
+    from: "  if (ids.length === 0) {",
+    to: "  if (ids.length >= 0) {",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "the operator is told contexts were un-landed while every stamp stays",
+  },
+  // The suspect window: what was touched in it is a question about the touch.
+  {
+    label: "suspect windows a long-lived context's touches by when it opened",
+    file: `${SERVER}/src/services/suspect.ts`,
+    from: "          eq(agentSessions.repo, repo),\n          gt(touchedAt, since),",
+    to: "          eq(agentSessions.repo, repo),\n          gt(sql`${activity}`, since),",
+    test: `${SERVER}/test/suspect.test.ts`,
+    because: "the worktree session that touched the break's files today is never named",
+  },
+  {
+    label: "suspect's denominator drops a long-lived context's touches",
+    file: `${SERVER}/src/services/suspect.ts`,
+    from: "          // this author made in the window, a long-lived context's included.\n          gt(touchedAt, since),",
+    to: "          // this author made in the window, a long-lived context's included.\n          gt(sql`${activity}`, since),",
+    test: `${SERVER}/test/suspect.test.ts`,
+    because: "lift is computed over fewer touches than the author made, and a sweep reads as focused",
+  },
+  {
+    label: "suspect windows an opted-out teammate's work by when she touched it",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  sql<Date | null>`(case when ${visiblePresenceCondition(viewerDeveloperId, ownerDeveloperId)} then ${targetTouchedAt(target)} end)`;",
+    to: "  sql<Date | null>`${targetTouchedAt(target)}`;",
+    test: `${SERVER}/test/suspect.test.ts`,
+    because: "a colleague's suspect run says she was in the break's files today, an instant of hers",
+  },
+  // A target's re-touch: the honest recency beside the honest age.
+  {
+    label: "a re-touch never moves a target's last_seen_at",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "        lastSeenAt: deps.now(),\n        source: sql`case when",
+    to: "        source: sql`case when",
+    test: `${SERVER}/test/target-last-seen.test.ts`,
+    because: "a long-lived session's edit today reads as the day it first touched the file",
+  },
+  {
+    label: "suspect windows a re-touched file by its first touch",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  sql<Date | null>`greatest(${target.createdAt}, ${target.lastSeenAt})`;",
+    to: "  sql<Date | null>`${target.createdAt}`;",
+    test: `${SERVER}/test/suspect.test.ts`,
+    because: "the session that edited the break's files again today is never named",
+  },
+  // The sweep rule counts what a context touched in the window, not ever.
+  {
+    label: "a long-lived context is a sweep by its old touches, and ghost checks lose it",
+    file: `${SERVER}/src/services/ghost-overlap.ts`,
+    from: "       AND ${targetInWindowSeenBy(viewerDeveloperId, sql`sweep_sessions.developer_id`, SWEEP_TARGET_TIMES, cutoff)}\n",
+    to: "",
+    test: `${SERVER}/test/ghost-overlap.test.ts`,
+    because:
+      "the pilot owner's 180-file worktree context reads as a formatter run and drops out " +
+      "of every ghost check while a teammate edits two of its files",
+  },
+  {
+    label: "a long-lived context is a sweep by its old touches, and the conference loses it",
+    file: `${SERVER}/src/services/ghost-overlap.ts`,
+    from: "       AND ${targetInWindowSeenBy(viewerDeveloperId, sql`sweep_sessions.developer_id`, SWEEP_TARGET_TIMES, cutoff)}\n",
+    to: "",
+    test: `${SERVER}/test/conference.test.ts`,
+    because: "the duplicated work of a long-lived session and a teammate never reaches the case file",
+  },
+  {
+    label: "my own old touches spend the ghost check's read bound",
+    file: `${SERVER}/src/services/ghost-overlap.ts`,
+    from: "        targetInWindowSeenBy(viewerDeveloperId, sql`${viewerDeveloperId}`, workContextTargets, cutoff),\n",
+    to: "",
+    test: `${SERVER}/test/ghost-overlap.test.ts`,
+    because: "a long-lived context of mine fills the read window with weeks-old files and today's collision goes unread",
+  },
+  {
+    label: "the sweep window reads an opted-out owner's touch times",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  sql`(case when ${visiblePresenceCondition(viewerDeveloperId, ownerDeveloperId)} then coalesce(${targetTouchedAt(target)} >= ${cutoff.toISOString()}::timestamptz, false) else true end)`;",
+    to: "  sql`coalesce(${targetTouchedAt(target)} >= ${cutoff.toISOString()}::timestamptz, false)`;",
+    test: `${SERVER}/test/conference.test.ts`,
+    because: "whether her context counts as a sweep, and so whether it pairs, says when she touched its files",
+  },
+  // A base already on the default branch, however it got there.
+  {
+    label: "a session ON the default branch is stamped landed by its base",
+    file: `${SERVER}/src/services/landed.ts`,
+    from: "  if (isDefaultBranch(candidate.branch, report.defaultBranch)) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/landed.test.ts`,
+    because: "a session on main reads merged the moment anybody reports main's tip, and its files leave collision checks",
+  },
+  {
+    label: "the default branch is matched only by its remote-tracking spelling",
+    file: `${SCHEMA}/src/default-branch.ts`,
+    from: "  return branch === localName || branch === defaultBranchRef;",
+    to: "  return branch === defaultBranchRef;",
+    test: `${SCHEMA}/test/default-branch.test.ts`,
+    because: "a session on `main` is not recognised against a report naming `origin/main`, the one spelling reports use",
+  },
+  {
+    label: "a base's age is judged from when its session started, not when it took the base",
+    file: `${SERVER}/src/services/landed.ts`,
+    from: "    .map((row) => ({ ...row, baseAdoptedAt: row.baseChangedAt ?? row.startedAt }))",
+    to: "    .map((row) => ({ ...row, baseAdoptedAt: row.startedAt }))",
+    test: `${SERVER}/test/landed.test.ts`,
+    because: "a long session that pulls a five-day-old main reads that base as younger than its work and lands it",
+  },
+  {
+    label: "a re-register on the same base moves when the session took it",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "      baseChangedAt: existing.baseCommit === input.baseCommit ? existing.baseChangedAt : timestamp,",
+    to: "      baseChangedAt: timestamp,",
+    test: `${SERVER}/test/landed.test.ts`,
+    because: "every SessionStart re-fire makes an old checkout look freshly taken",
+  },
+  {
+    label: "a session's register never records when it took its base",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "      baseChangedAt: timestamp,\n      status: input.status,",
+    to: "      status: input.status,",
+    test: `${SERVER}/test/landed.test.ts`,
+    because: "the age rule falls back to the session start for every new session, and a pull later reads young",
+  },
+  {
+    label: "the unflagged date fallback never ends",
+    file: `${SERVER}/src/services/landed.ts`,
+    from: "  if (report.at.getTime() >= UNFLAGGED_FALLBACK_ENDS_MS) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/landed.test.ts`,
+    because: "a guess that was wrong 9 times in 16 on the pilot hub keeps stamping connectors nobody updates",
+  },
+  {
+    label: "the landed repair spares a session on the default branch",
+    file: `${SERVER}/src/services/landed-repair.ts`,
+    from: "    return \"default\";",
+    to: "    return null;",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "the stamps an older hub made on sessions ON main, the commonest false fresh-dated kind, stay",
+  },
+  // The age bound's own edges (the review's OM1–OM3).
+  {
+    label: "the stale bound is six weeks, and the incident's checkout lands",
+    file: `${SERVER}/src/constants.ts`,
+    from: "export const LANDED_STALE_BASE_HOURS = 24;",
+    to: "export const LANDED_STALE_BASE_HOURS = 1000;",
+    test: `${SERVER}/test/landed.test.ts`,
+    because: "a base checked out a day and more before its session took it reads as the session's own tip",
+  },
+  {
+    label: "the stale bound is two hours, and an overnight branch tip never lands",
+    file: `${SERVER}/src/constants.ts`,
+    from: "export const LANDED_STALE_BASE_HOURS = 24;",
+    to: "export const LANDED_STALE_BASE_HOURS = 2;",
+    test: `${SERVER}/test/landed.test.ts`,
+    because: "yesterday's commit on the session's own branch is refused as a stale checkout",
+  },
+  {
+    label: "a base exactly 24 hours old is stale",
+    file: `${SERVER}/src/services/landed.ts`,
+    from: "  baseCommittedAt.getTime() < baseAdoptedAt.getTime() - LANDED_STALE_BASE_HOURS * MS_PER_HOUR;",
+    to: "  baseCommittedAt.getTime() <= baseAdoptedAt.getTime() - LANDED_STALE_BASE_HOURS * MS_PER_HOUR;",
+    test: `${SERVER}/test/landed.test.ts`,
+    because: "the documented bound (no more than 24 hours) and the rule disagree at its edge",
+  },
+  // The conference's page: open work first, ended work only within the grace.
+  {
+    label: "a page of ended work pushes the live collision out of the conference",
+    file: `${SERVER}/src/services/conference.ts`,
+    from: "      desc(openSeenByReader(viewerDeveloperId)),\n",
+    to: "",
+    test: `${SERVER}/test/conference.test.ts`,
+    because: "twelve contexts that ended an hour ago fill the page and the one open session is not read",
+  },
+  {
+    label: "the conference reads work that ended a fortnight ago",
+    file: `${SERVER}/src/services/conference.ts`,
+    from: "    withinEndedGrace(viewerDeveloperId, window.endedSince),\n",
+    to: "",
+    test: `${SERVER}/test/conference.test.ts`,
+    because: "with landed rarely firing, the window fills with finished work, 19 to 246 contexts on the pilot hub",
+  },
+  {
+    label: "the conference drops an opted-out teammate's work by when her session ended",
+    file: `${SERVER}/src/services/conference.ts`,
+    from: "then (${agentSessions.endedAt} is null or ${agentSessions.endedAt} >= ${endedSince.toISOString()}::timestamptz) else true end)`;",
+    to: "then (${agentSessions.endedAt} is null or ${agentSessions.endedAt} >= ${endedSince.toISOString()}::timestamptz) else ${agentSessions.endedAt} >= ${endedSince.toISOString()}::timestamptz end)`;",
+    test: `${SERVER}/test/conference.test.ts`,
+    because: "whether her context is in the report says when her session ended, an instant of hers",
+  },
+  {
+    label: "the conference ranks an opted-out teammate's work by whether her session is open",
+    file: `${SERVER}/src/services/conference.ts`,
+    from: "then ${agentSessions.endedAt} is null else false end)`;",
+    to: "then ${agentSessions.endedAt} is null else ${agentSessions.endedAt} is null end)`;",
+    test: `${SERVER}/test/conference.test.ts`,
+    because: "her context leading the page says her session is live, which her opt-out withholds",
+  },
+  // The repair's scope, and the pilot report it rewrites.
+  {
+    label: "the landed repair's --scope open still judges ended sessions",
+    file: `${SERVER}/src/services/landed-repair.ts`,
+    from: "          scope === \"open\" ? isNull(agentSessions.endedAt) : undefined,",
+    to: "          undefined,",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "the owner's open-only run un-lands ended work too, and rewrites the pilot's past windows",
+  },
+  {
+    label: "the landed repair applies without a named scope",
+    file: `${SERVER}/scripts/unland-false-landed.ts`,
+    from: "  if (apply && scope === undefined) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "an --apply that forgot --scope open un-lands every scope's stamps",
+  },
+  {
+    label: "the landed repair never says to save the pilot report",
+    file: `${SERVER}/scripts/unland-false-landed.ts`,
+    from: "  deps.write(PILOT_SNAPSHOT_REMINDER);\n",
+    to: "",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "the pilot's \"both landed\" series changes under the operator with no snapshot to compare",
+  },
+  {
+    label: "the landed repair accepts a --git-dir that is not a repository",
+    file: `${SERVER}/scripts/unland-false-landed.ts`,
+    from: "  if (parsed.options.gitDir !== null && !(await deps.isGitDir(parsed.options.gitDir))) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "a typo'd clone path dates nothing, and the run reads as a hub with no stale bases",
+  },
+  {
+    label: "the landed repair never says how many bases it could date",
+    file: `${SERVER}/scripts/unland-false-landed.ts`,
+    from: "    deps.write(datedLine(bases, baseCommittedAt));\n",
+    to: "",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "a clone of the wrong repo or a shallow one dates almost nothing, silently",
+  },
+  {
+    label: "a plain directory passes for a git repository",
+    file: `${SERVER}/scripts/unland-false-landed.ts`,
+    from: "  return (await proc.exited) === 0;\n};\n\nconst gitLog",
+    to: "  return (await proc.exited) >= 0;\n};\n\nconst gitLog",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "the clone check answers yes for any path, and the refusal never fires",
+  },
+  {
+    label: "the landed repair opens a typo'd data dir as a fresh empty hub",
+    file: `${SERVER}/scripts/unland-false-landed.ts`,
+    from: "  if (!(await exists(join(options.dataDir, PG_VERSION_FILE)))) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "PGlite creates a cluster at the typo, and the run reports \"landed contexts: 0\" for a hub it never read",
+  },
+  {
+    label: "the landed repair opens a data dir a running hub still holds",
+    file: `${SERVER}/scripts/unland-false-landed.ts`,
+    from: "  if (!options.force && (await exists(join(options.dataDir, POSTMASTER_PID_FILE)))) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "two PostgreSQL processes write over each other's pages in one dir",
+  },
+  {
+    label: "the landed repair takes a flag as a path",
+    file: `${SERVER}/scripts/unland-false-landed.ts`,
+    from: "  if (flagShaped !== undefined) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "`--data-dir --apply` names a data dir `--apply`, the reviewer's own slip",
+  },
+  {
+    label: "the landed repair names a base by a prefix two bases share",
+    file: `${SERVER}/scripts/unland-false-landed.ts`,
+    from: "  return named.ambiguous.length > 0;\n};",
+    to: "  return false;\n};",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "an ambiguous short sha un-lands a context the operator never named",
+  },
+  {
+    label: "a --stale-base prefix names no base unless typed in full",
+    file: `${SERVER}/src/services/landed-repair.ts`,
+    from: "    lowered.filter(({ key }) => key.startsWith(prefix.toLowerCase())).map(({ base }) => base);",
+    to: "    lowered.filter(({ key }) => key === prefix.toLowerCase()).map(({ base }) => base);",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "the short sha an operator copies from git log silently names nothing",
+  },
+  // A connector's "new base" against an operator's name (the review's OM7).
+  {
+    label: "a named base clears a stamp its connector said was new",
+    file: `${SERVER}/src/services/landed-repair.ts`,
+    from: "  if (row.baseOnDefault !== false && evidence.namedBases.has(row.baseCommit)) {",
+    to: "  if (evidence.namedBases.has(row.baseCommit)) {",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "a real landing is undone by a sha the operator typed for a different reason, with no override asked",
+  },
+  {
+    label: "the landed repair's override clears nothing",
+    file: `${SERVER}/src/services/landed-repair.ts`,
+    from: "  return evidence.overriddenBases.has(row.baseCommit) ? \"override\" : null;",
+    to: "  return null;",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "the one documented way to overrule a connector's word does nothing",
+  },
+  // Every connector says it at register (the review's OM11, OM12).
+  {
+    label: "Cursor's SessionStart never sends baseOnDefault",
+    file: `${CURSOR}/src/handlers/session-start.ts`,
+    from: "    baseCommit: ctx.identity.baseCommit,\n    baseOnDefault,\n",
+    to: "    baseCommit: ctx.identity.baseCommit,\n",
+    test: `${CURSOR}/test/register-base-on-default.test.ts`,
+    because: "every Cursor session reads as an older connector's, and a base already on main lands on a fresh date",
+  },
+  {
+    label: "the ACP proxy's session/new never sends baseOnDefault",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "      baseCommit: identity.baseCommit,\n      baseOnDefault,\n",
+    to: "      baseCommit: identity.baseCommit,\n",
+    test: `${ACP}/test/register-base-on-default.test.ts`,
+    because: "every ACP session reads as an older connector's, and a base already on main lands on a fresh date",
+  },
+  // A detached HEAD is never probed: the hub ignores its answer.
+  {
+    label: "the register probe runs git on a detached HEAD",
+    file: `${CORE}/src/capture/landed.ts`,
+    from: "  if (isDetachedBranch(checkout.branch)) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/landed-capture.test.ts`,
+    because: "every orchestration worktree spends two git calls before its register for an answer the hub discards",
+  },
+  {
+    label: "a detached Claude session sends a flag the hub discards",
+    file: `${CORE}/src/capture/landed.ts`,
+    from: "  if (isDetachedBranch(checkout.branch)) {",
+    to: "  if (false) {",
+    test: `${CONNECTOR}/test/solved-hook.test.ts`,
+    because: "the detached SessionStart pays the probe's wall clock on the path that carries the briefing",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -23532,6 +24050,7 @@ interface Outcome {
  * PRINTS: packages/connector-acp/test/key-rotation-acp.test.ts 2
  * PRINTS: packages/connector-acp/test/pool-starvation.test.ts 1
  * PRINTS: packages/connector-acp/test/proxy-e2e.test.ts 1
+ * PRINTS: packages/connector-acp/test/register-base-on-default.test.ts 1
  * PRINTS: packages/connector-acp/test/transparency.test.ts 1
  * PRINTS: packages/connector-acp/test/turn-slice.test.ts 2
  * PRINTS: packages/connector-acp/test/wire-loss.test.ts 3
@@ -23582,7 +24101,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
  * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
  * PRINTS: packages/connector-claude/test/settings-merge-removal.test.ts 1
- * PRINTS: packages/connector-claude/test/solved-hook.test.ts 1
+ * PRINTS: packages/connector-claude/test/solved-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/state-reap.test.ts 1
  * PRINTS: packages/connector-claude/test/stop-gate.test.ts 6
  * PRINTS: packages/connector-claude/test/stop-git-touches.test.ts 1
@@ -23651,6 +24170,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/intent-budget.test.ts 1
  * PRINTS: packages/connector-core/test/intent-chain-render.test.ts 1
  * PRINTS: packages/connector-core/test/kit.test.ts 1
+ * PRINTS: packages/connector-core/test/landed-capture.test.ts 5
  * PRINTS: packages/connector-core/test/landed-changes-completeness.test.ts 26
  * PRINTS: packages/connector-core/test/landed-changes-edges.test.ts 19
  * PRINTS: packages/connector-core/test/landed-changes.test.ts 7
@@ -23684,6 +24204,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/question-delivery.test.ts 1
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3
  * PRINTS: packages/connector-core/test/read-text.test.ts 1
+ * PRINTS: packages/connector-core/test/register-base-on-default.test.ts 1
  * PRINTS: packages/connector-core/test/register-guarantees.test.ts 2
  * PRINTS: packages/connector-core/test/register-seq.test.ts 3
  * PRINTS: packages/connector-core/test/remember-developer.test.ts 1
@@ -23717,13 +24238,16 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/drift-loss.test.ts 5
  * PRINTS: packages/connector-cursor/test/handlers.test.ts 5
  * PRINTS: packages/connector-cursor/test/injection.test.ts 4
+ * PRINTS: packages/connector-cursor/test/register-base-on-default.test.ts 1
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/causal-guarantees.test.ts 7
  * PRINTS: packages/schema/test/claim.test.ts 1
+ * PRINTS: packages/schema/test/default-branch.test.ts 1
  * PRINTS: packages/schema/test/fallback-title.test.ts 2
  * PRINTS: packages/schema/test/file-ref.test.ts 5
  * PRINTS: packages/schema/test/hint-outcome.test.ts 2
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
+ * PRINTS: packages/schema/test/landed-evidence.test.ts 1
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1
  * PRINTS: packages/schema/test/session.test.ts 1
@@ -23737,7 +24261,7 @@ interface Outcome {
  * PRINTS: packages/server/test/claim-revalidations.test.ts 10
  * PRINTS: packages/server/test/claim-validity.test.ts 2
  * PRINTS: packages/server/test/commit-evidence-opt-out.test.ts 3
- * PRINTS: packages/server/test/conference.test.ts 3
+ * PRINTS: packages/server/test/conference.test.ts 10
  * PRINTS: packages/server/test/coverage-answer-sessions.test.ts 10
  * PRINTS: packages/server/test/coverage-compat-0.10.test.ts 2
  * PRINTS: packages/server/test/coverage-instant-privacy.test.ts 8
@@ -23767,7 +24291,7 @@ interface Outcome {
  * PRINTS: packages/server/test/drafts.test.ts 4
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/fence-waivers.test.ts 1
- * PRINTS: packages/server/test/ghost-overlap.test.ts 4
+ * PRINTS: packages/server/test/ghost-overlap.test.ts 7
  * PRINTS: packages/server/test/hint-content-floor.test.ts 6
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-outcome-retention.test.ts 4
@@ -23782,6 +24306,8 @@ interface Outcome {
  * PRINTS: packages/server/test/key-rotation.test.ts 6
  * PRINTS: packages/server/test/landed-context.test.ts 22
  * PRINTS: packages/server/test/landed-notices.test.ts 34
+ * PRINTS: packages/server/test/landed-repair.test.ts 20
+ * PRINTS: packages/server/test/landed.test.ts 15
  * PRINTS: packages/server/test/live-location-cost.test.ts 3
  * PRINTS: packages/server/test/live-location-differential.test.ts 5
  * PRINTS: packages/server/test/live-location-privacy.test.ts 27
@@ -23834,7 +24360,8 @@ interface Outcome {
  * PRINTS: packages/server/test/solved-ranking.test.ts 3
  * PRINTS: packages/server/test/startup-boot.test.ts 3
  * PRINTS: packages/server/test/startup-upgrades.test.ts 3
- * PRINTS: packages/server/test/suspect.test.ts 5
+ * PRINTS: packages/server/test/suspect.test.ts 9
+ * PRINTS: packages/server/test/target-last-seen.test.ts 1
  * PRINTS: packages/server/test/team-settings.test.ts 9
  * PRINTS: packages/server/test/ui-feed.test.ts 3
  * PRINTS: packages/server/test/ui-passkeys.test.ts 9

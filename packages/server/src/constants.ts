@@ -417,10 +417,18 @@ export const GHOST_ACTIVE_WINDOW_DAYS = 7;
 export const GHOST_MAX_OWN_CONTEXTS = 3;
 
 /**
- * A work context carrying more target values than this is EXCLUDED from both
- * sides of the SHARED-TARGET tier — mine and theirs alike. The INTENT tier is
- * deliberately untouched by it: that tier shares no value, so the argument
- * below does not reach it (services/ghost-overlap.ts listIntentHits).
+ * A work context that TOUCHED more target values than this inside the
+ * surface's window is EXCLUDED from both sides of the SHARED-TARGET tier —
+ * mine and theirs alike. The INTENT tier is deliberately untouched by it:
+ * that tier shares no value, so the argument below does not reach it
+ * (services/ghost-overlap.ts listIntentHits).
+ *
+ * Inside the window, because a ConE pull request is one change and a work
+ * context is not (pilot finding, 2026-10-05): a long-lived worktree session
+ * touches hundreds of files over weeks, and counted over its life it read as
+ * a sweep and vanished from every collision check. A file counts when it was
+ * first seen or touched again in the window (notASweepCondition); an
+ * opted-out owner is counted by all her files, her times unread.
  *
  * It is a sweep, not a plan: a mass rename, a formatter run, a dependency
  * bump. Sharing a file with a sweep says nothing about whether two designs
@@ -587,6 +595,23 @@ export type EventKind = (typeof EVENT_KINDS)[keyof typeof EVENT_KINDS];
  * a weekend is exactly the kind a synthesis is supposed to find again.
  */
 export const CONFERENCE_ACTIVE_WINDOW_DAYS = 14;
+
+/**
+ * How long work whose session ENDED stays in a conference, and it ranks
+ * after every open session's (pilot finding, 2026-10-07). The window holds
+ * ended work on purpose — VISION §2's conference runs overnight, when nobody
+ * is live — but with landed rarely firing, ended contexts filled it: 19 to
+ * 246 on a copy of the pilot hub, and ranked by activity alone they pushed
+ * live collisions off a twelve-context page.
+ *
+ * SEVENTY-TWO HOURS, from the purpose: the overnight run reads yesterday's
+ * work, and an investigation paused over a weekend — the case the
+ * fourteen-day window above exists for — ended Friday evening and is read
+ * Monday morning, about 64 hours on. Older ended work is history that
+ * `search` still finds; the window keeps holding OPEN work for the full
+ * fortnight.
+ */
+export const CONFERENCE_ENDED_GRACE_HOURS = 72;
 
 /**
  * Work contexts one conference may read, freshest first.
@@ -786,6 +811,43 @@ export const LANDED_NOTICE_GROUPS_LISTED = 3;
  * a row still waiting only refreshes it and is never held back.
  */
 export const LANDED_NOTICE_MAX_PER_PAIR = 20;
+
+/**
+ * HOW OLD A BASE MAY BE WHEN ITS WORK CONTEXT OPENS and still count as the
+ * session's own branch tip, for a session whose connector never said whether
+ * its base was already on the default branch (services/landed.ts). A base
+ * committed more than this before the context opened is a checkout — a stale
+ * worktree, a branch cut from an old main — and its reaching main says
+ * nothing about this session's work. The diagnosed one was six weeks old.
+ *
+ * SMALL, BECAUSE THE TWO ERRORS COST DIFFERENT THINGS. Too small refuses a
+ * real landing (a branch resumed after a weekend), and the context stays in
+ * ghost checks only while its session is still open — they drop ended
+ * sessions anyway — and in the conference's fortnight with its age printed.
+ * Too large stamps a stale checkout landed, and that hides a LIVE session's
+ * files from every collision check, which is the pilot incident. A day keeps
+ * a same-day or overnight branch tip and refuses anything older; committer
+ * dates come from laptops, and clock skew is minutes against it.
+ */
+export const LANDED_STALE_BASE_HOURS = 24;
+
+/**
+ * WHEN THE DATE FALLBACK ENDS. After this instant (the hub's clock) a session
+ * whose connector never said whether its base was already on the default
+ * branch does not land by base ancestry at all; before it, it lands on a
+ * dated base no older than LANDED_STALE_BASE_HOURS (services/landed.ts).
+ *
+ * WHY A CUT AT ALL: the fallback guesses. On the pilot hub 9 of 16
+ * fresh-dated stamps it would have made were still false — a base that was
+ * fresh AND already on main — so it is a bridge for connectors from before
+ * `baseOnDefault` (0.10.x and older), not a rule to keep.
+ *
+ * WHY 2026-11-04: four weeks after the fix (2026-10-07). The pilot team takes
+ * connector releases within days; a connector still not sending the field a
+ * month on is an install nobody updates, and its sessions then stay unlanded
+ * — visible to every collision check, the safe direction.
+ */
+export const LANDED_UNFLAGGED_FALLBACK_ENDS_AT = "2026-11-04T00:00:00.000Z";
 // ── Claim ↔ code binding (1.0 spec 02) ──────────────────────────────────────
 
 /**

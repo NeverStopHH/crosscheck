@@ -36,7 +36,11 @@
  * circling, and VISION §2's own scenario runs it overnight, when nobody's
  * session is live. Excluding ended sessions would make the overnight
  * conference read an empty repo. Landed work is still excluded on both — work
- * that merged is not work anybody is still doing.
+ * that merged is not work anybody is still doing. But ended work is BOUNDED
+ * (pilot finding, 2026-10-07): it stays for CONFERENCE_ENDED_GRACE_HOURS after
+ * its end and ranks after every open session's, because with landed rarely
+ * firing, a fortnight of finished work filled the page (19 to 246 contexts on
+ * a copy of the pilot hub) and pushed the live collision off it.
  *
  * BOUNDED END TO END, and the bounds are arithmetic rather than hope:
  * CONFERENCE_MAX_CONTEXTS contexts, each contributing at most
@@ -51,10 +55,12 @@
  * one reader's side.
  */
 import { and, asc, count, desc, eq, gt, gte, inArray, isNull, ne, sql } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 
 import {
   CONFERENCE_ACTIVE_WINDOW_DAYS,
+  CONFERENCE_ENDED_GRACE_HOURS,
   CONFERENCE_CLAIM_BODY_MAX_CHARS,
   CONFERENCE_MAX_CLAIMS_PER_CONTEXT,
   CONFERENCE_MAX_CONTEXTS,
@@ -86,13 +92,15 @@ import {
 } from "./ghost-overlap.ts";
 import type { OverlapKind, SharedValue } from "./ghost-overlap.ts";
 import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
-import { activitySeenBy, locationHiddenFrom, projectRow } from "./live-location.ts";
+import { activitySeenBy, locationHiddenFrom, projectRow, targetInWindowSeenBy } from "./live-location.ts";
 import type { HiddenLocations } from "./live-location.ts";
+import { visiblePresenceCondition } from "./visibility.ts";
 import type { EvidenceAxes } from "@crosscheck/schema";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
 const MS_PER_DAY = 86_400_000;
+const MS_PER_HOUR = 3_600_000;
 
 /** Only what a person or their agent stated — never a machine draft. */
 const DECLARED_PROVENANCE = "declared";
@@ -181,19 +189,50 @@ export interface ConferenceView {
 const activitySeenByReader = (viewerDeveloperId: string) =>
   activitySeenBy(viewerDeveloperId, agentSessions.developerId, workContexts.updatedAt, workContexts.createdAt);
 
-/** Unfinished work of this repo inside the window, whether or not attended. */
-const recentWorkCondition = (repo: string, cutoff: Date, viewerDeveloperId: string) =>
+/**
+ * Whether a context's session is OPEN, as this reader may rank by it: a
+ * session's end is its owner's instant, so for an owner hidden from the
+ * reader it is not read — her work ranks with the ended, by creation.
+ */
+const openSeenByReader = (viewerDeveloperId: string): SQL =>
+  sql`(case when ${visiblePresenceCondition(viewerDeveloperId, agentSessions.developerId)} then ${agentSessions.endedAt} is null else false end)`;
+
+/**
+ * Ended no longer ago than CONFERENCE_ENDED_GRACE_HOURS — or open — as this
+ * reader may judge it: an owner hidden from the reader is judged by
+ * creation alone, as the window already judges her.
+ */
+const withinEndedGrace = (viewerDeveloperId: string, endedSince: Date): SQL =>
+  sql`(case when ${visiblePresenceCondition(viewerDeveloperId, agentSessions.developerId)} then (${agentSessions.endedAt} is null or ${agentSessions.endedAt} >= ${endedSince.toISOString()}::timestamptz) else true end)`;
+
+/**
+ * Unfinished work of this repo inside the window, attended or not — work
+ * whose session ended counts only within CONFERENCE_ENDED_GRACE_HOURS.
+ */
+const recentWorkCondition = (repo: string, window: ConferenceWindow, viewerDeveloperId: string) =>
   and(
     eq(agentSessions.repo, repo),
-    gte(activityExpression, cutoff),
-    gte(activitySeenByReader(viewerDeveloperId), cutoff),
+    gte(activityExpression, window.cutoff),
+    gte(activitySeenByReader(viewerDeveloperId), window.cutoff),
+    withinEndedGrace(viewerDeveloperId, window.endedSince),
     isNull(workContexts.landedAt),
   );
 
+/** The two instants a conference reads by: activity since, and ended since. */
+interface ConferenceWindow {
+  readonly cutoff: Date;
+  readonly endedSince: Date;
+}
+
+/**
+ * The page: OPEN sessions' work first, then the ended work within the grace,
+ * each freshest first — so a live collision is never the context a page of
+ * yesterday's finished work pushes out.
+ */
 const listRecentContexts = async (
   deps: Deps,
   repo: string,
-  cutoff: Date,
+  window: ConferenceWindow,
   viewerDeveloperId: string,
   hidden: HiddenLocations,
 ): Promise<readonly Omit<ConferenceContextView, "claims">[]> => {
@@ -212,8 +251,12 @@ const listRecentContexts = async (
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
     .innerJoin(developers, eq(agentSessions.developerId, developers.id))
-    .where(recentWorkCondition(repo, cutoff, viewerDeveloperId))
-    .orderBy(desc(activitySeenByReader(viewerDeveloperId)), asc(workContexts.id))
+    .where(recentWorkCondition(repo, window, viewerDeveloperId))
+    .orderBy(
+      desc(openSeenByReader(viewerDeveloperId)),
+      desc(activitySeenByReader(viewerDeveloperId)),
+      asc(workContexts.id),
+    )
     .limit(CONFERENCE_MAX_CONTEXTS);
   return rows.map((row) =>
     projectRow(hidden, { developerId: row.developerId, titleFacts: { repo, branch: row.branch, titleSource: row.titleSource } }, {
@@ -237,14 +280,14 @@ const listRecentContexts = async (
 const countContextsInWindow = async (
   deps: Deps,
   repo: string,
-  cutoff: Date,
+  window: ConferenceWindow,
   viewerDeveloperId: string,
 ): Promise<{ readonly total: number; readonly capped: boolean }> => {
   const rows = await deps.db
     .select({ id: workContexts.id })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
-    .where(recentWorkCondition(repo, cutoff, viewerDeveloperId))
+    .where(recentWorkCondition(repo, window, viewerDeveloperId))
     .limit(CONFERENCE_MAX_COUNTED_CONTEXTS);
   return {
     total: rows.length,
@@ -346,13 +389,21 @@ interface ContextTargets {
 
 /**
  * The strong target values of the slice, with the SWEEP rule applied in the
- * query: a context carrying more than GHOST_MAX_CONTEXT_TARGETS values is a
- * rename or a formatter run and contributes nothing, on this side exactly as
- * on the ghost check's.
+ * query: a context that touched more than GHOST_MAX_CONTEXT_TARGETS values in
+ * the window is a rename or a formatter run and contributes nothing, on this
+ * side exactly as on the ghost check's.
+ *
+ * Only the values touched in the window, by the sweep rule's own clock
+ * (pilot finding, 2026-10-05): the cap bounds exactly those, so the ceiling
+ * below stays arithmetic for a long-lived context that is under the cap now
+ * and over it for its life. An owner hidden from the reader keeps every value
+ * and is counted by all of them, her times unread (targetInWindowSeenBy).
  */
 const listSliceTargets = async (
   deps: Deps,
+  viewerDeveloperId: string,
   ids: readonly string[],
+  cutoff: Date,
 ): Promise<readonly ContextTargets[]> => {
   if (ids.length === 0) {
     return [];
@@ -364,11 +415,14 @@ const listSliceTargets = async (
       value: workContextTargets.value,
     })
     .from(workContextTargets)
+    .innerJoin(workContexts, eq(workContexts.id, workContextTargets.workContextId))
+    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
     .where(
       and(
         inArray(workContextTargets.workContextId, [...ids]),
         inArray(workContextTargets.kind, [...OVERLAP_TARGET_KINDS]),
-        notASweepCondition(workContextTargets.workContextId),
+        targetInWindowSeenBy(viewerDeveloperId, agentSessions.developerId, workContextTargets, cutoff),
+        notASweepCondition(workContextTargets.workContextId, viewerDeveloperId, cutoff),
       ),
     )
     .orderBy(
@@ -592,16 +646,20 @@ export const readConference = async (
   const cutoff = new Date(
     deps.now().getTime() - CONFERENCE_ACTIVE_WINDOW_DAYS * MS_PER_DAY,
   );
+  const reads: ConferenceWindow = {
+    cutoff,
+    endedSince: new Date(deps.now().getTime() - CONFERENCE_ENDED_GRACE_HOURS * MS_PER_HOUR),
+  };
   const hidden = await locationHiddenFrom(deps.db, viewerDeveloperId);
   const [contexts, window, questionRows] = await Promise.all([
-    listRecentContexts(deps, repo, cutoff, viewerDeveloperId, hidden),
-    countContextsInWindow(deps, repo, cutoff, viewerDeveloperId),
+    listRecentContexts(deps, repo, reads, viewerDeveloperId, hidden),
+    countContextsInWindow(deps, repo, reads, viewerDeveloperId),
     listOpenQuestions(deps, viewerDeveloperId, repo, hidden),
   ]);
   const ids = contexts.map((context) => context.id);
   const [claimLists, sliceTargets, contradictions] = await Promise.all([
     Promise.all(ids.map((id) => listContextClaims(deps, id, hidden))),
-    listSliceTargets(deps, ids),
+    listSliceTargets(deps, viewerDeveloperId, ids, cutoff),
     // SECOND, because it needs the slice. The deliberate-pull posture again:
     // no `excludeMutedForDeveloperId`, the same call findContradictionById
     // makes, for the same reason. But bounded to the contexts this report

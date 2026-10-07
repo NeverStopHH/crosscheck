@@ -14,6 +14,7 @@ import { describe, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 
 import {
+  CONFERENCE_ENDED_GRACE_HOURS,
   CONFERENCE_MAX_CLAIMS_PER_CONTEXT,
   CONFERENCE_MAX_CONTEXTS,
   GHOST_HOT_TARGET_MAX_CONTEXTS,
@@ -36,8 +37,21 @@ import {
   VALID_SESSION_BODY,
 } from "./helpers.ts";
 import type { TestDeveloper, TestHarness } from "./helpers.ts";
+import { setPresenceOptOutViaApi } from "./ui-helpers.ts";
 
 const REPO = VALID_SESSION_BODY.repo;
+/** An old main commit a long-lived worktree stays detached at. */
+const STALE_DETACHED_BASE = "51eae4d8f0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5";
+/** When it was committed: six weeks before the contexts open. */
+const STALE_DETACHED_AT = "2026-06-12T09:00:00.000Z";
+/** Past CONFERENCE_ACTIVE_WINDOW_DAYS, as a clock advance and as the instant it reaches. */
+const TWENTY_DAYS_S = 20 * 86_400;
+const TWENTY_DAYS_AFTER_START = "2026-08-13T09:00:00.000Z";
+/** The incident's context held 180 files; all but the two shared ones are old here. */
+const LONG_LIVED_OLD_TOUCHES = 178;
+/** Records per POST /api/records — the route refuses more (MAX_INGEST_BATCH). */
+const INGEST_CHUNK = 100;
+const TWO_DAYS_BEFORE_START = "2026-07-22T09:00:00.000Z";
 const MY_SESSION = "ses_mine";
 const THEIR_SESSION = "ses_theirs";
 const MY_CONTEXT = "wc_mine";
@@ -119,6 +133,7 @@ const contextRecords = (
   title: string,
   targets: readonly { kind: string; value: string }[] = [],
   intent?: Record<string, unknown>,
+  overrides: Record<string, unknown> = {},
 ): readonly Record<string, unknown>[] => [
   recordEnvelope(
     "work_context",
@@ -129,6 +144,7 @@ const contextRecords = (
       description: undefined,
       createdAt: TEST_START_ISO,
       ...(intent === undefined ? {} : { intent }),
+      ...overrides,
     }),
     { sessionId },
   ),
@@ -274,6 +290,141 @@ describe("the conference corpus", () => {
 
     // Assert: merged work is not work anybody is still doing.
     expect((await fetchConference(harness, me.apiKey)).contexts).toEqual([]);
+  });
+
+  test("a stale detached base a teammate reported landed stays in the report", async () => {
+    // Arrange: Ken's long-lived worktree session is detached at a six-week-
+    // old main commit (an older connector: it said nothing about it), and my
+    // feature-branch SessionStart reports that commit as an ancestor of main.
+    const { harness, me, them } = await setup();
+    await registerTestSession(harness, them.apiKey, {
+      id: THEIR_SESSION,
+      branch: `detached@${STALE_DETACHED_BASE.slice(0, 9)}`,
+      baseCommit: STALE_DETACHED_BASE,
+    });
+    await seed(harness, them, [
+      ...contextRecords(THEIR_CONTEXT, THEIR_SESSION, "Session store migration"),
+    ]);
+
+    // Act: a current connector's report, dating the base as git does.
+    await seed(harness, me, [
+      recordEnvelope(
+        "landed_evidence",
+        {
+          repo: REPO,
+          defaultBranch: "origin/main",
+          checkedAt: TEST_START_ISO,
+          commits: [STALE_DETACHED_BASE],
+          commitDates: [{ sha: STALE_DETACHED_BASE, committedAt: STALE_DETACHED_AT }],
+        },
+        { sessionId: MY_SESSION },
+      ),
+    ]);
+
+    // Assert: still unfinished work the conference reads.
+    expect(
+      (await fetchConference(harness, me.apiKey)).contexts.map((c) => c.id),
+    ).toEqual([THEIR_CONTEXT]);
+  });
+
+  test("a long-lived context's old touches do not make it a sweep; an opted-out owner's are judged by count alone", async () => {
+    // Arrange: Ken's long-lived context touched 178 files twenty days ago and
+    // the two I touch today. Twenty days is past the conference's window.
+    const { harness, me, them } = await setup();
+    const shared = ["src/auth/token.ts", "src/auth/session.ts"];
+    const files = (values: readonly string[]) => values.map((value) => ({ kind: "file", value }));
+    const opened = { createdAt: TWENTY_DAYS_AFTER_START };
+    const kensOldTouches = contextRecords(
+      THEIR_CONTEXT,
+      THEIR_SESSION,
+      "Orchestration worktree",
+      files(Array.from({ length: LONG_LIVED_OLD_TOUCHES }, (_unused, i) => `src/old/file-${String(i)}.ts`)),
+      undefined,
+      opened,
+    );
+    for (let start = 0; start < kensOldTouches.length; start += INGEST_CHUNK) {
+      await seed(harness, them, kensOldTouches.slice(start, start + INGEST_CHUNK));
+    }
+    harness.clock.advanceSeconds(TWENTY_DAYS_S);
+    await seed(harness, them, shared.map((value) =>
+      recordEnvelope("target", { workContextId: THEIR_CONTEXT, kind: "file", value }, { sessionId: THEIR_SESSION }),
+    ));
+    await seed(harness, me, contextRecords(MY_CONTEXT, MY_SESSION, "Token refresh rework", files(shared), undefined, opened));
+    const pairsWithKen = (view: ConferenceView): number =>
+      view.overlaps.filter((pair) => [pair.workContextIdA, pair.workContextIdB].includes(THEIR_CONTEXT)).length;
+
+    // Act
+    const visible = await fetchConference(harness, me.apiKey);
+    await setPresenceOptOutViaApi(harness, them.apiKey, true);
+    const hidden = await fetchConference(harness, me.apiKey);
+
+    // Assert: duplicated work while Ken's times may be read; once he opts
+    // out, his touch times are not read, and 180 files are a sweep again.
+    expect(pairsWithKen(visible)).toBe(1);
+    expect(pairsWithKen(hidden)).toBe(0);
+  });
+
+  test("open sessions fill the page first, and work ended more than the grace ago is out", async () => {
+    // Arrange: Ken ended twelve fresh contexts an hour ago — a full page by
+    // activity — and one four days ago; Nick's one OPEN context is older by
+    // activity than all of them. With landed rarely firing, the window holds
+    // ended work for a fortnight, and ranked by activity alone the live
+    // collision is the one that falls off the page.
+    const { harness, me, them } = await setup();
+    await seed(harness, me, contextRecords(MY_CONTEXT, MY_SESSION, "Live work", [], undefined, { createdAt: TWO_DAYS_BEFORE_START }));
+    const nowMs = harness.clock.now().getTime();
+    const endedAgo = async (sessionId: string, hours: number): Promise<void> => {
+      await harness.db
+        .update(agentSessions)
+        .set({ endedAt: new Date(nowMs - hours * 3_600_000) })
+        .where(eq(agentSessions.id, sessionId));
+    };
+    for (let i = 0; i < CONFERENCE_MAX_CONTEXTS; i += 1) {
+      const sessionId = `ses_ended_${String(i)}`;
+      await registerTestSession(harness, them.apiKey, { id: sessionId });
+      await seed(harness, them, contextRecords(`wc_ended_${String(i)}`, sessionId, `Ended ${String(i)}`));
+      await endedAgo(sessionId, 1);
+    }
+    await registerTestSession(harness, them.apiKey, { id: "ses_long_ended" });
+    await seed(harness, them, contextRecords("wc_long_ended", "ses_long_ended", "Ended four days ago"));
+    await endedAgo("ses_long_ended", CONFERENCE_ENDED_GRACE_HOURS + 24);
+
+    // Act
+    const view = await fetchConference(harness, me.apiKey);
+    const ids = view.contexts.map((context) => context.id);
+
+    // Assert: the open context leads; the long-ended one is neither read nor counted.
+    expect(ids[0]).toBe(MY_CONTEXT);
+    expect(ids).toHaveLength(CONFERENCE_MAX_CONTEXTS);
+    expect(ids).not.toContain("wc_long_ended");
+    expect(view.contextsInWindow).toBe(CONFERENCE_MAX_CONTEXTS + 1);
+  });
+
+  test("an opted-out teammate's session end neither drops nor ranks her work", async () => {
+    // Arrange: Ken opted out. One of his sessions ended four days ago (its
+    // context is fresh), another is OPEN with an older context. When his
+    // sessions ended is his; by creation alone, the open one ranks last.
+    const { harness, me, them } = await setup();
+    await seed(harness, me, contextRecords(MY_CONTEXT, MY_SESSION, "My work"));
+    await registerTestSession(harness, them.apiKey, { id: "ses_ken_ended" });
+    await seed(harness, them, contextRecords("wc_ken_ended", "ses_ken_ended", "Ended long ago"));
+    await seed(harness, them, contextRecords(THEIR_CONTEXT, THEIR_SESSION, "Open, older", [], undefined, { createdAt: TWO_DAYS_BEFORE_START }));
+    await harness.db
+      .update(agentSessions)
+      .set({ endedAt: new Date(harness.clock.now().getTime() - (CONFERENCE_ENDED_GRACE_HOURS + 24) * 3_600_000) })
+      .where(eq(agentSessions.id, "ses_ken_ended"));
+    await harness.db
+      .update(agentSessions)
+      .set({ endedAt: harness.clock.now() })
+      .where(eq(agentSessions.id, MY_SESSION));
+    await setPresenceOptOutViaApi(harness, them.apiKey, true);
+
+    // Act
+    const ids = (await fetchConference(harness, me.apiKey)).contexts.map((context) => context.id);
+
+    // Assert
+    expect(ids).toContain("wc_ken_ended");
+    expect(ids.at(-1)).toBe(THEIR_CONTEXT);
   });
 
   test("two developers on the same files are duplicated work; two worktrees of one are not", async () => {

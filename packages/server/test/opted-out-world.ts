@@ -444,14 +444,17 @@ const seedTeam = async (harness: TestHarness): Promise<Pick<OptedOutWorld, "nick
 
 const seedRobin = async (harness: TestHarness, robin: TestDeveloper): Promise<void> => {
   harness.clock.advanceSeconds(STARTED_OFFSET_S);
+  // `baseOnDefault: false` — a current connector whose base was not yet on
+  // main — so that a report of her base is a real landing and the landed
+  // oracle and residual below measure the presence rule, not the age rule.
   for (const id of [ROBIN_LIVE, ROBIN_STALE]) {
     await assertOk(
-      await registerTestSession(harness, robin.apiKey, { id, branch: SECRET_BRANCH, baseCommit: SECRET_SHA }),
+      await registerTestSession(harness, robin.apiKey, { id, branch: SECRET_BRANCH, baseCommit: SECRET_SHA, baseOnDefault: false }),
       `Robin's session ${id}`,
     );
   }
   await assertOk(
-    await registerTestSession(harness, robin.apiKey, { id: ROBIN_LOCAL, repo: LOCAL_REPO, branch: SECRET_LOCAL_BRANCH, baseCommit: SECRET_SHA2 }),
+    await registerTestSession(harness, robin.apiKey, { id: ROBIN_LOCAL, repo: LOCAL_REPO, branch: SECRET_LOCAL_BRANCH, baseCommit: SECRET_SHA2, baseOnDefault: false }),
     "Robin's local session",
   );
   harness.clock.advanceSeconds(CREATED_OFFSET_S - STARTED_OFFSET_S);

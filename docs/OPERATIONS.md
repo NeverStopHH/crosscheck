@@ -44,6 +44,30 @@ ON CONFLICT DO NOTHING;
 
 To restore a single link, add `AND r.id = '<edge id>'`. A restored link carries origin `restored`, which the cleanup never matches, so later starts leave it in place. A link whose claim or session no longer exists is skipped.
 
+## Un-landing contexts a base-ancestry stamp got wrong
+
+Before 2026-10-07 a teammate's landed report stamped every open work context whose base commit was an ancestor of the default branch, including ones whose base was already there when their session started — a worktree detached at an old main commit, a branch cut from main with nothing committed yet. Such a context reads *landed* and drops out of ghost checks and the conference while its session is still working. The hub no longer makes those stamps (`services/landed.ts`); this clears the ones an older hub made. It is opt-in and changes nothing unless told to:
+
+```sh
+# 1. Stop the hub, copy its data dir, and run against the COPY first.
+cp -R /path/to/data /path/to/data-copy
+# 2. Save the pilot report as it stands (see below).
+crosscheck pilot --json > pilot-before.json
+# 3. Dry run, both scopes: prints counts only — never an id, title, branch or sha.
+bun packages/server/scripts/unland-false-landed.ts --data-dir /path/to/data-copy \
+  --scope open --default-branch origin/main --git-dir /path/to/a/clone/of/the/repo \
+  --stale-base <known stale commit>
+bun packages/server/scripts/unland-false-landed.ts --data-dir /path/to/data-copy \
+  --scope all --default-branch origin/main --git-dir /path/to/a/clone/of/the/repo
+# 4. Only when the counts are what you expect, the same with --apply.
+```
+
+**Scope.** `--scope open` judges only contexts whose session is still open: those are the stamps hiding live work from ghost checks and the conference today. `--scope all` judges every landed context, ended sessions included. **A full apply breaks the pilot's "both landed" series**: the pilot report's collision proof counts a flagged collision as "both landed" by `landed_at`, and un-landing ended work changes that figure for windows already reported. Save `crosscheck pilot --json` first either way. On the pilot hub the decision is `--scope open` only, after a dry run on a copy. A dry run without `--scope` judges `all`; `--apply` refuses to run without a named scope.
+
+**What it refuses to open.** `--data-dir` must already be a hub data dir (it carries `PG_VERSION`): PGlite would otherwise create a fresh, empty cluster at a typo and report nothing landed. A dir carrying `postmaster.pid` — which a running PGlite holds and removes on close — is refused unless `--force` says it is a copy taken while the hub ran. A flag-shaped value (`--data-dir --apply`) is refused rather than taken as a path, and `--git-dir` must be a git repository.
+
+A stamp is cleared when the evidence shows the base was already on the default branch at register: the connector said so, the session is on a detached HEAD, the session is ON the branch given to `--default-branch`, you named its base with `--stale-base` (a full sha or a unique prefix of 7+ hex digits; repeatable), or the clone given to `--git-dir` dates the base (committer date) more than 24 hours before the session took it, for a session whose connector said nothing. Without `--default-branch` or `--git-dir` that rule is not judged, and the output says so. A context whose connector said its base was *not* on the default branch keeps its stamp — against a date and against `--stale-base` alike; only `--stale-base-override <sha>`, a separate flag on purpose, clears it. Opening the dir runs this version's bootstrap, as a hub start would.
+
 ## One hub process per data dir
 
 Two hub processes on one `CROSSCHECK_DATA_DIR` are not supported, and neither is a script that opens the dir while the hub runs. Each PGlite process runs its own PostgreSQL, with its own buffer cache, over the dir, and takes no lock that another process would see, so two processes write over each other's pages. The start-up passes also assume they are the only writer: two hubs would run them at the same time over the same rows. The hub refuses a port that is already taken, but it cannot tell that another process holds its data dir. Run one hub per dir, and stop it before running SQL against the dir.

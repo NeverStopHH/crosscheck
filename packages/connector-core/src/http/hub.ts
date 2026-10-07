@@ -218,6 +218,12 @@ export interface RegisterSessionInput {
   readonly repo: string;
   readonly branch: string;
   readonly baseCommit: string;
+  /**
+   * Was `baseCommit` already reachable from the default branch when the
+   * session started? Additive and optional: the hub reads absent as "did not
+   * say" (server services/landed.ts).
+   */
+  readonly baseOnDefault?: boolean;
   readonly status: string;
   /**
    * `session.started`'s own position — `n = 0`, minted with the epoch rather

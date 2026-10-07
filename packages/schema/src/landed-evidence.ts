@@ -30,6 +30,23 @@ export { COMMIT_SHA_PATTERN } from "./commit-sha.ts";
 /** Longest ref label a connector may claim it checked against. */
 const MAX_DEFAULT_BRANCH_CHARS = 200;
 
+/**
+ * WHEN A REPORTED COMMIT WAS COMMITTED — git's committer date, never the
+ * author date: a rebase rewrites the committer date and keeps the author's,
+ * so an author date would make every rebased branch look days old.
+ *
+ * What it is for: a session whose connector never said whether its base was
+ * already on the default branch at register (a connector from before
+ * `baseOnDefault`) can only be judged by how old its base was when its work
+ * context opened — a base committed days before is a stale checkout, not the
+ * session's own work (server services/landed.ts). Published history, like
+ * the sha beside it.
+ */
+export const LandedCommitDateSchema = z.looseObject({
+  sha: z.string().regex(COMMIT_SHA_PATTERN),
+  committedAt: z.iso.datetime(),
+});
+
 export const LandedEvidenceSchema = z.looseObject({
   repo: z.string().min(1),
   /** Which ref the ancestry was checked against — context, not a key. */
@@ -41,6 +58,14 @@ export const LandedEvidenceSchema = z.looseObject({
     .array(z.string().regex(COMMIT_SHA_PATTERN))
     .min(1)
     .max(MAX_LANDED_COMMITS),
+  /**
+   * Additive and optional: a connector from before it sends none, and the
+   * hub then cannot date any base — so it lands only the contexts whose
+   * connector said their base was NOT on the default branch at register.
+   */
+  commitDates: z.array(LandedCommitDateSchema).max(MAX_LANDED_COMMITS).optional(),
 });
+
+export type LandedCommitDate = z.infer<typeof LandedCommitDateSchema>;
 
 export type LandedEvidence = z.infer<typeof LandedEvidenceSchema>;

@@ -496,7 +496,7 @@ const WRITE_ROUTES: Readonly<Record<string, RouteSpec>> = {
     self: { none: WRITE_ACK },
   },
   "POST /api/sessions": {
-    variants: [{ path: "/api/sessions", body: { ...VALID_SESSION_BODY, id: "cc_99999999-aaaa-4bbb-8ccc-dddddddddddd", guarantees: [], losses: EMPTY_LOSS_REPORT, seq: WALK_SEQ } }],
+    variants: [{ path: "/api/sessions", body: { ...VALID_SESSION_BODY, id: "cc_99999999-aaaa-4bbb-8ccc-dddddddddddd", baseOnDefault: false, guarantees: [], losses: EMPTY_LOSS_REPORT, seq: WALK_SEQ } }],
     colleague: { hidden: "registers the caller's own session and answers with it" },
     self: { none: WRITE_ACK },
   },

@@ -35,6 +35,7 @@ import {
   recordBriefingDeliveries,
 } from "@crosscheck/connector-core/flows/briefing.ts";
 import { registerSessionFlow } from "@crosscheck/connector-core/flows/register-session.ts";
+import { probeBaseOnDefault } from "@crosscheck/connector-core/capture/landed.ts";
 import { guaranteeDeclarationFor } from "@crosscheck/connector-core/guarantees/declarations.ts";
 import { resolveFallbackWorkContextTitle } from "@crosscheck/connector-core/flows/work-context-title.ts";
 import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
@@ -101,6 +102,14 @@ export const handleCursorSessionStart = async (
   budget: HookBudget,
 ): Promise<string> => {
   const now = ctx.now();
+  // The base probe (was this base already on the default branch? — the hub
+  // never stamps such a context landed) runs beside the title: two git calls
+  // on a named branch, where the title asks git nothing; skipped on a
+  // detached HEAD, where the title asks twice. At most two either way.
+  const [title, baseOnDefault] = await Promise.all([
+    resolveFallbackWorkContextTitle(ctx.identity),
+    probeBaseOnDefault(ctx.identity),
+  ]);
   const { crosscheckSessionId, developerId } = await registerSessionFlow({
     home: ctx.config.home,
     repoKey: ctx.repoKey,
@@ -111,13 +120,14 @@ export const handleCursorSessionStart = async (
     repoRoot: ctx.identity.root,
     branch: ctx.identity.branch,
     baseCommit: ctx.identity.baseCommit,
+    baseOnDefault,
     hubUrl: ctx.config.hubUrl,
     fallbackDeveloperId: ctx.config.developerId,
     // Cursor supplies no session title, and none is synthesized from
     // conversation content (§2.4 privacy posture — same as ACP). The core
     // builder labels a detached worktree by its branch tip or commit
     // subject (trial finding #15), two bounded git calls at most.
-    title: await resolveFallbackWorkContextTitle(ctx.identity),
+    title,
     // Always the connector's own: the hub withholds it, the branch it names,
     // from colleagues of a developer who opted out of presence.
     titleSource: "fallback",

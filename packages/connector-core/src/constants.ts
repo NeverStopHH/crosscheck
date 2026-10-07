@@ -753,13 +753,24 @@ export const STATUS_MAX_ABSENCE_LINES = 20;
 
 /**
  * Landed detection (DESIGN.md §5) is a nice-to-have like drift: a slow git
- * loses the report, never the briefing. The default-branch resolution rides
- * INSIDE the SessionStart parallel hub-fetch block (its timeout below the
- * per-request hub timeout, same free ride as COMMIT_EVIDENCE_GIT_TIMEOUT_MS),
- * and the ancestry fan-out runs in parallel with the drift lookups — both
- * bounded by this, so the block's wall clock does not grow.
+ * loses the report, never the briefing. The ancestry fan-out — and the read
+ * of those commits' dates beside it — runs in parallel with the drift
+ * lookups, each bounded by this, so the briefing block's wall clock does not
+ * grow.
  *
  * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.LANDED_GIT_TIMEOUT_MS < c.HTTP_TIMEOUT_MS)'
+ * PRINTS: true
+ *
+ * The REGISTER needs it too since the pilot finding of 2026-10-05: whether
+ * the session's base was already on the default branch rides the register
+ * body (capture/landed.ts probeBaseOnDefault), so SessionStart resolves the
+ * default ref and probes the base BEFORE the register round trip — two calls
+ * in sequence, on a named branch only. That is real wall clock there: the
+ * title asks git nothing on a named branch. On a detached HEAD the probe is
+ * skipped and the title's own two (HEAD_LABEL_GIT_TIMEOUT_MS) are the cost.
+ * Either way at most two calls precede the register, inside the same slack:
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(2 * c.LANDED_GIT_TIMEOUT_MS <= c.SESSION_START_BUDGET_RATIO * c.HTTP_TIMEOUT_MS - c.HTTP_TIMEOUT_MS)'
  * PRINTS: true
  */
 export const LANDED_GIT_TIMEOUT_MS = 250;

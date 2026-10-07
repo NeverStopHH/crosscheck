@@ -64,6 +64,17 @@ ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_newest_at timestamptz;
 -- of casting loss_kinds JSON to int4, which one large count made throw.
 ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_ignored_at timestamptz;
 
+-- Whether the base commit was already on the default branch when the session
+-- registered, by the connector's own word (pilot finding, 2026-10-05). NULL
+-- means the connector did not say — every row from before the column — and a
+-- base that was already there is never read as this session's work landing
+-- (services/landed.ts).
+ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS base_on_default boolean;
+-- When the session took its base_commit (hub clock): set at register, moved
+-- by a re-register only when the base differs. A base's age is judged against
+-- it. NULL on older rows; readers fall back to started_at.
+ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS base_changed_at timestamptz;
+
 CREATE INDEX IF NOT EXISTS agent_sessions_repo_idx
   ON agent_sessions (repo);
 CREATE INDEX IF NOT EXISTS agent_sessions_heartbeat_idx
@@ -92,6 +103,10 @@ CREATE TABLE IF NOT EXISTS work_context_targets (
 -- and set by ingestTarget, so a row that predates this column reads null and
 -- the pointer says "age unknown" rather than a fabricated now() age.
 ALTER TABLE work_context_targets ADD COLUMN IF NOT EXISTS created_at timestamptz;
+-- When the target was last touched again (pilot finding, 2026-10-05): every
+-- duplicate touch sets it, so a long-lived session's re-edit today reads as
+-- today. Null until the first re-touch; first-seen (created_at) never moves.
+ALTER TABLE work_context_targets ADD COLUMN IF NOT EXISTS last_seen_at timestamptz;
 
 -- The derived-contradictions join matches targets on (kind, value) with the
 -- PK's leading column unconstrained (services/contradictions.ts) — without

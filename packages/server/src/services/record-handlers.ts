@@ -687,15 +687,21 @@ export const ingestTarget = async (
     // silently own the label and `suspect` would report a second source as
     // dead. Still a DUPLICATE record either way: nothing new was learned
     // about the file, only about who saw it.
+    //
+    // THE RE-TOUCH IS RECORDED TOO (pilot finding, 2026-10-05): one UPDATE
+    // moves `last_seen_at` to now and, only when the other lane saw it,
+    // upgrades the label — first-seen stays where it was.
     await deps.db
       .update(workContextTargets)
-      .set({ source: "both" })
+      .set({
+        lastSeenAt: deps.now(),
+        source: sql`case when ${workContextTargets.source} NOT IN (${source}, 'both') then 'both' else ${workContextTargets.source} end`,
+      })
       .where(
         and(
           eq(workContextTargets.workContextId, body.workContextId),
           eq(workContextTargets.kind, body.kind),
           eq(workContextTargets.value, value),
-          sql`${workContextTargets.source} NOT IN (${source}, 'both')`,
         ),
       );
     await project();

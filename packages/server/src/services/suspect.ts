@@ -53,7 +53,13 @@ import {
   workContextTargets,
   workContexts,
 } from "../db/schema.ts";
-import { activitySeenBy, locationHiddenFrom, projectRow, titleSourceOf } from "./live-location.ts";
+import {
+  activitySeenBy,
+  locationHiddenFrom,
+  projectRow,
+  targetTouchedAtSeenBy,
+  titleSourceOf,
+} from "./live-location.ts";
 import { readPin } from "./pins.ts";
 import { explanationTimingOf } from "./intent-ledger.ts";
 import type { ExplanationTimingAnswer } from "./intent-ledger.ts";
@@ -321,6 +327,17 @@ const readCandidates = async (
     workContexts.updatedAt,
     workContexts.createdAt,
   );
+  // WHAT WAS TOUCHED IN THE WINDOW is a question about the TOUCH (pilot
+  // finding, 2026-10-05): a long-lived worktree session opens one context
+  // and touches files in it for weeks, and windowed by its context alone —
+  // created long ago, updated only by a re-fire — its touches today were out
+  // of the window, so the session in the break's files today was never
+  // named. A touch is in when its context was active in the window OR the
+  // touch was first seen — or touched again — in it (targetTouchedAt);
+  // never narrower than before. Those are the owner's instants, so for an
+  // owner hidden from this reader they are not read, and her work stays
+  // windowed by creation alone.
+  const touchedAt = sql`greatest(${activity}, ${targetTouchedAtSeenBy(readerDeveloperId, agentSessions.developerId, workContextTargets)})`;
   const touching = deps.db.$with("touching").as(
     deps.db
       .select({
@@ -335,7 +352,9 @@ const readCandidates = async (
         agentKind: sql<string>`${agentSessions.agentKind}`.as("agent_kind"),
         branch: sql<string>`${agentSessions.branch}`.as("branch"),
         developerId: sql<string>`${agentSessions.developerId}`.as("developer_id"),
-        lastActiveAt: sql<Date>`${activity}`.as("last_active_at"),
+        // Its latest touch of these files by the window's own rule, so a
+        // candidate admitted for a touch today never reads as idle for weeks.
+        lastActiveAt: sql<Date>`max(${touchedAt})`.as("last_active_at"),
         overlap: sql<number>`count(distinct ${workContextTargets.value})`.as("overlap"),
         sources: sql<string[]>`array_agg(distinct ${workContextTargets.source})`.as("sources"),
       })
@@ -350,7 +369,7 @@ const readCandidates = async (
           eq(workContextTargets.kind, "file"),
           inArray(workContextTargets.value, [...files]),
           eq(agentSessions.repo, repo),
-          gt(sql`${activity}`, since),
+          gt(touchedAt, since),
         ),
       )
       .groupBy(
@@ -382,7 +401,9 @@ const readCandidates = async (
         and(
           eq(workContextTargets.kind, "file"),
           eq(agentSessions.repo, repo),
-          gt(sql`${activity}`, since),
+          // The denominator by the same rule as the numerator: every touch
+          // this author made in the window, a long-lived context's included.
+          gt(touchedAt, since),
           sql`${agentSessions.developerId} in (select "developer_id" from "touching")`,
         ),
       )

@@ -91,6 +91,7 @@ import type { AssembledBriefing } from "@crosscheck/connector-core/flows/briefin
 import { endSessionFlow } from "@crosscheck/connector-core/flows/end-session.ts";
 import { heartbeatMaybe } from "@crosscheck/connector-core/flows/heartbeat.ts";
 import { registerSessionFlow } from "@crosscheck/connector-core/flows/register-session.ts";
+import { probeBaseOnDefault } from "@crosscheck/connector-core/capture/landed.ts";
 import {
   ACP_CONNECTOR,
   guaranteeDeclarationFor,
@@ -528,6 +529,14 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
       },
     };
     const at = now();
+    // The base probe (was this base already on the default branch? — the hub
+    // never stamps such a context landed) runs beside the title: two git
+    // calls on a named branch, where the title asks git nothing; skipped on
+    // a detached HEAD, where the title asks twice. At most two either way.
+    const [title, baseOnDefault] = await Promise.all([
+      resolveFallbackWorkContextTitle(identity),
+      probeBaseOnDefault(identity),
+    ]);
     const registered = await registerSessionFlow({
       home: config.home,
       repoKey: key,
@@ -538,11 +547,12 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
       repoRoot: identity.root,
       branch: identity.branch,
       baseCommit: identity.baseCommit,
+      baseOnDefault,
       hubUrl: config.hubUrl,
       fallbackDeveloperId: config.developerId,
       // Detached-aware (trial finding #15): a worktree session is labelled by
       // its branch tip or commit subject — two bounded git calls at most, once.
-      title: await resolveFallbackWorkContextTitle(identity),
+      title,
       // The proxy's only title is its own fallback — the branch, which the
       // hub withholds from colleagues of a developer who opted out.
       titleSource: "fallback",

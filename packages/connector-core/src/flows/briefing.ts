@@ -41,6 +41,8 @@ import {
   renderBriefing,
 } from "../briefing/render.ts";
 import { resolveDriftByBaseCommit } from "../git/commit-drift.ts";
+import { NOTHING_LANDED } from "../capture/landed.ts";
+import type { LandedReading } from "../capture/landed.ts";
 import { UNKNOWN_DEVELOPER_ID, hintDeliveryRecord, landedNoticeDeliveryRecord } from "../capture/records.ts";
 import type { Producer } from "../capture/records.ts";
 import {
@@ -86,7 +88,7 @@ export interface AssembleBriefingInput {
    * wall clock of its own; its result is returned untouched.
    */
   readonly collectLanded?:
-    | ((workContexts: readonly WorkContextEntry[]) => Promise<readonly string[]>)
+    | ((workContexts: readonly WorkContextEntry[]) => Promise<LandedReading>)
     | undefined;
   /**
    * False when no person reads this session (landed changes, step 4): the
@@ -125,7 +127,7 @@ export interface AssembledBriefing {
    */
   readonly shownGhostCount: number;
   /** The `collectLanded` rider's result; empty when no rider was passed. */
-  readonly landedCommits: readonly string[];
+  readonly landed: LandedReading;
   /**
    * The hub rows of the author's notices the emitted text really names
    * (landed changes, step 4): told once, so only what the reader saw is
@@ -210,9 +212,9 @@ export const assembleBriefing = async (
   const shownBaseCommits = groupTeammates(presence, now)
     .slice(0, MAX_TEAMMATES)
     .flatMap((group) => (group.baseCommit === null ? [] : [group.baseCommit]));
-  const [drift, landedCommits] = await Promise.all([
+  const [drift, landed] = await Promise.all([
     resolveDriftByBaseCommit(repoRoot, shownBaseCommits),
-    input.collectLanded?.(workContexts) ?? Promise.resolve([] as readonly string[]),
+    input.collectLanded?.(workContexts) ?? Promise.resolve(NOTHING_LANDED),
   ]);
 
   const briefing = renderBriefing({
@@ -276,7 +278,7 @@ export const assembleBriefing = async (
     presence,
     presenceFetched: presenceResult.ok,
     workContexts,
-    landedCommits,
+    landed,
   };
 };
 

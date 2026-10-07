@@ -126,7 +126,8 @@ export const buildTeamWorld = async (robinOptsOut: boolean): Promise<TeamWorld> 
   await ok(await registerTestSession(h, nick.apiKey, { id: NICK_S, branch: "fix/nick-refresh", baseCommit: "aaaabbbbccccdddd" }), "nick session");
   await ok(await registerTestSession(h, ken.apiKey, { id: KEN_S, branch: "main", baseCommit: "1111222233334444" }), "ken session");
   await ok(await registerTestSession(h, robin.apiKey, { id: ROBIN_S, branch: ROBIN_BRANCH, baseCommit: ROBIN_HEAD }), "robin session");
-  await ok(await registerTestSession(h, robin.apiKey, { id: ROBIN_S2, branch: "fix/cache-warmup", baseCommit: ROBIN_HEAD2 }), "robin session 2");
+  // A current connector whose base was not yet on main: its report below is a real landing.
+  await ok(await registerTestSession(h, robin.apiKey, { id: ROBIN_S2, branch: "fix/cache-warmup", baseCommit: ROBIN_HEAD2, baseOnDefault: false }), "robin session 2");
   if (robinOptsOut) {
     await setPresenceOptOutViaApi(h, robin.apiKey, true);
   }

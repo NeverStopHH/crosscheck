@@ -69,6 +69,13 @@ export const RegisterSessionBodySchema = z.object({
   repo: z.string().min(1),
   branch: z.string().min(1),
   baseCommit: z.string().min(1),
+  /**
+   * Was `baseCommit` ALREADY reachable from the default branch at register?
+   * The connector's word (services/landed.ts reads it). Additive: absent is
+   * a connector from before the field, and a value this hub cannot read is
+   * read as absent rather than refusing the session it rides.
+   */
+  baseOnDefault: z.boolean().optional().catch(undefined),
   status: SessionStatusSchema,
   ...SeqBodyField,
   ...LossBodyField,

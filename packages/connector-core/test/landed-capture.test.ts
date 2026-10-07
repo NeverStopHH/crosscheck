@@ -10,8 +10,12 @@ import { writeFile } from "node:fs/promises";
 
 import { MAX_LANDED_ANCESTRY_CHECKS } from "../src/constants.ts";
 import {
+  baseReachableFromDefault,
   collectLandedCommits,
+  collectLandedReading,
   landedEvidenceRecord,
+  probeBaseOnDefault,
+  readCommitDates,
 } from "../src/capture/landed.ts";
 import { resolveDefaultBranchRef } from "../src/git/default-branch.ts";
 import { runGit } from "../src/git/git.ts";
@@ -184,6 +188,113 @@ describe("collectLandedCommits", () => {
   });
 });
 
+/** A commit whose committer date is fixed — the one thing the shared helper cannot set. */
+const commitDatedAt = async (root: string, message: string, committedAt: string): Promise<void> => {
+  const proc = Bun.spawn({
+    cmd: ["git", "commit", "-q", "-m", message],
+    cwd: root,
+    stdout: "ignore",
+    stderr: "ignore",
+    env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null", GIT_COMMITTER_DATE: committedAt },
+  });
+  expect(await proc.exited).toBe(0);
+};
+
+describe("baseReachableFromDefault — what register says about its own base", () => {
+  test("a detached checkout of a commit main already holds is on the default branch", async () => {
+    // Arrange: the pilot owner's shape — a worktree detached at a main commit.
+    const { root, mainSha } = await makeRepoWithOrigin();
+    await git(root, ["checkout", "-q", "--detach", mainSha]);
+
+    // Act
+    const onDefault = await baseReachableFromDefault(root, mainSha, "origin/main");
+
+    // Assert
+    expect(onDefault).toBe(true);
+  });
+
+  test("a branch's own commit main does not hold yet is not", async () => {
+    // Arrange
+    const { root, featureSha } = await makeRepoWithOrigin();
+
+    // Act + Assert
+    expect(await baseReachableFromDefault(root, featureSha, "origin/main")).toBe(false);
+  });
+
+  test("git that cannot answer says nothing — never a guess either way", async () => {
+    // Arrange
+    const { root } = await makeRepoWithOrigin();
+
+    // Act + Assert: unknown sha, flag-shaped value, no default ref.
+    expect(await baseReachableFromDefault(root, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", "origin/main")).toBeUndefined();
+    expect(await baseReachableFromDefault(root, "--all", "origin/main")).toBeUndefined();
+    expect(await baseReachableFromDefault(root, "a1b2c3d4", null)).toBeUndefined();
+  });
+
+  test("probeBaseOnDefault resolves the default ref itself on a named branch", async () => {
+    // Arrange
+    const { root, mainSha, featureSha } = await makeRepoWithOrigin();
+
+    // Act + Assert
+    expect(await probeBaseOnDefault({ root, baseCommit: mainSha, branch: "feat/cut" })).toBe(true);
+    expect(await probeBaseOnDefault({ root, baseCommit: featureSha, branch: "feat/divergent" })).toBe(false);
+  });
+
+  test("a detached HEAD is never probed — the hub never lands it by its base anyway", async () => {
+    // Arrange: count the default-ref resolutions the probe asks for.
+    const { root, mainSha } = await makeRepoWithOrigin();
+    let resolutions = 0;
+    const resolveRef = (): Promise<string | null> => {
+      resolutions += 1;
+      return Promise.resolve("origin/main");
+    };
+
+    // Act
+    const detached = await probeBaseOnDefault({ root, baseCommit: mainSha, branch: `detached@${mainSha.slice(0, 9)}` }, resolveRef);
+
+    // Assert: no answer and no git — not even the default ref.
+    expect(detached).toBeUndefined();
+    expect(resolutions).toBe(0);
+  });
+});
+
+describe("collectLandedReading — the ancestors, and when each was committed", () => {
+  test("dates exactly the landed commits, by git's committer date", async () => {
+    // Arrange: main's commit was committed at a known instant.
+    const root = await makeRepo("landed-dated");
+    await writeFile(join(root, "dated.ts"), "export const d = 1;\n", "utf8");
+    await git(root, ["add", "."]);
+    await commitDatedAt(root, "dated", "2026-08-21T10:00:00+02:00");
+    const mainSha = await revParse(root, "HEAD");
+    await git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    await git(root, ["checkout", "-q", "-b", "feat/unmerged"]);
+    await writeFile(join(root, "unmerged.ts"), "export const u = 1;\n", "utf8");
+    await git(root, ["add", "."]);
+    await git(root, ["commit", "-q", "-m", "unmerged"]);
+    const featureSha = await revParse(root, "HEAD");
+
+    // Act
+    const reading = await collectLandedReading(root, "origin/main", [mainSha, featureSha]);
+
+    // Assert: in UTC, as the wire wants it; the unmerged commit is neither.
+    expect(reading).toEqual({
+      commits: [mainSha],
+      commitDates: [{ sha: mainSha, committedAt: "2026-08-21T08:00:00.000Z" }],
+    });
+  });
+
+  test("readCommitDates reads nothing for an unknown or flag-shaped value", async () => {
+    // Arrange
+    const { root, mainSha } = await makeRepoWithOrigin();
+
+    // Act
+    const dates = await readCommitDates(root, [mainSha, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", "--all"]);
+
+    // Assert
+    expect(dates.map((entry) => entry.sha)).toEqual([mainSha]);
+  });
+});
+
 describe("landedEvidenceRecord", () => {
   test("wraps the finding in a landed_evidence envelope", () => {
     // Arrange
@@ -193,7 +304,7 @@ describe("landedEvidenceRecord", () => {
     const record = landedEvidenceRecord(
       "github.com/acme/api",
       "origin/main",
-      ["a1b2c3d4"],
+      { commits: ["a1b2c3d4"], commitDates: [] },
       {
         developerId: "dev_1",
         agentKind: "claude-code",
@@ -202,7 +313,7 @@ describe("landedEvidenceRecord", () => {
       now,
     );
 
-    // Assert
+    // Assert: no dates read, no field — never an empty list.
     expect(record.kind).toBe("landed_evidence");
     expect(record.body).toEqual({
       repo: "github.com/acme/api",
@@ -210,5 +321,22 @@ describe("landedEvidenceRecord", () => {
       checkedAt: "2026-07-24T09:00:00.000Z",
       commits: ["a1b2c3d4"],
     });
+  });
+
+  test("carries the commits' dates when git gave them", () => {
+    // Arrange
+    const dates = [{ sha: "a1b2c3d4", committedAt: "2026-07-23T18:00:00.000Z" }];
+
+    // Act
+    const record = landedEvidenceRecord(
+      "github.com/acme/api",
+      "origin/main",
+      { commits: ["a1b2c3d4"], commitDates: dates },
+      { developerId: "dev_1", agentKind: "claude-code", sessionId: "cc_1" },
+      new Date("2026-07-24T09:00:00.000Z"),
+    );
+
+    // Assert
+    expect((record.body as { commitDates?: unknown }).commitDates).toEqual(dates);
   });
 });
