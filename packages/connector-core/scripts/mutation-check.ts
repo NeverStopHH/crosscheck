@@ -23917,6 +23917,15 @@ export const MUTATIONS: readonly Mutation[
     test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
     because: "every compact, resume or late briefing tells the person about the same teammate's work again",
   },
+  // ── Review of feat/collision-visible, L9: the ghost claim inside SessionStart's budget ──
+  {
+    label: "SessionStart claims its ghost notice only from the spare the drain spends",
+    file: `${CONNECTOR}/src/hooks/session-start.ts`,
+    from: "await tellPersonOfGhosts(ctx, assembled.shownGhosts);",
+    to: "(budget.spareMs() > 0 ? await tellPersonOfGhosts(ctx, assembled.shownGhosts) : \"\");",
+    test: `${CONNECTOR}/test/hook-time-budget.test.ts`,
+    because: "a session that starts on a backlog — the one whose drain spends the spare — never tells its person of the multi-day overlap",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -24083,6 +24092,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/hook-contract.test.ts 1
  * PRINTS: packages/connector-claude/test/hook-reserve.test.ts 1
  * PRINTS: packages/connector-claude/test/hook-seq.test.ts 3
+ * PRINTS: packages/connector-claude/test/hook-time-budget.test.ts 1
  * PRINTS: packages/connector-claude/test/hook-timeout-loss.test.ts 6
  * PRINTS: packages/connector-claude/test/hook-window-pairing.test.ts 11
  * PRINTS: packages/connector-claude/test/hook-window.test.ts 4
