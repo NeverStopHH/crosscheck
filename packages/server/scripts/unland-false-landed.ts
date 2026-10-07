@@ -28,6 +28,9 @@
  * are not, and the output says so. `--stale-base` names a commit known to be
  * a stale checkout; repeatable.
  */
+import { stat } from "node:fs/promises";
+import { join } from "node:path";
+
 import { COMMIT_SHA_PATTERN } from "@crosscheck/schema";
 
 import { closeDb, createDb } from "../src/db/client.ts";
@@ -58,6 +61,10 @@ const GIT_SHAS_PER_CALL = 200;
 /** A local `git log --no-walk` over a few hundred commits; generous on purpose. */
 const GIT_TIMEOUT_MS = 30_000;
 const FIELD_SEPARATOR = "\t";
+/** What every PostgreSQL data dir carries; a dir without it is not one. */
+const PG_VERSION_FILE = "PG_VERSION";
+/** What a running PGlite leaves in the dir it holds. */
+const POSTMASTER_PID_FILE = "postmaster.pid";
 
 export interface OpenedHub {
   readonly db: Db;
@@ -74,6 +81,8 @@ export interface UnlandDeps {
 
 interface Options {
   readonly dataDir: string;
+  /** Open a data dir that still carries postmaster.pid — a copy taken live. */
+  readonly force: boolean;
   readonly scope: RepairScope;
   readonly defaultBranch: string | null;
   readonly gitDir: string | null;
@@ -84,6 +93,8 @@ interface Options {
 type Parsed = { readonly ok: true; readonly options: Options } | { readonly ok: false; readonly error: string };
 
 const VALUE_FLAGS = new Set(["--data-dir", "--scope", "--default-branch", "--git-dir", "--stale-base"]);
+
+const SWITCHES = new Set(["--apply", "--force"]);
 
 const isRepairScope = (value: string): value is RepairScope =>
   (REPAIR_SCOPES as readonly string[]).includes(value);
@@ -105,12 +116,18 @@ const tokenize = (argv: readonly string[]): readonly (readonly [string, string |
 
 const parseArgs = (argv: readonly string[]): Parsed => {
   const pairs = tokenize(argv);
-  const unknown = pairs.find(([flag]) => !VALUE_FLAGS.has(flag) && flag !== "--apply");
+  const unknown = pairs.find(([flag]) => !VALUE_FLAGS.has(flag) && !SWITCHES.has(flag));
   if (unknown !== undefined) {
     return { ok: false, error: `unknown argument ${unknown[0]}` };
   }
   if (pairs.some(([flag, value]) => VALUE_FLAGS.has(flag) && (value === null || value.length === 0))) {
     return { ok: false, error: "a flag is missing its value" };
+  }
+  // `--data-dir --apply` once made a data dir NAMED `--apply`: a value that
+  // looks like a flag is a forgotten value, never a path.
+  const flagShaped = pairs.find(([flag, value]) => VALUE_FLAGS.has(flag) && value?.startsWith("-") === true);
+  if (flagShaped !== undefined) {
+    return { ok: false, error: `${flagShaped[0]} needs a value, not another flag` };
   }
   const valuesOf = (flag: string): readonly string[] =>
     pairs.flatMap(([name, value]) => (name === flag && value !== null ? [value] : []));
@@ -135,6 +152,7 @@ const parseArgs = (argv: readonly string[]): Parsed => {
     ok: true,
     options: {
       dataDir,
+      force: pairs.some(([flag]) => flag === "--force"),
       scope: scope ?? DRY_RUN_SCOPE,
       defaultBranch: valuesOf("--default-branch").at(-1) ?? null,
       gitDir: valuesOf("--git-dir").at(-1) ?? null,
@@ -191,11 +209,47 @@ const runOnHub = async (db: Db, options: Options, deps: UnlandDeps): Promise<voi
   deps.write(`un-landed ${String(await unlandContexts(db, plan.unland))} contexts`);
 };
 
+const exists = async (path: string): Promise<boolean> => {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Why this data dir must not be opened, or null. Opening a path PGlite does
+ * not know CREATES a fresh cluster there — a typo became an empty hub that
+ * reported "landed contexts: 0" — so the dir must exist and carry
+ * PG_VERSION. A dir holding postmaster.pid is one a hub process still has
+ * open (PGlite writes it while it runs and removes it on close); two writers
+ * corrupt each other's pages, so that is refused unless --force says it is a
+ * copy taken while the hub ran.
+ */
+const dataDirProblem = async (options: Options): Promise<string | null> => {
+  if (!(await exists(join(options.dataDir, PG_VERSION_FILE)))) {
+    return `--data-dir is not a hub data dir (no ${PG_VERSION_FILE}): ${options.dataDir}`;
+  }
+  if (!options.force && (await exists(join(options.dataDir, POSTMASTER_PID_FILE)))) {
+    return (
+      `--data-dir holds ${POSTMASTER_PID_FILE}: a hub may still have it open — stop it and ` +
+      "run on a copy, or pass --force if this IS a copy taken while the hub ran"
+    );
+  }
+  return null;
+};
+
 /** The whole command, with its edges injected; the exit code it ends with. */
 export const runUnlandFalseLanded = async (argv: readonly string[], deps: UnlandDeps): Promise<number> => {
   const parsed = parseArgs(argv);
   if (!parsed.ok) {
     deps.write(`${parsed.error}\n${USAGE}`);
+    return EXIT_USAGE;
+  }
+  const dirProblem = await dataDirProblem(parsed.options);
+  if (dirProblem !== null) {
+    deps.write(`${dirProblem}\n${USAGE}`);
     return EXIT_USAGE;
   }
   // A wrong --git-dir would date nothing and read as "no stale bases"; it is

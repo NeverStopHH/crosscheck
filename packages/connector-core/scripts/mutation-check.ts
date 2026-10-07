@@ -23831,6 +23831,30 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/landed-repair.test.ts`,
     because: "the clone check answers yes for any path, and the refusal never fires",
   },
+  {
+    label: "the landed repair opens a typo'd data dir as a fresh empty hub",
+    file: `${SERVER}/scripts/unland-false-landed.ts`,
+    from: "  if (!(await exists(join(options.dataDir, PG_VERSION_FILE)))) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "PGlite creates a cluster at the typo, and the run reports \"landed contexts: 0\" for a hub it never read",
+  },
+  {
+    label: "the landed repair opens a data dir a running hub still holds",
+    file: `${SERVER}/scripts/unland-false-landed.ts`,
+    from: "  if (!options.force && (await exists(join(options.dataDir, POSTMASTER_PID_FILE)))) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "two PostgreSQL processes write over each other's pages in one dir",
+  },
+  {
+    label: "the landed repair takes a flag as a path",
+    file: `${SERVER}/scripts/unland-false-landed.ts`,
+    from: "  if (flagShaped !== undefined) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "`--data-dir --apply` names a data dir `--apply`, the reviewer's own slip",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -24213,7 +24237,7 @@ interface Outcome {
  * PRINTS: packages/server/test/key-rotation.test.ts 6
  * PRINTS: packages/server/test/landed-context.test.ts 22
  * PRINTS: packages/server/test/landed-notices.test.ts 34
- * PRINTS: packages/server/test/landed-repair.test.ts 13
+ * PRINTS: packages/server/test/landed-repair.test.ts 16
  * PRINTS: packages/server/test/landed.test.ts 15
  * PRINTS: packages/server/test/live-location-cost.test.ts 3
  * PRINTS: packages/server/test/live-location-differential.test.ts 5

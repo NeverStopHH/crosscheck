@@ -13,7 +13,7 @@
  * title, a branch or a sha.
  */
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq, isNotNull } from "drizzle-orm";
@@ -155,7 +155,21 @@ const run = async (
   return { code, output: lines.join("\n"), opened };
 };
 
-const DATA_DIR = ["--data-dir", "/nonexistent/seeded-in-memory-hub"];
+/**
+ * A directory that LOOKS like a hub data dir — PG_VERSION only. The script
+ * checks the dir it is given; the hub it opens is still the seeded in-memory
+ * one, injected through openDb.
+ */
+const makeHubDir = async (): Promise<string> => {
+  const dir = await mkdtemp(join(tmpdir(), "cx-unland-hub-"));
+  await writeFile(join(dir, "PG_VERSION"), "17\n", "utf8");
+  return dir;
+};
+const HUB_DIR = await makeHubDir();
+afterAll(async () => {
+  await rm(HUB_DIR, { recursive: true, force: true });
+});
+const DATA_DIR = ["--data-dir", HUB_DIR];
 const EVIDENCE = ["--git-dir", "/nonexistent/clone", "--stale-base", NAMED_BASE, "--default-branch", "origin/main"];
 
 describe("the dry run", () => {
@@ -191,6 +205,46 @@ describe("the dry run", () => {
     expect(result.output).toContain("base already on the default branch: 3");
     expect(result.output).toContain("stale base not judged (no --git-dir)");
     expect(result.output).toContain("on the default branch not judged (no --default-branch)");
+  });
+});
+
+describe("--data-dir", () => {
+  test("must name an existing hub data dir, never a typo or another flag", async () => {
+    // Arrange: a missing path, a directory that is not a data dir, and the
+    // reviewer's own slip — `--data-dir --apply`, which made a dir named
+    // `--apply`.
+    const { harness } = await seedHub();
+    const notAHub = await mkdtemp(join(tmpdir(), "cx-unland-nothub-"));
+
+    // Act
+    const missing = await run(harness, ["--data-dir", join(notAHub, "typo-dir")]);
+    const plain = await run(harness, ["--data-dir", notAHub]);
+    const flagShaped = await run(harness, ["--data-dir", "--apply"]);
+    await rm(notAHub, { recursive: true, force: true });
+
+    // Assert: refused, and nothing was opened — or created.
+    expect([missing.code, plain.code, flagShaped.code]).toEqual([2, 2, 2]);
+    expect(missing.opened + plain.opened + flagShaped.opened).toBe(0);
+    expect(missing.output).toContain("is not a hub data dir");
+    expect(flagShaped.output).toContain("--data-dir needs a value, not another flag");
+  });
+
+  test("a data dir a hub still holds is refused unless --force", async () => {
+    // Arrange: PGlite writes postmaster.pid while it holds the dir.
+    const { harness } = await seedHub();
+    const held = await makeHubDir();
+    await writeFile(join(held, "postmaster.pid"), "1\n", "utf8");
+
+    // Act
+    const refused = await run(harness, ["--data-dir", held]);
+    const forced = await run(harness, ["--data-dir", held, "--force"]);
+    await rm(held, { recursive: true, force: true });
+
+    // Assert
+    expect(refused.code).toBe(2);
+    expect(refused.opened).toBe(0);
+    expect(refused.output).toContain("postmaster.pid");
+    expect(forced.code).toBe(0);
   });
 });
 
@@ -284,7 +338,7 @@ describe("opt-in, explicitly", () => {
     // Act
     const noDir = await run(harness, ["--scope", "all"]);
     const badSha = await run(harness, [...DATA_DIR, "--stale-base", "--all"]);
-    const unknown = await run(harness, [...DATA_DIR, "--force"]);
+    const unknown = await run(harness, [...DATA_DIR, "--yes"]);
 
     // Assert: usage errors, and the hub was never opened.
     expect([noDir.code, badSha.code, unknown.code]).toEqual([2, 2, 2]);
