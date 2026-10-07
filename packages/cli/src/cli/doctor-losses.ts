@@ -75,6 +75,9 @@ export const lossChecks = (local: LocalLosses, now: Date): readonly Check[] => {
     lineCheck("withheld records", lines.withheld),
     ignoredCheck(lines),
     lineCheck("capture losses", lines.capture),
+    // ...and what a connector before 1.0 lost, apart from all of the above:
+    // its ledgers kept only counts, so nothing of it is re-sent.
+    lineCheck("legacy losses", lines.legacy),
   ];
 };
 

@@ -1037,6 +1037,29 @@ which is the one place the distinction can be acted on.
 doctor derives it from data it already fetches (§5.2). Coverage from such a hub is 03's own `unknown /
 hub_did_not_report` or its five real rows, unchanged.
 
+**What a connector before 1.0 lost is counted, not migrated** (the 1.0 release gate: "the old late-write losses
+migrated or counted"). The code of 0.10.0 says what is left of a record its hub refused:
+
+- The drop ledger keeps a line of `{at, count, reason: "rejected"}`, with no cause, no record kind and no envelope id.
+- The record itself stays in the session's spool file, behind the cursor, only until reap removes the delivered spool.
+- After `MAX_SPOOL_AGE_DAYS`, reap folds the ledger into an archive of the total alone, with no reason.
+- A 0.10.0 connector sent the hub no loss report, so the hub never heard of them.
+
+Nothing can be re-sent. No line says which records were refused, and the spools are mostly gone. Those records also
+name lives the hub had ended: under a healed life they would be filed into the ended session past its end, which is the
+filing the ownership rule and the refused-lives note exist to prevent (I2, I3).
+
+So they are counted as what the ledgers can prove, on a line of their own, `legacy losses`, in `doctor` and on
+`status`'s `losses:` line. It shows the rejections recorded without a cause, and an archive's total from before reasons
+were kept, read under the reason word `legacy` rather than beside an unreadable ledger's floor. It does not call them
+late writes. The pilot's diagnosis from the hub's own log (2026-10-05) put 225 of 433 rejections down to an ended
+session, not all of them, so the line says a refusal then was often a late write, and that only the hub's log says
+which.
+
+The wire is unchanged: they go under the hub's kinds `hub_rejected` and `unattributed`, with their own instants.
+`crosscheck pilot`'s coverage proof reads them only through the hub's window rule (§4.5), so they count against the
+window they happened in and none after it (`server/test/coverage-losses.test.ts`).
+
 ### 4.8 What stays local, with the proof that it cannot affect a judgment
 
 **4.8.1 Foreign-repo drops (#11).** A session bound to repo A drops a touch of repo B (`touched-root.ts:159`).

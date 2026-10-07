@@ -10,7 +10,14 @@ import { rm } from "node:fs/promises";
 
 import { EMPTY_LOSS_REPORT } from "@crosscheck/schema";
 import type { TelemetryLossReport } from "@crosscheck/schema";
-import { repoKey, sessionSlug } from "@crosscheck/connector-core/config/paths.ts";
+import {
+  ensureDir,
+  repoKey,
+  sessionSlug,
+  spoolDir,
+  spoolDropsArchivePath,
+  writePrivateFile,
+} from "@crosscheck/connector-core/config/paths.ts";
 import type { CoverageRecord } from "@crosscheck/connector-core/http/coverage.ts";
 import { UNKNOWN_COVERAGE } from "@crosscheck/connector-core/http/coverage.ts";
 import { recordDrop } from "@crosscheck/connector-core/spool/drops.ts";
@@ -254,6 +261,64 @@ describe("doctor and status say why the hub rejected records", () => {
     expect(result.stdout).toContain(
       "\nlosses: 5 records rejected by the hub: 2 because the session delivering them was one the hub held as ended",
     );
+  });
+});
+
+/**
+ * WHAT A CONNECTOR BEFORE 1.0 LOST (the 1.0 release gate: the old late-write
+ * losses). Its ledgers kept only counts and its delivered spools are gone, so
+ * nothing is re-sent; both commands count those losses on a line of their own,
+ * apart from what this connector lost, and claim no cause the ledger never kept.
+ */
+describe("doctor and status count what a connector before 1.0 lost on a line of its own", () => {
+  const seedLegacy = async (home: string, key: string): Promise<void> => {
+    await ensureDir(spoolDir(home, key));
+    // A 0.10 archive: the total alone.
+    await writePrivateFile(
+      spoolDropsArchivePath(home, key),
+      `${JSON.stringify({ at: new Date().toISOString(), oldestAt: new Date().toISOString(), count: 640, entries: 4, malformed: 0, reason: "aggregated" })}\n`,
+    );
+    // A 0.10 ledger line: the count and the word, nothing about why.
+    await recordDrop(home, key, sessionSlug("legacy-cli"), 4, "rejected", new Date());
+  };
+
+  test("doctor names them as legacy, never as this connector's rejections", async () => {
+    // Arrange
+    const { repo, home, env, key } = await fixture("doctor-legacy");
+    await seedLegacy(home, key);
+
+    // Act
+    const result = await runCli(["doctor"], env, repo);
+
+    // Assert
+    expect(result.stdout).toContain(
+      "WARN  legacy losses  644 records lost by a connector before 1.0, whose ledgers kept only counts: " +
+        "4 rejected by the hub with no cause recorded · 640 in a ledger archive that kept only the total",
+    );
+    expect(result.stdout).toContain("only the hub's own log says which");
+  });
+
+  test("status carries them on its losses line", async () => {
+    // Arrange
+    const { repo, home, env, key } = await fixture("status-legacy");
+    await seedLegacy(home, key);
+
+    // Act
+    const result = await runCli(["status"], env, repo);
+
+    // Assert
+    expect(result.stdout).toContain("644 records lost by a connector before 1.0");
+  });
+
+  test("a machine with none passes the line", async () => {
+    // Arrange
+    const { repo, env } = await fixture("doctor-no-legacy");
+
+    // Act
+    const result = await runCli(["doctor"], env, repo);
+
+    // Assert
+    expect(result.stdout).toContain("PASS  legacy losses  none");
   });
 });
 

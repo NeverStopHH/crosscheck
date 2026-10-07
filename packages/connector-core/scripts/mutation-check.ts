@@ -13339,7 +13339,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a reason word a hand edit planted in a ledger reaches the terminal as written",
     file: `${CORE}/src/spool/loss-report.ts`,
-    from: "const screenReason = (reason: string): string =>\n  isDropReasonWord(reason) || reason === UNATTRIBUTED_DROP_REASON ? reason : OTHER_REASON;",
+    from: "const screenReason = (reason: string): string =>\n  isDropReasonWord(reason) || reason === UNATTRIBUTED_DROP_REASON || reason === LEGACY_DROP_REASON\n    ? reason\n    : OTHER_REASON;",
     to: "const screenReason = (reason: string): string => reason;",
     test: `${CORE}/test/loss-report.test.ts`,
     because:
@@ -13536,10 +13536,18 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an archive from before reasons reports its count under no kind",
     file: `${CORE}/src/spool/drops.ts`,
-    from: "      unattributed > 0\n        ? addCounts(byReason, { [UNATTRIBUTED_DROP_REASON]: unattributed })\n        : byReason,",
-    to: "      byReason,",
+    from: "      ...(legacy > 0 ? { [LEGACY_DROP_REASON]: legacy } : {}),\n",
+    to: "",
     test: `${CORE}/test/loss-report.test.ts`,
     because: "the kinds of a pre-reason archive sum to less than its total, and the report's kinds understate the loss",
+  },
+  {
+    label: "an archive's count no reason accounts for goes under no kind",
+    file: `${CORE}/src/spool/drops.ts`,
+    from: "      ...(unattributed > 0 ? { [UNATTRIBUTED_DROP_REASON]: unattributed } : {}),\n",
+    to: "",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "an unreadable ledger's floor folded into an archive leaves its kinds below its total, and the report understates the loss",
   },
   {
     // LOSS-8's named mutation: drop `losses` from the heartbeat body.
@@ -17357,8 +17365,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "status's losses line leaves the rejection causes out",
     file: `${CLI}/src/cli/status.ts`,
-    from: "  const parts = [rejected, withheld, ignored, capture].filter((part): part is string => part !== null);",
-    to: "  const parts = [withheld, ignored, capture].filter((part): part is string => part !== null);",
+    from: "  const parts = [rejected, withheld, ignored, capture, legacy].filter((part): part is string => part !== null);",
+    to: "  const parts = [withheld, ignored, capture, legacy].filter((part): part is string => part !== null);",
     test: `${CLI}/test/doctor-losses.test.ts`,
     because: "status says '433 dropped' beside nothing that explains it, which is what the pilot read",
   },
@@ -17605,8 +17613,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "status's losses line leaves the withheld records out",
     file: `${CLI}/src/cli/status.ts`,
-    from: "  const parts = [rejected, withheld, ignored, capture].filter((part): part is string => part !== null);",
-    to: "  const parts = [rejected, ignored, capture].filter((part): part is string => part !== null);",
+    from: "  const parts = [rejected, withheld, ignored, capture, legacy].filter((part): part is string => part !== null);",
+    to: "  const parts = [rejected, ignored, capture, legacy].filter((part): part is string => part !== null);",
     test: `${CLI}/test/doctor-losses.test.ts`,
     because: "status counts withheld records as dropped beside nothing that says why",
   },
@@ -19495,6 +19503,46 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/skeleton-identity.test.ts`,
     because: "review-2 round 9: the provider and claim-context walks hold every request behind them at boot",
   },
+  {
+    label: "a 0.10 archive's total reads as unattributed, beside an unreadable ledger's floor",
+    file: `${CORE}/src/spool/drops.ts`,
+    from: "  const legacy = parsed.data.byReason === undefined ? parsed.data.count : (parsed.data.legacy ?? 0);",
+    to: "  const legacy = 0;",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "the 1.0 release gate: the late-write losses a 0.10 connector archived blend into the floor of unreadable ledgers, and no line says they are legacy",
+  },
+  {
+    label: "a fold writes the legacy total back as a remainder nobody can tell from the unreadable floor",
+    file: `${CORE}/src/spool/drops.ts`,
+    from: "      ...(legacy > 0 ? { legacy } : {}),\n",
+    to: "",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "the 1.0 release gate: the first reap after the upgrade turns the 0.10 losses into unattributed ones for good",
+  },
+  {
+    label: "the legacy line leaves out the rejections a 0.10 ledger kept without a cause",
+    file: `${CORE}/src/spool/loss-report.ts`,
+    from: '  const rejected = Math.max(0, (local.drops.byReason["rejected"] ?? 0) - causes);',
+    to: "  const rejected = 0;",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "the 1.0 release gate: the 0.10 late-write losses read only as this connector's rejections, never as what was lost before the fix",
+  },
+  {
+    label: "doctor drops the legacy losses line",
+    file: `${CLI}/src/cli/doctor-losses.ts`,
+    from: '    lineCheck("legacy losses", lines.legacy),\n',
+    to: "",
+    test: `${CLI}/test/doctor-losses.test.ts`,
+    because: "the 1.0 release gate: doctor never says what a connector before 1.0 lost, apart from this one's losses",
+  },
+  {
+    label: "status leaves the legacy losses off its losses line",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "  const parts = [rejected, withheld, ignored, capture, legacy].filter((part): part is string => part !== null);",
+    to: "  const parts = [rejected, withheld, ignored, capture].filter((part): part is string => part !== null);",
+    test: `${CLI}/test/doctor-losses.test.ts`,
+    because: "the 1.0 release gate: status counts the 0.10 losses in its dropped total and never says what they were",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19563,7 +19611,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1
  * PRINTS: packages/cli/test/doctor-last-sync.test.ts 1
  * PRINTS: packages/cli/test/doctor-latency.test.ts 2
- * PRINTS: packages/cli/test/doctor-losses.test.ts 12
+ * PRINTS: packages/cli/test/doctor-losses.test.ts 14
  * PRINTS: packages/cli/test/doctor-pilot.test.ts 6
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
  * PRINTS: packages/cli/test/doctor-verdict-legality.test.ts 2
@@ -19730,7 +19778,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/landing-fetch-worker.test.ts 20
  * PRINTS: packages/connector-core/test/latency.test.ts 3
  * PRINTS: packages/connector-core/test/loss-ledger.test.ts 5
- * PRINTS: packages/connector-core/test/loss-report.test.ts 34
+ * PRINTS: packages/connector-core/test/loss-report.test.ts 38
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 5
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3

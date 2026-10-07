@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1799
+    # PRINTS: 1805
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -181,7 +181,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/doctor-landed-authors.ts 9
     # PRINTS: packages/cli/src/cli/doctor-landed.ts 2
     # PRINTS: packages/cli/src/cli/doctor-landing-fetch.ts 6
-    # PRINTS: packages/cli/src/cli/doctor-losses.ts 6
+    # PRINTS: packages/cli/src/cli/doctor-losses.ts 7
     # PRINTS: packages/cli/src/cli/doctor-retention.ts 3
     # PRINTS: packages/cli/src/cli/doctor.ts 59
     # PRINTS: packages/cli/src/cli/index.ts 4
@@ -203,7 +203,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/pin.ts 9
     # PRINTS: packages/cli/src/cli/project-copy.ts 9
     # PRINTS: packages/cli/src/cli/revalidate.ts 2
-    # PRINTS: packages/cli/src/cli/status.ts 11
+    # PRINTS: packages/cli/src/cli/status.ts 12
     # PRINTS: packages/cli/src/cli/suspect-render.ts 3
     # PRINTS: packages/cli/src/cli/terminal.ts 3
     # PRINTS: packages/cli/src/cli/verdict-render.ts 3
@@ -340,13 +340,13 @@ jobs:
     # PRINTS: spool/batch-losses.ts 7
     # PRINTS: spool/counts.ts 1
     # PRINTS: spool/cursor.ts 1
-    # PRINTS: spool/drops.ts 11
+    # PRINTS: spool/drops.ts 14
     # PRINTS: spool/end-marker.ts 2
     # PRINTS: spool/flush-heal.ts 14
     # PRINTS: spool/flush.ts 34
     # PRINTS: spool/ledger-read.ts 2
     # PRINTS: spool/lock.ts 2
-    # PRINTS: spool/loss-report.ts 17
+    # PRINTS: spool/loss-report.ts 18
     # PRINTS: spool/owed-work-context.ts 16
     # PRINTS: spool/ownership.ts 16
     # PRINTS: spool/reap.ts 15
@@ -542,11 +542,11 @@ jobs:
     # PRINTS: doctor-landed-authors.ts 9
     # PRINTS: doctor-landed.ts 2
     # PRINTS: doctor-landing-fetch.ts 6
-    # PRINTS: doctor-losses.ts 6
+    # PRINTS: doctor-losses.ts 7
     # PRINTS: doctor-retention.ts 3
     # PRINTS: doctor.ts 75
     # PRINTS: driver.ts 2
-    # PRINTS: drops.ts 11
+    # PRINTS: drops.ts 14
     # PRINTS: end-marker.ts 2
     # PRINTS: end-session.ts 13
     # PRINTS: engine.ts 24
@@ -613,7 +613,7 @@ jobs:
     # PRINTS: lock.ts 2
     # PRINTS: loss-ledger.ts 10
     # PRINTS: loss-refusals.ts 1
-    # PRINTS: loss-report.ts 17
+    # PRINTS: loss-report.ts 18
     # PRINTS: manifest-doc.ts 2
     # PRINTS: noise.ts 7
     # PRINTS: normalized-doc.ts 2
@@ -711,7 +711,7 @@ jobs:
     # PRINTS: spawn.ts 2
     # PRINTS: ssh-hostname.ts 2
     # PRINTS: stats.ts 1
-    # PRINTS: status.ts 11
+    # PRINTS: status.ts 12
     # PRINTS: stop.ts 3
     # PRINTS: stream.ts 3
     # PRINTS: suspect-render.ts 3

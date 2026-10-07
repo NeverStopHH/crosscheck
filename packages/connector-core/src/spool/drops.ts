@@ -104,8 +104,17 @@ export type DropReason =
   /** An edit whose path resolved to no root of this repo — never written. */
   | "outside-root";
 
-/** The word a pre-reason archive's count is reported under. */
+/** The word an unreadable ledger's floor, and any count no reason accounts for, is reported under. */
 export const UNATTRIBUTED_DROP_REASON = "unattributed";
+
+/**
+ * THE TOTAL A CONNECTOR BEFORE 1.0 ARCHIVED (the 1.0 release gate's late-write
+ * losses). A 0.10 reap folded its ledgers into an archive of the count alone,
+ * no reason, and removed the delivered spools the records were in. Read under
+ * its own word, and written back as its own field, so a fold never blends it
+ * into this connector's reasons, nor into an unreadable ledger's floor.
+ */
+export const LEGACY_DROP_REASON = "legacy";
 
 /**
  * A ledger file that exists and cannot be read holds an unknown number of
@@ -543,6 +552,8 @@ const ArchiveSchema = z.looseObject({
   ignoredKinds: KindsSchema.optional(),
   /** The rejection causes folded in; absent in an archive from before them. */
   rejectedCauses: KindsSchema.optional(),
+  /** The legacy total folded in (LEGACY_DROP_REASON); absent in an archive with none. */
+  legacy: z.number().int().min(0).optional(),
   /** Undatable entries folded in, and their bound (review H2). */
   undatable: z.number().int().min(0).optional(),
   undatableBy: z.string().nullable().optional(),
@@ -571,7 +582,11 @@ const readArchiveDetail = async (path: string): Promise<DropDetail> => {
     return unreadableDetail(loose.success ? loose.data.count : UNREADABLE_FLOOR, writtenBy);
   }
   const byReason = parsed.data.byReason ?? {};
-  const unattributed = parsed.data.count - sumOf(byReason);
+  // An archive that kept no reasons at all is a 0.10 reap's: its whole count
+  // is legacy. A later one names its legacy part; what no reason accounts for
+  // beyond that is an unreadable ledger's floor, folded in.
+  const legacy = parsed.data.byReason === undefined ? parsed.data.count : (parsed.data.legacy ?? 0);
+  const unattributed = parsed.data.count - sumOf(byReason) - legacy;
   const oldestAt = isoOrNull(msOrNull(parsed.data.oldestAt));
   const newestAt = isoOrNull(msOrNull(parsed.data.at));
   // An archive whose own instants do not parse holds counted records with no
@@ -583,10 +598,10 @@ const readArchiveDetail = async (path: string): Promise<DropDetail> => {
       entries: parsed.data.entries,
       malformed: parsed.data.malformed,
     },
-    byReason:
-      unattributed > 0
-        ? addCounts(byReason, { [UNATTRIBUTED_DROP_REASON]: unattributed })
-        : byReason,
+    byReason: addCounts(byReason, {
+      ...(legacy > 0 ? { [LEGACY_DROP_REASON]: legacy } : {}),
+      ...(unattributed > 0 ? { [UNATTRIBUTED_DROP_REASON]: unattributed } : {}),
+    }),
     entriesByReason: parsed.data.entriesByReason ?? {},
     ignoredRecordKinds: screenKinds(parsed.data.ignoredKinds ?? {}),
     rejectedCauses: screenCauses(parsed.data.rejectedCauses ?? {}),
@@ -635,11 +650,15 @@ export const archiveLedger = async (
   const path = spoolDropsArchivePath(home, key);
   const total = addDetail(await readArchiveDetail(path), folding);
   const stamp = (iso: string | null): string => iso ?? new Date().toISOString();
-  // `unattributed` is a READ-side word for the count an older archive kept
-  // without reasons; written back under a reason it would look like a line
-  // somebody recorded, so it is left out of `byReason` and recovered from the
-  // difference again on the next read.
-  const { [UNATTRIBUTED_DROP_REASON]: _unattributed, ...byReason } = total.byReason;
+  // `unattributed` and `legacy` are READ-side words; written back under a
+  // reason they would look like lines somebody recorded. `unattributed` is
+  // left out and recovered from the difference again on the next read;
+  // `legacy` is written as its own field, so it stays apart from that floor.
+  const {
+    [UNATTRIBUTED_DROP_REASON]: _unattributed,
+    [LEGACY_DROP_REASON]: legacy = 0,
+    ...byReason
+  } = total.byReason;
   await writePrivateFile(
     path,
     `${JSON.stringify({
@@ -653,6 +672,7 @@ export const archiveLedger = async (
       entriesByReason: total.entriesByReason,
       ignoredKinds: total.ignoredRecordKinds,
       rejectedCauses: total.rejectedCauses,
+      ...(legacy > 0 ? { legacy } : {}),
       // Carried, because `stamp` above writes a real instant even when every
       // folded line was undatable, and the archive must not launder that —
       // with the bound those lines had, so they still age out (review H2).

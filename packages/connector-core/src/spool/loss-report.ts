@@ -29,12 +29,15 @@ import { addCount } from "./counts.ts";
 import type { Counts } from "./counts.ts";
 import { NO_UNDATED, ledgerInstant, mergeUndated, undatedOf } from "./ledger-read.ts";
 import {
+  LEGACY_DROP_REASON,
   UNATTRIBUTED_DROP_REASON,
   readDropDetail,
   readUnrecordedDrop,
 } from "./drops.ts";
 import type { DropDetail, UnrecordedDrop } from "./drops.ts";
 import {
+  LEGACY_LOSS_REMEDY,
+  LEGACY_LOSS_SENTENCE,
   REJECT_CAUSES,
   REJECT_CAUSE_SENTENCES,
   UNRECORDED_CAUSE_SENTENCE,
@@ -311,6 +314,8 @@ export interface LossLines {
   readonly ignoredEarlier: string | null;
   /** Losses upstream of any record: timed-out hooks, host drift, wire lines. */
   readonly capture: string | null;
+  /** What a connector before 1.0 lost, whose ledgers kept only counts: apart from this connector's losses. */
+  readonly legacy: string | null;
 }
 
 /** A word no ledger writer spells — what a hand edit or a torn line left. */
@@ -323,7 +328,9 @@ const OTHER_REASON = "other";
  * marker's instant is re-formatted from `Date.parse` or printed `undated`.
  */
 const screenReason = (reason: string): string =>
-  isDropReasonWord(reason) || reason === UNATTRIBUTED_DROP_REASON ? reason : OTHER_REASON;
+  isDropReasonWord(reason) || reason === UNATTRIBUTED_DROP_REASON || reason === LEGACY_DROP_REASON
+    ? reason
+    : OTHER_REASON;
 
 const screenReasons = (counts: Counts): Counts =>
   Object.entries(counts).reduce<Counts>(
@@ -378,6 +385,30 @@ const rejectedLine = (local: LocalLosses): string | null => {
   const unnamed = records - Object.values(causes).reduce((sum, count) => sum + count, 0);
   const parts = unnamed > 0 ? [...named, `${String(unnamed)} ${UNRECORDED_CAUSE_SENTENCE}`] : named;
   return `${plural(records, "record")} rejected by the hub: ${parts.join(" · ")}`;
+};
+
+/**
+ * WHAT A CONNECTOR BEFORE 1.0 LOST (the 1.0 release gate: the old late-write
+ * losses). A 0.10 connector kept a refused record as a count and the word
+ * `rejected`, and its archive kept the total alone; reap removed the delivered
+ * spools the records were in, and nothing said which refusal was a late write.
+ * They are counted here, on their own line, as what the ledgers can prove —
+ * never re-sent, never folded into this connector's causes, never guessed into
+ * one. The wire still carries them, under the hub's own kinds and their own
+ * instants, so coverage judges them by when they happened.
+ */
+const legacyLine = (local: LocalLosses): string | null => {
+  const causes = Object.values(local.drops.rejectedCauses).reduce((sum, count) => sum + count, 0);
+  const rejected = Math.max(0, (local.drops.byReason["rejected"] ?? 0) - causes);
+  const archived = local.drops.byReason[LEGACY_DROP_REASON] ?? 0;
+  if (rejected + archived === 0) {
+    return null;
+  }
+  const parts = [
+    ...(rejected > 0 ? [`${String(rejected)} rejected by the hub with no cause recorded`] : []),
+    ...(archived > 0 ? [`${String(archived)} in a ledger archive that kept only the total`] : []),
+  ];
+  return `${plural(rejected + archived, "record")} ${LEGACY_LOSS_SENTENCE}: ${parts.join(" · ")} — ${LEGACY_LOSS_REMEDY}`;
 };
 
 /** Withheld records, in their own words — never "rejected by the hub" (review finding 5). */
@@ -486,4 +517,5 @@ export const formatLossLines = (local: LocalLosses, now: Date): LossLines => ({
   withheld: withheldLine(local),
   ...ignoredLines(local, now),
   capture: captureLine(local),
+  legacy: legacyLine(local),
 });
