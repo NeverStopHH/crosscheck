@@ -20,7 +20,7 @@ import {
   SUBAGENT_RELAY_HEADER,
 } from "@crosscheck/connector-core/hints/collision-notice.ts";
 import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
-import { activeTeammateSession } from "../../connector-core/test/fixtures/hint-hub.ts";
+import { TEAMMATE_DEVELOPER_ID, activeTeammateSession } from "../../connector-core/test/fixtures/hint-hub.ts";
 import { assertUntrustedCharacters } from "../../connector-core/test/fixtures/untrusted-invariants.ts";
 import {
   MIKE_FILES,
@@ -35,6 +35,7 @@ import {
   ghostFixture,
   mikeGhostRow,
   parsed,
+  presentNow,
   promptPayload,
   sessionStartPayload,
 } from "./fixtures/collision-fixture.ts";
@@ -287,9 +288,11 @@ const statusline = (repo: string, env: Env): Promise<string> =>
 describe("the statusline shows the overlap while the session has one", () => {
   test("after a tripwire hit, the line leads with the indicator", async () => {
     // Arrange
-    const { repo, env } = await fixture("cn-status");
+    const fix = await fixture("cn-status");
+    const { repo, env } = fix;
     await runHook("pre-tool-use", editPayload(repo, OVERLAP_FILE), env);
     await runHook("pre-tool-use", editPayload(repo, SECOND_FILE), env);
+    await presentNow(fix, [TEAMMATE_DEVELOPER_ID]);
 
     // Act
     const line = await statusline(repo, env);
@@ -312,9 +315,11 @@ describe("the statusline shows the overlap while the session has one", () => {
 
   test("a hostile name stays inside the indicator's bound", async () => {
     // Arrange
-    const { repo, hub, env } = await fixture("cn-status-hostile");
+    const fix = await fixture("cn-status-hostile");
+    const { repo, hub, env } = fix;
     hub.setTripwireSessions([{ ...activeTeammateSession(), developerName: "N".repeat(500) }]);
     await runHook("pre-tool-use", editPayload(repo, OVERLAP_FILE), env);
+    await presentNow(fix, [TEAMMATE_DEVELOPER_ID]);
 
     // Act
     const line = await statusline(repo, env);

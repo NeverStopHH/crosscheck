@@ -40,6 +40,7 @@ import {
   COLLISION_NOTICE_MAX_CHARS,
   COLLISION_NOTICE_MAX_LINES,
   MAX_COLLISION_NOTICES,
+  PRESENCE_TTL_MS,
   COLLISION_NOTICE_NAME_CHARS,
   COLLISION_NOTICE_PATH_CHARS,
   STATUSLINE_NAME_CHARS,
@@ -295,6 +296,33 @@ export const renderCollisionNotice = (group: CollisionNotice, now: Date): string
     ? `crosscheck: ${name} changed ${what}${where} (merged) — talk before you change ${pronoun}${partial}`
     : `crosscheck: ${name} is working on ${what}${where}${ageClause(group.lastActiveAt, now)} — ` +
         `talk before you both change ${pronoun}${partial}`;
+};
+
+/**
+ * The groups whose teammate the hub's PRESENCE answer still lists (review
+ * M2). A group was recorded from a row the hub had already filtered, but the
+ * record outlives the moment: presence drops a teammate who opted out since,
+ * one the reader muted, and one whose session ended — so a surface that
+ * shows a record LATER (the statusline, a relay) names only who is listed
+ * now. Present-but-self rows never name a teammate.
+ */
+export const stillPresent = (
+  groups: readonly CollisionNotice[],
+  presence: readonly { readonly developerId: string; readonly isSelf: boolean }[],
+): readonly CollisionNotice[] =>
+  groups.filter((group) => presence.some((entry) => !entry.isSelf && entry.developerId === group.developerId));
+
+/**
+ * A group older than the presence TTL keeps its name and its files and loses
+ * its location (review M2): a branch and a "last active" age are presence
+ * facts, and past PRESENCE_TTL_MS they are no longer facts the hub would give
+ * out about anybody. An unreadable instant counts as old.
+ */
+export const withoutStaleLocation = (group: CollisionNotice, now: Date): CollisionNotice => {
+  const ms = group.lastActiveAt === null ? Number.NaN : Date.parse(group.lastActiveAt);
+  return !Number.isNaN(ms) && now.getTime() - ms <= PRESENCE_TTL_MS
+    ? group
+    : { ...group, branch: null, lastActiveAt: null };
 };
 
 /** The renderer's own tail for the groups a bounded output does not name. */

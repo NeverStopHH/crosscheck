@@ -11,7 +11,13 @@
  * sentence) and the PERSON'S (the lines alone, for `systemMessage`). Both are
  * rendered by core hints/collision-notice.ts; this module composes nothing.
  */
-import { renderCollisionNotices, renderSubagentCollisionRelay } from "@crosscheck/connector-core/hints/collision-notice.ts";
+import {
+  renderCollisionNotices,
+  renderSubagentCollisionRelay,
+  stillPresent,
+  withoutStaleLocation,
+} from "@crosscheck/connector-core/hints/collision-notice.ts";
+import { isCacheFresh, readPresenceCache } from "@crosscheck/connector-core/state/presence-cache.ts";
 import {
   readSessionState,
   updateSessionState,
@@ -28,6 +34,25 @@ export interface CollisionRelay {
 }
 
 export const NO_RELAY: CollisionRelay = { agent: "", person: "" };
+
+/**
+ * A queued group held to presence AS IT IS NOW (review M2): the hub's
+ * presence answer drops a teammate who opted out, one the reader muted, and
+ * one whose session ended — and cannot say which — so a FRESH answer that no
+ * longer lists the teammate drops the group whole: privacy wins over a late
+ * line. A stale or missing answer says nothing either way; then only the
+ * location goes once the hit is older than the presence TTL. One local file
+ * read, no hub call.
+ */
+const asPresentNow = async (
+  ctx: HookContext,
+  groups: readonly CollisionNotice[],
+): Promise<readonly CollisionNotice[]> => {
+  const now = ctx.now();
+  const cache = await readPresenceCache(ctx.config.home, ctx.repoKey);
+  const listed = cache !== null && isCacheFresh(cache, now) ? stillPresent(groups, cache.entries) : groups;
+  return listed.map((group) => withoutStaleLocation(group, now));
+};
 
 /**
  * The queue taken and emptied in ONE locked transform, so a racing sibling
@@ -55,10 +80,11 @@ export const drainCollisionRelay = async (ctx: HookContext, budget: HookBudget):
       taken.value = (fresh.collisionNotices ?? []).filter((notice) => queue.includes(notice.key));
       return withDrainedCollisionRelays(fresh);
     });
-    return drained && taken.value.length > 0
+    const groups = drained ? await asPresentNow(ctx, taken.value) : [];
+    return groups.length > 0
       ? {
-          agent: renderSubagentCollisionRelay(taken.value, ctx.now()),
-          person: renderCollisionNotices(taken.value, ctx.now()),
+          agent: renderSubagentCollisionRelay(groups, ctx.now()),
+          person: renderCollisionNotices(groups, ctx.now()),
         }
       : NO_RELAY;
   } catch {

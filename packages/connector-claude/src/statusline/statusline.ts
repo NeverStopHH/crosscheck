@@ -17,7 +17,7 @@ import type { LastSeenEntry } from "@crosscheck/connector-core/state/presence-ca
 import { recordStatuslineRendered } from "@crosscheck/connector-core/state/fired-markers.ts";
 import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
-import { renderOverlapIndicator } from "@crosscheck/connector-core/hints/collision-notice.ts";
+import { renderOverlapIndicator, stillPresent } from "@crosscheck/connector-core/hints/collision-notice.ts";
 import { prepareHook } from "../hooks/runner.ts";
 import type { HookContext } from "../hooks/runner.ts";
 
@@ -127,7 +127,13 @@ const failureHead = (
 const failureLine = (head: string, age: string | null): string =>
   capLine(age === null ? `cx ! ${head}` : `cx ! ${head} · last capture ${age}`);
 
-const renderForContext = async (ctx: HookContext): Promise<string> => {
+/** The presence line, and the presence answer it was drawn from — none when the hub could not be read. */
+interface RenderedPresence {
+  readonly line: string;
+  readonly present: readonly PresenceEntry[];
+}
+
+const renderForContext = async (ctx: HookContext): Promise<RenderedPresence> => {
   const now = ctx.now();
   const cache = await readPresenceCache(ctx.config.home, ctx.repoKey);
   const sync = await readSyncState(ctx.config.home, ctx.repoKey);
@@ -142,14 +148,12 @@ const renderForContext = async (ctx: HookContext): Promise<string> => {
     // call is the newest thing known about the hub, and saying "sync 12s"
     // over it would launder a rejected key into health (M4's cached path).
     if (sync.lastErrorStatus === HTTP_UNAUTHORIZED) {
-      return failureLine(failureHead(HTTP_UNAUTHORIZED, "http"), captureAge);
+      return { line: failureLine(failureHead(HTTP_UNAUTHORIZED, "http"), captureAge), present: [] };
     }
-    return presenceLine(
-      cache.entries,
-      captureAge ?? "never",
-      now,
-      cache.lastSeen,
-    );
+    return {
+      line: presenceLine(cache.entries, captureAge ?? "never", now, cache.lastSeen),
+      present: cache.entries,
+    };
   }
 
   const result = await getPresence(ctx.hub, ctx.identity.repoId);
@@ -164,31 +168,31 @@ const renderForContext = async (ctx: HookContext): Promise<string> => {
       now,
       cache?.lastSeen ?? [],
     );
-    return presenceLine(
-      result.data,
-      captureAge ?? "never",
-      now,
-      cache?.lastSeen ?? [],
-    );
+    return {
+      line: presenceLine(result.data, captureAge ?? "never", now, cache?.lastSeen ?? []),
+      present: result.data,
+    };
   }
 
-  return failureLine(failureHead(result.status, result.kind), captureAge);
+  return { line: failureLine(failureHead(result.status, result.kind), captureAge), present: [] };
 };
 
 /**
  * `⚠ overlap: Mike · 3 files` while THIS session has told its person about a
  * teammate collision (hints/collision-notice.ts; pilot, 2026-10-07) — read
  * from the session's own state file, which the session id on stdin names, so
- * no hub call and no budget. Names only, never a branch: the record outlives
- * the moment its row was projected, and every name in it came from a row the
- * hub's opt-out and mute filters had already passed. LEADING, in a bound of
- * its own, so it never takes the characters of the capture-health indicator
- * the line exists for. Fail open: no state, no segment.
+ * no hub call and no budget. Names only, never a branch — and only teammates
+ * the presence answer this line is drawn from STILL lists (review M2): the
+ * record outlives the moment its row was projected, and presence drops a
+ * teammate who opted out, one the reader muted, and one whose session ended,
+ * so a hub that could not be read names nobody. LEADING, in a bound of its
+ * own, so it never takes the characters of the capture-health indicator the
+ * line exists for. Fail open: no state, no segment.
  */
-const overlapSegment = async (ctx: HookContext): Promise<string> => {
+const overlapSegment = async (ctx: HookContext, present: readonly PresenceEntry[]): Promise<string> => {
   try {
     const state = await readSessionState(ctx.config.home, ctx.payload.session_id);
-    const indicator = renderOverlapIndicator(state?.collisionNotices ?? []);
+    const indicator = renderOverlapIndicator(stillPresent(state?.collisionNotices ?? [], present));
     return indicator.length === 0 ? "" : `${indicator} · `;
   } catch {
     return "";
@@ -208,8 +212,9 @@ export const runStatusline = async (
     if (ctx === null) {
       return "";
     }
-    const [overlap, presence] = await Promise.all([overlapSegment(ctx), renderForContext(ctx)]);
-    const line = `${overlap}${presence}`;
+    const presence = await renderForContext(ctx);
+    const overlap = await overlapSegment(ctx, presence.present);
+    const line = `${overlap}${presence.line}`;
     // The RENDERED fact, which nothing recorded before (trial finding H7).
     // `doctor`'s `statusline registered` line reads the settings file and
     // reports what it says — and the statusline is a terminal-TUI feature, so

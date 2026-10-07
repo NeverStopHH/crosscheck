@@ -8,6 +8,8 @@ import { rm } from "node:fs/promises";
 
 import type { Env } from "../../src/index.ts";
 import { deriveSessionState, writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import { writePresenceCache } from "@crosscheck/connector-core/state/presence-cache.ts";
+import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import { makeHome, makeRepo, writeRepoFile } from "../../../connector-core/test/helpers.ts";
 import { activeTeammateSession, startHintHub } from "../../../connector-core/test/fixtures/hint-hub.ts";
 import type { HintHub } from "../../../connector-core/test/fixtures/hint-hub.ts";
@@ -178,6 +180,28 @@ export const ghostFixture = async (
 
 export const sessionStartPayload = (repo: string, source: string): string =>
   JSON.stringify({ session_id: SESSION_ID, cwd: repo, hook_event_name: "SessionStart", source });
+
+/**
+ * A FRESH presence answer in the cache the statusline and the relay read,
+ * naming exactly these developers as present — what the hub's presence
+ * endpoint says once it has dropped the opted-out, the muted and the ended.
+ */
+export const presentNow = async (fixture: CollisionFixture, developerIds: readonly string[]): Promise<void> => {
+  await writePresenceCache(
+    fixture.home,
+    repoKey(fixture.hub.url, REPO_ID),
+    developerIds.map((developerId) => ({
+      sessionId: `cc_${developerId}`,
+      developerId,
+      developerName: developerId,
+      branch: "feat/x",
+      status: "implementing",
+      lastHeartbeatAt: new Date().toISOString(),
+      isSelf: false,
+    })),
+    new Date(),
+  );
+};
 
 /** A second live teammate, Ken, on his own work context. */
 export const kenSession = (): Record<string, unknown> => ({

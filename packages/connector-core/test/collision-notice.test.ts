@@ -16,6 +16,7 @@ import {
   COLLISION_NOTICE_MAX_LINES,
   COLLISION_NOTICE_PATH_CHARS,
   MAX_COLLISION_NOTICES,
+  PRESENCE_TTL_MS,
 } from "../src/constants.ts";
 import {
   COLLISION_RELAY_SENTENCE,
@@ -26,7 +27,9 @@ import {
   renderCollisionNotices,
   renderOverlapIndicator,
   renderSubagentCollisionRelay,
+  stillPresent,
   tripwireCollision,
+  withoutStaleLocation,
 } from "../src/hints/collision-notice.ts";
 import { UNKNOWN_COVERAGE } from "../src/http/coverage.ts";
 import type { CoverageRecord } from "../src/http/coverage.ts";
@@ -683,4 +686,74 @@ describe("the statusline's overlap indicator", () => {
       assertUntrustedCharacters(indicator, payload);
     },
   );
+});
+
+describe("a record shown later is held to presence as it is now (review M2)", () => {
+  const presentEntry = (developerId: string, isSelf = false): { developerId: string; isSelf: boolean } => ({
+    developerId,
+    isSelf,
+  });
+
+  test("only teammates presence still lists are kept", () => {
+    // Arrange
+    const mike = tripwireCollision(tripwireRow(), FILE);
+    const ken = tripwireCollision(tripwireRow({ developerId: "dev_ken", developerName: "Ken" }), FILE);
+
+    // Act
+    const kept = stillPresent([mike, ken], [presentEntry("dev_ken")]);
+
+    // Assert
+    expect(kept.map((group) => group.name)).toEqual(["Ken"]);
+  });
+
+  test("a self row never keeps a teammate's group", () => {
+    // Arrange
+    const mike = tripwireCollision(tripwireRow(), FILE);
+
+    // Act
+    const kept = stillPresent([mike], [presentEntry("dev_mike", true)]);
+
+    // Assert
+    expect(kept).toEqual([]);
+  });
+
+  test("a hit exactly at the presence TTL keeps its branch and age", () => {
+    // Arrange
+    const group = tripwireCollision(tripwireRow({ lastHeartbeatAt: new Date(NOW.getTime() - PRESENCE_TTL_MS).toISOString() }), FILE);
+
+    // Act
+    const shown = withoutStaleLocation(group, NOW);
+
+    // Assert
+    expect(shown).toBe(group);
+  });
+
+  test("a hit past the presence TTL keeps name and file and loses branch and age", () => {
+    // Arrange
+    const group = tripwireCollision(
+      tripwireRow({ lastHeartbeatAt: new Date(NOW.getTime() - PRESENCE_TTL_MS - 1).toISOString() }),
+      FILE,
+    );
+
+    // Act
+    const shown = withoutStaleLocation(group, NOW);
+
+    // Assert
+    expect(shown).toEqual({ ...group, branch: null, lastActiveAt: null });
+    expect(renderCollisionNotice(shown, NOW)).toBe(
+      "crosscheck: Mike is working on PlayerMappingGrid.tsx — talk before you both change it",
+    );
+  });
+
+  test("an unreadable instant counts as old", () => {
+    // Arrange
+    const group = { ...tripwireCollision(tripwireRow(), FILE), lastActiveAt: "not a date" };
+
+    // Act
+    const shown = withoutStaleLocation(group, NOW);
+
+    // Assert
+    expect(shown.branch).toBeNull();
+    expect(shown.lastActiveAt).toBeNull();
+  });
 });

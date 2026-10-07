@@ -1586,6 +1586,17 @@ export const STATUS_MAX_SESSION_STATES = 50;
 export const STATUS_SESSION_IDLE_HOURS = 24;
 
 export const PRESENCE_CACHE_TTL_MS = 10_000;
+/**
+ * How long a heartbeat keeps a session PRESENT on the hub (server
+ * PRESENCE_TTL_SECONDS), as the connector needs it: a teammate fact older
+ * than this — a branch, a "last active" age — is no longer a presence fact
+ * the hub would still give out, so a relayed collision line drops both
+ * (hints/collision-notice.ts; review M2).
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/server/src/constants.ts");console.log(c.PRESENCE_TTL_MS === s.PRESENCE_TTL_SECONDS * 1000)'
+ * PRINTS: true
+ */
+export const PRESENCE_TTL_MS = 90_000;
 export const STATUSLINE_MAX_CHARS = 90;
 /**
  * Teammates the `cx 0` branch may name as last-seen (Anhang A, A4-09). Three,

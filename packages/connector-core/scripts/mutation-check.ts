@@ -23461,8 +23461,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the statusline hides an overlap the session has",
     file: `${CONNECTOR}/src/statusline/statusline.ts`,
-    from: "    const line = `${overlap}${presence}`;",
-    to: "    const line = presence;",
+    from: "    const line = `${overlap}${presence.line}`;",
+    to: "    const line = presence.line;",
     test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
     because: "the one surface a person glances at while working says nothing of a teammate on their files",
   },
@@ -23837,6 +23837,54 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/doctor-global.test.ts`,
     because: "every install from before it passes, and its subagents' collisions keep waiting for the next prompt",
   },
+  {
+    label: "the statusline names a teammate presence no longer lists",
+    file: `${CONNECTOR}/src/statusline/statusline.ts`,
+    from: "renderOverlapIndicator(stillPresent(state?.collisionNotices ?? [], present))",
+    to: "renderOverlapIndicator(state?.collisionNotices ?? [])",
+    test: `${CONNECTOR}/test/collision-visibility-hook.test.ts`,
+    because: "a teammate who opted out, was muted or ended their session keeps being named for the rest of the session",
+  },
+  {
+    label: "a relayed subagent hit ignores a fresh presence answer",
+    file: `${CONNECTOR}/src/hooks/collision-relay.ts`,
+    from: "isCacheFresh(cache, now) ? stillPresent(groups, cache.entries) : groups;",
+    to: "isCacheFresh(cache, now) ? groups : groups;",
+    test: `${CONNECTOR}/test/collision-visibility-hook.test.ts`,
+    because: "a teammate who opted out or was muted since the subagent's edit is named to the person anyway",
+  },
+  {
+    label: "a relayed subagent hit keeps its branch past the presence TTL",
+    file: `${CONNECTOR}/src/hooks/collision-relay.ts`,
+    from: "  return listed.map((group) => withoutStaleLocation(group, now));",
+    to: "  return listed;",
+    test: `${CONNECTOR}/test/collision-visibility-hook.test.ts`,
+    because: "a branch and an age the hub stopped giving out are printed from a stale record",
+  },
+  {
+    label: "a self row keeps a teammate's group present",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "presence.some((entry) => !entry.isSelf && entry.developerId === group.developerId)",
+    to: "presence.some((entry) => entry.developerId === group.developerId)",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "the reader's own presence row counts as a teammate's",
+  },
+  {
+    label: "the presence TTL boundary is exclusive",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "now.getTime() - ms <= PRESENCE_TTL_MS",
+    to: "now.getTime() - ms < PRESENCE_TTL_MS",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "a hit exactly as old as presence still allows loses a location the hub still gives out",
+  },
+  {
+    label: "an unreadable last-active instant counts as fresh",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  return !Number.isNaN(ms) && now.getTime()",
+    to: "  return Number.isNaN(ms) || now.getTime()",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "a garbled stamp keeps branch and age forever",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -23986,6 +24034,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/collision-notice-hook.test.ts 8
  * PRINTS: packages/connector-claude/test/collision-order-hook.test.ts 4
  * PRINTS: packages/connector-claude/test/collision-teammates-hook.test.ts 3
+ * PRINTS: packages/connector-claude/test/collision-visibility-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/conclusion-corpus.test.ts 6
  * PRINTS: packages/connector-claude/test/conference-prompt.test.ts 1
  * PRINTS: packages/connector-claude/test/derive-doctor.test.ts 1
@@ -24050,7 +24099,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/claim-surface.test.ts 1
  * PRINTS: packages/connector-core/test/claim-validity-parity.test.ts 2
  * PRINTS: packages/connector-core/test/claim-validity-render.test.ts 2
- * PRINTS: packages/connector-core/test/collision-notice.test.ts 24
+ * PRINTS: packages/connector-core/test/collision-notice.test.ts 27
  * PRINTS: packages/connector-core/test/collision-state.test.ts 4
  * PRINTS: packages/connector-core/test/commit-evidence.test.ts 1
  * PRINTS: packages/connector-core/test/conference-cost.test.ts 1
