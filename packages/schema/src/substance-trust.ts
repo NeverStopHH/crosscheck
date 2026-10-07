@@ -39,10 +39,22 @@ export const isSubstanceShape = (kind: string, status: string): boolean =>
  */
 export const SUBSTANCE_MIN_MATCHED_TERMS = 2;
 
+/**
+ * Of those, how many no other candidate tree says (round 4, C2): a finding
+ * whose every shared word the runner-up says too is about what both trees
+ * share, not about this one.
+ */
+export const SUBSTANCE_MIN_DISTINCT_TERMS = 1;
+
+/** Topical words the finding's tree's OWN statement must share: the tree is about the prompt (C2). */
+export const SUBSTANCE_MIN_TREE_TERMS = 1;
+
 /** What a claim's relevance is judged on, all counted in TOPICAL words. */
 export interface SubstanceMatch {
   /** Topical query words the claim's SHOWN sentence shares. */
   readonly claimTerms: number;
+  /** Of them, the words no other candidate tree says, on any of its statements (C2). */
+  readonly distinctTerms: number;
   /** Topical query words its tree's own statement — title, description, intent — shares. */
   readonly treeTerms: number;
   /** The match is content identity: an error fingerprint the prompt carried. */
@@ -51,17 +63,58 @@ export interface SubstanceMatch {
 
 /**
  * A STRONG MATCH, one rule for the hub's withholding and the connector's
- * selector: the claim shares SUBSTANCE_MIN_MATCHED_TERMS topical words, or
- * one while its tree's own statement shares that many, or the match is an
- * error fingerprint. Closed-class words never count (C1): "token", "minute"
- * and "rate" beside one "key" made a rate-limit decision a strong match for
- * "token refresh fails after key rotation" — wrong-tree substance in 12 of
- * 119 hold-out tasks.
+ * selector: the claim shares SUBSTANCE_MIN_MATCHED_TERMS topical words,
+ * SUBSTANCE_MIN_DISTINCT_TERMS of which no other candidate tree says, and
+ * its tree's own statement shares SUBSTANCE_MIN_TREE_TERMS — or the match is
+ * an error fingerprint, content identity, which needs no words. Closed-class
+ * words never count (round 3, C1): "token", "minute" and "rate" beside one
+ * "key" made a rate-limit decision a strong match for "token refresh fails
+ * after key rotation" — wrong-tree substance in 12 of 119 hold-out tasks.
+ *
+ * STRICT (round 4, C2): the round-4 hold-out still showed 9 of 182 tasks a
+ * finding from another tree — "invoice pdf timeout" the PDF-labels tree's
+ * cause, on the two words the timeout tree's title says too. One shared word
+ * beside a strong tree no longer makes a finding strong, and a word every
+ * candidate says tells the trees apart no better than none. The tree must
+ * also be the ONE strongest candidate (hints/select.ts and the hub's
+ * withholding judge that across candidates).
  */
 export const isStrongSubstanceMatch = (match: SubstanceMatch): boolean =>
-  match.claimTerms >= SUBSTANCE_MIN_MATCHED_TERMS ||
-  (match.claimTerms > 0 && match.treeTerms >= SUBSTANCE_MIN_MATCHED_TERMS) ||
+  (match.claimTerms >= SUBSTANCE_MIN_MATCHED_TERMS &&
+    match.distinctTerms >= SUBSTANCE_MIN_DISTINCT_TERMS &&
+    match.treeTerms >= SUBSTANCE_MIN_TREE_TERMS) ||
   match.isContentIdentity;
+
+/**
+ * A TREE'S STRENGTH (round 3, H3 + M6): an exact target first — the prompt
+ * named something the tree touched, a fact — then the most topical query
+ * words one of its statements shares.
+ */
+export interface TreeStrength {
+  readonly isExact: boolean;
+  readonly topical: number;
+}
+
+export const isAtLeastAsStrongTree = (strength: TreeStrength, than: TreeStrength): boolean =>
+  strength.isExact === than.isExact ? strength.topical >= than.topical : strength.isExact;
+
+/**
+ * THE ONE STRONGEST TREE, or none (round 4, C2): the index of the tree no
+ * other is as strong as, or null for no trees or a TIE at the top. A tie says
+ * nothing — no finding and no pointer: "invoice pdf timeout" shares invoice
+ * and pdf with the timeout tree's title and with the labels tree's title
+ * alike, and the hub's order between them is search rank, not relevance.
+ * The hub's withholding and the connector's selector call this one rule.
+ */
+export const strongestTreeIndex = (strengths: readonly TreeStrength[]): number | null => {
+  const best = strengths.reduce<number | null>(
+    (bestIndex, strength, index) =>
+      bestIndex === null || !isAtLeastAsStrongTree(strengths[bestIndex] ?? strength, strength) ? index : bestIndex,
+    null,
+  );
+  const top = best === null ? undefined : strengths[best];
+  return top !== undefined && strengths.filter((strength) => isAtLeastAsStrongTree(strength, top)).length === 1 ? best : null;
+};
 
 export const qualifiesAsSubstance = (claim: SubstanceCandidate): boolean =>
   claim.provenance === "declared" &&

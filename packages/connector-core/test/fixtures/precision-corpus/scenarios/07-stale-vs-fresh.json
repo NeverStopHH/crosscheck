@@ -100,10 +100,8 @@
       "kind": "prompt",
       "reader": "Riley",
       "prompt": "connection pool exhaustion in src/db/pool.ts",
-      "expect": "substance",
-      "expectClaimId": "clm_pool_fresh_find",
-      "expectContextId": "wc_pool_fresh",
-      "rationale": "Stale-vs-fresh ranking (DESIGN.md 5): both trees are injectable and own the exact target, and the 14-day half-life decay ranks yesterday's tree above the 65-day one, so the fresh finding is what arrives."
+      "expect": "silence",
+      "rationale": "Relabelled from substance (hold-out review round 4, C2): both trees own the exact target and both titles share connection, pool and exhaustion, so they are EQUALLY strong, and a tie at the top says nothing, finding or pointer. The 14-day half-life decay still ranks yesterday's tree first, but the hub's order between equals is search rank, not relevance; the round-4 hold-out showed 9 of 182 tasks a finding from the tree that order put first."
     }
   ]
 }

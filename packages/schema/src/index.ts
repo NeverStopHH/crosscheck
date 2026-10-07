@@ -347,12 +347,16 @@ export type { CitedHead, CitingClaim } from "./evidence-resolution.ts";
 export {
   SUBSTANCE_MIN_EVIDENCE_REFS,
   SUBSTANCE_ROOT_CAUSE_STATUSES,
+  SUBSTANCE_MIN_DISTINCT_TERMS,
   SUBSTANCE_MIN_MATCHED_TERMS,
+  SUBSTANCE_MIN_TREE_TERMS,
+  isAtLeastAsStrongTree,
   isStrongSubstanceMatch,
   isSubstanceShape,
   qualifiesAsSubstance,
+  strongestTreeIndex,
 } from "./substance-trust.ts";
-export type { SubstanceCandidate, SubstanceMatch } from "./substance-trust.ts";
+export type { SubstanceCandidate, SubstanceMatch, TreeStrength } from "./substance-trust.ts";
 export {
   ENGLISH_FUNCTION_WORDS,
   ENGLISH_STOP_SUPPLEMENT,
@@ -393,6 +397,7 @@ export {
   floorTermsOf,
   isClosedInflection,
   knownTermsIn,
+  sharedLexemes,
   sharedTermCount,
   statementMatch,
   termLexeme,

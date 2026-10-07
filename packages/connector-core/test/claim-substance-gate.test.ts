@@ -57,6 +57,7 @@ const claim = (
   // A strong match by default: this file is about the CODE axis, and the
   // relevance half is pinned on its own (hint-substance-select.test.ts).
   matchedTerms: 2,
+  distinctTerms: 2,
   createdAt: ISO,
   ...overrides,
 });
@@ -74,6 +75,8 @@ const context = (
     baseCommit: "a1b2c3d4",
     createdAt: ISO,
     updatedAt: null,
+    // The tree is about the prompt (round 4, C2).
+    matchedTerms: 1,
   },
   claims,
   matchedTargets: [],

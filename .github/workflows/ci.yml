@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1819
+    # PRINTS: 1829
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -297,7 +297,7 @@ jobs:
     # PRINTS: hints/delivery.ts 8
     # PRINTS: hints/precision.ts 2
     # PRINTS: hints/render.ts 29
-    # PRINTS: hints/select.ts 38
+    # PRINTS: hints/select.ts 39
     # PRINTS: http/client.ts 4
     # PRINTS: http/coverage.ts 3
     # PRINTS: http/hub.ts 14
@@ -391,7 +391,7 @@ jobs:
     # PRINTS: packages/schema/src/slash-command.ts 4
     # PRINTS: packages/schema/src/stop-words.ts 2
     # PRINTS: packages/schema/src/substance-sentence.ts 15
-    # PRINTS: packages/schema/src/substance-trust.ts 5
+    # PRINTS: packages/schema/src/substance-trust.ts 10
     # PRINTS: packages/schema/src/telemetry-loss.ts 6
     # PRINTS: packages/schema/src/typing-slip.ts 11
     # PRINTS: packages/schema/src/untrusted-text.ts 6
@@ -435,7 +435,7 @@ jobs:
     # PRINTS: packages/server/src/services/evidence-resolution.ts 10
     # PRINTS: packages/server/src/services/ghost-overlap.ts 4
     # PRINTS: packages/server/src/services/hint-deliveries.ts 5
-    # PRINTS: packages/server/src/services/hints.ts 38
+    # PRINTS: packages/server/src/services/hints.ts 42
     # PRINTS: packages/server/src/services/intent-ledger.ts 12
     # PRINTS: packages/server/src/services/landed-context.ts 20
     # PRINTS: packages/server/src/services/landed-notices.ts 28
@@ -577,7 +577,7 @@ jobs:
     # PRINTS: heartbeat.ts 1
     # PRINTS: hint-deliveries.ts 5
     # PRINTS: hint.ts 36
-    # PRINTS: hints.ts 41
+    # PRINTS: hints.ts 45
     # PRINTS: hook-budget.ts 2
     # PRINTS: hub.ts 14
     # PRINTS: index.ts 4
@@ -679,7 +679,7 @@ jobs:
     # PRINTS: search-tokens.ts 4
     # PRINTS: search.ts 13
     # PRINTS: secret-scan.ts 1
-    # PRINTS: select.ts 38
+    # PRINTS: select.ts 39
     # PRINTS: seq-cost.ts 8
     # PRINTS: session-control.ts 9
     # PRINTS: session-events.ts 9
@@ -707,7 +707,7 @@ jobs:
     # PRINTS: stop.ts 3
     # PRINTS: stream.ts 3
     # PRINTS: substance-sentence.ts 15
-    # PRINTS: substance-trust.ts 5
+    # PRINTS: substance-trust.ts 10
     # PRINTS: suspect-render.ts 3
     # PRINTS: suspect.ts 7
     # PRINTS: sweep.ts 3

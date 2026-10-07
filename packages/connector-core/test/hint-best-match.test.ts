@@ -20,7 +20,8 @@ const SELF = "dev_self";
 const TEAMMATE = "dev_ken";
 const ISO = "2026-09-20T08:00:00.000Z";
 
-const decision = (id: string, workContextId: string, matchedTerms: number): HintClaimCandidate => ({
+/** A trusted decision; every word it shares is its own unless said otherwise (C2). */
+const decision = (id: string, workContextId: string, matchedTerms: number, distinctTerms = matchedTerms): HintClaimCandidate => ({
   id,
   workContextId,
   kind: "decision",
@@ -34,6 +35,7 @@ const decision = (id: string, workContextId: string, matchedTerms: number): Hint
   authorDeveloperName: "Ken",
   body: "Keep the previous signing key in the JWKS for a day after every rotation.",
   matchedTerms,
+  distinctTerms,
   createdAt: ISO,
 });
 
@@ -94,10 +96,60 @@ describe("substance comes from the strongest topical match, not the hub's first 
     expect(pickedId([rate, jwt])).toBe("clm_jwt");
   });
 
-  test("a tie keeps the hub's order", () => {
+  test("a tie says nothing — round 4, C2: the hub's order between equals is search rank, not relevance", () => {
     const first = tree("wc_a", [decision("clm_a", "wc_a", 2)], { treeTerms: 2, topicalTerms: 2 });
     const second = tree("wc_b", [decision("clm_b", "wc_b", 2)], { treeTerms: 2, topicalTerms: 2 });
-    expect(pickedId([first, second])).toBe("clm_a");
+    expect(pickedId([first, second])).toBe("silence");
+  });
+});
+
+/**
+ * STRICT SUBSTANCE (round 4, C2): the round-4 hold-out still showed 9 of 182
+ * tasks a finding from another tree. A finding is shown only from the ONE
+ * strongest tree, when the claim shares two topical words, one of which no
+ * other candidate says, and the tree's own statement shares one; otherwise a
+ * pointer at that tree — and nothing at all on a tie.
+ */
+describe("a finding only from the one strongest tree, on a word only it says (C2)", () => {
+  test("every word the finding shares, another candidate says too: a pointer at its tree", () => {
+    // Arrange — K063's shape: invoice and pdf, said by the labels tree as well
+    const timeout = tree("wc_timeout", [decision("clm_t", "wc_timeout", 2, 0)], { treeTerms: 3, topicalTerms: 3 });
+    const labels = tree("wc_labels", [observation("clm_l", "wc_labels", 2)], { treeTerms: 2, topicalTerms: 2 });
+
+    // Act + Assert
+    expect(pickedId([timeout, labels])).toBe("pointer:wc_timeout");
+  });
+
+  test("a tree whose own statement shares nothing lends no finding, however well the claim matches", () => {
+    const notes = tree("wc_notes", [decision("clm_n", "wc_notes", 3)], { treeTerms: 0, topicalTerms: 3 });
+    expect(pickedId([notes])).toBe("pointer:wc_notes");
+  });
+
+  test("one shared word is no finding, however strong its tree", () => {
+    const strong = tree("wc_strong", [decision("clm_s", "wc_strong", 1)], { treeTerms: 4, topicalTerms: 4 });
+    expect(pickedId([strong])).toBe("pointer:wc_strong");
+  });
+
+  test("a tie at the top: no finding and no pointer, however strict the claims", () => {
+    const first = tree("wc_a", [decision("clm_a", "wc_a", 3)], { treeTerms: 3, topicalTerms: 3 });
+    const second = tree("wc_b", [decision("clm_b", "wc_b", 3)], { treeTerms: 3, topicalTerms: 3 });
+    expect(pickedId([first, second])).toBe("silence");
+  });
+
+  test("a tie below the top is no tie", () => {
+    const top = tree("wc_top", [decision("clm_top", "wc_top", 3)], { treeTerms: 3, topicalTerms: 4 });
+    const first = tree("wc_a", [observation("clm_a", "wc_a", 2)], { treeTerms: 2, topicalTerms: 2 });
+    const second = tree("wc_b", [observation("clm_b", "wc_b", 2)], { treeTerms: 2, topicalTerms: 2 });
+    expect(pickedId([first, second, top])).toBe("clm_top");
+  });
+
+  test("a hub that does not say how many words are the claim's own buys no finding", () => {
+    // Arrange — a round-4 hub: matchedTerms, but no distinctTerms
+    const { distinctTerms: _distinct, ...claim } = decision("clm_old", "wc_old", 3);
+    const old = tree("wc_old", [claim], { treeTerms: 3, topicalTerms: 3 });
+
+    // Act + Assert
+    expect(pickedId([old])).toBe("pointer:wc_old");
   });
 });
 
@@ -143,12 +195,12 @@ describe("the pointer names the strongest tree, or nothing (H3 + M6)", () => {
     expect(pickedId([dashboard, banner], ["wc_banner"])).toBe("silence");
   });
 
-  test("a hub too old to send the strength keeps its own order", () => {
-    // Arrange — no topicalTerms on either: every tree is equally strong
+  test("a hub too old to send the strength: trees the recount finds equally strong are a tie, and a tie says nothing (C2)", () => {
+    // Arrange — no topicalTerms on either, and no prompt word to recount on
     const { topicalTerms: _first, ...first } = tree("wc_a", [observation("clm_a", "wc_a", 1)], { treeTerms: 1, topicalTerms: 1 });
     const { topicalTerms: _second, ...second } = tree("wc_b", [observation("clm_b", "wc_b", 3)], { treeTerms: 3, topicalTerms: 3 });
 
     // Act + Assert
-    expect(pickedId([first, second])).toBe("pointer:wc_a");
+    expect(pickedId([first, second])).toBe("silence");
   });
 });

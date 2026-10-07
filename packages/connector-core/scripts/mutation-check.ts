@@ -17405,9 +17405,10 @@ export const MUTATIONS: readonly Mutation[
     label: "two spellings of one word count as two agreeing words",
     // RETARGETED (round 3, follow-up): the hub and the connector count by one function,
     // pinned on a topical word — since C1 the meta words of the old test count for nothing.
+    // RETARGETED (round 4, C2): the count is the size of the shared lexemes, which C2 reads as words.
     file: `${SCHEMA}/src/content-floor.ts`,
-    from: "  new Set(terms.map(termLexeme).filter((lexeme) => said.has(lexeme))).size;",
-    to: "  terms.map(termLexeme).filter((lexeme) => said.has(lexeme)).length;",
+    from: "export const sharedTermCount = (terms: readonly string[], said: ReadonlySet<string>): number => sharedLexemes(terms, said).size;",
+    to: "export const sharedTermCount = (terms: readonly string[], said: ReadonlySet<string>): number =>\n  terms.map(termLexeme).filter((lexeme) => said.has(lexeme)).length;",
     test: `${SCHEMA}/test/content-floor.test.ts`,
     because: "\"limit limits limiting\" carries a task and a claim's relevance doubles with every inflection the prompt repeats",
   },
@@ -17415,9 +17416,10 @@ export const MUTATIONS: readonly Mutation[
     label: "words from two different claims count as agreeing on one statement",
     // RETARGETED (round 3, C1): the per-claim count is the topical floor count now.
     // RETARGETED (round 3, follow-up): counted in TypeScript by the shared rule.
+    // RETARGETED (round 4, C2): one helper counts a context's statements, and the words they say.
     file: `${SERVER}/src/services/hints.ts`,
-    from: "      return [id, { floor: Math.max(...matches.map((match) => match.floor)), topical:",
-    to: "      return [id, { floor: matches.reduce((total, match) => total + match.floor, 0), topical:",
+    from: "    floor: Math.max(0, ...matches.map((match) => match.floor)),",
+    to: "    floor: matches.reduce((total, match) => total + match.floor, 0),",
     test: `${SERVER}/test/hint-content-floor.test.ts`,
     because: "\"weiter\" in a German claim plus \"limit\" in another make a limit note look like a task",
   },
@@ -17478,9 +17480,10 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a strongly matched tree lends substance to a claim about something else",
     // RETARGETED (round 3, H3 + M6): the strong-match rule is the shared one in the schema.
+    // RETARGETED (round 4, C2): the claim's own two words are the rule; the tree's may stand in.
     file: `${SCHEMA}/src/substance-trust.ts`,
-    from: "  (match.claimTerms > 0 && match.treeTerms >= SUBSTANCE_MIN_MATCHED_TERMS) ||",
-    to: "  (match.treeTerms >= SUBSTANCE_MIN_MATCHED_TERMS) ||",
+    from: "  (match.claimTerms >= SUBSTANCE_MIN_MATCHED_TERMS &&",
+    to: "  ((match.claimTerms >= SUBSTANCE_MIN_MATCHED_TERMS || match.treeTerms >= SUBSTANCE_MIN_MATCHED_TERMS) &&",
     test: `${CORE}/test/hint-substance-select.test.ts`,
     because: "a backed claim sharing no word of the prompt is injected because its tree's title matched",
   },
@@ -17786,8 +17789,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the hub's claim window hides that it left rows out",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "  return { claims: windowed, truncated: fetched.length > rows.length };",
-    to: "  return { claims: windowed, truncated: false };",
+    // RETARGETED (round 4, C2): the window carries each shown sentence's words beside it.
+    from: "  return { claims: windowed, truncated: fetched.length > rows.length, shown: shownTerms };",
+    to: "  return { claims: windowed, truncated: false, shown: shownTerms };",
     test: `${SERVER}/test/hints.test.ts`,
     because: "a 50-claim tree is announced as \"beside 29 more claims\", and nobody can tell the count stopped at the window",
   },
@@ -18996,8 +19000,9 @@ export const MUTATIONS: readonly Mutation[
     label: "a tree's own statement clears the floor on meta words",
     // RETARGETED (round 3, follow-up): the statement is counted by the shared rule; no topical word needed.
     file: `${SERVER}/src/services/hints.ts`,
-    from: "  return new Map(rows.map((row) => [row.id, statementMatch(floor, row.statement)]));",
-    to: "  return new Map(rows.map((row) => [row.id, statementMatch({ ...floor, minTopical: 0 }, row.statement)]));",
+    // RETARGETED (round 4, C2): one helper counts a context's statements.
+    from: "  return new Map(rows.map((row) => [row.id, contextMatchOf(floor, [row.statement])]));",
+    to: "  return new Map(rows.map((row) => [row.id, contextMatchOf({ ...floor, minTopical: 0 }, [row.statement])]));",
     test: `${SERVER}/test/hint-topical-floor.test.ts`,
     because: "an intent made of the session's machinery became the round-3 magnet, taking six of ten content-free hints (C1)",
   },
@@ -19005,8 +19010,9 @@ export const MUTATIONS: readonly Mutation[
     label: "a claim clears the floor on meta words",
     // RETARGETED (round 3, follow-up): each claim is counted by the shared rule; no topical word needed.
     file: `${SERVER}/src/services/hints.ts`,
-    from: "      const matches = group.map((row) => statementMatch(floor, row.body));",
-    to: "      const matches = group.map((row) => statementMatch({ ...floor, minTopical: 0 }, row.body));",
+    // RETARGETED (round 4, C2): one helper counts a context's statements.
+    from: "      contextMatchOf(\n        floor,\n        group.map((row) => row.body),\n      ),",
+    to: "      contextMatchOf(\n        { ...floor, minTopical: 0 },\n        group.map((row) => row.body),\n      ),",
     test: `${SERVER}/test/hint-topical-floor.test.ts`,
     because: "a claim that says usage, limit, reset and session qualifies its tree for every limit chatter (C1)",
   },
@@ -19081,46 +19087,52 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the hub ships a weakly matched body",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "    isStrongSubstanceMatch({ claimTerms: claim.matchedTerms, treeTerms, isContentIdentity }) ? claim : { ...claim, body: \"\" },",
-    to: "    true ? claim : { ...claim, body: \"\" },",
+    // RETARGETED (round 4, C2): the test reads the strict scope.
+    from: "      isStrongSubstanceMatch({ claimTerms: claim.matchedTerms, distinctTerms, treeTerms: scope.treeTerms, isContentIdentity: scope.isContentIdentity })",
+    to: "      true",
     test: `${SERVER}/test/hint-strong-match.test.ts`,
     because: "a 0.10.0 connector inlines the rate-limit decision for \"token refresh fails after key rotation\" (H3 + M6)",
   },
   {
     label: "the hub never reads a fingerprint as content identity",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "      (matchedTargets.get(row.id) ?? []).some((target) => target.kind === CONTENT_IDENTITY_TARGET_KIND),",
-    to: "      false,",
+    // RETARGETED (round 4, C2): the strict scope names it.
+    from: "      isContentIdentity: (matchedTargets.get(row.id) ?? []).some((target) => target.kind === CONTENT_IDENTITY_TARGET_KIND),",
+    to: "      isContentIdentity: false,",
     test: `${SERVER}/test/hint-strong-match.test.ts`,
     because: "the decision of a tree whose very error the prompt carried is withheld, for want of a shared word (H3 + M6)",
   },
   {
     label: "one shared word on each side is a strong match",
     file: `${SCHEMA}/src/substance-trust.ts`,
-    from: "  (match.claimTerms > 0 && match.treeTerms >= SUBSTANCE_MIN_MATCHED_TERMS) ||",
-    to: "  (match.claimTerms > 0 && match.treeTerms >= 1) ||",
+    // RETARGETED (round 4, C2): one claim word beside a tree word is the claim threshold at one.
+    from: "  (match.claimTerms >= SUBSTANCE_MIN_MATCHED_TERMS &&",
+    to: "  (match.claimTerms >= 1 &&",
     test: `${SCHEMA}/test/substance-match.test.ts`,
     because: "a claim and a tree that each brush the prompt with one word push the claim as a finding (H3 + M6)",
   },
   {
     label: "substance comes from a weaker tree",
     file: `${CORE}/src/hints/select.ts`,
-    from: "  const best = eligible\n    .filter(isStrongest)\n",
-    to: "  const best = eligible\n",
+    // RETARGETED (round 4, C2): substance and pointer both come from the one strongest tree.
+    from: "  const context = strongestIndex === null ? undefined : pointable[strongestIndex];",
+    to: "  const context = strongestIndex === null ? undefined : pointable[0];",
     test: `${CORE}/test/hint-best-match.test.ts`,
     because: "the hub's first trusted claim wins, and t004 gets the rate-limit decision for a JWT prompt (round 3, H3 + M6)",
   },
   {
     label: "the pointer names the hub's first, not the strongest",
     file: `${CORE}/src/hints/select.ts`,
-    from: "  const named = pointable.filter(isStrongest).find(",
-    to: "  const named = pointable.find(",
+    // RETARGETED (round 4, C2): the pointer names the one strongest tree.
+    from: "  return isUnpointed(context, seen) ? (pointerAt(context, selfDeveloperId) ?? SILENCE) : SILENCE;",
+    to: "  return isUnpointed(context, seen) ? (pointerAt(pointable[0] ?? context, selfDeveloperId) ?? SILENCE) : SILENCE;",
     test: `${CORE}/test/hint-best-match.test.ts`,
     because: "\"the usage limit banner shows wrong numbers\" points at the dashboard tree that shares one word (H3 + M6)",
   },
   {
     label: "an exact target counts no more than words",
-    file: `${CORE}/src/hints/select.ts`,
+    // RETARGETED (round 4, C2): the comparison is the schema's, for the hub and the selector.
+    file: `${SCHEMA}/src/substance-trust.ts`,
     from: "  strength.isExact === than.isExact ? strength.topical >= than.topical : strength.isExact;",
     to: "  strength.topical >= than.topical;",
     test: `${CORE}/test/hint-best-match.test.ts`,
@@ -19767,6 +19779,86 @@ export const MUTATIONS: readonly Mutation[
     because: "\"na dann mal los\" says nothing but that the session goes on (round 4, C1)",
   },
   {
+    label: "a finding on words every candidate says is a strong match",
+    file: `${SCHEMA}/src/substance-trust.ts`,
+    from: "    match.distinctTerms >= SUBSTANCE_MIN_DISTINCT_TERMS &&\n",
+    to: "",
+    test: `${SCHEMA}/test/substance-match.test.ts`,
+    because: "\"invoice pdf timeout\" is shown the labels tree's cause on the two words the timeout tree's title says too (round 4, C2)",
+  },
+  {
+    label: "a tree whose own statement says nothing lends a finding",
+    file: `${SCHEMA}/src/substance-trust.ts`,
+    from: "    match.treeTerms >= SUBSTANCE_MIN_TREE_TERMS) ||",
+    to: "    true) ||",
+    test: `${SCHEMA}/test/substance-match.test.ts`,
+    because: "a tree titled \"Investigation notes\" pushes a finding the prompt only brushed (round 4, C2)",
+  },
+  {
+    label: "a tie at the top counts as the strongest tree",
+    file: `${SCHEMA}/src/substance-trust.ts`,
+    from: "  return top !== undefined && strengths.filter((strength) => isAtLeastAsStrongTree(strength, top)).length === 1 ? best : null;",
+    to: "  return best;",
+    test: `${CORE}/test/hint-best-match.test.ts`,
+    because: "of two trees sharing invoice and pdf, the one search ranked first is shown as the answer (round 4, C2)",
+  },
+  {
+    label: "the first tree is taken for the strongest",
+    file: `${SCHEMA}/src/substance-trust.ts`,
+    from: "      bestIndex === null || !isAtLeastAsStrongTree(strengths[bestIndex] ?? strength, strength) ? index : bestIndex,",
+    to: "      bestIndex === null ? index : bestIndex,",
+    test: `${SCHEMA}/test/substance-match.test.ts`,
+    because: "the hub's order picks the weaker of two trees again, and a stronger one beside it is never named (round 4, C2)",
+  },
+  {
+    label: "the selector reads every shared word as the claim's own",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "    distinctTerms: claim.distinctTerms ?? 0,",
+    to: "    distinctTerms: claim.distinctTerms ?? claim.matchedTerms ?? 0,",
+    test: `${CORE}/test/hint-best-match.test.ts`,
+    because: "a round-4 hub, which never counted what tells its trees apart, buys substance on words every tree says (C2)",
+  },
+  {
+    label: "the selector takes the hub's first tree for the strongest",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  const strongestIndex = strongestTreeIndex(pointable.map((context) => strengthOf(context, selfDeveloperId, recount)));",
+    to: "  const strongestIndex = pointable.length > 0 ? 0 : null;",
+    test: `${CORE}/test/hint-best-match.test.ts`,
+    because: "two trees tied on invoice and pdf get the search's first named, finding and all (round 4, C2)",
+  },
+  {
+    label: "the hub ships a finding from a tree that is not the one strongest",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    return scope.isStrongest &&\n",
+    to: "    return true &&\n",
+    test: `${SERVER}/test/hint-strong-match.test.ts`,
+    because: "a 0.10.0 connector inlines the weaker labels tree's finding, or one of two tied trees' (round 4, C2)",
+  },
+  {
+    label: "the hub counts every shared word as the claim's own",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    const distinctTerms = [...(window.shown.get(claim.id) ?? [])].filter((lexeme) => !scope.saidElsewhere.has(lexeme)).length;",
+    to: "    const distinctTerms = window.shown.get(claim.id)?.size ?? 0;",
+    test: `${SERVER}/test/hint-strong-match.test.ts`,
+    because: "a finding on the words the runner-up says too ships its body to every connector (round 4, C2)",
+  },
+  {
+    label: "the hub tells a finding apart from no other candidate",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "      saidElsewhere: new Set(qualified.filter((_, other) => other !== index).flatMap((other) => [...other.saidTopical])),",
+    to: "      saidElsewhere: new Set(),",
+    test: `${SERVER}/test/hint-strong-match.test.ts`,
+    because: "\"Dutch customers get the invoice from a cached template\" ships although the labels tree says each word (round 4, C2)",
+  },
+  {
+    label: "the hub reads only a tree's own statement for what it says",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "        saidTopical: new Set([...(statementTerms.get(id)?.saidTopical ?? []), ...(claimTerms.get(id)?.saidTopical ?? [])]),",
+    to: "        saidTopical: new Set([...(statementTerms.get(id)?.saidTopical ?? [])]),",
+    test: `${SERVER}/test/hint-strong-match.test.ts`,
+    because: "a word the runner-up says only in a claim tells the trees apart, and a finding on it ships (round 4, C2)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     // RETARGETED (round 3, M7): the query is the prompt's window now.
@@ -20022,7 +20114,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/git-timeout.test.ts 4
  * PRINTS: packages/connector-core/test/guarantee-declarations.test.ts 28
  * PRINTS: packages/connector-core/test/guarantee-doctor.test.ts 3
- * PRINTS: packages/connector-core/test/hint-best-match.test.ts 4
+ * PRINTS: packages/connector-core/test/hint-best-match.test.ts 7
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 2
  * PRINTS: packages/connector-core/test/hint-harness-turn.test.ts 7
@@ -20119,7 +20211,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/session-control.test.ts 7
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/schema/test/slash-command.test.ts 4
- * PRINTS: packages/schema/test/substance-match.test.ts 1
+ * PRINTS: packages/schema/test/substance-match.test.ts 4
  * PRINTS: packages/schema/test/substance-sentence.test.ts 13
  * PRINTS: packages/schema/test/telemetry-loss.test.ts 2
  * PRINTS: packages/schema/test/typing-slip.test.ts 11
@@ -20160,7 +20252,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-harness-turn.test.ts 2
  * PRINTS: packages/server/test/hint-long-prompt.test.ts 4
  * PRINTS: packages/server/test/hint-pushable-ranking.test.ts 5
- * PRINTS: packages/server/test/hint-strong-match.test.ts 5
+ * PRINTS: packages/server/test/hint-strong-match.test.ts 9
  * PRINTS: packages/server/test/hint-topical-floor.test.ts 4
  * PRINTS: packages/server/test/hint-withheld-bodies.test.ts 5
  * PRINTS: packages/server/test/hints.test.ts 6

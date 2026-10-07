@@ -38,6 +38,14 @@
  * equals, and the claim sharing most topical words within it; a pointer names
  * the strongest tree, never a weaker one in its place — or nothing, once it
  * was shown.
+ *
+ * STRICT (hold-out review round 4, C2): the round-4 hold-out still showed 9
+ * of 182 tasks a finding from another tree. Now the strongest tree must be
+ * the ONE strongest — a tie at the top says nothing, finding or pointer — and
+ * a finding of it is shown only when it shares two topical words, one of
+ * which no other candidate says, and the tree's own statement shares one
+ * (`@crosscheck/schema` isStrongSubstanceMatch, strongestTreeIndex: the
+ * hub's withholding calls the same two rules). Otherwise the pointer at it.
  */
 import {
   HINT_MIN_EVIDENCE_REFS,
@@ -52,9 +60,10 @@ import {
   isStrongSubstanceMatch,
   knownTermsIn,
   statementMatch,
+  strongestTreeIndex,
   substanceSentence,
 } from "@crosscheck/schema";
-import type { FloorTerms } from "@crosscheck/schema";
+import type { FloorTerms, TreeStrength } from "@crosscheck/schema";
 
 import { isAssertableValidity } from "../claim-validity.ts";
 import type { HintClaimCandidate, HintContextCandidate } from "../http/hub.ts";
@@ -206,38 +215,28 @@ const isStrongMatch = (
 ): boolean =>
   isStrongSubstanceMatch({
     claimTerms: claim.matchedTerms ?? 0,
+    // STRICT (round 4, C2): one of its words no other candidate says; a hub
+    // that never counted it buys no substance.
+    distinctTerms: claim.distinctTerms ?? 0,
     treeTerms: context.workContext.matchedTerms ?? 0,
     isContentIdentity: context.matchedTargets.some((target) => target.kind === SUBSTANCE_MATCH_KIND),
   });
 
 /**
- * A TREE'S STRENGTH (round 3, H3 + M6): an exact target first — the prompt
- * named something the tree touched, a fact — then the most TOPICAL query
- * words one of its statements shares (the hub's `topicalTerms`). A hub too
- * old to send the number is measured here by the rule the recount floors it
- * with (round 3, follow-up): the most topical words one of its statements on
- * the wire shares, so an old hub's order no longer picks the weaker of two
- * trees that both clear the floor.
+ * A TREE'S STRENGTH (round 3, H3 + M6; `@crosscheck/schema` TreeStrength):
+ * an exact target first — the prompt named something the tree touched, a
+ * fact — then the most TOPICAL query words one of its statements shares (the
+ * hub's `topicalTerms`). A hub too old to send the number is measured here by
+ * the rule the recount floors it with (round 3, follow-up): the most topical
+ * words one of its statements on the wire shares, so an old hub's order no
+ * longer picks the weaker of two trees that both clear the floor.
  */
-interface Strength {
-  readonly isExact: boolean;
-  readonly topical: number;
-}
-
-const strengthOf = (context: HintContextCandidate, selfDeveloperId: string | null, recount: FloorTerms): Strength => ({
+const strengthOf = (context: HintContextCandidate, selfDeveloperId: string | null, recount: FloorTerms): TreeStrength => ({
   isExact: context.workContext.tier === "exact",
   topical:
     context.topicalTerms ??
     Math.max(0, ...[wireStatementOf(context), ...recountBodies(context, selfDeveloperId)].map((statement) => statementMatch(recount, statement).topical)),
 });
-
-const isAtLeastAsStrong = (strength: Strength, than: Strength): boolean =>
-  strength.isExact === than.isExact ? strength.topical >= than.topical : strength.isExact;
-
-interface SubstanceOffer {
-  readonly context: HintContextCandidate;
-  readonly claim: HintClaimCandidate;
-}
 
 /**
  * The order a tree's claims are offered in: most relevant first, more shared
@@ -476,35 +475,24 @@ export const selectHint = (input: SelectHintInput): HintSelection => {
   const seen = new Set(input.seenRefIds);
   const recount = recountFloorTermsOf(input);
   const eligible = input.candidates.filter(isEligibleContext(input, recount)).map(withPushableClaims);
-  const strengthIn = (context: HintContextCandidate): Strength => strengthOf(context, selfDeveloperId, recount);
-  // THE BEST TREE A POINTER COULD NAME, shown already or not (round 3, H3 +
-  // M6): substance comes only from a tree at least this strong, and a weaker
-  // tree is never pointed at in its place.
+  // THE ONE STRONGEST TREE A POINTER COULD NAME, shown already or not (round
+  // 3, H3 + M6; round 4, C2): substance comes only from it, a weaker tree is
+  // never pointed at in its place — and a TIE at the top says nothing at all,
+  // since the hub's order between equals is search rank, not relevance.
   const pointable = eligible.filter((context) => pointerAt(context, selfDeveloperId) !== null);
-  const strongest = pointable.map(strengthIn).reduce<Strength | null>(
-    (best, strength) => (best === null || !isAtLeastAsStrong(best, strength) ? strength : best),
-    null,
-  );
-  const isStrongest = (context: HintContextCandidate): boolean =>
-    strongest === null || isAtLeastAsStrong(strengthIn(context), strongest);
+  const strongestIndex = strongestTreeIndex(pointable.map((context) => strengthOf(context, selfDeveloperId, recount)));
+  const context = strongestIndex === null ? undefined : pointable[strongestIndex];
+  if (context === undefined) {
+    return SILENCE;
+  }
 
-  // Substance pass over ALL eligible contexts first: an evidence-backed claim
-  // in the second-ranked context beats a pointer at the first-ranked one —
-  // but only from a tree as strong as any (H3 + M6). Among equally strong
-  // trees the hub's order decides, relevance and freshness (§5's
-  // stale-vs-fresh), and within a tree the claim sharing most topical words.
-  const best = eligible
-    .filter(isStrongest)
-    .map((context): SubstanceOffer | undefined => {
-      // Negatives first (§4), then the most relevant of the rest.
-      const claim = offeringOrder(context.claims.filter((member) => isForeignClaim(member, selfDeveloperId))).find(
-        (member) => isDeliverable(member, context) && !seen.has(member.id),
-      );
-      return claim === undefined ? undefined : { context, claim };
-    })
-    .find((offer) => offer !== undefined);
-  if (best !== undefined) {
-    const { context, claim } = best;
+  // Substance from that tree first: an evidence-backed claim beats a pointer
+  // at its own tree — within it the claim sharing most topical words, each
+  // strictly matched (C2).
+  const claim = offeringOrder(context.claims.filter((member) => isForeignClaim(member, selfDeveloperId))).find(
+    (member) => isDeliverable(member, context) && !seen.has(member.id),
+  );
+  if (claim !== undefined) {
     const foreign = context.claims.filter((member) => isForeignClaim(member, selfDeveloperId));
     // The rest are the tree's OTHER claims — the reader's own among them,
     // since get_diagnosis reads those too — what the hint's pointer line
@@ -521,12 +509,11 @@ export const selectHint = (input: SelectHintInput): HintSelection => {
     };
   }
 
-  // Pointer pass: the STRONGEST tree (H3 + M6), the hub's order among equals,
-  // and only if it is unseen — never a weaker tree in its place. "Unseen"
-  // covers the context id AND its claims: once substance from a context was
-  // delivered, re-surfacing the same context as a pointer is noise, not news.
-  const named = pointable.filter(isStrongest).find((context) => isUnpointed(context, seen));
-  return named === undefined ? SILENCE : (pointerAt(named, selfDeveloperId) ?? SILENCE);
+  // Otherwise a pointer at the STRONGEST tree (H3 + M6), only if it is
+  // unseen — never a weaker tree in its place. "Unseen" covers the context id
+  // AND its claims: once substance from a context was delivered, re-surfacing
+  // the same context as a pointer is noise, not news.
+  return isUnpointed(context, seen) ? (pointerAt(context, selfDeveloperId) ?? SILENCE) : SILENCE;
 };
 
 type PointerSelection = Extract<HintSelection, { readonly kind: "pointer" }>;

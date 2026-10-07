@@ -42,7 +42,7 @@
       "workContextId": "wc_flags",
       "authorSessionId": "s_quinn_flags",
       "kind": "root_cause",
-      "body": "Variant cache entries are written without an expiry so updates never propagate",
+      "body": "Variant cache entries are written without an expiry, so stale flag variants keep serving after every update",
       "status": "likely_root_cause",
       "confidence": 0.75,
       "captureMode": "agent",

@@ -30,7 +30,9 @@ const claim = (kind: string, status: string, provenance: string, resolved: numbe
   authorDeveloperId: "dev_nick",
   authorDeveloperName: "Ken",
   body,
+  // A strict match (round 4, C2): two words, both its own.
   matchedTerms: HINT_MIN_SHARED_TERMS,
+  distinctTerms: HINT_MIN_SHARED_TERMS,
   createdAt: ISO,
 });
 
@@ -45,6 +47,8 @@ const context = (only: HintClaimCandidate): HintContextCandidate => ({
     baseCommit: "a1b2c3d4",
     createdAt: ISO,
     updatedAt: null,
+    // Its own title shares "upload" with the prompt (C2).
+    matchedTerms: 1,
   },
   claims: [only],
   matchedTargets: [],

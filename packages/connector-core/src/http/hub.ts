@@ -1488,6 +1488,13 @@ export const HintClaimCandidateSchema = z.looseObject({
    * claim whose relevance nobody measured is a pointer, not substance.
    */
   matchedTerms: z.number().int().min(0).optional(),
+  /**
+   * Of those words, how many NO OTHER candidate of the response says (round
+   * 4, C2): a finding is shown only on a word that tells its tree from the
+   * runner-up. OPTIONAL, and absent fails closed like `matchedTerms`: a hub
+   * that never counted it buys no substance.
+   */
+  distinctTerms: z.number().int().min(0).optional(),
   createdAt: z.string().min(1),
 });
 

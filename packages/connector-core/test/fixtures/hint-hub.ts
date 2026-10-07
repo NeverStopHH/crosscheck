@@ -78,6 +78,9 @@ export const injectableCandidate = (): Record<string, unknown> => ({
     baseCommit: "a1b2c3d4e5f6a7b8",
     createdAt: "2026-08-10T08:00:00.000Z",
     updatedAt: null,
+    // Its own title shares "key" and "rotation" with the canned prompt: the
+    // tree is about it (round 4, C2).
+    matchedTerms: 2,
   },
   claims: [
     {
@@ -95,8 +98,10 @@ export const injectableCandidate = (): Record<string, unknown> => ({
       body: CANDIDATE_BODY,
       // What a current hub counts for the canned prompt ("why does
       // src/auth/refresh.ts still 500 after the key rotation") against this
-      // body: "refresh" and "key" — a strong match, so this stays substance.
+      // body: "refresh" and "key" — a strong match, so this stays substance;
+      // the only candidate, so no other tree says either (round 4, C2).
       matchedTerms: 2,
+      distinctTerms: 2,
       createdAt: "2026-08-10T08:00:00.000Z",
     },
   ],

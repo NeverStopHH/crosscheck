@@ -27,8 +27,10 @@ const claim = (
   body: "Retrying the refresh call does not help; the key is gone",
   // A STRONG match by default — "refresh" and "key", as the canned prompt
   // shares them — because every rule below is about trust, and relevance is
-  // pinned on its own in hint-substance-select.test.ts.
+  // pinned on its own in hint-substance-select.test.ts. Both words its own:
+  // no other candidate says them (round 4, C2).
   matchedTerms: 2,
+  distinctTerms: 2,
   createdAt: "2026-08-10T08:00:00.000Z",
   ...overrides,
 });
@@ -48,6 +50,8 @@ const context = (
     baseCommit: "a1b2c3d4",
     createdAt: "2026-08-10T08:00:00.000Z",
     updatedAt: null,
+    // Its own title shares a word of the prompt: the tree is about it (C2).
+    matchedTerms: 1,
     ...overrides,
   },
   claims,
@@ -199,14 +203,19 @@ describe("anchoring asymmetry (DESIGN.md §4, structural)", () => {
     );
   });
 
-  test("substance in a lower-ranked context beats a pointer in a higher one", () => {
-    const weak = context(
-      { id: "wc_weak" },
-      [claim({ id: "clm_weak", kind: "hypothesis", status: "proposed", evidenceRefCount: 0, workContextId: "wc_weak" })],
-    );
-    const strong = context({ id: "wc_strong" }, [
-      claim({ id: "clm_strong", workContextId: "wc_strong" }),
-    ]);
+  test("substance in a lower-ranked but stronger context beats a pointer in a higher one", () => {
+    // Round 4, C2: the two must differ in strength — a tie says nothing.
+    const weak = {
+      ...context(
+        { id: "wc_weak" },
+        [claim({ id: "clm_weak", kind: "hypothesis", status: "proposed", evidenceRefCount: 0, workContextId: "wc_weak" })],
+      ),
+      topicalTerms: 1,
+    };
+    const strong = {
+      ...context({ id: "wc_strong" }, [claim({ id: "clm_strong", workContextId: "wc_strong" })]),
+      topicalTerms: 2,
+    };
     const selection = select([weak, strong]);
     expect(selection.kind).toBe("claim");
     if (selection.kind === "claim") {
@@ -343,13 +352,13 @@ describe("seen-set dedup and session cap", () => {
 
   test("one prompt yields at most one hint even with many candidates", () => {
     const many = [
-      context({ id: "wc_a" }, [claim({ id: "clm_a", workContextId: "wc_a" })]),
-      context({ id: "wc_b" }, [claim({ id: "clm_b", workContextId: "wc_b" })]),
-      context({ id: "wc_c" }, [claim({ id: "clm_c", workContextId: "wc_c" })]),
+      { ...context({ id: "wc_a" }, [claim({ id: "clm_a", workContextId: "wc_a" })]), topicalTerms: 3 },
+      { ...context({ id: "wc_b" }, [claim({ id: "clm_b", workContextId: "wc_b" })]), topicalTerms: 2 },
+      { ...context({ id: "wc_c" }, [claim({ id: "clm_c", workContextId: "wc_c" })]), topicalTerms: 1 },
     ];
     const selection = select(many);
     // Structural: selectHint returns ONE selection object, never a list — the
-    // first-ranked injectable wins and the rest wait for later prompts.
+    // strongest injectable wins and the rest wait for later prompts.
     expect(Array.isArray(selection)).toBe(false);
     expect(selection.kind).toBe("claim");
     if (selection.kind === "claim") {
@@ -442,9 +451,10 @@ describe("intent-only contexts pointer (trial finding #16: same topic, different
     // Control: alone, the intent-only context is a pointer
     expect(select([intentOnly]).kind).toBe("pointer");
 
+    // Round 4, C2: the claims context is the stronger one — a tie says nothing.
     const selection = select([
-      intentOnly,
-      context({ id: "wc_claims" }, [claim({ workContextId: "wc_claims" })]),
+      { ...intentOnly, topicalTerms: 1 },
+      { ...context({ id: "wc_claims" }, [claim({ workContextId: "wc_claims" })]), topicalTerms: 2 },
     ]);
 
     expect(selection.kind).toBe("claim");

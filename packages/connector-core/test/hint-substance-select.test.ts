@@ -7,8 +7,10 @@
  * The rule has TWO halves and both are required. TRUST, as before: declared,
  * a body, evidence that resolves (the hub's evidenceBacked), not superseded or rejected, code
  * still current — never a draft. RELEVANCE, new: the claim ITSELF shares
- * HINT_MIN_SHARED_TERMS words with what was matched, or the match is content
- * identity (an error fingerprint). Evidence makes a claim trustworthy; the
+ * HINT_MIN_SHARED_TERMS words with what was matched — since round 4 (C2)
+ * one of them a word no other candidate says, in a tree whose own statement
+ * shares one — or the match is content identity (an error fingerprint).
+ * Evidence makes a claim trustworthy; the
  * match makes it relevant; asserting one unasked needs both — the rule §4's
  * "Solved before" already states for the briefing. Everything else keeps the
  * pointer, which is never a regression: it is where every claim used to go.
@@ -38,14 +40,17 @@ const decision = (overrides: Partial<HintClaimCandidate> = {}): HintClaimCandida
   authorDeveloperName: "Ken",
   body: "Keep the chunked upload; the single PUT hits the gateway body limit above 2 GB.",
   matchedTerms: HINT_MIN_SHARED_TERMS,
+  // Both words its own: no other candidate says them (round 4, C2).
+  distinctTerms: HINT_MIN_SHARED_TERMS,
   createdAt: ISO,
   ...overrides,
 });
 
+/** A tree whose own statement shares one word of the prompt by default: it is about it (C2). */
 const context = (
   claims: readonly HintClaimCandidate[],
   matchedTargets: HintContextCandidate["matchedTargets"] = [],
-  treeTerms?: number,
+  treeTerms: number | undefined = 1,
 ): HintContextCandidate => ({
   workContext: {
     id: "wc_1",
@@ -95,12 +100,19 @@ describe("a strong, evidence-backed match is substance", () => {
     expect(selectedClaimId([context([closer, negative])])).toBe("clm_closer");
   });
 
-  test("a tree clearly about the prompt lends its strength to a claim that shares one word", () => {
+  test("round 4, C2: a tree clearly about the prompt no longer lends its strength to a claim that shares one word", () => {
     // The tree's own statement shares three words; the finding touches one
     // of the prompt's — "pool" in "the pool cap is sized for one worker".
-    expect(selectedClaimId([context([decision({ matchedTerms: 1 })], [], 3)])).toBe(
-      "clm_decision",
-    );
+    // One word is no finding about the prompt: the pointer at its tree.
+    expect(select([context([decision({ matchedTerms: 1, distinctTerms: 1 })], [], 3)]).kind).toBe("pointer");
+  });
+
+  test("C2: a finding whose every shared word another candidate says is a pointer", () => {
+    expect(select([context([decision({ distinctTerms: 0 })], [], 3)]).kind).toBe("pointer");
+  });
+
+  test("C2: a finding in a tree whose own statement shares nothing is a pointer", () => {
+    expect(select([context([decision({ matchedTerms: 4, distinctTerms: 4 })], [], 0)]).kind).toBe("pointer");
   });
 
   test("an error-fingerprint match is content identity, strong without a shared word", () => {

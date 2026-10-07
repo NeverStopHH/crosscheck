@@ -36,6 +36,7 @@ interface WireClaim {
   readonly id: string;
   readonly body: string;
   readonly matchedTerms?: number;
+  readonly distinctTerms?: number;
 }
 
 interface WireCandidate {
@@ -44,8 +45,8 @@ interface WireCandidate {
   readonly topicalTerms?: number;
 }
 
-/** The two round-3 trees, Nick's, and Robin asking. */
-const candidates = async (): Promise<ReadonlyMap<string, WireCandidate>> => {
+/** The two round-3 trees and the notes tree, Nick's, and Robin asking — the notes tree left out on request. */
+const candidates = async (withNotes = true): Promise<ReadonlyMap<string, WireCandidate>> => {
   const { harness, developer: nick } = await createHarnessWithSession();
   const records = [
     recordEnvelope("work_context", validWorkContextBody({ id: JWT_TREE, title: "JWT token refresh fails after signing key rotation", description: "Auth" })),
@@ -63,8 +64,12 @@ const candidates = async (): Promise<ReadonlyMap<string, WireCandidate>> => {
     recordEnvelope("claim", validClaimBody({ id: "clm_rate_obs", workContextId: RATE_TREE, body: "Public API traffic spikes to 2000 requests per minute from a single key." })),
     recordEnvelope("claim", validClaimBody({ id: "clm_rate_dec", workContextId: RATE_TREE, kind: "decision", evidenceRefs: ["clm_rate_obs"], body: "Use a token bucket per API key with 100 requests per minute." })),
     // A tree whose own statement says nothing, and one claim that says it all
-    recordEnvelope("work_context", validWorkContextBody({ id: NOTES_TREE, title: "Investigation notes", description: "Scratch" })),
-    recordEnvelope("claim", validClaimBody({ id: "clm_notes_obs", workContextId: NOTES_TREE, body: "The refresh fails right after every key rotation." })),
+    ...(withNotes
+      ? [
+          recordEnvelope("work_context", validWorkContextBody({ id: NOTES_TREE, title: "Investigation notes", description: "Scratch" })),
+          recordEnvelope("claim", validClaimBody({ id: "clm_notes_obs", workContextId: NOTES_TREE, body: "The refresh fails right after every key rotation." })),
+        ]
+      : []),
   ];
   const seeded = await postRecords(harness, nick, { records });
   expect(seeded.data?.accepted).toBe(records.length);
@@ -127,12 +132,22 @@ describe("the hub withholds a body its own strong-match test refuses (H3 + M6)",
     expect(claimOf(byTree.get(RATE_TREE), "clm_rate_dec")?.body).toBe("");
   });
 
-  test("the control: the JWT decision, strongly matched, carries its body", async () => {
-    // Arrange + Act
+  test("the control: the JWT decision, strongly matched in the one strongest tree, carries its body", async () => {
+    // Arrange + Act — without the notes tree, which ties the JWT tree (C2)
+    const byTree = await candidates(false);
+
+    // Assert — key and rotation; the rate tree says key, never rotation
+    expect(claimOf(byTree.get(JWT_TREE), "clm_jwt_dec")?.distinctTerms).toBe(1);
+    expect(claimOf(byTree.get(JWT_TREE), "clm_jwt_dec")?.body.length ?? 0).toBeGreaterThan(0);
+  });
+
+  test("C2: the notes tree ties the JWT tree at the top, and a tie ships no body", async () => {
+    // Arrange + Act — both say fails, key and rotation on one statement
     const byTree = await candidates();
 
     // Assert
-    expect(claimOf(byTree.get(JWT_TREE), "clm_jwt_dec")?.body.length ?? 0).toBeGreaterThan(0);
+    expect(byTree.get(JWT_TREE)?.topicalTerms).toBe(byTree.get(NOTES_TREE)?.topicalTerms);
+    expect(claimOf(byTree.get(JWT_TREE), "clm_jwt_dec")?.body).toBe("");
   });
 
   test("an error fingerprint the prompt carried is content identity: the body ships without a shared word", async () => {
@@ -157,5 +172,91 @@ describe("the hub withholds a body its own strong-match test refuses (H3 + M6)",
     // Assert
     expect(claimOf(crash, "clm_crash_dec")?.matchedTerms).toBe(0);
     expect(claimOf(crash, "clm_crash_dec")?.body.length ?? 0).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * STRICT SUBSTANCE (round 4, C2): a body ships only from the ONE strongest
+ * candidate, when the claim shares two topical words, one of which no other
+ * candidate tree says, and its tree's own statement shares one. The round-4
+ * hold-out's "invoice pdf timeout" was shown the PDF-labels tree's cause on
+ * the two words the timeout tree's title says as well.
+ */
+describe("the hub ships a body only from the one strongest tree, on a word only it says (C2)", () => {
+  // "german" is a conversation word ("auf deutsch", "in german"): Dutch is topical
+  const STRICT_PROMPT = "invoice pdf rendering fails for dutch customers on staging";
+  const INVOICE_TREE = "wc_invoice";
+  const LABELS_TREE = "wc_labels";
+  const TOTALS_TREE = "wc_totals";
+
+  /** The invoice tree (4 words on its title) beside the labels tree (3), and a tie on request. */
+  const strictWorld = async (withTie: boolean): Promise<ReadonlyMap<string, WireCandidate>> => {
+    const { harness, developer: nick } = await createHarnessWithSession();
+    const records = [
+      recordEnvelope("work_context", validWorkContextBody({ id: INVOICE_TREE, title: "Invoice PDF rendering fails under load", description: "Billing" })),
+      recordEnvelope("claim", validClaimBody({ id: "clm_inv_obs", workContextId: INVOICE_TREE, body: "Puppeteer renders each invoice PDF in a fresh browser." })),
+      recordEnvelope("claim", validClaimBody({ id: "clm_inv_shared", workContextId: INVOICE_TREE, kind: "decision", evidenceRefs: ["clm_inv_obs"], body: "Dutch customers get the invoice from a cached template." })),
+      recordEnvelope("claim", validClaimBody({ id: "clm_inv_own", workContextId: INVOICE_TREE, kind: "decision", evidenceRefs: ["clm_inv_obs"], body: "Rendering fails when the PDF font is missing." })),
+      recordEnvelope("work_context", validWorkContextBody({ id: LABELS_TREE, title: "Dutch labels on staging invoices", description: "Locale" })),
+      recordEnvelope("claim", validClaimBody({ id: "clm_lab_obs", workContextId: LABELS_TREE, body: "Staging customers see Dutch labels from the locale cache." })),
+      recordEnvelope("claim", validClaimBody({ id: "clm_lab_dec", workContextId: LABELS_TREE, kind: "decision", evidenceRefs: ["clm_lab_obs"], body: "Staging customers need the Dutch locale bundle." })),
+      ...(withTie
+        ? [
+            recordEnvelope("work_context", validWorkContextBody({ id: TOTALS_TREE, title: "Invoice totals wrong for Dutch customers on staging", description: "Billing" })),
+            recordEnvelope("claim", validClaimBody({ id: "clm_tot_obs", workContextId: TOTALS_TREE, body: "The VAT line is rounded per item." })),
+          ]
+        : []),
+    ];
+    const seeded = await postRecords(harness, nick, { records });
+    expect(seeded.data?.accepted).toBe(records.length);
+    const robin = await addTestDeveloperWithSession(harness, "Robin", "robin@example.com", { id: "ses_02" });
+    const search = new URLSearchParams({ repo: VALID_SESSION_BODY.repo, query: STRICT_PROMPT });
+    const response = await harness.app.request(`/api/hints/candidates?${search.toString()}`, jsonRequest("GET", robin.apiKey));
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { data: { candidates: readonly WireCandidate[] } };
+    return new Map(body.data.candidates.map((candidate) => [candidate.workContext.id, candidate]));
+  };
+
+  test("a finding on words only its tree says ships, and says how many", async () => {
+    // Arrange + Act
+    const byTree = await strictWorld(false);
+
+    // Assert — rendering, fails and pdf; the labels tree says none of them
+    expect(byTree.get(INVOICE_TREE)?.topicalTerms).toBe(4);
+    expect(byTree.get(LABELS_TREE)?.topicalTerms).toBe(3);
+    expect(claimOf(byTree.get(INVOICE_TREE), "clm_inv_own")?.distinctTerms).toBe(3);
+    expect(claimOf(byTree.get(INVOICE_TREE), "clm_inv_own")?.body.length ?? 0).toBeGreaterThan(0);
+  });
+
+  test("a finding whose every shared word the runner-up says too travels without its body", async () => {
+    // Arrange + Act
+    const byTree = await strictWorld(false);
+
+    // Assert — dutch, customers and invoice: the labels tree says all three
+    const shared = claimOf(byTree.get(INVOICE_TREE), "clm_inv_shared");
+    expect(shared?.matchedTerms).toBe(3);
+    expect(shared?.distinctTerms).toBe(0);
+    expect(shared?.body).toBe("");
+  });
+
+  test("a weaker tree's finding travels without its body, however well it matches alone", async () => {
+    // Arrange + Act
+    const byTree = await strictWorld(false);
+
+    // Assert — staging is the labels decision's own word, but its tree is not the strongest
+    const weaker = claimOf(byTree.get(LABELS_TREE), "clm_lab_dec");
+    expect(weaker?.matchedTerms).toBe(3);
+    expect(weaker?.distinctTerms).toBe(1);
+    expect(weaker?.body).toBe("");
+  });
+
+  test("a tie at the top ships no body at all, words of its own or not", async () => {
+    // Arrange + Act — the totals tree's title says four words too, none of the finding's
+    const byTree = await strictWorld(true);
+
+    // Assert
+    expect(byTree.get(TOTALS_TREE)?.topicalTerms).toBe(4);
+    expect(claimOf(byTree.get(INVOICE_TREE), "clm_inv_own")?.distinctTerms).toBe(3);
+    expect(claimOf(byTree.get(INVOICE_TREE), "clm_inv_own")?.body).toBe("");
   });
 });

@@ -116,9 +116,12 @@ export const floorTermsOf = (
   };
 };
 
+/** The distinct lexemes of the terms that are among those a text says. */
+export const sharedLexemes = (terms: readonly string[], said: ReadonlySet<string>): ReadonlySet<string> =>
+  new Set(terms.map(termLexeme).filter((lexeme) => said.has(lexeme)));
+
 /** How many distinct lexemes of the terms are among those a text says. */
-export const sharedTermCount = (terms: readonly string[], said: ReadonlySet<string>): number =>
-  new Set(terms.map(termLexeme).filter((lexeme) => said.has(lexeme))).size;
+export const sharedTermCount = (terms: readonly string[], said: ReadonlySet<string>): number => sharedLexemes(terms, said).size;
 
 /** What one statement shares with a prompt. */
 export interface StatementMatch {

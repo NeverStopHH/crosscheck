@@ -52,9 +52,22 @@ const SESSION_INTENT = "Refactor the player search export for the scouting team"
 /** How a hint that carries a teammate's finding opens (hints/render.ts); a pointer opens otherwise. */
 const SUBSTANCE_HEAD = "crosscheck hint:";
 
-/** Wrong-tree substance this training set still shows, each with why. Nothing else may appear. */
-const ACCEPTED_WRONG_TREE_SUBSTANCE: ReadonlyMap<string, string> = new Map([
-  ["t095", "\"add pagination to /api/players\" agrees with the rate-limit tree's intent \"Add per-key rate limiting to the public API\" on two topical words, add and api"],
+/**
+ * Wrong-tree substance this training set still shows, each with why. Nothing
+ * else may appear. Empty since round 4 (C2): t095, "add pagination to
+ * /api/players", agreed with the rate-limit tree's intent on add and api, and
+ * a finding now needs two words of its own claim.
+ */
+const ACCEPTED_WRONG_TREE_SUBSTANCE: ReadonlyMap<string, string> = new Map();
+
+/**
+ * TASKS WHOSE TREE TIES ANOTHER AT THE TOP (round 4, C2): a tie says nothing,
+ * finding or pointer — the hub's order between equals is search rank, not
+ * relevance. Named, so the decision's cost stays visible.
+ */
+const TIED_TASKS: ReadonlyMap<string, string> = new Map([
+  ["t077", "\"ECONNRESET in import worker after restart\": the retry-storm and the import-OOM trees each say import and worker"],
+  ["t126", "\"test runner keeps rerunning failed tests\": the test-runner and the CI-timeout trees each say runner and failed"],
 ]);
 
 /**
@@ -74,6 +87,7 @@ const CONTINUATION_TASKS: ReadonlyMap<string, string> = new Map([
 /** Task rows with a tree that do not reach it, each with why. Nothing else may miss. */
 const KNOWN_TREE_MISSES: ReadonlyMap<string, string> = new Map([
   ...CONTINUATION_TASKS,
+  ...TIED_TASKS,
   ["t040", "\"quota reset job runs at midnight twice\": job, runs and twice are closed or absent on the cron tree; the token-usage tree ranks first"],
   ["t050", "Austrian dialect, a documented residual"],
   ["t102", "\"deploy the session timeout fix to staging\": the PGlite tree's \"timeouts\" outranks"],
@@ -345,5 +359,7 @@ describe("the round-3 hold-out, as training data, through the whole hint pipelin
   test("(d) a task row with a tree reaches that tree, but the named misses", () => {
     const missed = treeRows().filter((outcome) => outcome.treeHit !== outcome.row.tree);
     expect(ids(missed).filter((id) => !KNOWN_TREE_MISSES.has(id))).toEqual([]);
+    // and every named tie is silent, so the list stays the decision's true cost (C2)
+    expect([...TIED_TASKS.keys()].filter((id) => outcomes.find((outcome) => outcome.row.id === id)?.kind !== "silence")).toEqual([]);
   });
 });

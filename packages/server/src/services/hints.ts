@@ -63,9 +63,10 @@ import {
   isStrongSubstanceMatch,
   promptTerms,
   qualifiesAsSubstance,
-  sharedTermCount,
+  sharedLexemes,
   shownSubstance,
   statementMatch,
+  strongestTreeIndex,
   textLexemes,
 } from "@crosscheck/schema";
 import type { ClaimValidity, FloorTerms, PromptTerms, StatementMatch } from "@crosscheck/schema";
@@ -212,6 +213,13 @@ export interface HintClaimCandidate {
    * words excluded from the strong-match count (round 3, H3 + M6).
    */
   readonly matchedTerms: number;
+  /**
+   * Of those, how many NO OTHER candidate of the response says, on any of
+   * its statements (round 4, C2): a finding is shown only on a word that
+   * tells its tree from the runner-up — "invoice" and "pdf" were said by the
+   * timeout tree and the labels tree alike.
+   */
+  readonly distinctTerms: number;
   readonly createdAt: string;
 }
 
@@ -326,13 +334,18 @@ interface ClaimWindowScope {
   readonly tokens: readonly string[];
 }
 
+/** A claim of the window before the response is known: what tells it apart is counted against the other candidates (C2). */
+type WindowClaim = Omit<HintClaimCandidate, "distinctTerms">;
+
 /** One context's claim window, and whether visible rows stayed outside it. */
 interface ClaimWindow {
-  readonly claims: readonly HintClaimCandidate[];
+  readonly claims: readonly WindowClaim[];
   readonly truncated: boolean;
+  /** The topical lexemes each claim's SHOWN sentence shares with the query (C2). */
+  readonly shown: ReadonlyMap<string, ReadonlySet<string>>;
 }
 
-const EMPTY_WINDOW: ClaimWindow = { claims: [], truncated: false };
+const EMPTY_WINDOW: ClaimWindow = { claims: [], truncated: false, shown: new Map() };
 
 const listClaimsForContext = async (
   scope: ClaimWindowScope,
@@ -460,22 +473,23 @@ const listClaimsForContext = async (
     // rung, never omitted: an absent field reads as "this hub does not report
     // one", which would send the reader to the wrong remedy.
     axes: axes.get(row.claim.id) ?? UNRESOLVED_AXES,
-    matchedTerms: shownTerms.get(row.claim.id) ?? 0,
+    matchedTerms: shownTerms.get(row.claim.id)?.size ?? 0,
     createdAt: row.claim.createdAt.toISOString(),
   }));
-  return { claims: windowed, truncated: fetched.length > rows.length };
+  return { claims: windowed, truncated: fetched.length > rows.length, shown: shownTerms };
 };
 
 /**
- * How many distinct query words each SHOWN sentence shares, by the floor's
- * own count (`@crosscheck/schema` content-floor.ts): english lexemes, the
- * database's algorithm.
+ * Which distinct query words each SHOWN sentence shares, by the floor's own
+ * count (`@crosscheck/schema` content-floor.ts): english lexemes, the
+ * database's algorithm — the words themselves, so the response can tell
+ * which of them another candidate says too (C2).
  */
 const shownSentenceTerms = (
   shown: readonly { readonly id: string; readonly sentence: string }[],
   tokens: readonly string[],
-): ReadonlyMap<string, number> =>
-  new Map(shown.map((entry) => [entry.id, sharedTermCount(tokens, textLexemes(entry.sentence))]));
+): ReadonlyMap<string, ReadonlySet<string>> =>
+  new Map(shown.map((entry) => [entry.id, sharedLexemes(tokens, textLexemes(entry.sentence))]));
 
 /**
  * One bounded query PER CONTEXT — at most HINT_MAX_CONTEXTS of them — so a
@@ -494,6 +508,25 @@ const listContextClaims = async (
 };
 
 /**
+ * What some statements of one context share with the query: the best of
+ * them by the one rule (`@crosscheck/schema` statementMatch), and every
+ * TOPICAL query word any of them says — what tells this tree from the one
+ * whose finding a hint would show (round 4, C2).
+ */
+interface ContextMatch extends StatementMatch {
+  readonly saidTopical: ReadonlySet<string>;
+}
+
+const contextMatchOf = (floor: FloorTerms, statements: readonly string[]): ContextMatch => {
+  const matches = statements.map((statement) => statementMatch(floor, statement));
+  return {
+    floor: Math.max(0, ...matches.map((match) => match.floor)),
+    topical: Math.max(0, ...matches.map((match) => match.topical)),
+    saidTopical: new Set(statements.flatMap((statement) => [...sharedLexemes(floor.topical, textLexemes(statement))])),
+  };
+};
+
+/**
  * What each context's OWN statement shares with the query — the other half of
  * the content floor beside its claims' — by the one rule
  * (`@crosscheck/schema` statementMatch). One bounded read for every candidate
@@ -503,7 +536,7 @@ const listStatementTerms = async (
   db: Db,
   workContextIds: readonly string[],
   floor: FloorTerms,
-): Promise<ReadonlyMap<string, StatementMatch>> => {
+): Promise<ReadonlyMap<string, ContextMatch>> => {
   if (workContextIds.length === 0 || floor.all.length === 0) {
     return new Map();
   }
@@ -512,7 +545,7 @@ const listStatementTerms = async (
     .from(workContexts)
     .where(inArray(workContexts.id, workContextIds))
     .limit(workContextIds.length);
-  return new Map(rows.map((row) => [row.id, statementMatch(floor, row.statement)]));
+  return new Map(rows.map((row) => [row.id, contextMatchOf(floor, [row.statement])]));
 };
 
 /** The base commit of each context's owning session, for the drift label. */
@@ -607,7 +640,7 @@ const listClaimTermMaxima = async (
   readerDeveloperId: string,
   workContextIds: readonly string[],
   floor: FloorTerms,
-): Promise<ReadonlyMap<string, StatementMatch>> => {
+): Promise<ReadonlyMap<string, ContextMatch>> => {
   if (workContextIds.length === 0 || floor.all.length === 0) {
     return new Map();
   }
@@ -637,10 +670,13 @@ const listClaimTermMaxima = async (
     .where(lte(ranked.position, HINT_FLOOR_MAX_CLAIMS_PER_CONTEXT))
     .limit(workContextIds.length * HINT_FLOOR_MAX_CLAIMS_PER_CONTEXT);
   return new Map(
-    [...Map.groupBy(rows, (row) => row.workContextId)].map(([id, group]): [string, StatementMatch] => {
-      const matches = group.map((row) => statementMatch(floor, row.body));
-      return [id, { floor: Math.max(...matches.map((match) => match.floor)), topical: Math.max(...matches.map((match) => match.topical)) }];
-    }),
+    [...Map.groupBy(rows, (row) => row.workContextId)].map(([id, group]): [string, ContextMatch] => [
+      id,
+      contextMatchOf(
+        floor,
+        group.map((row) => row.body),
+      ),
+    ]),
   );
 };
 
@@ -722,9 +758,11 @@ export interface CandidateFloor {
   readonly topicalTerms: number;
   /** The topical words its OWN statement shares — what lets one of its claims match strongly. */
   readonly ownTerms: number;
+  /** Every topical query word one of its statements says, in lexemes: what another tree's finding must not lean on alone (C2). */
+  readonly saidTopical: ReadonlySet<string>;
 }
 
-const NO_FLOOR: CandidateFloor = { sharedTerms: 0, topicalTerms: 0, ownTerms: 0 };
+const NO_FLOOR: CandidateFloor = { sharedTerms: 0, topicalTerms: 0, ownTerms: 0, saidTopical: new Set() };
 
 /**
  * THE HUB'S CONTENT FLOOR over some contexts: each one's own statement and
@@ -751,6 +789,7 @@ export const contentFloorOf = async (
         topicalTerms: Math.max(statementTerms.get(id)?.topical ?? 0, claimTerms.get(id)?.topical ?? 0),
         // TOPICAL, like every relevance count the selector reads (H3 + M6).
         ownTerms: statementTerms.get(id)?.topical ?? 0,
+        saidTopical: new Set([...(statementTerms.get(id)?.saidTopical ?? []), ...(claimTerms.get(id)?.saidTopical ?? [])]),
       },
     ]),
   );
@@ -816,7 +855,10 @@ const matchCandidates = async (
     listBaseCommits(deps.db, ids),
     listMatchedTargets(deps.db, ids, exactTokens(query.text)),
   ]);
-  return qualified.map(({ row, ownTerms, sharedTerms, topicalTerms }) => ({
+  // THE ONE STRONGEST CANDIDATE, or none on a tie (round 4, C2): only its
+  // findings may ship a body, by the rule the selector applies too.
+  const strongest = strongestTreeIndex(qualified.map(({ row, topicalTerms }) => ({ isExact: row.tier === "exact", topical: topicalTerms })));
+  return qualified.map(({ row, ownTerms, sharedTerms, topicalTerms }, index) => ({
     workContext: {
       id: row.id,
       title: row.title,
@@ -832,11 +874,13 @@ const matchCandidates = async (
       updatedAt: row.updatedAt,
       matchedTerms: ownTerms,
     },
-    claims: withheldUnlessStrong(
-      (claimsByContext.get(row.id) ?? EMPTY_WINDOW).claims,
-      ownTerms,
-      (matchedTargets.get(row.id) ?? []).some((target) => target.kind === CONTENT_IDENTITY_TARGET_KIND),
-    ),
+    claims: withheldUnlessStrong(claimsByContext.get(row.id) ?? EMPTY_WINDOW, {
+      isStrongest: index === strongest,
+      treeTerms: ownTerms,
+      isContentIdentity: (matchedTargets.get(row.id) ?? []).some((target) => target.kind === CONTENT_IDENTITY_TARGET_KIND),
+      // What every OTHER candidate says: a finding must say one word none of them does.
+      saidElsewhere: new Set(qualified.filter((_, other) => other !== index).flatMap((other) => [...other.saidTopical])),
+    }),
     claimsTruncated: (claimsByContext.get(row.id) ?? EMPTY_WINDOW).truncated,
     matchedTargets: matchedTargets.get(row.id) ?? [],
     matchedOn: query.on,
@@ -856,15 +900,30 @@ const CONTENT_IDENTITY_TARGET_KIND = "error_fingerprint";
  * counts). A connector older than the selector's best-match rule — 0.10.0
  * pushes the first trusted claim it is handed — then has no weakly matched,
  * wrong-tree finding to inline.
+ *
+ * STRICT (round 4, C2): and only in the ONE strongest candidate of the
+ * response (`@crosscheck/schema` strongestTreeIndex — none on a tie), on two
+ * topical words of which one no other candidate says (`distinctTerms`,
+ * shipped so the selector looks again), with its tree's own statement
+ * sharing one.
  */
-const withheldUnlessStrong = (
-  window: readonly HintClaimCandidate[],
-  treeTerms: number,
-  isContentIdentity: boolean,
-): readonly HintClaimCandidate[] =>
-  window.map((claim) =>
-    isStrongSubstanceMatch({ claimTerms: claim.matchedTerms, treeTerms, isContentIdentity }) ? claim : { ...claim, body: "" },
-  );
+interface StrictScope {
+  readonly isStrongest: boolean;
+  readonly treeTerms: number;
+  readonly isContentIdentity: boolean;
+  /** The topical query lexemes every other candidate of the response says. */
+  readonly saidElsewhere: ReadonlySet<string>;
+}
+
+const withheldUnlessStrong = (window: ClaimWindow, scope: StrictScope): readonly HintClaimCandidate[] =>
+  window.claims.map((claim) => {
+    const distinctTerms = [...(window.shown.get(claim.id) ?? [])].filter((lexeme) => !scope.saidElsewhere.has(lexeme)).length;
+    const counted = { ...claim, distinctTerms };
+    return scope.isStrongest &&
+      isStrongSubstanceMatch({ claimTerms: claim.matchedTerms, distinctTerms, treeTerms: scope.treeTerms, isContentIdentity: scope.isContentIdentity })
+      ? counted
+      : { ...counted, body: "" };
+  });
 
 /**
  * The prompt's candidates, or silence. NOTHING STANDS IN for a prompt that

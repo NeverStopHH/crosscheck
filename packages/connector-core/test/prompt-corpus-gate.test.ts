@@ -71,6 +71,22 @@ const CONTINUATION_TASKS: ReadonlySet<string> = new Set([
   "session context lost after restart, keep going on that",
 ]);
 
+/**
+ * TASKS WHOSE TREE TIES ANOTHER AT THE TOP (round 4, C2): a tie says nothing,
+ * finding or pointer — the hub's order between equals is search rank, not
+ * relevance. The corpus seeds sibling trees on purpose (two JWT trees, two
+ * migration trees, two worker trees), and these rows share as many topical
+ * words with each. Named, so the decision's cost stays visible.
+ */
+const TIED_TASKS: ReadonlySet<string> = new Set([
+  "login session läuft zu früh ab",
+  "refresh token race",
+  "migration waits on lock",
+  "flaky tests again",
+  "worker hängt beim SIGTERM",
+  "Worker stoppt nicht bei SIGTERM",
+]);
+
 const REPO_ID = CORPUS_REPO_ID;
 const NOW = CORPUS_NOW;
 const HOST_KEY = "corpus-reader-uuid";
@@ -189,11 +205,20 @@ describe("the labelled prompt corpus through the whole hint pipeline", () => {
     expect([...CONTINUATION_TASKS].filter((prompt) => !floored.includes(prompt))).toEqual([]);
   });
 
-  test("(c) a task row that shares two words with a tree arrives as a hint, but the continuation tasks", () => {
+  test("(c) a task row that shares two words with a tree arrives as a hint, but the continuation tasks and the ties", () => {
     const missed = outcomes
-      .filter((outcome) => outcome.row.tree !== undefined && outcome.hint.length === 0 && !CONTINUATION_TASKS.has(outcome.row.prompt))
+      .filter(
+        (outcome) =>
+          outcome.row.tree !== undefined &&
+          outcome.hint.length === 0 &&
+          !CONTINUATION_TASKS.has(outcome.row.prompt) &&
+          !TIED_TASKS.has(outcome.row.prompt),
+      )
       .map((outcome) => outcome.row.prompt);
     expect(missed).toEqual([]);
+    // and every named tie is silent, so the list stays the decision's true cost (C2)
+    expect(outcomes.filter((outcome) => TIED_TASKS.has(outcome.row.prompt) && outcome.hint.length > 0).map((outcome) => outcome.row.prompt)).toEqual([]);
+    expect(outcomes.filter((outcome) => TIED_TASKS.has(outcome.row.prompt))).toHaveLength(TIED_TASKS.size);
   });
 
   test("(d) a task row whose words only an unreviewed draft shares earns no hint", () => {
