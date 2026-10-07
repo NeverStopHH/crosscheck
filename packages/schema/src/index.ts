@@ -381,6 +381,23 @@ export {
   promptTokens,
 } from "./prompt-terms.ts";
 export type { ClassifiedPrompt, PromptTerms } from "./prompt-terms.ts";
+export { englishStem } from "./english-stem.ts";
+export {
+  HINT_LONG_PROMPT_KNOWN_TERMS,
+  HINT_LONG_PROMPT_MIN_TOPICAL,
+  HINT_MAX_COUNTED_TERMS,
+  HINT_MAX_EXAMINED_TERMS,
+  HINT_MIN_SHARED_TERMS,
+  clearsFloorOn,
+  floorTermsOf,
+  isClosedInflection,
+  knownTermsIn,
+  sharedTermCount,
+  statementMatch,
+  termLexeme,
+  textLexemes,
+} from "./content-floor.ts";
+export type { FloorTerms, StatementMatch } from "./content-floor.ts";
 export {
   CI_MAX_TEST_ROWS,
   CI_KNOWN_PROVIDERS,

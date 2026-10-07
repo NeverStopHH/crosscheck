@@ -47,6 +47,9 @@ export { TARGET_EVENT_KINDS, seqKindFor } from "./services/record-handlers.ts";
 // Exported so connector-core can pin its substance gate to the same terms
 // (test/claim-validity-parity.test.ts).
 export { isAssertableCause } from "./services/claim-validity.ts";
+// The hub's content floor, exported so connector-core pins its recount of an
+// old hub's candidates to it, row for row (test/content-floor-parity.test.ts).
+export { contentFloorOf, hubFloorTermsOf } from "./services/hints.ts";
 export { createEmbedderFromEnv } from "./services/embedder.ts";
 export type { Embedder } from "./services/embedder.ts";
 // 03's ground, exported because 04's verdict layer and 07's instrumentation

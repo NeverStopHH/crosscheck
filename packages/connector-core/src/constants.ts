@@ -95,14 +95,16 @@ export const HINT_MIN_EVIDENCE_REFS = 1;
  * match must be an error fingerprint, which is content identity. A claim
  * that merely sits in a tree the prompt brushed is a pointer, however well
  * evidenced. The hub's content floor counts in the same unit with the same
- * number, across an HTTP boundary no import can reach, so the two literals
- * are pinned rather than assumed:
+ * number — ONE constant since round 3's follow-up: `@crosscheck/schema`
+ * content-floor.ts, which the hub's floor and this connector's recount of an
+ * old hub both import, so the literal is pinned to exist once:
  *
- * VERIFY: grep -c 'MIN_SHARED_TERMS = [2];' packages/server/src/services/hints.ts packages/connector-core/src/constants.ts
- * PRINTS: packages/server/src/services/hints.ts:1
- * PRINTS: packages/connector-core/src/constants.ts:1
+ * VERIFY: grep -c 'MIN_SHARED_TERMS = [2];' packages/schema/src/content-floor.ts packages/server/src/services/hints.ts packages/connector-core/src/constants.ts
+ * PRINTS: packages/schema/src/content-floor.ts:1
+ * PRINTS: packages/server/src/services/hints.ts:0
+ * PRINTS: packages/connector-core/src/constants.ts:0
  */
-export const HINT_MIN_SHARED_TERMS = 2;
+export { HINT_MIN_SHARED_TERMS } from "@crosscheck/schema";
 
 /**
  * THE ONE MATCH KIND THAT MAY CARRY SUBSTANCE, named here rather than

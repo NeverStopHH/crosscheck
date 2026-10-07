@@ -45,7 +45,15 @@ import {
   MAX_HINTS_PER_SESSION,
   SUBSTANCE_MATCH_KIND,
 } from "../constants.ts";
-import { isStrongSubstanceMatch, promptTokens, substanceSentence } from "@crosscheck/schema";
+import {
+  HINT_MAX_EXAMINED_TERMS,
+  clearsFloorOn,
+  floorTermsOf,
+  isStrongSubstanceMatch,
+  knownTermsIn,
+  substanceSentence,
+} from "@crosscheck/schema";
+import type { FloorTerms } from "@crosscheck/schema";
 
 import { isAssertableValidity } from "../claim-validity.ts";
 import type { HintClaimCandidate, HintContextCandidate } from "../http/hub.ts";
@@ -118,10 +126,11 @@ export interface SelectHintInput {
   /** The reader; their own claims are knowledge, not hints. */
   readonly selfDeveloperId: string | null;
   /**
-   * The prompt's content terms by the shared rule (@crosscheck/schema
-   * promptTerms) — what the floor is RECOUNTED on when a hub too old to send
-   * `sharedTerms` sends a candidate (hold-out review, H4). Required, so no
-   * caller can skip the recount by forgetting it.
+   * The RANKED terms of the query the hub was sent (@crosscheck/schema
+   * promptTerms().ranked: task clauses only, topical words first) — what the
+   * floor is RECOUNTED on, exactly as the hub counts them, when a hub too old
+   * to send `sharedTerms` sends a candidate (hold-out review H4; round 3,
+   * follow-up). Required, so no caller can skip the recount by forgetting it.
    */
   readonly promptTerms: readonly string[];
   /**
@@ -321,48 +330,71 @@ const isInjectable = (claim: HintClaimCandidate): boolean =>
  * word is never pointed at — not even after the strong tree beside it was
  * delivered (the batch-1006 review's probe F).
  *
- * A HUB TOO OLD TO REPORT THE NUMBER IS RECOUNTED HERE, AND FAILS CLOSED
- * (hold-out review, H4): it ranked on its normalized document, drafts
- * included, and floored nothing. So the prompt's content terms are counted
- * against what the wire shows — the title, and each DECLARED foreign claim
- * body — and HINT_MIN_SHARED_TERMS of them must stand on one, at least one of
- * them TOPICAL (round 3, C1: two meta words agreeing are the session's
- * machinery, never a topic); a tree whose wire carries no such body earns no
- * hint at all.
+ * A HUB TOO OLD TO REPORT THE NUMBER IS RECOUNTED HERE, BY THE HUB'S OWN RULE
+ * (hold-out review H4; round 3, follow-up): it ranked on its normalized
+ * document, drafts included, and floored nothing. The recount calls the very
+ * function the hub counts with (`@crosscheck/schema` content-floor.ts) —
+ * english lexemes, a closed word's inflection no topic (L1), three topical
+ * words for a long prompt (M7) — on what the wire shows: each context's own
+ * statement (the title and the intent's summary; an old hub sends no
+ * description) and its pushable foreign claim bodies. A tree whose wire
+ * carries no such body earns no hint at all.
  */
-const clearsContentFloor = (context: HintContextCandidate, input: SelectHintInput): boolean =>
+const clearsContentFloor = (context: HintContextCandidate, input: SelectHintInput, recount: FloorTerms): boolean =>
   context.workContext.tier === "exact" ||
   (context.sharedTerms === undefined
-    ? recountsContentFloor(context, input)
+    ? recountsContentFloor(context, input.selfDeveloperId, recount)
     : context.sharedTerms >= HINT_MIN_SHARED_TERMS);
 
-/**
- * Whether one statement clears the floor on its own, as written (fail
- * closed: no stemming): HINT_MIN_SHARED_TERMS of the prompt's terms, one of
- * them topical (C1).
- */
-const clearsOn = (statement: string, input: SelectHintInput): boolean => {
-  const words = new Set(promptTokens(statement));
-  const shared = (terms: readonly string[]): number => terms.filter((term) => words.has(term)).length;
-  return shared(input.promptTerms) >= HINT_MIN_SHARED_TERMS && shared(input.promptTopicalTerms) >= 1;
-};
+/** A context's own statement as the wire carries it: its title and its intent's summary. */
+const wireStatementOf = (context: HintContextCandidate): string =>
+  [context.workContext.title, context.workContext.intent?.summary ?? ""].filter((part) => part.length > 0).join(" ");
 
-const recountsContentFloor = (context: HintContextCandidate, input: SelectHintInput): boolean => {
-  // PUSHABLE, not merely declared (round 3, M5): a refuted hypothesis is a
-  // declared claim, and its words qualified a tree a pointer then named on an
-  // unrelated observation beside it.
-  const bodies = context.claims
-    .filter((claim) => isPushableClaim(claim) && claim.authorDeveloperId !== input.selfDeveloperId && claim.body.trim().length > 0)
+/**
+ * The claim bodies the recount counts on: PUSHABLE, not merely declared
+ * (round 3, M5: a refuted hypothesis is a declared claim, and its words
+ * qualified a tree a pointer then named on an unrelated observation), and
+ * foreign.
+ */
+const recountBodies = (context: HintContextCandidate, selfDeveloperId: string | null): readonly string[] =>
+  context.claims
+    .filter((claim) => isPushableClaim(claim) && claim.authorDeveloperId !== selfDeveloperId && claim.body.trim().length > 0)
     .map((claim) => claim.body);
-  return bodies.length > 0 && [context.workContext.title, ...bodies].some((statement) => clearsOn(statement, input));
-};
+
+/**
+ * The floor terms against an old hub, under the one rule (`@crosscheck/schema`
+ * floorTermsOf): counted on the prompt's ranked terms that some statement ON
+ * THE WIRE says — a word no wire statement says cannot match one, so that
+ * count is exact — while the long-prompt test takes every ranked word as one
+ * the team may know. An old hub puts three trees on the wire, a fraction of
+ * the repo the tip hub counts known words in; a 120-word status report
+ * looked short through that keyhole and cleared on "usage", "shows" and
+ * "wrong". Failing closed costs a long task its hint against an old hub when
+ * it shares only two topical words with its tree.
+ */
+export const recountFloorTermsOf = (input: SelectHintInput): FloorTerms =>
+  floorTermsOf(
+    { topical: input.promptTopicalTerms },
+    knownTermsIn(
+      input.promptTerms,
+      input.candidates.flatMap((context) => [wireStatementOf(context), ...recountBodies(context, input.selfDeveloperId)]),
+    ),
+    Math.min(input.promptTerms.length, HINT_MAX_EXAMINED_TERMS),
+  );
+
+/** THE RECOUNT'S FLOOR: one of the context's statements on the wire clears it, by the hub's own rule. */
+export const clearsRecountedFloor = (context: HintContextCandidate, selfDeveloperId: string | null, floor: FloorTerms): boolean =>
+  [wireStatementOf(context), ...recountBodies(context, selfDeveloperId)].some((statement) => clearsFloorOn(floor, statement));
+
+const recountsContentFloor = (context: HintContextCandidate, selfDeveloperId: string | null, floor: FloorTerms): boolean =>
+  recountBodies(context, selfDeveloperId).length > 0 && clearsRecountedFloor(context, selfDeveloperId, floor);
 
 const isEligibleContext =
-  (input: SelectHintInput) =>
+  (input: SelectHintInput, recount: FloorTerms) =>
   (context: HintContextCandidate): boolean =>
     context.workContext.tier !== undefined &&
     HINT_ELIGIBLE_TIERS.has(context.workContext.tier) &&
-    clearsContentFloor(context, input);
+    clearsContentFloor(context, input, recount);
 
 /**
  * A claim that may drive a PUSHED hint — the hub's own rule, applied again
@@ -437,7 +469,7 @@ export const selectHint = (input: SelectHintInput): HintSelection => {
     return SILENCE;
   }
   const seen = new Set(input.seenRefIds);
-  const eligible = input.candidates.filter(isEligibleContext(input)).map(withPushableClaims);
+  const eligible = input.candidates.filter(isEligibleContext(input, recountFloorTermsOf(input))).map(withPushableClaims);
   // THE BEST TREE A POINTER COULD NAME, shown already or not (round 3, H3 +
   // M6): substance comes only from a tree at least this strong, and a weaker
   // tree is never pointed at in its place.

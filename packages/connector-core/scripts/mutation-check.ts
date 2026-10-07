@@ -17404,18 +17404,21 @@ export const MUTATIONS: readonly Mutation[
   // not matched) and hint-intent-fallback.test.ts (no intent on the wire).
   {
     label: "two spellings of one word count as two agreeing words",
-    file: `${SERVER}/src/services/hints.ts`,
-    from: "count(DISTINCT term.lexeme::text)::int",
-    to: "count(term.lexeme)::int",
-    test: `${SERVER}/test/hint-content-floor.test.ts`,
+    // RETARGETED (round 3, follow-up): the hub and the connector count by one function,
+    // pinned on a topical word — since C1 the meta words of the old test count for nothing.
+    file: `${SCHEMA}/src/content-floor.ts`,
+    from: "  new Set(terms.map(termLexeme).filter((lexeme) => said.has(lexeme))).size;",
+    to: "  terms.map(termLexeme).filter((lexeme) => said.has(lexeme)).length;",
+    test: `${SCHEMA}/test/content-floor.test.ts`,
     because: "\"limit limits limiting\" carries a task and a claim's relevance doubles with every inflection the prompt repeats",
   },
   {
     label: "words from two different claims count as agreeing on one statement",
     // RETARGETED (round 3, C1): the per-claim count is the topical floor count now.
+    // RETARGETED (round 3, follow-up): counted in TypeScript by the shared rule.
     file: `${SERVER}/src/services/hints.ts`,
-    from: "terms: sql<number>`max(${floorTermsSql(sql`${claims.tsv}`, terms)})`,",
-    to: "terms: sql<number>`sum(${floorTermsSql(sql`${claims.tsv}`, terms)})`,",
+    from: "      return [id, { floor: Math.max(...matches.map((match) => match.floor)), topical:",
+    to: "      return [id, { floor: matches.reduce((total, match) => total + match.floor, 0), topical:",
     test: `${SERVER}/test/hint-content-floor.test.ts`,
     because: "\"weiter\" in a German claim plus \"limit\" in another make a limit note look like a task",
   },
@@ -17546,7 +17549,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the selector points at a candidate below the content floor",
     file: `${CORE}/src/hints/select.ts`,
-    from: "    HINT_ELIGIBLE_TIERS.has(context.workContext.tier) &&\n    clearsContentFloor(context, input);",
+    // RETARGETED (round 3, follow-up): the recount's floor terms are worked out once per selection.
+    from: "    HINT_ELIGIBLE_TIERS.has(context.workContext.tier) &&\n    clearsContentFloor(context, input, recount);",
     to: "    HINT_ELIGIBLE_TIERS.has(context.workContext.tier);",
     test: `${CORE}/test/hint-substance-select.test.ts`,
     because: "a hub that forgets the per-candidate floor gets its stray-word tree pointed at, with nothing on this side to stop it",
@@ -18121,8 +18125,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the selector counts a draft among a tree's claims",
     file: `${CORE}/src/hints/select.ts`,
-    from: "  const eligible = input.candidates.filter(isEligibleContext(input)).map(withPushableClaims);",
-    to: "  const eligible = input.candidates.filter(isEligibleContext(input));",
+    // RETARGETED (round 3, follow-up): the recount's floor terms are worked out once per selection.
+    from: "  const eligible = input.candidates.filter(isEligibleContext(input, recountFloorTermsOf(input))).map(withPushableClaims);",
+    to: "  const eligible = input.candidates.filter(isEligibleContext(input, recountFloorTermsOf(input)));",
     test: `${CORE}/test/hint-substance-select.test.ts`,
     because: "\"It carries 1 claim\" — a hub that still ships the draft's row gets it pointed at, discarded or not",
   },
@@ -18863,7 +18868,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an old hub's candidate keeps its free pass past the floor",
     file: `${CORE}/src/hints/select.ts`,
-    from: "    ? recountsContentFloor(context, input)",
+    // RETARGETED (round 3, follow-up): the recount takes the floor terms worked out once.
+    from: "    ? recountsContentFloor(context, input.selfDeveloperId, recount)",
     to: "    ? true",
     test: `${CORE}/test/hint-old-hub-floor.test.ts`,
     because: "a 0.10.0 hub ranked on drafts and floored nothing, and every candidate it sends is pointed at (H4)",
@@ -18871,26 +18877,29 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a tree whose wire carries no body is recounted on its title alone",
     // RETARGETED (round 3, C1): the recount asks each statement through clearsOn.
+    // RETARGETED (round 3, follow-up): the statements are asked by the shared rule.
     file: `${CORE}/src/hints/select.ts`,
-    from: "  return bodies.length > 0 && [context.workContext.title, ...bodies].some(",
-    to: "  return [context.workContext.title, ...bodies].some(",
+    from: "  recountBodies(context, selfDeveloperId).length > 0 && clearsRecountedFloor(context, selfDeveloperId, floor);",
+    to: "  clearsRecountedFloor(context, selfDeveloperId, floor);",
     test: `${CORE}/test/hint-old-hub-floor.test.ts`,
     because: "a title that shares the prompt's words points at a tree with nothing vouched for on the wire (H4)",
   },
   {
     label: "a draft's body counts in the old-hub recount",
     // RETARGETED (round 3, M5): the recount reads pushable claims, a superset rule of declared.
+    // RETARGETED (round 3, follow-up): the bodies are named once, for the floor and its known terms.
     file: `${CORE}/src/hints/select.ts`,
-    from: "    .filter((claim) => isPushableClaim(claim) && claim.authorDeveloperId !== input.selfDeveloperId && claim.body.trim().length > 0)",
-    to: "    .filter((claim) => claim.authorDeveloperId !== input.selfDeveloperId && claim.body.trim().length > 0)",
+    from: "    .filter((claim) => isPushableClaim(claim) && claim.authorDeveloperId !== selfDeveloperId && claim.body.trim().length > 0)",
+    to: "    .filter((claim) => claim.authorDeveloperId !== selfDeveloperId && claim.body.trim().length > 0)",
     test: `${CORE}/test/hint-old-hub-floor.test.ts`,
     because: "an unreviewed draft's words qualify a tree an old hub ranked on them (H4, L6)",
   },
   {
     label: "the reader's own body counts in the old-hub recount",
     // RETARGETED (round 3, M5): the recount reads pushable claims, a superset rule of declared.
+    // RETARGETED (round 3, follow-up): the bodies are named once, for the floor and its known terms.
     file: `${CORE}/src/hints/select.ts`,
-    from: "    .filter((claim) => isPushableClaim(claim) && claim.authorDeveloperId !== input.selfDeveloperId && claim.body.trim().length > 0)",
+    from: "    .filter((claim) => isPushableClaim(claim) && claim.authorDeveloperId !== selfDeveloperId && claim.body.trim().length > 0)",
     to: "    .filter((claim) => isPushableClaim(claim) && claim.body.trim().length > 0)",
     test: `${CORE}/test/hint-old-hub-floor.test.ts`,
     because: "the reader's own words point them at a teammate's tree (H4)",
@@ -18899,7 +18908,8 @@ export const MUTATIONS: readonly Mutation[
     label: "the flow recounts an old hub's candidates on nothing",
     file: `${CORE}/src/flows/hint.ts`,
     // RETARGETED (round 3, L4): the terms come from the hook's one classification.
-    from: "    promptTerms: terms.content,",
+    // RETARGETED (round 3, follow-up): the recount counts the ranked terms of the query sent.
+    from: "    promptTerms: terms.ranked,",
     to: "    promptTerms: [],",
     test: `${CORE}/test/hint-old-hub-floor.test.ts`,
     because: "against a 0.10.0 hub no candidate ever clears the recount, and every real task loses its hint (H4)",
@@ -18908,8 +18918,9 @@ export const MUTATIONS: readonly Mutation[
     label: "the flow recounts an old hub's candidates on raw words, steering included",
     file: `${CORE}/src/flows/hint.ts`,
     // RETARGETED (round 3, L4): the terms come from the hook's one classification.
-    from: "    promptTerms: terms.content,",
-    to: "    promptTerms: humanText.toLowerCase().split(/[^\\p{L}\\p{N}]+/u),",
+    // RETARGETED (round 3, follow-up): the recount counts the ranked terms of the query sent.
+    from: "    promptTerms: terms.ranked,",
+    to: "    promptTerms: input.prompt.toLowerCase().split(/[^\\p{L}\\p{N}]+/u),",
     test: `${CORE}/test/hint-old-hub-floor.test.ts`,
     because: "\"please continue\" beside one task word clears an old hub's floor again (H4, H1)",
   },
@@ -18956,7 +18967,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the hub sends every content term to SQL, unbounded",
     // RETARGETED (round 3, C1): the bounded terms are named once, for both halves of the floor.
-    file: `${SERVER}/src/services/hints.ts`,
+    // RETARGETED (round 3, follow-up): in the shared floor-terms rule.
+    file: `${SCHEMA}/src/content-floor.ts`,
     from: "  const all = known.slice(0, HINT_MAX_COUNTED_TERMS);",
     to: "  const all = known;",
     test: `${SERVER}/test/hint-candidate-floor.test.ts`,
@@ -18964,34 +18976,38 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "a statement of meta words only clears the floor",
-    file: `${SERVER}/src/services/hints.ts`,
-    from: "  sql<number>`(CASE WHEN ${sharedTermsSql(document, terms.topical)} >= ${terms.minTopical} THEN",
-    to: "  sql<number>`(CASE WHEN 1 >= 1 THEN",
+    // RETARGETED (round 3, follow-up): the floor of one statement is the shared rule's.
+    file: `${SCHEMA}/src/content-floor.ts`,
+    from: "  return { floor: topical >= floor.minTopical ? sharedTermCount(floor.all, said) : 0, topical };",
+    to: "  return { floor: sharedTermCount(floor.all, said), topical };",
     test: `${SERVER}/test/hint-topical-floor.test.ts`,
     because: "\"session limit hit earlier, it's back now, continue\" points at the intent-only tree that says session and limit (round 3, C1)",
   },
   {
     label: "a tree's own statement clears the floor on meta words",
+    // RETARGETED (round 3, follow-up): the statement is counted by the shared rule; no topical word needed.
     file: `${SERVER}/src/services/hints.ts`,
-    from: "      floor: floorTermsSql(contextStatement, terms),",
-    to: "      floor: sharedTermsSql(contextStatement, terms.all),",
+    from: "  return new Map(rows.map((row) => [row.id, statementMatch(floor, row.statement)]));",
+    to: "  return new Map(rows.map((row) => [row.id, statementMatch({ ...floor, minTopical: 0 }, row.statement)]));",
     test: `${SERVER}/test/hint-topical-floor.test.ts`,
     because: "an intent made of the session's machinery became the round-3 magnet, taking six of ten content-free hints (C1)",
   },
   {
     label: "a claim clears the floor on meta words",
+    // RETARGETED (round 3, follow-up): each claim is counted by the shared rule; no topical word needed.
     file: `${SERVER}/src/services/hints.ts`,
-    from: "      terms: sql<number>`max(${floorTermsSql(sql`${claims.tsv}`, terms)})`,",
-    to: "      terms: sql<number>`max(${sharedTermsSql(sql`${claims.tsv}`, terms.all)})`,",
+    from: "      const matches = group.map((row) => statementMatch(floor, row.body));",
+    to: "      const matches = group.map((row) => statementMatch({ ...floor, minTopical: 0 }, row.body));",
     test: `${SERVER}/test/hint-topical-floor.test.ts`,
     because: "a claim that says usage, limit, reset and session qualifies its tree for every limit chatter (C1)",
   },
   {
     label: "the hub counts every term as topical",
-    file: `${SERVER}/src/services/hints.ts`,
     // RETARGETED (round 3, L1): the topical terms pass the closed-stem check first.
-    from: "      topical: await withoutClosedStems(deps.db, all.filter((term) => terms.topical.includes(term))),",
-    to: "      topical: all,",
+    // RETARGETED (round 3, follow-up): in the shared floor-terms rule.
+    file: `${SCHEMA}/src/content-floor.ts`,
+    from: "    topical: all.filter((term) => topicalWords.has(term) && !isClosedInflection(term)),",
+    to: "    topical: all,",
     test: `${SERVER}/test/hint-topical-floor.test.ts`,
     because: "the topical-word rule reads meta words as topics and floors nothing (C1)",
   },
@@ -19011,44 +19027,45 @@ export const MUTATIONS: readonly Mutation[
     test: `${SCHEMA}/test/prompt-terms.test.ts`,
     because: "\"rate limit is gone, retry\" reaches the hub and finds the StatsBomb rate-limit root cause (round 3, C1)",
   },
-  {
-    label: "the old-hub recount counts meta words as a topic",
-    file: `${CORE}/src/hints/select.ts`,
-    from: "  return shared(input.promptTerms) >= HINT_MIN_SHARED_TERMS && shared(input.promptTopicalTerms) >= 1;",
-    to: "  return shared(input.promptTerms) >= HINT_MIN_SHARED_TERMS;",
-    test: `${CORE}/test/hint-old-hub-floor.test.ts`,
-    because: "against a 0.10.0 hub, a body of session, limit and usage qualifies its tree for limit chatter (C1)",
-  },
-  {
-    label: "the flow hands the recount every term as topical",
-    file: `${CORE}/src/flows/hint.ts`,
-    // RETARGETED (round 3, L4): the terms come from the hook's one classification.
-    from: "    promptTopicalTerms: terms.topical,",
-    to: "    promptTopicalTerms: terms.content,",
-    test: `${CORE}/test/hint-old-hub-floor.test.ts`,
-    because: "the selector's topical rule is fed the meta words it exists to discount (C1)",
-  },
+  // EQUIVALENT, NOT ANCHORED (round 3, follow-up) — "the old-hub recount
+  // counts meta words as a topic", which handed the recount every ranked term
+  // as topical (`{ topical: input.promptTerms }` in hints/select.ts). The
+  // recount now calls the hub's own rule, which drops every closed-class
+  // word's lexeme from the topical terms as well (`@crosscheck/schema`
+  // isClosedInflection: a word's lexeme is its own), so the classifier's
+  // topical list only matters for a slipped class word repeated, typo and
+  // all, in a teammate's body. Its intent stays guarded on the shared rule:
+  // "the hub counts every term as topical" and "the hub reads an inflected
+  // closed-class word as a topic". Recorded so it is not re-reported as a gap.
+  // EQUIVALENT, NOT ANCHORED (round 3, follow-up) — "the flow hands the
+  // recount every term as topical" (`promptTopicalTerms: terms.content` in
+  // flows/hint.ts), for the reason given at "the old-hub recount counts meta
+  // words as a topic" above: the shared rule drops every closed-class
+  // lexeme from the topical terms itself. Recorded so it is not re-reported.
   {
     label: "the hub counts a claim's meta words toward its relevance",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "repo: query.repo, tokens: query.terms.topical },",
-    to: "repo: query.repo, tokens: query.terms.all },",
+    // RETARGETED (round 3, follow-up): the query's words are its floor terms.
+    from: "repo: query.repo, tokens: query.floor.topical },",
+    to: "repo: query.repo, tokens: query.floor.all },",
     test: `${SERVER}/test/hint-strong-match.test.ts`,
     because: "\"token\" and \"minute\" beside one \"key\" make the rate-limit decision a strong match for a JWT prompt (round 3, H3 + M6)",
   },
   {
     label: "the hub counts a tree's meta words toward its relevance",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "      ownTerms: statementTerms.get(row.id)?.topical ?? 0,",
-    to: "      ownTerms: statementTerms.get(row.id)?.all ?? 0,",
+    // RETARGETED (round 3, follow-up): the hub's floor over given contexts; a statement's every shared word is its floor count.
+    from: "        ownTerms: statementTerms.get(id)?.topical ?? 0,",
+    to: "        ownTerms: statementTerms.get(id)?.floor ?? 0,",
     test: `${SERVER}/test/hint-strong-match.test.ts`,
     because: "a tree whose title says token lends its strength to every claim that shares one other word (H3 + M6)",
   },
   {
     label: "a tree's strength ignores its claims",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "      topicalTerms: Math.max(statementTerms.get(row.id)?.topical ?? 0, claimTerms.get(row.id)?.topical ?? 0),",
-    to: "      topicalTerms: statementTerms.get(row.id)?.topical ?? 0,",
+    // RETARGETED (round 3, follow-up): the hub's floor over given contexts.
+    from: "        topicalTerms: Math.max(statementTerms.get(id)?.topical ?? 0, claimTerms.get(id)?.topical ?? 0),",
+    to: "        topicalTerms: statementTerms.get(id)?.topical ?? 0,",
     test: `${SERVER}/test/hint-strong-match.test.ts`,
     because: "a tree titled \"Investigation notes\" whose claim says the whole prompt reads as the weakest tree, and a stray tree outranks it (H3 + M6)",
   },
@@ -19216,16 +19233,18 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the hub searches on the prompt's own order, command clauses included",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "  const known = await listKnownTerms(deps.db, input.repo, terms.ranked);",
-    to: "  const known = await listKnownTerms(deps.db, input.repo, terms.content);",
+    // RETARGETED (round 3, follow-up): the hub's floor terms come from one helper.
+    from: "  floorTermsOf(terms, await listKnownTerms(db, repo, terms.ranked));",
+    to: "  floorTermsOf(terms, await listKnownTerms(db, repo, terms.content));",
     test: `${SERVER}/test/hint-long-prompt.test.ts`,
     because: "\"keep it short please\" lends \"short\" to a tree titled \"Short redis keys\" (M7)",
   },
   {
     label: "the hub counts words nobody on the team wrote",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "  const known = await listKnownTerms(deps.db, input.repo, terms.ranked);",
-    to: "  const known = terms.ranked;",
+    // RETARGETED (round 3, follow-up): the hub's floor terms come from one helper.
+    from: "  floorTermsOf(terms, await listKnownTerms(db, repo, terms.ranked));",
+    to: "  floorTermsOf(terms, terms.ranked);",
     test: `${SERVER}/test/hint-long-prompt.test.ts`,
     because: "a morning's chatter fills the counted slots and the redis task behind it finds nothing (t066, M7)",
   },
@@ -19239,9 +19258,10 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "a long prompt's floor is a short one's",
-    file: `${SERVER}/src/services/hints.ts`,
-    from: "      minTopical: known.length > HINT_LONG_PROMPT_KNOWN_TERMS ? HINT_LONG_PROMPT_MIN_TOPICAL : 1,",
-    to: "      minTopical: 1,",
+    // RETARGETED (round 3, follow-up): in the shared floor-terms rule.
+    file: `${SCHEMA}/src/content-floor.ts`,
+    from: "    minTopical: knownCount > HINT_LONG_PROMPT_KNOWN_TERMS ? HINT_LONG_PROMPT_MIN_TOPICAL : 1,",
+    to: "    minTopical: 1,",
     test: `${SERVER}/test/hint-long-prompt.test.ts`,
     because: "a long status report agrees with a teammate's root cause on two words from two sentences, and gets it as substance (cf172, M7)",
   },
@@ -19263,25 +19283,28 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "the hub reads an inflected closed-class word as a topic",
-    file: `${SERVER}/src/services/hints.ts`,
-    from: "      topical: await withoutClosedStems(deps.db, all.filter((term) => terms.topical.includes(term))),",
-    to: "      topical: all.filter((term) => terms.topical.includes(term)),",
+    // RETARGETED (round 3, follow-up): in the shared floor-terms rule.
+    file: `${SCHEMA}/src/content-floor.ts`,
+    from: "    topical: all.filter((term) => topicalWords.has(term) && !isClosedInflection(term)),",
+    to: "    topical: all.filter((term) => topicalWords.has(term)),",
     test: `${SERVER}/test/hint-closed-stems.test.ts`,
     because: "\"weekly limit reset, pick up where you stopped\" reaches the rate-limit tree on the lexeme of \"stop\" (round 3, L1)",
   },
   {
     label: "the closed-stem check compares words as written",
-    file: `${SERVER}/src/services/hints.ts`,
-    from: "      WHERE plainto_tsquery('english', closed.word)::text = plainto_tsquery('english', term.word)::text",
-    to: "      WHERE closed.word = term.word",
+    // RETARGETED (round 3, follow-up): the shared rule compares lexemes.
+    file: `${SCHEMA}/src/content-floor.ts`,
+    from: "CLOSED_LEXEMES.has(termLexeme(foldWord(term)));",
+    to: "CLOSED_CLASS_WORDS.includes(foldWord(term));",
     test: `${SERVER}/test/hint-closed-stems.test.ts`,
     because: "\"shows\" is never \"show\", and the dashboard tree is pointed at for a limit report (L1)",
   },
   {
     label: "the old-hub recount counts a refuted claim's words",
     file: `${CORE}/src/hints/select.ts`,
-    from: "    .filter((claim) => isPushableClaim(claim) && claim.authorDeveloperId !== input.selfDeveloperId && claim.body.trim().length > 0)",
-    to: "    .filter((claim) => isDeclared(claim) && claim.authorDeveloperId !== input.selfDeveloperId && claim.body.trim().length > 0)",
+    // RETARGETED (round 3, follow-up): the bodies are named once, for the floor and its known terms.
+    from: "    .filter((claim) => isPushableClaim(claim) && claim.authorDeveloperId !== selfDeveloperId && claim.body.trim().length > 0)",
+    to: "    .filter((claim) => isDeclared(claim) && claim.authorDeveloperId !== selfDeveloperId && claim.body.trim().length > 0)",
     test: `${CORE}/test/hint-old-hub-floor.test.ts`,
     because: "against a 0.10.0 hub, a rejected hypothesis that says the prompt's words points at its tree on an unrelated observation (round 3, M5)",
   },
@@ -19535,6 +19558,102 @@ export const MUTATIONS: readonly Mutation[
     because: "\"paßt scho\" — the old spelling — is a task word and earns a hint (L6)",
   },
   {
+    label: "the floor matches words as written again",
+    file: `${SCHEMA}/src/content-floor.ts`,
+    from: "  return HAS_DIGIT.test(lower) ? lower : englishStem(lower);",
+    to: "  return lower;",
+    test: `${CORE}/test/hint-old-hub-floor.test.ts`,
+    because: "against a 0.10.0 hub \"the uploads keep failing at the gateway\" no longer reaches the upload tree the tip hub points at (round 3, follow-up)",
+  },
+  {
+    label: "a word with a digit is stemmed",
+    file: `${SCHEMA}/src/content-floor.ts`,
+    from: "  return HAS_DIGIT.test(lower) ? lower : englishStem(lower);",
+    to: "  return englishStem(lower);",
+    test: `${SCHEMA}/test/content-floor.test.ts`,
+    because: "\"e2es\" is matched as \"e2e\", where the database's simple dictionary keeps it as written (round 3, follow-up)",
+  },
+  {
+    label: "a text's English stop words say their stems",
+    file: `${SCHEMA}/src/content-floor.ts`,
+    from: "      .filter((word) => word.length > 0 && !ENGLISH_STOP_WORDS.has(word))",
+    to: "      .filter((word) => word.length > 0)",
+    test: `${SCHEMA}/test/content-floor.test.ts`,
+    because: "a statement says words the database drops, and a term that stems like one matches where the hub's index never would (round 3, follow-up)",
+  },
+  {
+    label: "the recount takes a long prompt for short through the wire's keyhole",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "    Math.min(input.promptTerms.length, HINT_MAX_EXAMINED_TERMS),\n",
+    to: "",
+    test: `${CORE}/test/hint-old-hub-floor.test.ts`,
+    because: "a 0.10.0 hub shows three trees, and the 120-word status report cf172 is pointed at the usage dashboard on usage, shows and wrong (round 3, follow-up)",
+  },
+  {
+    label: "the recount counts the whole prompt, not the query sent",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "  const sent = promptQuery === humanText ? terms : promptTerms(promptQuery);",
+    to: "  const sent = terms;",
+    test: `${CORE}/test/hint-old-hub-floor.test.ts`,
+    because: "a word the route's cap cut out of a long paste qualifies a tree the hub never saw it for (round 3, follow-up)",
+  },
+  {
+    label: "the recount counts a command clause's words",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "    promptTerms: terms.ranked,",
+    to: "    promptTerms: terms.content,",
+    test: `${CORE}/test/hint-old-hub-floor.test.ts`,
+    because: "\"commit and push. then the zebrafrobnicator\" clears an old hub's floor on commit and push, where the hub counts one word (round 3, follow-up)",
+  },
+  {
+    label: "the recount reads no intent",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  [context.workContext.title, context.workContext.intent?.summary ?? \"\"].filter(",
+    to: "  [context.workContext.title].filter(",
+    test: `${CORE}/test/hint-old-hub-floor.test.ts`,
+    because: "a tree whose intent says the prompt's words is refused against an old hub and pointed at by the tip hub (round 3, follow-up)",
+  },
+  {
+    label: "the recount counts words no statement on the wire says",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "    knownTermsIn(\n      input.promptTerms,\n      input.candidates.flatMap((context) => [wireStatementOf(context), ...recountBodies(context, input.selfDeveloperId)]),\n    ),",
+    to: "    input.promptTerms,",
+    test: `${CORE}/test/hint-old-hub-floor.test.ts`,
+    because: "forty words of chatter fill the counted slots and the task after them clears nothing against an old hub (M7, round 3 follow-up)",
+  },
+  {
+    label: "the stem knows no R1 exceptions",
+    file: `${SCHEMA}/src/english-stem.ts`,
+    from: "const R1_PREFIXES = [\"gener\", \"commun\", \"arsen\"] as const;",
+    to: "const R1_PREFIXES = [\"zzzzz\"] as const;",
+    test: `${SCHEMA}/test/english-stem.test.ts`,
+    because: "\"generous\" stems to \"gener\" where the database keeps \"generous\", and the two sides match different words (round 3, follow-up)",
+  },
+  {
+    label: "the stem adds no e to a short word",
+    file: `${SCHEMA}/src/english-stem.ts`,
+    from: "  return stem.length === regions.r1 && endsWithShortSyllable(stem) ? `${stem}e` : stem;",
+    to: "  return stem;",
+    test: `${SCHEMA}/test/english-stem.test.ts`,
+    because: "\"hoping\" stems to \"hop\" and matches \"hopping\", where the database says \"hope\" (round 3, follow-up)",
+  },
+  {
+    label: "the stem drops a final e in R1 after a short syllable",
+    file: `${SCHEMA}/src/english-stem.ts`,
+    from: "    return start >= regions.r2 || (start >= regions.r1 && !endsWithShortSyllable(stem)) ? stem : word;",
+    to: "    return start >= regions.r1 ? stem : word;",
+    test: `${SCHEMA}/test/english-stem.test.ts`,
+    because: "\"hopefully\" and \"hope\" stem to \"hop\", away from the database's \"hope\" (round 3, follow-up)",
+  },
+  {
+    label: "the stem forgets its whole-word exceptions",
+    file: `${SCHEMA}/src/english-stem.ts`,
+    from: "  const exceptional = EXCEPTIONAL_WORDS.get(word);",
+    to: "  const exceptional = undefined;",
+    test: `${SCHEMA}/test/english-stem.test.ts`,
+    because: "\"skies\" stems to \"ski\" and \"news\" to \"new\", where the database keeps them apart (round 3, follow-up)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     // RETARGETED (round 3, M7): the query is the prompt's window now.
@@ -19555,8 +19674,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the hint pool is ranked on raw tokens",
     // RETARGETED (round 3, C1): the query's terms carry their topical half beside them.
+    // RETARGETED (round 3, follow-up): the query's words are its floor terms.
     file: `${SERVER}/src/services/hints.ts`,
-    from: "      ftsTokens: query.terms.all,\n",
+    from: "      ftsTokens: query.floor.all,\n",
     to: "",
     test: `${SERVER}/test/hint-content-terms.test.ts`,
     because: "a German prompt's das/ist/nicht/die fill the 10-row pool with noise trees and the one tree it is about never reaches the floor (M8)",
@@ -19793,7 +19913,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 3
  * PRINTS: packages/connector-core/test/hint-harness-turn.test.ts 7
  * PRINTS: packages/connector-core/test/hint-intent-fallback.test.ts 6
- * PRINTS: packages/connector-core/test/hint-old-hub-floor.test.ts 10
+ * PRINTS: packages/connector-core/test/hint-old-hub-floor.test.ts 14
  * PRINTS: packages/connector-core/test/hint-query-window.test.ts 2
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
@@ -19873,6 +19993,8 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/causal-guarantees.test.ts 7
  * PRINTS: packages/schema/test/claim.test.ts 1
+ * PRINTS: packages/schema/test/content-floor.test.ts 3
+ * PRINTS: packages/schema/test/english-stem.test.ts 4
  * PRINTS: packages/schema/test/evidence-resolution.test.ts 8
  * PRINTS: packages/schema/test/file-ref.test.ts 5
  * PRINTS: packages/schema/test/harness-turn.test.ts 16
@@ -19915,7 +20037,7 @@ interface Outcome {
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hint-candidate-floor.test.ts 8
  * PRINTS: packages/server/test/hint-closed-stems.test.ts 2
- * PRINTS: packages/server/test/hint-content-floor.test.ts 7
+ * PRINTS: packages/server/test/hint-content-floor.test.ts 6
  * PRINTS: packages/server/test/hint-content-terms.test.ts 3
  * PRINTS: packages/server/test/hint-deliveries.test.ts 10
  * PRINTS: packages/server/test/hint-draft-visibility.test.ts 2

@@ -30,9 +30,8 @@
  * with this note rather than half-built. The lexical fast path (exact targets +
  * FTS) is the one the design names normative for the sync budget.
  */
-import { and, desc, eq, gt, inArray, isNull, ne, notExists, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, lte, ne, notExists, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
-import type { SQL } from "drizzle-orm";
 
 import {
   agentSessions,
@@ -47,7 +46,6 @@ import { resolvedEvidenceCounts } from "./evidence-resolution.ts";
 import { claimValidity, loadRevalidations } from "./claim-validity.ts";
 import { presenceCutoff } from "./presence.ts";
 import {
-  SEARCH_MAX_QUERY_TOKENS,
   TIER_CANDIDATES,
   exactTargetTokenConditions,
   exactTokens,
@@ -58,15 +56,19 @@ import { pushableClaimCondition } from "./pushable-claims.ts";
 import { DECLARED_PROVENANCE } from "./similarity-gate.ts";
 import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
 import {
-  CLOSED_CLASS_WORDS,
-  foldWord,
+  HINT_MAX_EXAMINED_TERMS,
+  HINT_MIN_SHARED_TERMS,
+  floorTermsOf,
   humanPromptText,
   isStrongSubstanceMatch,
   promptTerms,
   qualifiesAsSubstance,
+  sharedTermCount,
   shownSubstance,
+  statementMatch,
+  textLexemes,
 } from "@crosscheck/schema";
-import type { ClaimValidity } from "@crosscheck/schema";
+import type { ClaimValidity, FloorTerms, PromptTerms, StatementMatch } from "@crosscheck/schema";
 import type { SearchResultKind, SearchTier } from "./search.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
@@ -128,95 +130,44 @@ const SEARCH_POOL_LIMIT = 10;
  * pr_limits_oneword_debatable found a header bug; two agreeing on the same
  * statement is a topic.
  *
- * COUNTED IN LEXEMES, after the english configuration's own stemming, and
- * without the stop words of English AND German (the database's own lists —
- * sharedTermsSql below), so "limit limits limiting" is one word and "the",
- * "das" and "nicht" are none.
+ * COUNTED BY ONE RULE, THE CONNECTOR'S TOO (round 3, follow-up):
+ * `@crosscheck/schema` content-floor.ts — words matched on their english
+ * lexemes, the database's own algorithm, so "limit limits limiting" is one
+ * word, and the prompt's content terms are counted, so "the", "das" and
+ * "nicht" are none. The hub reads the statements and the known terms from
+ * its database; a connector recounting an old hub reads them off the wire;
+ * the count is the same function on both sides, and the two can no longer
+ * drift (connector-core/test/content-floor-parity.test.ts).
  */
-export const HINT_MIN_SHARED_TERMS = 2;
+export {
+  HINT_LONG_PROMPT_KNOWN_TERMS,
+  HINT_LONG_PROMPT_MIN_TOPICAL,
+  HINT_MAX_COUNTED_TERMS,
+  HINT_MAX_EXAMINED_TERMS,
+  HINT_MIN_SHARED_TERMS,
+} from "@crosscheck/schema";
 
 /** What a candidate was matched on: the prompt, or the session's intent in its place. */
 export type HintMatchedOn = "prompt" | "intent";
 
 /**
- * How many of a prompt's ranked terms the hub LOOKS AT before it counts on
- * SEARCH_MAX_QUERY_TOKENS of them (hold-out review round 3, M7): the cap is
- * raised where it is cheap. Each examined term costs one indexed existence
- * probe — does any work context or claim of this repo say it at all — and
- * only the words that pass take one of the sixteen counted slots, so a long
- * prompt's chatter, which nobody on the team wrote, no longer fills them
- * before the task. A 2000-character query (the route's cap) holds a few
- * hundred words at most; this bounds the probes whatever it holds.
+ * How many of a context's visible claims the floor reads, those sharing most
+ * of the prompt's words first: the floor needs the claim that shares most,
+ * which ranks first, and a bound keeps the read bounded like every other.
  */
-export const HINT_MAX_EXAMINED_TERMS = 256;
-
-/**
- * How many of the KNOWN terms the floor is counted on (M7): twice the
- * search's own SEARCH_MAX_QUERY_TOKENS, since only words some statement of
- * this repo says reach the count, and a long prompt's task — "the daily quota
- * reset cron runs twice" after two thousand characters of office chatter —
- * sat past the sixteenth of them. Bounded like every query on the hub.
- */
-export const HINT_MAX_COUNTED_TERMS = 2 * SEARCH_MAX_QUERY_TOKENS;
-
-/**
- * A LONG PROMPT'S FLOOR (M7): one that carries more known words than this is
- * a long message, and among dozens of its words two agreeing with some tree
- * is chance — the round-3 set's content-free status reports matched a tree on
- * two or three of them, while every long task's tree shared three topical
- * words or more. So a candidate of a long prompt needs
- * HINT_LONG_PROMPT_MIN_TOPICAL topical words on its floor statement, where a
- * short prompt needs one.
- */
-export const HINT_LONG_PROMPT_KNOWN_TERMS = 16;
-export const HINT_LONG_PROMPT_MIN_TOPICAL = 3;
+export const HINT_FLOOR_MAX_CLAIMS_PER_CONTEXT = 32;
 
 /** Same-author revision edge (DESIGN.md §5); its TARGET is the retracted claim. */
 const SUPERSEDES_EDGE_KIND = "supersedes";
 
-
-/**
- * How many distinct LEXEMES of `terms` the document matches — the count
- * HINT_MIN_SHARED_TERMS is stated in. One subquery over at most
- * SEARCH_MAX_QUERY_TOKENS terms.
- *
- * A FUNCTION WORD IS NEVER A TERM: `terms` are the prompt's CONTENT terms
- * (@crosscheck/schema prompt-terms.ts) — PostgreSQL's English stop list
- * always out, its German one out of a German prompt (review 1006b, L1; the
- * english configuration alone kept "das", "ist", "nicht" as terms, finding
- * 2 of the review before). The lexeme that is MATCHED stays the english one,
- * because that is the configuration every tsv in this database is built with.
- */
-const sharedTermsSql = (document: SQL, terms: readonly string[]): SQL<number> =>
-  terms.length === 0
-    ? sql<number>`0`
-    : sql<number>`(SELECT count(DISTINCT term.lexeme::text)::int
-        FROM (SELECT plainto_tsquery('english', word) AS lexeme
-              FROM unnest(ARRAY[${sql.join(
-                terms.map((term) => sql`${term}`),
-                sql`, `,
-              )}]::text[]) AS words(word)) AS term
-        WHERE numnode(term.lexeme) > 0
-          AND ${document} @@ term.lexeme)`;
-
-
-/**
- * THE FLOOR COUNT OF ONE STATEMENT (hold-out review round 3, C1): how many of
- * the query's words it shares, provided at least one of them is TOPICAL — of
- * no closed class (`@crosscheck/schema` promptTerms().topical) — and 0
- * otherwise. Two meta words agreeing ("session", "limit") are the session's
- * machinery, never a topic, and the topical word must stand on the same
- * statement as the second one: a title of meta words beside a claim that
- * shares one stray word is two weak statements, not one strong one.
- */
-const floorTermsSql = (document: SQL, terms: QueryTerms): SQL<number> =>
-  sql<number>`(CASE WHEN ${sharedTermsSql(document, terms.topical)} >= ${terms.minTopical} THEN ${sharedTermsSql(document, terms.all)} ELSE 0 END)`;
-
 /**
  * The context's own statement — what its owner said the work is — as one
- * document, so its words are counted apart from any one claim's.
+ * text, so its words are counted apart from any one claim's.
  */
-const contextStatement = sql`to_tsvector('english', concat_ws(' ', ${workContexts.title}, ${workContexts.description}, ${workContexts.intent}->>'summary'))`;
+const contextStatementText = sql<string>`concat_ws(' ', ${workContexts.title}, ${workContexts.description}, ${workContexts.intent}->>'summary')`;
+
+/** The same statement as a document, for the search's own ranking. */
+const contextStatement = sql`to_tsvector('english', ${contextStatementText})`;
 
 /** Most sessions one tripwire response names — one is enough to ask. */
 export const TRIPWIRE_MAX_SESSIONS = 5;
@@ -446,8 +397,7 @@ const listClaimsForContext = async (
   // or a word past the ellipsis can never make a claim a strong match for a
   // prompt its shown sentence says nothing about (review of batch 1006,
   // finding 6). A body that never crosses the wire scores nothing.
-  const shownTerms = await listShownSentenceTerms(
-    db,
+  const shownTerms = shownSentenceTerms(
     rows.map((row) => ({
       id: row.claim.id,
       sentence:
@@ -517,29 +467,15 @@ const listClaimsForContext = async (
 };
 
 /**
- * How many distinct query words each SHOWN sentence shares, in one bounded
- * query for the whole claim window: the sentences travel as a parameter
- * array and are tokenized with the same english configuration every tsv on
- * this hub uses.
+ * How many distinct query words each SHOWN sentence shares, by the floor's
+ * own count (`@crosscheck/schema` content-floor.ts): english lexemes, the
+ * database's algorithm.
  */
-const listShownSentenceTerms = async (
-  db: Db,
+const shownSentenceTerms = (
   shown: readonly { readonly id: string; readonly sentence: string }[],
   tokens: readonly string[],
-): Promise<ReadonlyMap<string, number>> => {
-  const counted = shown.filter((entry) => entry.sentence.length > 0);
-  if (counted.length === 0 || tokens.length === 0) {
-    return new Map();
-  }
-  const result = await db.execute<{ id: string; terms: number }>(sql`
-    SELECT shown.id AS id,
-           ${sharedTermsSql(sql`to_tsvector('english', shown.sentence)`, tokens)} AS terms
-    FROM unnest(
-      ARRAY[${sql.join(counted.map((entry) => sql`${entry.id}`), sql`, `)}]::text[],
-      ARRAY[${sql.join(counted.map((entry) => sql`${entry.sentence}`), sql`, `)}]::text[]
-    ) AS shown(id, sentence)`);
-  return new Map(result.rows.map((row) => [row.id, Number(row.terms)]));
-};
+): ReadonlyMap<string, number> =>
+  new Map(shown.map((entry) => [entry.id, sharedTermCount(tokens, textLexemes(entry.sentence))]));
 
 /**
  * One bounded query PER CONTEXT — at most HINT_MAX_CONTEXTS of them — so a
@@ -557,39 +493,26 @@ const listContextClaims = async (
   return new Map(workContextIds.map((id, index) => [id, lists[index] ?? EMPTY_WINDOW]));
 };
 
-/** What one statement shares with the query: every word, the floor count (C1), and its topical words. */
-interface StatementTerms {
-  readonly all: number;
-  readonly floor: number;
-  readonly topical: number;
-}
-
 /**
- * How many distinct query words each context's OWN statement shares — the
- * other half of the content floor beside its claims' counts — and its floor
- * count under the topical-word rule. One bounded query for every candidate id.
+ * What each context's OWN statement shares with the query — the other half of
+ * the content floor beside its claims' — by the one rule
+ * (`@crosscheck/schema` statementMatch). One bounded read for every candidate
+ * id: the statement is the title, the description and the intent's summary.
  */
 const listStatementTerms = async (
   db: Db,
   workContextIds: readonly string[],
-  terms: QueryTerms,
-): Promise<ReadonlyMap<string, StatementTerms>> => {
-  if (workContextIds.length === 0 || terms.all.length === 0) {
+  floor: FloorTerms,
+): Promise<ReadonlyMap<string, StatementMatch>> => {
+  if (workContextIds.length === 0 || floor.all.length === 0) {
     return new Map();
   }
   const rows = await db
-    .select({
-      id: workContexts.id,
-      all: sharedTermsSql(contextStatement, terms.all),
-      floor: floorTermsSql(contextStatement, terms),
-      topical: sharedTermsSql(contextStatement, terms.topical),
-    })
+    .select({ id: workContexts.id, statement: contextStatementText })
     .from(workContexts)
     .where(inArray(workContexts.id, workContextIds))
     .limit(workContextIds.length);
-  return new Map(
-    rows.map((row) => [row.id, { all: Number(row.all), floor: Number(row.floor), topical: Number(row.topical) }]),
-  );
+  return new Map(rows.map((row) => [row.id, statementMatch(floor, row.statement)]));
 };
 
 /** The base commit of each context's owning session, for the drift label. */
@@ -669,31 +592,31 @@ const clearsFloor = (tier: SearchTier, sharedTerms: number): boolean =>
   tier === "exact" || sharedTerms >= HINT_MIN_SHARED_TERMS;
 
 /**
- * The best shared-word count of any one VISIBLE claim per context — under the
- * claim window's own two conditions, retraction and the reader's mutes, so a
- * hidden author's words can never qualify a tree. One bounded aggregate, the
- * GIN prefilter first, over the whole pool: the floor is decided BEFORE the
- * pool is cut to HINT_MAX_CONTEXTS, so three weak trees cannot crowd out a
- * fourth that qualifies.
+ * The best match of any one VISIBLE claim per context — under the claim
+ * window's own two conditions, retraction and the reader's mutes, so a hidden
+ * author's words can never qualify a tree — by the one rule
+ * (`@crosscheck/schema` statementMatch): the best floor count (C1) and the
+ * most topical words, the tree's strength beside its own statement's (H3 +
+ * M6). Over the whole pool, the GIN prefilter first: the floor is decided
+ * BEFORE the pool is cut to HINT_MAX_CONTEXTS, so three weak trees cannot
+ * crowd out a fourth that qualifies. Each context's claims are read most
+ * matching first, at most HINT_FLOOR_MAX_CLAIMS_PER_CONTEXT of them.
  */
 const listClaimTermMaxima = async (
   db: Db,
   readerDeveloperId: string,
   workContextIds: readonly string[],
-  terms: QueryTerms,
-): Promise<ReadonlyMap<string, ClaimTermMaxima>> => {
-  const tokens = terms.all;
-  if (workContextIds.length === 0 || tokens.length === 0) {
+  floor: FloorTerms,
+): Promise<ReadonlyMap<string, StatementMatch>> => {
+  if (workContextIds.length === 0 || floor.all.length === 0) {
     return new Map();
   }
-  const anyToken = sql`websearch_to_tsquery('english', ${tokens.join(" or ")})`;
-  const rows = await db
+  const anyToken = sql`websearch_to_tsquery('english', ${floor.all.join(" or ")})`;
+  const ranked = db
     .select({
-      id: claims.workContextId,
-      // The best FLOOR count of one claim: the topical-word rule per claim (C1).
-      terms: sql<number>`max(${floorTermsSql(sql`${claims.tsv}`, terms)})`,
-      // And its most topical words — the tree's strength beside its own statement's (H3 + M6).
-      topical: sql<number>`max(${sharedTermsSql(sql`${claims.tsv}`, terms.topical)})`,
+      workContextId: claims.workContextId,
+      body: claims.body,
+      position: sql<number>`row_number() over (partition by ${claims.workContextId} order by ts_rank(${claims.tsv}, ${anyToken}) desc, ${claims.id})`.as("position"),
     })
     .from(claims)
     .innerJoin(agentSessions, eq(claims.authorSessionId, agentSessions.id))
@@ -707,15 +630,19 @@ const listClaimTermMaxima = async (
         pushableClaimCondition(),
       ),
     )
-    .groupBy(claims.workContextId);
-  return new Map(rows.map((row) => [row.id, { floor: Number(row.terms), topical: Number(row.topical) }]));
+    .as("floor_claims");
+  const rows = await db
+    .select({ workContextId: ranked.workContextId, body: ranked.body })
+    .from(ranked)
+    .where(lte(ranked.position, HINT_FLOOR_MAX_CLAIMS_PER_CONTEXT))
+    .limit(workContextIds.length * HINT_FLOOR_MAX_CLAIMS_PER_CONTEXT);
+  return new Map(
+    [...Map.groupBy(rows, (row) => row.workContextId)].map(([id, group]): [string, StatementMatch] => {
+      const matches = group.map((row) => statementMatch(floor, row.body));
+      return [id, { floor: Math.max(...matches.map((match) => match.floor)), topical: Math.max(...matches.map((match) => match.topical)) }];
+    }),
+  );
 };
-
-/** What one context's visible claims share at best: the floor count, and the most topical words. */
-interface ClaimTermMaxima {
-  readonly floor: number;
-  readonly topical: number;
-}
 
 /** The claim author's session, beside the context owner's the scope reads. */
 const claimAuthors = alias(agentSessions, "hint_claim_authors");
@@ -779,23 +706,63 @@ const rankOnPushableText =
     return [...best.values()];
   };
 
-/** The query's words as the floor counts them. */
-interface QueryTerms {
-  /** The prompt's content terms, bounded — what the pool is ranked and counted on. */
-  readonly all: readonly string[];
-  /** Those of them that belong to no closed class (C1). */
-  readonly topical: readonly string[];
-  /** Topical words a floor statement must share: one, or more for a long prompt (M7). */
-  readonly minTopical: number;
-}
-
-/** What one search is made of: the text, for its exact tier, and the content terms. */
+/** What one search is made of: the text, for its exact tier, and the words the floor counts. */
 interface CandidateQuery {
   readonly text: string;
-  readonly terms: QueryTerms;
+  readonly floor: FloorTerms;
   readonly repo: string;
   readonly on: HintMatchedOn;
 }
+
+/** What one candidate shares with the query on its best statement. */
+export interface CandidateFloor {
+  /** The floor count of its best statement — its own, or one visible claim (C1, M7). */
+  readonly sharedTerms: number;
+  /** The most topical words one of its statements shares: the tree's strength (H3 + M6). */
+  readonly topicalTerms: number;
+  /** The topical words its OWN statement shares — what lets one of its claims match strongly. */
+  readonly ownTerms: number;
+}
+
+const NO_FLOOR: CandidateFloor = { sharedTerms: 0, topicalTerms: 0, ownTerms: 0 };
+
+/**
+ * THE HUB'S CONTENT FLOOR over some contexts: each one's own statement and
+ * its visible claims, counted by the one rule (`@crosscheck/schema`
+ * statementMatch). Exported so the connector's recount of an old hub's
+ * candidates is pinned to it, row for row
+ * (connector-core/test/content-floor-parity.test.ts).
+ */
+export const contentFloorOf = async (
+  db: Db,
+  readerDeveloperId: string,
+  floor: FloorTerms,
+  workContextIds: readonly string[],
+): Promise<ReadonlyMap<string, CandidateFloor>> => {
+  const [statementTerms, claimTerms] = await Promise.all([
+    listStatementTerms(db, workContextIds, floor),
+    listClaimTermMaxima(db, readerDeveloperId, workContextIds, floor),
+  ]);
+  return new Map(
+    workContextIds.map((id): [string, CandidateFloor] => [
+      id,
+      {
+        sharedTerms: Math.max(statementTerms.get(id)?.floor ?? 0, claimTerms.get(id)?.floor ?? 0),
+        topicalTerms: Math.max(statementTerms.get(id)?.topical ?? 0, claimTerms.get(id)?.topical ?? 0),
+        // TOPICAL, like every relevance count the selector reads (H3 + M6).
+        ownTerms: statementTerms.get(id)?.topical ?? 0,
+      },
+    ]),
+  );
+};
+
+/**
+ * A prompt's floor terms ON THIS HUB: its ranked terms that some work context
+ * or claim of the repo says at all, by the database's own index (M7), under
+ * the one rule (`@crosscheck/schema` floorTermsOf).
+ */
+export const hubFloorTermsOf = async (db: Db, repo: string, terms: PromptTerms): Promise<FloorTerms> =>
+  floorTermsOf(terms, await listKnownTerms(db, repo, terms.ranked));
 
 /** One query's candidates, each of which clears the floor on its own. */
 const matchCandidates = async (
@@ -812,7 +779,7 @@ const matchCandidates = async (
       // RANKED ON CONTENT TERMS (review 1006b, M8): the raw tokens let a
       // German prompt's "das ist nicht die" fill the pool with every tree
       // that says them, before the floor below ever ran.
-      ftsTokens: query.terms.all,
+      ftsTokens: query.floor.all,
       // AND RANKED ON PUSHABLE TEXT ONLY (hold-out review, M3): what a hint
       // would never show cannot rank a tree into the pool either.
       rankFtsTier: rankOnPushableText(deps.db, callerDeveloperId),
@@ -831,30 +798,19 @@ const matchCandidates = async (
     .filter((row) => HINT_ELIGIBLE_TIERS.includes(row.tier))
     // Defense in depth only — exclusion already happened inside the search.
     .filter((row) => row.developerId !== callerDeveloperId);
-  const tokens = query.terms.all;
-  const poolIds = pool.map((row) => row.id);
-  const [statementTerms, claimTerms] = await Promise.all([
-    listStatementTerms(deps.db, poolIds, query.terms),
-    listClaimTermMaxima(deps.db, callerDeveloperId, poolIds, query.terms),
-  ]);
+  const floors = await contentFloorOf(deps.db, callerDeveloperId, query.floor, pool.map((row) => row.id));
   // THE FLOOR, PER CANDIDATE: every tree a hint may name must itself share
   // HINT_MIN_SHARED_TERMS words on ONE of its statements — its own, or one
   // visible claim — one of them TOPICAL (C1), or hold a target the query
   // named. Decided over the whole pool, then cut to the bound.
   const qualified = pool
-    .map((row) => ({
-      row,
-      // TOPICAL, like every relevance count the selector reads (H3 + M6).
-      ownTerms: statementTerms.get(row.id)?.topical ?? 0,
-      sharedTerms: Math.max(statementTerms.get(row.id)?.floor ?? 0, claimTerms.get(row.id)?.floor ?? 0),
-      topicalTerms: Math.max(statementTerms.get(row.id)?.topical ?? 0, claimTerms.get(row.id)?.topical ?? 0),
-    }))
+    .map((row) => ({ row, ...(floors.get(row.id) ?? NO_FLOOR) }))
     .filter(({ row, sharedTerms }) => clearsFloor(row.tier, sharedTerms))
     .slice(0, HINT_MAX_CONTEXTS);
   const ids = qualified.map(({ row }) => row.id);
   const [claimsByContext, baseCommits, matchedTargets] = await Promise.all([
     listContextClaims(
-      { db: deps.db, now: deps.now(), readerDeveloperId: callerDeveloperId, repo: query.repo, tokens: query.terms.topical },
+      { db: deps.db, now: deps.now(), readerDeveloperId: callerDeveloperId, repo: query.repo, tokens: query.floor.topical },
       ids,
     ),
     listBaseCommits(deps.db, ids),
@@ -937,15 +893,9 @@ export const listHintCandidates = async (
   if (terms.isContentFree) {
     return [];
   }
-  const known = await listKnownTerms(deps.db, input.repo, terms.ranked);
-  const all = known.slice(0, HINT_MAX_COUNTED_TERMS);
   return matchCandidates(deps, callerDeveloperId, {
     text: humanText,
-    terms: {
-      all,
-      topical: await withoutClosedStems(deps.db, all.filter((term) => terms.topical.includes(term))),
-      minTopical: known.length > HINT_LONG_PROMPT_KNOWN_TERMS ? HINT_LONG_PROMPT_MIN_TOPICAL : 1,
-    },
+    floor: await hubFloorTermsOf(deps.db, input.repo, terms),
     repo: input.repo,
     on: "prompt",
   });
@@ -984,35 +934,6 @@ const listKnownTerms = async (db: Db, repo: string, ranked: readonly string[]): 
       )
     ORDER BY term.position`);
   return result.rows.map((row) => row.word);
-};
-
-/** Letters a term and a closed-class word must share before their lexemes are compared. */
-const CLOSED_STEM_PREFIX_CHARS = 3;
-
-/**
- * THE TOPICAL TERMS, LESS A CLOSED-CLASS WORD'S INFLECTION (round 3, L1). The
- * schema classes a word as written; this hub MATCHES in lexemes, so
- * "stopped" — no class word as written — matched "stops" as the lexeme of
- * the conversation word "stop" and carried a limit report to the rate-limit
- * tree. A term whose english lexeme is a closed-class word's lexeme is not
- * topical here. One query over the few class words that share a term's
- * first letters — a stem never changes them.
- */
-const withoutClosedStems = async (db: Db, topical: readonly string[]): Promise<readonly string[]> => {
-  const prefixes = new Set(topical.map((term) => foldWord(term).slice(0, CLOSED_STEM_PREFIX_CHARS)));
-  const closed = CLOSED_CLASS_WORDS.filter((word) => prefixes.has(word.slice(0, CLOSED_STEM_PREFIX_CHARS)));
-  if (topical.length === 0 || closed.length === 0) {
-    return topical;
-  }
-  const result = await db.execute<{ word: string }>(sql`
-    SELECT term.word AS word
-    FROM unnest(ARRAY[${sql.join(topical.map((word) => sql`${word}`), sql`, `)}]::text[]) AS term(word)
-    WHERE EXISTS (
-      SELECT 1 FROM unnest(ARRAY[${sql.join(closed.map((word) => sql`${word}`), sql`, `)}]::text[]) AS closed(word)
-      WHERE plainto_tsquery('english', closed.word)::text = plainto_tsquery('english', term.word)::text
-    )`);
-  const inflected = new Set(result.rows.map((row) => row.word));
-  return topical.filter((term) => !inflected.has(term));
 };
 
 export interface TargetSessionView {

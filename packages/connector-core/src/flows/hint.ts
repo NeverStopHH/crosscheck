@@ -46,7 +46,7 @@ import { getHintCandidates } from "../http/hub.ts";
 import type { AnsweredQuestion, HintCandidatesResult, HubContext, LandedNotice } from "../http/hub.ts";
 import { rememberHintDelivery, rememberLandedNoticeDelivery } from "../hints/delivery.ts";
 import { hintBodyHash } from "../hints/echo.ts";
-import { classifyPrompt, isHarnessTurn, shownSubstance } from "@crosscheck/schema";
+import { classifyPrompt, isHarnessTurn, promptTerms, shownSubstance } from "@crosscheck/schema";
 import type { ClassifiedPrompt, PromptTerms } from "@crosscheck/schema";
 import {
   hintTrailerReserve,
@@ -371,7 +371,11 @@ export const selectAndRenderHint = async (
   if (!result.ok) {
     return "";
   }
-  const text = await hintFromAnswer(input, state, result.data, terms);
+  // THE QUERY SENT is what an old hub's candidates are recounted on, by the
+  // hub's own rule (round 3, follow-up): a prompt past the route's cap went
+  // as its window, so it is the window that is classified then.
+  const sent = promptQuery === humanText ? terms : promptTerms(promptQuery);
+  const text = await hintFromAnswer(input, state, result.data, sent);
   // A CALL THE HUB ANSWERED THAT ENDED IN NO HINT is counted, and only
   // counted (hold-out review round 3, L5): with the turns stood down on, it
   // says whether a quiet session was never asked or asked and matched nothing.
@@ -460,7 +464,7 @@ const hintFromAnswer = async (
     deliveredCount: state.deliveredHintRefs.length,
     selfDeveloperId: state.developerId,
     // What an old hub's candidates are recounted on (hold-out review, H4).
-    promptTerms: terms.content,
+    promptTerms: terms.ranked,
     promptTopicalTerms: terms.topical,
   });
   const delivery = await renderSelection(

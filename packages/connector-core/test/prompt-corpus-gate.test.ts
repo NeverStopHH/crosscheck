@@ -35,14 +35,14 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
-import { createDb, createServer } from "@crosscheck/server";
-
-import { CORPUS_TREES, PROMPT_CORPUS } from "../../schema/test/fixtures/prompt-corpus.ts";
+import { PROMPT_CORPUS } from "../../schema/test/fixtures/prompt-corpus.ts";
 import type { CorpusPrompt } from "../../schema/test/fixtures/prompt-corpus.ts";
 import { selectAndRenderHint } from "../src/flows/hint.ts";
 import { repoKey } from "../src/config/paths.ts";
 import type { HubContext } from "../src/http/client.ts";
 import { writeSessionState } from "../src/state/session-state.ts";
+import { CORPUS_NOW, CORPUS_REPO_ID, startCorpusHub } from "./fixtures/corpus-hub.ts";
+import type { CorpusHub } from "./fixtures/corpus-hub.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
 
 /** Content-free rows of the corpus the pipeline may hint. None. */
@@ -50,22 +50,11 @@ const CONTENT_FREE_HINT_MAX_RATE = 0;
 /** Task rows of the corpus the pipeline may judge content-free. None. */
 const TASK_FALSE_FLOOR_MAX = 0;
 
-const ADMIN_TOKEN = "prompt-corpus-admin";
-const REPO_ID = "github.com/acme/api";
-const NOW = new Date("2026-10-06T10:00:00.000Z");
-const CREATED = "2026-10-05T10:00:00.000Z";
-const OWNER_SESSION = "ses_ken";
+const REPO_ID = CORPUS_REPO_ID;
+const NOW = CORPUS_NOW;
 const HOST_KEY = "corpus-reader-uuid";
 /** An intent that would match the limit trees on its own — the stand-in, if it existed, would show. */
 const SESSION_INTENT = "Make the usage limit reset and the upload limit handling more robust";
-
-interface Seeded {
-  readonly hubUrl: string;
-  readonly readerKey: string;
-  readonly readerId: string;
-  readonly candidateCalls: () => number;
-  readonly stop: () => void;
-}
 
 interface RowOutcome {
   readonly row: CorpusPrompt;
@@ -73,112 +62,10 @@ interface RowOutcome {
   readonly calledHub: boolean;
 }
 
-let seeded: Seeded;
+let seeded: CorpusHub;
 let home: string;
 let repo: string;
 let outcomes: readonly RowOutcome[];
-
-const post = async (url: string, token: string, body: unknown): Promise<Record<string, unknown>> => {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const parsed = (await response.json()) as Record<string, unknown>;
-  if (response.status !== 200) {
-    throw new Error(`corpus seed failed: ${JSON.stringify(parsed)}`);
-  }
-  return parsed;
-};
-
-const developer = async (base: string, name: string): Promise<{ id: string; apiKey: string }> => {
-  const body = await post(`${base}/api/developers`, ADMIN_TOKEN, { name, email: `${name.toLowerCase()}@example.com` });
-  const data = body["data"] as { developer: { id: string }; apiKey: string };
-  return { id: data.developer.id, apiKey: data.apiKey };
-};
-
-const envelope = (developerId: string, kind: string, body: Record<string, unknown>, index: number) => ({
-  cx: "0.1",
-  id: `env_corpus_${String(index)}`,
-  ts: CREATED,
-  producer: { developerId, agentKind: "claude-code", sessionId: OWNER_SESSION },
-  kind,
-  body,
-});
-
-/** The corpus trees, owned by Ken: one work context and its declared claims each. */
-const seedTrees = async (base: string, ken: { id: string; apiKey: string }): Promise<void> => {
-  await post(`${base}/api/sessions`, ken.apiKey, {
-    id: OWNER_SESSION,
-    agentKind: "claude-code",
-    repo: REPO_ID,
-    branch: "main",
-    baseCommit: "a1b2c3d4",
-    status: "analyzing",
-  });
-  const records = CORPUS_TREES.flatMap((tree) => [
-    { kind: "work_context", body: { id: tree.id, sessionId: OWNER_SESSION, title: tree.title, description: tree.description, status: "analyzing", createdAt: CREATED } },
-    ...tree.claims.map((claimBody, index) => ({
-      kind: "claim",
-      body: {
-        id: `clm_${tree.id}_${String(index)}`,
-        workContextId: tree.id,
-        authorSessionId: OWNER_SESSION,
-        kind: "observation",
-        body: claimBody,
-        status: "proposed",
-        confidence: 0.6,
-        captureMode: "agent",
-        provenance: "declared",
-        evidenceRefs: [],
-        createdAt: CREATED,
-      },
-    })),
-    ...(tree.drafts ?? []).map((draftBody, index) => ({
-      kind: "claim",
-      body: {
-        id: `clm_${tree.id}_draft_${String(index)}`,
-        workContextId: tree.id,
-        authorSessionId: OWNER_SESSION,
-        kind: "observation",
-        body: draftBody,
-        status: "proposed",
-        confidence: 0.4,
-        captureMode: "auto",
-        provenance: "derived",
-        evidenceRefs: [],
-        createdAt: CREATED,
-      },
-    })),
-  ]);
-  const body = await post(`${base}/api/records`, ken.apiKey, {
-    records: records.map((record, index) => envelope(ken.id, record.kind, record.body, index)),
-  });
-  const data = body["data"] as { accepted: number };
-  if (data.accepted !== records.length) {
-    throw new Error(`corpus seed: ${String(data.accepted)} of ${String(records.length)} records accepted`);
-  }
-};
-
-const startSeededHub = async (): Promise<Seeded> => {
-  const db = await createDb();
-  const app = createServer({ db, now: () => NOW, adminToken: ADMIN_TOKEN, embedder: null });
-  let calls = 0;
-  const server = Bun.serve({
-    port: 0,
-    fetch: (request) => {
-      if (new URL(request.url).pathname === "/api/hints/candidates") {
-        calls += 1;
-      }
-      return app.fetch(request);
-    },
-  });
-  const base = `http://127.0.0.1:${String(server.port)}`;
-  const ken = await developer(base, "Ken");
-  const reader = await developer(base, "Robin");
-  await seedTrees(base, ken);
-  return { hubUrl: base, readerKey: reader.apiKey, readerId: reader.id, candidateCalls: () => calls, stop: () => server.stop(true) };
-};
 
 /** One row in a FRESH session — nothing delivered yet, the intent set. */
 const runRow = async (row: CorpusPrompt): Promise<RowOutcome> => {
@@ -222,7 +109,7 @@ const rate = (part: number, whole: number): string =>
   `${String(part)}/${String(whole)} (${whole === 0 ? "0.0" : ((100 * part) / whole).toFixed(1)}%)`;
 
 beforeAll(async () => {
-  seeded = await startSeededHub();
+  seeded = await startCorpusHub();
   home = await makeHome("prompt-corpus");
   repo = await makeRepo("prompt-corpus", { remote: "git@github.com:acme/api.git" });
   const collected: RowOutcome[] = [];

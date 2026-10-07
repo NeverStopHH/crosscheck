@@ -18,6 +18,8 @@ import type { HintClaimCandidate, HintContextCandidate } from "../src/http/hub.t
 import { writeSessionState } from "../src/state/session-state.ts";
 import { SELF_DEVELOPER_ID, startHintHub } from "./fixtures/hint-hub.ts";
 import type { HintHub } from "./fixtures/hint-hub.ts";
+import { ROWS } from "./fixtures/holdout-round3/rows.ts";
+import { TREES } from "./fixtures/holdout-round3/trees.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
 
 const ISO = "2026-08-10T08:00:00.000Z";
@@ -249,5 +251,104 @@ describe("the flow recounts on the prompt's own content terms", () => {
 
   test("a body sharing the prompt's steering words and one task word is not", async () => {
     expect(await hintFor("ohf-steering", "please continue the zebrafrobnicator work", "Please continue the zebrafrobnicator import")).toBe("");
+  });
+
+  describe("the recount is the hub's own rule (round 3, follow-up)", () => {
+    /** One tree as an old hub ships it: its title, and one declared teammate body. */
+    const treeWire = (title: string) => (body: string): Record<string, unknown> => ({
+      ...oldHubWire(body),
+      workContext: { ...(oldHubWire(body)["workContext"] as Record<string, unknown>), title },
+    });
+
+    /** The round-3 usage-dashboard tree, with its declared claims, as a 0.10.0 hub ships it. */
+    const dashboardWire = (): Record<string, unknown> => {
+      const tree = TREES.find((candidate) => candidate.id === "wc_usage_dashboard");
+      return {
+        ...oldHubWire(""),
+        workContext: { ...(oldHubWire("")["workContext"] as Record<string, unknown>), id: "wc_usage_dashboard", title: tree?.title ?? "" },
+        claims: (tree?.claims ?? []).map((member) => ({ ...claim({ id: member.id, workContextId: "wc_usage_dashboard", body: member.body }), kind: member.kind, status: member.status })),
+      };
+    };
+
+    test("the round-3 status report gets no pointer at the usage dashboard (cf172)", async () => {
+      // Arrange — 120 words about the session; "usage", "shows" and "wrong" are on the dashboard's title
+      const report = ROWS.find((row) => row.id === "cf172")?.prompt ?? "";
+
+      // Act
+      const hint = await hintFor("ohf-cf172", report, "", dashboardWire);
+
+      // Assert
+      expect(report.length).toBeGreaterThan(0);
+      expect(hint).toBe("");
+    });
+
+    test("a closed word's inflection is no topic: \"shows\" beside a meta word clears nothing (L1)", async () => {
+      const wire = treeWire("Usage dashboard shows wrong monthly totals");
+      expect(await hintFor("ohf-shows", "the weekly export shows usage", "Tracked minutes are summed per tenant.", wire)).toBe("");
+    });
+
+    test("an intent on the wire is part of the tree's own statement, as on the hub", async () => {
+      // Arrange — the title and the body say nothing of the prompt; the intent does
+      const withIntent = (body: string): Record<string, unknown> => ({
+        ...oldHubWire(body),
+        workContext: {
+          ...(oldHubWire(body)["workContext"] as Record<string, unknown>),
+          intent: { summary: "Stop the zebrafrobnicator cache from poisoning warm starts", provenance: "declared", confidence: 0.9, capturedAt: ISO },
+        },
+      });
+
+      // Act
+      const hint = await hintFor("ohf-intent", PROMPT, "The nightly report renders in UTC.", withIntent);
+
+      // Assert
+      expect(hint).toContain("crosscheck pointer");
+    });
+
+    test("an inflection matches its word, as on the hub: \"uploads\" is \"upload\"", async () => {
+      const wire = treeWire("Practice video upload fails above gateway body limit");
+      expect(await hintFor("ohf-stems", "the uploads keep failing at the gateway", "The multipart URLs expire after an hour.", wire)).toContain(
+        "crosscheck pointer",
+      );
+    });
+
+    /** Seventeen words nobody wrote, ahead of the task: a long prompt to anyone who cannot see the team's text. */
+    const LONG_LEAD = Array.from({ length: 17 }, (_, index) => `officeword${String.fromCharCode(97 + index)}`).join(" ");
+
+    test("a long prompt needs three topical words on one statement, even when the wire shows few (M7)", async () => {
+      expect(await hintFor("ohf-long-two", `${LONG_LEAD}. The zebrafrobnicator and the quuxinator`, "The zebrafrobnicator cache poisons the quuxinator on every warm start")).toBe("");
+    });
+
+    test("the recount counts what was sent: a word cut out of a long prompt's window counts for nothing", async () => {
+      // Arrange — the task sits in the middle of a paste the route's cap cuts to its head and tail
+      const filler = "office ".repeat(200);
+      const prompt = `${filler}The zebrafrobnicator cache poisons the quuxinator. ${filler}`;
+
+      // Act
+      const hint = await hintFor("ohf-window", prompt, "The zebrafrobnicator cache poisons the quuxinator on every warm start");
+
+      // Assert — the hub never saw those words, and neither does the recount
+      expect(hint).toBe("");
+    });
+
+    test("words no statement on the wire says take no counted slot: the task after forty of them still counts (M7)", async () => {
+      // Arrange — forty distinct words nobody wrote, then the task: more than HINT_MAX_COUNTED_TERMS ranked terms
+      const lead = Array.from({ length: 40 }, (_, index) => `chatter${String(index).padStart(2, "0")}x`).join(" ");
+
+      // Act
+      const hint = await hintFor("ohf-known", `${lead}. The zebrafrobnicator cache and the quuxinator`, "The zebrafrobnicator cache poisons the quuxinator on every warm start");
+
+      // Assert
+      expect(hint).toContain("crosscheck pointer");
+    });
+
+    test("the recount counts the ranked terms, as the hub: a command clause's words count for nothing", async () => {
+      expect(await hintFor("ohf-ranked", "commit and push. then the zebrafrobnicator", "Commit the zebrafrobnicator fix and push it")).toBe("");
+    });
+
+    test("the control: three topical words clear a long prompt", async () => {
+      expect(
+        await hintFor("ohf-long-three", `${LONG_LEAD}. The zebrafrobnicator cache and the quuxinator`, "The zebrafrobnicator cache poisons the quuxinator on every warm start"),
+      ).toContain("crosscheck pointer");
+    });
   });
 });
