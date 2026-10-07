@@ -657,6 +657,56 @@ describe("a heal asked from a hook in another repo (review finding 7)", () => {
     const contexts = await raw<{ id: string }>("select id from work_contexts where session_id = $1", [next]);
     expect(contexts).toEqual([{ id: `wc_${next}` }]);
   });
+
+  test("writes the ended life down in both repos, so neither repo's successor files its stragglers into it (review-2 round 9)", async () => {
+    // Arrange: a session bound to acme/api, ended by the hub; an edit of it in
+    // acme/web, flushed by a hook there whose heal lands nothing (every
+    // register refused, so no ladder walks past the life either)
+    const fx = await fixture("foreign-refusal");
+    const life = await register(fx);
+    await flushAsHook(fx);
+    await endSession(fx.hub, life.crosscheckSessionId);
+    const foreignRepoId = "github.com/acme/web";
+    const foreignKey = repoKey(hubUrl, foreignRepoId);
+    const edit = (key: string, file: string) =>
+      appendRecords(
+        fx.home,
+        key,
+        fx.hostSessionKey,
+        [targetRecord(life.workContextId, "file", file, producerOf(life.crosscheckSessionId), new Date())],
+        new Date(),
+      );
+    await edit(foreignKey, "web/refused.ts");
+    const healer = sessionHealer({
+      home: fx.home,
+      repoKey: foreignKey,
+      hub: { ...fx.proxied, repoKey: foreignKey },
+      agentKind: "acp:test",
+      hostSessionKey: fx.hostSessionKey,
+      repoId: foreignRepoId,
+      branch: BRANCH,
+      baseCommit: BASE_COMMIT,
+      guarantees: guaranteeDeclarationFor(ACP_CONNECTOR),
+      now: () => new Date(),
+    });
+    refuseRegisters = true;
+    await flushSpool({ ...fx.hub, repoKey: foreignKey }, { sessionId: life.crosscheckSessionId, developerId, heal: healer }, BUDGET_MS);
+    refuseRegisters = false;
+    // ...one more edit of the life in each repo, and the conversation is gone
+    await edit(fx.key, "api/straggler.ts");
+    await edit(foreignKey, "web/straggler.ts");
+    await closeSessionState(fx.home, fx.hostSessionKey, life.crosscheckSessionId);
+
+    // Act: another conversation flushes both repos
+    const other = await register(fx, fx.hub, `${fx.hostSessionKey}-other`);
+    await flushSpool(fx.hub, { sessionId: other.crosscheckSessionId, developerId }, BUDGET_MS);
+    await flushSpool({ ...fx.hub, repoKey: foreignKey }, { sessionId: other.crosscheckSessionId, developerId }, BUDGET_MS);
+
+    // Assert: each repo's straggler withheld, never filed into the ended life
+    expect(await targetsOf(life.workContextId)).toEqual([]);
+    expect((await readDropDetail(fx.home, fx.key)).byReason).toEqual({ withheld: 1 });
+    expect((await readDropDetail(fx.home, foreignKey)).byReason).toEqual({ rejected: 1, withheld: 1 });
+  });
 });
 
 /**

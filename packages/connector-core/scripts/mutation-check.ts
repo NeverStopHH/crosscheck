@@ -18380,6 +18380,15 @@ export const MUTATIONS: readonly Mutation[
     because: "review-2 round 7, simulation seed 8 (I2): the next life files the ended life's edits into it past its end",
   },
   {
+    label: "a heartbeat refused as ended tells no later flush (H1)",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "      await recordRefusedLife(input.home, input.repoKey, sessionId, new Date());\n",
+    to: "",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because:
+      "review-2 round 9, H1: a heartbeat's 409 is written down by the ladder once the same life's re-register is refused; without it, a successor files the ended life's records into it",
+  },
+  {
     label: "a state-less register ignores the epoch it reserved",
     file: `${CORE}/src/flows/register-session.ts`,
     from: "  (await readReservedEpoch(input)) ??\n",
@@ -18528,16 +18537,18 @@ export const MUTATIONS: readonly Mutation[
     file: `${CORE}/src/spool/flush-heal.ts`,
     from: "    await recordRefusedLife(input.ctx.home, input.ctx.repoKey, input.flusherSessionId, input.ctx.now());\n",
     to: "",
-    test: `${CORE}/test/session-heal.test.ts`,
-    because: "review-2 round 7, simulation seed 500 (I2): SessionEnd's flush has no healer to say so, and a successor files the ended life's stragglers into it",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because:
+      "review-2 round 7, simulation seed 500 (I2): the flushed repo's note is the only one that names the life when the heal was asked from a hook in another repo, and a successor there files the ended life's stragglers into it",
   },
   {
-    label: "a heartbeat refused as ended tells no later flush",
+    label: "a heal asked from another repo tells the session's own repo nothing of the ended life",
     file: `${CORE}/src/flows/heal-session.ts`,
     from: "      await recordRefusedLife(input.home, boundToSession(input, state).repoKey, refusal.sessionId, input.now());\n",
     to: "",
-    test: `${CORE}/test/session-heal.test.ts`,
-    because: "review-2 round 7 (I2): a successor files the ended life's records into it after the walk lands nothing",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because:
+      "review-2 round 7 (I2): the heal is the only writer into the session's own repo when it was asked from another repo and its walk lands nothing, and a successor there files the ended life's records into it",
   },
   {
     label: "a debt of a life the hub ended is paid into it",
@@ -19749,9 +19760,9 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
- * PRINTS: packages/connector-core/test/session-heal.test.ts 33
+ * PRINTS: packages/connector-core/test/session-heal.test.ts 32
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 4
- * PRINTS: packages/connector-core/test/session-lives.test.ts 62
+ * PRINTS: packages/connector-core/test/session-lives.test.ts 64
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2

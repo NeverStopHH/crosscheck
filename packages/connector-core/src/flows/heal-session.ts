@@ -416,6 +416,9 @@ const heal =
       // (spool/refused-lives.ts). A heartbeat's 409 is no such verdict
       // (review-2 round 9, H1): the walk below re-registers the same life
       // first, and the ladder writes it down only when the hub refuses that.
+      // Into the session's OWN repo: the refused flush wrote the flushed
+      // repo's note (spool/flush-heal.ts), and the two differ when the heal
+      // was asked from a hook in another repo.
       await recordRefusedLife(input.home, boundToSession(input, state).repoKey, refusal.sessionId, input.now());
     }
     // Healed already — by a sibling hook, or a SessionStart that re-registered.
