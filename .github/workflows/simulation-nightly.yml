@@ -1,0 +1,99 @@
+# Sweeps the spool simulation wide, every night.
+#
+# PR CI runs 300 seeds of the `shipped` generator with the rest of the suite,
+# plus every seed any sweep ever found failing (the historical corpus,
+# packages/connector-core/test/simulation/seed-corpus.ts). That catches a
+# regression of a known bug. It does not find the next one: each review round
+# found its bugs in thousands of seeds across the generators, a few per
+# thousand. This workflow runs that sweep every night, one job per generator,
+# 2000 seeds each from a starting seed that moves on with every run, so the
+# nights together keep drawing seeds no sweep has seen.
+#
+# The generators: `shipped` (resumes, edits, set_intent, SessionEnd, hub ends,
+# crashes, 503s, lost answers, two processes at once, a slow hub, an aged
+# home), `io` (a disk refusing writes), `sleep` (a night the hub reaps through,
+# a week away, a woken conversation, connector-claude's recovery, a heartbeat
+# with its heal), `focus` (two processes of one conversation around
+# set_intent, SessionStart and SessionEnd) and `all` (io and sleep at once).
+#
+# A failing seed fails its job, says so in the run's summary table, and its
+# shrunk events and trace are uploaded with the job's report. Those events go
+# into the corpus with the fix (docs/1.0/loss-accounting.md, "The simulation
+# as a standing method"). Run it by hand with a seed count, a starting seed,
+# or `rc` for the release-candidate sweep, 5000 seeds of each generator.
+#
+# INERT UNTIL MERGED. GitHub fires `schedule` only from the default branch.
+# Run it once by hand (Run workflow → `workflow_dispatch`) after it lands on
+# main, then check the first night's run appeared.
+name: Simulation nightly
+
+on:
+  schedule:
+    # 03:41 UTC daily. Off the hour, where scheduled workflows queue late.
+    - cron: "41 3 * * *"
+  workflow_dispatch:
+    inputs:
+      seeds:
+        description: "Seeds per generator"
+        required: false
+        default: "2000"
+      base:
+        description: "First seed (empty: moves on with every run)"
+        required: false
+        default: ""
+      rc:
+        description: "Release-candidate sweep: 5000 seeds of each generator"
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: simulation-nightly
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    name: Sweep (${{ matrix.generator }})
+    strategy:
+      fail-fast: false
+      matrix:
+        generator: [shipped, io, sleep, focus, all]
+    runs-on: ubuntu-latest
+    # 2000 seeds of the slowest generator (focus) take about 9 minutes on a
+    # laptop; the release candidate's 5000 about 23. A runner is slower: the
+    # bound leaves room for three times that, inside the six hours a job may run.
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Sweep ${{ matrix.generator }}
+        env:
+          GENERATOR: ${{ matrix.generator }}
+          SEEDS: ${{ inputs.seeds || '2000' }}
+          BASE: ${{ inputs.base }}
+          RC: ${{ inputs.rc && 'true' || 'false' }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          if [ "$RC" = "true" ]; then
+            count=5000
+          else
+            count="$SEEDS"
+          fi
+          # A starting seed that moves on with every run: night n sweeps
+          # n*count+1 onwards, and comes round again after 500 nights.
+          base="${BASE:-$(( (RUN_NUMBER % 500) * count + 1 ))}"
+          echo "Sweeping $GENERATOR: $count seeds from $base (replay: SIM_ADD=$GENERATOR SIM_SEED_BASE=$base)"
+          bun run packages/connector-core/scripts/sim-sweep.ts \
+            --generators "$GENERATOR" --seeds "$count" --base "$base" --report sim-report
+      - name: Upload failing seeds and shrunk traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: simulation-${{ matrix.generator }}-${{ github.run_number }}-${{ github.run_attempt }}
+          path: sim-report/
+          if-no-files-found: warn
+          retention-days: 30

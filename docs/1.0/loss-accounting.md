@@ -534,6 +534,29 @@ One class is a documented residual, I1u, and the sweep counts it without failing
 write down anywhere: the ledger line and its fallback marker both failed, so nothing on that disk can count it. Each
 `io` seed that found it is a fixed scenario asserting that this, and nothing else, happened.
 
+**The simulation as a standing method** (review-2 round 9). Each review round found its bugs in a few thousand seeds
+across the generators, a few per thousand, so the sweep runs at three widths:
+
+- **Every pull request** runs 300 seeds of `shipped` with the suite, plus every seed any sweep ever found failing.
+  Those seeds live in the historical corpus, `connector-core/test/simulation/seed-corpus.ts`: each with the seed, its
+  generator, the invariant it broke, the bug in one line and the commit that fixed it. Each runs as a fixed scenario
+  with its shrunk events, since a generator's draw for a seed changes as the generator grows. A residual names its class
+  and may fall only in that class; a fixed bug allows none. Moving the fixed scenarios into the corpus cost PR CI 1.7 s
+  (14.1 to 15.8 s for the fixed scenarios), for one seed the round-9 sweep added (focus 270, L1) and the corpus check.
+- **Every night**, `.github/workflows/simulation-nightly.yml` sweeps every generator (`shipped`, `io`, `sleep`, `focus`,
+  `all`) at 2000 seeds each, one job per generator. The starting seed moves on with each run, so the nights keep drawing
+  seeds no sweep has seen. A failing seed fails its job and is listed in the run's summary table. The job uploads each
+  generator's report: its failing seeds, the shrunk events and trace of the first three, its residuals and its
+  over-count. 2000 `focus` seeds take about 9 minutes on a laptop; each job is bounded at 150 minutes.
+- **Before a release**, the release-candidate sweep runs 5000 seeds of every generator:
+  `bun run packages/connector-core/scripts/sim-sweep.ts --rc --report sim-report`, or the workflow by hand with `rc`.
+  The same script runs any slice (`--generators io,focus --seeds 500 --base 4001`). One seed replays alone with
+  `SIM_ADD=<generator> SIM_SEED_BASE=<seed> SIM_SEEDS=1 bun test test/spool-simulation.test.ts -t "seeded scenarios"`.
+
+A seed the nightly or the release-candidate sweep finds failing goes into the corpus with the fix, using the shrunk
+events from its report. Until the fix lands it is marked `open` (and `racy`, if it fails on some interleavings only):
+the sweep skips it, and its fixed scenario is marked failing.
+
 **A night's reap is revoked by the first heartbeat** (review-2 round 9, H1; a regression from the mid-life heal). The
 hub reaps a session silent past `SESSION_REAP_STALE_HOURS`, so every laptop that slept loses its session overnight. A
 register or a record from that session revives it, because both prove it alive, but a heartbeat was answered

@@ -31,10 +31,20 @@
  *
  * SIM_SEEDS and SIM_SEED_BASE widen or move the sweep: `SIM_SEEDS=2000 bun test
  * test/spool-simulation.test.ts`. Every run prints the over-count: records the
- * ledger calls lost that the hub holds.
+ * ledger calls lost that the hub holds. SIM_REPORT_DIR names a directory the
+ * sweep writes `<generator>.json` into: its failing seeds, their shrunk traces,
+ * its residuals and its over-count — what the nightly workflow uploads.
+ *
+ * EVERY SEED A SWEEP EVER FOUND FAILING is in the historical corpus
+ * (simulation/seed-corpus.ts) and runs here as a fixed scenario; the probes
+ * below are the reviewers' hand-written ones. PR CI runs 300 seeds of
+ * `shipped`; the nightly workflow (.github/workflows/simulation-nightly.yml)
+ * and the release-candidate sweep run every generator wide, through
+ * scripts/sim-sweep.ts (docs/1.0/loss-accounting.md).
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { rm } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import "./simulation/sim-hooks.ts";
 import { accountingStats, checkInvariants } from "./simulation/sim-invariants.ts";
@@ -43,6 +53,24 @@ import { startSimHub } from "./simulation/sim-hub.ts";
 import type { SimHub } from "./simulation/sim-hub.ts";
 import { describeEvent, execute, GENERATORS, scenarioOf } from "./simulation/sim-world.ts";
 import type { GeneratorName, Run, SimEvent } from "./simulation/sim-world.ts";
+import { corpusName, SEED_CORPUS } from "./simulation/seed-corpus.ts";
+import type { CorpusSeed, ResidualClass } from "./simulation/seed-corpus.ts";
+import {
+  age,
+  beat,
+  edit,
+  end,
+  fault,
+  hubEnd,
+  intent,
+  NIGHT,
+  recover,
+  start,
+  straggle,
+  VACATION,
+  wake,
+} from "./simulation/sim-events.ts";
+import { parseSweepArgs, SWEEP_GENERATORS } from "../scripts/sim-sweep.ts";
 import { makeRepo } from "./helpers.ts";
 
 const SEEDS = Number(process.env["SIM_SEEDS"] ?? "300");
@@ -56,9 +84,18 @@ const GENERATOR = GENERATORS[GENERATOR_NAME as GeneratorName];
 const MAX_REPORTED = 3;
 /** Re-runs a shrink may spend on one failing scenario. */
 const SHRINK_RUNS = 80;
-/** The sweep's own bound; the measured runtime is printed with every run. */
-const SWEEP_TIMEOUT_MS = 60 * 60 * 1000;
-const PROBE_TIMEOUT_MS = 60 * 1000;
+const MINUTE_MS = 60 * 1000;
+/**
+ * The sweep's own bound, grown with the seeds a wide sweep asks for: 1.5 s a
+ * seed is about three times what the slowest generator (`focus`) takes on a
+ * laptop, which leaves room for a CI runner. The measured runtime is printed
+ * with every run.
+ */
+const SWEEP_MS_PER_SEED = 1500;
+const SWEEP_TIMEOUT_MS = Math.max(60 * MINUTE_MS, SEEDS * SWEEP_MS_PER_SEED);
+const PROBE_TIMEOUT_MS = MINUTE_MS;
+/** Where a wide sweep writes what it found (the nightly workflow's artifacts), or nowhere. */
+const REPORT_DIR = process.env["SIM_REPORT_DIR"];
 
 let hub: SimHub;
 let repo: string;
@@ -97,16 +134,24 @@ const shrink = async (events: readonly SimEvent[]): Promise<readonly SimEvent[]>
   return current;
 };
 
-const reportOf = async (seed: number, events: readonly SimEvent[]): Promise<string> => {
+/** A failing seed, shrunk: its minimal events (replayable as a corpus entry) and what they broke. */
+interface Report {
+  readonly seed: number;
+  readonly events: readonly SimEvent[];
+  readonly text: string;
+}
+
+const reportOf = async (seed: number, events: readonly SimEvent[]): Promise<Report> => {
   const minimal = await shrink(events);
   const { run, verdicts } = await verdictsOf(minimal);
-  return [
+  const text = [
     `seed ${String(seed)}: ${String(events.length)} events, shrunk to ${String(minimal.length)}`,
     `  events: ${minimal.map(describeEvent).join(" · ")}`,
     ...verdicts.map((verdict) => `  ${verdict.invariant}: ${verdict.detail}`),
     "  trace:",
     ...run.trace.map((line) => `    ${line}`),
   ].join("\n");
+  return { seed, events: minimal, text };
 };
 
 const said = (verdicts: readonly Verdict[]): readonly string[] =>
@@ -114,10 +159,12 @@ const said = (verdicts: readonly Verdict[]): readonly string[] =>
 
 /**
  * Seeds still failing, as `generator:seed`, and the fix each waits for: the
- * sweep skips them, and their fixed scenarios below are marked `failing` until
- * that fix lands.
+ * corpus entries marked `open`. The sweep skips them, and their fixed
+ * scenarios below are marked `failing` until that fix lands.
  */
-const OPEN: ReadonlyMap<string, string> = new Map<string, string>();
+const OPEN: ReadonlyMap<string, string> = new Map(
+  SEED_CORPUS.flatMap((entry) => (entry.open === undefined ? [] : [[`${entry.generator}:${String(entry.seed)}`, entry.open] as const])),
+);
 
 /** The conversation a verdict's work context or life belongs to: `…sim<run>-c<N>…`. */
 const conversationOf = (verdict: Verdict): number | null => {
@@ -149,7 +196,7 @@ const hasConcurrentIntent = (events: readonly SimEvent[], c: number): boolean =>
  *         acknowledgement follows the order answers arrive in, not the order
  *         the hub applied them (review-2 round 8, L1, accepted in round 9).
  */
-const residualOf = (events: readonly SimEvent[], verdict: Verdict): string | null => {
+const residualOf = (events: readonly SimEvent[], verdict: Verdict): ResidualClass | null => {
   if (verdict.invariant === "I1u") {
     return "I1u";
   }
@@ -157,8 +204,27 @@ const residualOf = (events: readonly SimEvent[], verdict: Verdict): string | nul
   return verdict.invariant === "I4" && c !== null && hasConcurrentIntent(events, c) ? "L1" : null;
 };
 
-const unexplained = (verdicts: readonly Verdict[], events: readonly SimEvent[]): readonly Verdict[] =>
-  verdicts.filter((verdict) => residualOf(events, verdict) === null);
+const ALL_RESIDUALS: readonly ResidualClass[] = ["I1u", "L1"];
+
+/** The verdicts no residual class explains — among `allowed`, every class the sweep counts by default. */
+const unexplained = (
+  verdicts: readonly Verdict[],
+  events: readonly SimEvent[],
+  allowed: readonly ResidualClass[] = ALL_RESIDUALS,
+): readonly Verdict[] =>
+  verdicts.filter((verdict) => {
+    const residual = residualOf(events, verdict);
+    return residual === null || !allowed.includes(residual);
+  });
+
+/** What a wide sweep found, for the nightly workflow to upload (SIM_REPORT_DIR). */
+const writeSweepReport = async (summary: Record<string, unknown>): Promise<void> => {
+  if (REPORT_DIR === undefined) {
+    return;
+  }
+  await mkdir(REPORT_DIR, { recursive: true });
+  await writeFile(join(REPORT_DIR, `${GENERATOR_NAME}.json`), `${JSON.stringify(summary, null, 2)}\n`);
+};
 
 describe("the spool, simulated", () => {
   test(
@@ -167,7 +233,7 @@ describe("the spool, simulated", () => {
       const started = Date.now();
       const failing: string[] = [];
       const residual: string[] = [];
-      const reports: string[] = [];
+      const reports: Report[] = [];
       const totals = { seeds: 0, overCountSeeds: 0, overCounted: 0, lost: 0, captured: 0, uncountable: 0 };
       for (let seed = SEED_BASE; seed < SEED_BASE + SEEDS; seed += 1) {
         if (OPEN.has(`${GENERATOR_NAME}:${String(seed)}`)) {
@@ -205,21 +271,23 @@ describe("the spool, simulated", () => {
         `[spool-simulation] residual ${String(residual.length)} (I1u: ${String(totals.uncountable)} records the disk let nothing count; L1: set_intent beside set_intent or SessionEnd): ${residual.join(" ")}`,
       );
       console.log(`[spool-simulation] failing ${String(failing.length)}: ${failing.join(" ")}`);
-      expect(reports.join("\n\n")).toBe("");
+      await writeSweepReport({
+        generator: GENERATOR_NAME,
+        base: SEED_BASE,
+        seeds: totals.seeds,
+        durationMs: Date.now() - started,
+        failing,
+        reports,
+        residual,
+        overCount: { seeds: totals.overCountSeeds, records: totals.overCounted },
+        captured: totals.captured,
+        lost: totals.lost,
+        uncountable: totals.uncountable,
+      });
+      expect(reports.map((report) => report.text).join("\n\n")).toBe("");
     },
     SWEEP_TIMEOUT_MS,
   );
-});
-
-const start = (c: number): SimEvent => ({ kind: "start", c });
-const edit = (c: number): SimEvent => ({ kind: "edit", c });
-const end = (c: number): SimEvent => ({ kind: "end", c });
-const hubEnd = (c: number): SimEvent => ({ kind: "hubEnd", c });
-const fault = (kind: "records503" | "recordsLate" | "registersDown" | "endsLate", count: number, after: number): SimEvent => ({
-  kind: "fault",
-  fault: kind,
-  count,
-  after,
 });
 
 interface Probe {
@@ -323,216 +391,30 @@ const PROBES: readonly Probe[] = [
   },
 ];
 
-const crash = (at: number, when: "before" | "after"): SimEvent => ({ kind: "crash", at, when });
-const intent = (c: number, status: string): SimEvent => ({ kind: "intent", c, status });
-
 /**
- * WHAT THE SWEEP FOUND while it was being written, shrunk, kept as fixed
- * scenarios: each named by the seed that first failed and the invariant it
- * broke, every one a bug fixed in this round — or, where marked, a residual
- * the invariants allow for and loss-accounting §4.3 documents.
+ * THE ROUND-7 REVIEW'S PROBES (the seeds its extended sweep found are in the
+ * corpus, simulation/seed-corpus.ts).
  */
-const FOUND: readonly Probe[] = [
-  { name: "seed 8 (I2): a SessionStart whose ladder climbed past an ended life left its records to be filed into it", events: [start(0), hubEnd(0), fault("records503", 2, 0), edit(0), start(0)] },
-  { name: "seed 10 (I4): a SessionStart re-fire put back the status set_intent had set", events: [start(0), intent(0, "done"), start(0)] },
-  { name: "seed 10, shrunk with a crash (I4): set_intent killed after the hub took its post, before its state write", events: [start(0), crash(1, "before"), intent(0, "done"), start(0)] },
-  { name: "seed 46 (I1): a crash right after an append, on a life the hub ended", events: [start(0), hubEnd(0), crash(2, "after"), edit(0)] },
-  { name: "seed 99 (I1, residual): records the hub took whose answer was lost, refused on a re-send", events: [start(0), fault("recordsLate", 2, 2), edit(0), edit(0), edit(0), hubEnd(0)] },
-  { name: "seed 113 (I3): a SessionStart killed between its register and its state split the session's epoch", events: [crash(3, "before"), start(0), start(0)] },
-  { name: "seed 115 (I2, residual): an end only a sibling saw, and a successor delivering into it", events: [start(0), fault("records503", 2, 0), hubEnd(0), edit(0), { kind: "abandon", c: 0 }] },
-  { name: "seed 349 (I4): the work context a register spooled reverted the status set_intent set first", events: [crash(6, "after"), start(0), intent(0, "implementing")] },
-  { name: "seed 500 (I2): a life the hub said ended, with no heal past it, was filed into by a successor", events: [start(0), fault("registersDown", 2, 0), hubEnd(0), edit(0), edit(0), fault("recordsLate", 2, 0), end(0)] },
-  { name: "seed 772 (I2): a moved life's debt was paid into it after the hub ended it", events: [start(0), fault("records503", 2, 1), hubEnd(0), edit(0), hubEnd(0)] },
-  { name: "seed 1020 (I4): set_intent put the old status back after a post whose answer was lost", events: [start(0), fault("recordsLate", 1, 1), fault("records503", 1, 0), intent(0, "done"), intent(0, "done"), intent(0, "blocked")] },
-  { name: "seed 1033 (I2): set_intent refused as ended told nobody, and a successor filed into the life", events: [fault("records503", 2, 0), start(1), hubEnd(1), start(2), intent(1, "blocked"), { kind: "abandon", c: 1 }] },
-  { name: "seed 1161 (I1, residual): a work context the hub took unheard, then withheld", events: [fault("recordsLate", 1, 0), start(1), hubEnd(1), start(1)] },
-  { name: "seed 2385 (I1): a crash armed before a host goes quiet kills the next connector step, not the host", events: [start(0), crash(2, "after"), edit(0), crash(1, "after"), { kind: "abandon", c: 0 }] },
-  { name: "seed 3062 (I4): a spooled work context sent after SessionEnd reverted the status set_intent set", events: [crash(7, "after"), start(0), fault("records503", 1, 1), intent(0, "blocked"), crash(1, "after"), start(0), end(0)] },
-  { name: "seed 3098 (I4): the same, with the work context the register spooled", events: [fault("records503", 1, 1), crash(6, "after"), start(0), intent(0, "done"), end(0)] },
-  { name: "seed 4337 (I4): set_intent killed after writing its status into the state", events: [start(1), intent(1, "done"), crash(1, "after"), intent(1, "implementing"), start(1)] },
-  { name: "seed 7019 (I2): the deferred end ended a life whose work context was still owed", events: [start(0), hubEnd(0), fault("records503", 2, 2), intent(0, "blocked"), edit(0), intent(0, "reviewing")] },
-];
-
-const par = (a: SimEvent, b: SimEvent): SimEvent => ({ kind: "par", a, b });
-const age = (c: number): SimEvent => ({ kind: "age", c });
-const slow = (ms: number, count: number, after: number): SimEvent => ({ kind: "fault", fault: "slow", count, after, ms });
-
-interface Found extends Probe {
-  /** The fix it waits for while it still fails (the sweep skips its seed). */
-  readonly open?: string;
-  /** Open and racy: it fails only on some interleavings of its two processes, so it is skipped, not marked failing. */
-  readonly racy?: boolean;
-}
-
-/**
- * WHAT THE ROUND-7 REVIEW'S EXTENDED SWEEP FOUND, shrunk: each named by its
- * seed, the invariant it broke and the finding it is (H1, M1, M3, L1, L2), and
- * two the checker misread (seeds 1018 and 1034: a conversation SessionEnd
- * ended within the step, read as live before it).
- */
-const ROUND_7: readonly Found[] = [
-  {
-    name: "seed 455 (I2, H1): an ended life's straggler, its host dead a week, sent into it by a successor",
-    events: [start(1), hubEnd(1), fault("registersDown", 1, 1), start(0), edit(1), par(edit(0), edit(1)), age(1)],
-  },
-  {
-    name: "seed 10005 (I2, H1): the same after a crash",
-    events: [start(0), hubEnd(0), crash(4, "before"), edit(0), age(0)],
-  },
-  {
-    name: "seed 11379 (I2, H1): the same behind a slow hub",
-    events: [start(0), hubEnd(0), slow(1400, 2, 0), edit(0), intent(0, "blocked"), edit(0), age(0)],
-  },
+const ROUND_7_PROBES: readonly Probe[] = [
   {
     name: "probe A1 (I2, H1): a refused life's straggler, then a week for everything on disk",
-    events: [start(0), edit(0), hubEnd(0), edit(0), { kind: "straggle", c: 0 }, age(0), start(1)],
+    events: [start(0), edit(0), hubEnd(0), edit(0), straggle(0), age(0), start(1)],
   },
   {
     name: "probe A3 (I2, H1): a healed life's open debt, its life refused as ended, then a week",
     events: [start(0), edit(0), hubEnd(0), fault("records503", 1, 1), edit(0), hubEnd(0), intent(0, "blocked"), age(0), start(1)],
   },
-  {
-    name: "seed 782 (I2, M1): a reload's re-fire beside SessionEnd, then set_intent beside it, filed past the end",
-    events: [
-      start(0),
-      fault("records503", 2, 1),
-      fault("recordsLate", 1, 0),
-      par(start(0), end(0)),
-      par(intent(0, "implementing"), end(0)),
-    ],
-  },
-  {
-    name: "seed 10895 (I4, M3): a reaped host's work context reverted the status set_intent set",
-    events: [crash(7, "before"), start(1), intent(1, "done"), fault("registersDown", 2, 0), age(1), start(0)],
-  },
-  {
-    name: "seed 184 (I4, L1): set_intent beside a SessionStart re-fire",
-    events: [start(0), par(intent(0, "implementing"), start(0))],
-  },
-  {
-    name: "seed 1255 (I4, L1): the same, the other way round",
-    events: [start(1), { kind: "refuseWc", c: 0 }, par(intent(1, "blocked"), start(1))],
-  },
-  {
-    name: "seed 1384 (I4, L1): a re-fire beside set_intent",
-    events: [start(0), par(start(0), intent(0, "implementing"))],
-  },
-  {
-    name: "seed 1605 (I4, L1): the same on a second conversation",
-    events: [start(1), par(start(1), intent(1, "implementing"))],
-  },
-  {
-    name: "seed 1715 (I4, L1): a re-fire beside set_intent blocked",
-    events: [start(0), par(start(0), intent(0, "blocked"))],
-  },
-  {
-    name: "seed 11151 (I4, L1): set_intent beside a re-fire, then a crash",
-    events: [start(0), par(intent(0, "blocked"), start(0)), crash(7, "before")],
-  },
-  {
-    name: "seed 11274 (I4, L1): a re-fire beside set_intent, another re-fire, a crash",
-    events: [start(1), par(start(1), intent(1, "blocked")), start(1), crash(4, "after")],
-  },
-  {
-    name: "seed 11362 (I4, L1): set_intent done beside a re-fire",
-    events: [start(0), par(intent(0, "done"), start(0))],
-  },
-  {
-    name: "seed 11645 (I4, L1): a re-fire beside set_intent implementing",
-    events: [start(0), par(start(0), intent(0, "implementing"))],
-  },
-  {
-    name: "seed 134 (I3, L2): two SessionStarts of one host session at once, a register refused",
-    events: [fault("registersDown", 2, 1), par(start(1), start(1))],
-  },
-  {
-    name: "seed 1933 (I3, L2): a SessionStart beside a SessionEnd after a crashed end",
-    events: [start(0), crash(4, "before"), end(0), par(start(0), end(0))],
-  },
-  {
-    name: "seed 11285 (I3, L2): two SessionStarts at once after a crash, registers refused",
-    events: [crash(1, "before"), fault("registersDown", 2, 2), par(start(0), start(0))],
-  },
-  {
-    name: "seed 11683 (I3, L2): an edit beside a resume after an ended life",
-    events: [start(0), hubEnd(0), crash(3, "after"), start(0), end(0), par(edit(0), start(0))],
-  },
-  {
-    name: "seed 1018 (checker): SessionEnd beside a successor's SessionStart, read as live",
-    events: [start(1), fault("records503", 2, 0), edit(1), par(end(1), start(0))],
-  },
-  {
-    name: "seed 1034 (checker): two SessionEnds at once, read as live",
-    events: [start(1), start(0), fault("recordsLate", 2, 1), edit(1), edit(1), par(end(1), end(0))],
-  },
-  {
-    name: "seed 10009 (checker, production timing): a resume beside a successor's drain of its ended spool, read as live",
-    events: [
-      start(0),
-      start(1),
-      fault("records503", 1, 2),
-      edit(1),
-      edit(0),
-      edit(1),
-      fault("recordsLate", 1, 0),
-      end(1),
-      par(edit(0), start(1)),
-    ],
-  },
-  {
-    name: "seed 10102 (I4, L1, production timing): set_intent beside a re-fire",
-    events: [start(1), par(intent(1, "implementing"), start(1))],
-  },
-  {
-    name: "seed 11955 (I4, L1, production timing): set_intent done beside a re-fire",
-    events: [start(1), par(intent(1, "done"), start(1))],
-  },
-  {
-    name: "seed 1035 (I4, L1, production timing): set_intent beside a re-fire, a second conversation open",
-    events: [start(0), start(1), edit(0), par(intent(0, "done"), start(0))],
-  },
-  {
-    name: "seed 1501 (I4, L1, production timing): set_intent blocked beside a re-fire after an edit",
-    events: [start(0), edit(0), par(intent(0, "blocked"), start(0))],
-  },
-  {
-    name: "seed 912 (I4, L1, production timing): a re-fire beside set_intent behind a slow hub",
-    events: [start(0), edit(0), slow(1700, 1, 1), edit(0), par(start(0), intent(0, "blocked"))],
-  },
-  {
-    name: "seed 1494 (I4, L1, production timing): a re-fire beside set_intent after a crashed start",
-    events: [start(0), crash(1, "before"), edit(0), par(start(0), intent(0, "done"))],
-  },
-  {
-    name: "seed 11268 (I4, L1, production timing): a re-fire beside set_intent, then a flush beside an edit",
-    events: [start(0), par(start(0), intent(0, "blocked")), par(edit(0), { kind: "flush", c: 0 })],
-  },
-  {
-    name: "seed 11974 (I3, L2, production timing): a resume onto the life a heal's unheard register opened, behind a slow hub",
-    events: [start(0), slow(600, 1, 1), hubEnd(0), edit(0), end(0), par(start(0), end(0))],
-  },
 ];
 
-const NIGHT: SimEvent = { kind: "night" };
-const VACATION: SimEvent = { kind: "vacation" };
-const wake = (c: number): SimEvent => ({ kind: "wake", c });
-const recover = (c: number): SimEvent => ({ kind: "recover", c });
-const beat = (c: number): SimEvent => ({ kind: "beat", c });
-const straggle = (c: number): SimEvent => ({ kind: "straggle", c });
-const ioFail = (at: number, count: number): SimEvent => ({ kind: "ioFail", at, count });
 /** Conversation 1 starting and ending `count` times: each SessionEnd writes its life into the refused-lives note (M1). */
 const manyEnds = (count: number): readonly SimEvent[] => Array.from({ length: count }, () => [start(1), end(1)]).flat();
 const noDrops = (run: Run): boolean => run.drops.length === 0;
-const counted = (run: Run): boolean => run.uncountable.count > 0;
-
 
 /**
- * WHAT THE ROUND-8 REVIEW FOUND (review-2 round 8): its probes, and every seed
- * its `io`, `sleep` and `focus` sweeps found failing, shrunk. The `io` seeds
- * are the documented residual I1u — a drop the disk refused to write down
- * anywhere — and each asserts that this, and only this, is what happened.
+ * THE ROUND-8 REVIEW'S PROBES (review-2 round 8; the seeds its `io`, `sleep`
+ * and `focus` sweeps found are in the corpus, simulation/seed-corpus.ts).
  */
-const ROUND_8: readonly Found[] = [
+const ROUND_8_PROBES: readonly Probe[] = [
   {
     name: "probe N1: a night — the hub reaps the sleeping session — then the conversation goes on",
     events: [start(0), edit(0), intent(0, "blocked"), NIGHT, edit(0), intent(0, "done"), edit(0), end(0)],
@@ -583,94 +465,6 @@ const ROUND_8: readonly Found[] = [
     name: "probe L0 (control for L1): the same end heard",
     events: [start(0), edit(0), end(0), straggle(0), start(1), edit(1)],
   },
-  {
-    name: "sleep seed 3 (I3): a first life asleep a week, resumed after another conversation started",
-    events: [start(0), VACATION, start(2), wake(0), start(0)],
-  },
-  {
-    name: "sleep seed 365 (I3): a recovery after a crashed resume of an ended life",
-    events: [start(0), end(0), crash(2, "after"), start(0), recover(0)],
-  },
-  {
-    name: "sleep seed 935 (I3): a recovery after the end of a life the hub ended",
-    events: [start(0), crash(7, "before"), hubEnd(0), edit(0), end(0), recover(0)],
-  },
-  {
-    name: "sleep seed 936 (I3): a recovery after a resume killed after its third write",
-    events: [start(0), end(0), crash(3, "after"), start(0), recover(0)],
-  },
-  {
-    name: "sleep seed 1955 (I3): a recovery after a resume killed before its third write",
-    events: [start(0), end(0), crash(3, "before"), start(0), recover(0)],
-  },
-  {
-    name: "focus seed 361 (I3, L4): SessionEnd beside a re-fire behind a slow hub",
-    events: [start(1), slow(600, 2, 1), edit(1), fault("records503", 2, 1), par({ kind: "flush", c: 1 }, intent(1, "done")), par(end(1), start(1))],
-  },
-  {
-    name: "focus seed 662 (I3, L4): a start beside an end, twice, behind a slow hub",
-    events: [
-      par(start(0), end(0)),
-      slow(1700, 1, 2),
-      par(start(0), { kind: "flush", c: 0 }),
-      fault("recordsLate", 2, 1),
-      edit(0),
-      par(end(0), start(0)),
-      edit(0),
-    ],
-  },
-  {
-    name: "focus seed 1811 (I3, L4): the generated scenario",
-    events: scenarioOf(1811, GENERATORS.focus),
-  },
-  {
-    name: "focus seed 18 (I4): two set_intents of one conversation at once behind a slow hub",
-    events: [start(0), par(intent(0, "blocked"), start(0)), slow(1700, 1, 1), par(intent(0, "done"), intent(0, "blocked"))],
-  },
-  {
-    name: "focus seed 313 (I4): the generated scenario",
-    events: scenarioOf(313, GENERATORS.focus),
-  },
-  {
-    name: "focus seed 399 (I4): SessionEnd beside set_intent behind a slow hub",
-    events: [start(0), par(intent(0, "done"), { kind: "flush", c: 0 }), slow(1400, 2, 0), par(end(0), intent(0, "implementing"))],
-  },
-  {
-    name: "focus seed 1786 (I4): two set_intents of one conversation at once, answers lost",
-    events: [start(0), par(edit(0), intent(0, "done")), fault("recordsLate", 2, 2), edit(0), par(intent(0, "implementing"), intent(0, "done"))],
-  },
-  {
-    name: "focus seed 1791 (I4): set_intent beside a re-fire and an end behind a slow hub",
-    events: [
-      start(0),
-      par(start(0), intent(0, "blocked")),
-      slow(600, 2, 2),
-      par(intent(0, "implementing"), start(0)),
-      par(end(0), intent(0, "implementing")),
-    ],
-  },
-  ...[
-    { seed: 112, events: [start(1), ioFail(3, 6), hubEnd(1), edit(1)] },
-    { seed: 252, events: [ioFail(8, 17), { kind: "refuseWc", c: 1 } as SimEvent, par(start(1), edit(1))] },
-    {
-      seed: 894,
-      events: [start(0), start(2), fault("records503", 2, 1), edit(2), hubEnd(2), edit(0), edit(2), ioFail(1, 5), { kind: "oldFlush", c: 2 } as SimEvent],
-    },
-    { seed: 924, events: [{ kind: "refuseWc", c: 0 } as SimEvent, start(0), ioFail(3, 8), edit(0)] },
-    { seed: 940, events: [start(1), hubEnd(1), ioFail(5, 29), par(edit(1), end(0))] },
-    { seed: 950, events: [start(0), slow(1400, 2, 2), hubEnd(0), start(2), edit(0), edit(2), ioFail(3, 29), edit(0)] },
-    { seed: 1022, events: [start(0), hubEnd(0), ioFail(4, 11), edit(0)] },
-    { seed: 1359, events: [start(2), ioFail(5, 14), hubEnd(2), edit(2)] },
-    { seed: 1957, events: [crash(5, "before"), start(0), ioFail(4, 7), edit(0)] },
-  ].map(({ seed, events }) => ({
-    name: `io seed ${String(seed)} (residual I1u): a drop the disk refused to write down, and nothing else`,
-    events,
-    shows: counted,
-  })),
-  {
-    name: "io seed 1993 (I1, found by round 9's sweep): a record the hub held, in a batch whose heal stayed pending, withheld once its conversation was over",
-    events: scenarioOf(1993, GENERATORS.io),
-  },
 ];
 
 /**
@@ -714,42 +508,57 @@ describe("every kind of drop names its records (per-record I1)", () => {
   }
 });
 
-describe("what the round-7 review's sweep found, as fixed scenarios", () => {
-  for (const found of ROUND_7) {
-    const runner = found.open === undefined ? test : found.racy === true ? test.skip : test.failing;
-    runner(
-      found.open === undefined ? found.name : `${found.name} — open until ${found.open}`,
-      async () => {
-        const { verdicts } = await verdictsOf(found.events);
-        expect(said(verdicts)).toEqual([]);
-      },
-      PROBE_TIMEOUT_MS,
-    );
-  }
-});
-
-describe("what the round-8 review found, as fixed scenarios", () => {
-  for (const found of ROUND_8) {
-    const runner = found.open === undefined ? test : found.racy === true ? test.skip : test.failing;
-    runner(
-      found.open === undefined ? found.name : `${found.name} — open until ${found.open}`,
-      async () => {
-        const { run, verdicts } = await verdictsOf(found.events);
-        expect(said(unexplained(verdicts, found.events))).toEqual([]);
-        expect(found.shows?.(run) ?? true).toBe(true);
-      },
-      PROBE_TIMEOUT_MS,
-    );
-  }
-});
-
-describe("what the sweep found, as fixed scenarios", () => {
-  for (const found of FOUND) {
+describe("the round-7 and round-8 reviews' probes, as fixed scenarios", () => {
+  for (const probe of [...ROUND_7_PROBES, ...ROUND_8_PROBES]) {
     test(
-      found.name,
+      probe.name,
       async () => {
-        const { verdicts } = await verdictsOf(found.events);
+        const { run, verdicts } = await verdictsOf(probe.events);
         expect(said(verdicts)).toEqual([]);
+        expect(probe.shows?.(run) ?? true).toBe(true);
+      },
+      PROBE_TIMEOUT_MS,
+    );
+  }
+});
+
+const isWellFormed = (entry: CorpusSeed): boolean =>
+  Number.isInteger(entry.seed) &&
+  entry.seed > 0 &&
+  entry.generator in GENERATORS &&
+  entry.bug.length > 0 &&
+  /^[0-9a-f]{8,40}$/.test(entry.fix) &&
+  entry.events.length > 0;
+
+describe("the wide sweep (scripts/sim-sweep.ts)", () => {
+  test("sweeps every generator the simulation has, and the release candidate 5000 seeds of each", () => {
+    // Arrange / Act
+    const nightly = parseSweepArgs([]);
+    const rc = parseSweepArgs(["--rc"]);
+
+    // Assert
+    expect([...SWEEP_GENERATORS].sort() as readonly string[]).toEqual(Object.keys(GENERATORS).sort());
+    expect(nightly).toMatchObject({ generators: [...SWEEP_GENERATORS], seeds: 2000, base: 1 });
+    expect(rc).toMatchObject({ generators: [...SWEEP_GENERATORS], seeds: 5000, base: 1 });
+  });
+});
+
+describe("the historical seed corpus (simulation/seed-corpus.ts)", () => {
+  test("names each seed's generator, invariant, bug and fixing commit, and no entry twice", () => {
+    const names = SEED_CORPUS.map(corpusName);
+    expect(SEED_CORPUS.filter((entry) => !isWellFormed(entry)).map(corpusName)).toEqual([]);
+    expect(names.filter((name, index) => names.indexOf(name) !== index)).toEqual([]);
+  });
+
+  for (const entry of SEED_CORPUS) {
+    const runner = entry.open === undefined ? test : entry.racy === true ? test.skip : test.failing;
+    runner(
+      entry.open === undefined ? corpusName(entry) : `${corpusName(entry)} — open until ${entry.open}`,
+      async () => {
+        const { run, verdicts } = await verdictsOf(entry.events);
+        // Only the residual classes the entry names: a fixed bug allows none.
+        expect(said(unexplained(verdicts, entry.events, entry.residual ?? []))).toEqual([]);
+        expect(entry.shows?.(run) ?? true).toBe(true);
       },
       PROBE_TIMEOUT_MS,
     );
