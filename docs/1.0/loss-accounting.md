@@ -657,6 +657,19 @@ conversation's records to whichever flusher came next. Now only absence (ENOENT,
 hold the file, the same rule as `ledger-read.ts isAbsence`) ends a conversation. Any other failure is a new owner,
 `unreadable`, and its records are held like a live writer's. Doctor's waiting-records line names them, because nothing
 sends them until the file can be read again.
+
+**A stamp dated ahead of the clock ages from now** (review-2 round 8, L5). A heartbeat, a state file's write, or a
+heal stamp written while the clock ran ahead (a VM resumed with a drifted clock, an NTP step back) read as fresh until
+the clock caught up. In that time a dead host's state was never reaped and its spool never released, and a heal's
+cooldown never ran out, so its life's records were held as long. Readers now treat any stamp past now plus
+`CLOCK_SKEW_MS`, the hub's two-minute skew bound, as dated ahead. They clamp it to that bound and write the clamp down,
+so it ages from there:
+
+- SessionStart's state reap clamps the heartbeat and rewrites the file under its lock;
+- the healer rewrites its stamp as a finished walk.
+
+`future-stamps.test.ts` dates each stamp a year ahead. The state is reaped a week after the clamp, and the cooldown
+ends one cooldown after it.
  `owed-work-context.test.ts` replays the probe, and all 11
 records land.
 

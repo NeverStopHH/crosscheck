@@ -18832,6 +18832,46 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/release-clock.test.ts`,
     because: "review-2 round 8 H2: a later spool of the same host session starts on the old clock and expires at its first release",
   },
+  {
+    label: "a state dated ahead of the clock is left as dated",
+    file: `${CORE}/src/state/session-reap.ts`,
+    from: "    if (isDatedAhead(parsed.data, file.mtimeMs, now.getTime())) {\n      await clampDatedAhead(home, parsed.data, now);\n      continue;\n    }\n",
+    to: "",
+    test: `${CORE}/test/future-stamps.test.ts`,
+    because: "review-2 round 8, L5: a dead host's state reads as fresh until the clock catches up — never reaped, its spool never released",
+  },
+  {
+    label: "a state dated ahead keeps its heartbeat ahead",
+    file: `${CORE}/src/state/session-reap.ts`,
+    from: "    lastHeartbeatAt: atMost(fresh.lastHeartbeatAt ?? fresh.startedAt, boundMs),",
+    to: "    lastHeartbeatAt: fresh.lastHeartbeatAt,",
+    test: `${CORE}/test/future-stamps.test.ts`,
+    because: "review-2 round 8, L5: the rewrite clamps the file's write and not the stamp, and the state stays fresh",
+  },
+  {
+    label: "a state whose file alone is dated ahead is left as dated",
+    file: `${CORE}/src/state/session-reap.ts`,
+    from: " || wroteAtMs > boundMs;",
+    to: ";",
+    test: `${CORE}/test/future-stamps.test.ts`,
+    because: "review-2 round 8, L5: silence runs from the newer of stamp and write, and a write a year ahead holds the state that long",
+  },
+  {
+    label: "a heal stamp dated ahead of the clock is read as dated",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: "  return atMs > input.now().getTime() + CLOCK_SKEW_MS ? clampStamp(input, read) : read;",
+    to: "  return read;",
+    test: `${CORE}/test/future-stamps.test.ts`,
+    because: "review-2 round 8, L5: its cooldown runs until the clock catches up, and its life's records are held that long",
+  },
+  {
+    label: "a heal stamp's clamp is never written down",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: '  await writeStamp(input, new Date(atMs), "done", 0, stamp.failedFor);\n',
+    to: "",
+    test: `${CORE}/test/future-stamps.test.ts`,
+    because: "review-2 round 8, L5: every read clamps to its own now, and the cooldown never runs out",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19035,6 +19075,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
  * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1
  * PRINTS: packages/connector-core/test/fix-diff.test.ts 7
+ * PRINTS: packages/connector-core/test/future-stamps.test.ts 5
  * PRINTS: packages/connector-core/test/ghost-declare.test.ts 1
  * PRINTS: packages/connector-core/test/ghost-render.test.ts 2
  * PRINTS: packages/connector-core/test/git-lane-cost.test.ts 1

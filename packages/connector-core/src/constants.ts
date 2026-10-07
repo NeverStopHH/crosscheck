@@ -1462,6 +1462,15 @@ export const MS_PER_DAY =
 /** Clock skew above this breaks the 90 s presence TTL (server PRESENCE_TTL_SECONDS). */
 export const MAX_CLOCK_SKEW_SECONDS = 120;
 
+/**
+ * How far ahead of the clock that reads it a local stamp may be and still be
+ * taken as written (review-2 round 8, L5). A heartbeat or heal stamp past it
+ * was written while the clock ran ahead, and is clamped to now plus this and
+ * written down, so it ages from there — read as dated, it stayed fresh until
+ * the clock caught up. The same bound as the hub's, one skew for both.
+ */
+export const CLOCK_SKEW_MS = MAX_CLOCK_SKEW_SECONDS * MS_PER_SECOND;
+
 export const DOCTOR_SPOOL_DEPTH_WARN = 200;
 export const DOCTOR_SPOOL_DEPTH_FAIL = 1500;
 export const DOCTOR_SPOOL_AGE_WARN_HOURS = 24;

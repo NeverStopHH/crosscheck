@@ -22,6 +22,7 @@
 import { rm } from "node:fs/promises";
 
 import {
+  CLOCK_SKEW_MS,
   MAX_SPOOL_AGE_DAYS,
   MS_PER_DAY,
   SESSION_STATE_REAP_MAX_PER_RUN,
@@ -32,7 +33,7 @@ import { writeEndMarker } from "../spool/end-marker.ts";
 import { stampReleased } from "../spool/release.ts";
 import { listSessionStateFiles, sessionSilentForMs } from "./session-scan.ts";
 import { lifeRungOf } from "./session-lineage.ts";
-import { crosscheckSessionIdFor, SessionStateSchema } from "./session-state.ts";
+import { crosscheckSessionIdFor, SessionStateSchema, updateSessionState } from "./session-state.ts";
 import type { SessionState } from "./session-state.ts";
 
 const STATE_SUFFIX = ".json";
@@ -88,6 +89,37 @@ const writeDownReapedLife = async (
   }
 };
 
+/**
+ * Whether the state's own stamp or its file's last write is dated past now
+ * plus CLOCK_SKEW_MS (review-2 round 8, L5): written while the clock ran
+ * ahead, it read as fresh until the clock caught up — a dead host's state
+ * never reaped, its spool never released.
+ */
+const isDatedAhead = (state: SessionState, wroteAtMs: number, nowMs: number): boolean => {
+  const boundMs = nowMs + CLOCK_SKEW_MS;
+  const saidMs = Date.parse(state.lastHeartbeatAt ?? state.startedAt);
+  return (!Number.isNaN(saidMs) && saidMs > boundMs) || wroteAtMs > boundMs;
+};
+
+/** The stamp, or the bound when it is later or unreadable. */
+const atMost = (iso: string, boundMs: number): string => {
+  const ms = Date.parse(iso);
+  return Number.isNaN(ms) || ms > boundMs ? new Date(boundMs).toISOString() : iso;
+};
+
+/**
+ * A STATE DATED AHEAD IS WRITTEN DOWN AT THE BOUND: its heartbeat clamped to
+ * now plus CLOCK_SKEW_MS, and the file rewritten under its lock, so its
+ * silence — what reaps it and releases its spool — runs from here.
+ */
+const clampDatedAhead = async (home: string, state: SessionState, now: Date): Promise<void> => {
+  const boundMs = now.getTime() + CLOCK_SKEW_MS;
+  await updateSessionState(home, state.hostSessionKey, (fresh) => ({
+    ...fresh,
+    lastHeartbeatAt: atMost(fresh.lastHeartbeatAt ?? fresh.startedAt, boundMs),
+  }));
+};
+
 export interface StateReapOptions {
   /** Never reaped, whatever its age: the caller is mid-session inside it. */
   readonly keepHostSessionKey?: string;
@@ -131,6 +163,10 @@ export const reapStaleSessionStates = async (
     }
     const parsed = SessionStateSchema.safeParse(await readJsonOrNull(file.path));
     if (!parsed.success) {
+      continue;
+    }
+    if (isDatedAhead(parsed.data, file.mtimeMs, now.getTime())) {
+      await clampDatedAhead(home, parsed.data, now);
       continue;
     }
     if (!isPastReapBound(parsed.data, file.mtimeMs, now.getTime())) {

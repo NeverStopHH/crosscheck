@@ -34,7 +34,7 @@
  */
 import type { CausalGuaranteeTriple } from "@crosscheck/schema";
 
-import { HEAL_COOLDOWN_MS, HEAL_MIN_ROOM_MS } from "../constants.ts";
+import { CLOCK_SKEW_MS, HEAL_COOLDOWN_MS, HEAL_MIN_ROOM_MS } from "../constants.ts";
 import {
   readJsonOrNull,
   removeFile,
@@ -114,14 +114,28 @@ const readStamp = async (input: SessionHealerInput): Promise<HealStamp | null> =
     failed?: unknown;
   } | null;
   const atMs = typeof stamp?.at === "string" ? Date.parse(stamp.at) : Number.NaN;
-  return Number.isNaN(atMs)
-    ? null
-    : {
-        atMs,
-        walking: stamp?.phase === "walking",
-        untilMs: typeof stamp?.until === "number" ? stamp.until : 0,
-        failedFor: typeof stamp?.failed === "string" ? stamp.failed : null,
-      };
+  if (Number.isNaN(atMs)) {
+    return null;
+  }
+  const read: HealStamp = {
+    atMs,
+    walking: stamp?.phase === "walking",
+    untilMs: typeof stamp?.until === "number" ? stamp.until : 0,
+    failedFor: typeof stamp?.failed === "string" ? stamp.failed : null,
+  };
+  return atMs > input.now().getTime() + CLOCK_SKEW_MS ? clampStamp(input, read) : read;
+};
+
+/**
+ * A STAMP DATED AHEAD OF THE CLOCK (review-2 round 8, L5) is written down
+ * again at now plus CLOCK_SKEW_MS, as a finished walk: its cooldown runs out
+ * one cooldown from here. Read as dated, it ran until the clock caught up,
+ * and every record of its life was held that long.
+ */
+const clampStamp = async (input: SessionHealerInput, stamp: HealStamp): Promise<HealStamp> => {
+  const atMs = input.now().getTime() + CLOCK_SKEW_MS;
+  await writeStamp(input, new Date(atMs), "done", 0, stamp.failedFor);
+  return { atMs, walking: false, untilMs: 0, failedFor: stamp.failedFor };
 };
 
 const writeStamp = async (
