@@ -244,8 +244,23 @@ export const MAX_SEEN_TARGETS = 500;
  * answers are cached too — a foreign root under ITS OWN repoId, an
  * unresolvable root as null — so a repeated foreign touch also costs no git
  * after the first.
+ *
+ * SIXTEEN, NOT EIGHT, since every root also carries its TOPIC — the branch it
+ * is on, read from its HEAD file — and the Stop-time git lane sweeps the roots
+ * listed here (flows/capture-git-touches.ts). One long-lived session working
+ * a dozen sibling worktrees evicted the oldest at eight and the git lane then
+ * never looked at it again; the session root counts as one entry now too.
  */
-export const MAX_KNOWN_WORKTREE_ROOTS = 8;
+export const MAX_KNOWN_WORKTREE_ROOTS = 16;
+
+/**
+ * How many hex characters of a detached HEAD's commit its TOPIC LABEL keeps:
+ * `detached@<sha>` read straight from the root's HEAD file, with no git to ask
+ * for the shortest unambiguous prefix. Nine is git's own `--short` length in a
+ * repository of this monorepo's size, and the label only has to tell two
+ * detached roots of one session apart.
+ */
+export const DETACHED_LABEL_SHA_CHARS = 9;
 
 /**
  * Tool-call ids an ACP session remembers as ALREADY having booked their

@@ -28,7 +28,7 @@
  *     #18 line has to be able to name a path that never resolved, and such a
  *     path has no repo-relative form to hold.
  */
-import { withKnownWorktreeRoot } from "./session-state.ts";
+import { withKnownWorktreeRoot, withRootHead } from "./session-state.ts";
 import type { SessionState } from "./session-state.ts";
 import { containsSecret } from "../capture/secret-scan.ts";
 import {
@@ -126,6 +126,11 @@ export const withCaptureBookkeeping = (
       entry.attempts,
       entry.stamp,
     );
+  }
+  // ...and what this touch read of each root's HEAD: its topic, kept on the
+  // entry so the next touch sees a branch switch from the HEAD bytes alone.
+  for (const head of input.resolution?.headByRoot.values() ?? []) {
+    next = withRootHead(next, head);
   }
   // WHAT THE RATIO IS DIVIDED BY MUST ALSO BE EDITS. `editToolFires` counts
   // edits, so a target or a drop only counts as evidence about EDIT capture

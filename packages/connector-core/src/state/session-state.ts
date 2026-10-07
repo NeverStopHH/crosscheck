@@ -226,6 +226,16 @@ const SessionStateObjectSchema = z.looseObject({
         repoId: z.string().min(1).nullable(),
         attempts: z.number().int().min(1).default(1),
         stamp: z.string().min(1).nullable().default(null),
+        // THE ROOT'S TOPIC (capture/touched-root.ts `RootHead`): the branch
+        // read from its HEAD file, the bytes that were read, the commit at
+        // the session's first touch and the touch times — null on an entry
+        // written before topics existed, which reads as "not seen yet".
+        branch: z.string().min(1).nullable().default(null),
+        headStamp: z.string().min(1).nullable().default(null),
+        firstHead: z.string().min(1).nullable().default(null),
+        firstTouchedAt: z.string().min(1).nullable().default(null),
+        lastTouchedAt: z.string().min(1).nullable().default(null),
+        bashTouchedAt: z.string().min(1).nullable().default(null),
       }),
     )
     .default([]),
@@ -1336,10 +1346,36 @@ export const withKnownWorktreeRoot = (
    */
   stamp: string | null = null,
 ): SessionState => {
-  const withoutRoot = state.knownWorktreeRoots.filter(
-    (entry) => entry.root !== root,
-  );
-  const merged = [...withoutRoot, { root, repoId, attempts, stamp }];
+  const previous = state.knownWorktreeRoots.find((entry) => entry.root === root);
+  // A re-judged identity is a new answer about the REPO, not about the
+  // topic: what the HEAD pass recorded on the entry stays with it — unless
+  // the checkout itself was replaced, when nothing it said survives.
+  const isSameCheckout =
+    previous !== undefined && (previous.stamp === null || stamp === null || previous.stamp === stamp);
+  return withRootEntry(state, {
+    ...(isSameCheckout ? previous : EMPTY_ROOT_TOPIC),
+    root,
+    repoId,
+    attempts,
+    stamp,
+  });
+};
+
+type KnownRootEntry = SessionState["knownWorktreeRoots"][number];
+
+/** An entry's topic fields before any HEAD has been read for it. */
+const EMPTY_ROOT_TOPIC = {
+  branch: null,
+  headStamp: null,
+  firstHead: null,
+  firstTouchedAt: null,
+  lastTouchedAt: null,
+  bashTouchedAt: null,
+} as const;
+
+/** Dedup by root, newest last, FIFO-capped — the one write every root entry takes. */
+const withRootEntry = (state: SessionState, entry: KnownRootEntry): SessionState => {
+  const merged = [...state.knownWorktreeRoots.filter((known) => known.root !== entry.root), entry];
   return {
     ...state,
     knownWorktreeRoots:
@@ -1347,6 +1383,43 @@ export const withKnownWorktreeRoot = (
         ? merged
         : merged.slice(merged.length - MAX_KNOWN_WORKTREE_ROOTS),
   };
+};
+
+/** What one touch read of a root's HEAD (capture/touched-root.ts `RootHead`). */
+export interface RootHeadFold {
+  readonly root: string;
+  readonly repoId: string;
+  readonly branch: string | null;
+  readonly headStamp: string | null;
+  readonly firstHead: string | null;
+  readonly touchedAt: string;
+}
+
+/**
+ * A touch's HEAD read, folded into the root's cache entry — created for a
+ * root the identity pass never had to judge, which is the session's own
+ * checkout. The first touch is kept once set (`firstTouchedAt`, `firstHead`):
+ * the git lane's commit window opens there (flows/capture-git-touches.ts).
+ * The entry moves to the end, so the FIFO cap evicts the root touched least
+ * recently rather than the one judged first.
+ */
+export const withRootHead = (state: SessionState, head: RootHeadFold): SessionState => {
+  const previous = state.knownWorktreeRoots.find((entry) => entry.root === head.root);
+  const base: KnownRootEntry = previous ?? {
+    root: head.root,
+    repoId: head.repoId,
+    attempts: 1,
+    stamp: null,
+    ...EMPTY_ROOT_TOPIC,
+  };
+  return withRootEntry(state, {
+    ...base,
+    branch: head.branch,
+    headStamp: head.headStamp,
+    firstHead: base.firstHead ?? head.firstHead,
+    firstTouchedAt: base.firstTouchedAt ?? head.touchedAt,
+    lastTouchedAt: head.touchedAt,
+  });
 };
 
 /** Remembers a probe key that answered "nothing", same FIFO cap as the markers. */

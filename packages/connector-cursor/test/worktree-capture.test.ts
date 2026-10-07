@@ -460,6 +460,13 @@ describe("the session's worktree-root cache is fed to the resolver", () => {
             // UNSTAMPED, like every entry an older state file holds: the
             // answer stands, which is what this test is about.
             stamp: null,
+            // ...and no topic: the schema's defaults for an older entry.
+            branch: null,
+            headStamp: null,
+            firstHead: null,
+            firstTouchedAt: null,
+            lastTouchedAt: null,
+            bashTouchedAt: null,
           },
         ],
       }),

@@ -42,6 +42,7 @@ const resolution = (
   outsideDrops: 0,
   newlyResolved: [],
   firstResolvedRoot: null,
+  headByRoot: new Map(),
   ...overrides,
 });
 
@@ -219,6 +220,16 @@ describe("the counters a WARN is measured on", () => {
   });
 });
 
+/** A root the identity pass judged and no HEAD read has reached yet. */
+const NO_TOPIC = {
+  branch: null,
+  headStamp: null,
+  firstHead: null,
+  firstTouchedAt: null,
+  lastTouchedAt: null,
+  bashTouchedAt: null,
+} as const;
+
 describe("the root cache and the drops it explains", () => {
   test("newly resolved roots are folded in with the attempts they cost", () => {
     // Arrange
@@ -246,15 +257,49 @@ describe("the root cache and the drops it explains", () => {
     });
 
     // Assert: a positive and an UNKNOWN answer are both remembered, and the
-    // unknown keeps its attempt budget so the resolver may retry it
+    // unknown keeps its attempt budget so the resolver may retry it — and
+    // neither has a topic yet: no HEAD read reached them
     expect(after.knownWorktreeRoots).toEqual([
       {
         root: "/repos/api-featB",
         repoId: "github.com/acme/api",
         attempts: 1,
         stamp: "1:2:3",
+        ...NO_TOPIC,
       },
-      { root: "/repos/mystery", repoId: null, attempts: 2, stamp: null },
+      { root: "/repos/mystery", repoId: null, attempts: 2, stamp: null, ...NO_TOPIC },
+    ]);
+  });
+
+  test("a HEAD the touch read is folded in as the root's topic", () => {
+    // Act
+    const after = withCaptureBookkeeping(state(), {
+      resolution: resolution({
+        headByRoot: new Map([
+          [
+            "/repos/api-featB",
+            {
+              root: "/repos/api-featB",
+              repoId: "github.com/acme/api",
+              branch: "feat/b",
+              headStamp: "ref: refs/heads/feat/b",
+              firstHead: null,
+              head: null,
+              touchedAt: NOW.toISOString(),
+            },
+          ],
+        ]),
+      }),
+      capturedCount: 1,
+      editFired: true,
+      toolLabel: "Edit",
+      firstPath: "/repos/api-featB/src/a.ts",
+      now: NOW,
+    });
+
+    // Assert
+    expect(after.knownWorktreeRoots.map((entry) => [entry.root, entry.branch, entry.lastTouchedAt])).toEqual([
+      ["/repos/api-featB", "feat/b", NOW.toISOString()],
     ]);
   });
 

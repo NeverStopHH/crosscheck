@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1794
+    # PRINTS: 1797
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -257,7 +257,7 @@ jobs:
     # PRINTS: capture/commit-evidence.ts 1
     # PRINTS: capture/records.ts 1
     # PRINTS: capture/target-paths.ts 1
-    # PRINTS: capture/touched-root.ts 5
+    # PRINTS: capture/touched-root.ts 6
     # PRINTS: claim-validity.ts 2
     # PRINTS: conference/report.ts 1
     # PRINTS: config/config.ts 4
@@ -290,12 +290,14 @@ jobs:
     # PRINTS: flows/hint.ts 5
     # PRINTS: flows/register-session.ts 30
     # PRINTS: flows/solved-hint.ts 4
+    # PRINTS: flows/work-context-title.ts 1
     # PRINTS: git/check-ignore.ts 1
     # PRINTS: git/claim-drift.ts 5
     # PRINTS: git/fix-diff.ts 7
     # PRINTS: git/git.ts 4
     # PRINTS: git/pin-paths.ts 8
     # PRINTS: git/pin-sweep.ts 2
+    # PRINTS: git/repo-identity.ts 1
     # PRINTS: git/ssh-hostname.ts 2
     # PRINTS: guarantees/check.ts 17
     # PRINTS: guarantees/declarations.ts 5
@@ -672,6 +674,7 @@ jobs:
     # PRINTS: render-surface-registry.test.ts 1
     # PRINTS: render-surfaces.ts 1
     # PRINTS: render.ts 83
+    # PRINTS: repo-identity.ts 1
     # PRINTS: repo-path.ts 1
     # PRINTS: report.ts 9
     # PRINTS: retention-registry.ts 9
@@ -724,7 +727,7 @@ jobs:
     # PRINTS: tool-events.ts 2
     # PRINTS: tool-failure.ts 3
     # PRINTS: tool-window-key.ts 2
-    # PRINTS: touched-root.ts 5
+    # PRINTS: touched-root.ts 6
     # PRINTS: transcript.ts 4
     # PRINTS: triggers.ts 2
     # PRINTS: ui-ceremony.ts 5
@@ -743,6 +746,7 @@ jobs:
     # PRINTS: wiring-removal.ts 7
     # PRINTS: wiring-scope.ts 3
     # PRINTS: work-context-ack.ts 6
+    # PRINTS: work-context-title.ts 1
     # PRINTS: work-contexts.ts 2
     # PRINTS: worker-env.ts 1
     # PRINTS: worker.ts 7

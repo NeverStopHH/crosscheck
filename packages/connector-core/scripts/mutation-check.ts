@@ -19452,6 +19452,37 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/init-remove-safety.test.ts`,
     because: "every checkout sharing the linked directory is wired by one repo's install",
   },
+  {
+    // DESIGN.md "One session, many topics", item 1.
+    label: "a branch switch inside a worktree keeps the topic the cache remembered",
+    file: `${CORE}/src/capture/touched-root.ts`,
+    from: "      : isSameHead\n        ? (known?.branch ?? head.branch)\n        : head.branch;",
+    to: "      : (known?.branch ?? head.branch);",
+    test: `${CORE}/test/topic-heads.test.ts`,
+    because:
+      "`git switch` in a sibling worktree goes unseen, and every edit on the new " +
+      "branch is filed under the branch the root was on when the session first touched it",
+  },
+  {
+    label: "a detached HEAD is labelled by a branch instead of its commit",
+    file: `${CORE}/src/git/repo-identity.ts`,
+    from: "    ? `${DETACHED_BRANCH_PREFIX}${content.slice(0, DETACHED_LABEL_SHA_CHARS)}`",
+    to: '    ? "main"',
+    test: `${CORE}/test/topic-heads.test.ts`,
+    because:
+      "a long-lived detached start checkout and every detached sibling are all " +
+      "filed under one branch they are not on — the stale-title defect the owner hit",
+  },
+  {
+    label: "a detached start checkout is titled by a branch that points at its commit",
+    file: `${CORE}/src/flows/work-context-title.ts`,
+    from: "  if (!identity.branch.startsWith(DETACHED_BRANCH_PREFIX)) {\n    return fallbackWorkContextTitle(identity.branch, identity.repoId);\n  }\n  const subject",
+    to: "  if (true) {\n    return fallbackWorkContextTitle(\"main\", identity.repoId);\n  }\n  const subject",
+    test: `${CORE}/test/session-flows.test.ts`,
+    because:
+      "the session's own work context reads `main @ api` while it sits detached at an " +
+      "old commit, and teammates read the stale branch as what it is working on",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19717,6 +19748,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
+ * PRINTS: packages/connector-core/test/session-flows.test.ts 1
  * PRINTS: packages/connector-core/test/session-heal.test.ts 33
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 4
  * PRINTS: packages/connector-core/test/session-lives.test.ts 60
@@ -19733,6 +19765,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/staleness-axis.test.ts 1
  * PRINTS: packages/connector-core/test/target-paths.test.ts 1
  * PRINTS: packages/connector-core/test/tool-window-pairing.test.ts 6
+ * PRINTS: packages/connector-core/test/topic-heads.test.ts 2
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
  * PRINTS: packages/connector-core/test/verdict-wire.test.ts 2
  * PRINTS: packages/connector-core/test/work-context-ack.test.ts 3

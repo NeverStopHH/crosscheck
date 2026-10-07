@@ -5,13 +5,18 @@
  * uses. This module is the SESSION-START half: a worktree session runs on a
  * detached HEAD, its branch reads `detached@<sha>`, and `detached@<sha> @
  * monorepo` told teammates nothing (70 of 80 trial work contexts). So, for a
- * detached session only, two bounded git calls (HEAD_LABEL_GIT_TIMEOUT_MS
- * each, runGit's deadline-raced, killable discipline):
+ * detached session only, one bounded git call (HEAD_LABEL_GIT_TIMEOUT_MS,
+ * runGit's deadline-raced, killable discipline) for the HEAD commit's
+ * subject, sanitized as PROSE and bounded to DETACHED_SUBJECT_MAX_CHARS:
+ * `detached@<sha> · <subject> @ api`.
  *
- *   1. the branch whose tip the commit sits on — a worktree made FROM a
- *      branch — is the best label and wins outright: `feat/x @ api`;
- *   2. otherwise the HEAD commit's subject, sanitized as PROSE and bounded
- *      to DETACHED_SUBJECT_MAX_CHARS: `detached@<sha> · <subject> @ api`.
+ * NEVER A BRANCH THAT MERELY POINTS AT THE COMMIT. This used to try
+ * `for-each-ref --points-at HEAD` first and let the branch win outright. A
+ * long-lived detached checkout sits at an OLD commit, and a stale branch from
+ * weeks ago points there too: the owner's one session in `agentic-main`
+ * titled every topic it worked on — in a dozen sibling worktrees — by that
+ * stale branch. A detached HEAD is on no branch, and its title says so; the
+ * topics it touches carry their own branches (flows/topic-contexts.ts).
  *
  * The subject is a developer's commit message on its way into an uploaded
  * title that every teammate surface frames in « » — so it takes the same
@@ -61,22 +66,6 @@ export const composeDetachedTitle = (
   return fallbackWorkContextTitle(head, repoId);
 };
 
-/** First local branch whose tip IS this commit — git lists them sorted. */
-const branchAtHead = async (root: string): Promise<string | null> => {
-  const listed = await runGit(
-    // for-each-ref, not `branch --points-at`: the latter prints a synthetic
-    // "(HEAD detached at …)" line first in exactly the state this runs in.
-    ["for-each-ref", "--points-at", "HEAD", "--format=%(refname:short)", "refs/heads"],
-    root,
-    HEAD_LABEL_GIT_TIMEOUT_MS,
-  );
-  const first = listed
-    ?.split("\n")
-    .map((line) => line.trim())
-    .find((line) => line.length > 0);
-  return first === undefined ? null : first;
-};
-
 /**
  * The session-start title for a host that supplied none: `branch @ repo`
  * unchanged for a branch session (no git at all), and the detached
@@ -89,10 +78,6 @@ export const resolveFallbackWorkContextTitle = async (
 ): Promise<string> => {
   if (!identity.branch.startsWith(DETACHED_BRANCH_PREFIX)) {
     return fallbackWorkContextTitle(identity.branch, identity.repoId);
-  }
-  const branch = await branchAtHead(identity.root);
-  if (branch !== null) {
-    return fallbackWorkContextTitle(branch, identity.repoId);
   }
   const subject = await runGit(
     ["log", "-1", "--format=%s"],

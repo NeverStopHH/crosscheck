@@ -18,6 +18,7 @@ import {
   withBriefingSolvedRefs,
   withKnownWorktreeRoot,
   withProbedFingerprint,
+  withRootHead,
 } from "../src/state/session-state.ts";
 import type { SessionState } from "../src/state/session-state.ts";
 
@@ -174,6 +175,16 @@ describe("withProbedFingerprint", () => {
 });
 
 
+/** A root the identity pass judged and no HEAD read has reached yet. */
+const NO_TOPIC = {
+  branch: null,
+  headStamp: null,
+  firstHead: null,
+  firstTouchedAt: null,
+  lastTouchedAt: null,
+  bashTouchedAt: null,
+} as const;
+
 describe("withKnownWorktreeRoot (the #17 per-session root cache)", () => {
   test("remembers a root's repoId, positive and negative", () => {
     // Arrange + Act: one same-repo worktree, one foreign/unresolvable root
@@ -185,8 +196,8 @@ describe("withKnownWorktreeRoot (the #17 per-session root cache)", () => {
 
     // Assert: both cached, the negative answer kept as null
     expect(state.knownWorktreeRoots).toEqual([
-      { root: "/wt/a", repoId: "github.com/acme/api", attempts: 1, stamp: null },
-      { root: "/wt/foreign", repoId: null, attempts: 1, stamp: null },
+      { root: "/wt/a", repoId: "github.com/acme/api", attempts: 1, stamp: null, ...NO_TOPIC },
+      { root: "/wt/foreign", repoId: null, attempts: 1, stamp: null, ...NO_TOPIC },
     ]);
   });
 
@@ -199,8 +210,31 @@ describe("withKnownWorktreeRoot (the #17 per-session root cache)", () => {
 
     // Assert: one entry, the newest answer
     expect(second.knownWorktreeRoots).toEqual([
-      { root: "/wt/a", repoId: "github.com/acme/api", attempts: 1, stamp: null },
+      { root: "/wt/a", repoId: "github.com/acme/api", attempts: 1, stamp: null, ...NO_TOPIC },
     ]);
+  });
+
+  test("a re-judged identity keeps the topic the HEAD pass recorded; a replaced checkout drops it", () => {
+    // Arrange: a root whose HEAD was read, stamped as one checkout
+    const judged = withKnownWorktreeRoot(baseState(), "/wt/a", "github.com/acme/api", 1, "1:1:1");
+    const touched = withRootHead(judged, {
+      root: "/wt/a",
+      repoId: "github.com/acme/api",
+      branch: "feat/x",
+      headStamp: "ref: refs/heads/feat/x",
+      firstHead: null,
+      touchedAt: "2026-10-07T10:00:00.000Z",
+    });
+
+    // Act
+    const sameCheckout = withKnownWorktreeRoot(touched, "/wt/a", "github.com/acme/api", 2, "1:1:1");
+    const replaced = withKnownWorktreeRoot(touched, "/wt/a", "github.com/acme/web", 1, "2:2:2");
+
+    // Assert
+    expect(sameCheckout.knownWorktreeRoots[0]?.branch).toBe("feat/x");
+    expect(sameCheckout.knownWorktreeRoots[0]?.firstTouchedAt).toBe("2026-10-07T10:00:00.000Z");
+    expect(replaced.knownWorktreeRoots[0]?.branch).toBeNull();
+    expect(replaced.knownWorktreeRoots[0]?.firstTouchedAt).toBeNull();
   });
 
   test("the cache is FIFO-capped at MAX_KNOWN_WORKTREE_ROOTS", () => {
