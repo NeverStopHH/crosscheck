@@ -122,6 +122,32 @@ export const listOwnedNeedsApproval = async (
   return rows.map(toArtifactView);
 };
 
+/**
+ * One needs_approval artifact the viewer owns, for the terms a release
+ * ceremony signs (routes/ui-ceremony-artifacts.ts). Null for a missing id
+ * and for somebody else's artifact alike, as setArtifactApproval answers.
+ */
+export const readOwnedNeedsApproval = async (
+  db: Db,
+  ownerDeveloperId: string,
+  artifactId: string,
+): Promise<{ readonly content: string } | null> => {
+  const rows = await db
+    .select({ content: artifacts.content })
+    .from(artifacts)
+    .innerJoin(claims, eq(artifacts.claimId, claims.id))
+    .innerJoin(agentSessions, eq(claims.authorSessionId, agentSessions.id))
+    .where(
+      and(
+        eq(artifacts.id, artifactId),
+        eq(artifacts.sensitivity, NEEDS_APPROVAL_SENSITIVITY),
+        eq(agentSessions.developerId, ownerDeveloperId),
+      ),
+    )
+    .limit(1);
+  return rows[0] ?? null;
+};
+
 export type ApprovalOutcome = "updated" | "not_found";
 
 /**

@@ -30,6 +30,11 @@ const EXPECTED_CSP =
   "default-src 'none'; style-src 'self'; img-src 'self'; " +
   "form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
 
+/** The ceremony pages' CSP: the strict one plus a same-origin script and fetch. */
+const EXPECTED_PASSKEY_CSP =
+  "default-src 'none'; style-src 'self'; img-src 'self'; script-src 'self'; connect-src 'self'; " +
+  "form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
+
 describe("ui login page", () => {
   test("serves the login form without auth, under the strict CSP", async () => {
     const harness = await createTestHarness();
@@ -184,11 +189,13 @@ describe("ui response headers", () => {
     const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");
     const cookie = await loginUi(harness, nick.apiKey);
 
+    // /ui/approvals runs the passkey ceremony since review M2, so it carries
+    // the ceremony pages' CSP (ui-approvals.test.ts pins which one).
     for (const path of ["/ui/feed", "/ui/members", "/ui/approvals"]) {
       const response = await uiGet(harness, path, cookie);
       expect(response.status).toBe(200);
       expect(response.headers.get("Content-Security-Policy")).toBe(
-        EXPECTED_CSP,
+        path === "/ui/approvals" ? EXPECTED_PASSKEY_CSP : EXPECTED_CSP,
       );
       expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
       expect(response.headers.get("Referrer-Policy")).toBe("no-referrer");

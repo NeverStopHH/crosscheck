@@ -1,7 +1,8 @@
 /**
  * THE ONE SCRIPT IN THE WEB UI (1.0 spec 04a §5) — served as /ui/passkey.js
- * and loaded only by /ui/passkeys and /ui/waivers, whose CSP alone allows a
- * same-origin script and same-origin fetch. Every other page stays JS-free.
+ * and loaded only by /ui/passkeys, /ui/waivers and /ui/approvals (artifact
+ * release, review M2), whose CSP alone allows a same-origin script and
+ * same-origin fetch. Every other page stays JS-free.
  *
  * WebAuthn has no form-only path: `navigator.credentials` is the only door
  * to an authenticator. So this script does exactly the ceremony and nothing

@@ -24093,6 +24093,51 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/ui-ceremony-localhost.test.ts`,
     because: "tailscale serve sends X-Forwarded-For, never Forwarded, so its requests read as the hub's own browser",
   },
+  // An agent's key could release an artifact in the web UI (hub hardening, review M2).
+  {
+    label: "a key-opened web session releases an artifact with a form post",
+    file: `${SERVER}/src/routes/ui-pages.tsx`,
+    from: '  router.post("/artifacts/:id/approve", (c) => refuseFormRelease(c));',
+    to:
+      '  router.post("/artifacts/:id/approve", async (c) => { const { setArtifactApproval } = await import("../services/artifacts.ts"); ' +
+      'await setArtifactApproval(deps.db, c.get("developer").id, c.req.param("id"), true); return c.redirect("/ui/approvals", 303); });',
+    test: `${SERVER}/test/ui-approvals.test.ts`,
+    because: "any agent holding the API key logs in, reads the CSRF token and discloses its person's artifact to the team",
+  },
+  {
+    label: "a key-opened web session withdraws an artifact with a form post",
+    file: `${SERVER}/src/routes/ui-pages.tsx`,
+    from: '  router.post("/artifacts/:id/revoke", (c) => refuseFormRelease(c));',
+    to:
+      '  router.post("/artifacts/:id/revoke", async (c) => { const { setArtifactApproval } = await import("../services/artifacts.ts"); ' +
+      'await setArtifactApproval(deps.db, c.get("developer").id, c.req.param("id"), false); return c.redirect("/ui/approvals", 303); });',
+    test: `${SERVER}/test/ui-approvals.test.ts`,
+    because: "the key undoes a release the person signed, with no gesture of theirs",
+  },
+  {
+    label: "an artifact release signs no content",
+    file: `${SERVER}/src/routes/ui-ceremony-artifacts.ts`,
+    from: "    terms: { contentDigest: digestOf(owned.content) },",
+    to: "    terms: {},",
+    test: `${SERVER}/test/ui-approvals.test.ts`,
+    because: "a signature given for the content on the page releases whatever the row holds by the time it verifies",
+  },
+  {
+    label: "a release ceremony names somebody else's artifact",
+    file: `${SERVER}/src/services/artifacts.ts`,
+    from: "        eq(agentSessions.developerId, ownerDeveloperId),\n      ),\n    )\n    .limit(1);",
+    to: "      ),\n    )\n    .limit(1);",
+    test: `${SERVER}/test/ui-approvals.test.ts`,
+    because: "a teammate's prompt is minted over an artifact that is not theirs, and the id's existence leaks",
+  },
+  {
+    label: "the approvals page loses the CSP its ceremony script needs",
+    file: `${SERVER}/src/routes/ui-pages.tsx`,
+    from: '    c.header("Content-Security-Policy", UI_PASSKEY_CSP);',
+    to: "    void UI_PASSKEY_CSP;",
+    test: `${SERVER}/test/ui-approvals.test.ts`,
+    because: "the browser blocks passkey.js under the strict CSP, so the person cannot release anything at all",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -24537,6 +24582,7 @@ interface Outcome {
  * PRINTS: packages/server/test/suspect.test.ts 9
  * PRINTS: packages/server/test/target-last-seen.test.ts 1
  * PRINTS: packages/server/test/team-settings.test.ts 9
+ * PRINTS: packages/server/test/ui-approvals.test.ts 5
  * PRINTS: packages/server/test/ui-ceremony-localhost.test.ts 5
  * PRINTS: packages/server/test/ui-feed.test.ts 3
  * PRINTS: packages/server/test/ui-passkeys.test.ts 9

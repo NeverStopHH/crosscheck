@@ -25,7 +25,9 @@ export const UI_CSP =
   "form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
 
 /**
- * The CSP of the two passkey pages ONLY (1.0 spec 04a §5): `UI_CSP` plus a
+ * The CSP of the three ceremony pages ONLY (1.0 spec 04a §5: /ui/passkeys and
+ * /ui/waivers; /ui/approvals since artifact release takes a passkey, review
+ * M2): `UI_CSP` plus a
  * same-origin script and same-origin fetch, because WebAuthn has no path that
  * does not go through `navigator.credentials`. Same-origin, so the one script
  * the hub serves (ui/passkey-script.ts) is the only one that can run; no

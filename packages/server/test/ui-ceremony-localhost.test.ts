@@ -30,6 +30,8 @@ const EVERY_ACTION: readonly Record<string, unknown>[] = [
   { action: "amend", subjectId: "fw_any", expiresAt: EXPIRES_AT, reason: "rollout" },
   { action: "revoke_waiver", subjectId: "fw_any", reason: "rollout" },
   { action: "revoke_passkey", subjectId: "pk_any" },
+  { action: "approve_artifact", subjectId: "art_any" },
+  { action: "revoke_artifact", subjectId: "art_any" },
 ];
 
 /** What verify needs on top of the fields to get past its own validation. */

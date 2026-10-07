@@ -2,8 +2,9 @@
  * THE TWO CEREMONY ENDPOINTS behind /ui/webauthn (1.0 spec 04a §5–§6):
  * `options` mints a challenge over exactly the submitted fields; `verify`
  * recomputes those terms from the same fields, checks the signature, and only
- * then performs the action. A ceremony is one of six actions, each with its
- * own terms, and the hub — never the browser — builds them.
+ * then performs the action. A ceremony is one of eight actions, each with its
+ * own terms, and the hub — never the browser — builds them: the six of 04a,
+ * and releasing or withdrawing an artifact (routes/ui-ceremony-artifacts.ts).
  *
  * WHAT IS TRUSTED FROM THE REQUEST, AND WHAT IS NOT:
  *   - the session cookie names the developer (ui.tsx's middleware);
@@ -46,6 +47,7 @@ import { isTrustedProxied } from "../http/forwarded.ts";
 import { isLoopbackAddress } from "../http/peer.ts";
 import { isCsrfValid } from "../ui/session.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
+import { ARTIFACT_SENTENCE, artifactTermsOf, performOnArtifact } from "./ui-ceremony-artifacts.ts";
 import { WAIVER_REQUEST_SENTENCE } from "./waiver-sentences.ts";
 
 const CSRF_HEADER = "x-crosscheck-csrf";
@@ -55,8 +57,10 @@ const MAX_CODE_CHARS = 64;
 const Subject = z.string().min(1).max(MAX_SUBJECT_CHARS);
 const Reason = z.string().trim().min(1).max(MAX_WAIVER_REASON_CHARS);
 
-/** The six actions and the fields each one signs. */
+/** The eight actions and the fields each one signs. */
 const CeremonyFieldsSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("approve_artifact"), subjectId: Subject }),
+  z.object({ action: z.literal("revoke_artifact"), subjectId: Subject }),
   z.object({
     action: z.literal("enrol"),
     code: z.string().min(1).max(MAX_CODE_CHARS),
@@ -102,6 +106,7 @@ const CEREMONY_SENTENCE = {
   unknown_passkey: "you have no passkey with that id",
   already_revoked: "that passkey has already been revoked",
   passkey_required: "after its first day a passkey is revoked with a passkey",
+  ...ARTIFACT_SENTENCE,
 } as const;
 
 type CeremonyRefusal = keyof typeof CEREMONY_SENTENCE;
@@ -126,13 +131,24 @@ interface Signed {
   readonly terms: CeremonyTerms;
 }
 
+/** Why no terms could be built: a waiver's own refusal, or one of this file's. */
+type TermsRefusal = { readonly refusal: WaiverRequestRefusal } | { readonly ceremonyRefusal: CeremonyRefusal };
+
+const isRefused = (signed: Signed | TermsRefusal): signed is TermsRefusal => !("purpose" in signed);
+
+const refuseTerms = (c: Context<AppEnv>, refused: TermsRefusal): Response =>
+  "refusal" in refused ? refuseWaiver(c, refused.refusal) : refuse(c, refused.ceremonyRefusal);
+
 /** The terms a ceremony signs, built by the hub from the fields and the stored request. */
 const signedTermsOf = async (
   deps: AppDeps,
   developerId: string,
   fields: AssertionFields,
-): Promise<Signed | { refusal: WaiverRequestRefusal }> => {
+): Promise<Signed | TermsRefusal> => {
   switch (fields.action) {
+    case "approve_artifact":
+    case "revoke_artifact":
+      return artifactTermsOf(deps, developerId, fields);
     case "authorise_enrolment":
       return { purpose: fields.action, subject: developerId, terms: {} };
     case "approve": {
@@ -276,8 +292,8 @@ export const ceremonyOptions = async (
       : ok(c, { ceremonyId: minted.ceremonyId, publicKey: minted.options });
   }
   const signed = await signedTermsOf(deps, developer.id, fields);
-  if ("refusal" in signed) {
-    return refuseWaiver(c, signed.refusal);
+  if (isRefused(signed)) {
+    return refuseTerms(c, signed);
   }
   const usable = await usableCredentials({ db: deps.db, developerId: developer.id, now: deps.now() });
   const minted = await webauthn.authenticationOptions({
@@ -405,6 +421,11 @@ const perform = async (
         ? refuse(c, outcome.refusal)
         : ok(c, { message: `Passkey revoked.${closedWithIt(outcome.terminated)}` });
     }
+    case "approve_artifact":
+    case "revoke_artifact": {
+      const outcome = await performOnArtifact(deps, developerId, fields);
+      return "ceremonyRefusal" in outcome ? refuse(c, outcome.ceremonyRefusal) : ok(c, outcome);
+    }
   }
 };
 
@@ -460,9 +481,9 @@ export const ceremonyVerify = async (
   // a ceremony that survived would be a nonce to try again with another key.
   const spend = (): void => webauthn.discard({ ...owner, ceremonyId: extras.data.ceremonyId });
   const signed = await signedTermsOf(deps, developerId, fields);
-  if ("refusal" in signed) {
+  if (isRefused(signed)) {
     spend();
-    return refuseWaiver(c, signed.refusal);
+    return refuseTerms(c, signed);
   }
   const usable = await usableCredentials({ db: deps.db, developerId, now: deps.now() });
   const match = usable.find((entry) => entry.credential.id === extras.data.response.id);

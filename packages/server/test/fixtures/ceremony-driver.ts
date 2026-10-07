@@ -103,21 +103,29 @@ export const pastCoolOff = (harness: TestHarness, developer: TestDeveloper): Pro
   return viewerOf(harness, developer);
 };
 
+export interface AssertionStep {
+  /** Runs between options and verify: what changes while the person reads the prompt. */
+  readonly between?: () => Promise<void>;
+  readonly origin?: string;
+  /** The authenticator's counter; a second assertion by one credential must count higher. */
+  readonly signCount?: number;
+}
+
 /** Options for `fields`, then the authenticator's signature over whatever challenge came back. */
 export const assertViaUi = async (
   harness: TestHarness,
   viewer: Viewer,
   credential: SoftCredential,
   fields: Record<string, unknown>,
-  between: () => Promise<void> = async () => {},
-  origin: string = TEST_WEBAUTHN_ORIGIN,
+  step: AssertionStep = {},
 ): Promise<Response> => {
+  const origin = step.origin ?? TEST_WEBAUTHN_ORIGIN;
   const options = await ceremony(harness, viewer, "options", fields, { origin });
   if (options.status !== 200) {
     return options;
   }
   const minted = await dataOf<MintedCeremony>(options);
-  await between();
+  await step.between?.();
   return ceremony(
     harness,
     viewer,
@@ -130,7 +138,7 @@ export const assertViaUi = async (
         challenge: minted.publicKey.challenge,
         origin,
         rpId: rpIdOf(origin),
-        signCount: 1,
+        signCount: step.signCount ?? 1,
       }),
     },
     { origin },
