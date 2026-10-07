@@ -30,7 +30,7 @@
  * with this note rather than half-built. The lexical fast path (exact targets +
  * FTS) is the one the design names normative for the sync budget.
  */
-import { and, desc, eq, gt, inArray, isNull, ne, notExists, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, ne, notExists, or, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 
 import {
@@ -729,6 +729,11 @@ export const listTargetSessions = async (
         notMutedCondition(callerDeveloperId, agentSessions.developerId),
       ),
     )
+    // A FIXED order before the bound (review M4): the connector names every
+    // row, the person-facing notice lists them in this order and the agent's
+    // ask names the first teammate not yet asked about — so the order is the
+    // freshest heartbeat first, ties broken on ids, never the storage order.
+    .orderBy(desc(agentSessions.lastHeartbeatAt), asc(agentSessions.id), asc(workContexts.id))
     .limit(TRIPWIRE_MAX_SESSIONS);
   return rows.map((row) => ({
     sessionId: row.session.id,

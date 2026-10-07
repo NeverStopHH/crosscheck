@@ -194,11 +194,12 @@ const CollisionNoticesSchema = z
   .catch(undefined);
 
 /**
- * The relay queue, read ENTRY BY ENTRY like the notices: a key that is not a
- * non-empty string costs only itself, and a value that is not a list reads as
- * an empty queue — never as a state file nobody can read.
+ * A list of KEYS — the relay queue, the tripwire's asked (file, group)
+ * pairs — read ENTRY BY ENTRY like the notices: a key that is not a non-empty
+ * string costs only itself, and a value that is not a list reads as an empty
+ * list — never as a state file nobody can read.
  */
-const CollisionRelayQueueSchema = z
+const TolerantKeyListSchema = z
   .array(z.unknown())
   .transform((entries): string[] =>
     entries.filter((entry): entry is string => typeof entry === "string" && entry.length > 0),
@@ -729,7 +730,15 @@ const SessionStateObjectSchema = z.looseObject({
    * owner's edits were made by subagents. Drained under the lock, so a group
    * is relayed at most once.
    */
-  collisionRelayQueue: CollisionRelayQueueSchema,
+  collisionRelayQueue: TolerantKeyListSchema,
+  /**
+   * The (file, teammate work context) pairs the tripwire already ASKED about
+   * (review M4) — the live half's once-per rule, which used to be per FILE
+   * alone in `tripwireAskedFiles`, so a second teammate on a file already
+   * asked about was never named. `tripwireAskedFiles` still records every
+   * file asked at least once; this list decides who is new on it.
+   */
+  tripwireAskedGroups: TolerantKeyListSchema,
   /**
    * When each summarizer or derived-intent fire was booked, oldest first, the
    * newest DERIVE_FIRES_KEPT — what lets doctor tell a model run still in
@@ -1540,6 +1549,19 @@ export const withDrainedCollisionRelays = (state: SessionState): SessionState =>
   ...state,
   collisionRelayQueue: [],
 });
+
+/** A (file, group) pair the tripwire asked about — FIFO-capped like the asked files. */
+export const withTripwireGroupAsked = (
+  state: SessionState,
+  key: string,
+): SessionState => {
+  const merged = [...new Set([...(state.tripwireAskedGroups ?? []), key])];
+  return {
+    ...state,
+    tripwireAskedGroups:
+      merged.length <= MAX_TRIPWIRE_ASKED_FILES ? merged : merged.slice(merged.length - MAX_TRIPWIRE_ASKED_FILES),
+  };
+};
 
 /**
  * An intent reached the hub or the spool (VISION.md §3): remember the

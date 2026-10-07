@@ -241,9 +241,11 @@ describe("the tripwire asks — once — on live teammate overlap", () => {
     // Act
     const second = await runHook("pre-tool-use", editPayload(repo, OVERLAP_FILE), env);
 
-    // Assert — silence, and no second hub call for this file
+    // Assert — silence. The hub IS asked again (review M4): a teammate who
+    // starts on the file later is new on it, and only the hub can say so;
+    // the same teammate on the same file is never asked about twice.
     expect(second).toBe("");
-    expect(hub.calls.tripwire).toBe(1);
+    expect(hub.calls.tripwire).toBe(2);
   });
 
   test("never a decision other than ask, whatever the hub says", async () => {

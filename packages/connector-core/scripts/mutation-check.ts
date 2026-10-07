@@ -23413,7 +23413,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a tripwire hit tells the agent and never the person again",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "return askOutput(ctx, reason, won.notice === null ? null : renderCollisionNotice(won.notice, ctx.now()));",
+    from: "return askOutput(ctx, reason, won.notices.length === 0 ? null : renderCollisionNotices(won.notices, ctx.now()));",
     to: "return askOutput(ctx, reason, null);",
     test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
     because: "the ask reaches the agent's context and the person, in notice mode or a subagent, reads nothing at all — the pilot's failure",
@@ -23421,8 +23421,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the person is told about the same teammate's work on every file",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "won.value = { teammate, landed, notice: told.length > 0 ? group : null };",
-    to: "won.value = { teammate, landed, notice: group };",
+    from: "won.value = { teammate, landed, notices: teammate === null ? [] : groups.filter((group) => told.includes(group.key)) };",
+    to: "won.value = { teammate, landed, notices: teammate === null ? [] : groups };",
     test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
     because: "one teammate on eleven files is eleven warnings, and a notice that nags is a notice that gets ignored",
   },
@@ -23688,6 +23688,39 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/tripwire-rows.test.ts`,
     because: "every connector reads merged work as a session still working on the file",
   },
+  // ── Review of feat/collision-visible, M4: every teammate on the file ───
+  {
+    label: "a teammate new on an already-asked file is never asked about",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "    const teammate = found.sessions.find((session) => !askedGroups.includes(liveAskKey(file, session))) ?? null;",
+    to: "    const teammate = fresh.tripwireAskedFiles.includes(file) ? null : (found.sessions[0] ?? null);",
+    test: `${CONNECTOR}/test/collision-teammates-hook.test.ts`,
+    because: "the asked marker is per file again, and Ken, who started on it after Nick, is never named to anybody",
+  },
+  {
+    label: "only the first teammate on a file is told to the person",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "    const groups = found.sessions.map((session) => tripwireCollision(session, file, found.coverage));",
+    to: "    const groups = teammate === null ? [] : [tripwireCollision(teammate, file, found.coverage)];",
+    test: `${CONNECTOR}/test/collision-teammates-hook.test.ts`,
+    because: "two teammates on the file, and the person hears about one",
+  },
+  {
+    label: "the same teammate on the same file is asked about on every edit",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "        : withTripwireGroupAsked(withTripwireAsked(rememberGroups(ctx, fresh, groups, told), file), liveAskKey(file, teammate));",
+    to: "        : withTripwireAsked(rememberGroups(ctx, fresh, groups, told), file);",
+    test: `${CONNECTOR}/test/collision-teammates-hook.test.ts`,
+    because: "the permission prompt comes back on every save of a file the person already chose to edit",
+  },
+  {
+    label: "the tripwire answers its teammates in storage order",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    .orderBy(desc(agentSessions.lastHeartbeatAt), asc(agentSessions.id), asc(workContexts.id))\n",
+    to: "",
+    test: `${SERVER}/test/tripwire-rows.test.ts`,
+    because: "which teammate the ask names and the order the person reads them in depend on insertion order, and the bound can drop the freshest",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -23835,6 +23868,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-claude/test/capture-latency.test.ts 1
  * PRINTS: packages/connector-claude/test/collision-notice-hook.test.ts 7
+ * PRINTS: packages/connector-claude/test/collision-teammates-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/conclusion-corpus.test.ts 6
  * PRINTS: packages/connector-claude/test/conference-prompt.test.ts 1
  * PRINTS: packages/connector-claude/test/derive-doctor.test.ts 1
@@ -24124,7 +24158,7 @@ interface Outcome {
  * PRINTS: packages/server/test/startup-upgrades.test.ts 3
  * PRINTS: packages/server/test/suspect.test.ts 5
  * PRINTS: packages/server/test/team-settings.test.ts 9
- * PRINTS: packages/server/test/tripwire-rows.test.ts 1
+ * PRINTS: packages/server/test/tripwire-rows.test.ts 2
  * PRINTS: packages/server/test/ui-feed.test.ts 3
  * PRINTS: packages/server/test/ui-passkeys.test.ts 9
  * PRINTS: packages/server/test/ui-work-context.test.ts 2

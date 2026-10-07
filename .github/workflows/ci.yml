@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 2264
+    # PRINTS: 2268
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -249,7 +249,7 @@ jobs:
     # PRINTS: hooks/landed-why.ts 2
     # PRINTS: hooks/post-tool-use-failure.ts 5
     # PRINTS: hooks/post-tool-use.ts 10
-    # PRINTS: hooks/pre-tool-use.ts 23
+    # PRINTS: hooks/pre-tool-use.ts 26
     # PRINTS: hooks/runner.ts 7
     # PRINTS: hooks/session-start.ts 9
     # PRINTS: hooks/stop.ts 3
@@ -467,7 +467,7 @@ jobs:
     # PRINTS: packages/server/src/services/hint-deliveries.ts 4
     # PRINTS: packages/server/src/services/hint-outcome-view.ts 16
     # PRINTS: packages/server/src/services/hint-outcomes.ts 23
-    # PRINTS: packages/server/src/services/hints.ts 17
+    # PRINTS: packages/server/src/services/hints.ts 18
     # PRINTS: packages/server/src/services/intent-ledger.ts 12
     # PRINTS: packages/server/src/services/landed-context.ts 22
     # PRINTS: packages/server/src/services/landed-notices.ts 28
@@ -631,7 +631,7 @@ jobs:
     # PRINTS: hint-outcome.ts 1
     # PRINTS: hint-outcomes.ts 29
     # PRINTS: hint.ts 13
-    # PRINTS: hints.ts 21
+    # PRINTS: hints.ts 22
     # PRINTS: hook-budget.ts 2
     # PRINTS: hub-status.ts 1
     # PRINTS: hub.ts 17
@@ -703,7 +703,7 @@ jobs:
     # PRINTS: post-tool-use-failure.ts 5
     # PRINTS: post-tool-use.ts 11
     # PRINTS: post.ts 1
-    # PRINTS: pre-tool-use.ts 23
+    # PRINTS: pre-tool-use.ts 26
     # PRINTS: precision.ts 2
     # PRINTS: presence.ts 1
     # PRINTS: probe.ts 39

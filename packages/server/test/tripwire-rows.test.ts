@@ -51,6 +51,34 @@ const setup = async (): Promise<{ harness: TestHarness; reader: TestDeveloper }>
   return { harness, reader };
 };
 
+describe("every teammate on the file, in a fixed order", () => {
+  test("two teammates' live sessions are both answered, the freshest heartbeat first", async () => {
+    // Arrange: Nick (the harness developer) registers first; Ken registers
+    // ten seconds later, so Ken's heartbeat is the fresher of the two even
+    // though his rows were inserted last
+    const { harness, reader } = await setup();
+    harness.clock.advanceSeconds(10);
+    const ken = await addTestDeveloperWithSession(harness, "Ken", "ken@example.com", {
+      id: "ses_ken",
+      branch: "feat/ken",
+    });
+    await postRecords(harness, ken, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody({ id: "wc_ken", sessionId: "ses_ken", title: "Ken's grid" }), {
+          sessionId: "ses_ken",
+        }),
+        recordEnvelope("target", { workContextId: "wc_ken", kind: "file", value: TARGET_FILE }, { sessionId: "ses_ken" }),
+      ],
+    });
+
+    // Act
+    const rows = await fetchTripwire(harness, reader);
+
+    // Assert
+    expect(rows.map((row) => row.developerName)).toEqual(["Ken", "Nick"]);
+  });
+});
+
 describe("a tripwire row says whether its work context landed", () => {
   test("an open context carries landedAt null", async () => {
     // Arrange

@@ -6,7 +6,6 @@
  * guarantees are pinned in connector-core/test/collision-notice.test.ts.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { rm } from "node:fs/promises";
 
 import { LOCATION_WITHHELD } from "@crosscheck/schema";
 
@@ -20,107 +19,29 @@ import {
   COLLISION_RELAY_SENTENCE,
   SUBAGENT_RELAY_HEADER,
 } from "@crosscheck/connector-core/hints/collision-notice.ts";
-import {
-  deriveSessionState,
-  readSessionState,
-  writeSessionState,
-} from "@crosscheck/connector-core/state/session-state.ts";
-import { makeHome, makeRepo, writeRepoFile } from "../../connector-core/test/helpers.ts";
-import { activeTeammateSession, startHintHub } from "../../connector-core/test/fixtures/hint-hub.ts";
-import type { HintHub } from "../../connector-core/test/fixtures/hint-hub.ts";
+import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
+import { activeTeammateSession } from "../../connector-core/test/fixtures/hint-hub.ts";
 import { assertUntrustedCharacters } from "../../connector-core/test/fixtures/untrusted-invariants.ts";
+import {
+  NICK_NOTICE,
+  OVERLAP_FILE,
+  SECOND_FILE,
+  SESSION_ID,
+  SUBAGENT,
+  cleanupCollisionFixtures,
+  collisionFixture as fixture,
+  editPayload,
+  parsed,
+  promptPayload,
+  trackForCleanup,
+} from "./fixtures/collision-fixture.ts";
+import type { HookOutput } from "./fixtures/collision-fixture.ts";
 
-const REPO_ID = "github.com/acme/api";
-const SESSION_ID = "collision-uuid";
-const OVERLAP_FILE = "src/auth/refresh.ts";
-const SECOND_FILE = "src/auth/rotate.ts";
-const SUBAGENT = { agent_id: "agent-abc123", agent_type: "general-purpose" } as const;
 const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
 
-const paths: string[] = [];
-const stops: (() => void)[] = [];
-
-afterEach(async () => {
-  for (const stop of stops) {
-    stop();
-  }
-  stops.length = 0;
-  await Promise.all(paths.map((path) => rm(path, { recursive: true, force: true })));
-  paths.length = 0;
-});
-
-interface Fixture {
-  readonly repo: string;
-  readonly home: string;
-  readonly hub: HintHub;
-  readonly env: Env;
-}
-
-/** A registered session on a repo whose hub reports Nick on OVERLAP_FILE. */
-const fixture = async (label: string): Promise<Fixture> => {
-  const repo = await makeRepo(label, { remote: "git@github.com:acme/api.git" });
-  const home = await makeHome(label);
-  paths.push(repo, home);
-  await writeRepoFile(repo, OVERLAP_FILE, "export const a = 1;\n");
-  await writeRepoFile(repo, SECOND_FILE, "export const b = 2;\n");
-  const hub = startHintHub();
-  stops.push(hub.stop);
-  hub.setTripwireSessions([activeTeammateSession()]);
-  // No prompt hint in these tests: what a prompt carries is the relay alone.
-  hub.setCandidates([]);
-  await writeSessionState(home, {
-    ...deriveSessionState({
-      hostSessionKey: SESSION_ID,
-      repoId: REPO_ID,
-      repoRoot: repo,
-      hubUrl: hub.url,
-      developerId: "dev_self",
-      startedAt: new Date().toISOString(),
-    }),
-    // The first-prompt intent fire is not what these tests are about.
-    intentFireCount: 1,
-  });
-  return {
-    repo,
-    home,
-    hub,
-    env: { CROSSCHECK_HOME: home, CROSSCHECK_HUB_URL: hub.url, CROSSCHECK_API_KEY: "test-key" },
-  };
-};
-
-const editPayload = (repo: string, file: string, extra: Record<string, string> = {}): string =>
-  JSON.stringify({
-    session_id: SESSION_ID,
-    cwd: repo,
-    hook_event_name: "PreToolUse",
-    tool_name: "Edit",
-    tool_input: { file_path: `${repo}/${file}` },
-    ...extra,
-  });
-
-const promptPayload = (repo: string): string =>
-  JSON.stringify({
-    session_id: SESSION_ID,
-    cwd: repo,
-    hook_event_name: "UserPromptSubmit",
-    prompt: "weiter",
-  });
-
-interface HookOutput {
-  readonly systemMessage?: string;
-  readonly hookSpecificOutput?: {
-    readonly permissionDecision?: string;
-    readonly permissionDecisionReason?: string;
-    readonly additionalContext?: string;
-  };
-}
-
-const parsed = (stdout: string): HookOutput => (stdout.length === 0 ? {} : (JSON.parse(stdout) as HookOutput));
-
-const NICK_NOTICE =
-  "crosscheck: Nick is working on refresh.ts on branch feat/refresh-fix (last active just now) — " +
-  "talk before you both change it";
+afterEach(cleanupCollisionFixtures);
 
 describe("a tripwire hit is told to the person, not only to the agent", () => {
   test("the ask carries a systemMessage naming the teammate, the file and the branch", async () => {
@@ -354,10 +275,10 @@ const MIKE_FILES = [
 
 const sessionStart = async (label: string, ghostChecks: readonly unknown[]): Promise<{ readonly run: (source: string) => Promise<HookOutput> }> => {
   const hub = startGhostHub(ghostChecks);
-  stops.push(hub.stop);
   const repo = await makeRepo(label, { remote: "git@github.com:acme/api.git" });
   const home = await makeHome(label);
-  paths.push(repo, home);
+  trackForCleanup(repo, hub.stop);
+  trackForCleanup(home);
   const env: Env = {
     CROSSCHECK_HOME: home,
     CROSSCHECK_HUB_URL: hub.url,
