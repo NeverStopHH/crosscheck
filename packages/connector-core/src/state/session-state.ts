@@ -191,6 +191,19 @@ const CollisionNoticesSchema = z
   .optional()
   .catch(undefined);
 
+/**
+ * The relay queue, read ENTRY BY ENTRY like the notices: a key that is not a
+ * non-empty string costs only itself, and a value that is not a list reads as
+ * an empty queue — never as a state file nobody can read.
+ */
+const CollisionRelayQueueSchema = z
+  .array(z.unknown())
+  .transform((entries): string[] =>
+    entries.filter((entry): entry is string => typeof entry === "string" && entry.length > 0),
+  )
+  .optional()
+  .catch(undefined);
+
 /** The ring after one more fire: appended, the newest DERIVE_FIRES_KEPT kept. */
 export const withDeriveFire = (
   fires: readonly DeriveFire[],
@@ -714,7 +727,7 @@ const SessionStateObjectSchema = z.looseObject({
    * owner's edits were made by subagents. Drained under the lock, so a group
    * is relayed at most once.
    */
-  collisionRelayQueue: z.array(z.string().min(1)).optional().catch(undefined),
+  collisionRelayQueue: CollisionRelayQueueSchema,
   /**
    * When each summarizer or derived-intent fire was booked, oldest first, the
    * newest DERIVE_FIRES_KEPT — what lets doctor tell a model run still in
