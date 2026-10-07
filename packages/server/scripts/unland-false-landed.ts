@@ -67,6 +67,8 @@ export interface OpenedHub {
 export interface UnlandDeps {
   readonly openDb: (dataDir: string) => Promise<OpenedHub>;
   readonly readCommitDates: (gitDir: string, shas: readonly string[]) => Promise<ReadonlyMap<string, Date>>;
+  /** Is this path a git repository? Checked before the hub is opened. */
+  readonly isGitDir: (gitDir: string) => Promise<boolean>;
   readonly write: (line: string) => void;
 }
 
@@ -153,13 +155,24 @@ const reasonLine = (plan: RepairPlan, options: Options, judgedAge: boolean): str
     judgedAge ? `stale base ${String(plan.byReason.stale)}` : "stale base not judged (no --git-dir)",
   ].join(" · ");
 
+/**
+ * How many of the judged bases the clone could date — so a clone that is the
+ * wrong repo, or too shallow, shows as "0 of 412 dated" instead of passing for
+ * a hub with no stale bases.
+ */
+const datedLine = (bases: readonly string[], dates: ReadonlyMap<string, Date>): string => {
+  const dated = bases.filter((sha) => dates.has(sha)).length;
+  return `git dates: ${String(dated)} of ${String(bases.length)} bases dated, ${String(bases.length - dated)} not in that clone`;
+};
+
 const runOnHub = async (db: Db, options: Options, deps: UnlandDeps): Promise<void> => {
   deps.write(SCOPE_LINES[options.scope]);
   const rows = await listLandedContexts(db, options.scope);
-  const baseCommittedAt =
-    options.gitDir === null
-      ? null
-      : await deps.readCommitDates(options.gitDir, [...new Set(rows.map((row) => row.baseCommit))]);
+  const bases = [...new Set(rows.map((row) => row.baseCommit))];
+  const baseCommittedAt = options.gitDir === null ? null : await deps.readCommitDates(options.gitDir, bases);
+  if (baseCommittedAt !== null) {
+    deps.write(datedLine(bases, baseCommittedAt));
+  }
   const plan = planLandedRepair(rows, {
     defaultBranch: options.defaultBranch,
     namedBases: new Set(options.staleBases),
@@ -185,6 +198,12 @@ export const runUnlandFalseLanded = async (argv: readonly string[], deps: Unland
     deps.write(`${parsed.error}\n${USAGE}`);
     return EXIT_USAGE;
   }
+  // A wrong --git-dir would date nothing and read as "no stale bases"; it is
+  // refused here, before the hub is opened, with the path it was given.
+  if (parsed.options.gitDir !== null && !(await deps.isGitDir(parsed.options.gitDir))) {
+    deps.write(`--git-dir is not a git repository: ${parsed.options.gitDir}\n${USAGE}`);
+    return EXIT_USAGE;
+  }
   const hub = await deps.openDb(parsed.options.dataDir);
   try {
     await runOnHub(hub.db, parsed.options, deps);
@@ -192,6 +211,17 @@ export const runUnlandFalseLanded = async (argv: readonly string[], deps: Unland
     await hub.close();
   }
   return EXIT_OK;
+};
+
+/** `git rev-parse --git-dir` succeeds there — a work tree, a bare clone, a worktree. */
+export const isGitRepository = async (gitDir: string): Promise<boolean> => {
+  const proc = Bun.spawn({
+    cmd: ["git", "-C", gitDir, "rev-parse", "--git-dir"],
+    stdout: "ignore",
+    stderr: "ignore",
+    timeout: GIT_TIMEOUT_MS,
+  });
+  return (await proc.exited) === 0;
 };
 
 const gitLog = async (gitDir: string, shas: readonly string[]): Promise<string> => {
@@ -243,6 +273,7 @@ if (import.meta.main) {
       return { db, close: () => closeDb(db) };
     },
     readCommitDates,
+    isGitDir: isGitRepository,
     write: (line) => {
       process.stdout.write(`${line}\n`);
     },

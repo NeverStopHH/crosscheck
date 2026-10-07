@@ -23807,6 +23807,30 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/landed-repair.test.ts`,
     because: "the pilot's \"both landed\" series changes under the operator with no snapshot to compare",
   },
+  {
+    label: "the landed repair accepts a --git-dir that is not a repository",
+    file: `${SERVER}/scripts/unland-false-landed.ts`,
+    from: "  if (parsed.options.gitDir !== null && !(await deps.isGitDir(parsed.options.gitDir))) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "a typo'd clone path dates nothing, and the run reads as a hub with no stale bases",
+  },
+  {
+    label: "the landed repair never says how many bases it could date",
+    file: `${SERVER}/scripts/unland-false-landed.ts`,
+    from: "    deps.write(datedLine(bases, baseCommittedAt));\n",
+    to: "",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "a clone of the wrong repo or a shallow one dates almost nothing, silently",
+  },
+  {
+    label: "a plain directory passes for a git repository",
+    file: `${SERVER}/scripts/unland-false-landed.ts`,
+    from: "  return (await proc.exited) === 0;\n};\n\nconst gitLog",
+    to: "  return (await proc.exited) >= 0;\n};\n\nconst gitLog",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "the clone check answers yes for any path, and the refusal never fires",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -24189,7 +24213,7 @@ interface Outcome {
  * PRINTS: packages/server/test/key-rotation.test.ts 6
  * PRINTS: packages/server/test/landed-context.test.ts 22
  * PRINTS: packages/server/test/landed-notices.test.ts 34
- * PRINTS: packages/server/test/landed-repair.test.ts 10
+ * PRINTS: packages/server/test/landed-repair.test.ts 13
  * PRINTS: packages/server/test/landed.test.ts 15
  * PRINTS: packages/server/test/live-location-cost.test.ts 3
  * PRINTS: packages/server/test/live-location-differential.test.ts 5

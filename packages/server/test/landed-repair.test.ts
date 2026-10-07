@@ -20,6 +20,7 @@ import { eq, isNotNull } from "drizzle-orm";
 
 import { agentSessions, workContexts } from "../src/db/schema.ts";
 import {
+  isGitRepository,
   readCommitDates,
   runUnlandFalseLanded,
 } from "../scripts/unland-false-landed.ts";
@@ -133,7 +134,11 @@ interface Run {
   readonly opened: number;
 }
 
-const run = async (harness: TestHarness, argv: readonly string[]): Promise<Run> => {
+const run = async (
+  harness: TestHarness,
+  argv: readonly string[],
+  edges: { readonly isGitDir?: boolean } = {},
+): Promise<Run> => {
   const lines: string[] = [];
   let opened = 0;
   const code = await runUnlandFalseLanded(argv, {
@@ -142,6 +147,7 @@ const run = async (harness: TestHarness, argv: readonly string[]): Promise<Run> 
       return Promise.resolve({ db: harness.db, close: () => Promise.resolve() });
     },
     readCommitDates: () => Promise.resolve(BASE_DATES),
+    isGitDir: () => Promise.resolve(edges.isGitDir ?? true),
     write: (line) => {
       lines.push(line);
     },
@@ -185,6 +191,32 @@ describe("the dry run", () => {
     expect(result.output).toContain("base already on the default branch: 3");
     expect(result.output).toContain("stale base not judged (no --git-dir)");
     expect(result.output).toContain("on the default branch not judged (no --default-branch)");
+  });
+});
+
+describe("--git-dir", () => {
+  test("a path that is not a git repository is refused before the hub is opened", async () => {
+    // Arrange
+    const { harness } = await seedHub();
+
+    // Act
+    const result = await run(harness, [...DATA_DIR, ...EVIDENCE], { isGitDir: false });
+
+    // Assert
+    expect(result.code).toBe(2);
+    expect(result.opened).toBe(0);
+    expect(result.output).toContain("--git-dir is not a git repository");
+  });
+
+  test("the run says how many bases the clone could date, and how many it could not", async () => {
+    // Arrange: seven landed bases, two of which the clone dates.
+    const { harness } = await seedHub();
+
+    // Act
+    const result = await run(harness, [...DATA_DIR, ...EVIDENCE]);
+
+    // Assert
+    expect(result.output).toContain("git dates: 3 of 7 bases dated, 4 not in that clone");
   });
 });
 
@@ -279,6 +311,18 @@ describe("readCommitDates", () => {
     expect(await proc.exited).toBe(0);
     return out.trim();
   };
+
+  test("isGitRepository tells a clone from a plain directory", async () => {
+    // Arrange
+    const clone = await mkdtemp(join(tmpdir(), "cx-unland-clone-"));
+    const plain = await mkdtemp(join(tmpdir(), "cx-unland-plain-"));
+    cleanups.push(clone, plain);
+    await git(clone, ["init", "-q"]);
+
+    // Act + Assert
+    expect(await isGitRepository(clone)).toBe(true);
+    expect(await isGitRepository(plain)).toBe(false);
+  });
 
   test("reads each base's committer date from a clone; unknown and flag-shaped values read nothing", async () => {
     // Arrange: one commit whose committer date is set, in a temp clone.
