@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,6 +12,7 @@ import {
 } from "../src/index.ts";
 import {
   ensureDir,
+  sessionStatePath,
   spoolCursorPath,
   spoolDataPath,
   spoolDir,
@@ -537,6 +538,42 @@ describe("crosscheck doctor waiting records check (review-2 round 7)", () => {
     // Assert
     expect(result.stdout).toContain("WARN  waiting records");
     expect(result.stdout).toContain("2 records wait for their own conversation (another live session)");
+  });
+
+  test("names the records held for a conversation whose state file cannot be read (review-2 round 8, L4)", async () => {
+    // Arrange: one edit on disk; the state path answers with an error that is
+    // not "no such file" (a link to itself, as EACCES or EIO would)
+    const { repo, home } = await fixture();
+    const host = "doctor-unstatable";
+    const at = new Date();
+    const state = deriveSessionState({
+      hostSessionKey: host,
+      repoId: REPO_ID,
+      repoRoot: repo,
+      hubUrl: HUB_URL,
+      developerId: null,
+      startedAt: at.toISOString(),
+    });
+    const producer = { developerId: "d", agentKind: "claude-code", sessionId: state.crosscheckSessionId };
+    await appendRecords(
+      home,
+      repoKey(HUB_URL, REPO_ID),
+      host,
+      [targetRecord(state.workContextId, "file", "src/a.ts", producer, at)],
+      at,
+    );
+    await ensureDir(join(home, "sessions"));
+    const statePath = sessionStatePath(home, host);
+    await symlink(statePath, statePath);
+
+    // Act
+    const result = await runCli(["doctor"], doctorEnv(home), repo);
+
+    // Assert
+    expect(result.stdout).toContain("WARN  waiting records");
+    expect(result.stdout).toContain(
+      "1 record is held for a conversation whose session state file cannot be read (check its permissions); nothing sends it until it can",
+    );
   });
 
   test("prints nothing while no record waits", async () => {

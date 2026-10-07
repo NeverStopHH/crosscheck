@@ -649,7 +649,15 @@ tests, and no seed is open in the sweep any more.
 **A torn debt file holds no drain** (review-2 round 8, L3). A spool with nothing left to send counted as pending
 whenever its debt file existed. With a torn file there was nothing to pay, yet as the oldest pending spool it took
 every batch of the drain. The unreadable-debt probe sent 0 records, and 11 waited behind it. A spool now owes alone only
-a debt it can read. The torn file goes when reap removes its spool, as every debt does. `owed-work-context.test.ts` replays the probe, and all 11
+a debt it can read. The torn file goes when reap removes its spool, as every debt does.
+
+**Only a missing state file is an ended conversation** (review-2 round 8, L4). `ownerOf` read any failed `stat` of
+a state file as "no file". A state the flusher may not look at, through EACCES or EIO, therefore handed a possibly live
+conversation's records to whichever flusher came next. Now only absence (ENOENT, or ENOTDIR for a path that cannot
+hold the file, the same rule as `ledger-read.ts isAbsence`) ends a conversation. Any other failure is a new owner,
+`unreadable`, and its records are held like a live writer's. Doctor's waiting-records line names them, because nothing
+sends them until the file can be read again.
+ `owed-work-context.test.ts` replays the probe, and all 11
 records land.
 
 **The hub's author-side refusals have a word, and a cooldown sends nothing** (review-2 LOW-5). A record whose own

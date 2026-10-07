@@ -1442,19 +1442,33 @@ const debtChecks = async (home: string, key: string): Promise<readonly Check[]> 
  * are any. Nothing while there are none.
  */
 const waitingChecks = async (home: string, key: string, now: Date): Promise<readonly Check[]> => {
-  const records = await countRecordsAwaitingOwners(home, key, await readAllSessionSpools(home, key), now);
-  if (records === 0) {
+  const { records, unreadableRecords } = await countRecordsAwaitingOwners(
+    home,
+    key,
+    await readAllSessionSpools(home, key),
+    now,
+  );
+  if (records === 0 && unreadableRecords === 0) {
     return [];
   }
-  return [
-    check(
-      "WARN",
-      "waiting records",
-      records === 1
-        ? "1 record waits for its own conversation (another live session)"
-        : `${String(records)} records wait for their own conversation (another live session)`,
-    ),
+  const parts = [
+    ...(records === 0
+      ? []
+      : [
+          records === 1
+            ? "1 record waits for its own conversation (another live session)"
+            : `${String(records)} records wait for their own conversation (another live session)`,
+        ]),
+    // A STATE FILE NO FLUSHER CAN LOOK AT (review-2 round 8, L4) is a live
+    // writer's for all a flush knows, so its records are held — for good,
+    // until someone can read the file again. Nothing else would say why.
+    ...(unreadableRecords === 0
+      ? []
+      : [
+          `${String(unreadableRecords)} ${unreadableRecords === 1 ? "record is" : "records are"} held for a conversation whose session state file cannot be read (check its permissions); nothing sends ${unreadableRecords === 1 ? "it" : "them"} until it can`,
+        ]),
   ];
+  return [check("WARN", "waiting records", parts.join("; "))];
 };
 
 /**

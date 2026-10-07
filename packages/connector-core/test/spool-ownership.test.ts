@@ -11,7 +11,7 @@
  * ended conversation's and an abandoned one's — never another live one's.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { rm, utimes, writeFile } from "node:fs/promises";
+import { rm, symlink, utimes, writeFile } from "node:fs/promises";
 
 import { createDb, createServer } from "@crosscheck/server";
 import type { Db } from "@crosscheck/server";
@@ -252,6 +252,24 @@ describe("another live conversation's records", () => {
     // Assert: refusing to read the state handed nothing over; the silent file did
     expect(landedWhileFresh).toBe(0);
     expect(await landed(life.workContextId)).toBe(2);
+  });
+
+  test("of a conversation whose state cannot be looked at stay on disk: only a missing state is an ended one (review-2 round 8, L4)", async () => {
+    // Arrange: two edits on disk; the state path answers with an error that is
+    // not "no such file" (a link to itself, ELOOP — as EACCES or EIO would)
+    const fx = await fixture("unstatable");
+    const life = await register(fx);
+    await appendRecords(fx.home, fx.key, fx.hostSessionKey, edits(life, "unstatable", 2), new Date());
+    const statePath = sessionStatePath(fx.home, fx.hostSessionKey);
+    await rm(statePath);
+    await symlink(statePath, statePath);
+
+    // Act
+    await successorFlush(fx);
+
+    // Assert: held for a writer that may be live — its work context and both edits still on disk
+    expect(await landed(life.workContextId)).toBe(0);
+    expect(await pending(fx)).toBe(3);
   });
 
   test("are never re-sent by a healing flusher, the owed life's work context with them (P4, p4b)", async () => {

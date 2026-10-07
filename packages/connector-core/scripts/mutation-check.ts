@@ -18090,10 +18090,42 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "doctor counts no live session's waiting records",
     file: `${CORE}/src/spool/ownership.ts`,
-    from: '    if ((await ownerOf(home, key, spool.slug, "", now)) === "live-elsewhere") {',
-    to: '    if ((await ownerOf(home, key, spool.slug, "", now)) === "own") {',
+    from: '  return { records: recordsOf("live-elsewhere"), unreadableRecords: recordsOf("unreadable") };',
+    to: '  return { records: recordsOf("own"), unreadableRecords: recordsOf("unreadable") };',
     test: `${CLI}/test/doctor.test.ts`,
     because: "review-2 round 7: records that wait for their own conversation show nowhere",
+  },
+  {
+    label: "doctor counts no record held for a state file it cannot look at",
+    file: `${CORE}/src/spool/ownership.ts`,
+    from: '  return { records: recordsOf("live-elsewhere"), unreadableRecords: recordsOf("unreadable") };',
+    to: '  return { records: recordsOf("live-elsewhere"), unreadableRecords: 0 };',
+    test: `${CLI}/test/doctor.test.ts`,
+    because: "review-2 round 8, L4: records held for good, until the file can be read again, show nowhere",
+  },
+  {
+    label: "doctor says nothing while only an unreadable state's records wait",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "  if (records === 0 && unreadableRecords === 0) {",
+    to: "  if (records === 0) {",
+    test: `${CLI}/test/doctor.test.ts`,
+    because: "review-2 round 8, L4: the one line that says why a spool stopped draining is never printed",
+  },
+  {
+    label: "a state file no flusher can look at reads as an ended conversation",
+    file: `${CORE}/src/spool/ownership.ts`,
+    from: '    return isAbsence(error) ? null : "unreadable";',
+    to: "    return null;",
+    test: `${CORE}/test/spool-ownership.test.ts`,
+    because: "review-2 round 8, L4: an EACCES or EIO on stat hands a live conversation's records to the next flusher",
+  },
+  {
+    label: "a flusher sends the records of a conversation whose state it cannot look at",
+    file: `${CORE}/src/spool/ownership.ts`,
+    from: '  return owner === "own" || owner === "ended" || owner === "abandoned";',
+    to: '  return owner !== "live-elsewhere";',
+    test: `${CORE}/test/spool-ownership.test.ts`,
+    because: "review-2 round 8, L4: held for a writer that may be live, its records are spent under another life",
   },
   {
     label: "a batch carries two lives' records",
@@ -18870,7 +18902,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-pilot.test.ts 6
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
  * PRINTS: packages/cli/test/doctor-verdict-legality.test.ts 2
- * PRINTS: packages/cli/test/doctor.test.ts 6
+ * PRINTS: packages/cli/test/doctor.test.ts 8
  * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
  * PRINTS: packages/cli/test/gitignored-advice.test.ts 10
@@ -19071,7 +19103,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 2
  * PRINTS: packages/connector-core/test/spool-ignored.test.ts 2
  * PRINTS: packages/connector-core/test/spool-lock.test.ts 2
- * PRINTS: packages/connector-core/test/spool-ownership.test.ts 9
+ * PRINTS: packages/connector-core/test/spool-ownership.test.ts 11
  * PRINTS: packages/connector-core/test/spool-simulation.test.ts 7
  * PRINTS: packages/connector-core/test/staleness-axis.test.ts 1
  * PRINTS: packages/connector-core/test/target-paths.test.ts 1
