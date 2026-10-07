@@ -6166,11 +6166,14 @@ export const MUTATIONS: readonly Mutation[
     // is spliced beside the header where the fitter cannot reach it.
     label: "a briefing says what the team knows, not how far it saw",
     file: `${CORE}/src/briefing/render.ts`,
+    // Repaired by the hub hardening's item 6: the presence notice now sits
+    // between the header and this line; the mutation still drops only it.
     from: `  const lines = sections.reduce<readonly string[]>(appendSection, [
     header,
+    ...presenceLines,
     ...coverageLines,
   ]);`,
-    to: "  const lines = sections.reduce<readonly string[]>(appendSection, [header]);",
+    to: "  const lines = sections.reduce<readonly string[]>(appendSection, [header, ...presenceLines]);",
     test: `${CORE}/test/coverage-render.test.ts`,
     because:
       "the one SessionStart line that says how far the rest can be trusted " +
