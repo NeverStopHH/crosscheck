@@ -24182,6 +24182,15 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/collision-notice-bounds.test.ts`,
     because: "five maximum-length lines fit and the tail that counts the sixth pushes the person's message past its bound",
   },
+  // ── Review of feat/collision-visible, round 2: reviewer mutation R6 ──
+  {
+    label: "a merged group keeps an older branch the newer row withheld (reviewer R6)",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "    ...rest,\n    files,\n    fileCount: Math.max(told.fileCount, group.fileCount, files.length),",
+    to: "    ...rest,\n    branch: group.branch ?? told.branch,\n    files,\n    fileCount: Math.max(told.fileCount, group.fileCount, files.length),",
+    test: `${CORE}/test/collision-state-eviction.test.ts`,
+    because: "a teammate who turned presence off since the first hit keeps being placed on their old branch",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
