@@ -138,6 +138,32 @@ describe("the notice a person reads when the tripwire fires", () => {
     expect(unreported).not.toContain("incomplete");
   });
 
+  test("a teammate whose work context LANDED changed the file; they are not working on it", () => {
+    // Arrange: the row says the context merged yesterday
+    const row = tripwireRow({ landedAt: "2026-10-06T09:00:00.000Z" });
+
+    // Act
+    const notice = noticeOf(row);
+
+    // Assert
+    expect(notice).toBe(
+      "crosscheck: Mike changed PlayerMappingGrid.tsx on branch feat/streaming-practice-beta (merged) — " +
+        "talk before you change it",
+    );
+  });
+
+  test("a row that says nothing about landing, or nonsense, is open work as before", () => {
+    // Act
+    const absent = noticeOf(tripwireRow());
+    const garbage = noticeOf(tripwireRow({ landedAt: "not-a-date" }));
+    const open = noticeOf(tripwireRow({ landedAt: null }));
+
+    // Assert
+    for (const notice of [absent, garbage, open]) {
+      expect(notice).toContain("Mike is working on PlayerMappingGrid.tsx");
+    }
+  });
+
   test("an instant that is unreadable or in the future says no age rather than a wrong one", () => {
     // Act
     const future = noticeOf(tripwireRow({ lastHeartbeatAt: "2026-10-08T12:00:00.000Z" }));

@@ -1132,6 +1132,8 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
       renderCollisionNotices(
         [
           tripwireCollision(tripwireSessionWith(payload), payload, CORPUS_COVERAGE),
+          // ...and the LANDED shape, which words the same fields differently
+          tripwireCollision({ ...tripwireSessionWith(payload), landedAt: ISO }, payload),
           ...ghostCollisions([ghostCheckWith(payload)]),
         ],
         NOW,

@@ -170,6 +170,8 @@ export const CollisionNoticeSchema = z.object({
   lastActiveAt: z.string().nullable(),
   /** The answer it came from said a rung of the record is incomplete (COV-9). */
   partial: z.boolean().optional(),
+  /** The teammate's work context had LANDED when the row was read. */
+  landed: z.boolean().optional(),
 });
 
 export type CollisionNotice = z.infer<typeof CollisionNoticeSchema>;

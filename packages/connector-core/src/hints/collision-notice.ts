@@ -211,8 +211,13 @@ export const tripwireCollision = (
     branch: visibleBranch(session.branch),
     lastActiveAt: session.lastHeartbeatAt,
     ...(coverage !== undefined && hasIncompleteRung(coverage) ? { partial: true } : {}),
+    ...(hasLanded(session.landedAt) ? { landed: true } : {}),
   };
 };
+
+/** A row's `landedAt` counts only when it is a readable instant; anything else is open work. */
+const hasLanded = (landedAt: string | null | undefined): boolean =>
+  typeof landedAt === "string" && !Number.isNaN(Date.parse(landedAt));
 
 /**
  * How many FILES a ghost row's overlap holds. The hub sorts the shared values
@@ -278,10 +283,15 @@ export const renderCollisionNotice = (group: CollisionNotice, now: Date): string
   const what = isGroup ? `${String(group.fileCount)} files you also touched, e.g. ${file}` : file;
   const branch = group.branch === null ? null : visibleBranch(group.branch);
   const where = branch === null ? "" : ` on branch ${branch}`;
-  return (
-    `crosscheck: ${name} is working on ${what}${where}${ageClause(group.lastActiveAt, now)} — ` +
-    `talk before you both change ${isGroup ? "them" : "it"}${group.partial === true ? PARTIAL_RECORD_CLAUSE : ""}`
-  );
+  const pronoun = isGroup ? "them" : "it";
+  const partial = group.partial === true ? PARTIAL_RECORD_CLAUSE : "";
+  // LANDED work is a change already made, not a plan in flight: the person
+  // is told what merged, and the advice drops "both" — only they are about
+  // to change it. No age: a heartbeat says nothing about when it merged.
+  return group.landed === true
+    ? `crosscheck: ${name} changed ${what}${where} (merged) — talk before you change ${pronoun}${partial}`
+    : `crosscheck: ${name} is working on ${what}${where}${ageClause(group.lastActiveAt, now)} — ` +
+        `talk before you both change ${pronoun}${partial}`;
 };
 
 /** Several groups, one line each — the shape a hook's `systemMessage` carries. */

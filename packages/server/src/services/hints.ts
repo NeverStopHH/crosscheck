@@ -673,6 +673,13 @@ export interface TargetSessionView {
   readonly workContextTitle: string;
   /** The overlapping session's stated intent; the ask reason shows it. */
   readonly workContextIntent: Record<string, unknown> | null;
+  /**
+   * When the overlapping work context LANDED, or null while it is open — so
+   * the person's collision line can say the teammate CHANGED the file and it
+   * merged, rather than that they are working on it (connector-core
+   * hints/collision-notice.ts). The row's matching rule is untouched.
+   */
+  readonly landedAt: string | null;
 }
 
 /**
@@ -697,6 +704,7 @@ export const listTargetSessions = async (
       workContextId: workContexts.id,
       workContextTitle: workContexts.title,
       workContextIntent: workContexts.intent,
+      landedAt: workContexts.landedAt,
     })
     .from(workContextTargets)
     .innerJoin(
@@ -732,5 +740,6 @@ export const listTargetSessions = async (
     workContextId: row.workContextId,
     workContextTitle: row.workContextTitle,
     workContextIntent: row.workContextIntent ?? null,
+    landedAt: row.landedAt === null ? null : row.landedAt.toISOString(),
   }));
 };

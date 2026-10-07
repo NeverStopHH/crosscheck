@@ -23663,6 +23663,31 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/collision-notice.test.ts`,
     because: "a lone surrogate and a blank filler are written into the session state as part of a path",
   },
+  // ── Review of feat/collision-visible, L8: landed work is a change, not a plan ──
+  {
+    label: "a landed teammate context is told as work in progress",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "    ...(hasLanded(session.landedAt) ? { landed: true } : {}),",
+    to: "    ...({}),",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "the person is told Mike is working on a file whose change already merged, and talks to him about a plan that is done",
+  },
+  {
+    label: "an unreadable landedAt is told as merged",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  typeof landedAt === \"string\" && !Number.isNaN(Date.parse(landedAt));",
+    to: "  typeof landedAt === \"string\";",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "a hub's garbage in one field turns live work into 'changed (merged)', and the person stops talking to a teammate still on it",
+  },
+  {
+    label: "the tripwire row stops saying whether its context landed",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    landedAt: row.landedAt === null ? null : row.landedAt.toISOString(),",
+    to: "    landedAt: null,",
+    test: `${SERVER}/test/tripwire-rows.test.ts`,
+    because: "every connector reads merged work as a session still working on the file",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -23872,7 +23897,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/claim-surface.test.ts 1
  * PRINTS: packages/connector-core/test/claim-validity-parity.test.ts 2
  * PRINTS: packages/connector-core/test/claim-validity-render.test.ts 2
- * PRINTS: packages/connector-core/test/collision-notice.test.ts 19
+ * PRINTS: packages/connector-core/test/collision-notice.test.ts 21
  * PRINTS: packages/connector-core/test/collision-state.test.ts 4
  * PRINTS: packages/connector-core/test/commit-evidence.test.ts 1
  * PRINTS: packages/connector-core/test/conference-cost.test.ts 1
@@ -24099,6 +24124,7 @@ interface Outcome {
  * PRINTS: packages/server/test/startup-upgrades.test.ts 3
  * PRINTS: packages/server/test/suspect.test.ts 5
  * PRINTS: packages/server/test/team-settings.test.ts 9
+ * PRINTS: packages/server/test/tripwire-rows.test.ts 1
  * PRINTS: packages/server/test/ui-feed.test.ts 3
  * PRINTS: packages/server/test/ui-passkeys.test.ts 9
  * PRINTS: packages/server/test/ui-work-context.test.ts 2
