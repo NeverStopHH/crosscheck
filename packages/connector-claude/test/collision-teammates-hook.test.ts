@@ -20,6 +20,7 @@ import {
   editPayload,
   kenSession,
   parsed,
+  pastRecheckWindow,
 } from "./fixtures/collision-fixture.ts";
 
 const KEN_NOTICE =
@@ -71,10 +72,12 @@ describe("two teammates on one file", () => {
   });
 
   test("a teammate who starts on an already-asked file later is told when they appear", async () => {
-    // Arrange: Nick alone first
+    // Arrange: Nick alone first; Ken starts on the file after the re-check
+    // window (round 2, L1) has passed
     const { repo, home, hub, env } = await collisionFixture("ct-later");
     await runHook("pre-tool-use", editPayload(repo, OVERLAP_FILE), env);
     hub.setTripwireSessions([activeTeammateSession(), kenSession()]);
+    await pastRecheckWindow(home);
 
     // Act
     const later = parsed(await runHook("pre-tool-use", editPayload(repo, OVERLAP_FILE), env));

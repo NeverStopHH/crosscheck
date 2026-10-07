@@ -7,7 +7,12 @@
 import { rm } from "node:fs/promises";
 
 import type { Env } from "../../src/index.ts";
-import { deriveSessionState, writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import { TRIPWIRE_RECHECK_TTL_MS } from "@crosscheck/connector-core/constants.ts";
+import {
+  deriveSessionState,
+  updateSessionState,
+  writeSessionState,
+} from "@crosscheck/connector-core/state/session-state.ts";
 import { writePresenceCache } from "@crosscheck/connector-core/state/presence-cache.ts";
 import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import { makeHome, makeRepo, writeRepoFile } from "../../../connector-core/test/helpers.ts";
@@ -245,6 +250,19 @@ export const presentNow = async (
     })),
     answer.fetchedAt ?? new Date(),
   );
+};
+
+/**
+ * Moves every file's settled tripwire answer back past TRIPWIRE_RECHECK_TTL_MS
+ * — "later", for a test about a teammate who starts on a file after the
+ * re-check window (round 2, L1) — without the test waiting it out.
+ */
+export const pastRecheckWindow = async (home: string): Promise<void> => {
+  const long = new Date(Date.now() - TRIPWIRE_RECHECK_TTL_MS - 1_000).toISOString();
+  await updateSessionState(home, SESSION_ID, (fresh) => ({
+    ...fresh,
+    tripwireCheckedFiles: (fresh.tripwireCheckedFiles ?? []).map((check) => ({ ...check, at: long })),
+  }));
 };
 
 /** The relayed line for a teammate live presence did not confirm, on OVERLAP_FILE. */

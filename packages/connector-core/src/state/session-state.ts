@@ -19,6 +19,7 @@ import {
   SESSION_STATE_LOCK_RETRIES,
   STATUS_MAX_SESSION_STATES,
   SUMMARIZER_TIMEOUT_MS,
+  TRIPWIRE_RECHECK_TTL_MS,
 } from "../constants.ts";
 import {
   readJsonOrNull,
@@ -203,6 +204,25 @@ const TolerantKeyListSchema = z
   .array(z.unknown())
   .transform((entries): string[] =>
     entries.filter((entry): entry is string => typeof entry === "string" && entry.length > 0),
+  )
+  .optional()
+  .catch(undefined);
+
+/**
+ * One file the live tripwire last answered for and left nothing new to say
+ * about (round 2, L1), and when. Read entry by entry like the keys above.
+ */
+const TripwireCheckSchema = z.object({ file: z.string().min(1), at: z.string().min(1) });
+
+export type TripwireCheck = z.infer<typeof TripwireCheckSchema>;
+
+const TripwireChecksSchema = z
+  .array(z.unknown())
+  .transform((entries): TripwireCheck[] =>
+    entries.flatMap((entry) => {
+      const parsed = TripwireCheckSchema.safeParse(entry);
+      return parsed.success ? [parsed.data] : [];
+    }),
   )
   .optional()
   .catch(undefined);
@@ -746,6 +766,13 @@ const SessionStateObjectSchema = z.looseObject({
    * file asked at least once; this list decides who is new on it.
    */
   tripwireAskedGroups: TolerantKeyListSchema,
+  /**
+   * Files whose live tripwire answer was fully dealt with — every teammate on
+   * it asked about, every group recorded told — and when (round 2, L1):
+   * within TRIPWIRE_RECHECK_TTL_MS the next edit of the file asks the hub
+   * nothing and writes nothing. FIFO-capped like the asked files.
+   */
+  tripwireCheckedFiles: TripwireChecksSchema,
   /**
    * When each summarizer or derived-intent fire was booked, oldest first, the
    * newest DERIVE_FIRES_KEPT — what lets doctor tell a model run still in
@@ -1591,6 +1618,27 @@ export const withDrainedCollisionRelays = (state: SessionState): SessionState =>
   collisionRelayQueue: [],
   collisionRelayDropped: 0,
 });
+
+/**
+ * Whether the live tripwire's last answer for `file` was fully dealt with
+ * less than TRIPWIRE_RECHECK_TTL_MS ago (round 2, L1). An instant ahead of
+ * the clock or unreadable is no answer at all.
+ */
+export const isTripwireFresh = (state: SessionState, file: string, now: Date): boolean => {
+  const at = (state.tripwireCheckedFiles ?? []).find((check) => check.file === file)?.at;
+  const ageMs = at === undefined ? Number.NaN : now.getTime() - Date.parse(at);
+  return ageMs >= 0 && ageMs < TRIPWIRE_RECHECK_TTL_MS;
+};
+
+/** `file`'s live answer dealt with now — one entry per file, FIFO-capped like the asked files. */
+export const withTripwireChecked = (state: SessionState, file: string, now: Date): SessionState => {
+  const merged = [...(state.tripwireCheckedFiles ?? []).filter((check) => check.file !== file), { file, at: now.toISOString() }];
+  return {
+    ...state,
+    tripwireCheckedFiles:
+      merged.length <= MAX_TRIPWIRE_ASKED_FILES ? merged : merged.slice(merged.length - MAX_TRIPWIRE_ASKED_FILES),
+  };
+};
 
 /** A (file, group) pair the tripwire asked about — FIFO-capped like the asked files. */
 export const withTripwireGroupAsked = (

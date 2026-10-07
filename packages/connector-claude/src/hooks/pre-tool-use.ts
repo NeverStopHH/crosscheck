@@ -92,6 +92,7 @@ import {
   tripwireCollision,
 } from "@crosscheck/connector-core/hints/collision-notice.ts";
 import {
+  isTripwireFresh,
   newCollisionKeys,
   openToolWindow,
   readSessionState,
@@ -102,6 +103,7 @@ import {
   withLandedClean,
   withQueuedCollisionRelays,
   withTripwireAsked,
+  withTripwireChecked,
   withTripwireGroupAsked,
 } from "@crosscheck/connector-core/state/session-state.ts";
 import type { CollisionNotice, SessionState } from "@crosscheck/connector-core/state/session-state.ts";
@@ -225,10 +227,14 @@ const askBeforeEdit = async (ctx: HookContext, budget: HookBudget): Promise<stri
   // One stop per file per session for the LANDED reason, and one per (file,
   // teammate work context) for the LIVE one (review M4): a teammate who starts
   // on a file already asked about is new on it, so the live question is asked
-  // of the hub on every edit — the one bounded call an unasked file always
-  // cost — and only the landed probe is skipped once it was answered.
+  // of the hub again — the one bounded call an unasked file always cost — and
+  // only the landed probe is skipped once it was answered. Not on EVERY edit
+  // (round 2, L1): within TRIPWIRE_RECHECK_TTL_MS of an answer this session
+  // fully dealt with, the next edit of the file asks nothing and writes
+  // nothing.
   const askedLanded = state.landedAskedFiles.includes(file);
-  const found = await findReasons(ctx, budget, edited, askedLanded, state.landedCleanKeys);
+  const isLiveFresh = isTripwireFresh(state, file, ctx.now());
+  const found = await findReasons(ctx, budget, edited, { askedLanded, isLiveFresh }, state.landedCleanKeys);
   if (found.cleanKey !== null && !state.landedCleanKeys.includes(found.cleanKey)) {
     await rememberClean(ctx, found.cleanKey);
   }
@@ -244,7 +250,7 @@ const askBeforeEdit = async (ctx: HookContext, budget: HookBudget): Promise<stri
   // needs is in hand, so no slow step sits between marking a group told and
   // the line leaving the hook.
   const groups = found.sessions.map((session) => tripwireCollision(session, file, found.coverage));
-  const notices = await tellPerson(ctx, budget, onePerKey(groups));
+  const notices = await tellPerson(ctx, budget, { file, sessions: found.sessions, groups: onePerKey(groups) });
   if (reason === null && notices.length === 0) {
     return "";
   }
@@ -305,19 +311,38 @@ const statedReason = async (
 const onePerKey = (groups: readonly CollisionNotice[]): readonly CollisionNotice[] =>
   groups.filter((group, index) => groups.findIndex((other) => other.key === group.key) === index);
 
+/** One live answer for one file, as the person's half of the hook takes it. */
+interface LiveAnswer {
+  readonly file: string;
+  readonly sessions: readonly TripwireSession[];
+  readonly groups: readonly CollisionNotice[];
+}
+
+/** Whether every teammate session this answer named on the file has been asked about. */
+const isAllAsked = (state: SessionState, answer: LiveAnswer): boolean =>
+  answer.sessions.every((session) => (state.tripwireAskedGroups ?? []).includes(liveAskKey(answer.file, session)));
+
+/** The collision fields a tell can change: nothing to write when none of them did. */
+const collisionFieldsOf = (state: SessionState): string =>
+  JSON.stringify([state.collisionNotices, state.collisionRelayQueue, state.collisionRelayDropped, state.tripwireCheckedFiles]);
+
 /**
  * Every group the hub named is recorded — a new file of a told group grows
  * it, which is what the statusline counts — and the groups new to this
  * session are returned as the ones to tell, in ONE locked check-and-set, so
  * two racing hooks never both tell the same group. Made only while the spare
  * budget lasts (review L3): a group not claimed now is still untold, and the
- * hub is asked again on the next edit of the file.
+ * hub is asked again on the next edit of the file. Once every teammate on
+ * the file is asked about AND told, the answer is dealt with and the file
+ * rests for TRIPWIRE_RECHECK_TTL_MS; and when nothing changed at all, nothing
+ * is written (round 2, L1).
  */
 const tellPerson = async (
   ctx: HookContext,
   budget: HookBudget,
-  groups: readonly CollisionNotice[],
+  answer: LiveAnswer,
 ): Promise<readonly CollisionNotice[]> => {
+  const { groups } = answer;
   if (groups.length === 0 || budget.spareMs() <= 0) {
     return [];
   }
@@ -325,7 +350,9 @@ const tellPerson = async (
   const isWritten = await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => {
     const fresher = newCollisionKeys(fresh, groups);
     told.value = groups.filter((group) => fresher.includes(group.key));
-    return rememberGroups(ctx, fresh, groups, fresher);
+    const remembered = rememberGroups(ctx, fresh, groups, fresher);
+    const next = isAllAsked(fresh, answer) ? withTripwireChecked(remembered, answer.file, ctx.now()) : remembered;
+    return collisionFieldsOf(next) === collisionFieldsOf(fresh) ? null : next;
   });
   return isWritten ? told.value : [];
 };
@@ -371,6 +398,14 @@ const NO_REASONS: Reasons = { teammate: null, landed: null };
 const liveAskKey = (file: string, session: TripwireSession): string =>
   JSON.stringify([file, session.developerId, session.workContextId]);
 
+/** Which of the two questions this edit already has an answer to. */
+interface Answered {
+  /** The landed probe answered for this file once this session. */
+  readonly askedLanded: boolean;
+  /** The live answer for this file was dealt with inside the re-check TTL (round 2, L1). */
+  readonly isLiveFresh: boolean;
+}
+
 /**
  * Asks only the questions this session has not been stopped for yet, in
  * parallel, and neither waits on the other: the live tripwire's hub call is
@@ -384,10 +419,10 @@ const findReasons = async (
   ctx: HookContext,
   budget: HookBudget,
   edited: EditedFile,
-  askedLanded: boolean,
+  answered: Answered,
   knownCleanKeys: readonly string[],
 ): Promise<FoundReasons> => {
-  const probing = askedLanded
+  const probing = answered.askedLanded
     ? Promise.resolve(null)
     : findLandedChanges({
         root: edited.root,
@@ -397,15 +432,16 @@ const findReasons = async (
         budgetMs: Math.min(LANDED_PROBE_BUDGET_MS, ctx.config.timeoutMs),
         knownCleanKeys,
       });
-  const live = getTripwireSessions(ctx.hub, ctx.identity.repoId, edited.file);
+  const live = answered.isLiveFresh
+    ? Promise.resolve(null)
+    : getTripwireSessions(ctx.hub, ctx.identity.repoId, edited.file).then((result) => (result.ok ? result.data : null));
   const why = probing
     .then((probed) => {
       const landed = worthStopping(probed);
       return landed === null ? NO_LANDED_ANSWER : landedWhyFor(ctx, budget, edited.file, landed);
     })
     .catch((): LandedContextAnswer => NO_LANDED_ANSWER);
-  const [result, probed] = await Promise.all([live, probing]);
-  const hub = result.ok ? result.data : null;
+  const [hub, probed] = await Promise.all([live, probing]);
   return {
     sessions: hub?.sessions ?? [],
     landed: worthStopping(probed),

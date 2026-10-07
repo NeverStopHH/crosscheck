@@ -132,6 +132,15 @@ export const HINT_MIN_TOKEN_CHARS = 3;
 /** Tripwire asks once per file per session; FIFO cap on the remembered set. */
 export const MAX_TRIPWIRE_ASKED_FILES = 100;
 /**
+ * How long a file whose live tripwire answer was fully dealt with — every
+ * teammate on it asked about, every group told — is not asked about again
+ * (round 2, L1): each edit of a collision file used to cost a hub call and a
+ * state write for an answer that could only repeat itself. Short, because a
+ * teammate who STARTS on the file is new on it and only the hub can say so:
+ * the next edit after the window asks again.
+ */
+export const TRIPWIRE_RECHECK_TTL_MS = 30_000;
+/**
  * The failure-time solved probe asks the hub about a fingerprint ONCE per
  * session; FIFO cap on the remembered set, the MAX_TRIPWIRE_ASKED_FILES
  * shape. Sized for the distinct failures one session produces rather than
