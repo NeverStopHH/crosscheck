@@ -11647,8 +11647,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a prompt no longer asks for the fetch",
     file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
-    from: "  const [delivery] = await Promise.all([deliverPromptContext(ctx, budget), requestLandingFetchFor(ctx)]);",
-    to: "  const [delivery] = await Promise.all([deliverPromptContext(ctx, budget)]);",
+    from: "  const [delivery] = await Promise.all([deliverPromptContext(promptCtx, budget), requestLandingFetchFor(ctx)]);",
+    to: "  const [delivery] = await Promise.all([deliverPromptContext(promptCtx, budget)]);",
     test: `${CONNECTOR}/test/landing-fetch-hook.test.ts`,
     because: "a change merged mid-session reaches the stop only when an edit happens to ask",
   },
@@ -24273,6 +24273,31 @@ export const MUTATIONS: readonly Mutation[
     to: "    return written ? told.value : groups;",
     test: `${CONNECTOR}/test/ghost-notice.test.ts`,
     because: "a group never recorded as told is told again by every compact, resume and late briefing",
+  },
+  // ── Review of feat/collision-visible, round 2, M3: a slow hint hub cannot starve the relay ──
+  {
+    label: "a queued relay is drained only after the prompt's hub calls",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    from: "  const early = (await hasQueuedRelay(ctx)) ? await drainCollisionRelay(ctx, budget) : NO_DRAIN;",
+    to: "  const early = NO_DRAIN;",
+    test: `${CONNECTOR}/test/collision-relay-slow-hub.test.ts`,
+    because: "a hint hub answering in 390 ms of its 400 ms timeout leaves no spare, and a background subagent's collision is never relayed",
+  },
+  {
+    label: "after an early drain the prompt's hub calls keep their full timeout",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    from: "  const promptCtx = isDrainedEarly ? withSpareBoundHub(ctx, budget) : ctx;",
+    to: "  const promptCtx = ctx;",
+    test: `${CONNECTOR}/test/collision-relay-slow-hub.test.ts`,
+    because: "the hint's call runs into the reserve, and the budget race throws away a relay the drain already emptied",
+  },
+  {
+    label: "the spare-bound hub ignores the spare",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    from: "Math.min(configured, budget.spareMs())",
+    to: "configured",
+    test: `${CONNECTOR}/test/collision-relay-slow-hub.test.ts`,
+    because: "the bound exists in name only and a slow hint hub holds the hook past what the budget left",
   },
 ];
 

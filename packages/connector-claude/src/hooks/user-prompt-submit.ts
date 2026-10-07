@@ -57,7 +57,9 @@
  * to the person — which is this hook, and it also fires when a background
  * subagent reports back. It is a few renderer-owned lines, so it does not
  * count as the one injection; it costs one state read, and a lock round only
- * when something is queued.
+ * when something is queued. A queue already waiting is drained BEFORE the
+ * prompt's own hub calls, which then get only the budget it leaves (round 2,
+ * M3): a slow hint hub can cost the hint, never the relay.
  *
  * This hook is the Claude-specific shell: payload fields in,
  * `hookSpecificOutput` envelope out.
@@ -65,7 +67,7 @@
 import { resolve } from "node:path";
 
 import { aPersonReads } from "@crosscheck/connector-core/config/tripwire.ts";
-import { INTENT_PROMPT_MAX_CHARS } from "@crosscheck/connector-core/constants.ts";
+import { INTENT_PROMPT_MAX_CHARS, MIN_SPARE_BOUND_TIMEOUT_MS } from "@crosscheck/connector-core/constants.ts";
 import { cutWellFormed } from "@crosscheck/connector-core/briefing/cut.ts";
 import {
   intentPromptPathForSlug,
@@ -81,7 +83,8 @@ import {
   updateSessionState,
 } from "@crosscheck/connector-core/state/session-state.ts";
 import type { RenderableCollision } from "@crosscheck/connector-core/hints/collision-notice.ts";
-import { agentCopy, drainCollisionRelay, personCopy } from "./collision-relay.ts";
+import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
+import { NO_DRAIN, agentCopy, drainCollisionRelay, hasPendingRelay, personCopy } from "./collision-relay.ts";
 import type { RelayDrain } from "./collision-relay.ts";
 import { tellPersonOfGhosts } from "./ghost-notice.ts";
 import { hasGhostAllowance, withGhostClaimed } from "@crosscheck/connector-core/derive/ghost/gate.ts";
@@ -324,19 +327,51 @@ const deliverPromptContext = async (ctx: HookContext, budget: HookBudget): Promi
   return delivered(nudge.length === 0 ? "" : envelope(nudge));
 };
 
+/** Whether a subagent's collision is waiting for this prompt — one state read. */
+const hasQueuedRelay = async (ctx: HookContext): Promise<boolean> => {
+  const state = await readSessionState(ctx.config.home, ctx.payload.session_id);
+  return state !== null && hasPendingRelay(state);
+};
+
+/**
+ * The prompt's hub calls held to what the budget has LEFT (round 2, M3): the
+ * request timeout every call reads is the configured one or the spare at the
+ * moment the call starts, whichever is smaller — never past the reserve that
+ * carries an already-drained relay out of the hook.
+ */
+const withSpareBoundHub = (ctx: HookContext, budget: HookBudget): HookContext => {
+  const configured = ctx.hub.timeoutMs;
+  const hub: HubContext = {
+    ...ctx.hub,
+    get timeoutMs(): number {
+      return Math.max(MIN_SPARE_BOUND_TIMEOUT_MS, Math.min(configured, budget.spareMs()));
+    },
+  };
+  return { ...ctx, hub };
+};
+
 export const handleUserPromptSubmit = async (
   ctx: HookContext,
   budget: HookBudget,
 ): Promise<string> => {
+  // A subagent's collision queued BEFORE this prompt is drained FIRST (round
+  // 2, M3): the drain is local — one state read and one lock — and drained
+  // last, behind a hint hub answering in 390 ms of a 400 ms timeout, it found
+  // no spare left on every prompt and a background subagent's collision never
+  // reached anybody. The prompt's own delivery then gets only the budget that
+  // is left, so the drained relay always leaves the hook.
+  const early = (await hasQueuedRelay(ctx)) ? await drainCollisionRelay(ctx, budget) : NO_DRAIN;
+  const isDrainedEarly = early.groups.length > 0 || early.hidden > 0;
+  const promptCtx = isDrainedEarly ? withSpareBoundHub(ctx, budget) : ctx;
   // Delivers nothing, like the two fires above: the background fetch of the
   // landing branches (hooks/landing-fetch.ts), beside the prompt's own work so
   // it adds no wall clock of its own.
-  const [delivery] = await Promise.all([deliverPromptContext(ctx, budget), requestLandingFetchFor(ctx)]);
-  // A subagent's collision LAST (review L3): the queue is drained only once
-  // everything else this prompt carries is in hand, so nothing slow sits
-  // between emptying it and the relay leaving the hook. It still LEADS the
-  // emitted text.
-  const relay = await drainCollisionRelay(ctx, budget);
+  const [delivery] = await Promise.all([deliverPromptContext(promptCtx, budget), requestLandingFetchFor(ctx)]);
+  // A collision queued WHILE this prompt ran (a background subagent) is
+  // drained last, and only while the spare lasts (review L3): nothing slow
+  // sits between emptying the queue and the relay leaving the hook. Either
+  // way the relay LEADS the emitted text.
+  const relay = isDrainedEarly ? early : await drainCollisionRelay(ctx, budget);
   // A paid briefing's ghost rows are claimed told after that, as SessionStart
   // claims its own (review L5): one lock write, the last thing before output,
   // and not gated on the spare — it is this prompt's own delivery.

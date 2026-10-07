@@ -1916,6 +1916,14 @@ export const SUBAGENT_RETURN_MATCHER = "Agent|Task";
  * room the drain is made in — the hook holds a turn the person waits on.
  */
 export const SUBAGENT_RETURN_BUDGET_RATIO = 2;
+/**
+ * The least request timeout a prompt's hub call is given once a relay drained
+ * FIRST holds the rest of the budget (connector-claude hooks/user-prompt-
+ * submit.ts; round 2, M3): `AbortSignal.timeout` wants a positive delay, and
+ * a spare of zero should fail the call at once, not spend the reserve that
+ * carries the drained relay out of the hook.
+ */
+export const MIN_SPARE_BOUND_TIMEOUT_MS = 1;
 
 /**
  * The PreToolUse tripwire mode (trial finding #25 + Q2). DESIGN §4 makes `ask`
