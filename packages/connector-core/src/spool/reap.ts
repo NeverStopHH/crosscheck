@@ -556,14 +556,14 @@ const endDeferredSession = async (
   if ((await readOwedWorkContext(home, key, slug))?.sessionId === parsed.data.crosscheckSessionId) {
     return;
   }
+  // Ending now: a record of it a parallel process appends later is withheld,
+  // never filed into the ended session (review-2 round 8, M1). Written down
+  // before the end goes out (review-2 round 9, M3): a "retry" may be an end
+  // the hub committed with its answer lost.
+  await recordRefusedLife(home, key, parsed.data.crosscheckSessionId, now, "end");
   const outcome = await ender(parsed.data.crosscheckSessionId, parsed.data.seq);
   if (outcome === "retry") {
     return;
-  }
-  if (outcome === "ended") {
-    // Ended now: a record of it a parallel process appends later is withheld,
-    // never filed into the ended session (review-2 round 8, M1).
-    await recordRefusedLife(home, key, parsed.data.crosscheckSessionId, now, "end");
   }
   // "ended" and "gone" both spend the marker, and for the same reason: the
   // hub will never hear about this session again from this marker. The

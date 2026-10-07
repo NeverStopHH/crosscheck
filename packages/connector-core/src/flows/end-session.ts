@@ -112,21 +112,24 @@ const writeDownEnd = async (input: EndSessionFlowInput, end: LifeEnd, standing: 
 };
 
 /**
- * Tells the hub one life is over; its marker goes once the hub took it — and
- * the life is written down as refused (review-2 round 8, M1): a record of it a
- * parallel process appends after this end, a reload's SessionStart re-fire
- * beside it, is withheld from every later flush rather than filed into the
- * ended session (spool/refused-lives.ts).
+ * Tells the hub one life is over; its marker goes once the hub took it. The
+ * life is written down as refused first (review-2 round 8, M1): a record of
+ * it a parallel process appends after this end, a reload's SessionStart
+ * re-fire beside it, is withheld from every later flush rather than filed
+ * into the ended session (spool/refused-lives.ts). FIRST, not on the answer
+ * (review-2 round 9, M3): an end the hub committed whose answer was lost is
+ * as final as one it answered, and one that never went still goes from the
+ * marker.
  */
 const endOnHub = async (
   input: EndSessionFlowInput,
   end: LifeEnd,
   losses: Awaited<ReturnType<typeof readTelemetryLossReport>>,
 ): Promise<boolean> => {
+  await recordRefusedLife(input.home, input.repoKey, end.sessionId, input.now(), "end");
   const result = await endSession(input.hub, end.sessionId, end.seq, losses);
   if (result.ok) {
     await removeFile(end.markerPath);
-    await recordRefusedLife(input.home, input.repoKey, end.sessionId, input.now(), "end");
   }
   return result.ok;
 };

@@ -90,6 +90,8 @@ let developerId: string;
 let refuseRegisters = false;
 let refuseRecords = false;
 let refuseEnds = false;
+/** An end the hub commits whose answer never comes back. */
+let endsLate = false;
 let registerDelayMs = 0;
 /** One answer per register, in arrival order, ahead of the dials above: a race's script. */
 let registerScript: readonly ("slow" | "refused")[] = [];
@@ -185,9 +187,9 @@ const endViaFlow = async (fx: Fixture, hub: HubContext = fx.hub) => {
 };
 
 /** SessionStart's maintenance reap, with the deferred ender it hands it. */
-const reapAsSessionStart = (fx: Fixture): Promise<unknown> =>
+const reapAsSessionStart = (fx: Fixture, hub: HubContext = fx.hub): Promise<unknown> =>
   reapSpool(fx.home, fx.key, new Date(), async (crosscheckSessionId, seq) =>
-    (await endSession(fx.hub, crosscheckSessionId, seq)).ok ? "ended" : "retry",
+    (await endSession(hub, crosscheckSessionId, seq)).ok ? "ended" : "retry",
   );
 
 const producerOf = (sessionId: string): Producer => ({ developerId, agentKind: "acp:test", sessionId });
@@ -255,6 +257,10 @@ beforeAll(async () => {
       }
       if (request.method === "POST" && pathname.endsWith("/end") && refuseEnds) {
         return Response.json({ ok: false, error: { code: "unavailable", message: "down" } }, { status: 503 });
+      }
+      if (request.method === "POST" && pathname.endsWith("/end") && endsLate) {
+        await fetch(`${hubUrl}${pathname}${search}`, { method: request.method, headers: request.headers, body });
+        return Response.json({ ok: false, error: { code: "unavailable", message: "late" } }, { status: 504 });
       }
       return fetch(`${hubUrl}${pathname}${search}`, { method: request.method, headers: request.headers, body });
     },
@@ -1528,6 +1534,54 @@ describe("a life SessionEnd ended (review-2 round 8, M1)", () => {
     const other = await register(fx, fx.hub, `${fx.hostSessionKey}-other`);
     await flushSpool(fx.hub, { sessionId: other.crosscheckSessionId, developerId }, BUDGET_MS);
     await reapAsSessionStart(fx);
+    await straggler(fx, life, "src/after-deferred-end.ts");
+
+    // Act
+    await flushSpool(fx.hub, { sessionId: other.crosscheckSessionId, developerId }, BUDGET_MS);
+
+    // Assert
+    expect(await isEnded(life.crosscheckSessionId)).toBe(true);
+    expect(await targetsOf(life.workContextId)).toEqual(["src/late.ts"]);
+    expect((await readDropDetail(fx.home, fx.key)).byReason).toEqual({ withheld: 1 });
+  });
+
+  test("withholds a record appended after an end the hub took but never answered (review-2 round 9, M3)", async () => {
+    // Arrange: the end commits on the hub and its answer is lost; then a
+    // parallel process's straggler of the life
+    const fx = await fixture("own-end-unanswered");
+    const life = await register(fx);
+    await flushAsHook(fx);
+    endsLate = true;
+    const ended = await endViaFlow(fx, fx.proxied);
+    endsLate = false;
+    await straggler(fx, life, "src/after-end.ts");
+
+    // Act: another conversation's flush
+    const other = await register(fx, fx.hub, `${fx.hostSessionKey}-other`);
+    await flushSpool(fx.hub, { sessionId: other.crosscheckSessionId, developerId }, BUDGET_MS);
+
+    // Assert
+    expect(ended.ended).toBe(false);
+    expect(await isEnded(life.crosscheckSessionId)).toBe(true);
+    expect(await targetsOf(life.workContextId)).toEqual([]);
+    expect((await readDropDetail(fx.home, fx.key)).byReason).toEqual({ withheld: 1 });
+  });
+
+  test("and after a deferred end the hub took but never answered (review-2 round 9, M3)", async () => {
+    // Arrange: SessionEnd deferred while the hub refused records; a successor
+    // delivers the backlog, and its reap's end commits with its answer lost
+    const fx = await fixture("deferred-end-unanswered");
+    const life = await register(fx);
+    await flushAsHook(fx);
+    await captureTarget(fx, "src/late.ts");
+    refuseRecords = true;
+    await endViaFlow(fx, fx.proxied);
+    refuseRecords = false;
+    const other = await register(fx, fx.hub, `${fx.hostSessionKey}-other`);
+    await flushSpool(fx.hub, { sessionId: other.crosscheckSessionId, developerId }, BUDGET_MS);
+    endsLate = true;
+    await reapAsSessionStart(fx, fx.proxied);
+    endsLate = false;
     await straggler(fx, life, "src/after-deferred-end.ts");
 
     // Act

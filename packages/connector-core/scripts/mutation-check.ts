@@ -18689,15 +18689,15 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "SessionEnd's own end leaves its life deliverable into (M1)",
     file: `${CORE}/src/flows/end-session.ts`,
-    from: '    await removeFile(end.markerPath);\n    await recordRefusedLife(input.home, input.repoKey, end.sessionId, input.now(), "end");\n',
-    to: "    await removeFile(end.markerPath);\n",
+    from: '  await recordRefusedLife(input.home, input.repoKey, end.sessionId, input.now(), "end");\n',
+    to: "",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review-2 round 8 M1, seed 782: a reload's re-fire beside SessionEnd spools a record a successor files into the ended session",
   },
   {
     label: "a deferred end that lands leaves its life deliverable into (M1)",
     file: `${CORE}/src/spool/reap.ts`,
-    from: '    await recordRefusedLife(home, key, parsed.data.crosscheckSessionId, now, "end");\n',
+    from: '  await recordRefusedLife(home, key, parsed.data.crosscheckSessionId, now, "end");\n',
     to: "",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review-2 round 8 M1: a record of the life appended after reap ended it is filed into the ended session",
@@ -19033,16 +19033,16 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "SessionEnd writes its life down as a heal would (H2)",
     file: `${CORE}/src/flows/end-session.ts`,
-    from: '    await recordRefusedLife(input.home, input.repoKey, end.sessionId, input.now(), "end");',
-    to: "    await recordRefusedLife(input.home, input.repoKey, end.sessionId, input.now());",
+    from: '  await recordRefusedLife(input.home, input.repoKey, end.sessionId, input.now(), "end");',
+    to: "  await recordRefusedLife(input.home, input.repoKey, end.sessionId, input.now());",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review-2 round 9, H2: the end's entry outlives its empty spool by a fortnight",
   },
   {
     label: "a deferred end writes its life down as a heal would (H2)",
     file: `${CORE}/src/spool/reap.ts`,
-    from: '    await recordRefusedLife(home, key, parsed.data.crosscheckSessionId, now, "end");',
-    to: "    await recordRefusedLife(home, key, parsed.data.crosscheckSessionId, now);",
+    from: '  await recordRefusedLife(home, key, parsed.data.crosscheckSessionId, now, "end");',
+    to: "  await recordRefusedLife(home, key, parsed.data.crosscheckSessionId, now);",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review-2 round 9, H2: the deferred end's entry outlives its empty spool by a fortnight",
   },
@@ -19109,6 +19109,22 @@ export const MUTATIONS: readonly Mutation[
     to: "    now: ctx.now(),",
     test: `${CONNECTOR}/test/recovery-epoch.test.ts`,
     because: "a recovered session was never briefed, and nothing would pay that debt",
+  },
+  {
+    label: "SessionEnd writes its life down as refused only once the hub answered its end (M3)",
+    file: `${CORE}/src/flows/end-session.ts`,
+    from: '  await recordRefusedLife(input.home, input.repoKey, end.sessionId, input.now(), "end");\n  const result = await endSession(input.hub, end.sessionId, end.seq, losses);\n  if (result.ok) {\n    await removeFile(end.markerPath);\n  }\n',
+    to: '  const result = await endSession(input.hub, end.sessionId, end.seq, losses);\n  if (result.ok) {\n    await removeFile(end.markerPath);\n    await recordRefusedLife(input.home, input.repoKey, end.sessionId, input.now(), "end");\n  }\n',
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 9, M3 (probe L1): an end the hub committed with its answer lost leaves a straggler of the life to be filed into the ended session",
+  },
+  {
+    label: "a deferred end writes its life down as refused only once the hub answered (M3)",
+    file: `${CORE}/src/spool/reap.ts`,
+    from: '  await recordRefusedLife(home, key, parsed.data.crosscheckSessionId, now, "end");\n  const outcome = await ender(parsed.data.crosscheckSessionId, parsed.data.seq);\n  if (outcome === "retry") {\n    return;\n  }\n',
+    to: '  const outcome = await ender(parsed.data.crosscheckSessionId, parsed.data.seq);\n  if (outcome === "retry") {\n    return;\n  }\n  await recordRefusedLife(home, key, parsed.data.crosscheckSessionId, now, "end");\n',
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 9, M3: a deferred end the hub committed with its answer lost leaves a straggler of the life to be filed into the ended session",
   },
 ];
 
@@ -19374,7 +19390,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
  * PRINTS: packages/connector-core/test/session-heal.test.ts 33
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 4
- * PRINTS: packages/connector-core/test/session-lives.test.ts 57
+ * PRINTS: packages/connector-core/test/session-lives.test.ts 59
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2

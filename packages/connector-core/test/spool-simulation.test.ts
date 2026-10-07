@@ -501,7 +501,6 @@ const manyEnds = (count: number): readonly SimEvent[] => Array.from({ length: co
 const noDrops = (run: Run): boolean => run.drops.length === 0;
 const counted = (run: Run): boolean => run.uncountable.count > 0;
 
-const M3 = "M3 (the refused life written down before the end goes out)";
 const L1 = "L1 (two concurrent set_intents on one conversation)";
 
 /**
@@ -556,7 +555,6 @@ const ROUND_8: readonly Found[] = [
   {
     name: "probe L1: SessionEnd's end committed but its answer lost, then a hook still in flight appends, and a successor flushes",
     events: [start(0), edit(0), fault("endsLate", 1, 0), end(0), straggle(0), start(1), edit(1)],
-    open: M3,
   },
   {
     name: "probe L0 (control for L1): the same end heard",

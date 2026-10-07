@@ -622,7 +622,9 @@ expires (`connector-core/test/release-clock.test.ts`).
 into the refused-lives note, but the end the connector sends itself never did. A record of the life appended after its
 end was sent by a successor and filed into the ended session. That record comes from a reload's SessionStart re-fire
 beside the old process's SessionEnd, or from a hook still in flight (seed 782, probe C1). SessionEnd's own end, and the
-deferred end reap sends from its marker, now record the life once the hub took the end.
+deferred end reap sends from its marker, now record the life. Since review-2 round 9 (M3) they do so before the end goes
+out, not once the hub answered it. An end the hub committed whose answer was lost is as final as one it answered (probe
+L1). An end that never went is still sent from its marker.
 
 **A conversation re-bound to another repo is over for this one** (review-2 round 8, M2). Ownership never compared the
 state's repo binding with the spool's. A conversation resumed from another checkout re-binds its state to that repo,
