@@ -324,6 +324,23 @@ describe("once per teammate and file group per session", () => {
     expect(grown.collisionNotices?.[0]?.fileCount).toBe(2);
   });
 
+  test("a group told on a partial record stays partial when a later file joins it", () => {
+    // Arrange: the first answer said a rung was incomplete, the second did not
+    const partial: CoverageRecord = {
+      ...UNKNOWN_COVERAGE,
+      sources: [
+        { source: "agent_event", state: "incomplete", reason: "session_reaped", gapSince: TWO_DAYS_AGO, observedAt: TWO_DAYS_AGO },
+      ],
+    };
+    const told = withCollisionNotices(state(), [tripwireCollision(tripwireRow(), FILE, partial)]);
+
+    // Act
+    const grown = withCollisionNotices(told, [tripwireCollision(tripwireRow(), "src/other.ts", UNKNOWN_COVERAGE)]);
+
+    // Assert: one complete answer does not vouch for the gap the first one reported
+    expect(grown.collisionNotices?.[0]?.partial).toBe(true);
+  });
+
   test("the same teammate in ANOTHER work context is another group", () => {
     // Arrange
     const told = withCollisionNotices(state(), [tripwireCollision(tripwireRow(), FILE)]);

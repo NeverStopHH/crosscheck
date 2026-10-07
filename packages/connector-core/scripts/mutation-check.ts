@@ -23587,6 +23587,15 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/collision-state.test.ts`,
     because: "a number or an object travels as a group key into the main thread's relay",
   },
+  // ── Review of feat/collision-visible, L6 ───────────────────────────────
+  {
+    label: "a later complete answer erases the gap an earlier one reported",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  const isPartial = told.partial === true || group.partial === true;",
+    to: "  const isPartial = group.partial === true;",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "COV-9: the statusline and the relay stop saying the overlap may be wider while the record still has a hole",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -23795,7 +23804,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/claim-surface.test.ts 1
  * PRINTS: packages/connector-core/test/claim-validity-parity.test.ts 2
  * PRINTS: packages/connector-core/test/claim-validity-render.test.ts 2
- * PRINTS: packages/connector-core/test/collision-notice.test.ts 11
+ * PRINTS: packages/connector-core/test/collision-notice.test.ts 12
  * PRINTS: packages/connector-core/test/collision-state.test.ts 4
  * PRINTS: packages/connector-core/test/commit-evidence.test.ts 1
  * PRINTS: packages/connector-core/test/conference-cost.test.ts 1

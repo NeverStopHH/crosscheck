@@ -1482,13 +1482,20 @@ export const newCollisionKeys = (
   return [...new Set(groups.map((group) => group.key))].filter((key) => !told.has(key));
 };
 
-/** One group folded into a told one: files unioned (capped), the larger count. */
+/**
+ * One group folded into a told one: files unioned (capped), the larger count,
+ * and PARTIAL if either answer was — a later complete answer does not vouch
+ * for the gap an earlier one reported.
+ */
 const mergedCollision = (told: CollisionNotice, group: CollisionNotice): CollisionNotice => {
   const files = [...new Set([...told.files, ...group.files])].slice(0, MAX_COLLISION_FILES);
+  const isPartial = told.partial === true || group.partial === true;
+  const { partial: _dropped, ...rest } = group;
   return {
-    ...group,
+    ...rest,
     files,
     fileCount: Math.max(told.fileCount, group.fileCount, files.length),
+    ...(isPartial ? { partial: true } : {}),
   };
 };
 
