@@ -50,6 +50,7 @@ import {
 } from "@crosscheck/connector-core/state/presence-cache.ts";
 import { reapStaleSessionStates } from "@crosscheck/connector-core/state/session-reap.ts";
 import { sweepAbandonedTemps } from "@crosscheck/connector-core/state/temp-sweep.ts";
+import { renderCollisionNotices } from "@crosscheck/connector-core/hints/collision-notice.ts";
 import { tellPersonOfGhosts } from "./ghost-notice.ts";
 import { requestLandingFetchFor } from "./landing-fetch.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
@@ -486,7 +487,8 @@ export const handleSessionStart = async (
   // inside the reserve every maintenance step above leaves for carrying the
   // briefing out. Not gated on the spare — maintenance spends it on purpose,
   // and this is the hook's own step, not maintenance.
-  const notice = await tellPersonOfGhosts(ctx, assembled.shownGhosts);
+  const told = await tellPersonOfGhosts(ctx, assembled.shownGhosts);
+  const notice = renderCollisionNotices(told, ctx.now());
   return JSON.stringify({
     ...(notice.length === 0 ? {} : { systemMessage: notice }),
     hookSpecificOutput: {

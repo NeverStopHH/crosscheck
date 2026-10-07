@@ -10,10 +10,13 @@
  * emitted briefing really shows, and only for groups this session has not
  * told its person about — a compact or resume re-fires SessionStart inside
  * the same session and keeps the record (withCarriedCapture). One locked
- * write, and none at all when no shown row has a file in it. Fail open: a
- * write that throws tells nobody and costs the hook nothing it emits.
+ * write, and none at all when no shown row has a file in it. Returns the
+ * groups to TELL, not their lines: the prompt hook renders them in one bounded
+ * render with a relay it emits beside them (round 2, L4). Fail open: a write
+ * that failed or threw tells nobody — a group not recorded as told is not
+ * told — and costs the hook nothing it emits.
  */
-import { ghostCollisions, renderCollisionNotices } from "@crosscheck/connector-core/hints/collision-notice.ts";
+import { ghostCollisions } from "@crosscheck/connector-core/hints/collision-notice.ts";
 import type { GhostCheckEntry } from "@crosscheck/connector-core/http/hub.ts";
 import {
   newCollisionKeys,
@@ -26,10 +29,10 @@ import type { HookContext } from "./runner.ts";
 export const tellPersonOfGhosts = async (
   ctx: HookContext,
   shown: readonly GhostCheckEntry[],
-): Promise<string> => {
+): Promise<readonly CollisionNotice[]> => {
   const groups = ghostCollisions(shown);
   if (groups.length === 0) {
-    return "";
+    return [];
   }
   try {
     const told: { value: readonly CollisionNotice[] } = { value: [] };
@@ -38,8 +41,8 @@ export const tellPersonOfGhosts = async (
       told.value = groups.filter((group) => fresher.includes(group.key));
       return withCollisionNotices(fresh, groups);
     });
-    return written ? renderCollisionNotices(told.value, ctx.now()) : "";
+    return written ? told.value : [];
   } catch {
-    return "";
+    return [];
   }
 };

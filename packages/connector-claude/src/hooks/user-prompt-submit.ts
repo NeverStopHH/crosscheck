@@ -80,8 +80,9 @@ import {
   readSessionState,
   updateSessionState,
 } from "@crosscheck/connector-core/state/session-state.ts";
-import { drainCollisionRelay } from "./collision-relay.ts";
-import type { CollisionRelay } from "./collision-relay.ts";
+import type { RenderableCollision } from "@crosscheck/connector-core/hints/collision-notice.ts";
+import { agentCopy, drainCollisionRelay, personCopy } from "./collision-relay.ts";
+import type { RelayDrain } from "./collision-relay.ts";
 import { tellPersonOfGhosts } from "./ghost-notice.ts";
 import { hasGhostAllowance, withGhostClaimed } from "@crosscheck/connector-core/derive/ghost/gate.ts";
 import { isSubstantivePrompt, withIntentFire } from "@crosscheck/connector-core/derive/intent/gate.ts";
@@ -140,16 +141,22 @@ const nonEmpty = (part: string): boolean => part.length > 0;
  * this sync hook is shown to the person, which no subagent hook's output is
  * documented to be — a person who already saw it there sees it twice, which
  * is the accepted cost of never seeing it at all. A paid briefing's ghost
- * lines follow it there (review L5); each part is bounded by its own renderer.
+ * groups follow it there (review L5), in the SAME render (round 2, L4): two
+ * renders capped apart gave one `systemMessage` eight lines.
  */
-const serialize = (output: PromptOutput | "", relay: CollisionRelay, ghosts: string): string => {
-  const text = [relay.agent, output === "" ? "" : output.hookSpecificOutput.additionalContext]
+const serialize = (
+  output: PromptOutput | "",
+  relay: RelayDrain,
+  ghosts: readonly RenderableCollision[],
+  now: Date,
+): string => {
+  const text = [agentCopy(relay, now), output === "" ? "" : output.hookSpecificOutput.additionalContext]
     .filter(nonEmpty)
     .join("\n\n");
   if (text.length === 0) {
     return "";
   }
-  const person = [relay.person, ghosts].filter(nonEmpty).join("\n");
+  const person = personCopy(relay, now, ghosts);
   return JSON.stringify(person.length === 0 ? envelope(text) : { systemMessage: person, ...envelope(text) });
 };
 
@@ -334,5 +341,5 @@ export const handleUserPromptSubmit = async (
   // claims its own (review L5): one lock write, the last thing before output,
   // and not gated on the spare — it is this prompt's own delivery.
   const ghosts = await tellPersonOfGhosts(ctx, delivery.shownGhosts);
-  return serialize(delivery.output, relay, ghosts);
+  return serialize(delivery.output, relay, ghosts, ctx.now());
 };

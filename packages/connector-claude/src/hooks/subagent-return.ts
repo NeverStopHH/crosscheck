@@ -19,15 +19,16 @@
  * SUBAGENT_RETURN_BUDGET_RATIO. A nested subagent's own return (its payload
  * carries `agent_id`) leaves the queue for the main thread.
  */
-import { drainCollisionRelay } from "./collision-relay.ts";
+import { agentCopy, drainCollisionRelay, personCopy } from "./collision-relay.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
 export const handleSubagentReturn = async (ctx: HookContext, budget: HookBudget): Promise<string> => {
-  const relay = await drainCollisionRelay(ctx, budget);
-  return relay.agent.length === 0
+  const drain = await drainCollisionRelay(ctx, budget);
+  const agent = agentCopy(drain, ctx.now());
+  return agent.length === 0
     ? ""
     : JSON.stringify({
-        systemMessage: relay.person,
-        hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: relay.agent },
+        systemMessage: personCopy(drain, ctx.now()),
+        hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: agent },
       });
 };

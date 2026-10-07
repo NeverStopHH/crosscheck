@@ -36,7 +36,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     name: "claude-subagent-collision-relay",
     delivery: "unsolicited",
     module: "src/hooks/collision-relay.ts",
-    note: "returns renderSubagentCollisionRelay output verbatim as the main thread's copy (core's collision-subagent-relay surface) and renderCollisionNotices output verbatim as the person's systemMessage (core's collision-notice surface); the groups it renders are the session state's own records of rows the tripwire already projected",
+    note: "returns renderSubagentCollisionRelay output verbatim as the main thread's copy (core's collision-subagent-relay surface) and renderCollisionNotices output verbatim as the person's systemMessage (core's collision-notice surface) — one render for the drained groups and any ghost groups the same prompt tells; the groups it renders are the session state's own records of rows the tripwire already projected, held to presence by core relayedCollisions (named, or unnamed)",
     corpusCoveredBy: ["test/collision-notice-hook.test.ts"],
   },
   {
@@ -44,7 +44,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     name: "claude-briefing-ghost-notice",
     delivery: "unsolicited",
     module: "src/hooks/ghost-notice.ts",
-    note: "returns renderCollisionNotices output verbatim (core's collision-notice surface) as the person's systemMessage on SessionStart and on the prompt that pays a deferred briefing; the groups are ghostCollisions of the ghost rows the emitted briefing really shows, so only teammates the briefing itself names",
+    note: "returns the groups to tell, which SessionStart renders through renderCollisionNotices verbatim (core's collision-notice surface) and the prompt that pays a deferred briefing renders in the relay's one person-facing render; the groups are ghostCollisions of the ghost rows the emitted briefing really shows, so only teammates the briefing itself names",
     corpusCoveredBy: ["test/collision-notice-hook.test.ts"],
   },
   // `claude-ghost-draft` is no longer registered here: the ghost worker moved

@@ -8,9 +8,11 @@
  * back) or the PostToolUse hook on the subagent tools, which fires the moment
  * a foreground subagent RETURNS (hooks/subagent-return.ts).
  *
- * TWO COPIES OF ONE FACT: the agent's (a header, the lines, the one relay
- * sentence) and the PERSON'S (the lines alone, for `systemMessage`). Both are
- * rendered by core hints/collision-notice.ts; this module composes nothing.
+ * TWO COPIES OF ONE FACT: the agent's (a header, every line, the one relay
+ * sentence) and the PERSON'S (the lines alone, for `systemMessage`, in ONE
+ * bounded render with whatever else the same hook tells the person — a paid
+ * briefing's ghost rows; round 2, L4). Both are rendered by core
+ * hints/collision-notice.ts; this module composes nothing.
  */
 import {
   relayedCollisions,
@@ -27,14 +29,27 @@ import {
 import type { CollisionNotice, SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
-export interface CollisionRelay {
-  /** The main thread's copy: header, one line per group, the one request. */
-  readonly agent: string;
-  /** The person's copy: the lines alone, for `systemMessage`. */
-  readonly person: string;
+/** What one drain hands the main thread. */
+export interface RelayDrain {
+  /** The queued groups as the main thread is told them — named only where live presence confirms. */
+  readonly groups: readonly RenderableCollision[];
+  /** Queued groups the record could only count (round 2, L6). */
+  readonly hidden: number;
 }
 
-export const NO_RELAY: CollisionRelay = { agent: "", person: "" };
+export const NO_DRAIN: RelayDrain = { groups: [], hidden: 0 };
+
+/** The main thread's copy: header, every line, the count, the one request — "" when nothing drained. */
+export const agentCopy = (drain: RelayDrain, now: Date): string =>
+  renderSubagentCollisionRelay(drain.groups, now, drain.hidden);
+
+/**
+ * The person's copy: the drained lines AND `alsoTold` — the other groups the
+ * same hook tells the person — through ONE `renderCollisionNotices`, so one
+ * `systemMessage` keeps one cap of lines and characters (round 2, L4).
+ */
+export const personCopy = (drain: RelayDrain, now: Date, alsoTold: readonly RenderableCollision[] = []): string =>
+  renderCollisionNotices([...drain.groups, ...alsoTold], now, drain.hidden);
 
 /**
  * A queued group held to presence AS IT IS NOW (review M2, round 2 H1): the
@@ -86,14 +101,14 @@ const takenFrom = (state: SessionState): TakenRelay => {
  * next hook, a queue drained into an abandoned hook is lost. Fail open: a
  * busy lock relays later, never twice.
  */
-export const drainCollisionRelay = async (ctx: HookContext, budget: HookBudget): Promise<CollisionRelay> => {
+export const drainCollisionRelay = async (ctx: HookContext, budget: HookBudget): Promise<RelayDrain> => {
   try {
     if (ctx.payload.agent_id !== undefined || budget.spareMs() <= 0) {
-      return NO_RELAY;
+      return NO_DRAIN;
     }
     const state = await readSessionState(ctx.config.home, ctx.payload.session_id);
     if (state === null || !hasPendingRelay(state)) {
-      return NO_RELAY;
+      return NO_DRAIN;
     }
     const taken: { value: TakenRelay } = { value: NOTHING_TAKEN };
     const drained = await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => {
@@ -103,16 +118,9 @@ export const drainCollisionRelay = async (ctx: HookContext, budget: HookBudget):
       taken.value = takenFrom(fresh);
       return withDrainedCollisionRelays(fresh);
     });
-    const { hidden } = taken.value;
-    const groups = drained ? await asPresentNow(ctx, taken.value.groups) : [];
-    return groups.length > 0 || hidden > 0
-      ? {
-          agent: renderSubagentCollisionRelay(groups, ctx.now(), hidden),
-          person: renderCollisionNotices(groups, ctx.now(), hidden),
-        }
-      : NO_RELAY;
+    return drained ? { groups: await asPresentNow(ctx, taken.value.groups), hidden: taken.value.hidden } : NO_DRAIN;
   } catch {
     // Fail open: the hosting hook's own job is untouched.
-    return NO_RELAY;
+    return NO_DRAIN;
   }
 };

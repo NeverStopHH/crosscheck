@@ -23453,7 +23453,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a briefing's ghost row is told to the agent and never the person",
     file: `${CONNECTOR}/src/hooks/session-start.ts`,
-    from: "  const notice = await tellPersonOfGhosts(ctx, assembled.shownGhosts);",
+    from: "  const notice = renderCollisionNotices(told, ctx.now());",
     to: "  const notice = \"\";",
     test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
     because: "the multi-day overlap the live tripwire cannot see stays inside additionalContext, which shows no chat message",
@@ -23808,7 +23808,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a returning subagent hands its collision to nobody",
     file: `${CONNECTOR}/src/hooks/subagent-return.ts`,
-    from: "  return relay.agent.length === 0",
+    from: "  return agent.length === 0",
     to: "  return true",
     test: `${CONNECTOR}/test/subagent-return-hook.test.ts`,
     because: "the hook fires when the subagent returns and says nothing, so the main thread replies without the overlap",
@@ -23896,8 +23896,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a late briefing's ghost lines never reach systemMessage",
     file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
-    from: "  const person = [relay.person, ghosts].filter(nonEmpty).join(\"\\n\");",
-    to: "  const person = relay.person;",
+    from: "  const person = personCopy(relay, now, ghosts);",
+    to: "  const person = personCopy(relay, now);",
     test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
     because: "the group is marked told and the line is thrown away",
   },
@@ -23922,7 +23922,7 @@ export const MUTATIONS: readonly Mutation[
     label: "SessionStart claims its ghost notice only from the spare the drain spends",
     file: `${CONNECTOR}/src/hooks/session-start.ts`,
     from: "await tellPersonOfGhosts(ctx, assembled.shownGhosts);",
-    to: "(budget.spareMs() > 0 ? await tellPersonOfGhosts(ctx, assembled.shownGhosts) : \"\");",
+    to: "(budget.spareMs() > 0 ? await tellPersonOfGhosts(ctx, assembled.shownGhosts) : []);",
     test: `${CONNECTOR}/test/hook-time-budget.test.ts`,
     because: "a session that starts on a backlog — the one whose drain spends the spare — never tells its person of the multi-day overlap",
   },
@@ -24255,6 +24255,24 @@ export const MUTATIONS: readonly Mutation[
     to: "",
     test: `${CONNECTOR}/test/subagent-return-hook.test.ts`,
     because: "groups the record had to drop are never owned up to once the queue itself is empty",
+  },
+  // ── Review of feat/collision-visible, round 2, L4: one prompt, one bounded line ──
+  {
+    label: "a relay and a briefing's ghost lines are capped apart on one prompt",
+    file: `${CONNECTOR}/src/hooks/collision-relay.ts`,
+    from: "  renderCollisionNotices([...drain.groups, ...alsoTold], now, drain.hidden);",
+    to: "  [renderCollisionNotices(drain.groups, now, drain.hidden), renderCollisionNotices(alsoTold, now)].filter((part) => part.length > 0).join(\"\\n\");",
+    test: `${CONNECTOR}/test/collision-prompt-render.test.ts`,
+    because: "seven queued groups and seven ghost rows make one systemMessage of eight lines, past the cap the person was promised",
+  },
+  // ── Review of feat/collision-visible, round 2: reviewer mutation R10 ──
+  {
+    label: "a ghost group is told even when the briefing write failed (reviewer R10)",
+    file: `${CONNECTOR}/src/hooks/ghost-notice.ts`,
+    from: "    return written ? told.value : [];",
+    to: "    return written ? told.value : groups;",
+    test: `${CONNECTOR}/test/ghost-notice.test.ts`,
+    because: "a group never recorded as told is told again by every compact, resume and late briefing",
   },
 ];
 
