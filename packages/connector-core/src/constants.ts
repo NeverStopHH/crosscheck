@@ -1620,6 +1620,15 @@ export const COLLISION_NOTICE_PATH_CHARS = 200;
 export const MAX_COLLISION_NOTICES = 32;
 export const MAX_COLLISION_FILES = 20;
 /**
+ * How much of that ONE hook output may carry (review L4): a relay can drain
+ * every group a session's subagents ran into, so at most this many lines are
+ * named and the rest counted on a line of their own, and the whole is bounded
+ * in characters — far under the 10,000 Claude Code caps `systemMessage` at,
+ * because past a few lines a person stops reading.
+ */
+export const COLLISION_NOTICE_MAX_LINES = 5;
+export const COLLISION_NOTICE_MAX_CHARS = 1600;
+/**
  * The statusline's overlap indicator (`⚠ overlap: Mike · 3 files`): at most
  * this many people by name, then a count, and the whole segment bounded so
  * it never takes the capture-health indicator's characters — it is printed

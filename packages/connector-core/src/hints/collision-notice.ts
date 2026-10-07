@@ -37,6 +37,9 @@ import {
   COLLISION_INDICATOR_MAX_NAMES,
   COLLISION_NOTICE_BRANCH_CHARS,
   COLLISION_NOTICE_FILE_CHARS,
+  COLLISION_NOTICE_MAX_CHARS,
+  COLLISION_NOTICE_MAX_LINES,
+  MAX_COLLISION_NOTICES,
   COLLISION_NOTICE_NAME_CHARS,
   COLLISION_NOTICE_PATH_CHARS,
   STATUSLINE_NAME_CHARS,
@@ -294,9 +297,28 @@ export const renderCollisionNotice = (group: CollisionNotice, now: Date): string
         `talk before you both change ${pronoun}${partial}`;
 };
 
-/** Several groups, one line each — the shape a hook's `systemMessage` carries. */
-export const renderCollisionNotices = (groups: readonly CollisionNotice[], now: Date): string =>
-  groups.map((group) => renderCollisionNotice(group, now)).join("\n");
+/** The renderer's own tail for the groups a bounded output does not name. */
+const moreLine = (count: number): string =>
+  `crosscheck: +${String(count)} more teammate overlap${count === 1 ? "" : "s"} not shown`;
+
+/** Room the tail line can take: its longest spelling, for a count of the whole relay queue. */
+const MORE_LINE_ROOM = moreLine(MAX_COLLISION_NOTICES).length + 1;
+
+/**
+ * Several groups, one line each — the shape a hook's `systemMessage` carries —
+ * at most COLLISION_NOTICE_MAX_LINES of them and COLLISION_NOTICE_MAX_CHARS in
+ * all (review L4), whole lines only, the rest counted on a line of their own:
+ * a cut line would lose the "talk before" half that is the point of it.
+ */
+export const renderCollisionNotices = (groups: readonly CollisionNotice[], now: Date): string => {
+  const lines = groups.map((group) => renderCollisionNotice(group, now));
+  const kept = lines.slice(0, COLLISION_NOTICE_MAX_LINES).reduce<readonly string[]>((fitted, line) => {
+    const candidate = [...fitted, line];
+    return candidate.join("\n").length + MORE_LINE_ROOM <= COLLISION_NOTICE_MAX_CHARS ? candidate : fitted;
+  }, []);
+  const rest = lines.length - kept.length;
+  return [...kept, ...(rest > 0 ? [moreLine(rest)] : [])].join("\n");
+};
 
 /**
  * What the MAIN thread is handed for groups its subagents ran into: a header

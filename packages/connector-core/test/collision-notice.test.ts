@@ -12,15 +12,20 @@ import { LOCATION_WITHHELD } from "@crosscheck/schema";
 import {
   COLLISION_INDICATOR_MAX_CHARS,
   COLLISION_INDICATOR_MAX_NAMES,
+  COLLISION_NOTICE_MAX_CHARS,
+  COLLISION_NOTICE_MAX_LINES,
   COLLISION_NOTICE_PATH_CHARS,
   MAX_COLLISION_NOTICES,
 } from "../src/constants.ts";
 import {
   COLLISION_RELAY_SENTENCE,
   PARTIAL_RECORD_CLAUSE,
+  SUBAGENT_RELAY_HEADER,
   ghostCollisions,
   renderCollisionNotice,
+  renderCollisionNotices,
   renderOverlapIndicator,
+  renderSubagentCollisionRelay,
   tripwireCollision,
 } from "../src/hints/collision-notice.ts";
 import { UNKNOWN_COVERAGE } from "../src/http/coverage.ts";
@@ -549,6 +554,61 @@ describe("once per teammate and file group per session", () => {
 
     // Assert
     expect(refired.collisionNotices).toEqual(told.collisionNotices);
+  });
+});
+
+describe("many groups at once stay a few lines (review L4)", () => {
+  const groupsOf = (count: number, name = "Mike"): readonly CollisionNotice[] =>
+    Array.from({ length: count }, (_, index) =>
+      tripwireCollision(
+        tripwireRow({ developerId: `dev_${String(index)}`, developerName: name, workContextId: `wc_${String(index)}` }),
+        FILE,
+      ),
+    );
+
+  test("past the line cap, the rest are counted on one line of their own", () => {
+    // Act
+    const text = renderCollisionNotices(groupsOf(COLLISION_NOTICE_MAX_LINES + 3), NOW);
+
+    // Assert
+    const lines = text.split("\n");
+    expect(lines).toHaveLength(COLLISION_NOTICE_MAX_LINES + 1);
+    expect(lines.at(-1)).toBe("crosscheck: +3 more teammate overlaps not shown");
+  });
+
+  test("the relay carries the same cap between its header and its request", () => {
+    // Act
+    const lines = renderSubagentCollisionRelay(groupsOf(COLLISION_NOTICE_MAX_LINES + 1), NOW).split("\n");
+
+    // Assert
+    expect(lines).toHaveLength(COLLISION_NOTICE_MAX_LINES + 3);
+    expect(lines.at(-2)).toBe("crosscheck: +1 more teammate overlap not shown");
+    expect(lines.at(-1)).toBe(COLLISION_RELAY_SENTENCE);
+  });
+
+  test("a queue full of maximum-length fields stays inside the character bound", () => {
+    // Arrange: every field at its cap, the whole relay queue's worth of groups
+    const groups = Array.from({ length: MAX_COLLISION_NOTICES }, (_, index) =>
+      tripwireCollision(
+        tripwireRow({
+          developerId: `dev_${String(index)}`,
+          developerName: "N".repeat(500),
+          branch: `feat/${"b".repeat(500)}`,
+          workContextId: `wc_${String(index)}`,
+        }),
+        `src/${"f".repeat(500)}.ts`,
+        { ...UNKNOWN_COVERAGE, sources: [{ source: "git", state: "incomplete", reason: "evidence_stale", gapSince: null, observedAt: null }] },
+      ),
+    );
+
+    // Act
+    const person = renderCollisionNotices(groups, NOW);
+    const agent = renderSubagentCollisionRelay(groups, NOW);
+
+    // Assert
+    expect(person.length).toBeLessThanOrEqual(COLLISION_NOTICE_MAX_CHARS);
+    expect(agent.length).toBeLessThanOrEqual(COLLISION_NOTICE_MAX_CHARS + SUBAGENT_RELAY_HEADER.length + COLLISION_RELAY_SENTENCE.length + 2);
+    expect(person.split("\n").at(-1)).toMatch(/^crosscheck: \+\d+ more teammate overlaps not shown$/);
   });
 });
 

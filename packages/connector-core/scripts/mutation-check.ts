@@ -23763,6 +23763,31 @@ export const MUTATIONS: readonly Mutation[
     test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
     because: "91% of the pilot owner's edits were subagents', and their collisions reached a context nobody reads and then a reply nobody was asked to write",
   },
+  // ── Review of feat/collision-visible, L4: a few lines, never a wall ────
+  {
+    label: "a relay of the whole queue prints every group on its own line",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  const kept = lines.slice(0, COLLISION_NOTICE_MAX_LINES).reduce<readonly string[]>((fitted, line) => {",
+    to: "  const kept = lines.reduce<readonly string[]>((fitted, line) => {",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "thirty-two subagent collisions drain as thirty-two lines on the person's screen, and the person stops reading at the fourth",
+  },
+  {
+    label: "the collision lines are bounded in count but not in characters",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "    return candidate.join(\"\\n\").length + MORE_LINE_ROOM <= COLLISION_NOTICE_MAX_CHARS ? candidate : fitted;",
+    to: "    return candidate;",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "five lines of maximum-length names, branches and paths are a wall of text no person reads",
+  },
+  {
+    label: "the groups past the cap vanish without a count",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  return [...kept, ...(rest > 0 ? [moreLine(rest)] : [])].join(\"\\n\");",
+    to: "  return kept.join(\"\\n\");",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "the person reads five overlaps as all of them, and the sixth teammate is never named or counted",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -23974,7 +23999,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/claim-surface.test.ts 1
  * PRINTS: packages/connector-core/test/claim-validity-parity.test.ts 2
  * PRINTS: packages/connector-core/test/claim-validity-render.test.ts 2
- * PRINTS: packages/connector-core/test/collision-notice.test.ts 21
+ * PRINTS: packages/connector-core/test/collision-notice.test.ts 24
  * PRINTS: packages/connector-core/test/collision-state.test.ts 4
  * PRINTS: packages/connector-core/test/commit-evidence.test.ts 1
  * PRINTS: packages/connector-core/test/conference-cost.test.ts 1
