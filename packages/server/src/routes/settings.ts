@@ -101,7 +101,7 @@ export const settingsRoutes = (deps: AppDeps): Hono<AppEnv> => {
       return fail(c, 400, "validation_failed", formatIssues(parsed.error));
     }
     await setPresenceOptOut(
-      { db: deps.db, now: deps.now },
+      { db: deps.db, now: deps.now, embedder: deps.embedder },
       c.get("developer").id,
       parsed.data.optOut,
     );

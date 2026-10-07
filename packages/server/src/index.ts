@@ -261,7 +261,7 @@ export const startServer = async (): Promise<void> => {
   // M1): her docs still hold her branch titles, so they are rebuilt BEFORE
   // serving — a colleague's first search must not find her by a guessed
   // branch. Once per opt-out (developers.location_index_built_at).
-  const indexesRebuilt = await rebuildOptedOutLocationIndexes({ db, now: () => new Date() });
+  const indexesRebuilt = await rebuildOptedOutLocationIndexes({ db, now: () => new Date(), embedder });
   if (indexesRebuilt > 0) {
     console.log(`[crosscheck] search index: rebuilt for ${String(indexesRebuilt)} opted-out developer(s)`);
   }

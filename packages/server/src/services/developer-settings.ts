@@ -16,9 +16,10 @@ import { and, asc, eq, isNull, notInArray, or, sql } from "drizzle-orm";
 
 import { agentSessions, developerEmails, developerMutes, developers, workContexts } from "../db/schema.ts";
 import { resolvesToDeveloper } from "./cloud-agent-identity.ts";
-import { refreshNormalizedDoc } from "./normalized-doc.ts";
+import { embedContextDoc, refreshNormalizedDoc } from "./normalized-doc.ts";
 import { listDeveloperEmails } from "./developers.ts";
 import type { DeveloperEmailView } from "./developers.ts";
+import type { Embedder } from "./embedder.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
@@ -50,6 +51,11 @@ interface Deps {
   readonly now: Clock;
 }
 
+/** What rebuilding her search index needs: the vector tier's embedder, null when keyless. */
+interface IndexDeps extends Deps {
+  readonly embedder: Embedder | null;
+}
+
 export const getDeveloperSettings = async (
   db: Db,
   developerId: string,
@@ -79,7 +85,7 @@ export const getDeveloperSettings = async (
  * the next boot finishes (rebuildOptedOutLocationIndexes).
  */
 export const setPresenceOptOut = async (
-  deps: Deps,
+  deps: IndexDeps,
   developerId: string,
   optOut: boolean,
 ): Promise<void> => {
@@ -90,13 +96,26 @@ export const setPresenceOptOut = async (
   await rebuildLocationIndex(deps, developerId, optOut);
 };
 
-/** Her location-titled docs rebuilt for the setting she has; an opt-out is marked built. */
+/**
+ * Her location-titled docs rebuilt for the setting she has, and their vectors
+ * with them (review round 5, M2): a rebuild clears a context's embedding
+ * (normalized-doc.ts), and with an embedder configured the vector tier would
+ * miss her work until each context's next ingest. Re-embedded here instead,
+ * one context at a time like an ingest's touched contexts; a failure costs
+ * that context's vector, never the toggle (embedContextDoc). An opt-out is
+ * marked built.
+ */
 const rebuildLocationIndex = async (
-  deps: Deps,
+  deps: IndexDeps,
   developerId: string,
   isOptedOut: boolean,
 ): Promise<void> => {
-  await reindexLocationTitles(deps.db, developerId);
+  const rebuilt = await reindexLocationTitles(deps.db, developerId);
+  if (deps.embedder !== null) {
+    for (const workContextId of rebuilt) {
+      await embedContextDoc(deps.db, deps.embedder, workContextId);
+    }
+  }
   if (isOptedOut) {
     await deps.db
       .update(developers)
@@ -119,7 +138,7 @@ const rebuildLocationIndex = async (
  * an opted-out developer's docs current while her `location_index_built_at`
  * is null — they still hold her location titles until this pass has run.
  */
-export const rebuildOptedOutLocationIndexes = async (deps: Deps): Promise<number> => {
+export const rebuildOptedOutLocationIndexes = async (deps: IndexDeps): Promise<number> => {
   const pending = await deps.db
     .select({ id: developers.id })
     .from(developers)
@@ -140,11 +159,10 @@ const AUTHORED_TITLE_SOURCES = ["host", "person"] as const;
  * built before she opted out. Only contexts whose title CAN be her location
  * are rebuilt — a `host` or `person` title never is — once per toggle, which
  * is rare by nature, and once at boot for an opt-out from before the index
- * followed the setting (above). A rebuild drops the context's embedding until its next
- * ingest re-embeds it (normalized-doc.ts), so the vector tier misses it for
- * that while: the safe direction.
+ * followed the setting (above). Returns the contexts it rebuilt, whose
+ * embeddings the rebuild cleared (rebuildLocationIndex re-embeds them).
  */
-const reindexLocationTitles = async (db: Db, developerId: string): Promise<void> => {
+const reindexLocationTitles = async (db: Db, developerId: string): Promise<readonly string[]> => {
   const rows = await db
     .select({ id: workContexts.id })
     .from(workContexts)
@@ -158,6 +176,7 @@ const reindexLocationTitles = async (db: Db, developerId: string): Promise<void>
   for (const row of rows) {
     await refreshNormalizedDoc(db, row.id);
   }
+  return rows.map((row) => row.id);
 };
 
 /**

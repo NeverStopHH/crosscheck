@@ -18611,8 +18611,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "opting out leaves the docs built before it in the index",
     file: `${SERVER}/src/services/developer-settings.ts`,
-    from: "  await reindexLocationTitles(deps.db, developerId);\n",
-    to: "",
+    from: "  const rebuilt = await reindexLocationTitles(deps.db, developerId);",
+    to: "  const rebuilt: readonly string[] = [];",
     test: `${SERVER}/test/live-location-surfaces.test.ts`,
     because:
       "every context she wrote before the toggle stays searchable by its " +
@@ -19037,6 +19037,23 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/location-index-rebuild.test.ts`,
     because: "the mark says built for an opt-out she no longer has",
   },
+  // ── Review round 5, M2: a rebuilt doc gets its vector back ────────────
+  {
+    label: "a doc the opt-out rebuild cleared is never re-embedded",
+    file: `${SERVER}/src/services/developer-settings.ts`,
+    from: "  if (deps.embedder !== null) {\n    for (const workContextId of rebuilt) {",
+    to: "  if (false) {\n    for (const workContextId of rebuilt) {",
+    test: `${SERVER}/test/location-index-rebuild.test.ts`,
+    because: "on a hub with an embedder the vector tier misses her work until each context's next ingest",
+  },
+  {
+    label: "the presence toggle rebuilds without the hub's embedder",
+    file: `${SERVER}/src/routes/settings.ts`,
+    from: "      { db: deps.db, now: deps.now, embedder: deps.embedder },",
+    to: "      { db: deps.db, now: deps.now, embedder: null },",
+    test: `${SERVER}/test/location-index-rebuild.test.ts`,
+    because: "every toggle leaves the contexts it rebuilt without a vector",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19379,7 +19396,7 @@ interface Outcome {
  * PRINTS: packages/server/test/live-location-prose.test.ts 2
  * PRINTS: packages/server/test/live-location-surfaces.test.ts 39
  * PRINTS: packages/server/test/live-location-told.test.ts 1
- * PRINTS: packages/server/test/location-index-rebuild.test.ts 5
+ * PRINTS: packages/server/test/location-index-rebuild.test.ts 7
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/passkey-announcements.test.ts 1
  * PRINTS: packages/server/test/passkey-revocation-terminates.test.ts 5
