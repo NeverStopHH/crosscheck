@@ -34,6 +34,7 @@ import { recordHookTimeout } from "@crosscheck/connector-core/state/loss-ledger.
 import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { extractFilePaths, parseHookPayload } from "../capture/tool-events.ts";
 import type { HookPayload } from "../capture/tool-events.ts";
+import { hasNothingToRelay } from "./subagent-return.ts";
 
 export type HookName =
   | "session-start"
@@ -318,6 +319,14 @@ export const runHookWith = async (
   env: Env,
 ): Promise<string> => {
   if (isSummarizerChild(env)) {
+    return "";
+  }
+  // The subagent-return hook fires on EVERY Agent/Task call in the main
+  // thread, and nearly every one has nothing to relay: answered from the
+  // payload and one state read, BEFORE the budget's config read and the repo
+  // identity's git spawns, and without a fired marker (round 2, M2;
+  // hooks/subagent-return.ts).
+  if (name === "subagent-return" && (await hasNothingToRelay(stdin, env))) {
     return "";
   }
   try {

@@ -24299,6 +24299,39 @@ export const MUTATIONS: readonly Mutation[
     test: `${CONNECTOR}/test/collision-relay-slow-hub.test.ts`,
     because: "the bound exists in name only and a slow hint hub holds the hook past what the budget left",
   },
+  // ── Review of feat/collision-visible, round 2, M2: the subagent-return hook is near-zero on an empty queue ──
+  {
+    label: "the subagent-return hook prepares the whole runner on an empty queue",
+    file: `${CONNECTOR}/src/hooks/runner.ts`,
+    from: "  if (name === \"subagent-return\" && (await hasNothingToRelay(stdin, env))) {",
+    to: "  if (false) {",
+    test: `${CONNECTOR}/test/subagent-return-cost.test.ts`,
+    because: "every Agent/Task call in the main thread pays four git spawns, a config read and a marker write for nothing",
+  },
+  {
+    label: "a background subagent's launch runs the full subagent-return hook",
+    file: `${CONNECTOR}/src/hooks/subagent-return.ts`,
+    from: " || isAsyncLaunch(payload.tool_response)",
+    to: "",
+    test: `${CONNECTOR}/test/subagent-return-cost.test.ts`,
+    because: "a launch that has not run yet drains the queue its own report-back prompt was meant to carry, at full cost",
+  },
+  {
+    label: "a nested subagent's return runs the full subagent-return hook",
+    file: `${CONNECTOR}/src/hooks/subagent-return.ts`,
+    from: "payload === null || payload.agent_id !== undefined || ",
+    to: "payload === null || ",
+    test: `${CONNECTOR}/test/subagent-return-cost.test.ts`,
+    because: "every nested Agent call inside a subagent pays the runner's git spawns to say nothing",
+  },
+  {
+    label: "the subagent-return shortcut skips a queued relay",
+    file: `${CONNECTOR}/src/hooks/subagent-return.ts`,
+    from: "  return state === null || !hasPendingRelay(state);",
+    to: "  return true;",
+    test: `${CONNECTOR}/test/subagent-return-cost.test.ts`,
+    because: "a foreground subagent's collision waits for the next prompt again, after the reply that should have mentioned it",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
