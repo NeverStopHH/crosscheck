@@ -16,6 +16,9 @@
  * with an older status, or sends nothing for a work context the hub was
  * never seen to take.
  */
+import type { Envelope } from "@crosscheck/schema";
+
+import { UNKNOWN_DEVELOPER_ID, workContextRecord } from "../capture/records.ts";
 import type { RecordResult } from "../http/hub.ts";
 import { updateSessionState } from "../state/session-state.ts";
 import type { SessionState } from "../state/session-state.ts";
@@ -64,20 +67,54 @@ export const noteWorkContextAcked = async (
   }
   await updateSessionState(home, hostSessionKey, (fresh) => {
     const last = acked.filter((ack) => ack.id === fresh.workContextId).at(-1);
+    // An acceptance answers an uncertain post too: the hub holds THIS status now.
     const isNew =
       last !== undefined &&
-      (fresh.workContextAcked?.id !== last.id || fresh.workContextAcked.status !== last.status);
+      (fresh.workContextAcked?.id !== last.id ||
+        fresh.workContextAcked.status !== last.status ||
+        fresh.workContextAcked.uncertain === true);
     return fresh.crosscheckSessionId === flusherSessionId && isNew ? { ...fresh, workContextAcked: last } : null;
   });
 };
 
 /**
  * Whether the hub last accepted ANOTHER status for the state's work context
- * than the state holds. One it never accepted any status for is not behind
- * but unknown to it: its own copies are on their way or counted, and one
- * more would only be refused with them.
+ * than the state holds — or may hold another since: a set_intent post after
+ * that acceptance went unanswered (`uncertain`), and a later one that failed
+ * may have put the state back on the acknowledged status while the hub took
+ * the unanswered one. One it never accepted any status for is not behind but
+ * unknown to it: its own copies are on their way or counted, and one more
+ * would only be refused with them.
  */
 export const isHubBehindState = (state: SessionState): boolean =>
   state.workContextStatus !== null &&
   state.workContextAcked?.id === state.workContextId &&
-  state.workContextAcked.status !== state.workContextStatus;
+  (state.workContextAcked.uncertain === true || state.workContextAcked.status !== state.workContextStatus);
+
+/**
+ * THE LIFE'S LAST WORK CONTEXT, from its state, when the hub may be behind it:
+ * what SessionEnd spools ahead of its drain (flows/end-session.ts), and what
+ * session-reap spools for a host that died without a SessionEnd
+ * (state/session-reap.ts) — no later sender would come for either. None for a
+ * state from before `agentKind` was written down: it has no producer to send
+ * it under.
+ */
+export const lastWorkContextRecords = (state: SessionState, now: Date): readonly Envelope[] =>
+  state.agentKind === null || state.workContextTitle === null || state.workContextStatus === null || !isHubBehindState(state)
+    ? []
+    : [
+        workContextRecord(
+          {
+            workContextId: state.workContextId,
+            sessionId: state.crosscheckSessionId,
+            title: state.workContextTitle,
+            status: state.workContextStatus,
+          },
+          {
+            developerId: state.developerId ?? UNKNOWN_DEVELOPER_ID,
+            agentKind: state.agentKind,
+            sessionId: state.crosscheckSessionId,
+          },
+          now,
+        ),
+      ];

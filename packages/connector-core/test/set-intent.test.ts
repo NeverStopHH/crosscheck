@@ -25,6 +25,7 @@ import { INTENT_ECHO_REFUSAL, INTENT_SECRET_REFUSAL, NO_TITLE } from "../src/mcp
 import { repoKey, sessionSlug } from "../src/config/paths.ts";
 import { oweWorkContext, readOwedWorkContext } from "../src/spool/owed-work-context.ts";
 import { readRefusedLives } from "../src/spool/refused-lives.ts";
+import { isHubBehindState } from "../src/spool/work-context-ack.ts";
 import { readSessionState, writeSessionState } from "../src/state/session-state.ts";
 import type { Env } from "../src/index.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
@@ -453,6 +454,25 @@ describe("set_intent", () => {
     // Assert
     expect(result).toMatchObject({ isError: true, text: expect.stringContaining("HTTP 500") });
     expect((await readSessionState(gina.home, gina.hostSessionKey))?.workContextStatus).toBe("blocked");
+  });
+
+  test("an unanswered post leaves the acknowledgement uncertain, so SessionEnd sends once more (L7)", async () => {
+    // Arrange: a gateway that forwards the first post, then answers every record post with 500
+    let answer: number | null = null;
+    const gateway = gatewayAnswering(() => answer);
+    const jo = await setUpDeveloper("si-uncertain", "Jo", "jo-intent@example.com", `http://127.0.0.1:${String(gateway.port)}`);
+    await call(jo, { summary: "Acknowledged before the gateway failed", status: "blocked" });
+    answer = HTTP_INTERNAL_ERROR;
+
+    // Act: a post the hub may have taken, then one putting the state back on the acknowledged status
+    await call(jo, { summary: "Maybe taken behind a 500", status: "done" });
+    await call(jo, { summary: "Back where the hub last agreed", status: "blocked" });
+    gateway.stop(true);
+
+    // Assert: the state agrees with the acknowledgement, and SessionEnd still reads the hub as behind
+    const state = await readSessionState(jo.home, jo.hostSessionKey);
+    expect(state?.workContextAcked).toEqual({ id: jo.workContextId, status: "blocked", uncertain: true });
+    expect(state === null ? null : isHubBehindState(state)).toBe(true);
   });
 
   test("puts the old status back when the hub ignores the change (review-2 round 8, R7-M7)", async () => {

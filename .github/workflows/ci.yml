@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1805
+    # PRINTS: 1809
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -326,7 +326,7 @@ jobs:
     # PRINTS: mcp/tools/answer-question.ts 1
     # PRINTS: mcp/tools/ask-teammate.ts 1
     # PRINTS: mcp/tools/get-diagnosis.ts 2
-    # PRINTS: mcp/tools/intent-write.ts 9
+    # PRINTS: mcp/tools/intent-write.ts 10
     # PRINTS: mcp/tools/publish-claim.ts 2
     # PRINTS: mcp/tools/review-draft.ts 1
     # PRINTS: mcp/tools/search-related-work.ts 1
@@ -353,7 +353,7 @@ jobs:
     # PRINTS: spool/refused-lives.ts 7
     # PRINTS: spool/reject-cause.ts 3
     # PRINTS: spool/release.ts 1
-    # PRINTS: spool/work-context-ack.ts 6
+    # PRINTS: spool/work-context-ack.ts 8
     # PRINTS: state/capture-bookkeeping.ts 6
     # PRINTS: state/capture-health.ts 2
     # PRINTS: state/conference-cost.ts 1
@@ -362,7 +362,7 @@ jobs:
     # PRINTS: state/loss-refusals.ts 1
     # PRINTS: state/seq-cost.ts 8
     # PRINTS: state/session-lineage.ts 3
-    # PRINTS: state/session-reap.ts 8
+    # PRINTS: state/session-reap.ts 9
     # PRINTS: state/session-scan.ts 2
     # PRINTS: state/session-state.ts 26
     # PRINTS: state/tool-window-key.ts 2
@@ -597,7 +597,7 @@ jobs:
     # PRINTS: intent-budget.test.ts 1
     # PRINTS: intent-ledger-authority.test.ts 1
     # PRINTS: intent-ledger.ts 12
-    # PRINTS: intent-write.ts 9
+    # PRINTS: intent-write.ts 10
     # PRINTS: intent.ts 1
     # PRINTS: junit.ts 2
     # PRINTS: key.ts 6
@@ -693,7 +693,7 @@ jobs:
     # PRINTS: session-events.ts 9
     # PRINTS: session-lineage.ts 3
     # PRINTS: session-order.ts 9
-    # PRINTS: session-reap.ts 8
+    # PRINTS: session-reap.ts 9
     # PRINTS: session-scan.ts 2
     # PRINTS: session-start.ts 8
     # PRINTS: session-state.ts 26
@@ -743,7 +743,7 @@ jobs:
     # PRINTS: wiring-lookalikes.ts 2
     # PRINTS: wiring-removal.ts 7
     # PRINTS: wiring-scope.ts 3
-    # PRINTS: work-context-ack.ts 6
+    # PRINTS: work-context-ack.ts 8
     # PRINTS: work-contexts.ts 2
     # PRINTS: worker-env.ts 1
     # PRINTS: worker.ts 7

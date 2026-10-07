@@ -19,6 +19,7 @@ import { settleOwedOnIntent } from "../../spool/owed-work-context.ts";
 import { recordRefusedLife } from "../../spool/refused-lives.ts";
 import { rejectCauseOf } from "../../spool/reject-cause.ts";
 import { allocateSeq, updateSessionState, withRecordedIntent } from "../../state/session-state.ts";
+import type { SessionState } from "../../state/session-state.ts";
 import type { OwnWorkContext } from "../session.ts";
 import { issuesOf, resultAt } from "./shared.ts";
 import type { HubFailure } from "./shared.ts";
@@ -70,6 +71,18 @@ const mayHaveLanded = (failure: HubFailure): boolean =>
 const writeStatus = (deps: IntentWriteDeps, own: OwnWorkContext, status: string): Promise<boolean> =>
   updateSessionState(deps.home, own.hostSessionKey, (fresh) => ({ ...fresh, workContextStatus: status }));
 
+/**
+ * A post that may have landed went unanswered: the acknowledgement no longer
+ * says what the hub holds, so SessionEnd sends the work context whatever the
+ * state's status is then (spool/work-context-ack.ts). Only an existing
+ * acknowledgement is marked — one never acknowledged at all is sent by its
+ * own copies already.
+ */
+const withUncertainAck = (fresh: SessionState, own: OwnWorkContext): SessionState =>
+  fresh.workContextAcked?.id === own.workContextId
+    ? { ...fresh, workContextAcked: { ...fresh.workContextAcked, uncertain: true } }
+    : fresh;
+
 export const writeIntent = async (
   deps: IntentWriteDeps,
   own: TitledWorkContext,
@@ -110,8 +123,12 @@ export const writeIntent = async (
   if (!posted.ok) {
     // ...unless it may have landed after all — then the state keeps what the
     // hub may now hold, and the next sender of this work context makes the two
-    // agree, rather than putting the old status back over it.
-    if (!mayHaveLanded(posted)) {
+    // agree, rather than putting the old status back over it. SessionEnd is
+    // that sender when nothing else comes, so the acknowledgement is marked as
+    // no longer telling.
+    if (mayHaveLanded(posted)) {
+      await updateSessionState(deps.home, own.hostSessionKey, (fresh) => withUncertainAck(fresh, own));
+    } else {
       await keepOldStatus();
     }
     return { outcome: "failed", failure: posted };

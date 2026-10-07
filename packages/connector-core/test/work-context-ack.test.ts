@@ -73,3 +73,33 @@ describe("what the hub acknowledged of a work context", () => {
     expect(isBehind).toBe(false);
   });
 });
+
+describe("an acknowledgement a set_intent post left uncertain (L7, an unanswered post)", () => {
+  test("puts the hub behind the state even on the same status", () => {
+    // Arrange: blocked acknowledged; a later post went unanswered, and the state is on blocked again
+    const own = state().workContextId;
+    const held = state({ workContextStatus: "blocked", workContextAcked: { id: own, status: "blocked", uncertain: true } });
+
+    // Act
+    const isBehind = isHubBehindState(held);
+
+    // Assert: SessionEnd sends the work context once more
+    expect(isBehind).toBe(true);
+  });
+
+  test("is settled by the next acceptance of the same status", async () => {
+    // Arrange
+    const home = await makeHome("ack-uncertain");
+    const own = state().workContextId;
+    const written = state({ workContextStatus: "blocked", workContextAcked: { id: own, status: "blocked", uncertain: true } });
+    await writeSessionState(home, written);
+
+    // Act: a flush hears the work context accepted at blocked
+    await noteWorkContextAcked(home, sessionSlug(HOST), written.crosscheckSessionId, [{ id: own, status: "blocked" }]);
+
+    // Assert
+    const after = await readSessionState(home, HOST);
+    expect(after?.workContextAcked).toEqual({ id: own, status: "blocked" });
+    expect(after === null ? null : isHubBehindState(after)).toBe(false);
+  });
+});

@@ -27,7 +27,6 @@ import {
   sessionSlug,
   spoolPendingEndPath,
 } from "../config/paths.ts";
-import { UNKNOWN_DEVELOPER_ID, workContextRecord } from "../capture/records.ts";
 import { endSession } from "../http/hub.ts";
 import type { HubContext } from "../http/client.ts";
 import { appendRecords } from "../spool/append.ts";
@@ -38,7 +37,7 @@ import { writeEndMarker } from "../spool/end-marker.ts";
 import type { WorkContextStanding } from "../spool/end-marker.ts";
 import { readTelemetryLossReport } from "../spool/loss-report.ts";
 import { recordRefusedLife } from "../spool/refused-lives.ts";
-import { isHubBehindState } from "../spool/work-context-ack.ts";
+import { lastWorkContextRecords } from "../spool/work-context-ack.ts";
 import { seqAt } from "../capture/seq.ts";
 import { lifeRungOf, recordEndedLife } from "../state/session-lineage.ts";
 import { allocateSeq, closeSessionState, crosscheckSessionIdFor, readSessionState } from "../state/session-state.ts";
@@ -144,30 +143,13 @@ const endOnHub = async (
  */
 const spoolLastWorkContext = async (input: EndSessionFlowInput): Promise<void> => {
   const state = await readSessionState(input.home, input.hostSessionKey);
-  if (
-    state?.crosscheckSessionId !== input.crosscheckSessionId ||
-    state.agentKind === null ||
-    state.workContextTitle === null ||
-    state.workContextStatus === null ||
-    !isHubBehindState(state)
-  ) {
+  if (state?.crosscheckSessionId !== input.crosscheckSessionId) {
     return;
   }
-  const record = workContextRecord(
-    {
-      workContextId: state.workContextId,
-      sessionId: state.crosscheckSessionId,
-      title: state.workContextTitle,
-      status: state.workContextStatus,
-    },
-    {
-      developerId: state.developerId ?? UNKNOWN_DEVELOPER_ID,
-      agentKind: state.agentKind,
-      sessionId: state.crosscheckSessionId,
-    },
-    input.now(),
-  );
-  await appendRecords(input.home, input.repoKey, input.hostSessionKey, [record], input.now());
+  const records = lastWorkContextRecords(state, input.now());
+  if (records.length > 0) {
+    await appendRecords(input.home, input.repoKey, input.hostSessionKey, records, input.now());
+  }
 };
 
 export const endSessionFlow = async (

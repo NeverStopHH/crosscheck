@@ -29,8 +29,10 @@ import {
   SESSION_STATE_SCAN_MAX_FILES,
 } from "../constants.ts";
 import { readJsonOrNull, repoKey, sessionSlug, spoolPendingEndPath } from "../config/paths.ts";
+import { appendRecords } from "../spool/append.ts";
 import { writeEndMarker } from "../spool/end-marker.ts";
 import { stampReleased } from "../spool/release.ts";
+import { lastWorkContextRecords } from "../spool/work-context-ack.ts";
 import { listSessionStateFiles, sessionSilentForMs } from "./session-scan.ts";
 import { lifeRungOf } from "./session-lineage.ts";
 import { crosscheckSessionIdFor, SessionStateSchema, updateSessionState } from "./session-state.ts";
@@ -92,6 +94,14 @@ const writeDownReapedLife = async (
       ...(state.seqEpoch === null ? {} : { seq: { epoch: state.seqEpoch, n: state.eventSeq + 1 } }),
       standing: { workContextTitle: state.workContextTitle, workContextStatus: state.workContextStatus },
     });
+    // ...and SessionEnd's last word, which a host that died never said: the
+    // work context once more when the hub may be behind the state on it
+    // (spool/work-context-ack.ts, L7) — spooled ahead of the end this marker
+    // defers, and sent by whichever flusher drains the dead host's spool.
+    const records = lastWorkContextRecords(state, now);
+    if (records.length > 0) {
+      await appendRecords(home, key, state.hostSessionKey, records, now);
+    }
   } catch {
     // Best-effort: the state goes regardless, as it always did.
   }

@@ -165,7 +165,36 @@ const ROUND_8_REVIEW: readonly CorpusSeed[] = [
   { seed: 1993, generator: "io", invariant: "I1", fix: "79c959d6", bug: "found by round 9's sweep: a record the hub held, in a batch whose heal stayed pending, withheld once its conversation was over", events: scenarioOf(1993, GENERATORS.io) },
 ];
 
-export const SEED_CORPUS: readonly CorpusSeed[] = [...ROUND_7_SWEEP, ...ROUND_7_REVIEW, ...ROUND_8_REVIEW];
+/**
+ * L7's last word, again (first found by feat/topic-contexts' topics sweep,
+ * seed 416, and fixed there in 7322b132; searched for here in `sleep`): a
+ * set_intent post whose answer was lost — the hub took it — then one failing
+ * back to the status the hub last acknowledged. The state and the
+ * acknowledgement agreed, so neither SessionEnd nor, for a host that died,
+ * session-reap sent the work context, and the hub ended on the lost post's
+ * status.
+ */
+const L7_LAST_WORD: readonly CorpusSeed[] = [
+  {
+    seed: 10478,
+    generator: "sleep",
+    invariant: "I4",
+    fix: "7322b132",
+    bug: "L7: a set_intent post taken unheard, then one failing back to the acknowledged status, and SessionEnd sent nothing",
+    events: [start(1), intent(1, "blocked"), fault("recordsLate", 2, 0), intent(1, "done"), fault("records503", 1, 0), intent(1, "blocked")],
+  },
+  {
+    seed: 10478,
+    generator: "sleep",
+    invariant: "I4",
+    fix: "7322b132",
+    bug: "L7: the same on a host that then died, its reaped state's last word never sent",
+    events: [start(1), intent(1, "blocked"), fault("recordsLate", 2, 0), intent(1, "done"), fault("records503", 1, 0), intent(1, "blocked"), age(1)],
+  },
+  { seed: 10478, generator: "sleep", invariant: "I4", fix: "7322b132", bug: "the generated scenario", events: scenarioOf(10478, GENERATORS.sleep) },
+];
+
+export const SEED_CORPUS: readonly CorpusSeed[] = [...ROUND_7_SWEEP, ...ROUND_7_REVIEW, ...ROUND_8_REVIEW, ...L7_LAST_WORD];
 
 /** A corpus entry as its fixed scenario's title names it. */
 export const corpusName = (entry: CorpusSeed): string =>

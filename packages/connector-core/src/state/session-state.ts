@@ -399,8 +399,16 @@ const SessionStateObjectSchema = z.looseObject({
    * when the state's status is not this one — a post that may have landed and
    * did not left the hub on the status before it, and no later sender of the
    * work context was coming to make the two agree.
+   *
+   * `uncertain`: a set_intent post since then may have landed and was never
+   * answered, so the hub may hold ITS status instead — SessionEnd sends the
+   * work context whatever the state's status is. The next acknowledgement
+   * clears it.
    */
-  workContextAcked: z.object({ id: z.string().min(1), status: z.string().min(1) }).nullable().default(null),
+  workContextAcked: z
+    .object({ id: z.string().min(1), status: z.string().min(1), uncertain: z.boolean().optional() })
+    .nullable()
+    .default(null),
   /**
    * Derived-intent telemetry (trial finding #16; the finding-#14 lesson — a
    * fire that lands nothing must be a number somebody can explain): fires
