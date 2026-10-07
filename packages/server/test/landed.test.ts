@@ -427,6 +427,36 @@ describe("a connector from before the flag", () => {
     expect(await landedAtOf(harness, developer.apiKey)).toBeNull();
   });
 
+  test("the age bound is 24 hours, inclusive: 23 h and exactly 24 h land, 25 h does not", async () => {
+    // Arrange: one session per case, each taking its base at TEST_START.
+    const startMs = Date.parse(TEST_START_ISO);
+    const cases = [
+      { hours: 23, lands: true },
+      { hours: 24, lands: true },
+      { hours: 25, lands: false },
+    ] as const;
+    const outcomes: { hours: number; landed: boolean }[] = [];
+    for (const { hours } of cases) {
+      const { harness, developer } = await createHarnessWithSession({ baseCommit: STALE_BASE });
+      await seedContext(harness, developer);
+      const teammate = await addReporter(harness);
+
+      // Act
+      await report(
+        harness,
+        teammate,
+        landedEvidenceBody([STALE_BASE], [
+          { sha: STALE_BASE, committedAt: new Date(startMs - hours * 3_600_000).toISOString() },
+        ]),
+        "ses_robin",
+      );
+      outcomes.push({ hours, landed: (await landedAtOf(harness, developer.apiKey)) !== null });
+    }
+
+    // Assert
+    expect(outcomes).toEqual(cases.map(({ hours, lands }) => ({ hours, landed: lands })));
+  });
+
   test("a stale base is not stamped — an old checkout is not new work", async () => {
     // Arrange: no flag, on a named branch; the base was committed six weeks
     // before the context opened.

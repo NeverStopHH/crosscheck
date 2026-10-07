@@ -23724,6 +23724,31 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/landed-repair.test.ts`,
     because: "the stamps an older hub made on sessions ON main, the commonest false fresh-dated kind, stay",
   },
+  // The age bound's own edges (the review's OM1–OM3).
+  {
+    label: "the stale bound is six weeks, and the incident's checkout lands",
+    file: `${SERVER}/src/constants.ts`,
+    from: "export const LANDED_STALE_BASE_HOURS = 24;",
+    to: "export const LANDED_STALE_BASE_HOURS = 1000;",
+    test: `${SERVER}/test/landed.test.ts`,
+    because: "a base checked out a day and more before its session took it reads as the session's own tip",
+  },
+  {
+    label: "the stale bound is two hours, and an overnight branch tip never lands",
+    file: `${SERVER}/src/constants.ts`,
+    from: "export const LANDED_STALE_BASE_HOURS = 24;",
+    to: "export const LANDED_STALE_BASE_HOURS = 2;",
+    test: `${SERVER}/test/landed.test.ts`,
+    because: "yesterday's commit on the session's own branch is refused as a stale checkout",
+  },
+  {
+    label: "a base exactly 24 hours old is stale",
+    file: `${SERVER}/src/services/landed.ts`,
+    from: "  baseCommittedAt.getTime() < baseAdoptedAt.getTime() - LANDED_STALE_BASE_HOURS * MS_PER_HOUR;",
+    to: "  baseCommittedAt.getTime() <= baseAdoptedAt.getTime() - LANDED_STALE_BASE_HOURS * MS_PER_HOUR;",
+    test: `${SERVER}/test/landed.test.ts`,
+    because: "the documented bound (no more than 24 hours) and the rule disagree at its edge",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -24107,7 +24132,7 @@ interface Outcome {
  * PRINTS: packages/server/test/landed-context.test.ts 22
  * PRINTS: packages/server/test/landed-notices.test.ts 34
  * PRINTS: packages/server/test/landed-repair.test.ts 7
- * PRINTS: packages/server/test/landed.test.ts 12
+ * PRINTS: packages/server/test/landed.test.ts 15
  * PRINTS: packages/server/test/live-location-cost.test.ts 3
  * PRINTS: packages/server/test/live-location-differential.test.ts 5
  * PRINTS: packages/server/test/live-location-privacy.test.ts 27

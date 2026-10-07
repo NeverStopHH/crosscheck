@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 2268
+    # PRINTS: 2271
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -417,7 +417,7 @@ jobs:
     # PRINTS: packages/schema/src/session.ts 2
     # PRINTS: packages/schema/src/telemetry-loss.ts 6
     # PRINTS: packages/server/scripts/unland-false-landed.ts 3
-    # PRINTS: packages/server/src/constants.ts 1
+    # PRINTS: packages/server/src/constants.ts 3
     # PRINTS: packages/server/src/db/bootstrap.sql 42
     # PRINTS: packages/server/src/db/client.ts 8
     # PRINTS: packages/server/src/db/schema.ts 1
@@ -475,7 +475,7 @@ jobs:
     # PRINTS: packages/server/src/services/landed-context.ts 22
     # PRINTS: packages/server/src/services/landed-notices.ts 28
     # PRINTS: packages/server/src/services/landed-repair.ts 4
-    # PRINTS: packages/server/src/services/landed.ts 10
+    # PRINTS: packages/server/src/services/landed.ts 11
     # PRINTS: packages/server/src/services/live-location.ts 35
     # PRINTS: packages/server/src/services/noise-label.ts 3
     # PRINTS: packages/server/src/services/normalized-doc.ts 6
@@ -562,7 +562,7 @@ jobs:
     # PRINTS: conference.ts 23
     # PRINTS: config.ts 4
     # PRINTS: connected-repo.ts 3
-    # PRINTS: constants.ts 13
+    # PRINTS: constants.ts 15
     # PRINTS: contradictions.ts 1
     # PRINTS: cost.ts 3
     # PRINTS: counts.ts 1
@@ -661,7 +661,7 @@ jobs:
     # PRINTS: landed-notices.ts 33
     # PRINTS: landed-repair.ts 4
     # PRINTS: landed-why.ts 2
-    # PRINTS: landed.ts 18
+    # PRINTS: landed.ts 19
     # PRINTS: landing-branches.ts 7
     # PRINTS: latency.ts 1
     # PRINTS: ledger-read.ts 2
