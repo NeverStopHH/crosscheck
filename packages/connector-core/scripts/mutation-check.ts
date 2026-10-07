@@ -19206,6 +19206,70 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/record-receipts.test.ts`,
     because: "review-2 round 9, M5: records that landed are answered 500, re-sent, and the spool pins behind them",
   },
+  {
+    label: "the receipts read is any developer's (M6)",
+    file: `${SERVER}/src/services/record-receipts.ts`,
+    from: ".where(and(eq(recordReceipts.developerId, developerId), inArray(recordReceipts.id, [...ids])));",
+    to: ".where(inArray(recordReceipts.id, [...ids]));",
+    test: `${SERVER}/test/record-receipts.test.ts`,
+    because: "review-2 round 9, M6: another developer's envelope id is answered duplicate, with the first developer's result id",
+  },
+  {
+    label: "a receipt write takes over another developer's receipt (M6)",
+    file: `${SERVER}/src/services/record-receipts.ts`,
+    from: "        setWhere: sql`${recordReceipts.developerId} = excluded.developer_id`,\n",
+    to: "",
+    test: `${SERVER}/test/record-receipts.test.ts`,
+    because: "review-2 round 9, M6: one developer's envelope under another's id answers the other's re-send with its own result",
+  },
+  {
+    label: "the hub keeps a receipt of what it refused or ignored (M6)",
+    file: `${SERVER}/src/services/records.ts`,
+    from: 'const TAKEN: ReadonlySet<RecordStatus> = new Set(["accepted", "duplicate"]);',
+    to: 'const TAKEN: ReadonlySet<RecordStatus> = new Set(["accepted", "duplicate", "rejected", "ignored"]);',
+    test: `${SERVER}/test/record-receipts.test.ts`,
+    because: "review-2 round 9, M6: a refused record re-sent after its producer ended is answered duplicate, and silently lost",
+  },
+  {
+    label: "the hub forgets every receipt on its next pass (M6)",
+    file: `${SERVER}/src/constants.ts`,
+    from: "export const RECORD_RECEIPT_RETENTION_DAYS = 30;",
+    to: "export const RECORD_RECEIPT_RETENTION_DAYS = 0;",
+    test: `${SERVER}/test/record-receipts.test.ts`,
+    because: "review-2 round 9, M6: the duplicate a receipt answers lasts only until the next reaper pass",
+  },
+  {
+    label: "a duplicate answer counts as the hub's acknowledgement (M6)",
+    file: `${CORE}/src/spool/work-context-ack.ts`,
+    from: '    .filter((result) => result.status === "accepted")\n',
+    to: '    .filter((result) => result.status === "accepted" || result.status === "duplicate")\n',
+    test: `${CORE}/test/work-context-ack.test.ts`,
+    because: "review-2 round 9, M6: an envelope the hub held before reads as the status it holds now, and SessionEnd skips the last one",
+  },
+  {
+    label: "a flush notes another work context's acknowledgement as the state's own (M6)",
+    file: `${CORE}/src/spool/work-context-ack.ts`,
+    from: "    const last = acked.filter((ack) => ack.id === fresh.workContextId).at(-1);",
+    to: "    const last = acked.at(-1);",
+    test: `${CORE}/test/work-context-ack.test.ts`,
+    because: "review-2 round 9, M6: SessionEnd compares the state's status with what the hub took for another work context",
+  },
+  {
+    label: "an acknowledgement of another work context puts the hub behind the state (M6)",
+    file: `${CORE}/src/spool/work-context-ack.ts`,
+    from: "  state.workContextAcked?.id === state.workContextId &&\n",
+    to: "  state.workContextAcked != null &&\n",
+    test: `${CORE}/test/work-context-ack.test.ts`,
+    because: "review-2 round 9, M6: SessionEnd re-sends a work context on another one's acknowledgement",
+  },
+  {
+    label: "a re-fire's busy-lock fallback keeps the life's epoch beside a counter at zero (M6)",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "    seqEpoch: restored?.epoch ?? fresh,\n",
+    to: "    seqEpoch: restored?.epoch ?? seqEpoch,\n",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 9, M6: the positions the life already handed out are handed out again",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19470,7 +19534,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
  * PRINTS: packages/connector-core/test/session-heal.test.ts 33
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 4
- * PRINTS: packages/connector-core/test/session-lives.test.ts 59
+ * PRINTS: packages/connector-core/test/session-lives.test.ts 60
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
@@ -19486,6 +19550,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/tool-window-pairing.test.ts 6
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
  * PRINTS: packages/connector-core/test/verdict-wire.test.ts 2
+ * PRINTS: packages/connector-core/test/work-context-ack.test.ts 3
  * PRINTS: packages/connector-core/test/working-days.test.ts 3
  * PRINTS: packages/connector-cursor/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-cursor/test/budget.test.ts 1
@@ -19558,7 +19623,7 @@ interface Outcome {
  * PRINTS: packages/server/test/questions.test.ts 8
  * PRINTS: packages/server/test/record-receipts-bloat.test.ts 1
  * PRINTS: packages/server/test/record-receipts-boot.test.ts 1
- * PRINTS: packages/server/test/record-receipts.test.ts 11
+ * PRINTS: packages/server/test/record-receipts.test.ts 15
  * PRINTS: packages/server/test/records.test.ts 2
  * PRINTS: packages/server/test/retention-registry.test.ts 2
  * PRINTS: packages/server/test/search-filters.test.ts 10

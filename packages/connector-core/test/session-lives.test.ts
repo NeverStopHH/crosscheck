@@ -1165,6 +1165,31 @@ describe("a SessionStart that re-fires inside a live conversation", () => {
     expect((await stateOf(fx))?.workContextStatus).toBe("blocked");
   });
 
+  test("whose publish finds the lock busy writes a fresh epoch beside its counter at zero, never the life's own (review-2 round 9, M6)", async () => {
+    // Arrange: a live life with positions handed out under its epoch
+    const fx = await fixture("refire-busy-fallback");
+    await register(fx);
+    await captureTarget(fx, "src/one.ts");
+    await captureTarget(fx, "src/two.ts");
+    const before = await stateOf(fx);
+
+    // Act: SessionStart fires again while another holder keeps the lock past
+    // the epoch decision's patience and the publish's
+    let refire: Promise<unknown> = Promise.resolve();
+    await withLock(sessionStateLockPath(fx.home, fx.hostSessionKey), false, async () => {
+      refire = register(fx);
+      await Bun.sleep(2 * LOCK_PAST_PATIENCE_MS);
+      return true;
+    });
+    await refire;
+
+    // Assert: the fallback's counter restarts, so the epoch beside it is not the one its positions were issued under
+    const after = await stateOf(fx);
+    expect(before?.eventSeq).toBeGreaterThan(0);
+    expect(after?.eventSeq).toBe(0);
+    expect(after?.seqEpoch).not.toBe(before?.seqEpoch);
+  });
+
   test("keeps a status set_intent writes while its register is in flight (review-2 round 8, L1)", async () => {
     // Arrange: a live life; the re-fire's register is slow
     const fx = await fixture("refire-status-in-flight");

@@ -17,11 +17,13 @@ import { pruneRecordReceipts } from "../src/services/record-receipts.ts";
 import { reapStaleSessions } from "../src/services/sessions.ts";
 
 import {
+  addTestDeveloperWithSession,
   createHarnessWithSession,
   jsonRequest,
   postRecords,
   recordEnvelope,
   registerTestSession,
+  validClaimBody,
   validWorkContextBody,
   VALID_SESSION_BODY,
   WORK_CONTEXT_ID,
@@ -111,6 +113,98 @@ describe("an envelope the hub already took", () => {
 
     // Assert: no receipt left, so the ended producer is refused as before
     expect(again).toBe("rejected");
+  });
+});
+
+const SHARED_ID = "env_shared";
+const ROBIN_SESSION = "ses_robin";
+
+/** Robin, a second developer with a live session of his own. */
+const addRobin = (harness: TestHarness): Promise<TestDeveloper> =>
+  addTestDeveloperWithSession(harness, "Robin", "robin@example.com", { id: ROBIN_SESSION });
+
+/**
+ * A RECEIPT IS ITS DEVELOPER'S, OF WHAT THE HUB TOOK, FOR ITS RETENTION —
+ * each guard here is one a mutation of the round-8 review walked through
+ * without a test noticing (review-2 round 9, M6).
+ */
+describe("a receipt", () => {
+  test("is never another developer's: the same envelope id under their ended producer is refused", async () => {
+    // Arrange: Nick's target taken under an envelope id; Robin's life ended
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(harness, developer, { records: [recordEnvelope("work_context", validWorkContextBody())] });
+    await statusOf(harness, developer, recordEnvelope("target", target("src/nick.ts"), { id: SHARED_ID }));
+    const robin = await addRobin(harness);
+    await harness.app.request(`/api/sessions/${ROBIN_SESSION}/end`, jsonRequest("POST", robin.apiKey, {}));
+
+    // Act: Robin's connector sends under the same envelope id
+    const robins = await statusOf(
+      harness,
+      robin,
+      recordEnvelope("target", { workContextId: "wc_robin", kind: "file", value: "src/robin.ts" }, { id: SHARED_ID, sessionId: ROBIN_SESSION }),
+    );
+
+    // Assert: answered as Robin's own, never with Nick's receipt
+    expect(robins).toBe("rejected");
+  });
+
+  test("is never overwritten by another developer's envelope under the same id", async () => {
+    // Arrange: Nick's claim taken; then Robin's claim, his life live, under Nick's envelope id
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(harness, developer, { records: [recordEnvelope("work_context", validWorkContextBody())] });
+    const nicks = recordEnvelope("claim", validClaimBody({ id: "clm_nick" }), { id: SHARED_ID });
+    await statusOf(harness, developer, nicks);
+    const robin = await addRobin(harness);
+    await postRecords(harness, robin, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody({ id: "wc_robin", sessionId: ROBIN_SESSION }), { sessionId: ROBIN_SESSION }),
+        recordEnvelope(
+          "claim",
+          validClaimBody({ id: "clm_robin", workContextId: "wc_robin", authorSessionId: ROBIN_SESSION, body: "the cache key omits the tenant" }),
+          { id: SHARED_ID, sessionId: ROBIN_SESSION },
+        ),
+      ],
+    });
+    await endProducer(harness, developer);
+
+    // Act: Nick's connector re-sends the claim whose answer it never heard
+    const again = (await postRecords(harness, developer, { records: [nicks] })).data?.results[0];
+
+    // Assert: Nick's own receipt answers, with Nick's claim
+    expect(again).toMatchObject({ status: "duplicate", id: "clm_nick" });
+  });
+
+  test("is never kept of a record the hub refused: its re-send under an ended producer is refused again", async () => {
+    // Arrange: a claim on a work context the hub never heard of, refused while its producer lives
+    const { harness, developer } = await createHarnessWithSession();
+    const refused = recordEnvelope("claim", validClaimBody({ workContextId: "wc_missing" }));
+    const first = await statusOf(harness, developer, refused);
+    await endProducer(harness, developer);
+
+    // Act
+    const again = await statusOf(harness, developer, refused);
+
+    // Assert
+    expect(first).toBe("rejected");
+    expect(again).toBe("rejected");
+  });
+
+  test("outlives the next day's reaper pass", async () => {
+    // Arrange: a target taken, then a day passes and the reaper runs — a fixed
+    // day, not one counted from the retention this guards
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(harness, developer, { records: [recordEnvelope("work_context", validWorkContextBody())] });
+    const held = recordEnvelope("target", target("src/kept.ts"));
+    await statusOf(harness, developer, held);
+    harness.clock.advanceSeconds(SECONDS_PER_DAY);
+    await reapStaleSessions({ db: harness.db, now: harness.clock.now });
+    await endProducer(harness, developer);
+
+    // Act
+    const again = await statusOf(harness, developer, held);
+
+    // Assert: the receipt answers the re-send
+    expect(again).toBe("duplicate");
   });
 });
 

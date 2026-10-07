@@ -621,6 +621,18 @@ column can hold. The envelope schema caps an id at 128 characters (connectors mi
 and write are best-effort: a receipt only spares a re-send its refusal, so one that cannot be read or written leaves the
 flush answered as a hub without receipts would answer it.
 
+**Round 8's own guards** (review-2 round 9, M6). The review's own mutations walked through every test on seven lines of
+round 8's code. Each now has a test and an anchor:
+
+- the receipt read keeps to its developer, so another developer's envelope id is never answered from it;
+- a receipt write never takes over another developer's receipt;
+- a refused or ignored record leaves no receipt that would answer its re-send as held;
+- a receipt outlives the next day's reaper pass (`record-receipts.test.ts`, a unit test, where only the slow simulation
+  had noticed a retention of zero days);
+- a duplicate answer is no acknowledgement of a status, and an acknowledgement of another work context is neither noted
+  nor compared as the state's own (`work-context-ack.test.ts`);
+- a re-fire whose publish meets a busy lock writes a fresh epoch beside its counter at zero, never the life's own.
+
 **Three clocks that were one** (review-2 round 8, H1 and H2). The refused-lives note dropped an entry
 `MAX_SPOOL_AGE_DAYS` after it was written. A flush reads a silent host session as abandoned after the same span. Reap
 expired a spool whose data file was that old. So when a host died:
