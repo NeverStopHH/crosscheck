@@ -43,8 +43,14 @@ export interface SessionHeal {
   readonly sessionId: string;
 }
 
-/** The two refusals a heal answers: the hub ended the session, or never registered it. */
-export type RefusalCause = "session_ended" | "session_unknown";
+/**
+ * The refusals a heal answers: the hub ended the session, or never registered
+ * it — or a heartbeat was answered `already_ended`, which on hubs up to 0.10
+ * is also what a session the reaper only presumed dead is answered (review-2
+ * round 9, H1). That one is no verdict: the heal re-registers the same life
+ * first, which revives a reaped session, and only a refusal of THAT ends it.
+ */
+export type RefusalCause = "session_ended" | "session_unknown" | "heartbeat_ended";
 
 export interface SessionRefusal {
   readonly sessionId: string;

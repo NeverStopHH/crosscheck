@@ -43,7 +43,7 @@ import { lineEnds, writeCountedLines, writeCursorOffset } from "../src/spool/cur
 import { readSessionSpool } from "../src/spool/files.ts";
 import { flushSpool } from "../src/spool/flush.ts";
 import type { SessionHealer } from "../src/spool/flush.ts";
-import { recordRefusedLife } from "../src/spool/refused-lives.ts";
+import { readRefusedLives, recordRefusedLife } from "../src/spool/refused-lives.ts";
 import { readSessionState, updateSessionState } from "../src/state/session-state.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
 
@@ -80,6 +80,8 @@ let endDelayMs = 0;
 let registerCalls = 0;
 /** Record deliveries the proxy forwarded. */
 let recordPosts = 0;
+/** Answer every heartbeat of a session the hub reaped `already_ended`, as hubs up to 0.10 do. */
+let olderHubHeartbeats = false;
 const cleanups: string[] = [];
 
 /**
@@ -222,6 +224,15 @@ beforeAll(async () => {
       }
       if (request.method === "POST" && pathname.endsWith("/end") && endDelayMs > 0) {
         await Bun.sleep(endDelayMs);
+      }
+      const beating = /^\/api\/sessions\/([^/]+)\/heartbeat$/.exec(pathname)?.[1];
+      if (olderHubHeartbeats && beating !== undefined) {
+        const rows = await raw<{ reaped: boolean }>("select reaped_at is not null as reaped from agent_sessions where id = $1", [
+          decodeURIComponent(beating),
+        ]);
+        if (rows[0]?.reaped === true) {
+          return Response.json({ ok: false, error: { code: "already_ended", message: "session has already ended" } }, { status: 409 });
+        }
       }
       return fetch(`${hubUrl}${pathname}${search}`, {
         method: request.method,
@@ -392,7 +403,7 @@ describe("a flush whose own session the hub ended", () => {
     expect((await readDropDetail(fx.home, fx.key)).byReason).toEqual({ rejected: 1, withheld: 1 });
   });
 
-  test("a heartbeat the hub refuses as ended marks the life refused too, a failed walk or not (review-2 round 7)", async () => {
+  test("a heartbeat's 409 is no verdict until the same life's re-register is refused (review-2 round 9, H1)", async () => {
     // Arrange: the hub ends the life and refuses every register
     const fx = await fixture("beat-ended", proxyUrl);
     const life = await register(fx);
@@ -400,8 +411,7 @@ describe("a flush whose own session the hub ended", () => {
     await endOnHub(life.crosscheckSessionId);
     refuseRegisters = true;
 
-    // Act: the beat's 409 asks the healer, whose walk lands nothing; then the
-    // conversation is gone with an edit of the life on disk, and another flushes
+    // Act: the beat's 409 asks the healer, whose re-register of the same life lands nothing
     await heartbeatMaybe({
       hub: fx.hub,
       crosscheckSessionId: life.crosscheckSessionId,
@@ -411,16 +421,33 @@ describe("a flush whose own session the hub ended", () => {
         healerFor(fx)({ sessionId: life.crosscheckSessionId, cause }, Date.now() + GENEROUS_BUDGET_MS),
     });
     refuseRegisters = false;
-    await appendTo(fx, fx.hostSessionKey, [
-      targetRecord(life.workContextId, "file", "src/after-beat.ts", producerOf(life.crosscheckSessionId), new Date()),
-    ]);
-    await rm(sessionStatePath(fx.home, fx.hostSessionKey), { force: true });
-    const other = await register(fx, `${fx.hostSessionKey}-other`);
-    await flushSpool(fx.hub, { sessionId: other.crosscheckSessionId, developerId }, GENEROUS_BUDGET_MS);
+
+    // Assert: a reaped session answers a heartbeat the same way on hubs up to
+    // 0.10, so nothing is written down and the life stays the state's
+    expect(await readRefusedLives(fx.home, fx.key, new Date())).toEqual(new Set());
+    expect(await stateId(fx)).toBe(life.crosscheckSessionId);
+  });
+
+  test("a heartbeat's 409 writes the life down once the same life's re-register is refused (review-2 round 9, H1)", async () => {
+    // Arrange: the hub ends the life
+    const fx = await fixture("beat-ended-heard", proxyUrl);
+    const life = await register(fx);
+    await flushAsHook(fx);
+    await endOnHub(life.crosscheckSessionId);
+
+    // Act: the beat; its heal's re-register of the same life is answered 409
+    await heartbeatMaybe({
+      hub: fx.hub,
+      crosscheckSessionId: life.crosscheckSessionId,
+      lastHeartbeatAt: null,
+      now: new Date(),
+      onRefused: (cause) =>
+        healerFor(fx)({ sessionId: life.crosscheckSessionId, cause }, Date.now() + GENEROUS_BUDGET_MS),
+    });
 
     // Assert
-    expect(await targetsOf(life.workContextId)).toEqual([]);
-    expect((await readDropDetail(fx.home, fx.key)).byReason).toEqual({ withheld: 1 });
+    expect(await readRefusedLives(fx.home, fx.key, new Date())).toEqual(new Set([life.crosscheckSessionId]));
+    expect(await stateId(fx)).toBe(`${life.crosscheckSessionId}~r1`);
   });
 
   test("a straggler of the refused life flushed later is withheld too", async () => {
@@ -1153,6 +1180,32 @@ describe("a heartbeat the hub refuses", () => {
     // Assert
     expect(await stateId(fx)).toBe(`${life.crosscheckSessionId}~r1`);
     expect(await sessionRow(`${life.crosscheckSessionId}~r1`)).toEqual({ ended: false });
+  });
+
+  test("of a session an older hub reaped overnight re-registers the same life, which revives it (review-2 round 9, H1)", async () => {
+    // Arrange: a life the hub reaped while the laptop slept; its heartbeats,
+    // as on hubs up to 0.10, are answered already_ended
+    const fx = await fixture("heal-heartbeat-reaped", proxyUrl);
+    const life = await register(fx);
+    await flushAsHook(fx);
+    await raw("update agent_sessions set ended_at = now(), reaped_at = now() where id = $1", [life.crosscheckSessionId]);
+    olderHubHeartbeats = true;
+    const healer = healerFor(fx);
+
+    // Act: the first hook after the night beats
+    await heartbeatMaybe({
+      hub: fx.hub,
+      crosscheckSessionId: life.crosscheckSessionId,
+      lastHeartbeatAt: null,
+      now: new Date(),
+      onRefused: (cause) => healer({ sessionId: life.crosscheckSessionId, cause }, Date.now() + GENEROUS_BUDGET_MS),
+    });
+    olderHubHeartbeats = false;
+
+    // Assert: the same life, live again, and nothing of it withheld
+    expect(await stateId(fx)).toBe(life.crosscheckSessionId);
+    expect(await sessionRow(life.crosscheckSessionId)).toEqual({ ended: false });
+    expect(await readRefusedLives(fx.home, fx.key, new Date())).toEqual(new Set());
   });
 
   test("registers a life the hub never heard of as itself, and spools its work context again", async () => {

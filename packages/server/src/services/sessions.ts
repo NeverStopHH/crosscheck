@@ -274,7 +274,15 @@ export const heartbeatSession = async (
     return { outcome: "forbidden" };
   }
   if (existing.endedAt !== null) {
-    return { outcome: "already_ended" };
+    if (existing.reapedAt === null) {
+      return { outcome: "already_ended" };
+    }
+    // A HEARTBEAT IS PROOF OF LIFE TOO (review-2 round 9, H1), as a register
+    // or a record is: the first hook after a night beat a session the reaper
+    // had given up on, was answered `already_ended`, and its heal moved the
+    // conversation to the next life — a parallel hook's record of the old
+    // one was then withheld for good.
+    await reviveReapedSession(deps, existing);
   }
 
   const now = deps.now();

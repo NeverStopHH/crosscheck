@@ -34,9 +34,13 @@ export interface HeartbeatMaybeInput {
   readonly onRefused?: (cause: RefusalCause) => Promise<unknown>;
 }
 
-/** The two answers that mean the session is dead to the hub, not that the hub is down. */
+/**
+ * The two answers that mean the session is dead to the hub, not that the hub
+ * is down. A 409 is `heartbeat_ended`, not `session_ended`: hubs up to 0.10
+ * give it for a session reaped overnight too (review-2 round 9, H1).
+ */
 const refusalOf = (status: number): RefusalCause | null =>
-  status === HTTP_CONFLICT ? "session_ended" : status === HTTP_NOT_FOUND ? "session_unknown" : null;
+  status === HTTP_CONFLICT ? "heartbeat_ended" : status === HTTP_NOT_FOUND ? "session_unknown" : null;
 
 export const heartbeatMaybe = async (
   input: HeartbeatMaybeInput,

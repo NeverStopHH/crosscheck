@@ -534,6 +534,24 @@ One class is a documented residual, I1u, and the sweep counts it without failing
 write down anywhere: the ledger line and its fallback marker both failed, so nothing on that disk can count it. Each
 `io` seed that found it is a fixed scenario asserting that this, and nothing else, happened.
 
+**A night's reap is revoked by the first heartbeat** (review-2 round 9, H1; a regression from the mid-life heal). The
+hub reaps a session silent past `SESSION_REAP_STALE_HOURS`, so every laptop that slept loses its session overnight. A
+register or a record from that session revives it, because both prove it alive, but a heartbeat was answered
+`already_ended`. The first hook after a night beats, so its heal took the 409 for the life's end: it wrote the life down
+as refused and moved the conversation to the next life. A parallel hook's record of the old life was then withheld for
+good. Probe H1 dropped one record that way.
+
+- The hub's heartbeat now revives a reaped session as a register and a record do. A session ended by its own SessionEnd
+  is still refused.
+- For older hubs the connector reads a heartbeat's 409 as `heartbeat_ended`, which is no verdict. The heal re-registers
+  the SAME life first. On 0.10.0, as now, a register of a reaped id revives it (`registerSession`: `reapedAt` set →
+  `reviveReapedSession`), and so does a record; only the heartbeat refuses it. Only a refusal of that register writes the
+  life down as refused, which the ladder does, and climbs.
+- A re-register that cannot reach the hub leaves nothing written down. A life a sibling's SessionEnd on this machine
+  ended was written down by that SessionEnd already (round 8, M1).
+
+Probe H1 now drops nothing.
+
 **Three clocks that were one** (review-2 round 8, H1 and H2). The refused-lives note dropped an entry
 `MAX_SPOOL_AGE_DAYS` after it was written. A flush reads a silent host session as abandoned after the same span. Reap
 expired a spool whose data file was that old. So when a host died:

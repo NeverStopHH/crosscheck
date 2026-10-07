@@ -509,7 +509,6 @@ const manyEnds = (count: number): readonly SimEvent[] => Array.from({ length: co
 const noDrops = (run: Run): boolean => run.drops.length === 0;
 const counted = (run: Run): boolean => run.uncountable.count > 0;
 
-const H1 = "H1 (a heartbeat revives a reaped session)";
 const H2 = "H2 (refused-lives never evicts an entry that owns leftovers)";
 const EPOCHS = "M1+M2+L4 (epochs across a reap, a recovery and a resume)";
 const M3 = "M3 (the refused life written down before the end goes out)";
@@ -534,7 +533,6 @@ const ROUND_8: readonly Found[] = [
     name: "probe H1: the first hook after a night beats before anything revives the reaped life, and a parallel hook's record of it goes",
     events: [start(0), edit(0), NIGHT, beat(0), straggle(0), edit(0)],
     shows: noDrops,
-    open: H1,
   },
   {
     name: "probe H0 (control for H1): the same without the beat — the record revives the reaped life",

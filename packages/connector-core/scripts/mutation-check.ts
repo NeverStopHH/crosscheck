@@ -19000,6 +19000,22 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/owed-work-context.test.ts`,
     because: "review-2 round 8, L10: a re-fire on a new branch renames the hub's work context away from the title its state holds",
   },
+  {
+    label: "a heartbeat answers a reaped session already_ended (H1)",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "    // one was then withheld for good.\n    await reviveReapedSession(deps, existing);",
+    to: '    // one was then withheld for good.\n    return { outcome: "already_ended" };',
+    test: `${SERVER}/test/session-reap-liveness.test.ts`,
+    because: "review-2 round 9, H1: the first hook after a night heals the conversation to its next life, and a parallel hook's record of the old one is withheld",
+  },
+  {
+    label: "a heartbeat's 409 is read as the life's end (H1)",
+    file: `${CORE}/src/flows/heartbeat.ts`,
+    from: 'status === HTTP_CONFLICT ? "heartbeat_ended" :',
+    to: 'status === HTTP_CONFLICT ? "session_ended" :',
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 round 9, H1: on hubs up to 0.10 a reaped session's heartbeat moves the conversation to its next life, and its stragglers are withheld",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19261,7 +19277,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
- * PRINTS: packages/connector-core/test/session-heal.test.ts 32
+ * PRINTS: packages/connector-core/test/session-heal.test.ts 33
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 2
  * PRINTS: packages/connector-core/test/session-lives.test.ts 51
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
@@ -19361,7 +19377,7 @@ interface Outcome {
  * PRINTS: packages/server/test/session-events.test.ts 2
  * PRINTS: packages/server/test/session-order-window.test.ts 3
  * PRINTS: packages/server/test/session-order.test.ts 7
- * PRINTS: packages/server/test/session-reap-liveness.test.ts 1
+ * PRINTS: packages/server/test/session-reap-liveness.test.ts 2
  * PRINTS: packages/server/test/session-reaper.test.ts 2
  * PRINTS: packages/server/test/sessions.test.ts 1
  * PRINTS: packages/server/test/skeleton-identity.test.ts 17

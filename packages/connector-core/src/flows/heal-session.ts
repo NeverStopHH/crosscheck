@@ -410,10 +410,12 @@ const heal =
       return FAILED;
     }
     if (refusal.cause === "session_ended") {
-      // THE HUB SAID THE LIFE IS OVER — a heartbeat's 409 as much as a
-      // flush's refusal — and that holds whether or not a walk lands past it
-      // (review-2 round 7, found by the spool simulation): its stragglers are
-      // withheld from every later flush (spool/refused-lives.ts).
+      // THE HUB SAID THE LIFE IS OVER, and that holds whether or not a walk
+      // lands past it (review-2 round 7, found by the spool simulation): its
+      // stragglers are withheld from every later flush
+      // (spool/refused-lives.ts). A heartbeat's 409 is no such verdict
+      // (review-2 round 9, H1): the walk below re-registers the same life
+      // first, and the ladder writes it down only when the hub refuses that.
       await recordRefusedLife(input.home, boundToSession(input, state).repoKey, refusal.sessionId, input.now());
     }
     // Healed already — by a sibling hook, or a SessionStart that re-registered.

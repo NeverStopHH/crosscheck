@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1738
+    # PRINTS: 1740
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -280,7 +280,7 @@ jobs:
     # PRINTS: flows/claim-surface.ts 1
     # PRINTS: flows/end-session.ts 11
     # PRINTS: flows/heal-session.ts 21
-    # PRINTS: flows/heartbeat.ts 2
+    # PRINTS: flows/heartbeat.ts 3
     # PRINTS: flows/hint.ts 5
     # PRINTS: flows/register-session.ts 23
     # PRINTS: flows/solved-hint.ts 4
@@ -455,7 +455,7 @@ jobs:
     # PRINTS: packages/server/src/services/search.ts 11
     # PRINTS: packages/server/src/services/session-events.ts 9
     # PRINTS: packages/server/src/services/session-order.ts 9
-    # PRINTS: packages/server/src/services/sessions.ts 14
+    # PRINTS: packages/server/src/services/sessions.ts 15
     # PRINTS: packages/server/src/services/skeleton-identity.ts 8
     # PRINTS: packages/server/src/services/solved-counts.ts 1
     # PRINTS: packages/server/src/services/solved-matches.ts 9
@@ -570,7 +570,7 @@ jobs:
     # PRINTS: git-queries.ts 15
     # PRINTS: git.ts 4
     # PRINTS: heal-session.ts 21
-    # PRINTS: heartbeat.ts 2
+    # PRINTS: heartbeat.ts 3
     # PRINTS: hint-deliveries.ts 3
     # PRINTS: hint.ts 6
     # PRINTS: hints.ts 5
@@ -688,7 +688,7 @@ jobs:
     # PRINTS: session-start.ts 8
     # PRINTS: session-state.ts 26
     # PRINTS: session.ts 4
-    # PRINTS: sessions.ts 16
+    # PRINTS: sessions.ts 17
     # PRINTS: set-intent.ts 4
     # PRINTS: settings-merge.ts 2
     # PRINTS: shared.ts 2
