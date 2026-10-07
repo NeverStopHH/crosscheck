@@ -661,6 +661,14 @@ prints it: an I4 on a conversation where a set_intent ran beside another set_int
 - The retention comment is corrected. A receipt is read only for a re-send whose producer has ended. A machine off for
   days re-sends under a live producer and reads none.
 
+**What the hub took stays taken when a heal leaves its batch on disk** (review-2 round 9, io seed 1993, found by the
+round's own sweep). A flush whose life the hub had ended sent a batch the hub answered `duplicate` for one record and
+`session_ended` for the next. The heal stayed pending, so the whole batch stayed on disk, the held record with it. Once
+the conversation was over, the next flusher withheld both as the refused life's records and counted the held one lost
+(I1, 8 of 16 replays at round 8's code). The lines the hub answered as held now go on the cursor's note of settled lines
+(`spool/cursor.ts`), which a later flush neither sends nor counts. The seed passes 16 of 16 replays and is a fixed
+scenario.
+
 **Three clocks that were one** (review-2 round 8, H1 and H2). The refused-lives note dropped an entry
 `MAX_SPOOL_AGE_DAYS` after it was written. A flush reads a silent host session as abandoned after the same span. Reap
 expired a spool whose data file was that old. So when a host died:

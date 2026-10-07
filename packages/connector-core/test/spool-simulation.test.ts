@@ -667,6 +667,10 @@ const ROUND_8: readonly Found[] = [
     events,
     shows: counted,
   })),
+  {
+    name: "io seed 1993 (I1, found by round 9's sweep): a record the hub held, in a batch whose heal stayed pending, withheld once its conversation was over",
+    events: scenarioOf(1993, GENERATORS.io),
+  },
 ];
 
 /**

@@ -170,7 +170,9 @@ export const lineEnds = (pending: string, count: number, base: number): readonly
  * flush that meets the batch again writes only lines not on this note, so a
  * batch stuck for a week is counted once. ONE LINE, ONE LOSS, whatever it was
  * counted as: a straggler a walk wrote down as refused is not counted again
- * as withheld once its life is.
+ * as withheld once its life is. A line the hub answered as held, in a batch
+ * the heal left on disk, is on the note too (spool/flush.ts noteTaken): it is
+ * neither sent nor counted again (review-2 round 9, io seed 1993).
  *
  * It rides the CURSOR, never beside it: it belongs to one data file at one
  * offset, which the cursor's identity already proves, and the cursor write

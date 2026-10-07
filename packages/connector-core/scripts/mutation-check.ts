@@ -19452,6 +19452,22 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/init-remove-safety.test.ts`,
     because: "every checkout sharing the linked directory is wired by one repo's install",
   },
+  {
+    label: "a batch the heal leaves on disk forgets what the hub took (io seed 1993)",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "    await noteTaken(spool, sendable, first.summary.results);\n",
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 9, io seed 1993: a record the hub holds is withheld once its life is refused, and counted lost",
+  },
+  {
+    label: "a batch the heal leaves on disk keeps only what the hub accepted (io seed 1993)",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: 'const HELD: ReadonlySet<string> = new Set(["accepted", "duplicate"]);',
+    to: 'const HELD: ReadonlySet<string> = new Set(["accepted"]);',
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 9, io seed 1993: a re-send the hub answered duplicate is withheld later, and counted lost",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19719,7 +19735,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
  * PRINTS: packages/connector-core/test/session-heal.test.ts 33
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 4
- * PRINTS: packages/connector-core/test/session-lives.test.ts 60
+ * PRINTS: packages/connector-core/test/session-lives.test.ts 62
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
