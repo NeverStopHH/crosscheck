@@ -19754,16 +19754,18 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a slip of a continuation word is not read",
     file: `${SCHEMA}/src/continuation.ts`,
-    from: "  (!NEAR_MISSES.has(word) && CONTINUATION_SIGNAL_WORDS.some((signal) => isTypingSlipOf(word, signal) || isShortSwapSlipOf(word, signal)));",
-    to: "  false;",
+    // RETARGETED (round 5, L1): the slip rule is its own function, the near-miss list's test reads it too.
+    from: "const isSignalWord = (word: string): boolean => SIGNALS.has(word) || (!NEAR_MISSES.has(word) && isSignalSlip(word));",
+    to: "const isSignalWord = (word: string): boolean => SIGNALS.has(word);",
     test: `${SCHEMA}/test/continuation.test.ts`,
     because: "\"wieter bitte\" and \"contiune\" carry the session on as surely as the words they slip from (round 4, C1)",
   },
   {
     label: "a word of its own one slip from a continuation word signals",
     file: `${SCHEMA}/src/continuation.ts`,
-    from: "  (!NEAR_MISSES.has(word) && CONTINUATION_SIGNAL_WORDS.some(",
-    to: "  (CONTINUATION_SIGNAL_WORDS.some(",
+    // RETARGETED (round 5, L1): the slip rule is its own function, the near-miss list's test reads it too.
+    from: "const isSignalWord = (word: string): boolean => SIGNALS.has(word) || (!NEAR_MISSES.has(word) && isSignalSlip(word));",
+    to: "const isSignalWord = (word: string): boolean => SIGNALS.has(word) || isSignalSlip(word);",
     test: `${SCHEMA}/test/continuation.test.ts`,
     because: "\"the pdf writer drops the footer\" loses its hint because writer is one key from weiter (round 4, C1)",
   },
@@ -20374,8 +20376,8 @@ export const MUTATIONS: readonly Mutation[
     label: "a whole form decides the verdict",
     file: `${SCHEMA}/src/prompt-terms.ts`,
     // RETARGETED (round 5, M3): the window is read once, for the shell-command verdict too.
-    from: "  const written = promptTokens(scored).filter((token) => !isWholeForm(token));",
-    to: "  const written = promptTokens(scored);",
+    from: "  const written = promptTokens(windowed).filter((token) => !isWholeForm(token));",
+    to: "  const written = promptTokens(windowed);",
     test: `${SCHEMA}/test/prompt-terms.test.ts`,
     because: "\"commit/push\" is a task to the hooks' verdict, though its parts are the session's commands (round 4, L1 follow-up)",
   },
@@ -20520,7 +20522,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the short verdict reads a bare shell command as a task",
     file: `${SCHEMA}/src/prompt-terms.ts`,
-    from: "  if (isBareShellCommand(scored)) {\n    return true;\n  }\n",
+    from: "  if (isBareShellCommand(windowed)) {\n    return true;\n  }\n",
     to: "",
     test: `${SCHEMA}/test/shell-command.test.ts`,
     because: "the hooks' short verdict and promptTerms disagree on \"npm run build\" (round 5, M3)",

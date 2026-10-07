@@ -298,12 +298,12 @@ const rankedTerms = (
  * asking only this question does not.
  */
 export const isContentFreePrompt = (text: string): boolean => {
-  const scored = classifiedWindow(commandArguments(text));
-  if (isBareShellCommand(scored)) {
+  const windowed = classifiedWindow(commandArguments(text));
+  if (isBareShellCommand(windowed)) {
     return true;
   }
   // The parts decide (L1): a word's whole form adds no verdict.
-  const written = promptTokens(scored).filter((token) => !isWholeForm(token));
+  const written = promptTokens(windowed).filter((token) => !isWholeForm(token));
   const isFunctionWord = functionWordsOf(written);
   const tokens = [...new Set(written)];
   const content = tokens.filter((token) => !isFunctionWord(token) && !isSteeringWord(token));
