@@ -20063,6 +20063,46 @@ export const MUTATIONS: readonly Mutation[
     because: "a window of a long prompt is held to a short prompt's floor (round 4, H1)",
   },
   {
+    label: "the intent fire is spent on a prompt that carries the session on",
+    file: `${CORE}/src/derive/intent/gate.ts`,
+    from: "  if (!isSubstantivePrompt(human) || classified.terms.hasContinuation) {",
+    to: "  if (!isSubstantivePrompt(human)) {",
+    test: `${CONNECTOR}/test/intent-gate.test.ts`,
+    because: "\"the checkout tests pass on staging now, carry on with the refund flow\" parks a status report as the session's intent (round 4, H2)",
+  },
+  {
+    label: "a NONE gives no fire back",
+    file: `${CORE}/src/derive/intent/gate.ts`,
+    from: "  state.intentFireCount > Math.min(state.intentNoneCount, INTENT_MAX_NONE_REFUNDS);",
+    to: "  state.intentFireCount > 0;",
+    test: `${CONNECTOR}/test/intent-gate.test.ts`,
+    because: "a first prompt the model could name no task in leaves the whole session without an intent (round 4, H2)",
+  },
+  {
+    label: "every NONE gives a fire back, without bound",
+    file: `${CORE}/src/derive/intent/gate.ts`,
+    from: "  state.intentFireCount > Math.min(state.intentNoneCount, INTENT_MAX_NONE_REFUNDS);",
+    to: "  state.intentFireCount > state.intentNoneCount;",
+    test: `${CONNECTOR}/test/intent-gate.test.ts`,
+    because: "a session of status reports pays a model call on every prompt (round 4, H2)",
+  },
+  {
+    label: "the prompt hook reads a refunded fire as spent before the lock",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    from: "    if (state === null || isIntentFireSpent(state)) {\n      return;\n    }\n    let fired = false;",
+    to: "    if (state === null || state.intentFireCount > 0) {\n      return;\n    }\n    let fired = false;",
+    test: `${CONNECTOR}/test/intent-hook.test.ts`,
+    because: "the fire a NONE gave back is never spent on the session's next task (round 4, H2)",
+  },
+  {
+    label: "the prompt hook reads a refunded fire as spent under the lock",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    from: "      if (isIntentFireSpent(fresh)) {\n        return null;\n      }\n      fired = true;\n      return withIntentFire(fresh);",
+    to: "      if (fresh.intentFireCount > 0) {\n        return null;\n      }\n      fired = true;\n      return withIntentFire(fresh);",
+    test: `${CONNECTOR}/test/intent-hook.test.ts`,
+    because: "the fire a NONE gave back is never spent on the session's next task (round 4, H2)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     // RETARGETED (round 3, M7): the query is the prompt's window now.
@@ -20261,7 +20301,8 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/hook-window-pairing.test.ts 11
  * PRINTS: packages/connector-claude/test/hook-window.test.ts 4
  * PRINTS: packages/connector-claude/test/hooks-fired-marker.test.ts 1
- * PRINTS: packages/connector-claude/test/intent-gate.test.ts 3
+ * PRINTS: packages/connector-claude/test/intent-gate.test.ts 6
+ * PRINTS: packages/connector-claude/test/intent-hook.test.ts 2
  * PRINTS: packages/connector-claude/test/intent-worker.test.ts 6
  * PRINTS: packages/connector-claude/test/landed-change-hook.test.ts 4
  * PRINTS: packages/connector-claude/test/landed-notice-author-hook.test.ts 1

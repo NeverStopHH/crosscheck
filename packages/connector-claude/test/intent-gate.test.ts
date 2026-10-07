@@ -6,6 +6,7 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  INTENT_MAX_NONE_REFUNDS,
   INTENT_MIN_PROMPT_CHARS,
   INTENT_MIN_TOPICAL_WORDS,
   SUMMARIZER_FAILURE_MAX_CHARS,
@@ -14,6 +15,7 @@ import { deriveSessionState } from "@crosscheck/connector-core/state/session-sta
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import {
   intentPromptOf,
+  isIntentFireSpent,
   isSubstantivePrompt,
   withIntentFailure,
   withIntentFire,
@@ -91,6 +93,15 @@ describe("intentPromptOf: what the one intent fire is spent on, and what is park
     expect(intentPromptOf(prompt)).toBe(prompt);
   });
 
+  test.each([
+    ["continue, and then fix why the refresh call 500s after the key rotation on staging"],
+    ["the checkout tests pass on staging now, carry on with the refund flow"],
+    ["cool, the cache fix for the checkout service is merged, next"],
+  ])("a prompt that carries the session on never spends the fire (round 4, H2): %p", (prompt) => {
+    expect(prompt.length).toBeGreaterThanOrEqual(INTENT_MIN_PROMPT_CHARS);
+    expect(intentPromptOf(prompt)).toBeNull();
+  });
+
   test("around a wrapper, only the human text is parked", () => {
     const turn = `<ide_opened_file>The user opened the file /repo/src/auth/refresh.ts in the IDE.</ide_opened_file>\n${TASK}`;
     expect(intentPromptOf(turn)).toBe(TASK);
@@ -113,6 +124,42 @@ describe("intent transforms", () => {
     expect(failed.intentLastFailure).toBe("exit 1: Not logged in");
     // Each outcome is exactly one counter — the remainder arithmetic holds
     expect(failed.intentNoneCount + failed.intentSetCount).toBe(0);
+  });
+
+  test("a NONE refunds the fire: the session may spend it again (round 4, H2)", () => {
+    // Arrange
+    const fired = withIntentFire(baseState());
+    expect(isIntentFireSpent(fired)).toBe(true);
+
+    // Act
+    const refunded = withIntentNone(fired);
+
+    // Assert — booked as a NONE, and the fire is free again
+    expect(refunded.intentNoneCount).toBe(1);
+    expect(refunded.intentFireCount).toBe(1);
+    expect(isIntentFireSpent(refunded)).toBe(false);
+  });
+
+  test(`at most ${String(INTENT_MAX_NONE_REFUNDS)} refunds a session: the NONE after them spends the fire for good`, () => {
+    // Arrange — fire and NONE, as often as refunds are owed
+    const exhausted = Array.from({ length: INTENT_MAX_NONE_REFUNDS }).reduce<SessionState>(
+      (state) => withIntentNone(withIntentFire(state)),
+      baseState(),
+    );
+    expect(isIntentFireSpent(exhausted)).toBe(false);
+
+    // Act — one more fire answered NONE
+    const last = withIntentNone(withIntentFire(exhausted));
+
+    // Assert — one fire and as many refunds: the next prompt fires no more
+    expect(last.intentFireCount).toBe(INTENT_MAX_NONE_REFUNDS + 1);
+    expect(last.intentNoneCount).toBe(INTENT_MAX_NONE_REFUNDS + 1);
+    expect(isIntentFireSpent(last)).toBe(true);
+  });
+
+  test("a set or a failure refunds nothing", () => {
+    expect(isIntentFireSpent(withIntentSet(withIntentFire(baseState())))).toBe(true);
+    expect(isIntentFireSpent(withIntentFailure(withIntentFire(baseState()), "exit 1"))).toBe(true);
   });
 
   test(`the failure reason is cut by the writer to ${String(SUMMARIZER_FAILURE_MAX_CHARS)} chars, never split mid-character`, () => {

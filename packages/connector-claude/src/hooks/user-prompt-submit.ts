@@ -60,7 +60,7 @@ import {
   updateSessionState,
 } from "@crosscheck/connector-core/state/session-state.ts";
 import { hasGhostAllowance, withGhostClaimed } from "@crosscheck/connector-core/derive/ghost/gate.ts";
-import { intentPromptFrom, withIntentFire } from "@crosscheck/connector-core/derive/intent/gate.ts";
+import { intentPromptFrom, isIntentFireSpent, withIntentFire } from "@crosscheck/connector-core/derive/intent/gate.ts";
 import { classifyPrompt } from "@crosscheck/schema";
 import type { ClassifiedPrompt } from "@crosscheck/schema";
 import { spawnDeriveWorker } from "@crosscheck/connector-core/derive/spawn.ts";
@@ -139,12 +139,12 @@ const maybeSpawnIntentWorker = async (ctx: HookContext, classified: ClassifiedPr
       return;
     }
     const state = await readSessionState(ctx.config.home, ctx.payload.session_id);
-    if (state === null || state.intentFireCount > 0) {
+    if (state === null || isIntentFireSpent(state)) {
       return;
     }
     let fired = false;
     await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => {
-      if (fresh.intentFireCount > 0) {
+      if (isIntentFireSpent(fresh)) {
         return null;
       }
       fired = true;

@@ -49,6 +49,7 @@ import {
 } from "@crosscheck/connector-core/derive/ghost/gate.ts";
 import {
   intentPromptOf,
+  isIntentFireSpent,
   withIntentFire,
 } from "@crosscheck/connector-core/derive/intent/gate.ts";
 import {
@@ -139,12 +140,12 @@ export const maybeSpawnAcpIntentWorker = async (
       return false;
     }
     const state = await readSessionState(ctx.home, ctx.hostSessionKey);
-    if (state === null || state.intentFireCount > 0) {
+    if (state === null || isIntentFireSpent(state)) {
       return false;
     }
     let fired = false;
     await updateSessionState(ctx.home, ctx.hostSessionKey, (fresh) => {
-      if (fresh.intentFireCount > 0) {
+      if (isIntentFireSpent(fresh)) {
         return null;
       }
       fired = true;

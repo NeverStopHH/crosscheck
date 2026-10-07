@@ -7,6 +7,7 @@
  */
 import {
   HINT_MIN_TOKEN_CHARS,
+  INTENT_MAX_NONE_REFUNDS,
   INTENT_MIN_PROMPT_CHARS,
   INTENT_MIN_TOPICAL_WORDS,
   SUMMARIZER_FAILURE_MAX_CHARS,
@@ -65,7 +66,10 @@ export const isSubstantivePrompt = (prompt: string): boolean => {
  */
 export const intentPromptFrom = (classified: ClassifiedPrompt): string | null => {
   const human = classified.human;
-  if (!isSubstantivePrompt(human)) {
+  // A PROMPT THAT CARRIES THE SESSION ON names the session's own work, not a
+  // new task (round 4, H2; continuation.ts): "the checkout tests pass now,
+  // carry on" would park a status report as the intent.
+  if (!isSubstantivePrompt(human) || classified.terms.hasContinuation) {
     return null;
   }
   // UNCLASSED, not topical (round 4, M1): in a task a meta word is a topic
@@ -90,11 +94,22 @@ export const withIntentFire = (state: SessionState): SessionState => ({
   intentFireCount: state.intentFireCount + 1,
 });
 
-/** The model answered NONE — an answer, not a failure. */
+/** The model answered NONE — an answer, not a failure, and a fire given back (H2, below). */
 export const withIntentNone = (state: SessionState): SessionState => ({
   ...state,
   intentNoneCount: state.intentNoneCount + 1,
 });
+
+/**
+ * THE SESSION'S INTENT FIRE IS SPENT while its fires outnumber the ones a
+ * NONE gave back (hold-out review round 4, H2): a NONE says the prompt named
+ * no task, and the session's next prompt that does may still find its
+ * intent — at most INTENT_MAX_NONE_REFUNDS times, so a session of status
+ * reports costs at most that many model calls more. Derived from the
+ * counters the state already keeps: every NONE answered a fire.
+ */
+export const isIntentFireSpent = (state: SessionState): boolean =>
+  state.intentFireCount > Math.min(state.intentNoneCount, INTENT_MAX_NONE_REFUNDS);
 
 /** An intent record reached the spool — booked AFTER the append, never before. */
 export const withIntentSet = (state: SessionState): SessionState => ({

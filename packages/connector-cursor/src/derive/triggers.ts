@@ -47,6 +47,7 @@ import {
 } from "@crosscheck/connector-core/derive/ghost/gate.ts";
 import {
   intentPromptOf,
+  isIntentFireSpent,
   withIntentFire,
 } from "@crosscheck/connector-core/derive/intent/gate.ts";
 import {
@@ -121,12 +122,12 @@ export const maybeSpawnCursorIntentWorker = async (
       return;
     }
     const state = await readSessionState(ctx.config.home, ctx.hostSessionKey);
-    if (state === null || state.intentFireCount > 0) {
+    if (state === null || isIntentFireSpent(state)) {
       return;
     }
     let fired = false;
     await updateSessionState(ctx.config.home, ctx.hostSessionKey, (fresh) => {
-      if (fresh.intentFireCount > 0) {
+      if (isIntentFireSpent(fresh)) {
         return null;
       }
       fired = true;

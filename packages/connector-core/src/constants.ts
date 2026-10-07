@@ -612,6 +612,14 @@ export const INTENT_MIN_PROMPT_CHARS = 40;
  */
 export const INTENT_MIN_TOPICAL_WORDS = 2;
 /**
+ * How often a NONE gives the session its one intent fire back (hold-out
+ * review round 4, H2). The model answers NONE when the prompt names no task
+ * it can say in a sentence, and the session then had no intent at all,
+ * however clearly its next prompt said what it was doing. Bounded, so a
+ * session of status reports costs at most four model calls.
+ */
+export const INTENT_MAX_NONE_REFUNDS = 3;
+/**
  * How much of the first prompt the worker hands the model — the token bill's
  * bound for the intent call (≈ INTENT_PROMPT_MAX_CHARS / 4 tokens at the
  * CHARS_PER_TOKEN_ESTIMATE rate). The prompt is written to a 0600 file under

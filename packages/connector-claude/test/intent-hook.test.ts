@@ -214,6 +214,29 @@ describe("the first substantive prompt derives the session intent, exactly once"
     expect(await spooledIntents(fix)).toHaveLength(0);
   });
 
+  test("a NONE refunds the fire: the next substantive prompt fires again (round 4, H2)", async () => {
+    // Arrange — a model that answers NONE, as it does for a prompt it cannot name a task in
+    const fix = await fixture("refund", "NONE");
+    const noneCount = async (): Promise<number> => (await readSessionState(fix.home, SESSION_ID))?.intentNoneCount ?? 0;
+    const untilNones = async (count: number): Promise<void> => {
+      const deadline = Date.now() + POLL_TIMEOUT_MS;
+      while (Date.now() < deadline && (await noneCount()) < count) {
+        await Bun.sleep(POLL_INTERVAL_MS);
+      }
+    };
+
+    // Act
+    await runHook("user-prompt-submit", promptPayload(fix, PROMPT), fix.env);
+    await untilNones(1);
+    await runHook("user-prompt-submit", promptPayload(fix, `${PROMPT} and also the cache`), fix.env);
+    await untilNones(2);
+
+    // Assert — two fires, both answered NONE
+    const state = await readSessionState(fix.home, SESSION_ID);
+    expect(state?.intentFireCount).toBe(2);
+    expect(state?.intentNoneCount).toBe(2);
+  });
+
   test("under the summarizer child marker the prompt hook fires nothing and parks no prompt", async () => {
     const fix = await fixture("child");
 
