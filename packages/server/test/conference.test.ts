@@ -36,12 +36,20 @@ import {
   VALID_SESSION_BODY,
 } from "./helpers.ts";
 import type { TestDeveloper, TestHarness } from "./helpers.ts";
+import { setPresenceOptOutViaApi } from "./ui-helpers.ts";
 
 const REPO = VALID_SESSION_BODY.repo;
 /** An old main commit a long-lived worktree stays detached at. */
 const STALE_DETACHED_BASE = "51eae4d8f0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5";
 /** When it was committed: six weeks before the contexts open. */
 const STALE_DETACHED_AT = "2026-06-12T09:00:00.000Z";
+/** Past CONFERENCE_ACTIVE_WINDOW_DAYS, as a clock advance and as the instant it reaches. */
+const TWENTY_DAYS_S = 20 * 86_400;
+const TWENTY_DAYS_AFTER_START = "2026-08-13T09:00:00.000Z";
+/** The incident's context held 180 files; all but the two shared ones are old here. */
+const LONG_LIVED_OLD_TOUCHES = 178;
+/** Records per POST /api/records — the route refuses more (MAX_INGEST_BATCH). */
+const INGEST_CHUNK = 100;
 const MY_SESSION = "ses_mine";
 const THEIR_SESSION = "ses_theirs";
 const MY_CONTEXT = "wc_mine";
@@ -123,6 +131,7 @@ const contextRecords = (
   title: string,
   targets: readonly { kind: string; value: string }[] = [],
   intent?: Record<string, unknown>,
+  overrides: Record<string, unknown> = {},
 ): readonly Record<string, unknown>[] => [
   recordEnvelope(
     "work_context",
@@ -133,6 +142,7 @@ const contextRecords = (
       description: undefined,
       createdAt: TEST_START_ISO,
       ...(intent === undefined ? {} : { intent }),
+      ...overrides,
     }),
     { sessionId },
   ),
@@ -313,6 +323,43 @@ describe("the conference corpus", () => {
     expect(
       (await fetchConference(harness, me.apiKey)).contexts.map((c) => c.id),
     ).toEqual([THEIR_CONTEXT]);
+  });
+
+  test("a long-lived context's old touches do not make it a sweep; an opted-out owner's are judged by count alone", async () => {
+    // Arrange: Ken's long-lived context touched 178 files twenty days ago and
+    // the two I touch today. Twenty days is past the conference's window.
+    const { harness, me, them } = await setup();
+    const shared = ["src/auth/token.ts", "src/auth/session.ts"];
+    const files = (values: readonly string[]) => values.map((value) => ({ kind: "file", value }));
+    const opened = { createdAt: TWENTY_DAYS_AFTER_START };
+    const kensOldTouches = contextRecords(
+      THEIR_CONTEXT,
+      THEIR_SESSION,
+      "Orchestration worktree",
+      files(Array.from({ length: LONG_LIVED_OLD_TOUCHES }, (_unused, i) => `src/old/file-${String(i)}.ts`)),
+      undefined,
+      opened,
+    );
+    for (let start = 0; start < kensOldTouches.length; start += INGEST_CHUNK) {
+      await seed(harness, them, kensOldTouches.slice(start, start + INGEST_CHUNK));
+    }
+    harness.clock.advanceSeconds(TWENTY_DAYS_S);
+    await seed(harness, them, shared.map((value) =>
+      recordEnvelope("target", { workContextId: THEIR_CONTEXT, kind: "file", value }, { sessionId: THEIR_SESSION }),
+    ));
+    await seed(harness, me, contextRecords(MY_CONTEXT, MY_SESSION, "Token refresh rework", files(shared), undefined, opened));
+    const pairsWithKen = (view: ConferenceView): number =>
+      view.overlaps.filter((pair) => [pair.workContextIdA, pair.workContextIdB].includes(THEIR_CONTEXT)).length;
+
+    // Act
+    const visible = await fetchConference(harness, me.apiKey);
+    await setPresenceOptOutViaApi(harness, them.apiKey, true);
+    const hidden = await fetchConference(harness, me.apiKey);
+
+    // Assert: duplicated work while Ken's times may be read; once he opts
+    // out, his touch times are not read, and 180 files are a sweep again.
+    expect(pairsWithKen(visible)).toBe(1);
+    expect(pairsWithKen(hidden)).toBe(0);
   });
 
   test("two developers on the same files are duplicated work; two worktrees of one are not", async () => {

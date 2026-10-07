@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 2257
+    # PRINTS: 2261
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -465,7 +465,7 @@ jobs:
     # PRINTS: packages/server/src/services/drafts.ts 3
     # PRINTS: packages/server/src/services/embedding-backfill.ts 5
     # PRINTS: packages/server/src/services/evidence-axes.ts 2
-    # PRINTS: packages/server/src/services/ghost-overlap.ts 4
+    # PRINTS: packages/server/src/services/ghost-overlap.ts 7
     # PRINTS: packages/server/src/services/hint-deliveries.ts 4
     # PRINTS: packages/server/src/services/hint-outcome-view.ts 16
     # PRINTS: packages/server/src/services/hint-outcomes.ts 23
@@ -475,7 +475,7 @@ jobs:
     # PRINTS: packages/server/src/services/landed-notices.ts 28
     # PRINTS: packages/server/src/services/landed-repair.ts 3
     # PRINTS: packages/server/src/services/landed.ts 7
-    # PRINTS: packages/server/src/services/live-location.ts 34
+    # PRINTS: packages/server/src/services/live-location.ts 35
     # PRINTS: packages/server/src/services/noise-label.ts 3
     # PRINTS: packages/server/src/services/normalized-doc.ts 6
     # PRINTS: packages/server/src/services/outcome-population.ts 43
@@ -621,7 +621,7 @@ jobs:
     # PRINTS: gate.ts 9
     # PRINTS: gates.ts 1
     # PRINTS: get-diagnosis.ts 2
-    # PRINTS: ghost-overlap.ts 4
+    # PRINTS: ghost-overlap.ts 7
     # PRINTS: ghost.ts 2
     # PRINTS: git-lane-cost.ts 2
     # PRINTS: git-queries.ts 15
@@ -663,7 +663,7 @@ jobs:
     # PRINTS: landing-branches.ts 7
     # PRINTS: latency.ts 1
     # PRINTS: ledger-read.ts 2
-    # PRINTS: live-location.ts 34
+    # PRINTS: live-location.ts 35
     # PRINTS: lock.ts 2
     # PRINTS: loss-ledger.ts 10
     # PRINTS: loss-refusals.ts 1

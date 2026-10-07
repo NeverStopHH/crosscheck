@@ -3078,9 +3078,8 @@ export const MUTATIONS: readonly Mutation[
     // is spent in id order.
     label: "one sweep of mine spends my other context's read window",
     file: `${SERVER}/src/services/ghost-overlap.ts`,
-    from: `        inArray(workContextTargets.kind, [...OVERLAP_TARGET_KINDS]),
-        notASweepCondition(workContextTargets.workContextId),`,
-    to: "        inArray(workContextTargets.kind, [...OVERLAP_TARGET_KINDS]),",
+    from: "        targetInWindowSeenBy(viewerDeveloperId, sql`${viewerDeveloperId}`, workContextTargets, cutoff),\n        notASweepCondition(workContextTargets.workContextId, viewerDeveloperId, cutoff),",
+    to: "        targetInWindowSeenBy(viewerDeveloperId, sql`${viewerDeveloperId}`, workContextTargets, cutoff),",
     test: `${SERVER}/test/ghost-overlap.test.ts`,
     because:
       "a mass rename in one of my worktrees takes the read budget and the " +
@@ -23633,6 +23632,41 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/suspect.test.ts`,
     because: "the session that edited the break's files again today is never named",
   },
+  // The sweep rule counts what a context touched in the window, not ever.
+  {
+    label: "a long-lived context is a sweep by its old touches, and ghost checks lose it",
+    file: `${SERVER}/src/services/ghost-overlap.ts`,
+    from: "       AND ${targetInWindowSeenBy(viewerDeveloperId, sql`sweep_sessions.developer_id`, SWEEP_TARGET_TIMES, cutoff)}\n",
+    to: "",
+    test: `${SERVER}/test/ghost-overlap.test.ts`,
+    because:
+      "the pilot owner's 180-file worktree context reads as a formatter run and drops out " +
+      "of every ghost check while a teammate edits two of its files",
+  },
+  {
+    label: "a long-lived context is a sweep by its old touches, and the conference loses it",
+    file: `${SERVER}/src/services/ghost-overlap.ts`,
+    from: "       AND ${targetInWindowSeenBy(viewerDeveloperId, sql`sweep_sessions.developer_id`, SWEEP_TARGET_TIMES, cutoff)}\n",
+    to: "",
+    test: `${SERVER}/test/conference.test.ts`,
+    because: "the duplicated work of a long-lived session and a teammate never reaches the case file",
+  },
+  {
+    label: "my own old touches spend the ghost check's read bound",
+    file: `${SERVER}/src/services/ghost-overlap.ts`,
+    from: "        targetInWindowSeenBy(viewerDeveloperId, sql`${viewerDeveloperId}`, workContextTargets, cutoff),\n",
+    to: "",
+    test: `${SERVER}/test/ghost-overlap.test.ts`,
+    because: "a long-lived context of mine fills the read window with weeks-old files and today's collision goes unread",
+  },
+  {
+    label: "the sweep window reads an opted-out owner's touch times",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  sql`(case when ${visiblePresenceCondition(viewerDeveloperId, ownerDeveloperId)} then coalesce(${targetTouchedAt(target)} >= ${cutoff.toISOString()}::timestamptz, false) else true end)`;",
+    to: "  sql`coalesce(${targetTouchedAt(target)} >= ${cutoff.toISOString()}::timestamptz, false)`;",
+    test: `${SERVER}/test/conference.test.ts`,
+    because: "whether her context counts as a sweep, and so whether it pairs, says when she touched its files",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -23969,7 +24003,7 @@ interface Outcome {
  * PRINTS: packages/server/test/claim-revalidations.test.ts 10
  * PRINTS: packages/server/test/claim-validity.test.ts 2
  * PRINTS: packages/server/test/commit-evidence-opt-out.test.ts 3
- * PRINTS: packages/server/test/conference.test.ts 4
+ * PRINTS: packages/server/test/conference.test.ts 6
  * PRINTS: packages/server/test/coverage-answer-sessions.test.ts 10
  * PRINTS: packages/server/test/coverage-compat-0.10.test.ts 2
  * PRINTS: packages/server/test/coverage-instant-privacy.test.ts 8
@@ -23999,7 +24033,7 @@ interface Outcome {
  * PRINTS: packages/server/test/drafts.test.ts 4
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/fence-waivers.test.ts 1
- * PRINTS: packages/server/test/ghost-overlap.test.ts 5
+ * PRINTS: packages/server/test/ghost-overlap.test.ts 7
  * PRINTS: packages/server/test/hint-content-floor.test.ts 6
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-outcome-retention.test.ts 4

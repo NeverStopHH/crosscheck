@@ -91,6 +91,7 @@ import {
   workContexts,
   workContextTargets,
 } from "../db/schema.ts";
+import { targetInWindowSeenBy } from "./live-location.ts";
 import { ftsTokens } from "./search.ts";
 import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
 import type { Db } from "../db/client.ts";
@@ -159,15 +160,39 @@ export interface GhostOverlapView {
   readonly intentTokenHits: number;
 }
 
+/** The sweep subquery's own alias of the target times. */
+const SWEEP_TARGET_TIMES = {
+  createdAt: sql`sweep_targets.created_at`,
+  lastSeenAt: sql`sweep_targets.last_seen_at`,
+};
+
 /**
- * A context carrying more than GHOST_MAX_CONTEXT_TARGETS values is a sweep,
- * not a plan (see the header). Correlated, and cheap because the count rides
- * the targets primary key, whose leading column is work_context_id.
+ * A context that TOUCHED more than GHOST_MAX_CONTEXT_TARGETS values inside
+ * the window is a sweep, not a plan (see the header). Correlated, and cheap
+ * because the count rides the targets primary key, whose leading column is
+ * work_context_id.
+ *
+ * IN THE WINDOW, NOT EVER (pilot finding, 2026-10-05). Counted over a
+ * context's whole life, the pilot owner's one long-lived worktree context —
+ * 180 files over weeks — read as a formatter run and dropped out of every
+ * ghost check and conference while a teammate edited two of its files. A
+ * target counts when it was first seen or touched again since `cutoff`
+ * (targetTouchedAt), so a long-lived session is judged by what it is doing
+ * now and a real sweep — sixty files today — still is one. For an owner
+ * hidden from the viewer every target counts, her times unread
+ * (targetInWindowSeenBy): the count before the window existed.
  */
-export const notASweepCondition = (contextId: SQL | AnyPgColumn): SQL =>
+export const notASweepCondition = (
+  contextId: SQL | AnyPgColumn,
+  viewerDeveloperId: string,
+  cutoff: Date,
+): SQL =>
   sql`(
     SELECT count(*) FROM work_context_targets sweep_targets
+      JOIN work_contexts sweep_contexts ON sweep_contexts.id = sweep_targets.work_context_id
+      JOIN agent_sessions sweep_sessions ON sweep_sessions.id = sweep_contexts.session_id
      WHERE sweep_targets.work_context_id = ${contextId}
+       AND ${targetInWindowSeenBy(viewerDeveloperId, sql`sweep_sessions.developer_id`, SWEEP_TARGET_TIMES, cutoff)}
   ) <= ${GHOST_MAX_CONTEXT_TARGETS}`;
 
 /**
@@ -262,9 +287,15 @@ const listOwnContexts = async (
 /**
  * The reader's own strong target values, with the sweep rule applied IN THE
  * QUERY: a context over the cap contributes NOTHING rather than an arbitrary
- * prefix of itself. The table has no timestamp, so "the newest 50 targets" is
- * not a thing this schema can answer honestly — dropping the whole context is
- * the rule that can be stated.
+ * prefix of itself.
+ *
+ * ONLY WHAT I TOUCHED IN THE WINDOW, by the sweep rule's own clock: the cap
+ * counts a context's touches in the window, so it bounds exactly those, and a
+ * long-lived context of mine — under the cap now, hundreds of files over its
+ * life — would otherwise bring all of them and break the ceiling below. The
+ * teammate's side keeps every value of a live context (listPairRows): an old
+ * touch of a session still open is still in its worktree, and that side's
+ * row count is bounded per value, not per context.
  *
  * THE EXCLUSION HAS TO BE THE DATABASE'S, not a filter over the rows that
  * came back, and that is not tidiness. With the sweeps admitted, one renaming
@@ -280,7 +311,9 @@ const listOwnContexts = async (
  */
 const listOwnTargets = async (
   deps: Deps,
+  viewerDeveloperId: string,
   ownIds: readonly string[],
+  cutoff: Date,
 ): Promise<readonly SharedValue[]> => {
   if (ownIds.length === 0) {
     return [];
@@ -296,7 +329,9 @@ const listOwnTargets = async (
       and(
         inArray(workContextTargets.workContextId, [...ownIds]),
         inArray(workContextTargets.kind, [...OVERLAP_TARGET_KINDS]),
-        notASweepCondition(workContextTargets.workContextId),
+        // My own contexts: I am their owner, so the window is read as mine.
+        targetInWindowSeenBy(viewerDeveloperId, sql`${viewerDeveloperId}`, workContextTargets, cutoff),
+        notASweepCondition(workContextTargets.workContextId, viewerDeveloperId, cutoff),
       ),
     )
     .orderBy(
@@ -427,7 +462,7 @@ const listPairRows = async (
         ne(agentSessions.developerId, viewerDeveloperId),
         gte(activityExpression, cutoff),
         ...liveWorkConditions(),
-        notASweepCondition(workContextTargets.workContextId),
+        notASweepCondition(workContextTargets.workContextId, viewerDeveloperId, cutoff),
         // A ghost line says a named teammate is working on this NOW, which is
         // presence-class information: opt-out hides it, exactly as it hides
         // the tripwire (services/hints.ts listTargetSessions).
@@ -622,7 +657,9 @@ export const listGhostOverlaps = async (
   }
   const ownTargets = await listOwnTargets(
     deps,
+    viewerDeveloperId,
     ownContexts.map((context) => context.id),
+    cutoff,
   );
   const coolTargets = await listCoolTargets(
     deps,

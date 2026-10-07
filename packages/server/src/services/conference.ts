@@ -86,7 +86,7 @@ import {
 } from "./ghost-overlap.ts";
 import type { OverlapKind, SharedValue } from "./ghost-overlap.ts";
 import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
-import { activitySeenBy, locationHiddenFrom, projectRow } from "./live-location.ts";
+import { activitySeenBy, locationHiddenFrom, projectRow, targetInWindowSeenBy } from "./live-location.ts";
 import type { HiddenLocations } from "./live-location.ts";
 import type { EvidenceAxes } from "@crosscheck/schema";
 import type { Db } from "../db/client.ts";
@@ -346,13 +346,21 @@ interface ContextTargets {
 
 /**
  * The strong target values of the slice, with the SWEEP rule applied in the
- * query: a context carrying more than GHOST_MAX_CONTEXT_TARGETS values is a
- * rename or a formatter run and contributes nothing, on this side exactly as
- * on the ghost check's.
+ * query: a context that touched more than GHOST_MAX_CONTEXT_TARGETS values in
+ * the window is a rename or a formatter run and contributes nothing, on this
+ * side exactly as on the ghost check's.
+ *
+ * Only the values touched in the window, by the sweep rule's own clock
+ * (pilot finding, 2026-10-05): the cap bounds exactly those, so the ceiling
+ * below stays arithmetic for a long-lived context that is under the cap now
+ * and over it for its life. An owner hidden from the reader keeps every value
+ * and is counted by all of them, her times unread (targetInWindowSeenBy).
  */
 const listSliceTargets = async (
   deps: Deps,
+  viewerDeveloperId: string,
   ids: readonly string[],
+  cutoff: Date,
 ): Promise<readonly ContextTargets[]> => {
   if (ids.length === 0) {
     return [];
@@ -364,11 +372,14 @@ const listSliceTargets = async (
       value: workContextTargets.value,
     })
     .from(workContextTargets)
+    .innerJoin(workContexts, eq(workContexts.id, workContextTargets.workContextId))
+    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
     .where(
       and(
         inArray(workContextTargets.workContextId, [...ids]),
         inArray(workContextTargets.kind, [...OVERLAP_TARGET_KINDS]),
-        notASweepCondition(workContextTargets.workContextId),
+        targetInWindowSeenBy(viewerDeveloperId, agentSessions.developerId, workContextTargets, cutoff),
+        notASweepCondition(workContextTargets.workContextId, viewerDeveloperId, cutoff),
       ),
     )
     .orderBy(
@@ -601,7 +612,7 @@ export const readConference = async (
   const ids = contexts.map((context) => context.id);
   const [claimLists, sliceTargets, contradictions] = await Promise.all([
     Promise.all(ids.map((id) => listContextClaims(deps, id, hidden))),
-    listSliceTargets(deps, ids),
+    listSliceTargets(deps, viewerDeveloperId, ids, cutoff),
     // SECOND, because it needs the slice. The deliberate-pull posture again:
     // no `excludeMutedForDeveloperId`, the same call findContradictionById
     // makes, for the same reason. But bounded to the contexts this report

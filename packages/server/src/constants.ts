@@ -417,10 +417,18 @@ export const GHOST_ACTIVE_WINDOW_DAYS = 7;
 export const GHOST_MAX_OWN_CONTEXTS = 3;
 
 /**
- * A work context carrying more target values than this is EXCLUDED from both
- * sides of the SHARED-TARGET tier — mine and theirs alike. The INTENT tier is
- * deliberately untouched by it: that tier shares no value, so the argument
- * below does not reach it (services/ghost-overlap.ts listIntentHits).
+ * A work context that TOUCHED more target values than this inside the
+ * surface's window is EXCLUDED from both sides of the SHARED-TARGET tier —
+ * mine and theirs alike. The INTENT tier is deliberately untouched by it:
+ * that tier shares no value, so the argument below does not reach it
+ * (services/ghost-overlap.ts listIntentHits).
+ *
+ * Inside the window, because a ConE pull request is one change and a work
+ * context is not (pilot finding, 2026-10-05): a long-lived worktree session
+ * touches hundreds of files over weeks, and counted over its life it read as
+ * a sweep and vanished from every collision check. A file counts when it was
+ * first seen or touched again in the window (notASweepCondition); an
+ * opted-out owner is counted by all her files, her times unread.
  *
  * It is a sweep, not a plan: a mass rename, a formatter run, a dependency
  * bump. Sharing a file with a sweep says nothing about whether two designs

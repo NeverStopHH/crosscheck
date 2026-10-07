@@ -41,6 +41,11 @@ const REPO = VALID_SESSION_BODY.repo;
 const STALE_DETACHED_BASE = "51eae4d8f0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5";
 /** When it was committed: six weeks before the contexts open. */
 const STALE_DETACHED_AT = "2026-06-12T09:00:00.000Z";
+/** Past GHOST_ACTIVE_WINDOW_DAYS, as a clock advance and as the instant it reaches. */
+const TEN_DAYS_S = 10 * 86_400;
+const TEN_DAYS_AFTER_START = "2026-08-03T09:00:00.000Z";
+/** The incident's context held 180 files; all but the two shared ones are old here. */
+const LONG_LIVED_OLD_TOUCHES = 178;
 const MY_SESSION = "ses_mine";
 const THEIR_SESSION = "ses_theirs";
 const MY_CONTEXT = "wc_mine";
@@ -91,6 +96,7 @@ const contextRecords = (
   title: string,
   targets: readonly { kind: string; value: string }[],
   intent?: Record<string, unknown>,
+  overrides: Record<string, unknown> = {},
 ): readonly Record<string, unknown>[] => [
   recordEnvelope(
     "work_context",
@@ -101,6 +107,7 @@ const contextRecords = (
       description: undefined,
       createdAt: TEST_START_ISO,
       ...(intent === undefined ? {} : { intent }),
+      ...overrides,
     }),
     { sessionId },
   ),
@@ -388,6 +395,91 @@ describe("ghost checks, the deterministic overlap", () => {
     );
     const checks = await fetchGhostChecks(harness, me.apiKey);
     expect(checks.map((row) => row.workContextId)).toEqual(["wc_modest"]);
+  });
+
+  test("a long-lived context's old touches do not make it a sweep — only what it touched in the window counts", async () => {
+    // Arrange: the pilot incident's real shape. Ken's one long-lived context
+    // touched 178 files ten days ago and the two I am in today; Mike's
+    // touched sixty files today — a real sweep.
+    const harness = await createTestHarness();
+    const me = await createTestDeveloper(harness, "Nick", "nick@example.com");
+    const ken = await createTestDeveloper(harness, "Ken", "ken@example.com");
+    const mike = await createTestDeveloper(harness, "Mike", "mike@example.com");
+    await registerTestSession(harness, me.apiKey, { id: MY_SESSION });
+    await registerTestSession(harness, ken.apiKey, { id: THEIR_SESSION });
+    await registerTestSession(harness, mike.apiKey, { id: "ses_mike" });
+    const shared = ["src/auth/token.ts", "src/auth/session.ts"];
+    const files = (values: readonly string[]) => values.map((value) => ({ kind: "file", value }));
+    const opened = { createdAt: TEN_DAYS_AFTER_START };
+    const kensOldTouches = contextRecords(
+      THEIR_CONTEXT,
+      THEIR_SESSION,
+      "Orchestration worktree",
+      files(Array.from({ length: LONG_LIVED_OLD_TOUCHES }, (_unused, i) => `src/old/file-${String(i)}.ts`)),
+      undefined,
+      opened,
+    );
+    for (let start = 0; start < kensOldTouches.length; start += INGEST_CHUNK) {
+      await seed(harness, ken, kensOldTouches.slice(start, start + INGEST_CHUNK));
+    }
+    harness.clock.advanceSeconds(TEN_DAYS_S);
+
+    // Act: today's touches.
+    await seed(
+      harness,
+      ken,
+      shared.map((value) => recordEnvelope("target", { workContextId: THEIR_CONTEXT, kind: "file", value }, { sessionId: THEIR_SESSION })),
+    );
+    await seed(harness, me, contextRecords(MY_CONTEXT, MY_SESSION, "Token refresh rework", files(shared), undefined, opened));
+    await seed(
+      harness,
+      mike,
+      contextRecords(
+        "wc_mike_sweep",
+        "ses_mike",
+        "Rename the whole module",
+        files([...shared, ...Array.from({ length: GHOST_MAX_CONTEXT_TARGETS + 8 }, (_unused, i) => `src/gen/file-${String(i)}.ts`)]),
+        undefined,
+        opened,
+      ),
+    );
+
+    // Assert: Ken is in my way; Mike's sweep still collides with nobody.
+    expect(LONG_LIVED_OLD_TOUCHES + shared.length).toBeGreaterThan(GHOST_MAX_CONTEXT_TARGETS);
+    expect((await fetchGhostChecks(harness, me.apiKey)).map((row) => row.workContextId)).toEqual([THEIR_CONTEXT]);
+  });
+
+  test("my own long-lived context is compared by what it touched in the window", async () => {
+    // Arrange: MY context touched 178 files ten days ago — spelled to sort
+    // before the two I touch today — and Ken is in those two now. My old
+    // values must not spend the read bound my live ones need.
+    const { harness, me, them } = await setup();
+    const shared = ["src/auth/token.ts", "src/auth/session.ts"];
+    const files = (values: readonly string[]) => values.map((value) => ({ kind: "file", value }));
+    const opened = { createdAt: TEN_DAYS_AFTER_START };
+    const myOldTouches = contextRecords(
+      MY_CONTEXT,
+      MY_SESSION,
+      "Orchestration worktree",
+      files(Array.from({ length: LONG_LIVED_OLD_TOUCHES }, (_unused, i) => `src/aaa-old/file-${String(i)}.ts`)),
+      undefined,
+      opened,
+    );
+    for (let start = 0; start < myOldTouches.length; start += INGEST_CHUNK) {
+      await seed(harness, me, myOldTouches.slice(start, start + INGEST_CHUNK));
+    }
+    harness.clock.advanceSeconds(TEN_DAYS_S);
+
+    // Act
+    await seed(
+      harness,
+      me,
+      shared.map((value) => recordEnvelope("target", { workContextId: MY_CONTEXT, kind: "file", value }, { sessionId: MY_SESSION })),
+    );
+    await seed(harness, them, contextRecords(THEIR_CONTEXT, THEIR_SESSION, "Session store migration", files(shared), undefined, opened));
+
+    // Assert
+    expect((await fetchGhostChecks(harness, me.apiKey)).map((row) => row.workContextId)).toEqual([THEIR_CONTEXT]);
   });
 
   test("my own second worktree never collides with me", async () => {

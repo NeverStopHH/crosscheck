@@ -486,6 +486,21 @@ export const targetTouchedAtSeenBy = (
 ): SQL<Date | null> =>
   sql<Date | null>`(case when ${visiblePresenceCondition(viewerDeveloperId, ownerDeveloperId)} then ${targetTouchedAt(target)} end)`;
 
+/**
+ * Was this target touched since `cutoff`, as THIS viewer may judge it? For an
+ * owner hidden from them EVERY target counts: her times are not read, so a
+ * count of her targets "in the window" is her count of targets — the rule
+ * before any window existed — and a read that is not about her time says
+ * nothing about it.
+ */
+export const targetInWindowSeenBy = (
+  viewerDeveloperId: string,
+  ownerDeveloperId: AnyPgColumn | SQL,
+  target: TargetTimes,
+  cutoff: Date,
+): SQL =>
+  sql`(case when ${visiblePresenceCondition(viewerDeveloperId, ownerDeveloperId)} then coalesce(${targetTouchedAt(target)} >= ${cutoff.toISOString()}::timestamptz, false) else true end)`;
+
 /** `coalesce(updated_at, created_at)` as this viewer may filter and rank by it. */
 export const activitySeenBy = (
   viewerDeveloperId: string,
