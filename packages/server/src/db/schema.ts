@@ -391,6 +391,16 @@ export const workContextTargets = pgTable(
      * age.
      */
     createdAt: timestamptz("created_at"),
+    /**
+     * When this target was last touched AGAIN — set by every duplicate touch,
+     * null until the first one (pilot finding, 2026-10-05). First-seen stays
+     * the honest AGE; this is the honest RECENCY: a long-lived session that
+     * re-edits the same files for weeks touched them today, not the day it
+     * first did. Windows that ask "what was touched lately" read
+     * greatest(created_at, last_seen_at) — for an owner whose location the
+     * reader may see only, since both are her instants.
+     */
+    lastSeenAt: timestamptz("last_seen_at"),
   },
   (table) => [
     primaryKey({ columns: [table.workContextId, table.kind, table.value] }),

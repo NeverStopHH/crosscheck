@@ -187,7 +187,13 @@ ledger spec extends this object; it does not mint a second one.
 PK `(work_context_id, kind, value)` (`:229`). `kind` enum `TARGET_KINDS`.
 `created_at` **NULLABLE** and never bumped on a duplicate touch — "first-seen is
 the honest age"; a pre-column row reads null and the pointer says *age unknown*
-rather than fabricating `now()` (`schema.ts:218-225`).
+rather than fabricating `now()` (`schema.ts:218-225`). **`last_seen_at`**
+NULLABLE is the honest RECENCY beside it (pilot finding, 2026-10-05): every
+duplicate touch sets it to now, so a long-lived session re-editing a file
+today reads as today. Windows that ask "what was touched lately" — `suspect`'s
+and the ghost/conference sweep test — read `greatest(created_at,
+last_seen_at)` (`live-location.ts targetTouchedAt`), and only for an owner
+whose location the reader may see: both are her instants.
 Index `work_context_targets_kind_value_idx (kind, value)` (`:233`) — this is the
 index the suspect intersection in PR #50 rides.
 

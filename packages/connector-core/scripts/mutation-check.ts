@@ -23610,11 +23610,28 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "suspect windows an opted-out teammate's work by when she touched it",
-    file: `${SERVER}/src/services/suspect.ts`,
-    from: "case when ${visiblePresenceCondition(readerDeveloperId, agentSessions.developerId)} then ${workContextTargets.createdAt} end",
-    to: "${workContextTargets.createdAt}",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  sql<Date | null>`(case when ${visiblePresenceCondition(viewerDeveloperId, ownerDeveloperId)} then ${targetTouchedAt(target)} end)`;",
+    to: "  sql<Date | null>`${targetTouchedAt(target)}`;",
     test: `${SERVER}/test/suspect.test.ts`,
     because: "a colleague's suspect run says she was in the break's files today, an instant of hers",
+  },
+  // A target's re-touch: the honest recency beside the honest age.
+  {
+    label: "a re-touch never moves a target's last_seen_at",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "        lastSeenAt: deps.now(),\n        source: sql`case when",
+    to: "        source: sql`case when",
+    test: `${SERVER}/test/target-last-seen.test.ts`,
+    because: "a long-lived session's edit today reads as the day it first touched the file",
+  },
+  {
+    label: "suspect windows a re-touched file by its first touch",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  sql<Date | null>`greatest(${target.createdAt}, ${target.lastSeenAt})`;",
+    to: "  sql<Date | null>`${target.createdAt}`;",
+    test: `${SERVER}/test/suspect.test.ts`,
+    because: "the session that edited the break's files again today is never named",
   },
 ];
 
@@ -24051,7 +24068,8 @@ interface Outcome {
  * PRINTS: packages/server/test/solved-ranking.test.ts 3
  * PRINTS: packages/server/test/startup-boot.test.ts 3
  * PRINTS: packages/server/test/startup-upgrades.test.ts 3
- * PRINTS: packages/server/test/suspect.test.ts 8
+ * PRINTS: packages/server/test/suspect.test.ts 9
+ * PRINTS: packages/server/test/target-last-seen.test.ts 1
  * PRINTS: packages/server/test/team-settings.test.ts 9
  * PRINTS: packages/server/test/ui-feed.test.ts 3
  * PRINTS: packages/server/test/ui-passkeys.test.ts 9

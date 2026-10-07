@@ -53,8 +53,13 @@ import {
   workContextTargets,
   workContexts,
 } from "../db/schema.ts";
-import { activitySeenBy, locationHiddenFrom, projectRow, titleSourceOf } from "./live-location.ts";
-import { visiblePresenceCondition } from "./visibility.ts";
+import {
+  activitySeenBy,
+  locationHiddenFrom,
+  projectRow,
+  targetTouchedAtSeenBy,
+  titleSourceOf,
+} from "./live-location.ts";
 import { readPin } from "./pins.ts";
 import { explanationTimingOf } from "./intent-ledger.ts";
 import type { ExplanationTimingAnswer } from "./intent-ledger.ts";
@@ -328,10 +333,11 @@ const readCandidates = async (
   // created long ago, updated only by a re-fire — its touches today were out
   // of the window, so the session in the break's files today was never
   // named. A touch is in when its context was active in the window OR the
-  // touch was first seen in it; never narrower than before. Its first-seen
-  // time is the owner's instant, so for an owner hidden from this reader it
-  // is not read, and her work stays windowed by creation alone.
-  const touchedAt = sql`greatest(${activity}, case when ${visiblePresenceCondition(readerDeveloperId, agentSessions.developerId)} then ${workContextTargets.createdAt} end)`;
+  // touch was first seen — or touched again — in it (targetTouchedAt);
+  // never narrower than before. Those are the owner's instants, so for an
+  // owner hidden from this reader they are not read, and her work stays
+  // windowed by creation alone.
+  const touchedAt = sql`greatest(${activity}, ${targetTouchedAtSeenBy(readerDeveloperId, agentSessions.developerId, workContextTargets)})`;
   const touching = deps.db.$with("touching").as(
     deps.db
       .select({

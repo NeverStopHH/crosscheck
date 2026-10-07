@@ -99,6 +99,10 @@ CREATE TABLE IF NOT EXISTS work_context_targets (
 -- and set by ingestTarget, so a row that predates this column reads null and
 -- the pointer says "age unknown" rather than a fabricated now() age.
 ALTER TABLE work_context_targets ADD COLUMN IF NOT EXISTS created_at timestamptz;
+-- When the target was last touched again (pilot finding, 2026-10-05): every
+-- duplicate touch sets it, so a long-lived session's re-edit today reads as
+-- today. Null until the first re-touch; first-seen (created_at) never moves.
+ALTER TABLE work_context_targets ADD COLUMN IF NOT EXISTS last_seen_at timestamptz;
 
 -- The derived-contradictions join matches targets on (kind, value) with the
 -- PK's leading column unconstrained (services/contradictions.ts) — without

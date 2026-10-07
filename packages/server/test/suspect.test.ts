@@ -48,6 +48,8 @@ const PINNED_A = "src/workbench/PlaybackControls.tsx";
 const PINNED_B = "src/workbench/usePlayback.ts";
 /** Past SUSPECT_WINDOW_DAYS before the harness clock's start. */
 const TWENTY_DAYS_BEFORE_START = "2026-07-04T09:00:00.000Z";
+/** Past SUSPECT_WINDOW_DAYS, as a clock advance. */
+const TWENTY_DAYS_S = 20 * 86_400;
 
 interface CandidateView {
   readonly sessionId: string;
@@ -366,6 +368,41 @@ describe("ranking", () => {
     expect(view.outcome).toBe("ranked");
     expect(view.candidates.map((candidate) => candidate.workContextId)).toEqual(["wc_ken_long"]);
     expect(view.candidates[0]?.authorTouches).toBe(3);
+  });
+
+  test("a file first touched weeks ago and touched again today is in the window", async () => {
+    // Arrange: Ken's context and its touches are twenty days old; today he
+    // edits the same two files again. First-seen never moves, so only the
+    // re-touch can say he was in them today.
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick-retouch@example.com");
+    await registerTestSession(harness, nick.apiKey, { id: "ses_nick" });
+    const ken = await addTestDeveloperWithSession(harness, "Ken", "ken-retouch@example.com", {
+      id: "ses_ken",
+    });
+    await seedTouches(harness, ken, {
+      sessionId: "ses_ken",
+      contextId: "wc_ken_retouch",
+      title: "Long-lived worktree session",
+      files: [PINNED_A, PINNED_B],
+    });
+    harness.clock.advanceSeconds(TWENTY_DAYS_S);
+    await createPin(harness, nick.apiKey);
+    await breakPin(harness, nick.apiKey);
+    const before = (await suspect(harness, nick.apiKey, "pin=pin_playback")).view;
+
+    // Act: the re-touch, as the duplicate target records it.
+    const retouched = await postRecords(harness, ken, {
+      records: [PINNED_A, PINNED_B].map((value) =>
+        recordEnvelope("target", { workContextId: "wc_ken_retouch", kind: "file", value }, { sessionId: "ses_ken" }),
+      ),
+    });
+    const after = (await suspect(harness, nick.apiKey, "pin=pin_playback")).view;
+
+    // Assert
+    expect(retouched.data?.duplicates).toBe(2);
+    expect(before.outcome).toBe("no_touch");
+    expect(after.candidates.map((candidate) => candidate.workContextId)).toEqual(["wc_ken_retouch"]);
   });
 
   test("an opted-out teammate's touches never move the window — her long-lived context counts from when it opened", async () => {

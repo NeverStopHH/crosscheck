@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 2255
+    # PRINTS: 2257
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -475,7 +475,7 @@ jobs:
     # PRINTS: packages/server/src/services/landed-notices.ts 28
     # PRINTS: packages/server/src/services/landed-repair.ts 3
     # PRINTS: packages/server/src/services/landed.ts 7
-    # PRINTS: packages/server/src/services/live-location.ts 32
+    # PRINTS: packages/server/src/services/live-location.ts 34
     # PRINTS: packages/server/src/services/noise-label.ts 3
     # PRINTS: packages/server/src/services/normalized-doc.ts 6
     # PRINTS: packages/server/src/services/outcome-population.ts 43
@@ -490,7 +490,7 @@ jobs:
     # PRINTS: packages/server/src/services/pointer-standing.ts 14
     # PRINTS: packages/server/src/services/presence.ts 1
     # PRINTS: packages/server/src/services/questions.ts 9
-    # PRINTS: packages/server/src/services/record-handlers.ts 25
+    # PRINTS: packages/server/src/services/record-handlers.ts 26
     # PRINTS: packages/server/src/services/records.ts 2
     # PRINTS: packages/server/src/services/referee.ts 4
     # PRINTS: packages/server/src/services/refusal.ts 3
@@ -508,7 +508,7 @@ jobs:
     # PRINTS: packages/server/src/services/solved.ts 1
     # PRINTS: packages/server/src/services/stale-docs.ts 2
     # PRINTS: packages/server/src/services/startup-upgrades.ts 5
-    # PRINTS: packages/server/src/services/suspect.ts 7
+    # PRINTS: packages/server/src/services/suspect.ts 6
     # PRINTS: packages/server/src/services/team-settings.ts 15
     # PRINTS: packages/server/src/services/time-window.ts 1
     # PRINTS: packages/server/src/services/verdict.ts 4
@@ -663,7 +663,7 @@ jobs:
     # PRINTS: landing-branches.ts 7
     # PRINTS: latency.ts 1
     # PRINTS: ledger-read.ts 2
-    # PRINTS: live-location.ts 32
+    # PRINTS: live-location.ts 34
     # PRINTS: lock.ts 2
     # PRINTS: loss-ledger.ts 10
     # PRINTS: loss-refusals.ts 1
@@ -720,7 +720,7 @@ jobs:
     # PRINTS: pump.ts 1
     # PRINTS: questions.ts 11
     # PRINTS: reap.ts 1
-    # PRINTS: record-handlers.ts 25
+    # PRINTS: record-handlers.ts 26
     # PRINTS: records.ts 4
     # PRINTS: recover.ts 4
     # PRINTS: referee.ts 4
@@ -777,7 +777,7 @@ jobs:
     # PRINTS: stop.ts 4
     # PRINTS: stream.ts 3
     # PRINTS: suspect-render.ts 4
-    # PRINTS: suspect.ts 12
+    # PRINTS: suspect.ts 11
     # PRINTS: sweep.ts 3
     # PRINTS: target-paths.ts 1
     # PRINTS: team-settings.ts 16

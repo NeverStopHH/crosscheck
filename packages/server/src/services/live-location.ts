@@ -460,6 +460,32 @@ export const updatedAtSeenBy = (
   sql`(case when ${visiblePresenceCondition(viewerDeveloperId, ownerDeveloperId)} then ${updatedAt} else null end)`
     .mapWith(updatedAt) as SQL<Date | null>;
 
+/** The columns a target row is touched by — the table itself, or an alias of it. */
+interface TargetTimes {
+  readonly createdAt: AnyPgColumn | SQL;
+  readonly lastSeenAt: AnyPgColumn | SQL;
+}
+
+/**
+ * When a target was LAST touched: its first touch or a later re-touch,
+ * whichever is newer (pilot finding, 2026-10-05). NULL for a row older than
+ * both columns, which no window then admits by its touch.
+ */
+export const targetTouchedAt = (target: TargetTimes): SQL<Date | null> =>
+  sql<Date | null>`greatest(${target.createdAt}, ${target.lastSeenAt})`;
+
+/**
+ * The same instant as THIS viewer may window by it: null for an owner whose
+ * location is hidden from them, because when she touched a file is hers —
+ * a read that admitted her work by it would say what her withheld times do.
+ */
+export const targetTouchedAtSeenBy = (
+  viewerDeveloperId: string,
+  ownerDeveloperId: AnyPgColumn | SQL,
+  target: TargetTimes,
+): SQL<Date | null> =>
+  sql<Date | null>`(case when ${visiblePresenceCondition(viewerDeveloperId, ownerDeveloperId)} then ${targetTouchedAt(target)} end)`;
+
 /** `coalesce(updated_at, created_at)` as this viewer may filter and rank by it. */
 export const activitySeenBy = (
   viewerDeveloperId: string,
