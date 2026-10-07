@@ -33,6 +33,7 @@ import {
   HTTP_TIMEOUT_MS,
   MAX_INGEST_BATCH,
   MAX_SPOOL_AGE_DAYS,
+  MAX_TARGETS_PER_INVOCATION,
   MINUTES_PER_HOUR,
   MS_PER_DAY,
   MS_PER_SECOND,
@@ -49,7 +50,10 @@ import type { Producer } from "../../src/capture/records.ts";
 import { seqAt, withSeq } from "../../src/capture/seq.ts";
 import type { HubContext } from "../../src/http/client.ts";
 import { endSession, postRecords } from "../../src/http/hub.ts";
+import type { TouchedRootsResolution } from "../../src/capture/touched-root.ts";
+import { captureTouchedFiles } from "../../src/flows/capture-touched-files.ts";
 import { endSessionFlow } from "../../src/flows/end-session.ts";
+import { topicLifeOf, withTopicCapture } from "../../src/flows/topic-contexts.ts";
 import { sessionHealer } from "../../src/flows/heal-session.ts";
 import { heartbeatMaybe } from "../../src/flows/heartbeat.ts";
 import { fallbackWorkContextTitle, registerSessionFlow } from "../../src/flows/register-session.ts";
@@ -63,7 +67,7 @@ import { flushSpool } from "../../src/spool/flush.ts";
 import { reapSpool } from "../../src/spool/reap.ts";
 import { rejectCauseOf } from "../../src/spool/reject-cause.ts";
 import { reapStaleSessionStates } from "../../src/state/session-reap.ts";
-import { allocateSeq, readSessionState, updateSessionState } from "../../src/state/session-state.ts";
+import { allocateSeq, readSessionState, updateSessionState, withSeenTargets } from "../../src/state/session-state.ts";
 import { makeHome } from "../helpers.ts";
 import {
   beginScenario,
@@ -137,7 +141,13 @@ export type SimEvent =
   /** A live host's PostToolUse finds no state (reaped while it slept, or a reload's SessionEnd) and recovers, as connector-claude does. */
   | { readonly kind: "recover"; readonly c: number }
   /** A PostToolUse heartbeat, its refusal healed (connector-claude hooks/heal.ts onRefusedHeartbeat). */
-  | { readonly kind: "beat"; readonly c: number };
+  | { readonly kind: "beat"; readonly c: number }
+  /**
+   * An edit in one of the conversation's sibling worktrees, on one of two
+   * branches there, through the REAL topic capture (DESIGN.md "One session,
+   * many topics"): its topic's context spooled ahead of its target.
+   */
+  | { readonly kind: "topicEdit"; readonly c: number; readonly worktree: number; readonly branch: number };
 
 /** mulberry32: a 32-bit seed, a stream of [0, 1). Small, fast and the same everywhere. */
 export const prng = (seed: number): (() => number) => {
@@ -175,7 +185,13 @@ const SLOW_MS: readonly number[] = [600, 1400, 1700];
 const FAULTS = ["records503", "recordsLate", "registersDown", "slow"] as const;
 
 /** The events a connector process plays: the only ones an armed crash can kill. */
-const ACTOR_EVENTS: ReadonlySet<SimEvent["kind"]> = new Set(["start", "edit", "flush", "intent", "end", "oldFlush"]);
+const ACTOR_EVENTS: ReadonlySet<SimEvent["kind"]> = new Set(["start", "edit", "flush", "intent", "end", "oldFlush", "topicEdit"]);
+
+/** How many sibling worktrees a `topics` conversation edits in, and how many branches each may be on. */
+const TOPIC_WORKTREES = 3;
+const TOPIC_BRANCHES = 2;
+/** The chance a worktree is on its first branch: most touches return to a topic already open. */
+const FIRST_BRANCH_CHANCE = 0.75;
 
 /**
  * A family of scenarios: the event weights, the faults and `par` pairs to draw
@@ -233,12 +249,28 @@ const extended = (added: readonly (readonly [SimEvent["kind"], number])[], focus
   sameConversation: focus ? 0.8 : 0,
 });
 
+/**
+ * ONE SESSION, MANY TOPICS (DESIGN.md): edits spread over sibling worktrees
+ * and their branches beside the shipped mix — resumes, heals, hub ends, faults
+ * and crashes included — and parallel tool calls among them, so a topic is
+ * opened, re-opened in the next life, and raced.
+ */
+const TOPICS: Generator = {
+  seedMix: 0x70b1c5,
+  extraLength: 24,
+  weights: [...WEIGHTS, ["topicEdit", 40]],
+  faults: FAULTS,
+  parKinds: [...PAR_KINDS, "topicEdit", "topicEdit", "topicEdit"],
+  sameConversation: 0.5,
+};
+
 export const GENERATORS = {
   shipped: SHIPPED,
   io: extended(IO_WEIGHTS),
   sleep: extended(SLEEP_WEIGHTS),
   focus: extended(FOCUS_WEIGHTS, true),
   all: extended([...IO_WEIGHTS, ...SLEEP_WEIGHTS]),
+  topics: TOPICS,
 } as const;
 
 export type GeneratorName = keyof typeof GENERATORS;
@@ -261,10 +293,19 @@ export const scenarioOf = (seed: number, generator: Generator = SHIPPED): readon
   const conversations = 1 + Math.floor(random() * 3);
   const length = 6 + Math.floor(random() * generator.extraLength);
   const started = new Set<number>();
+  // Drawn only for a topic edit, so every other family replays draw for draw.
+  const topicEditOf = (c: number): SimEvent => ({
+    kind: "topicEdit",
+    c,
+    worktree: Math.floor(random() * TOPIC_WORKTREES),
+    branch: random() < FIRST_BRANCH_CHANCE ? 0 : 1 + Math.floor(random() * (TOPIC_BRANCHES - 1)),
+  });
   const actorOf = (kind: SimEvent["kind"], c: number): SimEvent =>
     kind === "intent"
       ? { kind, c, status: STATUSES[Math.floor(random() * STATUSES.length)] ?? "implementing" }
-      : ({ kind, c } as SimEvent);
+      : kind === "topicEdit"
+        ? topicEditOf(c)
+        : ({ kind, c } as SimEvent);
   return Array.from({ length }, (): SimEvent => {
     const c = Math.floor(random() * conversations);
     const kind = started.has(c) ? pick(random, generator.weights) : "start";
@@ -289,6 +330,8 @@ export const scenarioOf = (seed: number, generator: Generator = SHIPPED): readon
       case "night":
       case "vacation":
         return { kind };
+      case "topicEdit":
+        return topicEditOf(c);
       case "par": {
         const other =
           generator.sameConversation > 0 && random() < generator.sameConversation ? c : Math.floor(random() * conversations);
@@ -469,6 +512,65 @@ const edit = async (world: World, c: number): Promise<void> => {
     new Date(),
   );
   await appendRecords(world.home, world.key, hostSessionKey, [withSeq(record, seq)], new Date());
+  await hookFlush(world, hostSessionKey, deadlineMs);
+};
+
+/** A conversation's sibling worktree: a synthetic root, never on disk — the resolution is stood in for. */
+const topicRootOf = (hostSessionKey: string, worktree: number): string => `/sim-topics/${hostSessionKey}/wt${String(worktree)}`;
+
+/** One path's resolution as the capture pre-pass would give it: its worktree, on the event's branch, its HEAD unread. */
+const topicResolution = (path: string, root: string, branch: string, now: Date): TouchedRootsResolution => ({
+  rootByPath: new Map([[path, root]]),
+  foreignDrops: 0,
+  outsideDrops: 0,
+  newlyResolved: [],
+  firstResolvedRoot: null,
+  headByRoot: new Map([
+    [root, { root, repoId: REPO_ID, branch, headStamp: `ref: refs/heads/${branch}`, firstHead: BASE_COMMIT, head: null, touchedAt: now.toISOString() }],
+  ]),
+});
+
+/**
+ * AN EDIT IN A SIBLING WORKTREE, as connector-claude's PostToolUse captures one
+ * (hooks/post-tool-use.ts): the shared capture flow with the life's topics —
+ * the topic's context into the spool first when the topic is new — then ONE
+ * locked state write folding the seen-set and the topics, then the drain.
+ */
+const topicEdit = async (world: World, c: number, worktree: number, branch: number): Promise<void> => {
+  const hostSessionKey = world.keys[c] ?? "";
+  const deadlineMs = hookDeadline(POST_TOOL_USE_BUDGET_RATIO);
+  const state = await readSessionState(world.home, hostSessionKey);
+  if (state === null) {
+    return;
+  }
+  world.edits += 1;
+  const now = new Date();
+  const root = topicRootOf(hostSessionKey, worktree);
+  const path = `${root}/src/sim/${hostSessionKey}-${String(world.edits)}.ts`;
+  const label = `feat/sim-${String(worktree)}-${String(branch)}`;
+  const { captured, topics } = await captureTouchedFiles({
+    seq: await allocateSeq(world.home, hostSessionKey, MAX_TARGETS_PER_INVOCATION),
+    home: world.home,
+    repoKey: world.key,
+    hostSessionKey,
+    repoRoot: state.repoRoot,
+    cwd: state.repoRoot,
+    paths: [path],
+    denylist: null,
+    seenTargets: state.seenTargets,
+    workContextId: state.workContextId,
+    producer: producerOf(world, state.crosscheckSessionId),
+    now,
+    sessionRepoId: REPO_ID,
+    identityRoot: state.repoRoot,
+    identityRepoId: REPO_ID,
+    knownWorktreeRoots: [],
+    topics: topicLifeOf(state),
+    resolveRoots: async () => topicResolution(path, root, label, now),
+  });
+  await updateSessionState(world.home, hostSessionKey, (fresh) =>
+    withTopicCapture(withSeenTargets(fresh, fresh.crosscheckSessionId === state.crosscheckSessionId ? captured : []), topics),
+  );
   await hookFlush(world, hostSessionKey, deadlineMs);
 };
 
@@ -826,6 +928,8 @@ async function act(world: World, event: SimEvent, step: number): Promise<void> {
       return recover(world, event.c);
     case "beat":
       return beat(world, event.c);
+    case "topicEdit":
+      return topicEdit(world, event.c, event.worktree, event.branch);
   }
 }
 
@@ -913,6 +1017,8 @@ export const describeEvent = (event: SimEvent): string => {
     case "night":
     case "vacation":
       return event.kind;
+    case "topicEdit":
+      return `topicEdit c${String(event.c)} wt${String(event.worktree)} b${String(event.branch)}`;
     default:
       return `${event.kind} c${String(event.c)}`;
   }
