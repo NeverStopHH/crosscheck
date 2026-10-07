@@ -19134,6 +19134,17 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/live-location-projection.test.ts`,
     because: "what she worked on is withheld whenever its spelling happens to be a date",
   },
+  // ── Review round 5: the reviewer's m2, kept as a regression anchor ────
+  {
+    label: "a withheld agent gap carries her newest heartbeat in a field of its own",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "    return { ...sourceRecord(\"agent_event\", \"incomplete\", WITHHELD_GAP_REASON, gapSince, observedAt), withheld: true };",
+    to:
+      "    return { ...sourceRecord(\"agent_event\", \"incomplete\", WITHHELD_GAP_REASON, gapSince, observedAt), withheld: true, " +
+      "detail: toIso((await deps.db.select({ at: sql`max(${agentSessions.lastHeartbeatAt}) filter (where not ${isTold})` }).from(agentSessions).where(inScope(scope)))[0]?.at) };",
+    test: `${SERVER}/test/coverage-instant-privacy.test.ts`,
+    because: "a field nobody named carries when she last ran an agent on every coverage block she gaps",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19443,7 +19454,7 @@ interface Outcome {
  * PRINTS: packages/server/test/conference.test.ts 3
  * PRINTS: packages/server/test/coverage-answer-sessions.test.ts 10
  * PRINTS: packages/server/test/coverage-compat-0.10.test.ts 2
- * PRINTS: packages/server/test/coverage-instant-privacy.test.ts 7
+ * PRINTS: packages/server/test/coverage-instant-privacy.test.ts 8
  * PRINTS: packages/server/test/coverage-judgeable.test.ts 2
  * PRINTS: packages/server/test/coverage-losses.test.ts 15
  * PRINTS: packages/server/test/coverage-measurement.test.ts 2
