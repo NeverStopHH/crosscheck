@@ -38,6 +38,10 @@ import {
 import type { TestDeveloper, TestHarness } from "./helpers.ts";
 
 const REPO = VALID_SESSION_BODY.repo;
+/** An old main commit a long-lived worktree stays detached at. */
+const STALE_DETACHED_BASE = "51eae4d8f0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5";
+/** When it was committed: six weeks before the contexts open. */
+const STALE_DETACHED_AT = "2026-06-12T09:00:00.000Z";
 const MY_SESSION = "ses_mine";
 const THEIR_SESSION = "ses_theirs";
 const MY_CONTEXT = "wc_mine";
@@ -274,6 +278,41 @@ describe("the conference corpus", () => {
 
     // Assert: merged work is not work anybody is still doing.
     expect((await fetchConference(harness, me.apiKey)).contexts).toEqual([]);
+  });
+
+  test("a stale detached base a teammate reported landed stays in the report", async () => {
+    // Arrange: Ken's long-lived worktree session is detached at a six-week-
+    // old main commit (an older connector: it said nothing about it), and my
+    // feature-branch SessionStart reports that commit as an ancestor of main.
+    const { harness, me, them } = await setup();
+    await registerTestSession(harness, them.apiKey, {
+      id: THEIR_SESSION,
+      branch: `detached@${STALE_DETACHED_BASE.slice(0, 9)}`,
+      baseCommit: STALE_DETACHED_BASE,
+    });
+    await seed(harness, them, [
+      ...contextRecords(THEIR_CONTEXT, THEIR_SESSION, "Session store migration"),
+    ]);
+
+    // Act: a current connector's report, dating the base as git does.
+    await seed(harness, me, [
+      recordEnvelope(
+        "landed_evidence",
+        {
+          repo: REPO,
+          defaultBranch: "origin/main",
+          checkedAt: TEST_START_ISO,
+          commits: [STALE_DETACHED_BASE],
+          commitDates: [{ sha: STALE_DETACHED_BASE, committedAt: STALE_DETACHED_AT }],
+        },
+        { sessionId: MY_SESSION },
+      ),
+    ]);
+
+    // Assert: still unfinished work the conference reads.
+    expect(
+      (await fetchConference(harness, me.apiKey)).contexts.map((c) => c.id),
+    ).toEqual([THEIR_CONTEXT]);
   });
 
   test("two developers on the same files are duplicated work; two worktrees of one are not", async () => {

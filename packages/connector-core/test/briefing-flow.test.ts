@@ -171,7 +171,7 @@ describe("assembleBriefing (the extracted session-start recipe)", () => {
     expect(assembled.presenceFetched).toBe(true);
     expect(assembled.presence).toHaveLength(1);
     expect(assembled.shownSolvedIds).toEqual([]);
-    expect(assembled.landedCommits).toEqual([]);
+    expect(assembled.landed).toEqual({ commits: [], commitDates: [] });
   });
 
   test("shownSolvedIds names exactly the pointers the emitted text contains", async () => {
@@ -261,6 +261,10 @@ describe("assembleBriefing (the extracted session-start recipe)", () => {
     hub.data.matches = [];
 
     const riderSaw: number[] = [];
+    const reading = {
+      commits: ["landed_sha"],
+      commitDates: [{ sha: "landed_sha", committedAt: ISO }],
+    };
     const assembled = await assembleBriefing({
       hub: hubContext(home),
       repoId: REPO_ID,
@@ -269,12 +273,12 @@ describe("assembleBriefing (the extracted session-start recipe)", () => {
       now: NOW,
       collectLanded: (workContexts) => {
         riderSaw.push(workContexts.length);
-        return Promise.resolve(["landed_sha"]);
+        return Promise.resolve(reading);
       },
     });
 
     expect(riderSaw).toEqual([1]);
-    expect(assembled.landedCommits).toEqual(["landed_sha"]);
+    expect(assembled.landed).toEqual(reading);
   });
 
   test("a dead hub costs the sections, never a throw — and presenceFetched says so", async () => {

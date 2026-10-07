@@ -64,6 +64,13 @@ ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_newest_at timestamptz;
 -- of casting loss_kinds JSON to int4, which one large count made throw.
 ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_ignored_at timestamptz;
 
+-- Whether the base commit was already on the default branch when the session
+-- registered, by the connector's own word (pilot finding, 2026-10-05). NULL
+-- means the connector did not say — every row from before the column — and a
+-- base that was already there is never read as this session's work landing
+-- (services/landed.ts).
+ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS base_on_default boolean;
+
 CREATE INDEX IF NOT EXISTS agent_sessions_repo_idx
   ON agent_sessions (repo);
 CREATE INDEX IF NOT EXISTS agent_sessions_heartbeat_idx

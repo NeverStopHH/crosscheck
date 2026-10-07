@@ -13,7 +13,9 @@ import {
   commitEvidenceRecord,
 } from "@crosscheck/connector-core/capture/commit-evidence.ts";
 import {
-  collectLandedCommits,
+  NOTHING_LANDED,
+  baseReachableFromDefault,
+  collectLandedReading,
   landedEvidenceRecord,
 } from "@crosscheck/connector-core/capture/landed.ts";
 import { UNKNOWN_DEVELOPER_ID } from "@crosscheck/connector-core/capture/records.ts";
@@ -237,13 +239,23 @@ export const handleSessionStart = async (
   // register round trip instead of adding to it, and it does not depend on
   // the hub answering.
   const landingFetch = requestLandingFetchFor(ctx);
+  // The default ref is resolved FIRST now, because the register itself needs
+  // it: whether this session's base was already on the default branch
+  // (pilot finding, 2026-10-05; capture/landed.ts baseReachableFromDefault)
+  // rides the register body, and a base that was is never stamped landed by
+  // a teammate's report. The same promise feeds the landed rider below.
+  const defaultBranchRefPromise = resolveDefaultBranchRef(ctx.identity.root);
   // Detached-aware (trial finding #15): on a worktree session this is up to
   // two bounded git calls BEFORE the register round trip — see
-  // HEAD_LABEL_GIT_TIMEOUT_MS for why they fit the SessionStart budget.
-  const title = await resolveSessionWorkContextTitle(
-    ctx.payload.session_title,
-    ctx.identity,
-  );
+  // HEAD_LABEL_GIT_TIMEOUT_MS for why they fit the SessionStart budget. The
+  // base probe's two (default ref, then ancestry) run BESIDE them, so the
+  // pair costs no wall clock of its own (LANDED_GIT_TIMEOUT_MS).
+  const [title, baseOnDefault] = await Promise.all([
+    resolveSessionWorkContextTitle(ctx.payload.session_title, ctx.identity),
+    defaultBranchRefPromise.then((ref) =>
+      baseReachableFromDefault(ctx.identity.root, ctx.identity.baseCommit, ref),
+    ),
+  ]);
   // The §1.3 flow: register (+409 retry) → state file BEFORE any append
   // (reap's aliveness invariant) → work-context record. One implementation,
   // shared with every connector (flows/register-session.ts).
@@ -258,6 +270,7 @@ export const handleSessionStart = async (
       repoRoot: ctx.identity.root,
       branch: ctx.identity.branch,
       baseCommit: ctx.identity.baseCommit,
+      baseOnDefault,
       hubUrl: ctx.config.hubUrl,
       fallbackDeveloperId: ctx.config.developerId,
       title,
@@ -266,14 +279,13 @@ export const handleSessionStart = async (
       now,
       guarantees: guaranteeDeclarationFor("claude-code"),
     });
-  // Commit-evidence collection and default-branch resolution START here and
-  // resolve DURING the flow's parallel hub-fetch block: their git timeouts
-  // are below the per-request hub timeout that block already waits for
-  // (COMMIT_EVIDENCE_GIT_TIMEOUT_MS / LANDED_GIT_TIMEOUT_MS), so they add no
-  // wall clock of their own — concurrency needs the promises started early,
-  // not membership in the same Promise.all.
+  // Commit-evidence collection STARTS here and resolves DURING the flow's
+  // parallel hub-fetch block: its git timeout is below the per-request hub
+  // timeout that block already waits for (COMMIT_EVIDENCE_GIT_TIMEOUT_MS), so
+  // it adds no wall clock of its own — concurrency needs the promise started
+  // early, not membership in the same Promise.all. The default ref has been
+  // resolving since the top of the hook.
   const commitAuthorsPromise = collectCommitEvidence(ctx.identity.root, now);
-  const defaultBranchRefPromise = resolveDefaultBranchRef(ctx.identity.root);
 
   // The rotation is the day number: every SessionStart on one day probes the
   // same window (idempotent replays), and the window advances daily so a
@@ -309,16 +321,20 @@ export const handleSessionStart = async (
       // session is what makes the label mean what the surface claims; a
       // session on a real feature branch is unaffected.
       if (isOnDefaultBranch(ctx.identity.branch, defaultBranchRef)) {
-        return [];
+        return NOTHING_LANDED;
       }
       const openBaseCommits = workContexts.flatMap((entry: WorkContextEntry) =>
         entry.landedAt === null || entry.landedAt === undefined
           ? (entry.baseCommit === undefined ? [] : [entry.baseCommit])
           : [],
       );
+      // Dated as well as proven (collectLandedReading): the committer date is
+      // what lets the hub tell a stale checkout from new work for a teammate
+      // whose connector never said where its base was (server
+      // services/landed.ts) — read in parallel, one git timeout still.
       return defaultBranchRef === null || openBaseCommits.length === 0
-        ? []
-        : collectLandedCommits(
+        ? NOTHING_LANDED
+        : collectLandedReading(
             ctx.identity.root,
             defaultBranchRef,
             openBaseCommits,
@@ -326,7 +342,7 @@ export const handleSessionStart = async (
           );
     },
   });
-  const { briefing, presence, landedCommits } = assembled;
+  const { briefing, presence, landed } = assembled;
   const [commitAuthors, defaultBranchRef] = await Promise.all([
     commitAuthorsPromise,
     defaultBranchRefPromise,
@@ -390,7 +406,7 @@ export const handleSessionStart = async (
     sessionId: crosscheckSessionId,
   };
   // A local append, microseconds — the maintenance flush below ships it.
-  if (defaultBranchRef !== null && landedCommits.length > 0) {
+  if (defaultBranchRef !== null && landed.commits.length > 0) {
     await appendRecords(
       ctx.config.home,
       ctx.repoKey,
@@ -399,7 +415,7 @@ export const handleSessionStart = async (
         landedEvidenceRecord(
           ctx.identity.repoId,
           defaultBranchRef,
-          landedCommits,
+          landed,
           producer,
           now,
         ),

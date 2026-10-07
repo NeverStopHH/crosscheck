@@ -786,6 +786,25 @@ export const LANDED_NOTICE_GROUPS_LISTED = 3;
  * a row still waiting only refreshes it and is never held back.
  */
 export const LANDED_NOTICE_MAX_PER_PAIR = 20;
+
+/**
+ * HOW OLD A BASE MAY BE WHEN ITS WORK CONTEXT OPENS and still count as the
+ * session's own branch tip, for a session whose connector never said whether
+ * its base was already on the default branch (services/landed.ts). A base
+ * committed more than this before the context opened is a checkout — a stale
+ * worktree, a branch cut from an old main — and its reaching main says
+ * nothing about this session's work. The diagnosed one was six weeks old.
+ *
+ * SMALL, BECAUSE THE TWO ERRORS COST DIFFERENT THINGS. Too small refuses a
+ * real landing (a branch resumed after a weekend), and the context stays in
+ * ghost checks only while its session is still open — they drop ended
+ * sessions anyway — and in the conference's fortnight with its age printed.
+ * Too large stamps a stale checkout landed, and that hides a LIVE session's
+ * files from every collision check, which is the pilot incident. A day keeps
+ * a same-day or overnight branch tip and refuses anything older; committer
+ * dates come from laptops, and clock skew is minutes against it.
+ */
+export const LANDED_STALE_BASE_HOURS = 24;
 // ── Claim ↔ code binding (1.0 spec 02) ──────────────────────────────────────
 
 /**

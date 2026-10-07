@@ -17606,7 +17606,7 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "detached sessions are one topic per sha again",
-    file: `${CORE}/src/git/detached-branch.ts`,
+    file: `${SCHEMA}/src/detached-branch.ts`,
     from: "  branch === UNNAMED_HEAD_BRANCH || DETACHED_REF_PATTERN.test(branch);",
     to: "  false;",
     test: `${CORE}/test/briefing-contexts.test.ts`,
@@ -22142,7 +22142,7 @@ export const MUTATIONS: readonly Mutation[
   {
     // Review L3: `detached@<hex sha>` exactly, never a prefix.
     label: "a branch named detached@release folds into the detached-HEAD topic",
-    file: `${CORE}/src/git/detached-branch.ts`,
+    file: `${SCHEMA}/src/detached-branch.ts`,
     from: "  branch === UNNAMED_HEAD_BRANCH || DETACHED_REF_PATTERN.test(branch);",
     to: "  branch === UNNAMED_HEAD_BRANCH || branch.startsWith(DETACHED_BRANCH_PREFIX);",
     test: `${CORE}/test/briefing-contexts.test.ts`,
@@ -22536,7 +22536,7 @@ export const MUTATIONS: readonly Mutation[
   {
     // Review round 3, L4: SHA-256 repositories name commits in 64 hex digits.
     label: "a SHA-256 repository's detached HEAD is read as a branch",
-    file: `${CORE}/src/git/detached-branch.ts`,
+    file: `${SCHEMA}/src/detached-branch.ts`,
     from: "const FULL_SHA_HEX = 64;",
     to: "const FULL_SHA_HEX = 40;",
     test: `${CORE}/test/detached-branch.test.ts`,
@@ -23404,6 +23404,144 @@ export const MUTATIONS: readonly Mutation[
       "a teammate's tree found only by a machine guess nobody vouched for is pushed " +
       "into a colleague's prompt, its draft counted toward the content floor",
   },
+  // ── Pilot finding 2026-10-05: false landed stamps hid a collision ─────
+  {
+    label: "a teammate's report stamps a detached session's context landed",
+    file: `${SERVER}/src/services/landed.ts`,
+    from: "  if (isDetachedBranch(candidate.branch)) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/landed.test.ts`,
+    because:
+      "a long-lived worktree detached at an old main commit reads landed the moment a " +
+      "teammate's SessionStart reports that commit, and its files leave every collision check",
+  },
+  {
+    label: "a base the connector said was already on main is stamped landed",
+    file: `${SERVER}/src/services/landed.ts`,
+    from: "    return !candidate.baseOnDefault;",
+    to: "    return true;",
+    test: `${SERVER}/test/landed.test.ts`,
+    because:
+      "a branch cut from main with nothing of its own yet reads merged before any work exists",
+  },
+  {
+    label: "an old connector's stale base is stamped landed",
+    file: `${SERVER}/src/services/landed.ts`,
+    from: "  return baseCommittedAt !== undefined && !isStaleBase(baseCommittedAt, candidate.contextCreatedAt);",
+    to: "  return baseCommittedAt !== undefined;",
+    test: `${SERVER}/test/landed.test.ts`,
+    because:
+      "a session from a connector that never said where its base was is stamped landed " +
+      "for a checkout six weeks old",
+  },
+  {
+    label: "an old connector's undated base is stamped landed",
+    file: `${SERVER}/src/services/landed.ts`,
+    from: "  return baseCommittedAt !== undefined && !isStaleBase(baseCommittedAt, candidate.contextCreatedAt);",
+    to: "  return baseCommittedAt === undefined || !isStaleBase(baseCommittedAt, candidate.contextCreatedAt);",
+    test: `${SERVER}/test/landed.test.ts`,
+    because:
+      "a report that cannot date the base stamps it anyway — unknown age read as new work",
+  },
+  {
+    label: "every base on the default branch stamps its context again, and ghost checks lose it",
+    file: `${SERVER}/src/services/landed.ts`,
+    from: "    .filter((row) => ancestryLandsContext(row, committedAt.get(row.baseCommit)))",
+    to: "    .filter(() => true)",
+    test: `${SERVER}/test/ghost-overlap.test.ts`,
+    because:
+      "the pilot incident: a teammate edits the files of a live session the hub calls merged, " +
+      "and no ghost line names it",
+  },
+  {
+    label: "every base on the default branch stamps its context again, and the conference loses it",
+    file: `${SERVER}/src/services/landed.ts`,
+    from: "    .filter((row) => ancestryLandsContext(row, committedAt.get(row.baseCommit)))",
+    to: "    .filter(() => true)",
+    test: `${SERVER}/test/conference.test.ts`,
+    because: "unfinished work drops out of the case file as if it had merged",
+  },
+  {
+    label: "the hub drops what the connector said about its base",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "      baseOnDefault: input.baseOnDefault ?? null,",
+    to: "      baseOnDefault: null,",
+    test: `${SERVER}/test/landed.test.ts`,
+    because:
+      "every session reads as an older connector's, and a base already on main lands on a fresh date",
+  },
+  {
+    label: "a re-register of the same base forgets what the connector said",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "  (existing.baseCommit === input.baseCommit ? existing.baseOnDefault : null);",
+    to: "  null;",
+    test: `${SERVER}/test/landed.test.ts`,
+    because: "a recovery path that does not probe git demotes the session to never-said",
+  },
+  {
+    label: "a re-register on a new base keeps the old base's answer",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "  (existing.baseCommit === input.baseCommit ? existing.baseOnDefault : null);",
+    to: "  existing.baseOnDefault;",
+    test: `${SERVER}/test/landed.test.ts`,
+    because: "an answer about one commit is read as an answer about another",
+  },
+  {
+    label: "the register never says whether its base was already on main",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "      ...(input.baseOnDefault === undefined ? {} : { baseOnDefault: input.baseOnDefault }),",
+    to: "",
+    test: `${CORE}/test/register-base-on-default.test.ts`,
+    because: "every session reads as an older connector's, and the hub can only guess from dates",
+  },
+  {
+    label: "the Claude SessionStart probes its base and never sends the answer",
+    file: `${CONNECTOR}/src/hooks/session-start.ts`,
+    from: "      baseOnDefault,\n      hubUrl: ctx.config.hubUrl,",
+    to: "      hubUrl: ctx.config.hubUrl,",
+    test: `${CONNECTOR}/test/solved-hook.test.ts`,
+    because: "the pilot owner's detached worktree registers as if it might hold new work",
+  },
+  {
+    label: "a flag-shaped base reaches git on the register probe",
+    file: `${CORE}/src/capture/landed.ts`,
+    from: "  if (defaultRef === null || !COMMIT_SHA_PATTERN.test(baseCommit)) {",
+    to: "  if (defaultRef === null) {",
+    test: `${CORE}/test/landed-capture.test.ts`,
+    because: "`--all` is handed to rev-list as the base, and its answer is sent as a fact",
+  },
+  {
+    label: "a landed report drops the commits' dates",
+    file: `${CORE}/src/capture/landed.ts`,
+    from: "      ...(reading.commitDates.length === 0 ? {} : { commitDates: reading.commitDates }),",
+    to: "",
+    test: `${CORE}/test/landed-capture.test.ts`,
+    because: "a hub can no longer land an older connector's genuine branch tip at all",
+  },
+  {
+    label: "a landed report dates commits that did not land",
+    file: `${CORE}/src/capture/landed.ts`,
+    from: "    commitDates: dates.filter((entry) => landed.includes(entry.sha)),",
+    to: "    commitDates: dates,",
+    test: `${CORE}/test/landed-capture.test.ts`,
+    because: "the report carries facts about commits it never proved were on the default branch",
+  },
+  {
+    label: "a landed report dates commits by their author",
+    file: `${CORE}/src/capture/landed.ts`,
+    from: "    [\"log\", \"--no-walk=unsorted\", \"--ignore-missing\", \"--format=%H%x09%cI\", ...wanted],",
+    to: "    [\"log\", \"--no-walk=unsorted\", \"--ignore-missing\", \"--format=%H%x09%aI\", ...wanted],",
+    test: `${CORE}/test/landed-capture.test.ts`,
+    because: "every rebased branch reads as a stale checkout, and its real landing is refused",
+  },
+  {
+    label: "a dated landed report fails the schema's commit cap",
+    file: `${SCHEMA}/src/landed-evidence.ts`,
+    from: "  commitDates: z.array(LandedCommitDateSchema).max(MAX_LANDED_COMMITS).optional(),",
+    to: "  commitDates: z.array(LandedCommitDateSchema).optional(),",
+    test: `${SCHEMA}/test/landed-evidence.test.ts`,
+    because: "one report carries an unbounded list into the hub's ingest",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -23582,7 +23720,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
  * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
  * PRINTS: packages/connector-claude/test/settings-merge-removal.test.ts 1
- * PRINTS: packages/connector-claude/test/solved-hook.test.ts 1
+ * PRINTS: packages/connector-claude/test/solved-hook.test.ts 2
  * PRINTS: packages/connector-claude/test/state-reap.test.ts 1
  * PRINTS: packages/connector-claude/test/stop-gate.test.ts 6
  * PRINTS: packages/connector-claude/test/stop-git-touches.test.ts 1
@@ -23651,6 +23789,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/intent-budget.test.ts 1
  * PRINTS: packages/connector-core/test/intent-chain-render.test.ts 1
  * PRINTS: packages/connector-core/test/kit.test.ts 1
+ * PRINTS: packages/connector-core/test/landed-capture.test.ts 4
  * PRINTS: packages/connector-core/test/landed-changes-completeness.test.ts 26
  * PRINTS: packages/connector-core/test/landed-changes-edges.test.ts 19
  * PRINTS: packages/connector-core/test/landed-changes.test.ts 7
@@ -23684,6 +23823,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/question-delivery.test.ts 1
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3
  * PRINTS: packages/connector-core/test/read-text.test.ts 1
+ * PRINTS: packages/connector-core/test/register-base-on-default.test.ts 1
  * PRINTS: packages/connector-core/test/register-guarantees.test.ts 2
  * PRINTS: packages/connector-core/test/register-seq.test.ts 3
  * PRINTS: packages/connector-core/test/remember-developer.test.ts 1
@@ -23724,6 +23864,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/file-ref.test.ts 5
  * PRINTS: packages/schema/test/hint-outcome.test.ts 2
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
+ * PRINTS: packages/schema/test/landed-evidence.test.ts 1
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1
  * PRINTS: packages/schema/test/session.test.ts 1
@@ -23737,7 +23878,7 @@ interface Outcome {
  * PRINTS: packages/server/test/claim-revalidations.test.ts 10
  * PRINTS: packages/server/test/claim-validity.test.ts 2
  * PRINTS: packages/server/test/commit-evidence-opt-out.test.ts 3
- * PRINTS: packages/server/test/conference.test.ts 3
+ * PRINTS: packages/server/test/conference.test.ts 4
  * PRINTS: packages/server/test/coverage-answer-sessions.test.ts 10
  * PRINTS: packages/server/test/coverage-compat-0.10.test.ts 2
  * PRINTS: packages/server/test/coverage-instant-privacy.test.ts 8
@@ -23767,7 +23908,7 @@ interface Outcome {
  * PRINTS: packages/server/test/drafts.test.ts 4
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/fence-waivers.test.ts 1
- * PRINTS: packages/server/test/ghost-overlap.test.ts 4
+ * PRINTS: packages/server/test/ghost-overlap.test.ts 5
  * PRINTS: packages/server/test/hint-content-floor.test.ts 6
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-outcome-retention.test.ts 4
@@ -23782,6 +23923,7 @@ interface Outcome {
  * PRINTS: packages/server/test/key-rotation.test.ts 6
  * PRINTS: packages/server/test/landed-context.test.ts 22
  * PRINTS: packages/server/test/landed-notices.test.ts 34
+ * PRINTS: packages/server/test/landed.test.ts 7
  * PRINTS: packages/server/test/live-location-cost.test.ts 3
  * PRINTS: packages/server/test/live-location-differential.test.ts 5
  * PRINTS: packages/server/test/live-location-privacy.test.ts 27

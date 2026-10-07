@@ -75,6 +75,14 @@ export interface RegisterSessionFlowInput {
   readonly repoRoot: string;
   readonly branch: string;
   readonly baseCommit: string;
+  /**
+   * Was `baseCommit` already reachable from the default branch? The caller's
+   * own probe (capture/landed.ts probeBaseOnDefault), run beside its title
+   * resolution so it costs no wall clock of its own; undefined — git could
+   * not answer, or a recovery path that does not probe — sends nothing, and
+   * the hub then keeps what it had for this base (server services/sessions.ts).
+   */
+  readonly baseOnDefault?: boolean | undefined;
   readonly hubUrl: string;
   /** Used when the hub does not answer (stored config identity). */
   readonly fallbackDeveloperId: string | null;
@@ -151,6 +159,7 @@ const registerWithRetry = async (
       repo: input.repoId,
       branch: input.branch,
       baseCommit: input.baseCommit,
+      ...(input.baseOnDefault === undefined ? {} : { baseOnDefault: input.baseOnDefault }),
       status: input.status,
       losses,
       guarantees: input.guarantees,

@@ -234,10 +234,17 @@ export type {
 } from "./claim-revalidation.ts";
 
 export {
+  LandedCommitDateSchema,
   LandedEvidenceSchema,
   MAX_LANDED_COMMITS,
 } from "./landed-evidence.ts";
-export type { LandedEvidence } from "./landed-evidence.ts";
+export type { LandedCommitDate, LandedEvidence } from "./landed-evidence.ts";
+
+export {
+  DETACHED_BRANCH_PREFIX,
+  UNNAMED_HEAD_BRANCH,
+  isDetachedBranch,
+} from "./detached-branch.ts";
 export {
   LANDED_AUTHORS_MAX_EMAILS,
   LANDED_CONTEXT_MAX_COMMITS,

@@ -191,6 +191,15 @@ export const agentSessions = pgTable(
     repo: text("repo").notNull(),
     branch: text("branch").notNull(),
     baseCommit: text("base_commit").notNull(),
+    /**
+     * Whether `base_commit` was ALREADY reachable from the default branch
+     * when the session registered — the connector's own ancestry probe
+     * (connector-core capture/landed.ts baseReachableFromDefault). NULL means
+     * the connector did not say: one from before the field, or a git that
+     * could not answer. A base that was on the default branch at register is
+     * never evidence that this session's work landed (services/landed.ts).
+     */
+    baseOnDefault: boolean("base_on_default"),
     status: text("status", { enum: SESSION_STATUSES }).notNull(),
     startedAt: timestamptz("started_at").notNull(),
     lastHeartbeatAt: timestamptz("last_heartbeat_at").notNull(),
@@ -300,11 +309,15 @@ export const workContexts = pgTable("work_contexts", {
   embedding: vector("embedding", { dimensions: EMBEDDING_DIMENSIONS }),
   embeddingModel: text("embedding_model"),
   /**
-   * When the hub first learned the owning session's base commit is an
-   * ancestor of the default branch (DESIGN.md §5 merged-branch detection) —
-   * null while unobserved. A COLUMN, not a status transition, and monotonic:
-   * git ancestry never un-happens, and the status enum keeps recording what
-   * the session was doing (services/landed.ts states the full reasoning).
+   * When the hub first learned the owning session's base commit REACHED the
+   * default branch after that session registered (DESIGN.md §5 merged-branch
+   * detection) — null while unobserved, and never set for a base that was
+   * already there (a detached checkout, a branch cut from main, a stale
+   * worktree). A COLUMN, not a status transition, and monotonic: git
+   * ancestry never un-happens, and the status enum keeps recording what the
+   * session was doing (services/landed.ts states the full reasoning). The
+   * one writer that clears it is the operator's repair
+   * (scripts/unland-false-landed.ts).
    */
   landedAt: timestamptz("landed_at"),
   createdAt: timestamptz("created_at").notNull(),

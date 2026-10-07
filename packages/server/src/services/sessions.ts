@@ -150,6 +150,20 @@ const lossColumns = (
     ? {}
     : reportedColumns(report, settleLossReport(report), now);
 
+/**
+ * WHAT A RE-REGISTER LEAVES IN `base_on_default`. Sent wins. Unsaid keeps the
+ * stored answer only while the base commit is unchanged — a recovery path
+ * re-registers without probing git, and wiping a known answer would demote
+ * the session to "never said" for nothing. Unsaid about a NEW base is
+ * unknown: the old answer was about a different commit.
+ */
+const carriedBaseOnDefault = (
+  existing: SessionRow,
+  input: RegisterSessionBody,
+): boolean | null =>
+  input.baseOnDefault ??
+  (existing.baseCommit === input.baseCommit ? existing.baseOnDefault : null);
+
 export type RegisterSessionResult =
   | { readonly outcome: "created" | "updated"; readonly session: SessionView }
   | { readonly outcome: "foreign_session" }
@@ -171,6 +185,7 @@ export const registerSession = async (
       repo: input.repo,
       branch: input.branch,
       baseCommit: input.baseCommit,
+      baseOnDefault: input.baseOnDefault ?? null,
       status: input.status,
       startedAt: timestamp,
       lastHeartbeatAt: timestamp,
@@ -244,6 +259,7 @@ export const registerSession = async (
       status: input.status,
       branch: input.branch,
       baseCommit: input.baseCommit,
+      baseOnDefault: carriedBaseOnDefault(existing, input),
       lastHeartbeatAt: timestamp,
       ...lossColumns(input.losses, timestamp),
     })

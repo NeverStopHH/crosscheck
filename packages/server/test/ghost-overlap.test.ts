@@ -24,6 +24,8 @@ import { agentSessions, workContexts } from "../src/db/schema.ts";
 import {
   addTestDeveloperWithSession,
   createHarnessWithSession,
+  createTestDeveloper,
+  createTestHarness,
   jsonRequest,
   postRecords,
   recordEnvelope,
@@ -35,6 +37,10 @@ import {
 import type { TestDeveloper, TestHarness } from "./helpers.ts";
 
 const REPO = VALID_SESSION_BODY.repo;
+/** An old main commit a long-lived worktree stays detached at. */
+const STALE_DETACHED_BASE = "51eae4d8f0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5";
+/** When it was committed: six weeks before the contexts open. */
+const STALE_DETACHED_AT = "2026-06-12T09:00:00.000Z";
 const MY_SESSION = "ses_mine";
 const THEIR_SESSION = "ses_theirs";
 const MY_CONTEXT = "wc_mine";
@@ -683,6 +689,80 @@ describe("ghost checks, the deterministic overlap", () => {
       .update(workContexts)
       .set({ landedAt: new Date() })
       .where(eq(workContexts.id, MY_CONTEXT));
+    expect(await fetchGhostChecks(harness, me.apiKey)).toEqual([]);
+  });
+
+  test("a stale detached base a teammate reported landed is still a collision", async () => {
+    // Arrange: the pilot incident. Ken's long-lived session sits detached at
+    // a six-week-old main commit while its work goes on; I am on a feature
+    // branch and my SessionStart reports Ken's base as an ancestor of main.
+    const harness = await createTestHarness();
+    const me = await createTestDeveloper(harness, "Nick", "nick@example.com");
+    const them = await createTestDeveloper(harness, "Ken", "ken@example.com");
+    await registerTestSession(harness, me.apiKey, { id: MY_SESSION, baseOnDefault: false });
+    await registerTestSession(harness, them.apiKey, {
+      id: THEIR_SESSION,
+      branch: `detached@${STALE_DETACHED_BASE.slice(0, 9)}`,
+      baseCommit: STALE_DETACHED_BASE,
+    });
+    const plan = [
+      { kind: "file", value: "src/auth/token.ts" },
+      { kind: "file", value: "src/auth/session.ts" },
+    ];
+    await seed(harness, me, contextRecords(MY_CONTEXT, MY_SESSION, "Token refresh rework", plan));
+    await seed(harness, them, contextRecords(THEIR_CONTEXT, THEIR_SESSION, "Session store migration", plan));
+
+    // Act: a current connector's report, dating the base as git does.
+    await seed(harness, me, [
+      recordEnvelope(
+        "landed_evidence",
+        {
+          repo: REPO,
+          defaultBranch: "origin/main",
+          checkedAt: TEST_START_ISO,
+          commits: [STALE_DETACHED_BASE],
+          commitDates: [{ sha: STALE_DETACHED_BASE, committedAt: STALE_DETACHED_AT }],
+        },
+        { sessionId: MY_SESSION },
+      ),
+    ]);
+
+    // Assert: Ken's files are still in my way.
+    expect(
+      (await fetchGhostChecks(harness, me.apiKey)).map((row) => row.workContextId),
+    ).toEqual([THEIR_CONTEXT]);
+  });
+
+  test("a teammate's base that reached main after they registered is landed, and out", async () => {
+    // Arrange: the lane still works — Ken's connector said his base was NOT
+    // on main when his session started, and now it is.
+    const harness = await createTestHarness();
+    const me = await createTestDeveloper(harness, "Nick", "nick@example.com");
+    const them = await createTestDeveloper(harness, "Ken", "ken@example.com");
+    await registerTestSession(harness, me.apiKey, { id: MY_SESSION, baseOnDefault: false });
+    await registerTestSession(harness, them.apiKey, {
+      id: THEIR_SESSION,
+      branch: "feat/session-store",
+      baseCommit: STALE_DETACHED_BASE,
+      baseOnDefault: false,
+    });
+    const plan = [
+      { kind: "file", value: "src/auth/token.ts" },
+      { kind: "file", value: "src/auth/session.ts" },
+    ];
+    await seed(harness, me, contextRecords(MY_CONTEXT, MY_SESSION, "Token refresh rework", plan));
+    await seed(harness, them, contextRecords(THEIR_CONTEXT, THEIR_SESSION, "Session store migration", plan));
+
+    // Act
+    await seed(harness, me, [
+      recordEnvelope(
+        "landed_evidence",
+        { repo: REPO, defaultBranch: "origin/main", checkedAt: TEST_START_ISO, commits: [STALE_DETACHED_BASE] },
+        { sessionId: MY_SESSION },
+      ),
+    ]);
+
+    // Assert: merged work collides with nothing.
     expect(await fetchGhostChecks(harness, me.apiKey)).toEqual([]);
   });
 

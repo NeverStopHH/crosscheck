@@ -14,9 +14,34 @@
  *
  * MONOTONIC BY CONSTRUCTION: the UPDATE touches only rows whose landed_at is
  * still null, so a replayed or repeated report cannot move the observation
- * and nothing can ever un-land a context (git ancestry never un-happens; a
+ * and no report can ever un-land a context (git ancestry never un-happens; a
  * force-pushed default branch is the one case that could, and honesty there
- * costs less than a flag teammates watch flap).
+ * costs less than a flag teammates watch flap). The one writer that clears
+ * it is an operator's: scripts/unland-false-landed.ts, for stamps this rule
+ * would have refused (services/landed-repair.ts).
+ *
+ * ONLY A BASE THAT ARRIVED IS EVIDENCE (pilot finding, 2026-10-05). The
+ * ancestry test alone cannot say "this session's work landed": a session
+ * detached at an old main commit — every orchestration worktree — or on a
+ * branch cut from main with nothing committed yet has a base that is an
+ * ancestor from its first second. A teammate's report stamped exactly such a
+ * context, a six-week-old detached base, and its 180 captured files left
+ * ghost checks and the conference while the teammate edited the same files.
+ * So a reported ancestor lands a context only when its base reaching the
+ * default branch can be NEW (ancestryLandsContext):
+ *   - never for a detached session, whatever else is known — its HEAD is a
+ *     checkout of a commit, and its session's work happens elsewhere;
+ *   - by the connector's word where it gave one: `base_on_default`, its own
+ *     ancestry probe at register — true never lands, false lands;
+ *   - for a connector from before that word, only when the report dates the
+ *     base (`commitDates`) and the base was committed no more than
+ *     LANDED_STALE_BASE_HOURS before the context opened. An undated base is
+ *     not stamped: its age is unknown, and unknown is not evidence.
+ * Every refusal leaves the context unlanded, the direction in which it stays
+ * visible to every collision check. The hub has no default-branch history
+ * to derive "already on main at creation" from — commit evidence is one
+ * aggregate row per author, no hashes — so the connector says it, or the
+ * date stands in for it.
  *
  * TRUST MODEL, same as commit evidence: any hub member may report, because
  * git ancestry is checkable from any clone and the hub maps commit → context
@@ -26,18 +51,19 @@
  * a context as landed — a wrong label with the same blast radius as forged
  * commit evidence, accepted and documented — but it cannot touch claims,
  * ranking (the solved floor keys on SOLVED, services/solved.ts), or another
- * repo's contexts.
+ * repo's contexts. A forged date widens nothing: it can only stamp what a
+ * forged sha already could.
  *
- * KNOWN LIMITATION, inherited from the DESIGN §5 semantic: a session that
- * started ON the default branch has a base commit that is trivially an
- * ancestor, so its context reads landed from day one. The connector
- * therefore checks only contexts the hub still lists as open, and renderers
- * state the fact literally ("base commit is on the default branch") rather
- * than claiming the WORK merged.
+ * Renderers still state the fact literally ("base commit is on the default
+ * branch") rather than claiming the WORK merged: a squash merge lands under
+ * a new sha that no base names, so this lane can miss a landing — it must
+ * never invent one.
  */
 import { and, eq, inArray, isNull } from "drizzle-orm";
+import { isDetachedBranch } from "@crosscheck/schema";
 import type { LandedEvidence } from "@crosscheck/schema";
 
+import { LANDED_STALE_BASE_HOURS } from "../constants.ts";
 import { agentSessions, workContexts } from "../db/schema.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
@@ -49,10 +75,48 @@ interface Deps {
   readonly now: Clock;
 }
 
+const MS_PER_HOUR = 3_600_000;
+
+/** What the rule reads about one open context and the session that owns it. */
+export interface LandingCandidate {
+  readonly branch: string;
+  /** The connector's word at register; null when it gave none. */
+  readonly baseOnDefault: boolean | null;
+  readonly contextCreatedAt: Date;
+}
+
+/** A base committed more than LANDED_STALE_BASE_HOURS before its context opened. */
+export const isStaleBase = (baseCommittedAt: Date, contextCreatedAt: Date): boolean =>
+  baseCommittedAt.getTime() < contextCreatedAt.getTime() - LANDED_STALE_BASE_HOURS * MS_PER_HOUR;
+
+/**
+ * May "this base commit is on the default branch now" stamp this context?
+ * The module header gives the three rules and why; `baseCommittedAt` is the
+ * report's date for the base, when it gave one.
+ */
+export const ancestryLandsContext = (
+  candidate: LandingCandidate,
+  baseCommittedAt: Date | undefined,
+): boolean => {
+  if (isDetachedBranch(candidate.branch)) {
+    return false;
+  }
+  if (candidate.baseOnDefault !== null) {
+    return !candidate.baseOnDefault;
+  }
+  return baseCommittedAt !== undefined && !isStaleBase(baseCommittedAt, candidate.contextCreatedAt);
+};
+
+const commitDatesOf = (body: LandedEvidence): ReadonlyMap<string, Date> =>
+  new Map((body.commitDates ?? []).map((entry) => [entry.sha, new Date(entry.committedAt)]));
+
 /**
  * Stamps landed_at on every still-open context whose owning session is on
- * `body.repo` with a base commit the report names. One bounded UPDATE — the
- * commit list is capped by the wire schema (MAX_LANDED_COMMITS).
+ * `body.repo` with a base commit the report names, and whose base reaching
+ * the default branch is evidence of new work (ancestryLandsContext). The
+ * candidates are read once, judged here, and stamped in one UPDATE that
+ * re-checks `landed_at IS NULL` — the commit list is capped by the wire
+ * schema (MAX_LANDED_COMMITS).
  *
  * Always "accepted", including when nothing matched: the write is idempotent
  * and the flush loop acts on nothing finer. No outbox event, same reasoning
@@ -64,11 +128,19 @@ export const ingestLandedEvidence = async (
   developerId: string,
   body: LandedEvidence,
 ): Promise<HandlerOutcome> => {
-  const sessionIds = deps.db
-    .select({ id: agentSessions.id })
-    .from(agentSessions)
+  const candidates = await deps.db
+    .select({
+      id: workContexts.id,
+      contextCreatedAt: workContexts.createdAt,
+      baseCommit: agentSessions.baseCommit,
+      branch: agentSessions.branch,
+      baseOnDefault: agentSessions.baseOnDefault,
+    })
+    .from(workContexts)
+    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
     .where(
       and(
+        isNull(workContexts.landedAt),
         eq(agentSessions.repo, body.repo),
         inArray(agentSessions.baseCommit, [...body.commits]),
         // A HIDDEN OWNER'S SESSIONS TAKE EVIDENCE FROM THE OWNER ONLY. The
@@ -81,14 +153,15 @@ export const ingestLandedEvidence = async (
         visiblePresenceCondition(developerId, agentSessions.developerId),
       ),
     );
-  await deps.db
-    .update(workContexts)
-    .set({ landedAt: deps.now() })
-    .where(
-      and(
-        isNull(workContexts.landedAt),
-        inArray(workContexts.sessionId, sessionIds),
-      ),
-    );
+  const committedAt = commitDatesOf(body);
+  const landing = candidates
+    .filter((row) => ancestryLandsContext(row, committedAt.get(row.baseCommit)))
+    .map((row) => row.id);
+  if (landing.length > 0) {
+    await deps.db
+      .update(workContexts)
+      .set({ landedAt: deps.now() })
+      .where(and(isNull(workContexts.landedAt), inArray(workContexts.id, landing)));
+  }
   return { status: "accepted" };
 };

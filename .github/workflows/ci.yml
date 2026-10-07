@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 2230
+    # PRINTS: 2246
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -251,7 +251,7 @@ jobs:
     # PRINTS: hooks/post-tool-use.ts 10
     # PRINTS: hooks/pre-tool-use.ts 19
     # PRINTS: hooks/runner.ts 7
-    # PRINTS: hooks/session-start.ts 8
+    # PRINTS: hooks/session-start.ts 9
     # PRINTS: hooks/stop.ts 3
     # PRINTS: hooks/user-prompt-submit.ts 6
     # PRINTS: summarizer/probe.ts 1
@@ -267,6 +267,7 @@ jobs:
     # PRINTS: briefing/sanitize.ts 10
     # PRINTS: briefing/topic-group.ts 11
     # PRINTS: capture/commit-evidence.ts 1
+    # PRINTS: capture/landed.ts 4
     # PRINTS: capture/records.ts 2
     # PRINTS: capture/target-paths.ts 1
     # PRINTS: capture/touched-root.ts 5
@@ -303,11 +304,11 @@ jobs:
     # PRINTS: flows/end-session.ts 5
     # PRINTS: flows/heartbeat.ts 1
     # PRINTS: flows/hint.ts 11
-    # PRINTS: flows/register-session.ts 5
+    # PRINTS: flows/register-session.ts 6
     # PRINTS: flows/solved-hint.ts 4
     # PRINTS: git/check-ignore.ts 1
     # PRINTS: git/claim-drift.ts 5
-    # PRINTS: git/detached-branch.ts 4
+    # PRINTS: git/detached-branch.ts 1
     # PRINTS: git/fix-diff.ts 7
     # PRINTS: git/git.ts 4
     # PRINTS: git/pin-paths.ts 8
@@ -398,6 +399,7 @@ jobs:
     # PRINTS: packages/schema/src/claim-revalidation.ts 1
     # PRINTS: packages/schema/src/commit-evidence.ts 2
     # PRINTS: packages/schema/src/delivery-id.ts 2
+    # PRINTS: packages/schema/src/detached-branch.ts 3
     # PRINTS: packages/schema/src/enums.ts 3
     # PRINTS: packages/schema/src/envelope.ts 1
     # PRINTS: packages/schema/src/evidence-axes.ts 1
@@ -405,6 +407,7 @@ jobs:
     # PRINTS: packages/schema/src/file-ref.ts 5
     # PRINTS: packages/schema/src/hint-outcome.ts 1
     # PRINTS: packages/schema/src/landed-context.ts 3
+    # PRINTS: packages/schema/src/landed-evidence.ts 1
     # PRINTS: packages/schema/src/landed-notice.ts 5
     # PRINTS: packages/schema/src/pilot-mark.ts 5
     # PRINTS: packages/schema/src/pin.ts 2
@@ -469,7 +472,7 @@ jobs:
     # PRINTS: packages/server/src/services/intent-ledger.ts 12
     # PRINTS: packages/server/src/services/landed-context.ts 22
     # PRINTS: packages/server/src/services/landed-notices.ts 28
-    # PRINTS: packages/server/src/services/landed.ts 1
+    # PRINTS: packages/server/src/services/landed.ts 7
     # PRINTS: packages/server/src/services/live-location.ts 32
     # PRINTS: packages/server/src/services/noise-label.ts 3
     # PRINTS: packages/server/src/services/normalized-doc.ts 6
@@ -495,7 +498,7 @@ jobs:
     # PRINTS: packages/server/src/services/search.ts 23
     # PRINTS: packages/server/src/services/session-events.ts 9
     # PRINTS: packages/server/src/services/session-order.ts 9
-    # PRINTS: packages/server/src/services/sessions.ts 16
+    # PRINTS: packages/server/src/services/sessions.ts 19
     # PRINTS: packages/server/src/services/similarity-gate.ts 4
     # PRINTS: packages/server/src/services/skeleton-identity.ts 8
     # PRINTS: packages/server/src/services/solved-counts.ts 1
@@ -649,10 +652,11 @@ jobs:
     # PRINTS: key.ts 6
     # PRINTS: kit.ts 1
     # PRINTS: landed-context.ts 25
+    # PRINTS: landed-evidence.ts 1
     # PRINTS: landed-notice.ts 5
     # PRINTS: landed-notices.ts 33
     # PRINTS: landed-why.ts 2
-    # PRINTS: landed.ts 5
+    # PRINTS: landed.ts 15
     # PRINTS: landing-branches.ts 7
     # PRINTS: latency.ts 1
     # PRINTS: ledger-read.ts 2
@@ -718,7 +722,7 @@ jobs:
     # PRINTS: recover.ts 4
     # PRINTS: referee.ts 4
     # PRINTS: refusal.ts 3
-    # PRINTS: register-session.ts 5
+    # PRINTS: register-session.ts 6
     # PRINTS: release-preflight.ts 5
     # PRINTS: render-intent-chain.ts 1
     # PRINTS: render-referee.ts 3
@@ -745,10 +749,10 @@ jobs:
     # PRINTS: session-events.ts 9
     # PRINTS: session-order.ts 9
     # PRINTS: session-scan.ts 2
-    # PRINTS: session-start.ts 12
+    # PRINTS: session-start.ts 13
     # PRINTS: session-state.ts 25
     # PRINTS: session.ts 4
-    # PRINTS: sessions.ts 18
+    # PRINTS: sessions.ts 21
     # PRINTS: set-intent.ts 5
     # PRINTS: settings-merge.ts 2
     # PRINTS: settings.ts 1
