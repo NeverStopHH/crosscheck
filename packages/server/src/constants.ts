@@ -753,6 +753,13 @@ export const LANDED_NOTICE_TTL_DAYS = 7;
  * Thirty days outlives both bounds with room.
  */
 export const RECORD_RECEIPT_RETENTION_DAYS = 30;
+/**
+ * Receipts one DELETE of the prune takes (services/record-receipts.ts, review-2
+ * round 9, M4). PGlite serves one statement at a time, so a request waits out
+ * at most one chunk: 2000 rows took 6 ms at the median and 15 ms at worst out
+ * of a 300 000-row backlog, where one DELETE of all of it took 100 ms.
+ */
+export const RECORD_RECEIPT_PRUNE_CHUNK = 2000;
 /** Reader-and-file groups one listing answers: a briefing section, a prompt. */
 export const LANDED_NOTICE_GROUPS_LISTED = 3;
 /**

@@ -509,8 +509,12 @@ export const reapStaleSessions = async (
   // does not keep them, and their subjects, for good.
   await pruneLandedNotices(deps);
   // ...and the receipts of envelopes taken past their retention
-  // (services/record-receipts.ts), for the same reason.
-  await pruneRecordReceipts(deps);
+  // (services/record-receipts.ts), for the same reason — on the timer pass
+  // only, as the skeleton sweep above (review-2 round 9, M4): the prune is
+  // hub-wide, and a SessionStart paid a restarted hub's whole backlog.
+  if (options.developerId === undefined) {
+    await pruneRecordReceipts(deps);
+  }
   // Candidates first, then one UPDATE by id: a bare `UPDATE … LIMIT` is not
   // portable, and the two-step keeps the write bounded by construction.
   const candidates = await deps.db

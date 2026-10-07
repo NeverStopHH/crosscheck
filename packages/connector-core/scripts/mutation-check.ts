@@ -18785,7 +18785,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the hub never forgets an envelope it took (M4)",
     file: `${SERVER}/src/services/sessions.ts`,
-    from: "  await pruneRecordReceipts(deps);\n",
+    from: "    await pruneRecordReceipts(deps);\n",
     to: "",
     test: `${SERVER}/test/record-receipts.test.ts`,
     because: "review-2 round 8 M4: a receipt per record ever ingested, for good",
@@ -19125,6 +19125,46 @@ export const MUTATIONS: readonly Mutation[
     to: '  const outcome = await ender(parsed.data.crosscheckSessionId, parsed.data.seq);\n  if (outcome === "retry") {\n    return;\n  }\n  await recordRefusedLife(home, key, parsed.data.crosscheckSessionId, now, "end");\n',
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review-2 round 9, M3: a deferred end the hub committed with its answer lost leaves a straggler of the life to be filed into the ended session",
+  },
+  {
+    label: "a SessionStart's register prunes every developer's receipts (M4)",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "  if (options.developerId === undefined) {\n    await pruneRecordReceipts(deps);\n  }\n",
+    to: "  await pruneRecordReceipts(deps);\n",
+    test: `${SERVER}/test/record-receipts.test.ts`,
+    because: "review-2 round 9, M4: the first SessionStart after a restart pays the hub's whole backlog, past the connector's 400 ms timeout",
+  },
+  {
+    label: "the receipts prune takes its whole backlog in one statement (M4)",
+    file: `${SERVER}/src/services/record-receipts.ts`,
+    from: "    .limit(RECORD_RECEIPT_PRUNE_CHUNK);\n",
+    to: ";\n",
+    test: `${SERVER}/test/record-receipts.test.ts`,
+    because: "review-2 round 9, M4: a million receipts past the retention hold every request for 457 ms",
+  },
+  {
+    label: "the receipts prune never yields to a request (M4)",
+    file: `${SERVER}/src/services/record-receipts.ts`,
+    from: "const yieldToRequests = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));",
+    to: "const yieldToRequests = (): Promise<void> => Promise.resolve();",
+    test: `${SERVER}/test/record-receipts.test.ts`,
+    because: "review-2 round 9, M4: PGlite answers in microtasks, so no request is read until the whole backlog is gone",
+  },
+  {
+    label: "a receipts prune stops after its first chunk (M4)",
+    file: `${SERVER}/src/services/record-receipts.ts`,
+    from: "    if (chunk < RECORD_RECEIPT_PRUNE_CHUNK) {\n      return pruned;\n    }\n",
+    to: "    return pruned;\n",
+    test: `${SERVER}/test/record-receipts.test.ts`,
+    because: "review-2 round 9, M4: a backlog larger than one chunk outlives its retention by a pass per chunk",
+  },
+  {
+    label: "the hub prunes no receipts at boot (M4)",
+    file: `${SERVER}/src/index.ts`,
+    from: "  void pruneRecordReceipts({ db, now: () => new Date() }).then(",
+    to: "  void Promise.resolve(0).then(",
+    test: `${SERVER}/test/record-receipts-boot.test.ts`,
+    because: "review-2 round 9, M4: a hub restarted after weeks off keeps their receipts until its timer's first pass",
   },
 ];
 
@@ -19477,7 +19517,8 @@ interface Outcome {
  * PRINTS: packages/server/test/presence.test.ts 1
  * PRINTS: packages/server/test/questions.test.ts 8
  * PRINTS: packages/server/test/record-receipts-bloat.test.ts 1
- * PRINTS: packages/server/test/record-receipts.test.ts 3
+ * PRINTS: packages/server/test/record-receipts-boot.test.ts 1
+ * PRINTS: packages/server/test/record-receipts.test.ts 7
  * PRINTS: packages/server/test/records.test.ts 2
  * PRINTS: packages/server/test/retention-registry.test.ts 2
  * PRINTS: packages/server/test/search-filters.test.ts 10

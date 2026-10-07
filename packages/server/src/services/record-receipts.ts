@@ -10,11 +10,11 @@
  * id the hub answered with — lets ingest answer such a re-send `duplicate`
  * where the producer check would refuse it (services/records.ts).
  *
- * Kept RECORD_RECEIPT_RETENTION_DAYS, pruned on the reaper pass.
+ * Kept RECORD_RECEIPT_RETENTION_DAYS, pruned on the reaper pass and at boot.
  */
 import { and, eq, inArray, lte, sql } from "drizzle-orm";
 
-import { MS_PER_DAY, RECORD_RECEIPT_RETENTION_DAYS } from "../constants.ts";
+import { MS_PER_DAY, RECORD_RECEIPT_PRUNE_CHUNK, RECORD_RECEIPT_RETENTION_DAYS } from "../constants.ts";
 import { recordReceipts } from "../db/schema.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
@@ -72,21 +72,55 @@ export const writeReceipts = async (deps: Deps, developerId: string, taken: read
     });
 };
 
-/**
- * Receipts past the retention, on the hub's reaper pass. A prune that deleted
- * rows VACUUMs the table (review-2 round 9, H3): PGlite runs no autovacuum,
- * and every deleted receipt left a dead row for good — the table grew six
- * times its retention's size in half a year, and the prune with it. Only when
- * something went, so a pass with nothing to prune costs nothing more
- * (services/skeleton-identity.ts does the same).
- */
-export const pruneRecordReceipts = async (deps: Deps): Promise<void> => {
-  const cutoff = new Date(deps.now().getTime() - RECORD_RECEIPT_RETENTION_DAYS * MS_PER_DAY);
+/** The oldest RECORD_RECEIPT_PRUNE_CHUNK receipts past the cutoff, deleted: how many went. */
+const deleteChunk = async (deps: Deps, cutoff: Date): Promise<number> => {
+  const oldest = deps.db
+    .select({ id: recordReceipts.id })
+    .from(recordReceipts)
+    .where(lte(recordReceipts.receivedAt, cutoff))
+    .orderBy(recordReceipts.receivedAt)
+    .limit(RECORD_RECEIPT_PRUNE_CHUNK);
   const pruned = await deps.db
     .delete(recordReceipts)
-    .where(lte(recordReceipts.receivedAt, cutoff))
+    .where(and(lte(recordReceipts.receivedAt, cutoff), inArray(recordReceipts.id, oldest)))
     .returning({ id: recordReceipts.id });
-  if (pruned.length > 0) {
+  return pruned.length;
+};
+
+/** The next turn of the event loop, where a request that arrived meanwhile is read. */
+const yieldToRequests = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+
+/**
+ * Receipts past the retention, on the hub's reaper pass and once at boot —
+ * never on a SessionStart's (review-2 round 9, M4). A CHUNK AT A TIME: PGlite
+ * serves one statement at a time, and a request waits out at most one
+ * statement, where one DELETE of a restarted hub's backlog held it 457 ms. AND
+ * A TURN OF THE EVENT LOOP after each statement: PGlite answers in
+ * microtasks, so a loop of statements that never yields reads no request
+ * until it is done.
+ *
+ * A chunk that deleted rows VACUUMs the table (review-2 round 9, H3): PGlite
+ * runs no autovacuum, and every deleted receipt left a dead row for good — the
+ * table grew six times its retention's size in half a year, and the prune with
+ * it. Only when something went, so a pass with nothing to prune costs nothing
+ * more (services/skeleton-identity.ts does the same). Per chunk, not once at
+ * the end: a VACUUM of a chunk's dead rows takes a millisecond or two, one of a
+ * million took 230 ms.
+ */
+export const pruneRecordReceipts = async (deps: Deps): Promise<number> => {
+  const cutoff = new Date(deps.now().getTime() - RECORD_RECEIPT_RETENTION_DAYS * MS_PER_DAY);
+  let pruned = 0;
+  for (;;) {
+    const chunk = await deleteChunk(deps, cutoff);
+    pruned += chunk;
+    await yieldToRequests();
+    if (chunk === 0) {
+      return pruned;
+    }
     await deps.db.execute(sql`VACUUM record_receipts`);
+    await yieldToRequests();
+    if (chunk < RECORD_RECEIPT_PRUNE_CHUNK) {
+      return pruned;
+    }
   }
 };

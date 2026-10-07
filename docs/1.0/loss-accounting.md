@@ -602,6 +602,16 @@ after its POST). In each case nothing was ever positioned in it. Without a reada
 on a fresh mint: its order splits honestly, and no position is handed out twice. The par[end ‖ start] split (L4) is
 fixed by the same marker, so I3 needs no exemption for it.
 
+**The receipts prune is no SessionStart's to pay** (review-2 round 9, M4). It ran hub-wide on the register route, where
+the skeleton sweep beside it was guarded, and PGlite serves one statement at a time. After a restart the first
+SessionStart paid the whole backlog: one DELETE of a million receipts held the hub 457 ms, past the connector's 400 ms
+timeout. The prune now runs on the hub's own timer pass and once at boot, off the request path. It deletes
+`RECORD_RECEIPT_PRUNE_CHUNK` (2000) receipts per statement and VACUUMs after each chunk; one VACUUM of a million dead
+rows took 230 ms. It yields a turn of the event loop after every statement, because PGlite answers in microtasks and a
+loop that never yields reads no request until it is done. Against a million receipts past the retention beside 300 000
+live ones, a query issued during the prune waited 12 ms at most (p99 1 ms). Before the yield it was not served until the
+prune ended, five seconds later.
+
 **Three clocks that were one** (review-2 round 8, H1 and H2). The refused-lives note dropped an entry
 `MAX_SPOOL_AGE_DAYS` after it was written. A flush reads a silent host session as abandoned after the same span. Reap
 expired a spool whose data file was that old. So when a host died:
