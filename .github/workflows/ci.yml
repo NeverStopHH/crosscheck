@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 2292
+    # PRINTS: 2303
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -418,11 +418,12 @@ jobs:
     # PRINTS: packages/schema/src/telemetry-loss.ts 6
     # PRINTS: packages/server/scripts/unland-false-landed.ts 12
     # PRINTS: packages/server/src/constants.ts 3
-    # PRINTS: packages/server/src/db/bootstrap.sql 42
+    # PRINTS: packages/server/src/db/bootstrap.sql 44
     # PRINTS: packages/server/src/db/client.ts 8
     # PRINTS: packages/server/src/db/schema.ts 1
+    # PRINTS: packages/server/src/http/listen.ts 6
     # PRINTS: packages/server/src/http/schemas.ts 1
-    # PRINTS: packages/server/src/index.ts 1
+    # PRINTS: packages/server/src/index.ts 4
     # PRINTS: packages/server/src/routes/absences.ts 2
     # PRINTS: packages/server/src/routes/drafts.ts 1
     # PRINTS: packages/server/src/routes/events.ts 1
@@ -534,7 +535,7 @@ jobs:
     # PRINTS: ask-teammate.ts 1
     # PRINTS: attempt.ts 5
     # PRINTS: before-submit-prompt.ts 1
-    # PRINTS: bootstrap.sql 42
+    # PRINTS: bootstrap.sql 44
     # PRINTS: briefing.ts 7
     # PRINTS: calibration.ts 1
     # PRINTS: capabilities.ts 9
@@ -639,7 +640,7 @@ jobs:
     # PRINTS: hook-budget.ts 2
     # PRINTS: hub-status.ts 1
     # PRINTS: hub.ts 17
-    # PRINTS: index.ts 7
+    # PRINTS: index.ts 10
     # PRINTS: init-global.ts 2
     # PRINTS: init-io.ts 10
     # PRINTS: init-remove-plan.ts 6
@@ -665,6 +666,7 @@ jobs:
     # PRINTS: landing-branches.ts 7
     # PRINTS: latency.ts 1
     # PRINTS: ledger-read.ts 2
+    # PRINTS: listen.ts 6
     # PRINTS: live-location.ts 35
     # PRINTS: lock.ts 2
     # PRINTS: loss-ledger.ts 10

@@ -2161,6 +2161,32 @@ export const ciRuns = pgTable(
 );
 
 /**
+ * Where a hub listens when CROSSCHECK_LISTEN is unset (http/listen.ts):
+ * `loopback` for a database this release created, `all_interfaces` for one
+ * that predates the setting. bootstrap.sql decides which, once.
+ */
+export const HUB_LISTEN_DEFAULTS = ["loopback", "all_interfaces"] as const;
+
+export type HubListenDefault = (typeof HUB_LISTEN_DEFAULTS)[number];
+
+/** One row, written by the bootstrap and never by the app (bootstrap.sql says why). */
+export const hubInstall = pgTable(
+  "hub_install",
+  {
+    singleton: boolean("singleton").primaryKey().default(true),
+    listenDefault: text("listen_default", { enum: HUB_LISTEN_DEFAULTS }).notNull(),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check("hub_install_singleton_check", sql`${table.singleton}`),
+    check(
+      "hub_install_listen_default_check",
+      sql`${table.listenDefault} IN ('loopback', 'all_interfaces')`,
+    ),
+  ],
+);
+
+/**
  * NON-GREEN ROWS ONLY (spec 05 §3.3), and that is a contract rather than an
  * optimisation: a run row ASSERTS that these are all the non-green tests it
  * ran, which is what lets a later reader conclude anything about a test that

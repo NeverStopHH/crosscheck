@@ -1,7 +1,20 @@
 import type { Context, Hono } from "hono";
 
 import { createApp } from "./app.ts";
+import {
+  IPV4_LOOPBACK,
+  IPV6_LOOPBACK,
+  LISTEN_ENV,
+  assertListenable,
+  canListenAt,
+  describeListening,
+  legacyListenWarning,
+  parseListenAddresses,
+  resolveListenPlan,
+  serveOnPlan,
+} from "./http/listen.ts";
 import { bunPeerAddress } from "./http/peer.ts";
+import { readListenDefault } from "./services/hub-install.ts";
 import { generateApiKey } from "./auth/keys.ts";
 import { DEFAULT_PORT, SESSION_REAP_INTERVAL_MS } from "./constants.ts";
 import { createDb } from "./db/client.ts";
@@ -196,6 +209,20 @@ const parsePort = (raw: string | undefined): number => {
 const PORT_PROBE_TIMEOUT_MS = 500;
 
 /**
+ * Where the port probe knocks: each address the hub will listen at, with
+ * "every interface" knocked at loopback. Unset, the hub listens at loopback
+ * either way (alone on a new data dir, as part of every interface on an old
+ * one), so both loopbacks are knocked: a foreign listener on `[::1]:<port>`
+ * would otherwise answer every browser that tries IPv6 first.
+ */
+const probeAddressesFor = (configured: readonly string[] | null): readonly string[] => {
+  if (configured === null) {
+    return canListenAt(IPV6_LOOPBACK) ? [IPV4_LOOPBACK, IPV6_LOOPBACK] : [IPV4_LOOPBACK];
+  }
+  return configured.map((address) => (address === "0.0.0.0" || address === "::" ? IPV4_LOOPBACK : address));
+};
+
+/**
  * "Address already in use" is the commonest first-run error, and Bun.serve on
  * macOS cannot report it against a FOREIGN listener: it binds over one with
  * reuse semantics, prints the healthy banner, and the kernel splits traffic
@@ -206,10 +233,10 @@ const PORT_PROBE_TIMEOUT_MS = 500;
  * best-effort — an unanswered connect (timeout) proceeds, and the tiny
  * check-to-bind race is accepted.
  */
-const assertPortFree = async (port: number): Promise<void> => {
-  const taken = await Promise.race([
+const isAnswering = (hostname: string, port: number): Promise<boolean> =>
+  Promise.race([
     Bun.connect({
-      hostname: "127.0.0.1",
+      hostname,
       port,
       socket: { data: () => {} },
     }).then(
@@ -223,6 +250,10 @@ const assertPortFree = async (port: number): Promise<void> => {
       setTimeout(() => resolveProbe(false), PORT_PROBE_TIMEOUT_MS);
     }),
   ]);
+
+const assertPortFree = async (port: number, hostnames: readonly string[]): Promise<void> => {
+  const answers = await Promise.all(hostnames.map((hostname) => isAnswering(hostname, port)));
+  const taken = answers.some((answered) => answered);
   if (taken) {
     throw new Error(
       `port ${port} is already in use — something is listening there ` +
@@ -238,12 +269,22 @@ const assertPortFree = async (port: number): Promise<void> => {
  * `npx crosscheck-hub serve`) is this same code path rather than a second copy.
  */
 export const startServer = async (): Promise<void> => {
-  // Port checks come FIRST: a taken port must refuse before PGlite writes a
-  // single byte, not after a full database boot.
+  // Port and address checks come FIRST: a taken port or an address this
+  // machine does not have must refuse before PGlite writes a single byte,
+  // not after a full database boot.
   const port = parsePort(process.env["PORT"]);
-  await assertPortFree(port);
+  const configuredListen = parseListenAddresses(process.env[LISTEN_ENV]);
+  if (configuredListen !== null) {
+    assertListenable(configuredListen);
+  }
+  await assertPortFree(port, probeAddressesFor(configuredListen));
   const dataDir = process.env["CROSSCHECK_DATA_DIR"];
   const db = await createDb(dataDir === undefined ? {} : { dataDir });
+  const listenPlan = resolveListenPlan({
+    configured: configuredListen,
+    listenDefault: await readListenDefault(db),
+    hasIpv6Loopback: canListenAt(IPV6_LOOPBACK),
+  });
   // Throws on explicit misconfiguration (e.g. openai chosen, no key) — a hub
   // that silently dropped its vector tier would be DESIGN.md §10 "silent death".
   const embedder = createEmbedderFromEnv(process.env);
@@ -266,7 +307,11 @@ export const startServer = async (): Promise<void> => {
   if (indexesRebuilt > 0) {
     console.log(`[crosscheck] search index: rebuilt for ${String(indexesRebuilt)} opted-out developer(s)`);
   }
-  Bun.serve({ port, fetch: app.fetch });
+  const servers = serveOnPlan(listenPlan, port, app.fetch);
+  const listeningPort = servers[0]?.port ?? port;
+  if (listenPlan.kind === "legacy_all_interfaces") {
+    console.warn(legacyListenWarning(listeningPort));
+  }
   // THE SKELETON'S IDENTITY FOR ROWS THAT PREDATE ITS COLUMNS (01a §4.1).
   // After serving, not before: until it has run, a missing identity reads as
   // UNRESOLVED and the retention sweep keeps what it cannot resolve, so
@@ -308,7 +353,9 @@ export const startServer = async (): Promise<void> => {
   }, SESSION_REAP_INTERVAL_MS).unref();
   const searchMode =
     embedder === null ? "exact+fts (keyless)" : `exact+fts+vector (${embedder.model})`;
-  console.log(`crosscheck server listening on :${port} · search: ${searchMode}`);
+  console.log(
+    `crosscheck server listening on :${String(listeningPort)} (${describeListening(listenPlan, servers)}) · search: ${searchMode}`,
+  );
 };
 
 if (import.meta.main) {

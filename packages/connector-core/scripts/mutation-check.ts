@@ -23922,6 +23922,95 @@ export const MUTATIONS: readonly Mutation[
     test: `${CONNECTOR}/test/solved-hook.test.ts`,
     because: "the detached SessionStart pays the probe's wall clock on the path that carries the briefing",
   },
+  // The hub listened on every interface (hub hardening, review M7).
+  {
+    label: "a new data dir is recorded as listening on every interface",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "SELECT CASE WHEN to_regclass('developers') IS NULL THEN 'loopback'",
+    to: "SELECT CASE WHEN to_regclass('developers') IS NULL THEN 'all_interfaces'",
+    test: `${SERVER}/test/listen.test.ts`,
+    because: "every new hub listens on every network its machine joins, over plain http",
+  },
+  {
+    label: "a data dir from before the setting is recorded as loopback",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "THEN 'loopback' ELSE 'all_interfaces' END",
+    to: "THEN 'loopback' ELSE 'loopback' END",
+    test: `${SERVER}/test/listen.test.ts`,
+    because: "the upgrade quietly stops answering every teammate who reaches the hub over the tailnet",
+  },
+  {
+    label: "the listen plan ignores the data dir's loopback default",
+    file: `${SERVER}/src/http/listen.ts`,
+    from: '  if (input.listenDefault === "loopback") {',
+    to: "  if (false) {",
+    test: `${SERVER}/test/listen.test.ts`,
+    because: "a new hub falls back to every interface although its data dir says loopback",
+  },
+  {
+    label: "CROSSCHECK_LISTEN takes a hostname",
+    file: `${SERVER}/src/http/listen.ts`,
+    from: "        if (isIP(address) === 0) {",
+    to: "        if (false) {",
+    test: `${SERVER}/test/listen.test.ts`,
+    because: "where the hub listens is decided by a DNS answer at boot",
+  },
+  {
+    label: "CROSSCHECK_LISTEN set but empty reads as unset",
+    file: `${SERVER}/src/http/listen.ts`,
+    from: "  if (entries.length === 0) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/listen.test.ts`,
+    because: "an operator who meant to restrict the hub gets a hub listening nowhere, or wherever the default says",
+  },
+  {
+    label: "every interface is accepted beside a specific address",
+    file: `${SERVER}/src/http/listen.ts`,
+    from: "  if (addresses.length > 1 && addresses.some((address) => WILDCARD_ADDRESSES.has(address))) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/listen.test.ts`,
+    because: "the list reads as restricted while 0.0.0.0 in it still listens everywhere",
+  },
+  {
+    label: "an address no interface has passes the listen check",
+    file: `${SERVER}/src/http/listen.ts`,
+    from: "    if (!canListenAt(address)) {",
+    to: "    if (false) {",
+    test: `${SERVER}/test/listen.test.ts`,
+    because: "a mistyped tailnet IP is found only after the database has booted, with Bun's bare error",
+  },
+  {
+    label: "a listen list binds every interface instead of its addresses",
+    file: `${SERVER}/src/http/listen.ts`,
+    from: "      servers.push(Bun.serve({ hostname, port: servers[0]?.port ?? port, fetch }));",
+    to: "      servers.push(Bun.serve({ port: servers[0]?.port ?? port, fetch }));",
+    test: `${SERVER}/test/listen.test.ts`,
+    because: "CROSSCHECK_LISTEN=127.0.0.1 still answers the café's Wi-Fi",
+  },
+  {
+    label: "the boot checks listen addresses only after the database",
+    file: `${SERVER}/src/index.ts`,
+    from: "    assertListenable(configuredListen);",
+    to: "    void configuredListen;",
+    test: `${SERVER}/test/listen-boot.test.ts`,
+    because: "an address this machine lacks still writes a PGlite cluster before the hub refuses",
+  },
+  {
+    label: "the boot never reads the data dir's listen default",
+    file: `${SERVER}/src/index.ts`,
+    from: "    listenDefault: await readListenDefault(db),",
+    to: '    listenDefault: "all_interfaces",',
+    test: `${SERVER}/test/listen-boot.test.ts`,
+    because: "every hub listens on every interface whatever its data dir recorded",
+  },
+  {
+    label: "a hub on every interface by default boots without a warning",
+    file: `${SERVER}/src/index.ts`,
+    from: "    console.warn(legacyListenWarning(listeningPort));",
+    to: "    void listeningPort;",
+    test: `${SERVER}/test/listen-boot.test.ts`,
+    because: "the upgraded pilot hub keeps answering every network and nobody is told what to set",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -24308,6 +24397,8 @@ interface Outcome {
  * PRINTS: packages/server/test/landed-notices.test.ts 34
  * PRINTS: packages/server/test/landed-repair.test.ts 20
  * PRINTS: packages/server/test/landed.test.ts 15
+ * PRINTS: packages/server/test/listen-boot.test.ts 3
+ * PRINTS: packages/server/test/listen.test.ts 8
  * PRINTS: packages/server/test/live-location-cost.test.ts 3
  * PRINTS: packages/server/test/live-location-differential.test.ts 5
  * PRINTS: packages/server/test/live-location-privacy.test.ts 27
