@@ -23848,17 +23848,17 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a relayed subagent hit ignores a fresh presence answer",
     file: `${CORE}/src/hints/collision-notice.ts`,
-    from: "    confirmingEntry(group, presence) === undefined ? anonymousCollision(group) : ",
-    to: "    ",
+    from: "entry === undefined ? anonymousCollision(group) : withoutStaleLocation(locatedBy(group, entry), now)",
+    to: "withoutStaleLocation(group, now)",
     test: `${CONNECTOR}/test/collision-visibility-hook.test.ts`,
     because: "a teammate who opted out or was muted since the subagent's edit is named to the person anyway",
   },
   {
     label: "a relayed subagent hit keeps its branch past the presence TTL",
     file: `${CORE}/src/hints/collision-notice.ts`,
-    from: " : withoutStaleLocation(group, now),",
-    to: " : group,",
-    test: `${CONNECTOR}/test/collision-visibility-hook.test.ts`,
+    from: " : withoutStaleLocation(locatedBy(group, entry), now);",
+    to: " : locatedBy(group, entry);",
+    test: `${CORE}/test/collision-relay-presence.test.ts`,
     because: "a branch and an age the hub stopped giving out are printed from a stale record",
   },
   {
@@ -24053,8 +24053,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a relayed hit whose teammate presence cannot confirm is dropped",
     file: `${CORE}/src/hints/collision-notice.ts`,
-    from: "  groups.map((group) =>\n    confirmingEntry(group, presence) === undefined",
-    to: "  groups.filter((group) => confirmingEntry(group, presence) !== undefined).map((group) =>\n    confirmingEntry(group, presence) === undefined",
+    from: "  groups.map((group) => {\n    const entry = confirmingEntry(group, presence);",
+    to: "  groups.filter((group) => confirmingEntry(group, presence) !== undefined).map((group) => {\n    const entry = confirmingEntry(group, presence);",
     test: `${CONNECTOR}/test/collision-relay-unconfirmed.test.ts`,
     because: "the queue is drained and the group marked told, and a subagent's collision with a teammate who just ended their session reaches nobody",
   },
@@ -24077,10 +24077,35 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a self row confirms a teammate on the relay",
     file: `${CORE}/src/hints/collision-notice.ts`,
-    from: "  presence.find((entry) => !entry.isSelf && entry.developerId === group.developerId);",
-    to: "  presence.find((entry) => entry.developerId === group.developerId);",
+    from: "boolean =>\n  !entry.isSelf && ",
+    to: "boolean =>\n  ",
     test: `${CORE}/test/collision-relay-presence.test.ts`,
     because: "the reader's own presence row would name the teammate it shares an id with",
+  },
+  // ── Review of feat/collision-visible, round 2, L3: where the teammate is NOW ──
+  {
+    label: "a relayed hit is located by its own old heartbeat, not by presence now",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  branch: group.landed === true ? group.branch : entry.branch,\n  lastActiveAt: entry.lastHeartbeatAt,\n",
+    to: "",
+    test: `${CONNECTOR}/test/collision-visibility-hook.test.ts`,
+    because: "a subagent that runs past 90 s loses the teammate's branch while presence still lists them on it",
+  },
+  {
+    label: "of several presence rows the first, not the freshest, locates the teammate",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "freshest === undefined || Date.parse(entry.lastHeartbeatAt) > Date.parse(freshest.lastHeartbeatAt)",
+    to: "freshest === undefined",
+    test: `${CORE}/test/collision-relay-presence.test.ts`,
+    because: "a teammate with two windows open is placed on the branch of the one that went quiet",
+  },
+  {
+    label: "a relayed landed group takes a live branch it never merged on",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "group.landed === true ? group.branch : entry.branch",
+    to: "entry.branch",
+    test: `${CORE}/test/collision-relay-presence.test.ts`,
+    because: "the person is told a change merged from the branch the teammate happens to be on now",
   },
 ];
 

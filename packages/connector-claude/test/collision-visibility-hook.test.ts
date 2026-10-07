@@ -103,19 +103,33 @@ describe("a relayed subagent hit is held to presence as it is now", () => {
     expect(output.systemMessage).toBe(NICK_NOTICE);
   });
 
-  test("older than the presence TTL, it names the teammate and the file only — no branch, no age", async () => {
-    // Arrange: the row's heartbeat is past the TTL by the time the relay drains
-    const fix = await collisionFixture("cv-relay-stale");
+  test("a subagent that ran past the presence TTL keeps branch and age while presence still lists the teammate (round 2, L3)", async () => {
+    // Arrange: the hit's heartbeat is past the TTL by the time the relay
+    // drains — a long subagent run — but a fresh answer lists Nick, on his branch
+    const fix = await collisionFixture("cv-relay-long-run");
     fix.hub.setTripwireSessions([
       { ...activeTeammateSession(), lastHeartbeatAt: new Date(Date.now() - PRESENCE_TTL_MS - 60_000).toISOString() },
     ]);
     await runHook("pre-tool-use", editPayload(fix.repo, OVERLAP_FILE, SUBAGENT), fix.env);
-    await presentNow(fix, [TEAMMATE_DEVELOPER_ID]);
+    await presentNow(fix, [TEAMMATE_DEVELOPER_ID], { branch: "feat/refresh-fix" });
 
     // Act
     const output = parsed(await runHook("user-prompt-submit", promptPayload(fix.repo), fix.env));
 
     // Assert
-    expect(output.systemMessage).toBe("crosscheck: Nick is working on refresh.ts — talk before you both change it");
+    expect(output.systemMessage).toBe(NICK_NOTICE);
+  });
+
+  test("the branch it names is the one presence reports now, not the one the hit recorded", async () => {
+    // Arrange
+    const fix = await collisionFixture("cv-relay-moved");
+    await runHook("pre-tool-use", editPayload(fix.repo, OVERLAP_FILE, SUBAGENT), fix.env);
+    await presentNow(fix, [TEAMMATE_DEVELOPER_ID], { branch: "feat/rotation-2" });
+
+    // Act
+    const output = parsed(await runHook("user-prompt-submit", promptPayload(fix.repo), fix.env));
+
+    // Assert
+    expect(output.systemMessage).toContain("Nick is working on refresh.ts on branch feat/rotation-2 (last active just now)");
   });
 });

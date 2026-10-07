@@ -410,15 +410,42 @@ export const withoutStaleLocation = (group: CollisionNotice, now: Date): Collisi
     : { ...group, branch: null, lastActiveAt: null };
 };
 
-/** What a later surface reads of a presence answer: who, and whether it is the reader. */
+/** What a relay reads of a presence answer: who, whether it is the reader, where, and since when. */
 export interface PresenceFact {
   readonly developerId: string;
   readonly isSelf: boolean;
+  readonly branch: string;
+  readonly lastHeartbeatAt: string;
 }
 
-/** The presence row that confirms this group's teammate, if the answer has one. */
-const confirmingEntry = <T extends PresenceFact>(group: CollisionNotice, presence: readonly T[]): T | undefined =>
-  presence.find((entry) => !entry.isSelf && entry.developerId === group.developerId);
+/** Whether this presence row is the group's teammate (never the reader's own row). */
+const isTeammateOf = (group: CollisionNotice, entry: PresenceFact): boolean =>
+  !entry.isSelf && entry.developerId === group.developerId;
+
+/** The FRESHEST presence row confirming this group's teammate — several windows are one teammate. */
+const confirmingEntry = (group: CollisionNotice, presence: readonly PresenceFact[]): PresenceFact | undefined =>
+  presence
+    .filter((entry) => isTeammateOf(group, entry))
+    .reduce<PresenceFact | undefined>(
+      (freshest, entry) =>
+        freshest === undefined || Date.parse(entry.lastHeartbeatAt) > Date.parse(freshest.lastHeartbeatAt)
+          ? entry
+          : freshest,
+      undefined,
+    );
+
+/**
+ * WHERE the teammate is NOW, from the presence row that confirmed them (round
+ * 2, L3): the hit's own heartbeat is as old as the subagent's run, so a
+ * subagent working past the presence TTL lost the branch while presence still
+ * listed the teammate. Landed work keeps the branch that merged — the
+ * teammate's live session may be on another one by now.
+ */
+const locatedBy = (group: CollisionNotice, entry: PresenceFact): CollisionNotice => ({
+  ...group,
+  branch: group.landed === true ? group.branch : entry.branch,
+  lastActiveAt: entry.lastHeartbeatAt,
+});
 
 /**
  * A subagent's queued groups as the MAIN thread is told them (round 2, H1).
@@ -429,16 +456,18 @@ const confirmingEntry = <T extends PresenceFact>(group: CollisionNotice, presenc
  * is told unnamed: the file stays, the name, branch and age go. Deterministic
  * — the same queue says the same thing whatever the cache's age — and
  * private for the opted-out and the muted. `presence` is [] when no fresh
- * answer is in hand.
+ * answer is in hand. A named group's branch and age are the confirming
+ * row's, still held to the presence TTL.
  */
 export const relayedCollisions = (
   groups: readonly CollisionNotice[],
   presence: readonly PresenceFact[],
   now: Date,
 ): readonly RenderableCollision[] =>
-  groups.map((group) =>
-    confirmingEntry(group, presence) === undefined ? anonymousCollision(group) : withoutStaleLocation(group, now),
-  );
+  groups.map((group) => {
+    const entry = confirmingEntry(group, presence);
+    return entry === undefined ? anonymousCollision(group) : withoutStaleLocation(locatedBy(group, entry), now);
+  });
 
 /** The renderer's own tail for the groups a bounded output does not name. */
 const moreLine = (count: number): string =>

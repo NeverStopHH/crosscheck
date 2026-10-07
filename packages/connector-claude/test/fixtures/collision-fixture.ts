@@ -237,7 +237,8 @@ export const presentNow = async (
       sessionId: `cc_${developerId}`,
       developerId,
       developerName: developerId,
-      branch: answer.branch ?? "feat/x",
+      // The branch Nick's live session is on (hint-hub activeTeammateSession).
+      branch: answer.branch ?? "feat/refresh-fix",
       status: "implementing",
       lastHeartbeatAt: (answer.lastHeartbeatAt ?? new Date()).toISOString(),
       isSelf: false,
