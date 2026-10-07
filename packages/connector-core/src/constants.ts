@@ -1420,6 +1420,12 @@ export const SUMMARIZER_MODEL = "haiku";
  * the budget exists for the state lock and the maintenance flush it hosts.
  */
 export const STOP_BUDGET_RATIO = 2;
+/**
+ * SubagentStop runs the git lane over the subagent's own root and the roots a
+ * shell touched (flows/git-lane.ts) and a maintenance flush — Stop's work
+ * without the summarizer gate, so Stop's envelope.
+ */
+export const SUBAGENT_STOP_BUDGET_RATIO = STOP_BUDGET_RATIO;
 /** Draft pointers one briefing may spend — pointer discipline like solved. */
 export const MAX_DRAFT_POINTERS = 2;
 /**
@@ -1780,7 +1786,7 @@ export const TRIPWIRE_MODE_ASK = "ask";
 export const TRIPWIRE_MODE_NOTICE = "notice";
 
 /**
- * The seven Claude Code hook events `crosscheck init` registers, mapped to the
+ * The eight Claude Code hook events `crosscheck init` registers, mapped to the
  * `crosscheck hook <name>` subcommand each one calls.
  *
  * ONE LIST, because three places used to keep their own and two of them
@@ -1806,11 +1812,17 @@ export const REGISTERED_HOOK_EVENTS = {
   UserPromptSubmit: "user-prompt-submit",
   PreToolUse: "pre-tool-use",
   Stop: "stop",
+  // The git lane over a subagent's own root the moment it finishes (DESIGN.md
+  // "One session, many topics"): missing, a subagent's shell work in its own
+  // worktree waits for the parent's next Stop, which may come after a revert.
+  // An install from before it is reported unregistered here, and `init`
+  // upgrades it.
+  SubagentStop: "subagent-stop",
 } as const;
 
 export type RegisteredHookEvent = keyof typeof REGISTERED_HOOK_EVENTS;
 
-/** The same seven as a list, for the callers that only need the names. */
+/** The same eight as a list, for the callers that only need the names. */
 export const REGISTERED_HOOK_EVENT_NAMES = Object.keys(
   REGISTERED_HOOK_EVENTS,
 ) as readonly RegisteredHookEvent[];
@@ -2355,6 +2367,36 @@ export const GIT_TOUCHES_TIMEOUT_MS = 250;
  * fresh paths afterwards, and counts what it cuts the same way.
  */
 export const MAX_GIT_TOUCH_CANDIDATES = 2000;
+
+/**
+ * ROOTS ONE STOP'S GIT LANE SWEEPS (DESIGN.md "One session, many topics").
+ * The lane used to diff the one checkout the hook's cwd sat in; a session
+ * working sibling worktrees left every one of them unswept. Now it visits the
+ * session's own root, the cwd's and every worktree root the session touched —
+ * bash-touched ones first — up to this many, in parallel, each git call on
+ * its own GIT_TOUCHES_TIMEOUT_MS deadline, so the lane's wall time is one
+ * deadline whatever the count. Eight is half the root cache
+ * (MAX_KNOWN_WORKTREE_ROOTS); the next Stop sweeps the rest, most recently
+ * touched first. Measured with eight roots in connector-claude/test/
+ * topic-git-lane.test.ts.
+ */
+export const MAX_GIT_LANE_ROOTS = 8;
+
+/**
+ * Commits the lane reads per root per Stop (`git log -n`), newest first: the
+ * commits this developer authored on the root's branch since the session
+ * first touched it. Bounded so a long-lived session's history never becomes
+ * an unbounded `git log` inside a hook.
+ */
+export const MAX_GIT_LANE_COMMITS = 50;
+
+/**
+ * How far before a root's first recorded touch the lane's window opens.
+ * A shell command is marked when its PostToolUse fires — AFTER it ran — so a
+ * `cp` or `git commit` it made predates the mark by up to the command's own
+ * run time. Ten minutes is Claude Code's longest Bash timeout.
+ */
+export const GIT_LANE_TOUCH_SLACK_MS = 600_000;
 
 /**
  * ── Coverage integrity (docs/1.0/03-coverage-integrity.md §5.3) ─────────────

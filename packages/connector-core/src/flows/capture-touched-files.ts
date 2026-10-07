@@ -47,7 +47,6 @@
 // PRINTS: packages/connector-core/src/flows/capture-touched-files.ts ok
 import { MAX_TARGETS_PER_INVOCATION } from "../constants.ts";
 import { sessionSlug } from "../config/paths.ts";
-import { workContextRecord } from "../capture/records.ts";
 import { resolveTouchedRoots } from "../capture/touched-root.ts";
 import { appendRecords } from "../spool/append.ts";
 import { recordDrop } from "../spool/drops.ts";
@@ -57,10 +56,10 @@ import type {
   ResolveTouchedRootsInput,
   TouchedRootsResolution,
 } from "../capture/touched-root.ts";
-import type { SeqRange } from "../state/session-state.ts";
+import { seqAfter } from "../capture/seq.ts";
 import { captureFileTargets } from "./capture-targets.ts";
 import type { CaptureFileTargetsInput } from "./capture-targets.ts";
-import { planTopics, seenPathsOf, topicSeenKey } from "./topic-contexts.ts";
+import { openedTopicRecords, planTopics, seenPathsOf, topicSeenKey } from "./topic-contexts.ts";
 import type { Filing, TopicCapture, TopicLife, TopicPlan } from "./topic-contexts.ts";
 
 /** The capture-loss detail a topic overflow is booked under (state/loss-ledger.ts). */
@@ -123,10 +122,6 @@ const resolveRootFrom = (
           resolution.rootByPath.get(path) ?? null,
       };
 
-/** The rest of a block, after `used` of its positions went to earlier records. */
-const seqAfter = (seq: SeqRange | null | undefined, used: number): SeqRange | null =>
-  seq === null || seq === undefined ? null : { ...seq, from: seq.from + used, count: Math.max(0, seq.count - used) };
-
 /**
  * THE CONTEXTS FIRST. Each topic this event opens gets its work context in the
  * spool AHEAD of any target that names it — the hub refuses a target whose
@@ -146,20 +141,7 @@ const spoolOpenedTopics = async (
     input.home,
     input.repoKey,
     input.hostSessionKey,
-    plan.opened.map((topic) =>
-      workContextRecord(
-        {
-          workContextId: topic.workContextId,
-          sessionId: topic.sessionId,
-          title: topic.title,
-          status: topic.status,
-          branch: topic.branch,
-          baseCommit: topic.baseCommit,
-        },
-        input.producer,
-        input.now,
-      ),
-    ),
+    openedTopicRecords(plan.opened, input.producer, input.now),
     input.now,
   );
   return appended.persisted;

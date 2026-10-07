@@ -228,6 +228,7 @@ const NO_TOPIC = {
   firstTouchedAt: null,
   lastTouchedAt: null,
   bashTouchedAt: null,
+  gitSweptAt: null,
 } as const;
 
 describe("the root cache and the drops it explains", () => {

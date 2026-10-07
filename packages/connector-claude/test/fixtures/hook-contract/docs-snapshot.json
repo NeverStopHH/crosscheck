@@ -6,6 +6,7 @@
   "event.UserPromptSubmit": true,
   "event.PreToolUse": true,
   "event.Stop": true,
+  "event.SubagentStop": true,
   "common.input.session_id": true,
   "common.input.cwd": true,
   "common.input.hook_event_name": true,
@@ -34,6 +35,7 @@
   "UserPromptSubmit.output.additionalContext": true,
   "Stop.input.transcript_path": true,
   "Stop.input.stop_hook_active": true,
+  "SubagentStop.input.stop_hook_active": true,
   "statusline.input.session_id": true,
   "statusline.input.cwd": true
 }

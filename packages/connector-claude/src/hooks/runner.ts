@@ -5,6 +5,7 @@ import {
   SESSION_END_BUDGET_RATIO,
   SESSION_START_BUDGET_RATIO,
   STOP_BUDGET_RATIO,
+  SUBAGENT_STOP_BUDGET_RATIO,
   USER_PROMPT_SUBMIT_BUDGET_RATIO,
 } from "@crosscheck/connector-core/constants.ts";
 import {
@@ -41,7 +42,8 @@ export type HookName =
   | "session-end"
   | "user-prompt-submit"
   | "pre-tool-use"
-  | "stop";
+  | "stop"
+  | "subagent-stop";
 
 export interface HookContext {
   readonly payload: HookPayload;
@@ -86,6 +88,7 @@ const BUDGET_RATIOS: Readonly<Record<HookName, number>> = {
   "user-prompt-submit": USER_PROMPT_SUBMIT_BUDGET_RATIO,
   "pre-tool-use": PRE_TOOL_USE_BUDGET_RATIO,
   stop: STOP_BUDGET_RATIO,
+  "subagent-stop": SUBAGENT_STOP_BUDGET_RATIO,
 };
 
 interface ResolvedHookRepo {
@@ -249,7 +252,8 @@ const prepareAndRun = async (
 /**
  * THE HOOKS WHOSE ABANDONMENT CAN LOSE CAPTURE (review M4). SessionStart
  * registers the session and spools its work context; PostToolUse spools the
- * targets; PostToolUseFailure the fingerprint; Stop the git lane. The rest
+ * targets; PostToolUseFailure the fingerprint; Stop and SubagentStop the git
+ * lane (SubagentStop over the subagent's own root). The rest
  * capture nothing a coverage question reads: PreToolUse spools the
  * tripwire's ask and UserPromptSubmit its hint deliveries (informational,
  * loss-accounting §3 row 25), and SessionEnd's end and drain leave the
@@ -261,6 +265,7 @@ const CAPTURE_HOOKS: ReadonlySet<HookName> = new Set([
   "post-tool-use",
   "post-tool-use-failure",
   "stop",
+  "subagent-stop",
 ]);
 
 interface LossOwner {

@@ -225,11 +225,12 @@ const claudeTable: ConnectorTable = {
   ...sharedKinds,
   // Edit-family calls are bracketed (pre-tool-use.ts:188 opens, post-tool-use.ts:284
   // closes); Bash is in POST_TOOL_USE_MATCHER and not PRE_TOOL_USE_MATCHER
-  // (constants.ts:1630-1632), and the Stop git lane (stop.ts:186) observes.
+  // (constants.ts:1630-1632), and the git lane Stop and SubagentStop share
+  // (hooks/git-lane.ts) observes, over every root the session touched.
   "file.modified": row([
     lane("pre_tool_bracketed", [CLAUDE_PRE_TOOL, CLAUDE_POST_TOOL]),
     lane("post_tool_unbracketed", [CLAUDE_POST_TOOL]),
-    lane("observing", [`${CLAUDE}/hooks/stop.ts`]),
+    lane("observing", [`${CLAUDE}/hooks/git-lane.ts`]),
   ]),
   // A failed Edit's fingerprint rides post-tool-use.ts's bracketed block; a
   // failed Bash has no window, and post-tool-use-failure.ts:118 keeps the

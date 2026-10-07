@@ -467,6 +467,7 @@ describe("the session's worktree-root cache is fed to the resolver", () => {
             firstTouchedAt: null,
             lastTouchedAt: null,
             bashTouchedAt: null,
+            gitSweptAt: null,
           },
         ],
       }),

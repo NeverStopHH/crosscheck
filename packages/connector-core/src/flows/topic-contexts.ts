@@ -38,7 +38,11 @@
  * CAPPED. MAX_TOPICS_PER_SESSION per life; a touch past it files under the
  * session's own context and is counted (`topic_overflow`), never dropped.
  */
+import type { Envelope } from "@crosscheck/schema";
+
 import { MAX_TOPICS_PER_SESSION, TOPIC_KEY_HEX_CHARS } from "../constants.ts";
+import { workContextRecord } from "../capture/records.ts";
+import type { Producer } from "../capture/records.ts";
 import { resolveHeadCommit } from "../git/repo-identity.ts";
 import type { RootHead, TouchedRootsResolution } from "../capture/touched-root.ts";
 import type { SessionState, TopicContext } from "../state/session-state.ts";
@@ -204,6 +208,43 @@ export const planTopics = async (
     filingByPath.set(path, { key, workContextId: topic.workContextId });
   }
   return { filingByPath, opened: [...opened.values()], touched, sessionTouched, overflowed };
+};
+
+/** The work_context records of topics just opened — what goes into the spool ahead of their first targets. */
+export const openedTopicRecords = (
+  opened: readonly TopicContext[],
+  producer: Producer,
+  now: Date,
+): readonly Envelope[] =>
+  opened.map((topic) =>
+    workContextRecord(
+      {
+        workContextId: topic.workContextId,
+        sessionId: topic.sessionId,
+        title: topic.title,
+        status: topic.status,
+        branch: topic.branch,
+        baseCommit: topic.baseCommit,
+      },
+      producer,
+      now,
+    ),
+  );
+
+/** Several events' topic outcomes as one — a Stop sweeping several roots folds them in one write. */
+export const mergeTopicCaptures = (captures: readonly TopicCapture[]): TopicCapture | null => {
+  const [first] = captures;
+  if (first === undefined) {
+    return null;
+  }
+  return {
+    sessionId: first.sessionId,
+    opened: captures.flatMap((capture) => capture.opened),
+    touched: new Map(captures.flatMap((capture) => [...capture.touched])),
+    sessionTouched: captures.some((capture) => capture.sessionTouched),
+    overflowed: captures.reduce((sum, capture) => sum + capture.overflowed, 0),
+    at: first.at,
+  };
 };
 
 /** One event's topic outcome, as the caller folds it into its single locked state write. */

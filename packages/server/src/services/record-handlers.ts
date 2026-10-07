@@ -595,10 +595,14 @@ export const TARGET_EVENT_KINDS = {
  * a file the tool lane already reported, the row becomes "both" while that
  * second event is still an upper bound, and stamping it emitted would let a
  * happens-before question answer from a position that cannot support one.
+ * `git_commit` is OBSERVED for the same reason: the Stop-time lane reads a
+ * commit after the turn that made it, and the commit's own date is the
+ * developer's clock, never a position in this session's order.
  */
 const SEQ_KIND_BY_SOURCE = {
   tool_edit: "emitted",
   git_diff: "observed",
+  git_commit: "observed",
   both: "emitted",
 } as const;
 
@@ -700,6 +704,10 @@ export const ingestTarget = async (
     // silently own the label and `suspect` would report a second source as
     // dead. Still a DUPLICATE record either way: nothing new was learned
     // about the file, only about who saw it.
+    // "both" is the TOOL lane and A GIT lane: two git lanes sighting one file
+    // (a change, then its commit) are still one kind of observer, and the
+    // label must not claim an Edit nobody reported (DESIGN.md "One session,
+    // many topics" added `git_commit` beside `git_diff`).
     await deps.db
       .update(workContextTargets)
       .set({ source: "both" })
@@ -708,7 +716,8 @@ export const ingestTarget = async (
           eq(workContextTargets.workContextId, body.workContextId),
           eq(workContextTargets.kind, body.kind),
           eq(workContextTargets.value, value),
-          sql`${workContextTargets.source} NOT IN (${source}, 'both')`,
+          sql`${workContextTargets.source} <> 'both'`,
+          sql`(${workContextTargets.source} = 'tool_edit') <> (${source}::text = 'tool_edit')`,
         ),
       );
     await project();

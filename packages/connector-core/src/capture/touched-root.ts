@@ -152,6 +152,8 @@ export interface KnownWorktreeRoot {
    * names, so the next Stop's git lane sweeps a bash-touched root FIRST.
    */
   readonly bashTouchedAt?: string | null;
+  /** When the Stop-time git lane last swept the root (flows/git-lane.ts). */
+  readonly gitSweptAt?: string | null;
 }
 
 /**

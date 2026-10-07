@@ -267,6 +267,15 @@ export const HOOK_PROBES: readonly FieldProbe[] = [
     section: "Stop",
     field: "stop_hook_active",
   },
+  /**
+   * The git lane over a subagent's own root (hooks/subagent-stop.ts) reads
+   * the common fields and this one, to pass over a stop already continuing.
+   */
+  {
+    key: "SubagentStop.input.stop_hook_active",
+    section: "SubagentStop",
+    field: "stop_hook_active",
+  },
 ];
 
 /** The statusline doc is small, so the whole page is the search space. */

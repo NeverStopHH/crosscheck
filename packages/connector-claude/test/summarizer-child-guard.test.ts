@@ -134,6 +134,13 @@ const payloadFor = (fix: Fixture, name: HookName): string => {
       transcript_path: fix.transcript,
       stop_hook_active: false,
     },
+    "subagent-stop": {
+      ...base,
+      hook_event_name: "SubagentStop",
+      agent_id: "agent-1",
+      agent_type: "general-purpose",
+      stop_hook_active: false,
+    },
     "session-end": { ...base, hook_event_name: "SessionEnd", reason: "exit" },
   };
   return JSON.stringify(byName[name]);

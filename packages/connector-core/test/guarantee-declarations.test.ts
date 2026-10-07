@@ -83,7 +83,7 @@ const PACKAGE_OF: Readonly<Record<GuaranteeConnector, string>> = {
  * modules that build nothing else.
  */
 const EVIDENCE_IMPORTS: Readonly<Record<string, readonly string[]>> = {
-  "file.modified": ["captureTouchedFiles", "captureFileTargets", "captureGitTouches"],
+  "file.modified": ["captureTouchedFiles", "captureFileTargets", "captureGitTouches", "sweepGitRoots"],
   "tool.failed": ["captureFailure"],
   "commit.observed": ["commitEvidenceRecord"],
   "intent.declared": ["withRecordedIntent"],
@@ -463,7 +463,7 @@ describe("a table built to break a rule fails the build", () => {
     const violations = check(withKind("claude-code", "file.modified", relabelled));
     // Assert
     expect(violations).toContain(
-      "claude-code file.modified: packages/connector-claude/src/hooks/stop.ts is in a bracketed lane and closes no window",
+      "claude-code file.modified: packages/connector-claude/src/hooks/git-lane.ts is in a bracketed lane and closes no window",
     );
   });
 

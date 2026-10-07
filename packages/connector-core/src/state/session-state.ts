@@ -236,6 +236,9 @@ const SessionStateObjectSchema = z.looseObject({
         firstTouchedAt: z.string().min(1).nullable().default(null),
         lastTouchedAt: z.string().min(1).nullable().default(null),
         bashTouchedAt: z.string().min(1).nullable().default(null),
+        // When the Stop-time git lane last swept the root (flows/git-lane.ts):
+        // past MAX_GIT_LANE_ROOTS, the root swept longest ago goes next.
+        gitSweptAt: z.string().min(1).nullable().default(null),
       }),
     )
     .default([]),
@@ -1427,6 +1430,7 @@ const EMPTY_ROOT_TOPIC = {
   firstTouchedAt: null,
   lastTouchedAt: null,
   bashTouchedAt: null,
+  gitSweptAt: null,
 } as const;
 
 /** Dedup by root, newest last, FIFO-capped — the one write every root entry takes. */

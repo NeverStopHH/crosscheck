@@ -14013,15 +14013,17 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "dirty paths past the git lane's candidate bound are cut without a count",
     file: `${CORE}/src/flows/capture-git-touches.ts`,
-    from: "    changed.length - candidates.length,\n",
-    to: "    0,\n",
+    from: "  await recordUnexamined(input, changed.length - candidates.length);",
+    to: "  await recordUnexamined(input, 0);",
     test: `${CORE}/test/capture-losses.test.ts`,
     because: "a turn that touched a dirty path past the bound loses it to a slice the freshness check never reaches, and nothing counts it",
   },
   {
     label: "a skipped git lane is a session-state number and nothing else",
-    file: `${CONNECTOR}/src/hooks/stop.ts`,
-    from: "  if (outcome.unavailable) {\n    await recordCaptureLoss(",
+    // The lane's bookkeeping moved with it into hooks/git-lane.ts, shared by
+    // Stop and SubagentStop (DESIGN.md "One session, many topics").
+    file: `${CONNECTOR}/src/hooks/git-lane.ts`,
+    from: "  if (sweep.unavailable) {\n    await recordCaptureLoss(",
     to: "  if (false) {\n    await recordCaptureLoss(",
     test: `${CONNECTOR}/test/stop-git-touches.test.ts`,
     because: "a session whose last turn skipped the lane loses its Bash-made edits, and the hub's coverage reads complete over them",
@@ -19603,6 +19605,81 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/topic-contexts.test.ts`,
     because: "every topic of a detached long-lived session reads as drifted from a weeks-old commit it never worked on",
   },
+  {
+    // DESIGN.md "One session, many topics", item 3.
+    label: "Stop's git lane sweeps only the checkout its cwd sits in",
+    file: `${CORE}/src/flows/git-lane.ts`,
+    from: "    choice.subagent === true ? [...cwd, ...bashed] : [...bashed, ...cwd, sessionRoot, ...recent];",
+    to: "    choice.subagent === true ? [...cwd, ...bashed] : [...cwd];",
+    test: `${CONNECTOR}/test/topic-git-lane.test.ts`,
+    because:
+      "every sibling worktree's shell work — cp, mv, a generator, a commit — is lost, " +
+      "because the long-lived session's cwd is the start checkout it never edits",
+  },
+  {
+    label: "a teammate's commit is filed as this developer's work",
+    file: `${CORE}/src/flows/capture-git-touches.ts`,
+    from: "    const isOwn = email.trim().toLowerCase() === author;",
+    to: "    const isOwn = true;",
+    test: `${CONNECTOR}/test/topic-git-lane.test.ts`,
+    because: "a merge, rebase or cherry-pick of a teammate's work names this session as having touched their files",
+  },
+  {
+    label: "the git lane never reads work committed during the session",
+    file: `${CORE}/src/flows/git-lane.ts`,
+    from: "    readGitCommits(base),\n",
+    to: "    Promise.resolve([]),\n",
+    test: `${CONNECTOR}/test/topic-git-lane.test.ts`,
+    because: "a session that commits through a shell leaves a clean tree, and the lane records nothing of it",
+  },
+  {
+    label: "a new file git does not track stays invisible to the git lane",
+    file: `${CORE}/src/flows/git-lane.ts`,
+    from: "    readGitTouches({ ...base, includeUntracked: true }),",
+    to: "    readGitTouches(base),",
+    test: `${CONNECTOR}/test/topic-git-lane.test.ts`,
+    because: "a `cp` or a generator's output is never captured until somebody adds it",
+  },
+  {
+    label: "SubagentStop sweeps no root",
+    file: `${CORE}/src/flows/git-lane.ts`,
+    from: "    choice.subagent === true ? [...cwd, ...bashed] :",
+    to: "    choice.subagent === true ? [] :",
+    test: `${CONNECTOR}/test/topic-git-lane.test.ts`,
+    because: "a subagent's shell work waits for the parent's next Stop, which may come after a revert",
+  },
+  {
+    label: "the git lane files a sibling worktree's work under the session's own context",
+    file: `${CORE}/src/flows/git-lane.ts`,
+    from: "  const filing = isOpened ? (plan.filingByPath.get(first) ?? session) : session;",
+    to: "  const filing = session;",
+    test: `${CONNECTOR}/test/topic-git-lane.test.ts`,
+    because: "the shell's work lands in the start checkout's context, the sweep the topics exist to break up",
+  },
+  {
+    label: "a root past the lane's cap is never swept",
+    file: `${CORE}/src/flows/git-lane.ts`,
+    from: "          swept.includes(entry.root) ? { ...entry, bashTouchedAt: null, gitSweptAt: at } : entry,",
+    to: "          swept.includes(entry.root) ? { ...entry, bashTouchedAt: null } : entry,",
+    test: `${CONNECTOR}/test/topic-git-lane.test.ts`,
+    because: "a session working more worktrees than one Stop sweeps never looks at the one it touched least recently",
+  },
+  {
+    label: "init installs no SubagentStop hook",
+    file: `${CONNECTOR}/src/cli/settings-merge.ts`,
+    from: "      SubagentStop: group(`${prefix} hook subagent-stop`, undefined, true),\n",
+    to: "",
+    test: `${CONNECTOR}/test/settings-merge.test.ts`,
+    because: "doctor demands an event init never writes, and a fresh install fails its own health check",
+  },
+  {
+    label: "two git lanes sighting one file label it as a tool edit too",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "          sql`(${workContextTargets.source} = 'tool_edit') <> (${source}::text = 'tool_edit')`,",
+    to: "          sql`TRUE`,",
+    test: `${SERVER}/test/topic-contexts.test.ts`,
+    because: "a file a codemod changed and a shell committed reads as `both`, claiming an Edit nobody reported",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19769,6 +19846,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/resumed-session.test.ts 10
  * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
  * PRINTS: packages/connector-claude/test/settings-merge-removal.test.ts 1
+ * PRINTS: packages/connector-claude/test/settings-merge.test.ts 1
  * PRINTS: packages/connector-claude/test/stop-gate.test.ts 4
  * PRINTS: packages/connector-claude/test/stop-git-touches.test.ts 1
  * PRINTS: packages/connector-claude/test/stop-hook.test.ts 1
@@ -19777,6 +19855,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/summarizer-child-guard.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-worker-env.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-worker.test.ts 2
+ * PRINTS: packages/connector-claude/test/topic-git-lane.test.ts 7
  * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 4
  * PRINTS: packages/connector-core/test/absence-render.test.ts 7
@@ -19988,7 +20067,7 @@ interface Outcome {
  * PRINTS: packages/server/test/solved-ranking.test.ts 3
  * PRINTS: packages/server/test/suspect.test.ts 5
  * PRINTS: packages/server/test/team-settings.test.ts 2
- * PRINTS: packages/server/test/topic-contexts.test.ts 3
+ * PRINTS: packages/server/test/topic-contexts.test.ts 4
  * PRINTS: packages/server/test/ui-passkeys.test.ts 9
  * PRINTS: packages/server/test/unstorable-text.test.ts 2
  * PRINTS: packages/server/test/upgrade.test.ts 1

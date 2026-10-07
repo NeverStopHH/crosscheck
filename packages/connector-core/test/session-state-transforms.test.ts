@@ -187,6 +187,7 @@ const NO_TOPIC = {
   firstTouchedAt: null,
   lastTouchedAt: null,
   bashTouchedAt: null,
+  gitSweptAt: null,
 } as const;
 
 describe("withKnownWorktreeRoot (the #17 per-session root cache)", () => {

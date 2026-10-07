@@ -161,6 +161,41 @@ describe("a session's topic contexts", () => {
   });
 });
 
+describe("the git lane's commit half (`git_commit`)", () => {
+  const storedSource = async (harness: TestHarness, value: string): Promise<string | undefined> =>
+    (
+      await harness.db.execute(
+        sql`SELECT source FROM work_context_targets WHERE work_context_id = ${WORK_CONTEXT_ID} AND value = ${value}`,
+      )
+    ).rows[0]?.source as string | undefined;
+
+  const sourced = (value: string, source: string): Record<string, unknown> =>
+    recordEnvelope("target", { workContextId: WORK_CONTEXT_ID, kind: "file", value, source });
+
+  test("is accepted, and two git lanes on one file are never 'both' — only a tool edit and a git lane are", async () => {
+    // Arrange
+    const { harness, developer } = await createHarnessWithSession();
+
+    // Act
+    const posted = await postRecords(harness, developer, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody()),
+        sourced("src/committed.ts", "git_commit"),
+        sourced("src/diffed.ts", "git_diff"),
+        sourced("src/diffed.ts", "git_commit"),
+        sourced("src/edited.ts", "tool_edit"),
+        sourced("src/edited.ts", "git_commit"),
+      ],
+    });
+
+    // Assert
+    expect(posted.data?.rejected).toBe(0);
+    expect(await storedSource(harness, "src/committed.ts")).toBe("git_commit");
+    expect(await storedSource(harness, "src/diffed.ts")).toBe("git_diff");
+    expect(await storedSource(harness, "src/edited.ts")).toBe("both");
+  });
+});
+
 describe("bootstrap.sql DDL sync — a topic's branch and base commit", () => {
   test("both columns are in both DDL sources and nullable after a bootstrap", async () => {
     // Arrange

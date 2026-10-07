@@ -146,7 +146,7 @@ export const landedNoticeDeliveryRecord = (
  * lane, which is what every target minted before Stage 1 was — so an old
  * spool replays as itself instead of as an unlabelled unknown.
  */
-export type TargetSource = "tool_edit" | "git_diff";
+export type TargetSource = "tool_edit" | "git_diff" | "git_commit";
 
 export const targetRecord = (
   workContextId: string,
