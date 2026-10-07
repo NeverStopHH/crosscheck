@@ -186,7 +186,8 @@ const MCP_CLAIMS = [
 ];
 /** review_draft's `supersedes` edge and extend_diagnosis's edge kind (server INVALIDATING_EDGE_KINDS). */
 const MCP_EDGES = [`${CORE}/mcp/tools/review-draft.ts`, `${CORE}/mcp/tools/extend-diagnosis.ts`];
-const MCP_INTENT = [`${CORE}/mcp/tools/set-intent.ts`];
+/** set_intent's write — the tool and the simulation both call it (review-2 round 8, M5). */
+const MCP_INTENT = [`${CORE}/mcp/tools/intent-write.ts`];
 const DERIVED_CLAIMS = [`${CORE}/derive/summarizer/derive.ts`, `${CORE}/derive/ghost/worker.ts`];
 const DERIVED_INTENT = [`${CORE}/derive/intent/worker.ts`];
 
