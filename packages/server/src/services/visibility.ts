@@ -28,7 +28,8 @@
  *   «coverage»  honest coverage that SOME session went quiet or reported:
  *               the agent_event rung's state, its reason, and whether its
  *               start may be printed — never whose session, never when
- *               (`session_withheld`, services/coverage.ts)
+ *               (a withheld gap: `session_silent` with `withheld: true`,
+ *               services/coverage.ts)
  *   «pilot»     team-level pilot counts: sessions, deliveries and pulls,
  *               the integrity counters, which prior work was opened
  *   «sequence»  event sequence gaps (the feed's ids, below)

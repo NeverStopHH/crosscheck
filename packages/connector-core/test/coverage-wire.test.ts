@@ -173,6 +173,28 @@ describe("parseCoverage fails closed, per row", () => {
     expect(record.sources[0]?.state).toBe("unknown");
     expect(record.sources[0]?.reason).toBe("hub_did_not_report");
   });
+
+  test("a row whose state this client knows keeps it when only the reason is new (review round 5, H4)", () => {
+    // Act: a newer hub's word for WHY the rung has a gap
+    const record = parseCoverage({
+      sources: [{ source: "agent_event", state: "incomplete", reason: "a_word_from_a_newer_hub", gapSince: null, observedAt: null }],
+    });
+
+    // Assert: still a gap — reading it unknown drops the caveat on every
+    // non-empty answer, the direction that looks better than the truth.
+    expect(record.sources[0]).toMatchObject({ source: "agent_event", state: "incomplete", reason: "hub_did_not_report" });
+  });
+
+  test("the additive withheld flag is kept when true and dropped otherwise, never costing the row", () => {
+    // Act
+    const flagged = parseCoverage({ sources: [{ source: "agent_event", state: "incomplete", reason: "session_silent", withheld: true }] });
+    const garbled = parseCoverage({ sources: [{ source: "agent_event", state: "incomplete", reason: "session_silent", withheld: "yes" }] });
+
+    // Assert
+    expect(flagged.sources[0]).toMatchObject({ state: "incomplete", reason: "session_silent", withheld: true });
+    expect(garbled.sources[0]).toMatchObject({ state: "incomplete", reason: "session_silent" });
+    expect(garbled.sources[0]?.withheld).toBeUndefined();
+  });
 });
 
 /**

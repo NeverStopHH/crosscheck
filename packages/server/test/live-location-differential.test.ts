@@ -284,9 +284,9 @@ interface Residual {
 
 const RESIDUALS: readonly Residual[] = [
   // visibility.ts «coverage»: honest coverage that SOME session went quiet or
-  // reported — the agent_event rung's state, its reason and whether its
-  // start may be printed. Never whose, never when (session_withheld).
-  { name: "coverage", line: /coverage\.sources\[\]\.(?:state|reason|gapSince)=/ },
+  // reported — the agent_event rung's state, its reason, whether the gap is
+  // withheld and whether its start may be printed. Never whose, never when.
+  { name: "coverage", line: /coverage\.sources\[\]\.(?:state|reason|withheld|gapSince)=/ },
   // visibility.ts «pilot»: team-level pilot counts — sessions, deliveries,
   // pulls and the integrity counters, and which prior work was opened.
   {

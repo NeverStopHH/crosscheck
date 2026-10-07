@@ -97,11 +97,17 @@ export type CoverageState = (typeof COVERAGE_STATES)[number];
  * kinds the hub answered 200 to and ignored — that one's remedy is specific,
  * upgrade the hub, which is why it is its own word.
  *
- * `session_withheld` (review round 4, H1) is the gap of a session whose
- * owner opted out of presence, as a viewer she is hidden from reads it: the
- * rung stays honestly `incomplete` — SOME session went quiet — and says
- * nothing of whose or how (silent, reaped, lossy), because naming that
- * would describe her session. A told session's gap is named as before.
+ * A WITHHELD GAP (review round 4, H1; round 5, H4) is the gap of a session
+ * whose owner opted out of presence, as a viewer she is hidden from reads
+ * it: the rung stays honestly `incomplete` — SOME session went quiet — and
+ * says nothing of whose or how (silent, reaped, lossy), because naming that
+ * would describe her session. A told session's gap is named as before. On
+ * the wire its reason is the FIXED word `session_silent`, which every
+ * released connector reads as a gap (0.10.0 read round 4's new word as
+ * unknown, and its caveat disappeared), and the record carries the additive
+ * `withheld: true`, which a current connector renders as «went quiet
+ * (withheld: presence opt-out)» and an older one ignores. The word is chosen
+ * by nothing of hers: the same for silence, reap and loss.
  *
  * The four `ci_*` words are RESERVED FOR 05 AND DORMANT until CI ingestion lands.
  * They are minted here rather than there because 05 §9.1 requests them, and a
@@ -127,8 +133,6 @@ export const COVERAGE_REASONS = [
   "ci_lanes_missing",
   "ci_awaiting_rerun",
   "ci_not_reported_yet",
-  // Appended (review round 4, H1), so 05's block stays contiguous.
-  "session_withheld",
 ] as const;
 
 export type CoverageReason = (typeof COVERAGE_REASONS)[number];
@@ -141,6 +145,12 @@ export interface CoverageSourceRecord {
   readonly gapSince: string | null;
   /** ISO; the newest thing this rung saw that this viewer may be told, null when none. */
   readonly observedAt: string | null;
+  /**
+   * Present, and true, only on an `agent_event` gap made of sessions this
+   * viewer may not be told about (a withheld gap, above). Additive: a client
+   * that does not know it reads the reason beside it, which is a gap.
+   */
+  readonly withheld?: true;
 }
 
 /**
@@ -467,6 +477,12 @@ const earliestIso = (left: string | null, right: string | null): string | null =
       : right;
 
 /**
+ * The wire's reason for a withheld gap (review round 5, H4): fixed whatever
+ * her session did, and a word every released connector reads as a gap.
+ */
+const WITHHELD_GAP_REASON: CoverageReason = "session_silent";
+
+/**
  * The reason word, in precedence order (loss-accounting §4.5): the ignored
  * kind first because its remedy is specific, any other loss next because it
  * is a fact nobody can revoke, then 03's reap-over-silence rule unchanged.
@@ -615,19 +631,20 @@ const readAgentEventCoverage = async (
           observedAt,
         );
   }
-  const isOnlyWithheld = toCount(row?.toldGaps) === 0 && toldLost === 0;
+  const gapSince = isGapSinceWithheld
+    ? null
+    : earliestIso(
+        lost > 0 ? toIso(row?.lossSince) : null,
+        gaps > 0 ? toIso(row?.gapSince) : null,
+      );
+  if (toCount(row?.toldGaps) === 0 && toldLost === 0) {
+    return { ...sourceRecord("agent_event", "incomplete", WITHHELD_GAP_REASON, gapSince, observedAt), withheld: true };
+  }
   return sourceRecord(
     "agent_event",
     "incomplete",
-    isOnlyWithheld
-      ? "session_withheld"
-      : agentGapReason(toldLost, toCount(row?.toldIgnored), toCount(row?.toldReaped)),
-    isGapSinceWithheld
-      ? null
-      : earliestIso(
-          lost > 0 ? toIso(row?.lossSince) : null,
-          gaps > 0 ? toIso(row?.gapSince) : null,
-        ),
+    agentGapReason(toldLost, toCount(row?.toldIgnored), toCount(row?.toldReaped)),
+    gapSince,
     observedAt,
   );
 };

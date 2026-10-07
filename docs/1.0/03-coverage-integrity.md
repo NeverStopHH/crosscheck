@@ -199,11 +199,18 @@ the `coverage = 87%` lie in another shape. Human edits surface through `git`, vi
 `no_platform_rung` · `hub_did_not_report`. Four more are **reserved for 05 and dormant until it lands** —
 `ci_lanes_reported` · `ci_lanes_missing` · `ci_awaiting_rerun` · `ci_not_reported_yet` — added here because
 05 §9.1 requests rather than mints them and a second coverage enum is exactly the drift 00 §9.6 forbids.
-`session_withheld` is appended after them (review round 4, H1): the `agent_event` gap of a session whose
-owner opted out of presence, as a viewer she is hidden from reads it — still `incomplete`, because SOME
-session went quiet, and never named (whose, or whether it was silent, reaped or lossy); a told session's gap
-keeps its own reason. Consequence for §5: **a coverage line contains no author-written string** — enum values, ISO timestamps,
-integers, renderer-owned literals — so it adds no untrusted slot to any surface it lands on.
+A **withheld gap** (review round 4, H1; round 5, H4) is the `agent_event` gap of a session whose owner opted
+out of presence, as a viewer she is hidden from reads it — still `incomplete`, because SOME session went
+quiet, and never named (whose, or whether it was silent, reaped or lossy); a told session's gap keeps its own
+reason. It is NOT a reason of its own: round 4 minted `session_withheld`, and a 0.10.0 connector, which has
+no such word, read the row as `unknown` and dropped its caveat. On the wire the reason is the fixed
+`session_silent` — the same for silence, reap and loss, so it describes nothing of hers, and a word every
+released connector reads as a gap — and the source record carries the additive `withheld: true`, which a
+current connector prints as «went quiet (withheld: presence opt-out)» and an older one ignores. A current
+connector also keeps a row's `state` when only its `reason` is a word it does not know (the reason reads
+`hub_did_not_report`), so the next new word cannot cost a caveat either. Consequence for §5: **a coverage
+line contains no author-written string** — enum values, ISO timestamps, integers, renderer-owned literals —
+so it adds no untrusted slot to any surface it lands on.
 
 ### 3.4 AT-1's sentence, and the half not buildable yet
 

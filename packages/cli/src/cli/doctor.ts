@@ -99,7 +99,7 @@ import type {
   HubResult,
 } from "@crosscheck/connector-core/http/client.ts";
 import { COVERAGE_EXEMPT_SURFACES } from "@crosscheck/connector-core/coverage/exempt-surfaces.ts";
-import { COVERAGE_HUB_UNREACHABLE } from "@crosscheck/connector-core/coverage/render.ts";
+import { COVERAGE_HUB_UNREACHABLE, WITHHELD_GAP_LABEL } from "@crosscheck/connector-core/coverage/render.ts";
 import type { CoverageSourceRecord } from "@crosscheck/connector-core/http/coverage.ts";
 import {
   describeConnectionFailure,
@@ -1514,7 +1514,10 @@ const coverageExemptionChecks = (): readonly Check[] =>
 const coverageSourceDetail = (row: CoverageSourceRecord): string => {
   const since =
     row.gapSince === null ? "" : `, since ${row.gapSince.slice(0, 16)}Z`;
-  return `${row.source} ${row.state} (${row.reason}${since})`;
+  // A withheld gap's reason is a fixed word for older clients (review round
+  // 5, H4); the flag says it is no session's to describe.
+  const withheld = row.withheld === true ? `, ${WITHHELD_GAP_LABEL}` : "";
+  return `${row.source} ${row.state} (${row.reason}${withheld}${since})`;
 };
 
 /**

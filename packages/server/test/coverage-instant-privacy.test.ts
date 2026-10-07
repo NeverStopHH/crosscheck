@@ -109,11 +109,14 @@ describe("a session the viewer may not be told about weakens the rung and lends 
     );
     // Assert
     // Counted, never NAMED (review round 4, H1): the answer names Ken's
-    // session, and "session_silent" would say how his session went quiet.
+    // session, and a reason chosen from it would say how his session went
+    // quiet. On the wire the reason is the fixed word every released client
+    // reads as a gap, and `withheld` says it was withheld (round 5, H4).
     expect(agentEventOf(data.coverage)).toEqual({
       source: "agent_event",
       state: "incomplete",
-      reason: "session_withheld",
+      reason: "session_silent",
+      withheld: true,
       gapSince: null,
       observedAt: harness.clock.now().toISOString(),
     });
@@ -149,7 +152,8 @@ describe("a session the viewer may not be told about weakens the rung and lends 
     // Assert: incomplete — the loss is real — and his loss is not named.
     expect(agentEventOf(data.coverage)).toMatchObject({
       state: "incomplete",
-      reason: "session_withheld",
+      reason: "session_silent",
+      withheld: true,
       gapSince: null,
     });
   });
@@ -170,11 +174,13 @@ describe("a hidden session is counted, never named (review round 4, H1)", () => 
   };
 
   test("his silent session makes the rung incomplete — SOME session went silent — and says nothing of it", async () => {
-    expect(await world(false)).toMatchObject({ state: "incomplete", reason: "session_withheld", gapSince: null });
+    expect(await world(false)).toMatchObject({ state: "incomplete", reason: "session_silent", withheld: true, gapSince: null });
   });
 
   test("his live session reads as every session reporting", async () => {
-    expect(await world(true)).toMatchObject({ state: "complete", reason: "sessions_reported" });
+    const live = await world(true);
+    expect(live).toMatchObject({ state: "complete", reason: "sessions_reported" });
+    expect(live).not.toHaveProperty("withheld");
   });
 
   test("a told session's gap is named as before, whatever his does", async () => {
@@ -186,8 +192,9 @@ describe("a hidden session is counted, never named (review round 4, H1)", () => 
     harness.clock.advanceSeconds(HOUR_SECONDS);
     // Act
     const nickView = agentEventOf((await dataOf<{ coverage: CoverageRecord }>(harness, nick, absencesUrl)).coverage);
-    // Assert: Nick's own silence, not Ken's reap.
+    // Assert: Nick's own silence, not Ken's reap — named, so not withheld.
     expect(nickView).toMatchObject({ state: "incomplete", reason: "session_silent" });
+    expect(nickView).not.toHaveProperty("withheld");
   });
 });
 

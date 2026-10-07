@@ -18671,8 +18671,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "coverage names how an opted-out teammate's session went quiet",
     file: `${SERVER}/src/services/coverage.ts`,
-    from: "  const isOnlyWithheld = toCount(row?.toldGaps) === 0 && toldLost === 0;",
-    to: "  const isOnlyWithheld = false;",
+    from: "  if (toCount(row?.toldGaps) === 0 && toldLost === 0) {",
+    to: "  if (false) {",
     test: `${SERVER}/test/coverage-instant-privacy.test.ts`,
     because:
       "get_diagnosis of her context names her session, and «session_silent» or " +
@@ -18691,8 +18691,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the coverage line drops the word for a withheld session",
     file: `${CORE}/src/coverage/render.ts`,
-    from: "  session_withheld: \"withheld: presence opt-out\",",
-    to: "",
+    from: "  row.withheld === true ? WITHHELD_GAP_LABEL : (INCOMPLETE_LABELS[row.reason] ?? null);",
+    to: "  row.withheld === true ? null : (INCOMPLETE_LABELS[row.reason] ?? null);",
     test: `${CORE}/test/coverage-render.test.ts`,
     because:
       "«went quiet» with no word reads as a teammate's ordinary silence, and " +
@@ -18936,6 +18936,66 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/developer-branches.test.ts`,
     because: "the foreign key refuses the row and the hub does not boot",
   },
+  // ── Review round 5, H4: mixed versions keep the caveat ───────────────
+  {
+    label: "a withheld gap goes on the wire as a word a 0.10.0 connector cannot read",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "const WITHHELD_GAP_REASON: CoverageReason = \"session_silent\";",
+    to: "const WITHHELD_GAP_REASON: CoverageReason = \"telemetry_lost\";",
+    test: `${SERVER}/test/coverage-compat-0.10.test.ts`,
+    because:
+      "a 0.10.0 connector reads the rung unknown and, with git complete, its " +
+      "caveat on a non-empty answer disappears: a team where SOME session went " +
+      "quiet reads as fully watched",
+  },
+  {
+    label: "a withheld gap goes on the wire without its withheld flag",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "WITHHELD_GAP_REASON, gapSince, observedAt), withheld: true };",
+    to: "WITHHELD_GAP_REASON, gapSince, observedAt) };",
+    test: `${SERVER}/test/coverage-compat-0.10.test.ts`,
+    because: "a current connector prints «went quiet (unclosed)», a word about her session it was never told",
+  },
+  {
+    label: "every agent gap goes on the wire as withheld, told ones included",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "  if (toCount(row?.toldGaps) === 0 && toldLost === 0) {",
+    to: "  if (gaps + lost > 0) {",
+    test: `${SERVER}/test/coverage-instant-privacy.test.ts`,
+    because: "a colleague's own silence, reap or loss is no longer named, so its remedy is lost",
+  },
+  {
+    label: "a coverage row whose reason is new reads unknown and loses its state",
+    file: `${CORE}/src/http/coverage.ts`,
+    from: "  reason: z.enum(COVERAGE_REASONS).catch(\"hub_did_not_report\"),",
+    to: "  reason: z.enum(COVERAGE_REASONS),",
+    test: `${CORE}/test/coverage-wire.test.ts`,
+    because: "the next new word a hub sends costs every caveat it was the reason for",
+  },
+  {
+    label: "a garbled withheld flag costs the whole coverage row",
+    file: `${CORE}/src/http/coverage.ts`,
+    from: "  withheld: z.literal(true).optional().catch(undefined),",
+    to: "  withheld: z.literal(true).optional(),",
+    test: `${CORE}/test/coverage-wire.test.ts`,
+    because: "an additive field read strictly turns an incomplete rung into unknown",
+  },
+  {
+    label: "a withheld gap is rendered by the wire's fixed word",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: "  row.withheld === true ? WITHHELD_GAP_LABEL : (INCOMPLETE_LABELS[row.reason] ?? null);",
+    to: "  INCOMPLETE_LABELS[row.reason] ?? null;",
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because: "the line says her session went quiet «unclosed», which nobody told this connector",
+  },
+  {
+    label: "doctor drops the withheld flag from the coverage detail",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "  const withheld = row.withheld === true ? `, ${WITHHELD_GAP_LABEL}` : \"\";",
+    to: "  const withheld = \"\";",
+    test: `${CLI}/test/coverage-cli.test.ts`,
+    because: "doctor reads «session_silent» as a fact about a session the hub withheld",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -18992,7 +19052,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/ci-status-render.test.ts 3
  * PRINTS: packages/cli/test/conference-cli.test.ts 12
  * PRINTS: packages/cli/test/connector-capture-health.test.ts 3
- * PRINTS: packages/cli/test/coverage-cli.test.ts 5
+ * PRINTS: packages/cli/test/coverage-cli.test.ts 6
  * PRINTS: packages/cli/test/cursor-doctor.test.ts 4
  * PRINTS: packages/cli/test/cursor-init.test.ts 1
  * PRINTS: packages/cli/test/doctor-capture.test.ts 7
@@ -19140,8 +19200,8 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-fire-rate.test.ts 1
  * PRINTS: packages/connector-core/test/coverage-hints.test.ts 2
  * PRINTS: packages/connector-core/test/coverage-registry-walk.test.ts 3
- * PRINTS: packages/connector-core/test/coverage-render.test.ts 21
- * PRINTS: packages/connector-core/test/coverage-wire.test.ts 3
+ * PRINTS: packages/connector-core/test/coverage-render.test.ts 22
+ * PRINTS: packages/connector-core/test/coverage-wire.test.ts 5
  * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 2
  * PRINTS: packages/connector-core/test/detached-branch.test.ts 1
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
@@ -19244,7 +19304,8 @@ interface Outcome {
  * PRINTS: packages/server/test/commit-evidence-opt-out.test.ts 3
  * PRINTS: packages/server/test/conference.test.ts 3
  * PRINTS: packages/server/test/coverage-answer-sessions.test.ts 10
- * PRINTS: packages/server/test/coverage-instant-privacy.test.ts 5
+ * PRINTS: packages/server/test/coverage-compat-0.10.test.ts 2
+ * PRINTS: packages/server/test/coverage-instant-privacy.test.ts 6
  * PRINTS: packages/server/test/coverage-judgeable.test.ts 2
  * PRINTS: packages/server/test/coverage-losses.test.ts 15
  * PRINTS: packages/server/test/coverage-measurement.test.ts 2
