@@ -20,6 +20,8 @@ import {
 import type { TestDeveloper, TestHarness } from "./helpers.ts";
 
 const OBSERVATION = "The token cache keeps the rotated key for an hour";
+/** Records one POST carries, under the hub's MAX_INGEST_BATCH. */
+const INGEST_CHUNK = 50;
 
 const cause = (id: string, evidenceRefs: readonly string[]) =>
   recordEnvelope("claim", validClaimBody({ id, kind: "root_cause", status: "likely_root_cause", evidenceRefs, body: `The kid cache is never invalidated (${id})` }));
@@ -123,6 +125,62 @@ describe("a revision written after the cause, or a teammate's contradiction, un-
 
     // Act + Assert
     expect(await isSolved(harness)).toBe(false);
+  });
+});
+
+describe("one tree's noise never hides another tree's solved label (round 3, M3)", () => {
+  test("210 newer, self-cited causes in tree X leave tree Y solved", async () => {
+    // Arrange — Y holds one backed cause; X a flood of newer causes citing themselves
+    const { harness, nick } = await seeded([recordEnvelope("claim", validClaimBody({ id: "clm_obs", body: OBSERVATION })), cause("clm_cause", ["clm_obs"])]);
+    const LATER = new Date(Date.parse(TEST_START_ISO) + 60_000).toISOString();
+    const flood = Array.from({ length: 210 }, (_, index) =>
+      recordEnvelope(
+        "claim",
+        validClaimBody({ id: `clm_noise_${String(index)}`, workContextId: "wc_noise", kind: "root_cause", status: "likely_root_cause", evidenceRefs: [`clm_noise_${String(index)}`], body: `The noise cause number ${String(index)} cites itself`, createdAt: LATER }),
+      ),
+    );
+    const records = [recordEnvelope("work_context", validWorkContextBody({ id: "wc_noise", title: "Noise" })), ...flood];
+    // In batches under the ingest cap (MAX_INGEST_BATCH)
+    const accepted = await Promise.all(
+      Array.from({ length: Math.ceil(records.length / INGEST_CHUNK) }, (_, chunk) => records.slice(chunk * INGEST_CHUNK, (chunk + 1) * INGEST_CHUNK)).map(
+        async (batch) => (await postRecords(harness, nick, { records: batch })).data?.accepted ?? 0,
+      ),
+    );
+    expect(accepted.reduce((sum, count) => sum + count, 0)).toBe(records.length);
+
+    // Act
+    const solved = await listSolvedInfo(harness.db, [WORK_CONTEXT_ID, "wc_noise"]);
+
+    // Assert
+    expect([...solved.keys()]).toEqual([WORK_CONTEXT_ID]);
+  });
+
+  test("sixty backed causes in tree X leave tree Y's recorded cause in the answer too", async () => {
+    // Arrange — every one of X's causes is backed, so all of them qualify
+    const { harness, nick } = await seeded([recordEnvelope("claim", validClaimBody({ id: "clm_obs", body: OBSERVATION })), cause("clm_cause", ["clm_obs"])]);
+    const many = Array.from({ length: 60 }, (_, index) =>
+      recordEnvelope(
+        "claim",
+        validClaimBody({ id: `clm_busy_${String(index)}`, workContextId: "wc_busy", kind: "root_cause", status: "likely_root_cause", evidenceRefs: ["clm_busy_obs"], body: `The busy cause number ${String(index)} is backed` }),
+      ),
+    );
+    const records = [
+      recordEnvelope("work_context", validWorkContextBody({ id: "wc_busy", title: "Busy" })),
+      recordEnvelope("claim", validClaimBody({ id: "clm_busy_obs", workContextId: "wc_busy", body: "The busy importer drops every second batch on restart" })),
+      ...many,
+    ];
+    const accepted = await Promise.all(
+      Array.from({ length: Math.ceil(records.length / INGEST_CHUNK) }, (_, chunk) => records.slice(chunk * INGEST_CHUNK, (chunk + 1) * INGEST_CHUNK)).map(
+        async (batch) => (await postRecords(harness, nick, { records: batch })).data?.accepted ?? 0,
+      ),
+    );
+    expect(accepted.reduce((sum, count) => sum + count, 0)).toBe(records.length);
+
+    // Act
+    const causes = await listSolvedRootCauses(harness.db, ["wc_busy", WORK_CONTEXT_ID]);
+
+    // Assert
+    expect(causes.get(WORK_CONTEXT_ID)?.claimId).toBe("clm_cause");
   });
 });
 

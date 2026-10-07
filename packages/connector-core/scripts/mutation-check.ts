@@ -19321,6 +19321,22 @@ export const MUTATIONS: readonly Mutation[
     because: "get_diagnosis labels a tree solved on an observation a teammate refuted (M2)",
   },
   {
+    label: "the solved window is one bound across every tree",
+    file: `${SERVER}/src/services/solved.ts`,
+    from: "  const candidates = (await Promise.all(contextIds.map((contextId) => listCandidatesOf(db, [contextId])))).flat();",
+    to: "  const candidates = await listCandidatesOf(db, contextIds);",
+    test: `${SERVER}/test/solved-evidence.test.ts`,
+    because: "210 newer self-cited causes in one tree fill the window and hide the next tree's solved label (round 3, M3)",
+  },
+  {
+    label: "the recorded causes are cut across trees",
+    file: `${SERVER}/src/services/solved.ts`,
+    from: "  const solving = await listSolvingClaims(db, contextIds);\n  return solving.reduce<ReadonlyMap<string, SolvedRootCause>>(",
+    to: "  const solving = (await listSolvingClaims(db, contextIds)).slice(0, 50);\n  return solving.reduce<ReadonlyMap<string, SolvedRootCause>>(",
+    test: `${SERVER}/test/solved-evidence.test.ts`,
+    because: "a tree of sixty backed causes pushes the next tree's recorded cause out of the briefing (M3)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     // RETARGETED (round 3, M7): the query is the prompt's window now.
@@ -19755,7 +19771,7 @@ interface Outcome {
  * PRINTS: packages/server/test/skeleton-sweep.test.ts 35
  * PRINTS: packages/server/test/solved-counts.test.ts 1
  * PRINTS: packages/server/test/solved-cross-repo.test.ts 4
- * PRINTS: packages/server/test/solved-evidence.test.ts 5
+ * PRINTS: packages/server/test/solved-evidence.test.ts 7
  * PRINTS: packages/server/test/solved-fanout.test.ts 2
  * PRINTS: packages/server/test/solved-intent.test.ts 4
  * PRINTS: packages/server/test/solved-probe.test.ts 1

@@ -58,12 +58,14 @@ export const SOLVED_CLAIM_STATUS = "likely_root_cause";
 export const SOLVED_MIN_EVIDENCE_REFS = 1;
 
 /**
- * Read bound on candidate rows per lookup. The caller's id list is already
- * capped, and a tree holds a handful of standing root causes at most, so
- * this is the usual "bounded like every other query" floor rather than a
- * working limit.
+ * Read bound on candidate rows PER CONTEXT (hold-out review round 3, M3). It
+ * used to bound the whole lookup, newest first, BEFORE evidence resolved — so
+ * 210 newer root causes citing themselves in one tree filled the window and
+ * hid the next tree's backed cause, and its solved label with it. Per tree,
+ * one tree's noise can only crowd itself; a tree holds a handful of standing
+ * root causes, so this is the usual "bounded like every other query" floor.
  */
-const SOLVED_CANDIDATE_MAX_ROWS = 200;
+const SOLVED_CANDIDATE_MAX_ROWS_PER_CONTEXT = 50;
 
 /** Same-author revision edge; its TARGET is the retracted claim. */
 const SUPERSEDES_EDGE_KIND = "supersedes";
@@ -122,11 +124,9 @@ const listDeadlocked = async (db: Db, qualifying: readonly SolvingClaim[]): Prom
  * had drifted from this one would be substance injected on a vouch nobody
  * made.
  */
-const listSolvingClaims = async (db: Db, contextIds: readonly string[]): Promise<readonly SolvingClaim[]> => {
-  if (contextIds.length === 0) {
-    return [];
-  }
-  const candidates = await db
+/** The candidate claims of `contextIds`, newest first, within one bound (M3: one tree per call). */
+const listCandidatesOf = (db: Db, contextIds: readonly string[]) =>
+  db
     .select({
       id: claims.id,
       workContextId: claims.workContextId,
@@ -140,7 +140,15 @@ const listSolvingClaims = async (db: Db, contextIds: readonly string[]): Promise
     .from(claims)
     .where(candidateClaimCondition(contextIds))
     .orderBy(desc(claims.createdAt))
-    .limit(SOLVED_CANDIDATE_MAX_ROWS);
+    .limit(SOLVED_CANDIDATE_MAX_ROWS_PER_CONTEXT);
+
+const listSolvingClaims = async (db: Db, contextIds: readonly string[]): Promise<readonly SolvingClaim[]> => {
+  if (contextIds.length === 0) {
+    return [];
+  }
+  // PER TREE (round 3, M3): each bounded on its own, so no tree's flood can
+  // push another tree's cause out of the window before evidence resolves.
+  const candidates = (await Promise.all(contextIds.map((contextId) => listCandidatesOf(db, [contextId])))).flat();
   const resolved = await resolvedEvidenceCounts(db, candidates.map((claim) => claim.id));
   const qualifying = candidates.filter((claim) => (resolved.get(claim.id) ?? 0) >= SOLVED_MIN_EVIDENCE_REFS);
   const deadlocked = await listDeadlocked(db, qualifying);
@@ -199,13 +207,6 @@ export const listSolvedInfo = async (
   }, new Map());
 };
 
-/**
- * Read bound on qualifying root-cause rows per lookup — the same order of
- * magnitude as the candidate bound above, kept as the documented cap the
- * briefing's callers size against.
- */
-export const SOLVED_ROOT_CAUSE_MAX_ROWS = 50;
-
 /** A solved tree's recorded cause, with the label the reader weighs it by. */
 export interface SolvedRootCause {
   readonly body: string;
@@ -246,12 +247,17 @@ export interface SolvedRootCause {
  * ordering key, so the sentence a reader sees and the age printed beside it
  * always describe one claim. Its confidence rides along for the same reason:
  * one claim, one set of labels.
+ *
+ * ONE PER TREE, NEVER A CUT ACROSS TREES (round 3, M3): the answer holds at
+ * most one cause per caller-bounded id, and a cut of the qualifying rows —
+ * a cap of fifty, newest first — let a tree of sixty backed causes push the
+ * next tree's out of it.
  */
 export const listSolvedRootCauses = async (
   db: Db,
   contextIds: readonly string[],
 ): Promise<ReadonlyMap<string, SolvedRootCause>> => {
-  const solving = (await listSolvingClaims(db, contextIds)).slice(0, SOLVED_ROOT_CAUSE_MAX_ROWS);
+  const solving = await listSolvingClaims(db, contextIds);
   return solving.reduce<ReadonlyMap<string, SolvedRootCause>>(
     (newest, claim) =>
       newest.has(claim.workContextId)
