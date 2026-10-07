@@ -108,7 +108,7 @@ PK `(reader_developer_id, muted_developer_id)`. Reader-side only: filters the
 | `repo` | text | normalised remote identity |
 | `branch` | text | |
 | `base_commit` | text | drift is rendered against this |
-| `base_on_default` | boolean NULL | the connector's word at register: was `base_commit` ALREADY reachable from the default branch? NULL = it did not say (a connector from before the field, or git could not answer). Read by the landed rule (§1.5) |
+| `base_on_default` | boolean NULL | the connector's word at register: was `base_commit` ALREADY reachable from the default branch? NULL = it did not say (a connector from before the field, a detached HEAD — never probed, since the rule never lands one — or git could not answer). Read by the landed rule (§1.5) |
 | `base_changed_at` | timestamptz NULL | when the session took `base_commit` (hub clock): set at register, moved by a re-register only onto a new base. The landed rule's age is measured from it; NULL on older rows, read as `started_at` |
 | `status` | text enum `SESSION_STATUSES` | |
 | `started_at` / `last_heartbeat_at` / `ended_at` | timestamptz | |

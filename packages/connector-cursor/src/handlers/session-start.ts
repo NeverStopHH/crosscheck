@@ -102,12 +102,13 @@ export const handleCursorSessionStart = async (
   budget: HookBudget,
 ): Promise<string> => {
   const now = ctx.now();
-  // The title's git calls and the base probe's (was this base already on the
-  // default branch? — the hub never stamps such a context landed) run side
-  // by side, so the probe costs no wall clock of its own.
+  // The base probe (was this base already on the default branch? — the hub
+  // never stamps such a context landed) runs beside the title: two git calls
+  // on a named branch, where the title asks git nothing; skipped on a
+  // detached HEAD, where the title asks twice. At most two either way.
   const [title, baseOnDefault] = await Promise.all([
     resolveFallbackWorkContextTitle(ctx.identity),
-    probeBaseOnDefault(ctx.identity.root, ctx.identity.baseCommit),
+    probeBaseOnDefault(ctx.identity),
   ]);
   const { crosscheckSessionId, developerId } = await registerSessionFlow({
     home: ctx.config.home,

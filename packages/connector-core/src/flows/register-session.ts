@@ -78,9 +78,10 @@ export interface RegisterSessionFlowInput {
   /**
    * Was `baseCommit` already reachable from the default branch? The caller's
    * own probe (capture/landed.ts probeBaseOnDefault), run beside its title
-   * resolution so it costs no wall clock of its own; undefined — git could
-   * not answer, or a recovery path that does not probe — sends nothing, and
-   * the hub then keeps what it had for this base (server services/sessions.ts).
+   * resolution: two git calls on a named branch, none on a detached HEAD.
+   * Undefined — a detached HEAD, a git that could not answer, or a recovery
+   * path that does not probe — sends nothing, and the hub then keeps what it
+   * had for this base (server services/sessions.ts).
    */
   readonly baseOnDefault?: boolean | undefined;
   readonly hubUrl: string;

@@ -95,17 +95,31 @@ const registerFrom = async (
 };
 
 describe("the register carries baseOnDefault", () => {
-  test("a detached checkout whose HEAD is an ancestor of origin/main says true", async () => {
-    // Arrange: the pilot owner's worktree, detached at a commit main holds.
-    const { root, mainSha } = await cloneWithOrigin("register-detached");
-    await git(root, ["checkout", "-q", "--detach", mainSha]);
+  test("a branch cut from main with nothing of its own says true", async () => {
+    // Arrange: a branch whose HEAD is still main's commit.
+    const { root, mainSha } = await cloneWithOrigin("register-cut");
+    await git(root, ["checkout", "-q", "-b", "feat/cut", mainSha]);
 
     // Act
-    const body = await registerFrom(root, `detached@${mainSha.slice(0, 9)}`, mainSha, await probeBaseOnDefault(root, mainSha));
+    const body = await registerFrom(root, "feat/cut", mainSha, await probeBaseOnDefault({ root, baseCommit: mainSha, branch: "feat/cut" }));
 
     // Assert
     expect(body?.["baseCommit"]).toBe(mainSha);
     expect(body?.["baseOnDefault"]).toBe(true);
+  });
+
+  test("a detached checkout at an ancestor of origin/main sends no flag — the hub never lands it by its base", async () => {
+    // Arrange: the pilot owner's worktree, detached at a commit main holds.
+    const { root, mainSha } = await cloneWithOrigin("register-detached");
+    await git(root, ["checkout", "-q", "--detach", mainSha]);
+    const branch = `detached@${mainSha.slice(0, 9)}`;
+
+    // Act
+    const body = await registerFrom(root, branch, mainSha, await probeBaseOnDefault({ root, baseCommit: mainSha, branch }));
+
+    // Assert
+    expect(body?.["baseCommit"]).toBe(mainSha);
+    expect(body !== undefined && "baseOnDefault" in body).toBe(false);
   });
 
   test("a branch whose own commit main does not hold says false", async () => {
@@ -113,7 +127,7 @@ describe("the register carries baseOnDefault", () => {
     const { root, branchSha } = await cloneWithOrigin("register-branch");
 
     // Act
-    const body = await registerFrom(root, "feat/unmerged", branchSha, await probeBaseOnDefault(root, branchSha));
+    const body = await registerFrom(root, "feat/unmerged", branchSha, await probeBaseOnDefault({ root, baseCommit: branchSha, branch: "feat/unmerged" }));
 
     // Assert
     expect(body?.["baseOnDefault"]).toBe(false);
@@ -126,7 +140,7 @@ describe("the register carries baseOnDefault", () => {
     const head = await headOf(root);
 
     // Act
-    const body = await registerFrom(root, "main", head, await probeBaseOnDefault(root, head));
+    const body = await registerFrom(root, "main", head, await probeBaseOnDefault({ root, baseCommit: head, branch: "main" }));
 
     // Assert
     expect(body !== undefined && "baseOnDefault" in body).toBe(false);

@@ -23905,6 +23905,23 @@ export const MUTATIONS: readonly Mutation[
     test: `${ACP}/test/register-base-on-default.test.ts`,
     because: "every ACP session reads as an older connector's, and a base already on main lands on a fresh date",
   },
+  // A detached HEAD is never probed: the hub ignores its answer.
+  {
+    label: "the register probe runs git on a detached HEAD",
+    file: `${CORE}/src/capture/landed.ts`,
+    from: "  if (isDetachedBranch(checkout.branch)) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/landed-capture.test.ts`,
+    because: "every orchestration worktree spends two git calls before its register for an answer the hub discards",
+  },
+  {
+    label: "a detached Claude session sends a flag the hub discards",
+    file: `${CORE}/src/capture/landed.ts`,
+    from: "  if (isDetachedBranch(checkout.branch)) {",
+    to: "  if (false) {",
+    test: `${CONNECTOR}/test/solved-hook.test.ts`,
+    because: "the detached SessionStart pays the probe's wall clock on the path that carries the briefing",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -24084,7 +24101,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
  * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
  * PRINTS: packages/connector-claude/test/settings-merge-removal.test.ts 1
- * PRINTS: packages/connector-claude/test/solved-hook.test.ts 2
+ * PRINTS: packages/connector-claude/test/solved-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/state-reap.test.ts 1
  * PRINTS: packages/connector-claude/test/stop-gate.test.ts 6
  * PRINTS: packages/connector-claude/test/stop-git-touches.test.ts 1
@@ -24153,7 +24170,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/intent-budget.test.ts 1
  * PRINTS: packages/connector-core/test/intent-chain-render.test.ts 1
  * PRINTS: packages/connector-core/test/kit.test.ts 1
- * PRINTS: packages/connector-core/test/landed-capture.test.ts 4
+ * PRINTS: packages/connector-core/test/landed-capture.test.ts 5
  * PRINTS: packages/connector-core/test/landed-changes-completeness.test.ts 26
  * PRINTS: packages/connector-core/test/landed-changes-edges.test.ts 19
  * PRINTS: packages/connector-core/test/landed-changes.test.ts 7

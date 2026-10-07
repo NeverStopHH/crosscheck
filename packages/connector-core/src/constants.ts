@@ -763,10 +763,12 @@ export const STATUS_MAX_ABSENCE_LINES = 20;
  *
  * The REGISTER needs it too since the pilot finding of 2026-10-05: whether
  * the session's base was already on the default branch rides the register
- * body (capture/landed.ts baseReachableFromDefault), so SessionStart resolves
- * the default ref and probes the base BEFORE the register round trip — two
- * calls in sequence, run beside the detached title's two
- * (HEAD_LABEL_GIT_TIMEOUT_MS). Side by side, the pair fits the same slack:
+ * body (capture/landed.ts probeBaseOnDefault), so SessionStart resolves the
+ * default ref and probes the base BEFORE the register round trip — two calls
+ * in sequence, on a named branch only. That is real wall clock there: the
+ * title asks git nothing on a named branch. On a detached HEAD the probe is
+ * skipped and the title's own two (HEAD_LABEL_GIT_TIMEOUT_MS) are the cost.
+ * Either way at most two calls precede the register, inside the same slack:
  *
  * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(2 * c.LANDED_GIT_TIMEOUT_MS <= c.SESSION_START_BUDGET_RATIO * c.HTTP_TIMEOUT_MS - c.HTTP_TIMEOUT_MS)'
  * PRINTS: true

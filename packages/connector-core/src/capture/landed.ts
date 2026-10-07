@@ -1,3 +1,4 @@
+import { isDetachedBranch } from "@crosscheck/schema";
 import type { Envelope, LandedCommitDate } from "@crosscheck/schema";
 
 import {
@@ -65,17 +66,37 @@ export const baseReachableFromDefault = async (
   return (await isAncestorOf(root, baseCommit, defaultRef)) ?? undefined;
 };
 
+/** What the register probe reads about the session's checkout. */
+export interface ProbedCheckout {
+  readonly root: string;
+  readonly baseCommit: string;
+  readonly branch: string;
+}
+
 /**
- * `baseReachableFromDefault` with the default ref resolved here — for a
- * session start that has not resolved it for anything else. Two bounded git
- * calls in sequence (LANDED_GIT_TIMEOUT_MS each); callers run it beside
- * their title resolution so the pair costs no wall clock of its own.
+ * The register's answer for this checkout, or undefined to send none.
+ *
+ * NOT PROBED ON A DETACHED HEAD: the hub never lands a detached session by
+ * its base, whatever it says (server services/landed.ts), so the answer would
+ * cost git calls and buy nothing — not even the default ref is resolved.
+ *
+ * On a named branch: the default ref (from `resolveRef`, so a caller that
+ * already started resolving it shares that call), then the ancestry probe —
+ * two bounded git calls in sequence, LANDED_GIT_TIMEOUT_MS each. The title
+ * builder asks git nothing on a named branch, so these two ARE the
+ * pre-register git cost there; on a detached HEAD it is the title's own two.
+ * Either way at most two such calls precede the register (the
+ * LANDED_GIT_TIMEOUT_MS directive pins the budget).
  */
 export const probeBaseOnDefault = async (
-  root: string,
-  baseCommit: string,
-): Promise<boolean | undefined> =>
-  baseReachableFromDefault(root, baseCommit, await resolveDefaultBranchRef(root));
+  checkout: ProbedCheckout,
+  resolveRef: () => Promise<string | null> = () => resolveDefaultBranchRef(checkout.root),
+): Promise<boolean | undefined> => {
+  if (isDetachedBranch(checkout.branch)) {
+    return undefined;
+  }
+  return baseReachableFromDefault(checkout.root, checkout.baseCommit, await resolveRef());
+};
 
 /** The distinct, sha-shaped candidates one probe checks, rotated (below). */
 const ancestryWindow = (

@@ -529,12 +529,13 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
       },
     };
     const at = now();
-    // The title's git calls and the base probe's (was this base already on
-    // the default branch? — the hub never stamps such a context landed) run
-    // side by side, so the probe costs no wall clock of its own.
+    // The base probe (was this base already on the default branch? — the hub
+    // never stamps such a context landed) runs beside the title: two git
+    // calls on a named branch, where the title asks git nothing; skipped on
+    // a detached HEAD, where the title asks twice. At most two either way.
     const [title, baseOnDefault] = await Promise.all([
       resolveFallbackWorkContextTitle(identity),
-      probeBaseOnDefault(identity.root, identity.baseCommit),
+      probeBaseOnDefault(identity),
     ]);
     const registered = await registerSessionFlow({
       home: config.home,

@@ -231,13 +231,30 @@ describe("baseReachableFromDefault — what register says about its own base", (
     expect(await baseReachableFromDefault(root, "a1b2c3d4", null)).toBeUndefined();
   });
 
-  test("probeBaseOnDefault resolves the default ref itself", async () => {
+  test("probeBaseOnDefault resolves the default ref itself on a named branch", async () => {
     // Arrange
     const { root, mainSha, featureSha } = await makeRepoWithOrigin();
 
     // Act + Assert
-    expect(await probeBaseOnDefault(root, mainSha)).toBe(true);
-    expect(await probeBaseOnDefault(root, featureSha)).toBe(false);
+    expect(await probeBaseOnDefault({ root, baseCommit: mainSha, branch: "feat/cut" })).toBe(true);
+    expect(await probeBaseOnDefault({ root, baseCommit: featureSha, branch: "feat/divergent" })).toBe(false);
+  });
+
+  test("a detached HEAD is never probed — the hub never lands it by its base anyway", async () => {
+    // Arrange: count the default-ref resolutions the probe asks for.
+    const { root, mainSha } = await makeRepoWithOrigin();
+    let resolutions = 0;
+    const resolveRef = (): Promise<string | null> => {
+      resolutions += 1;
+      return Promise.resolve("origin/main");
+    };
+
+    // Act
+    const detached = await probeBaseOnDefault({ root, baseCommit: mainSha, branch: `detached@${mainSha.slice(0, 9)}` }, resolveRef);
+
+    // Assert: no answer and no git — not even the default ref.
+    expect(detached).toBeUndefined();
+    expect(resolutions).toBe(0);
   });
 });
 

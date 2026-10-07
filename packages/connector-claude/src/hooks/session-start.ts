@@ -15,9 +15,9 @@ import {
 } from "@crosscheck/connector-core/capture/commit-evidence.ts";
 import {
   NOTHING_LANDED,
-  baseReachableFromDefault,
   collectLandedReading,
   landedEvidenceRecord,
+  probeBaseOnDefault,
 } from "@crosscheck/connector-core/capture/landed.ts";
 import { UNKNOWN_DEVELOPER_ID } from "@crosscheck/connector-core/capture/records.ts";
 import type { Producer } from "@crosscheck/connector-core/capture/records.ts";
@@ -243,16 +243,16 @@ export const handleSessionStart = async (
   // rides the register body, and a base that was is never stamped landed by
   // a teammate's report. The same promise feeds the landed rider below.
   const defaultBranchRefPromise = resolveDefaultBranchRef(ctx.identity.root);
-  // Detached-aware (trial finding #15): on a worktree session this is up to
-  // two bounded git calls BEFORE the register round trip — see
+  // Detached-aware (trial finding #15): on a worktree session the title is up
+  // to two bounded git calls BEFORE the register round trip — see
   // HEAD_LABEL_GIT_TIMEOUT_MS for why they fit the SessionStart budget. The
-  // base probe's two (default ref, then ancestry) run BESIDE them, so the
-  // pair costs no wall clock of its own (LANDED_GIT_TIMEOUT_MS).
+  // base probe is the other way round: skipped on a detached HEAD (the hub
+  // never lands one by its base), two calls on a named branch, where the
+  // title asks git nothing. Run side by side, at most two such calls precede
+  // the register either way (LANDED_GIT_TIMEOUT_MS).
   const [title, baseOnDefault] = await Promise.all([
     resolveSessionWorkContextTitle(ctx.payload.session_title, ctx.identity),
-    defaultBranchRefPromise.then((ref) =>
-      baseReachableFromDefault(ctx.identity.root, ctx.identity.baseCommit, ref),
-    ),
+    probeBaseOnDefault(ctx.identity, () => defaultBranchRefPromise),
   ]);
   // The §1.3 flow: register (+409 retry) → state file BEFORE any append
   // (reap's aliveness invariant) → work-context record. One implementation,
