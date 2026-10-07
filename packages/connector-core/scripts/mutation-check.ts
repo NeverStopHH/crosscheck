@@ -24138,6 +24138,23 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/ui-approvals.test.ts`,
     because: "the browser blocks passkey.js under the strict CSP, so the person cannot release anything at all",
   },
+  // The presence opt-out hid security events (hub hardening, item 5).
+  {
+    label: "the presence opt-out hides a key rotation from the team",
+    file: `${SERVER}/src/services/events.ts`,
+    from: "  sql`(${inArray(events.kind, [...SECURITY_EVENT_KINDS])} OR NOT EXISTS (",
+    to: "  sql`(false OR NOT EXISTS (",
+    test: `${SERVER}/test/security-events-feed.test.ts`,
+    because: "an agent switches its person's presence off with the API key and its own key rotation vanishes from every feed",
+  },
+  {
+    label: "a work-activity event is exempt from the presence opt-out",
+    file: `${SERVER}/src/constants.ts`,
+    from: "export const SECURITY_EVENT_KINDS: readonly EventKind[] = [EVENT_KINDS.DEVELOPER_KEY_ROTATED];",
+    to: "export const SECURITY_EVENT_KINDS: readonly EventKind[] = [EVENT_KINDS.DEVELOPER_KEY_ROTATED, EVENT_KINDS.SESSION_STARTED];",
+    test: `${SERVER}/test/security-events-feed.test.ts`,
+    because: "an opted-out person's session starts reach every colleague's feed, the activity timeline the opt-out exists to withhold",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -24559,6 +24576,7 @@ interface Outcome {
  * PRINTS: packages/server/test/search-filters.test.ts 10
  * PRINTS: packages/server/test/search-tokens.test.ts 5
  * PRINTS: packages/server/test/search.test.ts 3
+ * PRINTS: packages/server/test/security-events-feed.test.ts 2
  * PRINTS: packages/server/test/session-event-conflict.test.ts 1
  * PRINTS: packages/server/test/session-event-retention.test.ts 2
  * PRINTS: packages/server/test/session-event-seq-kind.test.ts 3

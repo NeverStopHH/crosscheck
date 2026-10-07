@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 2318
+    # PRINTS: 2320
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -417,7 +417,7 @@ jobs:
     # PRINTS: packages/schema/src/session.ts 2
     # PRINTS: packages/schema/src/telemetry-loss.ts 6
     # PRINTS: packages/server/scripts/unland-false-landed.ts 12
-    # PRINTS: packages/server/src/constants.ts 3
+    # PRINTS: packages/server/src/constants.ts 4
     # PRINTS: packages/server/src/db/bootstrap.sql 44
     # PRINTS: packages/server/src/db/client.ts 8
     # PRINTS: packages/server/src/db/schema.ts 1
@@ -470,6 +470,7 @@ jobs:
     # PRINTS: packages/server/src/services/draft-link-cleanup.ts 17
     # PRINTS: packages/server/src/services/drafts.ts 3
     # PRINTS: packages/server/src/services/embedding-backfill.ts 5
+    # PRINTS: packages/server/src/services/events.ts 1
     # PRINTS: packages/server/src/services/evidence-axes.ts 2
     # PRINTS: packages/server/src/services/ghost-overlap.ts 7
     # PRINTS: packages/server/src/services/hint-deliveries.ts 4
@@ -568,7 +569,7 @@ jobs:
     # PRINTS: conference.ts 27
     # PRINTS: config.ts 4
     # PRINTS: connected-repo.ts 3
-    # PRINTS: constants.ts 15
+    # PRINTS: constants.ts 16
     # PRINTS: contradictions.ts 1
     # PRINTS: cost.ts 3
     # PRINTS: counts.ts 1
@@ -609,7 +610,7 @@ jobs:
     # PRINTS: entry.ts 1
     # PRINTS: enums.ts 3
     # PRINTS: envelope.ts 1
-    # PRINTS: events.ts 1
+    # PRINTS: events.ts 2
     # PRINTS: evidence-axes.ts 3
     # PRINTS: exec.ts 1
     # PRINTS: exempt-surfaces.ts 2

@@ -585,6 +585,28 @@ export const EVENT_KINDS = {
 } as const;
 
 export type EventKind = (typeof EVENT_KINDS)[keyof typeof EVENT_KINDS];
+
+/**
+ * THE SECURITY EVENTS: rare changes to a member's credentials, which every
+ * member keeps seeing in the feed even after the subject opts out of presence
+ * (services/events.ts). Without this, an agent holding a person's API key
+ * could switch the person's presence off and so hide its own key rotation
+ * from the team.
+ *
+ * ONLY credential and authority changes belong here, never work activity:
+ * waiver approvals, artifact releases and claims stay filtered, or an
+ * opted-out person's feed rows would be an activity timeline again. Each
+ * kind listed must carry no live-location field (no branch, HEAD, base
+ * commit or heartbeat); `developer_key_rotated` carries the developer id and
+ * `by`. Its instant is the residual visibility.ts names «security».
+ *
+ * Passkey enrolment and revocation, suspension and reinstatement, and other
+ * credential revocations belong here too the day they become feed events.
+ * Today they are not events: passkey enrolments are announced on
+ * /api/passkeys/announcements and /ui/passkeys, which apply no presence
+ * filter at all.
+ */
+export const SECURITY_EVENT_KINDS: readonly EventKind[] = [EVENT_KINDS.DEVELOPER_KEY_ROTATED];
 // ── Agent conferences (VISION.md §2) ────────────────────────────────────────
 
 /**
