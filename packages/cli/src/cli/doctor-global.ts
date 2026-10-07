@@ -23,7 +23,7 @@ import {
   claudeUserSettingsPath,
   isOwnedCommand,
 } from "@crosscheck/connector-claude";
-import { MCP_SERVER_KEY } from "@crosscheck/connector-core/constants.ts";
+import { MCP_SERVER_KEY, SUBAGENT_RETURN_HOOK } from "@crosscheck/connector-core/constants.ts";
 import { isOwnedMcpEntry } from "@crosscheck/connector-core/config/mcp-config.ts";
 import { readTextOrNull } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
@@ -50,7 +50,7 @@ export interface GlobalWiring {
   readonly mcpRegistered: boolean;
   /** Why ~/.claude.json exists but could not be read; null = `mcpRegistered` is a fact. */
   readonly mcpUnreadable: ReadRefusal | null;
-  /** Hook events carrying an owned command in the user settings. */
+  /** Hook events carrying an owned command in the user settings (`hookKeyOf`). */
   readonly hookEvents: readonly string[];
   /** The first owned hook command — what a user-scope hook would run. */
   readonly launcherCommand: string | null;
@@ -85,6 +85,20 @@ export const ownedHookEntries = (
         .map((command) => ({ event, command: String(command) }));
     }),
   );
+
+/**
+ * The SECOND crosscheck entry on PostToolUse (review H1b): the sync
+ * subagent-return hook. An event name alone cannot say whether it is there —
+ * the capture hook already makes PostToolUse "registered" — so doctor names
+ * it by event and subcommand together.
+ */
+export const SUBAGENT_RETURN_KEY = `PostToolUse (${SUBAGENT_RETURN_HOOK})`;
+
+/** What doctor calls an owned entry: its event, or the subagent hook's own key. */
+export const hookKeyOf = (entry: OwnedHookEntry): string =>
+  entry.event === "PostToolUse" && entry.command.trimEnd().endsWith(`hook ${SUBAGENT_RETURN_HOOK}`)
+    ? SUBAGENT_RETURN_KEY
+    : entry.event;
 
 /**
  * Whether a PROJECT-scoped settings file registers crosscheck hooks — the
@@ -129,7 +143,7 @@ export const readGlobalWiring = async (env: Env): Promise<GlobalWiring> => {
     mcpRegistered:
       mcpRead.ok && isOwnedMcpEntry(asRecord(mcpRead.value["mcpServers"])[MCP_SERVER_KEY]),
     mcpUnreadable: mcpRead.ok ? null : mcpRead.reason,
-    hookEvents: hookEntries.map((entry) => entry.event),
+    hookEvents: hookEntries.map(hookKeyOf),
     launcherCommand: hookEntries[0]?.command ?? null,
     statuslineCommand: typeof statusline === "string" ? statusline : null,
   };

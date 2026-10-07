@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { buildSettingsPlan, mergeClaudeSettings } from "../src/index.ts";
+import { POST_TOOL_USE_MATCHER, SUBAGENT_RETURN_MATCHER } from "@crosscheck/connector-core/constants.ts";
 
 const PLAN = buildSettingsPlan("crosscheck", false);
 
@@ -26,7 +27,7 @@ describe("buildSettingsPlan", () => {
    */
   test("SessionEnd carries the explicit 60-second host timeout", () => {
     // Act
-    const entry = PLAN.hooks["SessionEnd"]?.hooks[0];
+    const entry = PLAN.hooks["SessionEnd"]?.[0]?.hooks[0];
 
     // Assert
     expect(entry?.command).toBe("crosscheck hook session-end");
@@ -40,9 +41,55 @@ describe("buildSettingsPlan", () => {
     );
 
     // Assert
-    for (const [event, group] of others) {
-      expect(group.hooks[0]?.timeout, event).toBeUndefined();
+    for (const [event, groups] of others) {
+      for (const group of groups) {
+        expect(group.hooks[0]?.timeout, event).toBeUndefined();
+      }
     }
+  });
+
+  test("PostToolUse carries TWO groups: the async capture hook and the sync subagent-return hook (review H1b)", () => {
+    // Act
+    const [capture, subagent] = PLAN.hooks["PostToolUse"] ?? [];
+
+    // Assert: capture stays async on the edit tools; the relay is sync, on the subagent tools only
+    expect(capture?.matcher).toBe(POST_TOOL_USE_MATCHER);
+    expect(capture?.hooks[0]?.async).toBe(true);
+    expect(subagent?.matcher).toBe(SUBAGENT_RETURN_MATCHER);
+    expect(subagent?.hooks[0]?.command).toBe("crosscheck hook subagent-return");
+    expect(subagent?.hooks[0]?.async).toBeUndefined();
+  });
+
+  test("re-running init keeps exactly the two crosscheck PostToolUse groups", () => {
+    // Arrange
+    const first = mergeClaudeSettings({}, PLAN);
+
+    // Act
+    const second = mergeClaudeSettings(first.settings, PLAN);
+
+    // Assert
+    const groups = (second.settings["hooks"] as Record<string, unknown>)["PostToolUse"] as { matcher: string }[];
+    expect(groups.map((group) => group.matcher)).toEqual([POST_TOOL_USE_MATCHER, SUBAGENT_RETURN_MATCHER]);
+  });
+
+  test("an install from before the subagent-return hook gains it on re-init, and keeps a foreign hook", () => {
+    // Arrange: what init wrote before — one crosscheck PostToolUse group — beside a foreign one
+    const before = {
+      hooks: {
+        PostToolUse: [
+          { matcher: "Write", hooks: [{ type: "command", command: "prettier --write" }] },
+          { matcher: POST_TOOL_USE_MATCHER, hooks: [{ type: "command", command: "crosscheck hook post-tool-use", async: true }] },
+        ],
+      },
+    };
+
+    // Act
+    const upgraded = mergeClaudeSettings(before, PLAN);
+
+    // Assert
+    const commands = ((upgraded.settings["hooks"] as Record<string, unknown>)["PostToolUse"] as { hooks: { command: string }[] }[])
+      .flatMap((group) => group.hooks.map((hook) => hook.command));
+    expect(commands).toEqual(["prettier --write", "crosscheck hook post-tool-use", "crosscheck hook subagent-return"]);
   });
 
   test("re-running init does not duplicate the SessionEnd entry", () => {
@@ -64,7 +111,7 @@ describe("buildSettingsPlan", () => {
   test("registers the Stop hook, async, for the Tier-1 summarizer gate", () => {
     // DESIGN.md §3 Tier 1: the gated Stop-hook summarizer needs the Stop
     // event; async because the hook returns nothing — it gates and spawns.
-    const stop = PLAN.hooks["Stop"];
+    const stop = PLAN.hooks["Stop"]?.[0];
     expect(stop).toBeDefined();
     expect(JSON.stringify(stop)).toContain("crosscheck hook stop");
     expect(stop?.hooks[0]?.async).toBe(true);
@@ -80,9 +127,11 @@ describe("mergeClaudeSettings", () => {
     const groups = (merged.settings["hooks"] as Record<string, unknown>)[
       "PostToolUse"
     ] as readonly Record<string, unknown>[];
-    expect(groups).toHaveLength(2);
+    // The foreign group first, then crosscheck's two (capture + subagent-return).
+    expect(groups).toHaveLength(3);
     expect(JSON.stringify(groups[0])).toContain("prettier --write");
     expect(JSON.stringify(groups[1])).toContain("crosscheck hook post-tool-use");
+    expect(JSON.stringify(groups[2])).toContain("crosscheck hook subagent-return");
   });
 
   test("leaves unrelated settings keys untouched", () => {

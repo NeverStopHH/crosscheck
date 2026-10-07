@@ -1886,6 +1886,27 @@ export const POST_TOOL_USE_MATCHER = "Edit|Write|MultiEdit|NotebookEdit|Bash";
 export const PRE_TOOL_USE_MATCHER = "Edit|Write|MultiEdit|NotebookEdit";
 
 /**
+ * The SECOND PostToolUse registration, and the only SYNC one (review H1b):
+ * `crosscheck hook subagent-return`, matched on the subagent tools only, so
+ * the moment a foreground subagent RETURNS the main thread drains the
+ * collisions it queued — `systemMessage` for the person, `additionalContext`
+ * "next to the tool result" for the agent, in the same turn. The capture
+ * hook stays async on POST_TOOL_USE_MATCHER; this one never fires on an edit.
+ * `Agent` is the tool the hooks reference documents ("##### Agent — Spawns a
+ * subagent"); `Task` is its earlier name, which older Claude Code builds
+ * still send.
+ */
+export const SUBAGENT_RETURN_HOOK = "subagent-return";
+export const SUBAGENT_RETURN_MATCHER = "Agent|Task";
+/**
+ * Tiny on purpose: no hub call, one state read and at most one locked drain.
+ * Two request timeouts, the least that leaves any spare at all: one is the
+ * reserve that carries the output out (HOOK_RESERVE_RATIO), the other the
+ * room the drain is made in — the hook holds a turn the person waits on.
+ */
+export const SUBAGENT_RETURN_BUDGET_RATIO = 2;
+
+/**
  * The PreToolUse tripwire mode (trial finding #25 + Q2). DESIGN §4 makes `ask`
  * normative and it stays the default. But a headless `claude -p` /
  * Agent-SDK subagent — most of Nick's live sessions — cannot show a permission

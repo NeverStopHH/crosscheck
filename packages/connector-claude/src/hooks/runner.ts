@@ -5,6 +5,7 @@ import {
   SESSION_END_BUDGET_RATIO,
   SESSION_START_BUDGET_RATIO,
   STOP_BUDGET_RATIO,
+  SUBAGENT_RETURN_BUDGET_RATIO,
   USER_PROMPT_SUBMIT_BUDGET_RATIO,
 } from "@crosscheck/connector-core/constants.ts";
 import {
@@ -41,7 +42,8 @@ export type HookName =
   | "session-end"
   | "user-prompt-submit"
   | "pre-tool-use"
-  | "stop";
+  | "stop"
+  | "subagent-return";
 
 export interface HookContext {
   readonly payload: HookPayload;
@@ -86,6 +88,7 @@ const BUDGET_RATIOS: Readonly<Record<HookName, number>> = {
   "user-prompt-submit": USER_PROMPT_SUBMIT_BUDGET_RATIO,
   "pre-tool-use": PRE_TOOL_USE_BUDGET_RATIO,
   stop: STOP_BUDGET_RATIO,
+  "subagent-return": SUBAGENT_RETURN_BUDGET_RATIO,
 };
 
 interface ResolvedHookRepo {

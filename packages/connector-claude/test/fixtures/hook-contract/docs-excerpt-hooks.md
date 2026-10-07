@@ -144,6 +144,21 @@ Runs immediately after a tool completes successfully.
 }
 ```
 
+#### PostToolUse decision control
+
+| Field               | Description                                                  |
+| :------------------ | :----------------------------------------------------------- |
+| `additionalContext` | String added to Claude's context alongside the tool result   |
+
+```json
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PostToolUse",
+    "additionalContext": "Additional information for Claude"
+  }
+}
+```
+
 ### PostToolUseFailure
 
 Runs when a tool that started executing fails.

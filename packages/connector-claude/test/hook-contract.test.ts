@@ -50,6 +50,7 @@ import {
   diffContract,
   extractContract,
   main as runContractWatch,
+  sectionBody,
 } from "../scripts/hook-contract-watch.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 import { TEAMMATE_NAME, startSlowHub } from "./fixtures/slow-hub.ts";
@@ -451,8 +452,10 @@ describe("the drift watcher itself", () => {
       // for the union of both. 33 became 35 when the tool-window pairing key
       // added a `tool_use_id` probe to the PreToolUse and PostToolUse sections,
       // and 37 when the collision notice added `agent_id` (Common input
-      // fields) and `systemMessage` (JSON output), both under `### ` headings.
-      37,
+      // fields) and `systemMessage` (JSON output), both under `### ` headings,
+      // and 40 when the sync subagent-return hook added PostToolUse's three
+      // output fields.
+      40,
     ],
   ] as const)(
     "KNOWN LIMIT: a formatting-only rewrite reports drift (%s)",
@@ -539,6 +542,26 @@ describe("the drift watcher itself", () => {
     // something rather than the probe never looking.
     expect(after["PreToolUse.output.permissionDecision"]).toBe(false);
     expect(after["PreToolUse.output.permissionDecisionReason"]).toBe(false);
+  });
+
+  test("the subagent-return hook's PostToolUse output is watched, and a rename is seen (review H1b)", async () => {
+    // Arrange: the one sync PostToolUse registration writes these three back
+    const hooks = await Bun.file(HOOKS_EXCERPT).text();
+    const statusline = await Bun.file(STATUSLINE_EXCERPT).text();
+    const postToolUse = sectionBody(hooks, "PostToolUse");
+
+    // Act
+    const before = extractContract({ hooks, statusline });
+    const after = extractContract({
+      hooks: hooks.replace(postToolUse, postToolUse.replaceAll("additionalContext", "extraContext")),
+      statusline,
+    });
+
+    // Assert
+    expect(before["PostToolUse.output.hookSpecificOutput"]).toBe(true);
+    expect(before["PostToolUse.output.hookEventName"]).toBe(true);
+    expect(before["PostToolUse.output.additionalContext"]).toBe(true);
+    expect(after["PostToolUse.output.additionalContext"]).toBe(false);
   });
 
   test("sees a field that is gone, so a recorded true means something", async () => {

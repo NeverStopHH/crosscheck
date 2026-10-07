@@ -976,7 +976,7 @@ export const MUTATIONS: readonly Mutation[
     // capture goes silent and the report stays green.
     label: "the failure event stops being registered",
     file: `${CONNECTOR}/src/cli/settings-merge.ts`,
-    from: "      PostToolUseFailure: group(`${prefix} hook post-tool-use-failure`),\n",
+    from: "      PostToolUseFailure: [group(`${prefix} hook post-tool-use-failure`)],\n",
     to: "",
     test: `${CLI}/test/doctor-global.test.ts`,
     because:
@@ -1778,7 +1778,7 @@ export const MUTATIONS: readonly Mutation[
     // so a machine with no install at all reads "via global install".
     label: "the hooks check trusts a global install that is not there",
     file: `${CLI}/src/cli/doctor.ts`,
-    from: "  REQUIRED_HOOK_EVENTS.every((event) => wiring.hookEvents.includes(event));",
+    from: "  REQUIRED_HOOK_KEYS.every((key) => wiring.hookEvents.includes(key));",
     to: "  wiring.hookEvents.length >= 0;",
     test: `${CLI}/test/doctor-global.test.ts`,
     because:
@@ -23788,6 +23788,55 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/collision-notice.test.ts`,
     because: "the person reads five overlaps as all of them, and the sixth teammate is never named or counted",
   },
+  // ── Review of feat/collision-visible, H1b: the same turn, not the next prompt ──
+  {
+    label: "init stops registering the subagent-return hook",
+    file: `${CONNECTOR}/src/cli/settings-merge.ts`,
+    from: "        group(`${prefix} hook ${SUBAGENT_RETURN_HOOK}`, SUBAGENT_RETURN_MATCHER),\n",
+    to: "",
+    test: `${CONNECTOR}/test/settings-merge.test.ts`,
+    because: "a foreground subagent's collision waits for the person's next prompt, after the reply that should have mentioned it",
+  },
+  {
+    label: "the subagent-return hook is registered async",
+    file: `${CONNECTOR}/src/cli/settings-merge.ts`,
+    from: "        group(`${prefix} hook ${SUBAGENT_RETURN_HOOK}`, SUBAGENT_RETURN_MATCHER),",
+    to: "        group(`${prefix} hook ${SUBAGENT_RETURN_HOOK}`, SUBAGENT_RETURN_MATCHER, true),",
+    test: `${CONNECTOR}/test/settings-merge.test.ts`,
+    because: "an async hook's systemMessage is shown to nobody and its context reaches the agent a turn late",
+  },
+  {
+    label: "a returning subagent hands its collision to nobody",
+    file: `${CONNECTOR}/src/hooks/subagent-return.ts`,
+    from: "  return relay.agent.length === 0",
+    to: "  return true",
+    test: `${CONNECTOR}/test/subagent-return-hook.test.ts`,
+    because: "the hook fires when the subagent returns and says nothing, so the main thread replies without the overlap",
+  },
+  {
+    label: "the subagent-return hook name runs no handler",
+    file: `${CONNECTOR}/src/hooks/index.ts`,
+    from: "  \"subagent-return\": handleSubagentReturn,",
+    to: "  \"subagent-return\": async () => \"\",",
+    test: `${CONNECTOR}/test/subagent-return-hook.test.ts`,
+    because: "the registered command exits 0 in silence on every subagent return",
+  },
+  {
+    label: "doctor cannot tell the subagent-return hook from the capture hook",
+    file: `${CLI}/src/cli/doctor-global.ts`,
+    from: "  entry.event === \"PostToolUse\" && entry.command.trimEnd().endsWith(`hook ${SUBAGENT_RETURN_HOOK}`)",
+    to: "  false",
+    test: `${CLI}/test/doctor-global.test.ts`,
+    because: "a fresh install reads as missing the hook it just wrote, and an old one reads as complete",
+  },
+  {
+    label: "doctor does not require the subagent-return hook",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "const REQUIRED_HOOK_KEYS: readonly string[] = [...REQUIRED_HOOK_EVENTS, SUBAGENT_RETURN_KEY];",
+    to: "const REQUIRED_HOOK_KEYS: readonly string[] = [...REQUIRED_HOOK_EVENTS];",
+    test: `${CLI}/test/doctor-global.test.ts`,
+    because: "every install from before it passes, and its subagents' collisions keep waiting for the next prompt",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -23852,7 +23901,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-ci.test.ts 3
  * PRINTS: packages/cli/test/doctor-claim-binding.test.ts 4
  * PRINTS: packages/cli/test/doctor-evidence-axes.test.ts 1
- * PRINTS: packages/cli/test/doctor-global.test.ts 3
+ * PRINTS: packages/cli/test/doctor-global.test.ts 5
  * PRINTS: packages/cli/test/doctor-home-repo.test.ts 3
  * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1
  * PRINTS: packages/cli/test/doctor-last-sync.test.ts 1
@@ -23969,12 +24018,14 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
  * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
  * PRINTS: packages/connector-claude/test/settings-merge-removal.test.ts 1
+ * PRINTS: packages/connector-claude/test/settings-merge.test.ts 2
  * PRINTS: packages/connector-claude/test/solved-hook.test.ts 1
  * PRINTS: packages/connector-claude/test/state-reap.test.ts 1
  * PRINTS: packages/connector-claude/test/stop-gate.test.ts 6
  * PRINTS: packages/connector-claude/test/stop-git-touches.test.ts 1
  * PRINTS: packages/connector-claude/test/stop-hook.test.ts 2
  * PRINTS: packages/connector-claude/test/stop-latency.test.ts 1
+ * PRINTS: packages/connector-claude/test/subagent-return-hook.test.ts 2
  * PRINTS: packages/connector-claude/test/summarizer-argv.test.ts 3
  * PRINTS: packages/connector-claude/test/summarizer-child-guard.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-worker-env.test.ts 1

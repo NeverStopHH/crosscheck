@@ -6,6 +6,8 @@
 import {
   POST_TOOL_USE_MATCHER,
   PRE_TOOL_USE_MATCHER,
+  SUBAGENT_RETURN_HOOK,
+  SUBAGENT_RETURN_MATCHER,
 } from "@crosscheck/connector-core/constants.ts";
 /**
  * Matches every launcher form `init` resolves on its OWN, and ONLY those —
@@ -61,7 +63,8 @@ export interface StatuslineEntry {
 }
 
 export interface SettingsPlan {
-  readonly hooks: Readonly<Record<string, MatcherGroup>>;
+  /** Per event, the groups crosscheck owns — PostToolUse carries two. */
+  readonly hooks: Readonly<Record<string, readonly MatcherGroup[]>>;
   readonly statusLine: StatuslineEntry;
   readonly forceStatusline: boolean;
 }
@@ -103,12 +106,12 @@ const stripOwnedHooks = (
 
 const mergeEvent = (
   existing: unknown,
-  ours: MatcherGroup,
+  ours: readonly MatcherGroup[],
 ): readonly unknown[] => {
   const preserved = asGroups(existing)
     .map(stripOwnedHooks)
     .filter((group): group is Record<string, unknown> => group !== null);
-  return [...preserved, ours];
+  return [...preserved, ...ours];
 };
 
 const mergeStatusline = (
@@ -141,9 +144,9 @@ export const mergeClaudeSettings = (
   const mergedHooks = Object.entries(plan.hooks).reduce<
     Record<string, unknown>
   >(
-    (hooks, [event, group]) => ({
+    (hooks, [event, groups]) => ({
       ...hooks,
-      [event]: mergeEvent(existingHooks[event], group),
+      [event]: mergeEvent(existingHooks[event], groups),
     }),
     { ...existingHooks },
   );
@@ -288,18 +291,21 @@ export const buildSettingsPlan = (
   });
   return {
     hooks: {
-      SessionStart: group(`${prefix} hook session-start`),
-      PostToolUse: group(
-        `${prefix} hook post-tool-use`,
-        POST_TOOL_USE_MATCHER,
-        true,
-      ),
+      SessionStart: [group(`${prefix} hook session-start`)],
+      PostToolUse: [
+        group(`${prefix} hook post-tool-use`, POST_TOOL_USE_MATCHER, true),
+        // The one SYNC PostToolUse entry (review H1b), on the subagent tools
+        // only: a foreground subagent's queued collision reaches the person
+        // and the main thread in the turn it returns, which an async hook's
+        // output never does (constants.ts SUBAGENT_RETURN_HOOK).
+        group(`${prefix} hook ${SUBAGENT_RETURN_HOOK}`, SUBAGENT_RETURN_MATCHER),
+      ],
       // SYNC and unmatched: the failure event carries `additionalContext`
       // (an async hook's response is ignored), and unlike PostToolUse it is
       // not filtered by tool name — a failure is worth a fingerprint
       // whatever produced it, and the payload carries no file path to
       // capture, so the edit-tool matcher would only lose signal.
-      PostToolUseFailure: group(`${prefix} hook post-tool-use-failure`),
+      PostToolUseFailure: [group(`${prefix} hook post-tool-use-failure`)],
       /**
        * The one entry with an explicit timeout (trial finding M10).
        *
@@ -324,16 +330,16 @@ export const buildSettingsPlan = (
        * risk of a slower exit — and mixing them would make an incident
        * impossible to attribute.
        */
-      SessionEnd: group(`${prefix} hook session-end`, undefined, false, 60),
+      SessionEnd: [group(`${prefix} hook session-end`, undefined, false, 60)],
       // The injection pipeline (DESIGN.md §4): both SYNC, deliberately — one
       // returns additionalContext, the other a permission decision, and an
       // async hook can deliver neither.
-      UserPromptSubmit: group(`${prefix} hook user-prompt-submit`),
-      PreToolUse: group(`${prefix} hook pre-tool-use`, PRE_TOOL_USE_MATCHER),
+      UserPromptSubmit: [group(`${prefix} hook user-prompt-submit`)],
+      PreToolUse: [group(`${prefix} hook pre-tool-use`, PRE_TOOL_USE_MATCHER)],
       // The Tier-1 summarizer gate (DESIGN.md §3 Tier 1): ASYNC, because the
       // hook returns nothing — it gates deterministically and spawns the
       // detached worker; the model must never wait on it.
-      Stop: group(`${prefix} hook stop`, undefined, true),
+      Stop: [group(`${prefix} hook stop`, undefined, true)],
     },
     statusLine: { type: "command", command: `${prefix} statusline` },
     forceStatusline,

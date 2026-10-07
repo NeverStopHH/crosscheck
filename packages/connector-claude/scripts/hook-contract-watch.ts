@@ -24,7 +24,7 @@
  *   bun test packages/connector-claude/test/hook-contract.test.ts
  *
  *   field names published in bold rather than in backticks   6 observations flip
- *   every heading promoted one level (`###` → `####`)       37 observations flip
+ *   every heading promoted one level (`###` → `####`)       40 observations flip
  *
  * That direction is a false alarm, not a missed change, so it fails safe: the
  * job goes red, somebody reads the reference and re-records with --write. The
@@ -202,6 +202,25 @@ export const HOOK_PROBES: readonly FieldProbe[] = [
     key: "PostToolUse.input.file_path",
     section: "PostToolUse",
     field: "file_path",
+  },
+  // THE ONE SYNC PostToolUse REGISTRATION writes these back (review H1b,
+  // hooks/subagent-return.ts): a foreground subagent's collision, next to the
+  // tool result, in the turn it returned. The capture hook is async and
+  // writes nothing.
+  {
+    key: "PostToolUse.output.hookSpecificOutput",
+    section: "PostToolUse",
+    field: "hookSpecificOutput",
+  },
+  {
+    key: "PostToolUse.output.hookEventName",
+    section: "PostToolUse",
+    field: "hookEventName",
+  },
+  {
+    key: "PostToolUse.output.additionalContext",
+    section: "PostToolUse",
+    field: "additionalContext",
   },
   // THE WINDOW PAIRING KEY, read by both halves of the bracket (core
   // state/tool-window-key.ts). Without it no window is opened and every Claude

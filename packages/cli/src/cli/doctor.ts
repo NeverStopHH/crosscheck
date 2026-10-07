@@ -238,7 +238,9 @@ import { isOwnedMcpEntry } from "@crosscheck/connector-core/config/mcp-config.ts
 import type { McpServerEntry } from "@crosscheck/connector-core/config/mcp-config.ts";
 import { claudeUserMcpPath, isOwnedCommand } from "@crosscheck/connector-claude";
 import {
+  SUBAGENT_RETURN_KEY,
   globalInstallChecks,
+  hookKeyOf,
   ownedHookEntries,
   readGlobalWiring,
   readProjectWiring,
@@ -403,13 +405,22 @@ const settingsOnly = (checks: readonly Check[]): SettingsInspection => ({
 const REQUIRED_HOOK_EVENTS = REGISTERED_HOOK_EVENT_NAMES;
 
 /**
+ * What `hooks registered` requires: every event above, and the sync
+ * subagent-return hook beside PostToolUse's capture hook (review H1b), which
+ * the event name alone cannot vouch for (doctor-global.ts `hookKeyOf`). The
+ * firing line keeps REQUIRED_HOOK_EVENTS: that hook fires only when a
+ * subagent returns, and "never" there is no symptom.
+ */
+const REQUIRED_HOOK_KEYS: readonly string[] = [...REQUIRED_HOOK_EVENTS, SUBAGENT_RETURN_KEY];
+
+/**
  * Whether the user-scope install registers every hook the project check
  * requires — the condition under which a repo with no project hooks is
  * still fully wired (finding #13: the project checks predate `init
  * --global` and read a healthy global-only machine as broken).
  */
 const globalCoversHooks = (wiring: GlobalWiring): boolean =>
-  REQUIRED_HOOK_EVENTS.every((event) => wiring.hookEvents.includes(event));
+  REQUIRED_HOOK_KEYS.every((key) => wiring.hookEvents.includes(key));
 
 /**
  * The hooks line when the PROJECT scope registers nothing: PASS when user
@@ -426,8 +437,8 @@ const hooksViaScopes = (wiring: GlobalWiring, projectDetail: string): Check => {
     );
   }
   if (wiring.hookEvents.length > 0) {
-    const missing = REQUIRED_HOOK_EVENTS.filter(
-      (event) => !wiring.hookEvents.includes(event),
+    const missing = REQUIRED_HOOK_KEYS.filter(
+      (key) => !wiring.hookEvents.includes(key),
     );
     return check(
       "FAIL",
@@ -510,11 +521,11 @@ const checkSettings = async (
     settings.data as Record<string, unknown>,
   );
 
-  const missing = REQUIRED_HOOK_EVENTS.filter(
-    (event) => !ownedCommands.some((entry) => entry.event === event),
+  const missing = REQUIRED_HOOK_KEYS.filter(
+    (key) => !ownedCommands.some((entry) => hookKeyOf(entry) === key),
   );
   const unexpected = ownedCommands.filter(
-    (entry) => !(REQUIRED_HOOK_EVENTS as readonly string[]).includes(entry.event),
+    (entry) => !REQUIRED_HOOK_KEYS.includes(hookKeyOf(entry)),
   );
   // A SYMPTOM AND THE REMEDY, like its user-scope sibling and like the
   // launcher line printed under it. This is not a rare message: adding an
@@ -537,9 +548,9 @@ const checkSettings = async (
           ? check(
               "WARN",
               "hooks registered",
-              `unexpected crosscheck entries: ${unexpected.map((entry) => entry.event).join(", ")}`,
+              `unexpected crosscheck entries: ${unexpected.map(hookKeyOf).join(", ")}`,
             )
-          : check("PASS", "hooks registered", REQUIRED_HOOK_EVENTS.join(", "));
+          : check("PASS", "hooks registered", REQUIRED_HOOK_KEYS.join(", "));
 
   const statuslineCommand = settings.data.statusLine?.command;
   const statuslineCheck =
