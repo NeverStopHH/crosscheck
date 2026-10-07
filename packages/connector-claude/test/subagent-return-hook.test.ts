@@ -10,6 +10,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
 import { runHook } from "../src/index.ts";
+import { prepareHook } from "../src/hooks/runner.ts";
+import { handleSubagentReturn } from "../src/hooks/subagent-return.ts";
 import {
   COLLISION_RELAY_SENTENCE,
   SUBAGENT_RELAY_HEADER,
@@ -39,6 +41,9 @@ import { CANDIDATE_CONTEXT_ID, TEAMMATE_DEVELOPER_ID } from "../../connector-cor
 
 /** Two past the person's line cap. */
 const SEVEN = 7;
+
+/** A budget with time to spare, so only the payload decides. */
+const AMPLE_SPARE_MS = 60_000;
 
 afterEach(cleanupCollisionFixtures);
 
@@ -220,6 +225,23 @@ describe("a foreground subagent's return", () => {
     expect(state?.collisionNotices?.some((group) => group.key === nickKey && group.name === "Nick")).toBe(true);
     expect(state?.collisionRelayQueue).toContain(nickKey);
     expect(state?.collisionRelayDropped).toBe(1);
+  });
+
+  test("the drain itself leaves the queue for the main thread on a subagent's payload, past the runner's shortcut (reviewer mutation R8)", async () => {
+    // Arrange: the runner answers an `agent_id` fire before any handler runs
+    // (round 2, M2), so the handler is driven directly — the drain's own
+    // guard is what stands between a nested return and the main thread's queue
+    const fix = await collisionFixture("sr-drain-guard");
+    await runHook("pre-tool-use", editPayload(fix.repo, OVERLAP_FILE, SUBAGENT), fix.env);
+    const ctx = await prepareHook(agentReturned(fix.repo, SUBAGENT), fix.env);
+
+    // Act
+    const output = ctx === null ? "no context" : await handleSubagentReturn(ctx, { spareMs: () => AMPLE_SPARE_MS });
+
+    // Assert
+    expect(output).toBe("");
+    const state = await readSessionState(fix.home, SESSION_ID);
+    expect(state?.collisionRelayQueue).toHaveLength(1);
   });
 
   test("a subagent's OWN subagent returning leaves the queue for the main thread", async () => {
