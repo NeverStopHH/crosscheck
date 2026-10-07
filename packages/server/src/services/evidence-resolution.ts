@@ -21,14 +21,20 @@ import type { Db } from "../db/client.ts";
 /** Same-author revision edge; its TARGET is the claim revised away. */
 const SUPERSEDES_EDGE_KIND = "supersedes";
 
+/** Disagreement edge; on a cited claim or its head it un-backs (round 3, M2). */
+const CONTRADICTS_EDGE_KIND = "contradicts";
+
 type ResolvedHeadRow = {
   readonly citing_id: string;
+  readonly citing_created_at: string;
   readonly cited_id: string;
   readonly head_id: string;
   readonly kind: string;
   readonly status: string;
   readonly provenance: string;
   readonly body: string;
+  readonly head_created_at: string;
+  readonly is_contradicted: boolean;
 };
 
 const headsOfRefs = (db: Db, claimIds: readonly string[]) =>
@@ -47,7 +53,13 @@ const headsOfRefs = (db: Db, claimIds: readonly string[]) =>
       JOIN claim_edges AS revision ON revision.to_claim_id = chain.node_id AND revision.kind = ${SUPERSEDES_EDGE_KIND}
       WHERE chain.depth < ${REVISION_MAX_DEPTH}
     )
-    SELECT DISTINCT chain.citing_id, chain.cited_id, head.id AS head_id, head.kind, head.status, head.provenance, head.body
+    SELECT DISTINCT chain.citing_id, to_json(citing.created_at) #>> '{}' AS citing_created_at,
+      chain.cited_id, head.id AS head_id, head.kind, head.status, head.provenance, head.body,
+      to_json(head.created_at) #>> '{}' AS head_created_at,
+      EXISTS (
+        SELECT 1 FROM claim_edges AS contra
+        WHERE contra.kind = ${CONTRADICTS_EDGE_KIND} AND contra.to_claim_id IN (chain.cited_id, head.id)
+      ) AS is_contradicted
     FROM chain
     JOIN claims AS head ON head.id = chain.node_id
     JOIN claims AS citing ON citing.id = chain.citing_id
@@ -71,12 +83,14 @@ export const resolvedEvidenceCounts = async (
   }
   const result = await headsOfRefs(db, claimIds);
   const resolved = result.rows.filter((row) =>
-    isEvidenceFor(row.citing_id, row.cited_id, {
+    isEvidenceFor({ id: row.citing_id, createdAt: row.citing_created_at }, row.cited_id, {
       id: row.head_id,
       kind: row.kind,
       status: row.status,
       provenance: row.provenance,
       body: row.body,
+      createdAt: row.head_created_at,
+      isContradicted: row.is_contradicted,
     }),
   );
   const refsByClaim = resolved.reduce<ReadonlyMap<string, ReadonlySet<string>>>(

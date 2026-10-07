@@ -17599,7 +17599,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a claim's reference to itself counts as evidence",
     file: `${SCHEMA}/src/evidence-resolution.ts`,
-    from: "  citedId !== citingId &&\n  head.id !== citingId &&\n",
+    // RETARGETED (round 3, M2): the rule reads the citing claim, its id and its time.
+    from: "  citedId !== citing.id &&\n  head.id !== citing.id &&\n",
     to: "",
     test: `${SERVER}/test/hint-evidence-backed.test.ts`,
     because: "a root cause that cites its own id is evidence-backed and pushed as substance",
@@ -18748,7 +18749,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the connector's solved mirror counts stored refs",
     file: `${CORE}/src/mcp/render.ts`,
-    from: "      resolvedRefsInTree(claim, diagnosis.claims, supersedes) > 0 &&",
+    // RETARGETED (round 3, M2): the mirror reads the tree's contradictions too.
+    from: "      resolvedRefsInTree(claim, diagnosis.claims, supersedes, contradicted) > 0 &&",
     to: "      claim.evidenceRefs.length > 0 &&",
     test: `${CORE}/test/mcp-solved-render.test.ts`,
     because: "get_diagnosis labels a tree solved that the hub does not (M2)",
@@ -19279,6 +19281,46 @@ export const MUTATIONS: readonly Mutation[
     because: "an observation of \"thanks thanks thanks\" is evidence, and the root cause citing it reads SOLVED (M1)",
   },
   {
+    label: "a head written after the citing claim still backs it",
+    file: `${SCHEMA}/src/evidence-resolution.ts`,
+    from: "  isNoNewerThan(head.createdAt, citing.createdAt) &&\n",
+    to: "",
+    test: `${SCHEMA}/test/evidence-resolution.test.ts`,
+    because: "\"Retracted: the 429s came from our own proxy\" is an observation with content and keeps the root cause backed (round 3, M2)",
+  },
+  {
+    label: "a contradicted head still backs",
+    file: `${SCHEMA}/src/evidence-resolution.ts`,
+    from: "  !head.isContradicted &&\n",
+    to: "",
+    test: `${SCHEMA}/test/evidence-resolution.test.ts`,
+    because: "a teammate's \"that is not so\" on the cited observation leaves the tree SOLVED (M2)",
+  },
+  {
+    label: "the hub never reads a contradicts edge on evidence",
+    file: `${SERVER}/src/services/evidence-resolution.ts`,
+    from: "WHERE contra.kind = ${CONTRADICTS_EDGE_KIND} AND contra.to_claim_id IN (chain.cited_id, head.id)",
+    to: "WHERE FALSE",
+    test: `${SERVER}/test/solved-evidence.test.ts`,
+    because: "the solved label stands on an observation a teammate refuted (M2)",
+  },
+  {
+    label: "the hub reads the head as old as the citing claim",
+    file: `${SERVER}/src/services/evidence-resolution.ts`,
+    from: "      to_json(head.created_at) #>> '{}' AS head_created_at,",
+    to: "      to_json(citing.created_at) #>> '{}' AS head_created_at,",
+    test: `${SERVER}/test/solved-evidence.test.ts`,
+    because: "a retraction written after the cause keeps it backed, since its time is never read (M2)",
+  },
+  {
+    label: "the solved mirror never reads a contradicts edge on evidence",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: "isEvidenceFor(claim, ref, { ...head, isContradicted: contradicted.has(ref) || contradicted.has(head.id) })",
+    to: "isEvidenceFor(claim, ref, { ...head, isContradicted: false })",
+    test: `${CORE}/test/mcp-solved-render.test.ts`,
+    because: "get_diagnosis labels a tree solved on an observation a teammate refuted (M2)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     // RETARGETED (round 3, M7): the query is the prompt's window now.
@@ -19570,7 +19612,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/mcp-render.test.ts 13
  * PRINTS: packages/connector-core/test/mcp-seq-e2e.test.ts 2
  * PRINTS: packages/connector-core/test/mcp-seq.test.ts 8
- * PRINTS: packages/connector-core/test/mcp-solved-render.test.ts 2
+ * PRINTS: packages/connector-core/test/mcp-solved-render.test.ts 3
  * PRINTS: packages/connector-core/test/mcp-tools.test.ts 4
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
@@ -19616,7 +19658,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/causal-guarantees.test.ts 7
  * PRINTS: packages/schema/test/claim.test.ts 1
- * PRINTS: packages/schema/test/evidence-resolution.test.ts 4
+ * PRINTS: packages/schema/test/evidence-resolution.test.ts 6
  * PRINTS: packages/schema/test/file-ref.test.ts 5
  * PRINTS: packages/schema/test/harness-turn.test.ts 16
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
@@ -19713,7 +19755,7 @@ interface Outcome {
  * PRINTS: packages/server/test/skeleton-sweep.test.ts 35
  * PRINTS: packages/server/test/solved-counts.test.ts 1
  * PRINTS: packages/server/test/solved-cross-repo.test.ts 4
- * PRINTS: packages/server/test/solved-evidence.test.ts 3
+ * PRINTS: packages/server/test/solved-evidence.test.ts 5
  * PRINTS: packages/server/test/solved-fanout.test.ts 2
  * PRINTS: packages/server/test/solved-intent.test.ts 4
  * PRINTS: packages/server/test/solved-probe.test.ts 1

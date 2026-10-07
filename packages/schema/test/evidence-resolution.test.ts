@@ -7,7 +7,10 @@
 import { describe, expect, test } from "bun:test";
 
 import { isEvidenceFor, revisionHeads } from "../src/evidence-resolution.ts";
-import type { CitedHead } from "../src/evidence-resolution.ts";
+import type { CitedHead, CitingClaim } from "../src/evidence-resolution.ts";
+
+const CITED_AT = "2026-09-01T08:00:00.000Z";
+const CITING: CitingClaim = { id: "clm_cause", createdAt: "2026-09-01T09:00:00.000Z" };
 
 const OBSERVATION: CitedHead = {
   id: "clm_obs",
@@ -15,6 +18,8 @@ const OBSERVATION: CitedHead = {
   status: "proposed",
   provenance: "declared",
   body: "The refresh token cache keeps the rotated key for an hour.",
+  createdAt: CITED_AT,
+  isContradicted: false,
 };
 
 describe("a cited head counts as evidence", () => {
@@ -22,8 +27,9 @@ describe("a cited head counts as evidence", () => {
     ["a declared observation with content", OBSERVATION],
     ["a piece of evidence", { ...OBSERVATION, kind: "evidence" }],
     ["a partially confirmed observation", { ...OBSERVATION, status: "partially_confirmed" }],
+    ["a head as old as the citing claim", { ...OBSERVATION, createdAt: CITING.createdAt }],
   ])("%s", (_, head) => {
-    expect(isEvidenceFor("clm_cause", "clm_obs", head)).toBe(true);
+    expect(isEvidenceFor(CITING, "clm_obs", head)).toBe(true);
   });
 });
 
@@ -42,16 +48,19 @@ describe("a cited head that is not evidence backs nothing", () => {
     ["ok, three times", { ...OBSERVATION, body: "ok ok ok" }],
     ["one word repeated", { ...OBSERVATION, body: "asdf asdf asdf" }],
     ["two content words beside a steering one", { ...OBSERVATION, body: "Confirmed, works fine." }],
+    ["a head written after the citing claim — a revision only weakens (round 3, M2)", { ...OBSERVATION, createdAt: "2026-09-01T10:00:00.000Z" }],
+    ["a head a teammate contradicted (round 3, M2)", { ...OBSERVATION, isContradicted: true }],
+    ["a head whose time nobody can read — fail closed", { ...OBSERVATION, createdAt: "not a time" }],
   ])("%s", (_, head) => {
-    expect(isEvidenceFor("clm_cause", "clm_obs", head)).toBe(false);
+    expect(isEvidenceFor(CITING, "clm_obs", head)).toBe(false);
   });
 
   test("the citing claim itself", () => {
-    expect(isEvidenceFor("clm_obs", "clm_obs", OBSERVATION)).toBe(false);
+    expect(isEvidenceFor({ ...CITING, id: "clm_obs" }, "clm_obs", OBSERVATION)).toBe(false);
   });
 
   test("a ref whose chain resolves to the citing claim — a revision citing what it retracts", () => {
-    expect(isEvidenceFor("clm_obs", "clm_old", OBSERVATION)).toBe(false);
+    expect(isEvidenceFor({ ...CITING, id: "clm_obs" }, "clm_old", OBSERVATION)).toBe(false);
   });
 });
 

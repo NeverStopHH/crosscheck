@@ -1079,6 +1079,7 @@ const resolvedRefsInTree = (
   claim: Diagnosis["claims"][number],
   claims: Diagnosis["claims"],
   supersedes: Diagnosis["edges"],
+  contradicted: ReadonlySet<string>,
 ): number => {
   const byId = new Map(claims.map((member) => [member.id, member]));
   const successorsOf = (id: string): readonly string[] =>
@@ -1086,7 +1087,11 @@ const resolvedRefsInTree = (
   return claim.evidenceRefs.filter((ref) =>
     revisionHeads(ref, successorsOf).some((headId) => {
       const head = byId.get(headId);
-      return head !== undefined && isEvidenceFor(claim.id, ref, head);
+      // A contradicts edge on what was cited or on its head un-backs it (round 3, M2).
+      return (
+        head !== undefined &&
+        isEvidenceFor(claim, ref, { ...head, isContradicted: contradicted.has(ref) || contradicted.has(head.id) })
+      );
     }),
   ).length;
 };
@@ -1099,11 +1104,14 @@ export const solvedAtFromTree = (
   }
   const supersedes = diagnosis.edges.filter((edge) => edge.kind === SUPERSEDES_EDGE_KIND);
   const supersededIds = new Set(supersedes.map((edge) => edge.toClaimId));
+  const contradicted = new Set(
+    diagnosis.edges.filter((edge) => edge.kind === CONTRADICTS_EDGE_KIND).map((edge) => edge.toClaimId),
+  );
   const qualifying = diagnosis.claims.filter(
     (claim) =>
       claim.status === SOLVED_CLAIM_STATUS &&
       claim.provenance === SOLVED_CLAIM_PROVENANCE &&
-      resolvedRefsInTree(claim, diagnosis.claims, supersedes) > 0 &&
+      resolvedRefsInTree(claim, diagnosis.claims, supersedes, contradicted) > 0 &&
       !supersededIds.has(claim.id),
   );
   const qualifyingIds = new Set(qualifying.map((claim) => claim.id));

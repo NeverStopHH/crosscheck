@@ -11,6 +11,7 @@ import {
   createHarnessWithSession,
   postRecords,
   recordEnvelope,
+  TEST_START_ISO,
   validClaimBody,
   validClaimEdgeBody,
   validWorkContextBody,
@@ -77,6 +78,50 @@ describe("a tree is solved only by a root cause whose evidence resolves", () => 
 
     // Assert
     expect(before).toBe(true);
+    expect(await isSolved(harness)).toBe(false);
+  });
+});
+
+describe("a revision written after the cause, or a teammate's contradiction, un-backs it (round 3, M2)", () => {
+  const LATER = new Date(Date.parse(TEST_START_ISO) + 60_000).toISOString();
+  const RETRACTION = "Retracted: the rotated key was dropped on time, the stale reads came from the CDN.";
+
+  test("a retraction with content of its own, written after the cause, unsolves the tree", async () => {
+    // Arrange — the retraction is an observation and says something, so only its time un-backs
+    const { harness } = await seeded([
+      recordEnvelope("claim", validClaimBody({ id: "clm_obs", body: OBSERVATION })),
+      cause("clm_cause", ["clm_obs"]),
+      recordEnvelope("claim", validClaimBody({ id: "clm_retract", body: RETRACTION, createdAt: LATER })),
+      recordEnvelope("claim_edge", validClaimEdgeBody({ id: "edge_retract", fromClaimId: "clm_retract", toClaimId: "clm_obs", kind: "supersedes", createdAt: LATER })),
+    ]);
+
+    // Act + Assert
+    expect(await isSolved(harness)).toBe(false);
+  });
+
+  test("the control: a revision written before the cause is what it cited, and backs it", async () => {
+    // Arrange — the cause, written later, cites the old id of a revised observation
+    const { harness } = await seeded([
+      recordEnvelope("claim", validClaimBody({ id: "clm_obs", body: OBSERVATION })),
+      recordEnvelope("claim", validClaimBody({ id: "clm_obs_v2", body: `${OBSERVATION}, measured twice` })),
+      recordEnvelope("claim_edge", validClaimEdgeBody({ id: "edge_revise", fromClaimId: "clm_obs_v2", toClaimId: "clm_obs", kind: "supersedes" })),
+      recordEnvelope("claim", validClaimBody({ id: "clm_cause", kind: "root_cause", status: "likely_root_cause", evidenceRefs: ["clm_obs"], body: "The kid cache is never invalidated", createdAt: LATER })),
+    ]);
+
+    // Act + Assert
+    expect(await isSolved(harness)).toBe(true);
+  });
+
+  test("a teammate's contradicts edge on the cited observation unsolves the tree", async () => {
+    // Arrange
+    const { harness } = await seeded([
+      recordEnvelope("claim", validClaimBody({ id: "clm_obs", body: OBSERVATION })),
+      cause("clm_cause", ["clm_obs"]),
+      recordEnvelope("claim", validClaimBody({ id: "clm_refute", body: "The token cache drops the rotated key within a second." })),
+      recordEnvelope("claim_edge", validClaimEdgeBody({ id: "edge_refute", fromClaimId: "clm_refute", toClaimId: "clm_obs", kind: "contradicts" })),
+    ]);
+
+    // Act + Assert
     expect(await isSolved(harness)).toBe(false);
   });
 });

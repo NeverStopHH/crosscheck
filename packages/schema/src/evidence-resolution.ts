@@ -19,7 +19,14 @@
  *   - real content, at least EVIDENCE_MIN_CONTENT_WORDS content words — "x"
  *     and "See above." back nothing;
  *   - in the citing claim's repo: the hub checks it, and the connector only
- *     ever resolves within one tree.
+ *     ever resolves within one tree;
+ *   - NO NEWER THAN THE CITING CLAIM (round 3, M2, principle 5: a revision
+ *     only ever weakens): a head written after the claim that cites it is
+ *     not what was cited — "Retracted: the 429s came from our own proxy" is
+ *     an observation with content, and it kept a root cause backed;
+ *   - not CONTRADICTED: a contradicts edge on the cited claim or its head —
+ *     a teammate saying it is not so — un-backs it, whoever drew it, since
+ *     un-backing only weakens.
  * Recomputed on every read, so a cited claim refuted or retracted later
  * flips every claim that leaned on it.
  */
@@ -40,15 +47,31 @@ export interface CitedHead {
   readonly status: string;
   readonly provenance: string;
   readonly body: string;
+  /** When the head was written (ISO-8601) — never after the citing claim (M2). */
+  readonly createdAt: string;
+  /** A contradicts edge points at the cited claim or at this head (M2). */
+  readonly isContradicted: boolean;
 }
 
-/** The ref `citedId`, resolved to `head`, counts as evidence for `citingId`. */
-export const isEvidenceFor = (citingId: string, citedId: string, head: CitedHead): boolean =>
-  citedId !== citingId &&
-  head.id !== citingId &&
+/** The fields the rule reads of the claim that cites. */
+export interface CitingClaim {
+  readonly id: string;
+  readonly createdAt: string;
+}
+
+/** Written no later than the citing claim; an unreadable time fails closed. */
+const isNoNewerThan = (headCreatedAt: string, citingCreatedAt: string): boolean =>
+  Date.parse(headCreatedAt) <= Date.parse(citingCreatedAt);
+
+/** The ref `citedId`, resolved to `head`, counts as evidence for `citing`. */
+export const isEvidenceFor = (citing: CitingClaim, citedId: string, head: CitedHead): boolean =>
+  citedId !== citing.id &&
+  head.id !== citing.id &&
   head.provenance === DECLARED &&
   !NOT_STANDING.has(head.status) &&
   EVIDENCE_KINDS.has(head.kind) &&
+  !head.isContradicted &&
+  isNoNewerThan(head.createdAt, citing.createdAt) &&
   contentWordCount(head.body) >= EVIDENCE_MIN_CONTENT_WORDS;
 
 /**

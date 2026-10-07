@@ -343,7 +343,7 @@ export {
   isEvidenceFor,
   revisionHeads,
 } from "./evidence-resolution.ts";
-export type { CitedHead } from "./evidence-resolution.ts";
+export type { CitedHead, CitingClaim } from "./evidence-resolution.ts";
 export {
   SUBSTANCE_MIN_EVIDENCE_REFS,
   SUBSTANCE_ROOT_CAUSE_STATUSES,

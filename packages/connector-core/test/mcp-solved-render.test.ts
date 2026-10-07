@@ -154,6 +154,34 @@ describe("solvedAtFromTree", () => {
     expect(solvedAtMs).toBe(Date.parse(SOLVED_ISO));
   });
 
+  test("a cited observation revised AFTER the root cause backs it no longer (round 3, M2)", () => {
+    // Arrange — the revision says something, but it was written after the cause
+    const revised = [
+      rootCauseClaim({ id: "clm_ev", kind: "observation", status: "proposed", evidenceRefs: [], body: "The importer retries with the old key id after every rotation" }),
+      rootCauseClaim({
+        id: "clm_ev_v2",
+        kind: "observation",
+        status: "proposed",
+        evidenceRefs: [],
+        body: "Retracted: the importer reads the new key id, the stale reads come from the CDN",
+        createdAt: "2026-03-11T08:00:00.000Z",
+      }),
+    ];
+    const revision: DiagnosisEdge = { ...supersedesEdge(), id: "edge_rev", fromClaimId: "clm_ev_v2", toClaimId: "clm_ev" };
+
+    // Act + Assert
+    expect(solvedAtFromTree(diagnosis([rootCauseClaim()], [revision], null, revised))).toBeNull();
+  });
+
+  test("a cited observation a teammate contradicts backs it no longer (round 3, M2)", () => {
+    // Arrange
+    const refutation = rootCauseClaim({ id: "clm_refute", kind: "observation", status: "proposed", evidenceRefs: [], body: "The importer reads the new key id within a second" });
+    const contradiction: DiagnosisEdge = { ...contradictsEdge(), id: "edge_refute", fromClaimId: "clm_refute", toClaimId: "clm_ev" };
+
+    // Act + Assert
+    expect(solvedAtFromTree(diagnosis([rootCauseClaim(), refutation], [contradiction]))).toBeNull();
+  });
+
   test("a superseded root cause does not", () => {
     // Act
     const solvedAtMs = solvedAtFromTree(
