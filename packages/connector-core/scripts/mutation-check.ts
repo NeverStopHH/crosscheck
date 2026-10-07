@@ -23386,6 +23386,19 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/coverage-instant-privacy.test.ts`,
     because: "a field nobody named carries when she last ran an agent on every coverage block she gaps",
   },
+  {
+    // The batch merge of the content floor with the opt-out: the floor's
+    // statement counted her withheld title, so a colleague's guess at her
+    // branch moved matchedTerms and could decide whether the hint fired.
+    label: "a colleague's guess at an opted-out teammate's branch moves her hint's floor",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    .filter((row) => hidden.has(row.developerId) && row.title === WITHHELD_TITLE)",
+    to: "    .filter(() => false)",
+    test: `${SERVER}/test/hint-content-floor.test.ts`,
+    because:
+      "a prompt naming her branch's words counts them on her context's statement, " +
+      "confirming the branch the index rebuild took out of search",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -23750,7 +23763,7 @@ interface Outcome {
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/fence-waivers.test.ts 1
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
- * PRINTS: packages/server/test/hint-content-floor.test.ts 5
+ * PRINTS: packages/server/test/hint-content-floor.test.ts 6
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
  * PRINTS: packages/server/test/hint-outcome-retention.test.ts 4
  * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 23

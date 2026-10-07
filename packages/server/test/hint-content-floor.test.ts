@@ -241,3 +241,68 @@ describe("each claim carries how many distinct words of the matched query it sha
     expect(decision?.matchedTerms).toBeGreaterThanOrEqual(HINT_MIN_SHARED_TERMS);
   });
 });
+
+/**
+ * AN OPTED-OUT TEAMMATE'S WITHHELD TITLE IS NO STATEMENT (the batch merge of
+ * this floor with the opt-out). The floor counts query words on the context's
+ * own title, description and intent; her fallback title is her branch, which
+ * the opt-out keeps off every page and out of the search index. Counted here,
+ * a colleague's guess at her branch moved the candidate's `matchedTerms` —
+ * and could decide whether the hint fired at all. A slash-free branch, since
+ * Postgres splits that one into words (`feat/x` stays one token).
+ */
+describe("an opted-out teammate's branch title counts toward no floor", () => {
+  const BRANCH = "lisbon-relocation";
+  const ROBIN_CONTEXT = "wc_robin_lisbon";
+
+  const teamWithRobin = async (optOut: boolean): Promise<{ harness: TestHarness; nick: TestDeveloper }> => {
+    const { harness, developer: nick } = await createHarnessWithSession();
+    const robin = await addTestDeveloperWithSession(harness, "Robin", "robin@example.com", { id: "ses_robin", branch: BRANCH });
+    const posted = await postRecords(harness, robin, {
+      records: [
+        recordEnvelope(
+          "work_context",
+          validWorkContextBody({
+            id: ROBIN_CONTEXT,
+            sessionId: "ses_robin",
+            title: `${BRANCH} @ api`,
+            titleSource: "fallback",
+            description: "refresh token rotation window",
+          }),
+          { sessionId: "ses_robin" },
+        ),
+      ],
+    });
+    expect(posted.data?.rejected).toBe(0);
+    const settings = await harness.app.request("/api/settings/presence", jsonRequest("PUT", robin.apiKey, { optOut }));
+    expect(settings.status).toBe(200);
+    return { harness, nick };
+  };
+
+  const counted = async (harness: TestHarness, nick: TestDeveloper, query: string) =>
+    (await fetchCandidates(harness, nick, { query })).map((candidate) => [candidate.workContext.id, candidate.workContext.matchedTerms]);
+
+  test("a guess at her branch tells a colleague nothing other words in its place would not", async () => {
+    // Arrange
+    const { harness, nick } = await teamWithRobin(true);
+
+    // Act
+    const guessed = await counted(harness, nick, "lisbon relocation token rotation");
+    const elsewhere = await counted(harness, nick, "porto migration token rotation");
+
+    // Assert — her work is still pointed at by what it is about
+    expect(elsewhere).toEqual([[ROBIN_CONTEXT, 2]]);
+    expect(guessed).toEqual(elsewhere);
+  });
+
+  test("a teammate who did not opt out is matched on her title as before", async () => {
+    // Arrange
+    const { harness, nick } = await teamWithRobin(false);
+
+    // Act
+    const guessed = await counted(harness, nick, "lisbon relocation token rotation");
+
+    // Assert — lisbon, relocation on the title; token, rotation on the description
+    expect(guessed).toEqual([[ROBIN_CONTEXT, 4]]);
+  });
+});

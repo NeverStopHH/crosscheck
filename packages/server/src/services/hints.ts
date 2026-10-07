@@ -54,6 +54,7 @@ import {
 } from "./search.ts";
 import { DECLARED_PROVENANCE } from "./similarity-gate.ts";
 import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
+import { WITHHELD_TITLE } from "@crosscheck/schema";
 import type { ClaimValidity } from "@crosscheck/schema";
 import type { SearchResultKind, SearchTier } from "./search.ts";
 import type { Db } from "../db/client.ts";
@@ -147,8 +148,20 @@ const sharedTermsSql = (document: SQL, tokens: readonly string[]): SQL<number> =
 /**
  * The context's own statement — what its owner said the work is — as one
  * document, so its words are counted apart from any one claim's.
+ *
+ * WITHOUT A TITLE WITHHELD FROM THIS READER (`titleWithheld`): an opted-out
+ * owner's fallback title is her branch (services/live-location.ts), kept off
+ * every page and out of the search index. Counted here, a colleague's guess
+ * at her branch moved `matchedTerms` and could decide the content floor —
+ * the confirmation the index rebuild took away.
  */
-const contextStatement = sql`to_tsvector('english', concat_ws(' ', ${workContexts.title}, ${workContexts.description}, ${workContexts.intent}->>'summary'))`;
+const contextStatement = (titleWithheld: readonly string[]): SQL => {
+  const title =
+    titleWithheld.length === 0
+      ? sql`${workContexts.title}`
+      : sql`(CASE WHEN ${inArray(workContexts.id, [...titleWithheld])} THEN NULL ELSE ${workContexts.title} END)`;
+  return sql`to_tsvector('english', concat_ws(' ', ${title}, ${workContexts.description}, ${workContexts.intent}->>'summary'))`;
+};
 
 /** Most sessions one tripwire response names — one is enough to ask. */
 export const TRIPWIRE_MAX_SESSIONS = 5;
@@ -401,18 +414,20 @@ const listContextClaims = async (
 /**
  * How many distinct query words each context's OWN statement shares — the
  * other half of the content floor beside its claims' counts. One bounded
- * query for every candidate id.
+ * query for every candidate id; `titleWithheld` names the ids whose title
+ * this reader may not see (contextStatement).
  */
 const listStatementTerms = async (
   db: Db,
   workContextIds: readonly string[],
   tokens: readonly string[],
+  titleWithheld: readonly string[],
 ): Promise<ReadonlyMap<string, number>> => {
   if (workContextIds.length === 0 || tokens.length === 0) {
     return new Map();
   }
   const rows = await db
-    .select({ id: workContexts.id, terms: sharedTermsSql(contextStatement, tokens) })
+    .select({ id: workContexts.id, terms: sharedTermsSql(contextStatement(titleWithheld), tokens) })
     .from(workContexts)
     .where(inArray(workContexts.id, workContextIds))
     .limit(workContextIds.length);
@@ -544,6 +559,11 @@ const matchCandidates = async (
     .slice(0, HINT_MAX_CONTEXTS);
   const ids = eligible.map((row) => row.id);
   const tokens = ftsTokens(query.text);
+  // The titles the search withheld from this reader — an opted-out owner's
+  // branch, already projected on the row: no statement is counted on them.
+  const titleWithheld = eligible
+    .filter((row) => hidden.has(row.developerId) && row.title === WITHHELD_TITLE)
+    .map((row) => row.id);
   const [claimsByContext, baseCommits, matchedTargets, statementTerms] = await Promise.all([
     listContextClaims(
       { db: deps.db, now: deps.now(), readerDeveloperId: callerDeveloperId, repo: query.repo, tokens },
@@ -551,7 +571,7 @@ const matchCandidates = async (
     ),
     listBaseCommits(deps.db, ids),
     listMatchedTargets(deps.db, ids, exactTokens(query.text)),
-    listStatementTerms(deps.db, ids, tokens),
+    listStatementTerms(deps.db, ids, tokens, titleWithheld),
   ]);
   return eligible.map((row) => {
     const contextClaims = claimsByContext.get(row.id) ?? [];
