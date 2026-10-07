@@ -48,14 +48,14 @@ interface World {
 /** A quarter ago: old enough that recency decay ranks fresher trees above it. */
 const QUARTER_AGO = "2026-05-15T09:00:00.000Z";
 
-/** Nick's tree, its own statement sharing nothing with the prompt, last active a quarter ago. */
-const world = async (): Promise<World> => {
+/** Nick's tree, its own statement sharing nothing with the prompt unless given a title, last active a quarter ago. */
+const world = async (title = "Unrelated title words"): Promise<World> => {
   const { harness, developer: nick } = await createHarnessWithSession();
   const seeded = await postRecords(harness, nick, {
     records: [
       recordEnvelope(
         "work_context",
-        validWorkContextBody({ title: "Unrelated title words", description: "x", createdAt: QUARTER_AGO }),
+        validWorkContextBody({ title, description: "x", createdAt: QUARTER_AGO }),
       ),
     ],
   });
@@ -93,6 +93,49 @@ describe("a word the reader could not be shown never qualifies a tree", () => {
   test("a claim by an author the reader muted, inside an unmuted teammate's tree", async () => {
     // Arrange — Mike extends Nick's tree; Robin muted Mike
     const { harness, robin } = await world();
+    const mike = await addTestDeveloperWithSession(harness, "Mike", "mike@example.com", { id: MIKE_SESSION });
+    const seeded = await postRecords(harness, mike, {
+      records: [recordEnvelope("claim", validClaimBody({ id: "clm_mike", authorSessionId: MIKE_SESSION, body: BODY }), { sessionId: MIKE_SESSION })],
+    });
+    expect(seeded.data?.accepted).toBe(1);
+    const muted = await harness.app.request("/api/settings/mutes", jsonRequest("POST", robin.apiKey, { developer: "Mike" }));
+    expect(muted.status).toBe(200);
+
+    // Act + Assert
+    expect(await fetchIds(harness, robin, PROMPT)).toEqual([]);
+  });
+});
+
+describe("a tree the pool holds on one word of its own title is not lifted over the floor by words the reader could not be shown", () => {
+  /** In the pool on "zebrafrobnicator" alone: one shared word, short of the floor. */
+  const ONE_WORD_TITLE = "Zebrafrobnicator migration notes";
+
+  test("the control: a visible claim's words lift it", async () => {
+    const { harness, nick, robin } = await world(ONE_WORD_TITLE);
+    await postRecords(harness, nick, { records: [recordEnvelope("claim", validClaimBody({ id: "clm_seen", body: BODY }))] });
+
+    expect(await fetchIds(harness, robin, PROMPT)).toEqual([WORK_CONTEXT_ID]);
+  });
+
+  test("a retracted claim's words do not", async () => {
+    // Arrange
+    const { harness, nick, robin } = await world(ONE_WORD_TITLE);
+    const seeded = await postRecords(harness, nick, {
+      records: [
+        recordEnvelope("claim", validClaimBody({ id: "clm_old", body: BODY })),
+        recordEnvelope("claim", validClaimBody({ id: "clm_new", body: "Nothing in the warm start path after all." })),
+        recordEnvelope("claim_edge", validClaimEdgeBody({ id: "edge_rev", fromClaimId: "clm_new", toClaimId: "clm_old", kind: "supersedes" })),
+      ],
+    });
+    expect(seeded.data?.accepted).toBe(3);
+
+    // Act + Assert
+    expect(await fetchIds(harness, robin, PROMPT)).toEqual([]);
+  });
+
+  test("a muted author's words do not", async () => {
+    // Arrange
+    const { harness, robin } = await world(ONE_WORD_TITLE);
     const mike = await addTestDeveloperWithSession(harness, "Mike", "mike@example.com", { id: MIKE_SESSION });
     const seeded = await postRecords(harness, mike, {
       records: [recordEnvelope("claim", validClaimBody({ id: "clm_mike", authorSessionId: MIKE_SESSION, body: BODY }), { sessionId: MIKE_SESSION })],

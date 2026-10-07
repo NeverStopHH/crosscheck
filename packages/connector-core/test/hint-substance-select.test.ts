@@ -194,6 +194,10 @@ describe("a weak or unbacked match keeps today's pointer", () => {
     expect(select([context([decision({ provenance: "derived" })])]).kind).toBe("silence");
   });
 
+  test("a decision under a status this build does not know is a pointer — positive equality on proposed fails closed", () => {
+    expect(select([context([decision({ status: "reopened" })])]).kind).toBe("pointer");
+  });
+
   test("a rejected decision is never substance, nor a reason to point", () => {
     expect(select([context([decision({ status: "rejected" })])]).kind).toBe("silence");
   });

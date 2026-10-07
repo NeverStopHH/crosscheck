@@ -49,10 +49,13 @@ const draft = (overrides: Record<string, unknown> = {}) =>
     validClaimBody({ id: "clm_draft", captureMode: "auto", provenance: "derived", confidence: 0.4, body: DRAFT_BODY, ...overrides }),
   );
 
-/** Nick's tree, its title sharing nothing with the prompt, plus the records given. */
-const treeWith = async (records: readonly unknown[]): Promise<{ harness: TestHarness; robin: TestDeveloper }> => {
+/** Nick's tree, its title sharing nothing with the prompt unless given one, plus the records given. */
+const treeWith = async (
+  records: readonly unknown[],
+  title = "Unrelated title words",
+): Promise<{ harness: TestHarness; robin: TestDeveloper }> => {
   const { harness, developer: nick } = await createHarnessWithSession();
-  const all = [recordEnvelope("work_context", validWorkContextBody({ title: "Unrelated title words" })), ...records];
+  const all = [recordEnvelope("work_context", validWorkContextBody({ title })), ...records];
   const seeded = await postRecords(harness, nick, { records: all });
   expect(seeded.data?.accepted).toBe(all.length);
   const robin = await addTestDeveloperWithSession(harness, "Robin", "robin@example.com", { id: "ses_02" });
@@ -78,6 +81,17 @@ describe("a tree whose only match is a draft gets no hint", () => {
       draft({ id: "clm_discard", status: "rejected" }),
       recordEnvelope("claim_edge", validClaimEdgeBody({ id: "edge_discard", fromClaimId: "clm_discard", toClaimId: "clm_draft", kind: "supersedes" })),
     ]);
+
+    // Act
+    const candidates = await fetchCandidates(harness, robin);
+
+    // Assert
+    expect(candidates).toEqual([]);
+  });
+
+  test("a tree in the pool on one word of its own title is not lifted over the floor by a draft's words", async () => {
+    // Arrange — the title shares one word, so the tree is ranked into the pool; only the draft says the rest
+    const { harness, robin } = await treeWith([draft()], "Zebrafrobnicator migration notes");
 
     // Act
     const candidates = await fetchCandidates(harness, robin);

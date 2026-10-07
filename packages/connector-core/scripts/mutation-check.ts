@@ -1056,7 +1056,11 @@ export const MUTATIONS: readonly Mutation[
     file: `${CORE}/src/hints/select.ts`,
     from: '  "likely_root_cause",\n  "partially_confirmed",\n]);',
     to: '  "likely_root_cause",\n  "partially_confirmed",\n  "proposed",\n]);',
-    test: `${CORE}/test/hint-select.test.ts`,
+    // RETARGETED TEST (round 3, follow-up): substance is a root cause or a
+    // decision since review 1006b H4, so a proposed HYPOTHESIS is turned away
+    // by its kind and the status list only decides a proposed ROOT CAUSE —
+    // pinned in hint-substance-select.test.ts (principle 5).
+    test: `${CORE}/test/hint-substance-select.test.ts`,
     because:
       "proposed joins the injectable statuses, so a teammate's guess with a " +
       "couple of self-referential evidence refs is pushed as substance " +
@@ -1199,7 +1203,11 @@ export const MUTATIONS: readonly Mutation[
     file: `${SERVER}/src/services/search.ts`,
     from: "export const SOLVED_DECAY_FLOOR = 0.7;",
     to: "export const SOLVED_DECAY_FLOOR = 0;",
-    test: `${CORE}/test/precision-corpus.test.ts`,
+    // RETARGETED TEST (round 3, follow-up): the hint path's per-candidate
+    // floor now refuses the corpus's noise contexts before their rank counts,
+    // so pr_idx_solved_recall holds whatever the decay; the ranking itself is
+    // where the floor is observable.
+    test: `${SERVER}/test/solved-ranking.test.ts`,
     because:
       "a 70-day solved tree decays below three fresh noise contexts and " +
       "falls out of HINT_MAX_CONTEXTS, so the answer somebody already found " +
@@ -3446,18 +3454,13 @@ export const MUTATIONS: readonly Mutation[
       "party influenced through a model — lands on every teammate's machine " +
       "in full, one client change away from being rendered as a finding",
   },
-  {
-    // The other half of V2-X4, on the reader's side of the wire.
-    label: "a withheld claim body renders as empty substance",
-    file: `${CORE}/src/hints/select.ts`,
-    from: "  hasBody(claim) &&",
-    to: "",
-    test: `${CORE}/test/hint-select.test.ts`,
-    because:
-      "a hub that withholds a body the selector still accepts produces a " +
-      "fully trust-labelled hint with «» where the finding should be, which " +
-      "reads as «Nick looked and found nothing»",
-  },
+  // EQUIVALENT, NOT ANCHORED (round 3, follow-up) — "a withheld claim body
+  // renders as empty substance", which deleted `hasBody(claim) &&` from
+  // isInjectable in hints/select.ts: the conjunction's next clause,
+  // hasSubstanceSentence, needs a sentence with content words and an empty
+  // or blank body has none, so the line can never decide alone. The other
+  // half of V2-X4 stays guarded by every "is a pointer, never a frame around
+  // nothing" case. Recorded so it is not re-reported as a gap.
   {
     // Audit row M12-rest. The default text-search parser reads a branch name
     // and a path as ONE `file` token, so without the derived word bag the
@@ -6649,19 +6652,15 @@ export const MUTATIONS: readonly Mutation[
       "injected in July unqualified — AT-2's whole subject — and a hub " +
       "forging a clean status past the superseding edge is believed",
   },
-  {
-    // The connector-side status check spec 02 §5 asks to DELETE, kept as
-    // defence in depth. Anchored so "it changes nothing" stays testable.
-    label: "the forging-hub lock on a superseded status is deleted",
-    file: `${CORE}/src/hints/select.ts`,
-    from: '  claim.status !== "superseded" &&',
-    to: "",
-    test: `${CORE}/test/claim-substance-gate.test.ts`,
-    because:
-      "a hub asserting `status: superseded` beside a `current` validity is " +
-      "asserting two contradictory things, and the connector believes the " +
-      "half that puts a retracted claim back into the prompt lane",
-  },
+  // EQUIVALENT, NOT ANCHORED (round 3, follow-up) — "the forging-hub lock on a
+  // superseded status is deleted", which removed `claim.status !==
+  // "superseded" &&` from isInjectable in hints/select.ts. Since review 1006b
+  // H4 the conjunction ends in a positive status test — a root cause settled
+  // as likely_root_cause or partially_confirmed, or a decision still
+  // proposed — so a claim a hub reports superseded fails that test whatever
+  // its validity says, and the lock can never decide alone. It stays in the
+  // code as defence in depth, as spec 02 §5's note above it says. Recorded so
+  // it is not re-reported as a gap.
   {
     // 1.0 spec 02 CCB-3. AT-2 requires the downgrade to NAME the commits.
     label: "a downgrade says the code moved and names no commit",
@@ -17469,8 +17468,11 @@ export const MUTATIONS: readonly Mutation[
     file: `${CORE}/src/hints/select.ts`,
     from: "  claim.kind === \"decision\" && claim.status === \"proposed\";",
     to: "  claim.kind === \"decision\";",
+    // A REJECTED decision is already off the push path (isPushableClaim), so
+    // the case that shows this line is a status this build does not know —
+    // the positive equality's fail-closed half (round 3, follow-up).
     test: `${CORE}/test/hint-substance-select.test.ts`,
-    because: "a decision its own tree turned down reaches the reader as a recorded finding",
+    because: "a decision under a status nobody here knows — a turned-down or a future one — reaches the reader as a recorded finding",
   },
   {
     label: "a strongly matched tree lends substance to a claim about something else",
@@ -18126,8 +18128,8 @@ export const MUTATIONS: readonly Mutation[
     label: "the selector counts a draft among a tree's claims",
     file: `${CORE}/src/hints/select.ts`,
     // RETARGETED (round 3, follow-up): the recount's floor terms are worked out once per selection.
-    from: "  const eligible = input.candidates.filter(isEligibleContext(input, recountFloorTermsOf(input))).map(withPushableClaims);",
-    to: "  const eligible = input.candidates.filter(isEligibleContext(input, recountFloorTermsOf(input)));",
+    from: "  const eligible = input.candidates.filter(isEligibleContext(input, recount)).map(withPushableClaims);",
+    to: "  const eligible = input.candidates.filter(isEligibleContext(input, recount));",
     test: `${CORE}/test/hint-substance-select.test.ts`,
     because: "\"It carries 1 claim\" — a hub that still ships the draft's row gets it pointed at, discarded or not",
   },
@@ -18144,7 +18146,10 @@ export const MUTATIONS: readonly Mutation[
     file: `${CORE}/src/hints/select.ts`,
     from: "  isDeclared(claim) && (claim.status !== \"rejected\" || claim.kind === \"rejected_approach\");",
     to: "  isDeclared(claim) && claim.status !== \"rejected\";",
-    test: `${CORE}/test/hint-flow.test.ts`,
+    // RETARGETED TEST (round 3, follow-up): hint-flow.test.ts no longer holds a
+    // rejected approach; hint-select.test.ts points at one, and loses the
+    // pointer when the claim falls off the push path.
+    test: `${CORE}/test/hint-select.test.ts`,
     because: "the dead end a teammate already ruled out — negative knowledge, rejected by definition — is never mentioned again",
   },
   {
@@ -18508,7 +18513,9 @@ export const MUTATIONS: readonly Mutation[
     from: "export const GERMAN_FUNCTION_WORDS: ReadonlySet<string> = new Set([...GERMAN_STOP_WORDS, ...GERMAN_STOP_SUPPLEMENT]);",
     to: "export const GERMAN_FUNCTION_WORDS: ReadonlySet<string> = new Set([...GERMAN_STOP_WORDS]);",
     test: `${SCHEMA}/test/substance-sentence.test.ts`,
-    because: "\"Ich glaube, dass es passt.\" is shown as a teammate's finding (M4)",
+    // Since round 3's M1 a closed-class word ("passt") is no content word
+    // anyway, so the pinning sentence is one of supplement words alone.
+    because: "\"Ich glaube, dass es so gemacht wurde.\" is shown as a teammate's finding (M4)",
   },
   {
     label: "a slash command's name is scored as task words",
@@ -19654,6 +19661,14 @@ export const MUTATIONS: readonly Mutation[
     because: "\"skies\" stems to \"ski\" and \"news\" to \"new\", where the database keeps them apart (round 3, follow-up)",
   },
   {
+    label: "an old hub's order picks the weaker of two trees again",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "    context.topicalTerms ??\n    Math.max(0, ...[wireStatementOf(context), ...recountBodies(context, selfDeveloperId)].map((statement) => statementMatch(recount, statement).topical)),",
+    to: "    context.topicalTerms ?? 0,",
+    test: `${CORE}/test/hint-old-hub-floor.test.ts`,
+    because: "against a 0.10.0 hub \"CI rot, functional suite timeout\" is pointed at the PGlite tree the hub happened to rank first, where the tip hub names the CI tree (t008, round 3 follow-up)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     // RETARGETED (round 3, M7): the query is the prompt's window now.
@@ -19882,7 +19897,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/claim-drift.test.ts 4
  * PRINTS: packages/connector-core/test/claim-revalidation-budget.test.ts 1
  * PRINTS: packages/connector-core/test/claim-revalidation-pull.test.ts 2
- * PRINTS: packages/connector-core/test/claim-substance-gate.test.ts 3
+ * PRINTS: packages/connector-core/test/claim-substance-gate.test.ts 2
  * PRINTS: packages/connector-core/test/claim-surface.test.ts 1
  * PRINTS: packages/connector-core/test/claim-validity-parity.test.ts 2
  * PRINTS: packages/connector-core/test/claim-validity-render.test.ts 1
@@ -19910,16 +19925,16 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/guarantee-doctor.test.ts 3
  * PRINTS: packages/connector-core/test/hint-best-match.test.ts 4
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
- * PRINTS: packages/connector-core/test/hint-flow.test.ts 3
+ * PRINTS: packages/connector-core/test/hint-flow.test.ts 2
  * PRINTS: packages/connector-core/test/hint-harness-turn.test.ts 7
  * PRINTS: packages/connector-core/test/hint-intent-fallback.test.ts 6
- * PRINTS: packages/connector-core/test/hint-old-hub-floor.test.ts 14
+ * PRINTS: packages/connector-core/test/hint-old-hub-floor.test.ts 15
  * PRINTS: packages/connector-core/test/hint-query-window.test.ts 2
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4
- * PRINTS: packages/connector-core/test/hint-select.test.ts 9
+ * PRINTS: packages/connector-core/test/hint-select.test.ts 8
  * PRINTS: packages/connector-core/test/hint-substance-flow.test.ts 10
  * PRINTS: packages/connector-core/test/hint-substance-render.test.ts 3
- * PRINTS: packages/connector-core/test/hint-substance-select.test.ts 16
+ * PRINTS: packages/connector-core/test/hint-substance-select.test.ts 17
  * PRINTS: packages/connector-core/test/hint-substance-trust-parity.test.ts 1
  * PRINTS: packages/connector-core/test/hint-trailer-budget.test.ts 6
  * PRINTS: packages/connector-core/test/hub-key-refresh.test.ts 3
@@ -19955,7 +19970,6 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/pilot-platform-refusals.test.ts 2
  * PRINTS: packages/connector-core/test/pin-paths.test.ts 8
  * PRINTS: packages/connector-core/test/pin-sweep.test.ts 2
- * PRINTS: packages/connector-core/test/precision-corpus.test.ts 1
  * PRINTS: packages/connector-core/test/prompt-corpus-gate.test.ts 5
  * PRINTS: packages/connector-core/test/question-delivery.test.ts 5
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3
@@ -20096,7 +20110,7 @@ interface Outcome {
  * PRINTS: packages/server/test/solved-fanout.test.ts 2
  * PRINTS: packages/server/test/solved-intent.test.ts 4
  * PRINTS: packages/server/test/solved-probe.test.ts 1
- * PRINTS: packages/server/test/solved-ranking.test.ts 3
+ * PRINTS: packages/server/test/solved-ranking.test.ts 4
  * PRINTS: packages/server/test/suspect.test.ts 5
  * PRINTS: packages/server/test/team-settings.test.ts 2
  * PRINTS: packages/server/test/ui-passkeys.test.ts 9

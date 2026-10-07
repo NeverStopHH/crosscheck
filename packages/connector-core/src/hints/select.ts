@@ -51,6 +51,7 @@ import {
   floorTermsOf,
   isStrongSubstanceMatch,
   knownTermsIn,
+  statementMatch,
   substanceSentence,
 } from "@crosscheck/schema";
 import type { FloorTerms } from "@crosscheck/schema";
@@ -213,17 +214,21 @@ const isStrongMatch = (
  * A TREE'S STRENGTH (round 3, H3 + M6): an exact target first — the prompt
  * named something the tree touched, a fact — then the most TOPICAL query
  * words one of its statements shares (the hub's `topicalTerms`). A hub too
- * old to send the number makes every tree equally strong, and the hub's
- * order decides, as it always did.
+ * old to send the number is measured here by the rule the recount floors it
+ * with (round 3, follow-up): the most topical words one of its statements on
+ * the wire shares, so an old hub's order no longer picks the weaker of two
+ * trees that both clear the floor.
  */
 interface Strength {
   readonly isExact: boolean;
   readonly topical: number;
 }
 
-const strengthOf = (context: HintContextCandidate): Strength => ({
+const strengthOf = (context: HintContextCandidate, selfDeveloperId: string | null, recount: FloorTerms): Strength => ({
   isExact: context.workContext.tier === "exact",
-  topical: context.topicalTerms ?? 0,
+  topical:
+    context.topicalTerms ??
+    Math.max(0, ...[wireStatementOf(context), ...recountBodies(context, selfDeveloperId)].map((statement) => statementMatch(recount, statement).topical)),
 });
 
 const isAtLeastAsStrong = (strength: Strength, than: Strength): boolean =>
@@ -469,17 +474,19 @@ export const selectHint = (input: SelectHintInput): HintSelection => {
     return SILENCE;
   }
   const seen = new Set(input.seenRefIds);
-  const eligible = input.candidates.filter(isEligibleContext(input, recountFloorTermsOf(input))).map(withPushableClaims);
+  const recount = recountFloorTermsOf(input);
+  const eligible = input.candidates.filter(isEligibleContext(input, recount)).map(withPushableClaims);
+  const strengthIn = (context: HintContextCandidate): Strength => strengthOf(context, selfDeveloperId, recount);
   // THE BEST TREE A POINTER COULD NAME, shown already or not (round 3, H3 +
   // M6): substance comes only from a tree at least this strong, and a weaker
   // tree is never pointed at in its place.
   const pointable = eligible.filter((context) => pointerAt(context, selfDeveloperId) !== null);
-  const strongest = pointable.map(strengthOf).reduce<Strength | null>(
+  const strongest = pointable.map(strengthIn).reduce<Strength | null>(
     (best, strength) => (best === null || !isAtLeastAsStrong(best, strength) ? strength : best),
     null,
   );
   const isStrongest = (context: HintContextCandidate): boolean =>
-    strongest === null || isAtLeastAsStrong(strengthOf(context), strongest);
+    strongest === null || isAtLeastAsStrong(strengthIn(context), strongest);
 
   // Substance pass over ALL eligible contexts first: an evidence-backed claim
   // in the second-ranked context beats a pointer at the first-ranked one —

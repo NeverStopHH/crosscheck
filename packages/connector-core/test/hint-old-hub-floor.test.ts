@@ -159,6 +159,29 @@ describe("an old hub's candidate is recounted, and refused unless it clears the 
     expect(selection.kind).toBe(kind);
   });
 
+  test("an old hub's trees are ranked by the recount's own topical count, never the hub's order alone (round 3, follow-up)", () => {
+    // Arrange — the old hub ranks the weaker tree first; both clear the floor
+    const tree = (id: string, title: string, body: string): HintContextCandidate => ({
+      ...oldHubContext([claim({ id: `clm_${id}`, workContextId: id, body })], title),
+      workContext: { ...oldHubContext([], title).workContext, id },
+    });
+    const weaker = tree("wc_weaker", "Zebrafrobnicator cache sizing", "The zebrafrobnicator cache is sized per tenant");
+    const stronger = tree("wc_stronger", "Nightly report formatting", "The zebrafrobnicator cache poisons the quuxinator on every warm start");
+
+    // Act
+    const selection = selectHint({
+      candidates: [weaker, stronger],
+      seenRefIds: [],
+      deliveredCount: 0,
+      selfDeveloperId: SELF,
+      promptTerms: promptTerms(PROMPT).ranked,
+      promptTopicalTerms: promptTerms(PROMPT).topical,
+    });
+
+    // Assert — the tree whose statement shares the most topical words is named, as the tip hub would
+    expect(selection.kind === "pointer" ? selection.context.workContext.id : selection.kind).toBe("wc_stronger");
+  });
+
   test("a steering word never counts toward the recount", () => {
     // Arrange — the body shares "continue" and "please" and one task word
     const context = oldHubContext([claim({ body: "Please continue the zebrafrobnicator import" })]);
