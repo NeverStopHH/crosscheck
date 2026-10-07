@@ -12,6 +12,9 @@ import { sql } from "drizzle-orm";
 
 import { rebuildOptedOutLocationIndexes } from "../src/services/developer-settings.ts";
 import type { Embedder } from "../src/services/embedder.ts";
+import { NORMALIZED_DOC_VERSION } from "../src/services/normalized-doc.ts";
+import { runStartupUpgrades } from "../src/services/startup-upgrades.ts";
+import type { StartupLog } from "../src/services/startup-upgrades.ts";
 import { FAKE_EMBEDDER_MODEL, createFakeEmbedder } from "./fixtures/fake-embedder.ts";
 import {
   VALID_SESSION_BODY,
@@ -21,6 +24,7 @@ import {
   postRecords,
   recordEnvelope,
   registerTestSession,
+  validClaimBody,
   validWorkContextBody,
 } from "./helpers.ts";
 import type { TestDeveloper, TestHarness } from "./helpers.ts";
@@ -169,5 +173,86 @@ describe("a rebuilt doc gets its vector back when the hub has an embedder (revie
 
     // Assert
     expect(await vectorModelOf(world)).toBe(FAKE_EMBEDDER_MODEL);
+  });
+});
+
+/**
+ * THE DOC UPGRADE DOES NOT SPARE HER TITLES (the batch merge with the drafts
+ * branch). That branch's upgrade STAMPS a declared-only doc current without
+ * rebuilding it (services/doc-upgrade.ts), and her location-titled doc on a
+ * hub from before both releases is declared-only: the stamp alone would mark
+ * her branch title current. Her rebuild is keyed on her marker
+ * (location_index_built_at), never on doc_version — the boot pass runs before
+ * serving and the upgrades after it (index.ts), and the other order ends the
+ * same.
+ */
+describe("a pre-upgrade hub: her declared-only, location-titled doc ends without her title, and current", () => {
+  const SILENT: StartupLog = { info: () => undefined, error: () => undefined };
+
+  /** Her context with one vouched claim, indexed before she opted out, its doc never stamped. */
+  const preUpgradeHub = async (): Promise<World> => {
+    const world = await seed();
+    const posted = await postRecords(world.harness, world.robin, {
+      records: [
+        recordEnvelope(
+          "claim",
+          validClaimBody({ id: "clm_robin_lisbon", workContextId: CONTEXT, authorSessionId: ROBIN_S, body: "the old key stays valid for one window" }),
+          { sessionId: ROBIN_S },
+        ),
+      ],
+    });
+    expect(posted.data?.rejected).toBe(0);
+    await optOutOnAnEarlierRelease(world);
+    await world.harness.db.execute(sql`UPDATE work_contexts SET doc_version = 0 WHERE id = ${CONTEXT}`);
+    return world;
+  };
+
+  const docOf = async (world: World): Promise<{ readonly doc: string; readonly version: number }> => {
+    const rows = await world.harness.db.execute<{ doc: string; version: number }>(
+      sql`SELECT normalized_doc AS doc, doc_version AS version FROM work_contexts WHERE id = ${CONTEXT}`,
+    );
+    const row = rows.rows[0];
+    if (row === undefined) {
+      throw new Error(`no work context ${CONTEXT}`);
+    }
+    return { doc: row.doc, version: Number(row.version) };
+  };
+
+  const expectRebuiltWithoutHerTitle = async (world: World): Promise<void> => {
+    const after = await docOf(world);
+    expect(after.doc).not.toContain("lisbon");
+    expect(after.version).toBe(NORMALIZED_DOC_VERSION);
+    expect(await nickFinds(world, SECRET_BRANCH)).toBe(false);
+    expect(await nickFinds(world, "refresh token rotation")).toBe(true);
+  };
+
+  test("in the boot's order: her rebuild before serving, the upgrades after", async () => {
+    // Arrange
+    const world = await preUpgradeHub();
+    const before = await docOf(world);
+    expect(before.doc).toContain("lisbon");
+    expect(before.version).toBeLessThan(NORMALIZED_DOC_VERSION);
+
+    // Act
+    await rebuildOptedOutLocationIndexes(deps(world));
+    await runStartupUpgrades({ db: world.harness.db, embedder: null, log: SILENT });
+
+    // Assert
+    await expectRebuiltWithoutHerTitle(world);
+  });
+
+  test("in the other order: a stamp first does not spare her doc the rebuild", async () => {
+    // Arrange
+    const world = await preUpgradeHub();
+
+    // Act
+    const upgrades = await runStartupUpgrades({ db: world.harness.db, embedder: null, log: SILENT });
+    const stampedWithHerTitle = await docOf(world);
+    await rebuildOptedOutLocationIndexes(deps(world));
+
+    // Assert
+    expect(upgrades.docs?.stamped).toBe(1);
+    expect(stampedWithHerTitle.doc).toContain("lisbon");
+    await expectRebuiltWithoutHerTitle(world);
   });
 });

@@ -133,10 +133,14 @@ const rebuildLocationIndex = async (
  * second boot, and an opt-out the toggle already rebuilt for, a no-op.
  * Returns how many developers' indexes it rebuilt.
  *
- * INTEGRATION POINT (the batch merge with the drafts branch): that branch's
- * `doc_version` stamp step marks a normalized doc current. It must not mark
- * an opted-out developer's docs current while her `location_index_built_at`
- * is null — they still hold her location titles until this pass has run.
+ * THE DRAFTS BRANCH'S DOC UPGRADE (merged in the batch): its `doc_version`
+ * stamp step marks a declared-only doc current WITHOUT rebuilding it, and
+ * her location-titled docs from before both releases are declared-only. So
+ * this pass runs BEFORE the hub serves and the upgrades after (index.ts):
+ * her docs are rebuilt, and stamped, before anything reads them. Her rebuild
+ * is keyed on `location_index_built_at`, never on `doc_version`, so a stamp
+ * that somehow ran first still could not spare her docs it
+ * (test/location-index-rebuild.test.ts, both orders).
  */
 export const rebuildOptedOutLocationIndexes = async (deps: IndexDeps): Promise<number> => {
   const pending = await deps.db
