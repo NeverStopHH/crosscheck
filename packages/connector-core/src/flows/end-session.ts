@@ -2,7 +2,8 @@
  * `endSessionFlow` (DESIGN-agent-agnostic.md §1.3) — the session-end recipe
  * as an extracted function:
  *
- *   flush (budgeted) → pending-end marker → ended-life lineage → delete
+ *   the life's work context, when the hub never acknowledged the state's
+ *   status → flush (budgeted) → pending-end marker → ended-life lineage → delete
  *   state (compared: a life a heal moved it to is ended too) → count
  *   undelivered → `end` only when nothing is left on disk (else the marker
  *   defers it to `reap`'s DeferredEnder).
@@ -26,8 +27,10 @@ import {
   sessionSlug,
   spoolPendingEndPath,
 } from "../config/paths.ts";
+import { UNKNOWN_DEVELOPER_ID, workContextRecord } from "../capture/records.ts";
 import { endSession } from "../http/hub.ts";
 import type { HubContext } from "../http/client.ts";
+import { appendRecords } from "../spool/append.ts";
 import { readSessionSpool } from "../spool/files.ts";
 import { readOwedWorkContext } from "../spool/owed-work-context.ts";
 import { flushSpool } from "../spool/flush.ts";
@@ -35,6 +38,7 @@ import { writeEndMarker } from "../spool/end-marker.ts";
 import type { WorkContextStanding } from "../spool/end-marker.ts";
 import { readTelemetryLossReport } from "../spool/loss-report.ts";
 import { recordRefusedLife } from "../spool/refused-lives.ts";
+import { isHubBehindState } from "../spool/work-context-ack.ts";
 import { seqAt } from "../capture/seq.ts";
 import { lifeRungOf, recordEndedLife } from "../state/session-lineage.ts";
 import { allocateSeq, closeSessionState, crosscheckSessionIdFor, readSessionState } from "../state/session-state.ts";
@@ -127,11 +131,48 @@ const endOnHub = async (
   return result.ok;
 };
 
+/**
+ * THE LIFE'S LAST STATUS GOES WITH ITS END (review-2 round 8, L7): when the
+ * hub last accepted another status for the life's work context than the
+ * state holds, the work context is spooled once more, ahead of the drain
+ * below. No later sender would come to make the two agree. A state from
+ * before `agentKind` was written down has no producer to send it under, and
+ * sends none.
+ */
+const spoolLastWorkContext = async (input: EndSessionFlowInput): Promise<void> => {
+  const state = await readSessionState(input.home, input.hostSessionKey);
+  if (
+    state?.crosscheckSessionId !== input.crosscheckSessionId ||
+    state.agentKind === null ||
+    state.workContextTitle === null ||
+    state.workContextStatus === null ||
+    !isHubBehindState(state)
+  ) {
+    return;
+  }
+  const record = workContextRecord(
+    {
+      workContextId: state.workContextId,
+      sessionId: state.crosscheckSessionId,
+      title: state.workContextTitle,
+      status: state.workContextStatus,
+    },
+    {
+      developerId: state.developerId ?? UNKNOWN_DEVELOPER_ID,
+      agentKind: state.agentKind,
+      sessionId: state.crosscheckSessionId,
+    },
+    input.now(),
+  );
+  await appendRecords(input.home, input.repoKey, input.hostSessionKey, [record], input.now());
+};
+
 export const endSessionFlow = async (
   input: EndSessionFlowInput,
 ): Promise<EndSessionFlowResult> => {
   const slug = sessionSlug(input.hostSessionKey);
 
+  await spoolLastWorkContext(input);
   await flushSpool(
     input.hub,
     {

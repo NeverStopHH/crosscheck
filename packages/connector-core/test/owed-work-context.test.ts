@@ -628,6 +628,31 @@ describe("one life per batch (review-2 round 7)", () => {
     expect(await targetsOf(life.workContextId)).toBe(BACKLOG);
   });
 
+  test("a debt the hub accepted is the status SessionEnd compares the state's with (review-2 round 8, L7)", async () => {
+    // Arrange: everything delivered; the life's work context owed with a status the state holds
+    const fx = await fixture("acked-debt");
+    const life = await register(fx);
+    await flushAsHook(fx);
+    await updateSessionState(fx.home, fx.hostSessionKey, (fresh) => ({ ...fresh, workContextStatus: "blocked" }));
+    await oweWorkContext(fx.home, fx.key, sessionSlug(fx.hostSessionKey), {
+      sessionId: life.crosscheckSessionId,
+      record: workContextRecord(
+        { workContextId: life.workContextId, sessionId: life.crosscheckSessionId, title: "Owed", status: "analyzing" },
+        producerOf(life.crosscheckSessionId),
+        new Date(),
+      ),
+    });
+
+    // Act
+    await flushAsHook(fx);
+
+    // Assert: the debt went with the state's status, and the hub's acceptance is written down
+    expect((await readSessionState(fx.home, fx.hostSessionKey))?.workContextAcked).toEqual({
+      id: life.workContextId,
+      status: "blocked",
+    });
+  });
+
   test("a debt with no record left to carry it is paid alone by the next drain", async () => {
     // Arrange: everything delivered, the life's work context still owed
     const fx = await fixture("lone-debt");

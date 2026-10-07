@@ -133,13 +133,17 @@ export const writeIntent = async (
     }
     return { outcome: "rejected", result };
   }
-  // The state write carries THREE facts at once, and one lock round is the
+  // The state write carries FOUR facts at once, and one lock round is the
   // reason they are together: the status the hub now holds, the sentence the
-  // ghost worker will compare (`workContextIntent`), and the debt that makes
-  // it run (`ghostPending`). Best-effort like every state update on this path.
+  // ghost worker will compare (`workContextIntent`), the debt that makes it
+  // run (`ghostPending`), and the acknowledgement below. Best-effort like
+  // every state update on this path.
   await updateSessionState(deps.home, own.hostSessionKey, (fresh) => ({
     ...withRecordedIntent(fresh, write.summary),
     workContextStatus: write.status === undefined ? fresh.workContextStatus : status,
+    // ...and the status the hub acknowledged, which SessionEnd compares the
+    // state's with (spool/work-context-ack.ts, review-2 round 8, L7).
+    workContextAcked: result?.status === "accepted" ? { id: own.workContextId, status } : fresh.workContextAcked,
   }));
   // The hub holds this work context now, as set_intent just wrote it: a debt a
   // heal left for it is paid (spool/owed-work-context.ts), and no later flush

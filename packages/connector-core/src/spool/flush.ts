@@ -65,6 +65,7 @@ import { mayFlusherSend } from "./ownership.ts";
 import { readRefusedLives, recordRefusedLife } from "./refused-lives.ts";
 import { rejectCauseOf } from "./reject-cause.ts";
 import type { RejectCause } from "./reject-cause.ts";
+import { ackedIn, noteWorkContextAcked } from "./work-context-ack.ts";
 
 export type { SessionHeal, SessionHealer } from "./flush-heal.ts";
 
@@ -165,6 +166,8 @@ interface Sent {
   readonly debt: OwedOutcome | null;
   /** The hub's own answer for the debt, when one went. */
   readonly owedAnswer: RecordResult | undefined;
+  /** The debt as it went, when one did. */
+  readonly owedSent: Record<string, unknown> | null;
 }
 
 /**
@@ -181,7 +184,7 @@ const send = async (
 ): Promise<Sent | null> => {
   if (owed === null) {
     const summary = await deliver(ctx, records);
-    return summary === null ? null : { summary, debt: null, owedAnswer: undefined };
+    return summary === null ? null : { summary, debt: null, owedAnswer: undefined, owedSent: null };
   }
   const delivery = await deliverOwed(ctx, spool.slug, owed, input.developerId, input.sessionId, records);
   if (delivery === null) {
@@ -195,7 +198,7 @@ const send = async (
     delivery.owedAnswer,
     ctx.now(),
   );
-  return { summary: delivery.summary, debt, owedAnswer: delivery.owedAnswer };
+  return { summary: delivery.summary, debt, owedAnswer: delivery.owedAnswer, owedSent: delivery.owedSent };
 };
 
 /**
@@ -376,6 +379,12 @@ const flushOneBatch = async (
   if (first === null) {
     return null;
   }
+  // What the hub accepted of the life's work context, for SessionEnd to
+  // compare the state's status with (spool/work-context-ack.ts, L7).
+  await noteWorkContextAcked(ctx.home, spool.slug, input.sessionId, [
+    ...(first.owedSent === null ? [] : ackedIn([first.owedSent], first.owedAnswer === undefined ? [] : [{ ...first.owedAnswer, index: 0 }])),
+    ...ackedIn(records, first.summary.results),
+  ]);
   if (isLoneDebt) {
     // A DEBT WITH NO RECORDS LEFT TO CARRY IT is paid alone (review-2 round
     // 7): a life that writes nothing after its heal never pays it otherwise,

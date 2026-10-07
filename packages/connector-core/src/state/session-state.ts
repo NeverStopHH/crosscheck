@@ -387,6 +387,21 @@ const SessionStateObjectSchema = z.looseObject({
   workContextTitle: z.string().min(1).nullable().default(null),
   workContextStatus: z.string().min(1).nullable().default(null),
   /**
+   * The agent kind the life registered as (review-2 round 8, L7): the producer
+   * of the work context SessionEnd sends for it. Null on a state from before
+   * the field, whose end sends none.
+   */
+  agentKind: z.string().min(1).nullable().default(null),
+  /**
+   * THE STATUS THE HUB LAST ACKNOWLEDGED, and for which work context (review-2
+   * round 8, L7): the last update it accepted, from a flush or from
+   * set_intent's own post. SessionEnd sends the life's work context once more
+   * when the state's status is not this one — a post that may have landed and
+   * did not left the hub on the status before it, and no later sender of the
+   * work context was coming to make the two agree.
+   */
+  workContextAcked: z.object({ id: z.string().min(1), status: z.string().min(1) }).nullable().default(null),
+  /**
    * Derived-intent telemetry (trial finding #16; the finding-#14 lesson — a
    * fire that lands nothing must be a number somebody can explain): fires
    * booked by the UserPromptSubmit hook under the lock BEFORE the worker
@@ -811,6 +826,8 @@ export const withCarriedCapture = (
           ? {
               workContextTitle: previous.workContextTitle ?? state.workContextTitle,
               workContextStatus: previous.workContextStatus ?? state.workContextStatus,
+              // ...and what the hub acknowledged of it (L7).
+              workContextAcked: previous.workContextAcked,
             }
           : {}),
       };
@@ -1554,6 +1571,8 @@ export const deriveSessionState = (
     summarizerLastUnreadable: null,
     workContextTitle: null,
     workContextStatus: null,
+    agentKind: null,
+    workContextAcked: null,
     intentFireCount: 0,
     intentNoneCount: 0,
     intentSetCount: 0,

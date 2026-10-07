@@ -15,7 +15,14 @@ import { createDb, createServer, readSessionCausalOrder } from "@crosscheck/serv
 import type { Db } from "@crosscheck/server";
 
 import { MAX_SPOOL_AGE_DAYS, MS_PER_DAY } from "../src/constants.ts";
-import { repoKey, sessionEpochPathForSlug, sessionSlug, sessionStatePath, spoolDir } from "../src/config/paths.ts";
+import {
+  repoKey,
+  sessionEpochPathForSlug,
+  sessionSlug,
+  sessionStatePath,
+  spoolDataPath,
+  spoolDir,
+} from "../src/config/paths.ts";
 import { commitEvidenceRecord } from "../src/capture/commit-evidence.ts";
 import { targetRecord, withProducer, workContextRecord } from "../src/capture/records.ts";
 import type { Producer } from "../src/capture/records.ts";
@@ -1414,5 +1421,62 @@ describe("a life SessionEnd ended (review-2 round 8, M1)", () => {
     expect(await isEnded(life.crosscheckSessionId)).toBe(true);
     expect(await targetsOf(life.workContextId)).toEqual(["src/late.ts"]);
     expect((await readDropDetail(fx.home, fx.key)).byReason).toEqual({ withheld: 1 });
+  });
+});
+
+/**
+ * THE LIFE'S LAST STATUS GOES WITH ITS END (review-2 round 8, L7). A set_intent
+ * whose post may have landed keeps its status in the state, and the next
+ * sender of the work context makes the hub agree — but at SessionEnd there is
+ * none: the hub kept the status before it for good.
+ */
+describe("a SessionEnd whose life's status the hub never acknowledged (review-2 round 8, L7)", () => {
+  /** Every work context the conversation's spool ever held, delivered or not. */
+  const workContextsSpooled = async (fx: Fixture): Promise<number> =>
+    (await Bun.file(spoolDataPath(fx.home, fx.key, sessionSlug(fx.hostSessionKey))).text())
+      .split("\n")
+      .filter((line) => line.includes('"kind":"work_context"')).length;
+
+  test("sends the work context with the status the state holds", async () => {
+    // Arrange: the hub took `analyzing`; set_intent's post of `blocked` may have
+    // landed and did not, so the state holds `blocked`
+    const fx = await fixture("end-sends-status");
+    const life = await register(fx);
+    await flushAsHook(fx);
+    await updateSessionState(fx.home, fx.hostSessionKey, (fresh) => ({ ...fresh, workContextStatus: "blocked" }));
+
+    // Act
+    const ended = await endViaFlow(fx);
+
+    // Assert
+    const rows = await raw<{ status: string }>("select status from work_contexts where id = $1", [life.workContextId]);
+    expect(ended.ended).toBe(true);
+    expect(rows).toEqual([{ status: "blocked" }]);
+  });
+
+  test("still knows what the hub acknowledged across a SessionStart re-fire", async () => {
+    // Arrange: the hub took `analyzing`
+    const fx = await fixture("end-after-refire");
+    const life = await register(fx);
+    await flushAsHook(fx);
+
+    // Act: compact re-fires SessionStart
+    await register(fx);
+
+    // Assert
+    expect((await stateOf(fx))?.workContextAcked).toEqual({ id: life.workContextId, status: "analyzing" });
+  });
+
+  test("sends none when the hub acknowledged the status the state holds", async () => {
+    // Arrange: the register's work context delivered and taken
+    const fx = await fixture("end-sends-none");
+    await register(fx);
+    await flushAsHook(fx);
+
+    // Act
+    await endViaFlow(fx);
+
+    // Assert: the register's one copy, and no other
+    expect(await workContextsSpooled(fx)).toBe(1);
   });
 });

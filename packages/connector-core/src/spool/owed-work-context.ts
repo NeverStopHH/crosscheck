@@ -116,7 +116,7 @@ export const oweWorkContext = async (home: string, key: string, slug: string, ow
 };
 
 /** The host session a spool slug belongs to; null for a name no slug is. */
-const hostSessionKeyOf = (slug: string): string | null => {
+export const hostSessionKeyOf = (slug: string): string | null => {
   try {
     return decodeURIComponent(slug);
   } catch {
@@ -359,6 +359,8 @@ export interface OwedDelivery {
   readonly summary: IngestSummary;
   /** The hub's answer for the owed record itself (`answerOwed`). */
   readonly owedAnswer: RecordResult | undefined;
+  /** The owed record as it went, built when it was sent. */
+  readonly owedSent: Record<string, unknown>;
 }
 
 /**
@@ -386,5 +388,6 @@ export const deliverOwed = async (
   return {
     summary: withoutAhead(result.data),
     owedAnswer: result.data.results?.find((answer) => answer.index === 0),
+    owedSent: ahead,
   };
 };

@@ -18872,6 +18872,78 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/future-stamps.test.ts`,
     because: "review-2 round 8, L5: every read clamps to its own now, and the cooldown never runs out",
   },
+  {
+    label: "SessionEnd never sends the work context the hub is behind on",
+    file: `${CORE}/src/flows/end-session.ts`,
+    from: "  await spoolLastWorkContext(input);\n",
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 8, L7: a set_intent post that may have landed and did not leaves the hub on the status before it for good",
+  },
+  {
+    label: "SessionEnd sends the work context whatever the hub acknowledged",
+    file: `${CORE}/src/spool/work-context-ack.ts`,
+    from: "  state.workContextAcked.status !== state.workContextStatus;",
+    to: "  true;",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 8, L7: every end sends one more work context, for nothing",
+  },
+  {
+    label: "SessionEnd sends the work context of a life the hub never took",
+    file: `${CORE}/src/spool/work-context-ack.ts`,
+    from: "  state.workContextAcked?.id === state.workContextId &&\n  state.workContextAcked.status !== state.workContextStatus;",
+    to: "  state.workContextAcked?.status !== state.workContextStatus;",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 round 8, L7: a life whose register never landed has one more record refused and counted at its end",
+  },
+  {
+    label: "a flush writes down nothing the hub accepted",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "noteWorkContextAcked(ctx.home, spool.slug, input.sessionId, [",
+    to: 'noteWorkContextAcked(ctx.home, spool.slug, "", [',
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 8, L7: SessionEnd has no acknowledged status to compare the state's with, and sends none",
+  },
+  {
+    label: "a flush writes its acknowledgement into another conversation's state",
+    file: `${CORE}/src/spool/work-context-ack.ts`,
+    from: "    return fresh.crosscheckSessionId === flusherSessionId && isNew ? { ...fresh, workContextAcked: last } : null;",
+    to: "    return isNew ? { ...fresh, workContextAcked: last } : null;",
+    test: `${CORE}/test/release-clock.test.ts`,
+    because: "review-2 round 8, L7: the write revives an abandoned host's state, and its backlog is held from every successor",
+  },
+  {
+    label: "a flush writes down no debt the hub accepted",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "    ...(first.owedSent === null ? [] : ackedIn(",
+    to: "    ...(true ? [] : ackedIn(",
+    test: `${CORE}/test/owed-work-context.test.ts`,
+    because: "review-2 round 8, L7: a healed life's work context, paid as a debt, is never seen as taken",
+  },
+  {
+    label: "set_intent writes down no status the hub accepted",
+    file: `${CORE}/src/mcp/tools/intent-write.ts`,
+    from: '    workContextAcked: result?.status === "accepted" ? { id: own.workContextId, status } : fresh.workContextAcked,',
+    to: "    workContextAcked: fresh.workContextAcked,",
+    test: `${CORE}/test/set-intent.test.ts`,
+    because: "review-2 round 8, L7: SessionEnd compares the state's status with the one before set_intent's",
+  },
+  {
+    label: "the state names no agent kind for SessionEnd's work context",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "    // The producer of the work context SessionEnd may send for this life (L7).\n    agentKind: input.agentKind,\n",
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 8, L7: SessionEnd has no producer for the work context, and sends none",
+  },
+  {
+    label: "a SessionStart re-fire forgets what the hub acknowledged",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "              workContextAcked: previous.workContextAcked,\n",
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 8, L7: after a compact, SessionEnd has nothing to compare the state's status with",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19115,7 +19187,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
  * PRINTS: packages/connector-core/test/owed-debt-rules.test.ts 21
- * PRINTS: packages/connector-core/test/owed-work-context.test.ts 15
+ * PRINTS: packages/connector-core/test/owed-work-context.test.ts 16
  * PRINTS: packages/connector-core/test/pilot-client.test.ts 4
  * PRINTS: packages/connector-core/test/pilot-platform-refusals.test.ts 2
  * PRINTS: packages/connector-core/test/pin-paths.test.ts 8
@@ -19126,20 +19198,20 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/register-guarantees.test.ts 2
  * PRINTS: packages/connector-core/test/register-seq.test.ts 3
  * PRINTS: packages/connector-core/test/reject-cause.test.ts 5
- * PRINTS: packages/connector-core/test/release-clock.test.ts 9
+ * PRINTS: packages/connector-core/test/release-clock.test.ts 10
  * PRINTS: packages/connector-core/test/remember-developer.test.ts 1
  * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 6
  * PRINTS: packages/connector-core/test/repo-ssh-determinism.test.ts 2
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
- * PRINTS: packages/connector-core/test/session-heal.test.ts 31
+ * PRINTS: packages/connector-core/test/session-heal.test.ts 32
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 2
- * PRINTS: packages/connector-core/test/session-lives.test.ts 46
+ * PRINTS: packages/connector-core/test/session-lives.test.ts 51
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
- * PRINTS: packages/connector-core/test/set-intent.test.ts 12
+ * PRINTS: packages/connector-core/test/set-intent.test.ts 13
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 2
  * PRINTS: packages/connector-core/test/spool-ignored.test.ts 2

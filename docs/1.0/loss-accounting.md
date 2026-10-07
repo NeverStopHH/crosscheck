@@ -688,6 +688,25 @@ so it ages from there:
 
 `future-stamps.test.ts` dates each stamp a year ahead. The state is reaped a week after the clamp, and the cooldown
 ends one cooldown after it.
+
+**The life's last status goes with its end** (review-2 round 8, L7). Every sender of a work context builds it from
+the state, so the next one makes the hub agree with it. At SessionEnd no next sender comes. A set_intent post that may
+have landed and did not left the hub on the old status for good. One that surely did not, put back after the window
+above had carried the new status, left the hub ahead. The state now remembers the last status the hub ACCEPTED for its
+work context (`workContextAcked`), from three sources:
+
+- a flush's spooled copy or a paid debt (`spool/work-context-ack.ts`);
+- set_intent's own post;
+- the same record, carried across a SessionStart re-fire.
+
+SessionEnd spools the work context once more, ahead of its drain, when the hub last accepted another status than the
+state holds. It sends none for a work context the hub was never seen to take. That one's own copies are on their way
+or counted, and one more would only be refused beside them. A state from before the life's `agentKind` was written
+down has no producer to send it under.
+
+Only `accepted` counts, never `duplicate`, and only the flusher's own state is written. Another conversation's state
+file is its liveness, and a write there revived an abandoned host and held its backlog from every successor (the
+release-clock probe caught it).
  `owed-work-context.test.ts` replays the probe, and all 11
 records land.
 

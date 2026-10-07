@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1722
+    # PRINTS: 1731
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -278,11 +278,11 @@ jobs:
     # PRINTS: flows/capture-touched-files.ts 3
     # PRINTS: flows/claim-revalidation.ts 2
     # PRINTS: flows/claim-surface.ts 1
-    # PRINTS: flows/end-session.ts 10
+    # PRINTS: flows/end-session.ts 11
     # PRINTS: flows/heal-session.ts 21
     # PRINTS: flows/heartbeat.ts 2
     # PRINTS: flows/hint.ts 5
-    # PRINTS: flows/register-session.ts 22
+    # PRINTS: flows/register-session.ts 23
     # PRINTS: flows/solved-hint.ts 4
     # PRINTS: git/check-ignore.ts 1
     # PRINTS: git/claim-drift.ts 5
@@ -320,7 +320,7 @@ jobs:
     # PRINTS: mcp/tools/answer-question.ts 1
     # PRINTS: mcp/tools/ask-teammate.ts 1
     # PRINTS: mcp/tools/get-diagnosis.ts 2
-    # PRINTS: mcp/tools/intent-write.ts 8
+    # PRINTS: mcp/tools/intent-write.ts 9
     # PRINTS: mcp/tools/publish-claim.ts 2
     # PRINTS: mcp/tools/review-draft.ts 1
     # PRINTS: mcp/tools/search-related-work.ts 1
@@ -337,7 +337,7 @@ jobs:
     # PRINTS: spool/drops.ts 11
     # PRINTS: spool/end-marker.ts 2
     # PRINTS: spool/flush-heal.ts 14
-    # PRINTS: spool/flush.ts 30
+    # PRINTS: spool/flush.ts 32
     # PRINTS: spool/ledger-read.ts 2
     # PRINTS: spool/lock.ts 2
     # PRINTS: spool/loss-report.ts 17
@@ -347,6 +347,7 @@ jobs:
     # PRINTS: spool/refused-lives.ts 5
     # PRINTS: spool/reject-cause.ts 3
     # PRINTS: spool/release.ts 1
+    # PRINTS: spool/work-context-ack.ts 3
     # PRINTS: state/capture-bookkeeping.ts 6
     # PRINTS: state/capture-health.ts 2
     # PRINTS: state/conference-cost.ts 1
@@ -357,7 +358,7 @@ jobs:
     # PRINTS: state/session-lineage.ts 3
     # PRINTS: state/session-reap.ts 7
     # PRINTS: state/session-scan.ts 2
-    # PRINTS: state/session-state.ts 25
+    # PRINTS: state/session-state.ts 26
     # PRINTS: state/tool-window-key.ts 2
     # PRINTS: packages/connector-core/test/intent-budget.test.ts 1
     # PRINTS: packages/connector-core/test/render-surface-registry.test.ts 1
@@ -538,7 +539,7 @@ jobs:
     # PRINTS: driver.ts 2
     # PRINTS: drops.ts 11
     # PRINTS: end-marker.ts 2
-    # PRINTS: end-session.ts 10
+    # PRINTS: end-session.ts 11
     # PRINTS: engine.ts 24
     # PRINTS: entry.ts 1
     # PRINTS: enums.ts 2
@@ -559,7 +560,7 @@ jobs:
     # PRINTS: fix-diff.ts 7
     # PRINTS: fixture.ts 1
     # PRINTS: flush-heal.ts 14
-    # PRINTS: flush.ts 30
+    # PRINTS: flush.ts 32
     # PRINTS: gate.ts 7
     # PRINTS: gates.ts 1
     # PRINTS: get-diagnosis.ts 2
@@ -587,7 +588,7 @@ jobs:
     # PRINTS: intent-budget.test.ts 1
     # PRINTS: intent-ledger-authority.test.ts 1
     # PRINTS: intent-ledger.ts 12
-    # PRINTS: intent-write.ts 8
+    # PRINTS: intent-write.ts 9
     # PRINTS: intent.ts 1
     # PRINTS: junit.ts 2
     # PRINTS: key.ts 6
@@ -653,7 +654,7 @@ jobs:
     # PRINTS: recover.ts 4
     # PRINTS: refusal.ts 3
     # PRINTS: refused-lives.ts 5
-    # PRINTS: register-session.ts 22
+    # PRINTS: register-session.ts 23
     # PRINTS: reject-cause.ts 3
     # PRINTS: release-preflight.ts 5
     # PRINTS: release.ts 1
@@ -685,7 +686,7 @@ jobs:
     # PRINTS: session-reap.ts 7
     # PRINTS: session-scan.ts 2
     # PRINTS: session-start.ts 8
-    # PRINTS: session-state.ts 25
+    # PRINTS: session-state.ts 26
     # PRINTS: session.ts 4
     # PRINTS: sessions.ts 16
     # PRINTS: set-intent.ts 4
@@ -732,6 +733,7 @@ jobs:
     # PRINTS: wiring-lookalikes.ts 1
     # PRINTS: wiring-removal.ts 7
     # PRINTS: wiring-scope.ts 1
+    # PRINTS: work-context-ack.ts 3
     # PRINTS: work-contexts.ts 2
     # PRINTS: worker-env.ts 1
     # PRINTS: worker.ts 7

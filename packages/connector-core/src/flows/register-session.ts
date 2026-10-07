@@ -440,6 +440,8 @@ export const registerSessionFlow = async (
     // fabricate one (trial finding #16).
     workContextTitle: input.title,
     workContextStatus: status,
+    // The producer of the work context SessionEnd may send for this life (L7).
+    agentKind: input.agentKind,
     // THE EPOCH IS MINTED ON THE INPUT, not inside publishSessionState (spec
     // 01 §3.4). publishSessionState's busy-lock FALLBACK writes this object
     // verbatim, with no carry at all — "the counters lose rather than the

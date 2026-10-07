@@ -368,6 +368,17 @@ describe("set_intent", () => {
     expect(body.data.workContext.status).toBe("implementing");
   });
 
+  test("a status the hub accepted is the one SessionEnd compares the state's with (review-2 round 8, L7)", async () => {
+    // Act
+    await call(alice, { summary: "Ship the JWKS refetch behind a flag, acknowledged", status: "blocked" });
+
+    // Assert
+    expect((await readSessionState(alice.home, alice.hostSessionKey))?.workContextAcked).toEqual({
+      id: alice.workContextId,
+      status: "blocked",
+    });
+  });
+
   test("settles the work context a heal still owes for that life, and only that one (review-2 round 7, M1)", async () => {
     // Arrange: a debt for Alice's work context, as a heal leaves it
     const key = repoKey(hubUrl, REPO_ID);
