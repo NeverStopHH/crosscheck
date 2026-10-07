@@ -20400,6 +20400,22 @@ export const MUTATIONS: readonly Mutation[
     because: "\"API Error: 529 Overloaded. retry\" is pointed at the rate-limit tree on the error it reports (round 4, C1 follow-up; C089)",
   },
   {
+    label: "a scripted session hints its opener's tree again",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  if (!isUnpointed(context, new Set(input.hintedRefIds ?? input.seenRefIds))) {\n    return SILENCE;\n  }\n",
+    to: "",
+    test: `${CORE}/test/holdout-round4-gate.test.ts`,
+    because: "the round-4 hold-out's sessions show one tree twice: the opener's pointer, then its finding (round 5, decision 11)",
+  },
+  {
+    label: "the round-4 hold-out's retry reaches the rate-limit tree",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "export const CONTINUATION_CLAUSE_WORDS: readonly string[] = [\"next\", \"los\", \"passt\", \"retry\", \"rerun\", \"restart\", \"resume\"];",
+    to: "export const CONTINUATION_CLAUSE_WORDS: readonly string[] = [\"next\", \"los\", \"passt\"];",
+    test: `${CORE}/test/holdout-round4-gate.test.ts`,
+    because: "C089, \"API Error: 529 Overloaded. retry\", is hinted beside the four named residuals (round 5)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     // RETARGETED (round 3, M7): the query is the prompt's window now.
@@ -20674,6 +20690,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-substance-select.test.ts 17
  * PRINTS: packages/connector-core/test/hint-substance-trust-parity.test.ts 1
  * PRINTS: packages/connector-core/test/hint-trailer-budget.test.ts 6
+ * PRINTS: packages/connector-core/test/holdout-round4-gate.test.ts 2
  * PRINTS: packages/connector-core/test/hub-key-refresh.test.ts 3
  * PRINTS: packages/connector-core/test/injection-corpus.test.ts 6
  * PRINTS: packages/connector-core/test/intent-budget.test.ts 1
