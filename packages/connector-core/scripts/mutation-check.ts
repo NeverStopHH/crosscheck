@@ -23872,16 +23872,16 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the presence TTL boundary is exclusive",
     file: `${CORE}/src/hints/collision-notice.ts`,
-    from: "now.getTime() - ms <= PRESENCE_TTL_MS",
-    to: "now.getTime() - ms < PRESENCE_TTL_MS",
+    from: "ageMs <= PRESENCE_TTL_MS",
+    to: "ageMs < PRESENCE_TTL_MS",
     test: `${CORE}/test/collision-notice.test.ts`,
     because: "a hit exactly as old as presence still allows loses a location the hub still gives out",
   },
   {
     label: "an unreadable last-active instant counts as fresh",
     file: `${CORE}/src/hints/collision-notice.ts`,
-    from: "  return !Number.isNaN(ms) && now.getTime()",
-    to: "  return Number.isNaN(ms) || now.getTime()",
+    from: "  return !Number.isNaN(ms) && ageMs >= 0",
+    to: "  return Number.isNaN(ms) || ageMs >= 0",
     test: `${CORE}/test/collision-notice.test.ts`,
     because: "a garbled stamp keeps branch and age forever",
   },
@@ -24039,6 +24039,15 @@ export const MUTATIONS: readonly Mutation[
     to: "    ;",
     test: `${CORE}/test/collision-person-strip.test.ts`,
     because: "a teammate named www.evil.example becomes a followable link with no scheme on the person's screen",
+  },
+  // ── Review of feat/collision-visible, round 2, L2: a stamp ahead of the clock ──
+  {
+    label: "a last-active instant ahead of the clock keeps branch and age",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "ageMs >= 0 && ageMs",
+    to: "ageMs",
+    test: `${CORE}/test/collision-relay-presence.test.ts`,
+    because: "a hub clock an hour fast keeps the branch of a teammate the 90 s rule should have stopped locating",
   },
 ];
 

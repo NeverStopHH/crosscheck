@@ -377,11 +377,14 @@ export const stillPresent = (
  * A group older than the presence TTL keeps its name and its files and loses
  * its location (review M2): a branch and a "last active" age are presence
  * facts, and past PRESENCE_TTL_MS they are no longer facts the hub would give
- * out about anybody. An unreadable instant counts as old.
+ * out about anybody. An unreadable instant counts as old, and so does one
+ * AHEAD of the clock (round 2, L2): a hub clock an hour fast, or a forged
+ * stamp, would otherwise keep a branch the 90 s rule exists to drop.
  */
 export const withoutStaleLocation = (group: CollisionNotice, now: Date): CollisionNotice => {
   const ms = group.lastActiveAt === null ? Number.NaN : Date.parse(group.lastActiveAt);
-  return !Number.isNaN(ms) && now.getTime() - ms <= PRESENCE_TTL_MS
+  const ageMs = now.getTime() - ms;
+  return !Number.isNaN(ms) && ageMs >= 0 && ageMs <= PRESENCE_TTL_MS
     ? group
     : { ...group, branch: null, lastActiveAt: null };
 };
