@@ -13,6 +13,8 @@ import {
   resolveListenPlan,
   serveOnPlan,
 } from "./http/listen.ts";
+import { NO_TRUSTED_PROXIES, TRUSTED_PROXIES_ENV, parseTrustedProxies } from "./http/forwarded.ts";
+import type { TrustedProxies } from "./http/forwarded.ts";
 import { bunPeerAddress } from "./http/peer.ts";
 import { readListenDefault } from "./services/hub-install.ts";
 import { generateApiKey } from "./auth/keys.ts";
@@ -152,6 +154,12 @@ export interface CreateServerOptions {
   readonly webauthnOrigins?: readonly string[];
   /** Omitted = Bun's own `requestIP` (http/peer.ts); the test harness injects one. */
   readonly peerAddress?: (c: Context<AppEnv>) => string | null;
+  /**
+   * Proxies besides loopback whose X-Forwarded-* headers count, already
+   * parsed (http/forwarded.ts). Omitted = none: `startServer` passes the
+   * parsed `CROSSCHECK_TRUSTED_PROXIES`.
+   */
+  readonly trustedProxies?: TrustedProxies;
 }
 
 /**
@@ -187,6 +195,7 @@ export const createServer = (options: CreateServerOptions): Hono<AppEnv> =>
     uiSessionSecret: resolveUiSessionSecret(options.uiSessionSecret),
     webauthnOrigins: options.webauthnOrigins ?? [],
     peerAddress: options.peerAddress ?? bunPeerAddress,
+    trustedProxies: options.trustedProxies ?? NO_TRUSTED_PROXIES,
   });
 
 const MIN_PORT = 1;
@@ -274,6 +283,7 @@ export const startServer = async (): Promise<void> => {
   // not after a full database boot.
   const port = parsePort(process.env["PORT"]);
   const configuredListen = parseListenAddresses(process.env[LISTEN_ENV]);
+  const trustedProxies = parseTrustedProxies(process.env[TRUSTED_PROXIES_ENV]);
   if (configuredListen !== null) {
     assertListenable(configuredListen);
   }
@@ -298,6 +308,7 @@ export const startServer = async (): Promise<void> => {
     // Throws on an origin no browser would run a ceremony at — refused here
     // rather than in front of a person at the approval page (04a §7).
     webauthnOrigins: parseWebAuthnOrigins(process.env["CROSSCHECK_WEBAUTHN_ORIGINS"], port),
+    trustedProxies,
   });
   // AN OPT-OUT FROM BEFORE THE INDEX FOLLOWED THE SETTING (review round 5,
   // M1): her docs still hold her branch titles, so they are rebuilt BEFORE

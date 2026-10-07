@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 
 import type { Db } from "./db/client.ts";
+import type { TrustedProxies } from "./http/forwarded.ts";
 import type { Embedder } from "./services/embedder.ts";
 
 /** Injected time source — pure logic never reads the system clock directly. */
@@ -53,4 +54,10 @@ export interface AppDeps {
    * says otherwise, since `app.request` has no socket to read.
    */
   readonly peerAddress: (c: Context<AppEnv>) => string | null;
+  /**
+   * Peers besides loopback whose X-Forwarded-* headers are believed
+   * (http/forwarded.ts, CROSSCHECK_TRUSTED_PROXIES). From any other peer the
+   * headers are ignored.
+   */
+  readonly trustedProxies: TrustedProxies;
 }

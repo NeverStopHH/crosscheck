@@ -24011,6 +24011,47 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/listen-boot.test.ts`,
     because: "the upgraded pilot hub keeps answering every network and nobody is told what to set",
   },
+  // X-Forwarded-* was believed from any peer (hub hardening, review M7).
+  {
+    label: "X-Forwarded-* is believed from any peer",
+    file: `${SERVER}/src/http/forwarded.ts`,
+    from: "  return peer !== null && (isLoopbackAddress(peer) || deps.trustedProxies.includes(peer));",
+    to: "  return true;",
+    test: `${SERVER}/test/forwarded-trust.test.ts`,
+    because: "a LAN peer talking to :7100 directly passes as https by writing one header",
+  },
+  {
+    label: "a trusted-proxy CIDR covers only its network address",
+    file: `${SERVER}/src/http/forwarded.ts`,
+    from: "    list.addSubnet(network, prefix, family);",
+    to: "    list.addAddress(network, family);",
+    test: `${SERVER}/test/forwarded-trust.test.ts`,
+    because: "the Docker kit's Caddy on 172.18.0.5 is listed as 172.18.0.0/16 and still counts as nobody's proxy",
+  },
+  {
+    label: "a trusted proxy may be named by hostname",
+    file: `${SERVER}/src/http/forwarded.ts`,
+    from: "    if (family === null || extra.length > 0) {",
+    to: "    if (extra.length > 0) {",
+    test: `${SERVER}/test/forwarded-trust.test.ts`,
+    because: "the hub starts with Node's argument error instead of saying which entry is not an address",
+  },
+  {
+    label: "a trusted-proxy prefix past the address width is passed to the parser",
+    file: `${SERVER}/src/http/forwarded.ts`,
+    from: "    if (!Number.isInteger(prefix) || prefix > maxPrefix) {",
+    to: "    if (false) {",
+    test: `${SERVER}/test/forwarded-trust.test.ts`,
+    because: "10.0.0.0/33 stops the hub with a RangeError that names no setting",
+  },
+  {
+    label: "the login cookie reads X-Forwarded-Proto from any peer",
+    file: `${SERVER}/src/routes/ui.tsx`,
+    from: "  const forwardedProto = trustedForwardedProto(c, deps);",
+    to: '  const forwardedProto = c.req.header("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();',
+    test: `${SERVER}/test/forwarded-trust.test.ts`,
+    because: "isSecureTransport says https for a header any LAN peer can write, and the name invites reuse as a gate",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -24380,6 +24421,7 @@ interface Outcome {
  * PRINTS: packages/server/test/drafts.test.ts 4
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/fence-waivers.test.ts 1
+ * PRINTS: packages/server/test/forwarded-trust.test.ts 5
  * PRINTS: packages/server/test/ghost-overlap.test.ts 7
  * PRINTS: packages/server/test/hint-content-floor.test.ts 6
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5

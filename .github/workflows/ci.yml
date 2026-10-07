@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 2303
+    # PRINTS: 2308
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -421,6 +421,7 @@ jobs:
     # PRINTS: packages/server/src/db/bootstrap.sql 44
     # PRINTS: packages/server/src/db/client.ts 8
     # PRINTS: packages/server/src/db/schema.ts 1
+    # PRINTS: packages/server/src/http/forwarded.ts 4
     # PRINTS: packages/server/src/http/listen.ts 6
     # PRINTS: packages/server/src/http/schemas.ts 1
     # PRINTS: packages/server/src/index.ts 4
@@ -444,6 +445,7 @@ jobs:
     # PRINTS: packages/server/src/routes/ui-ceremony.ts 5
     # PRINTS: packages/server/src/routes/ui-pages.tsx 2
     # PRINTS: packages/server/src/routes/ui-passkeys.tsx 1
+    # PRINTS: packages/server/src/routes/ui.tsx 1
     # PRINTS: packages/server/src/routes/work-contexts.ts 9
     # PRINTS: packages/server/src/services/absences.ts 12
     # PRINTS: packages/server/src/services/calibration.ts 1
@@ -621,6 +623,7 @@ jobs:
     # PRINTS: fix-diff.ts 7
     # PRINTS: fixture.ts 1
     # PRINTS: flush.ts 3
+    # PRINTS: forwarded.ts 4
     # PRINTS: gate.ts 9
     # PRINTS: gates.ts 1
     # PRINTS: get-diagnosis.ts 2
@@ -799,6 +802,7 @@ jobs:
     # PRINTS: ui-ceremony.ts 5
     # PRINTS: ui-pages.tsx 2
     # PRINTS: ui-passkeys.tsx 1
+    # PRINTS: ui.tsx 1
     # PRINTS: unland-false-landed.ts 12
     # PRINTS: user-prompt-submit.ts 6
     # PRINTS: v1.ts 2
