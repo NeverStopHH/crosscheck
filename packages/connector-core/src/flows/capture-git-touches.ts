@@ -274,6 +274,13 @@ const authoredPaths = (stdout: string, author: string, since: Date): readonly st
  * session's. Bounded at MAX_GIT_LANE_COMMITS commits and the lane's own path
  * bound. Null when git did not answer; an empty list when nobody is
  * configured to attribute a commit to.
+ *
+ * NO CLOCK QUESTION TO GIT (CCB-2, test/staleness-axis.test.ts). Git is asked
+ * for the newest commits on HEAD — a count, not a date filter, so a merge that
+ * brought in old committer dates cannot hide what sits behind it — and the
+ * window is cut here, on each commit's AUTHOR time and this developer's own
+ * address. It is a question about this session's ACTIVITY, never about a
+ * claim's currency, and it feeds capture, not any claim's authority.
  */
 export const readGitCommits = async (
   input: CaptureGitTouchesInput & { readonly authorEmail?: string | null },
@@ -284,9 +291,6 @@ export const readGitCommits = async (
       [
         "log",
         "--no-merges",
-        // One second wider than the window: git's `--since` reads the
-        // committer date in whole seconds, and the exact cut is made below.
-        `--since=${new Date(input.since.getTime() - MS_PER_SECOND).toISOString()}`,
         "-n",
         String(MAX_GIT_LANE_COMMITS),
         `--format=${COMMIT_MARK}%ae${FIELD_MARK}%at`,
