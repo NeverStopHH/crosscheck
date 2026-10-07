@@ -311,6 +311,20 @@ describe("what a refusal of the debt is", () => {
     expect((await owedOf(fx))?.refusals).toBe(0);
   });
 
+  test("a refusal of the debt's own life, one the hub never registered, counts against the debt (review-2 round 8, R7-M3)", async () => {
+    // Arrange: everything delivered; a debt for a life of this conversation the hub never registered
+    const fx = await fixture("author-unknown-debt");
+    const life = await register(fx);
+    await flushAsHook(fx);
+    await owe(fx, `${life.crosscheckSessionId}~r9`);
+
+    // Act: the lone debt goes, and the hub refuses it `author_unknown`
+    await flushAsHook(fx);
+
+    // Assert: not the producer's refusal, so the debt's own — counted toward its bound
+    expect((await owedOf(fx))?.refusals).toBe(1);
+  });
+
   test("a lone debt the hub refuses goes once per drain", async () => {
     // Arrange: everything delivered; a debt the hub refuses, nothing to carry it
     const fx = await fixture("lone-refused");

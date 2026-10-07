@@ -18984,6 +18984,22 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review-2 round 8, L7: after a compact, SessionEnd has nothing to compare the state's status with",
   },
+  {
+    label: "a debt refused author_unknown never counts a refusal (R7-M3)",
+    file: `${CORE}/src/spool/owed-work-context.ts`,
+    from: 'const OWN_SESSION_CAUSES: ReadonlySet<string> = new Set(["session_ended", "session_unknown"]);',
+    to: 'const OWN_SESSION_CAUSES: ReadonlySet<string> = new Set(["session_ended", "session_unknown", "author_unknown"]);',
+    test: `${CORE}/test/owed-debt-rules.test.ts`,
+    because: "review-2 round 8, L10: a debt for a life the hub never registered never reaches its bound, and holds SessionEnd open for good",
+  },
+  {
+    label: "a spooled work context goes with the title it was spooled with (R7-M9)",
+    file: `${CORE}/src/spool/owed-work-context.ts`,
+    from: '          title: textOr(state.workContextTitle, body["title"]),',
+    to: '          title: textOr(body["title"], state.workContextTitle),',
+    test: `${CORE}/test/owed-work-context.test.ts`,
+    because: "review-2 round 8, L10: a re-fire on a new branch renames the hub's work context away from the title its state holds",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19226,8 +19242,8 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/mcp-tools.test.ts 4
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
- * PRINTS: packages/connector-core/test/owed-debt-rules.test.ts 21
- * PRINTS: packages/connector-core/test/owed-work-context.test.ts 16
+ * PRINTS: packages/connector-core/test/owed-debt-rules.test.ts 22
+ * PRINTS: packages/connector-core/test/owed-work-context.test.ts 17
  * PRINTS: packages/connector-core/test/pilot-client.test.ts 4
  * PRINTS: packages/connector-core/test/pilot-platform-refusals.test.ts 2
  * PRINTS: packages/connector-core/test/pin-paths.test.ts 8

@@ -719,6 +719,15 @@ waited a week for the reap bound. The line now gives:
 An owner silent past the hour doctor calls a state a zombie is named as a conversation that may have crashed, with that
 release day. A conversation re-bound to another repo (M2) is now its own owner, `rebound`. Like an ended one it is
 sendable by any flusher of this repo, and doctor says its records wait for this repo's next session.
+
+**Two round-7 guards had no test** (review-2 round 8, L10). The reviewer showed that two mutations survived. Each now
+has a test and an anchor:
+
+- R7-M3: a debt refused `author_unknown` never counted a refusal. That happens when its own life was never registered
+  on the hub, and such a debt never reached its bound and held SessionEnd open for good. `owed-debt-rules.test.ts`
+  pays it alone and expects one refusal counted.
+- R7-M9: a spooled work context went with the title it was spooled with, not its state's. A re-fire on a new branch
+  spools that title while the state keeps the life's. `owed-work-context.test.ts` expects the state's title on the hub.
  `owed-work-context.test.ts` replays the probe, and all 11
 records land.
 

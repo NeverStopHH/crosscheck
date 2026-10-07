@@ -462,6 +462,35 @@ describe("a work context spooled at registration (review-2 round 7, found by the
     expect(await statusOf(life.workContextId)).toBe("blocked");
   });
 
+  test("goes with the title the life's state holds, not the one it was spooled with (review-2 round 8, R7-M9)", async () => {
+    // Arrange: a copy of the work context spooled under another title — as a
+    // re-fire on a new branch spools it, while its state keeps the life's
+    const fx = await fixture("spooled-title");
+    const life = await register(fx);
+    await flushAsHook(fx);
+    const kept = (await readSessionState(fx.home, fx.hostSessionKey))?.workContextTitle;
+    await appendRecords(
+      fx.home,
+      fx.key,
+      fx.hostSessionKey,
+      [
+        workContextRecord(
+          { workContextId: life.workContextId, sessionId: life.crosscheckSessionId, title: "Spooled title", status: "analyzing" },
+          producerOf(life.crosscheckSessionId),
+          new Date(),
+        ),
+      ],
+      new Date(),
+    );
+
+    // Act
+    await flushAsHook(fx);
+
+    // Assert
+    const rows = await raw<{ title: string }>("select title from work_contexts where id = $1", [life.workContextId]);
+    expect(rows).toEqual([{ title: kept ?? "" }]);
+  });
+
   test("goes with the status the life's end left on its marker once the state is gone", async () => {
     // Arrange: the same race, and a SessionEnd with no room to drain
     const fx = await fixture("spooled-wc-ended");
