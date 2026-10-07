@@ -415,6 +415,13 @@ export const spanRedactedUntrusted = (
  */
 const RENDERER_STRUCTURE = /[·:\u2014]/g;
 
+/** The renderer's structure out, whitespace folded — the one copy of the BARE strip. */
+const withoutStructure = (text: string): string =>
+  text
+    .replace(RENDERER_STRUCTURE, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
 /**
  * A short field a renderer prints OUTSIDE the frame: a claim's kind and
  * status, a developer's display name, an absence line's author name. One strip
@@ -432,11 +439,20 @@ const RENDERER_STRUCTURE = /[·:\u2014]/g;
 export const bareUntrusted = (
   raw: string,
   maxChars: number = MAX_TITLE_CHARS,
-): string =>
-  sanitizeUntrusted(raw, maxChars)
-    .replace(RENDERER_STRUCTURE, "")
-    .replace(/\s+/g, " ")
-    .trim();
+): string => withoutStructure(sanitizeUntrusted(raw, maxChars));
+
+/**
+ * Every strip `bareUntrusted` applies EXCEPT the phrase filter and the cap:
+ * for a value that is STORED and rendered later through a phrase decision of
+ * its own (hints/collision-notice.ts). The redaction marker is a rendering,
+ * never data — stored, two distinct paths that both trip the filter would
+ * collapse into one and the count would lie.
+ */
+export const bareCleaned = (raw: string): string => withoutStructure(cleanUntrusted(raw));
+
+/** Whether the phrase filter blanks this value — the one decision a caller makes its own fallback for. */
+export const tripsPhraseFilter = (raw: string): boolean =>
+  sanitizeUntrusted(raw) === REDACTED_TITLE;
 
 /**
  * Characters an id may carry, written once and used in both directions.

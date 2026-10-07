@@ -215,6 +215,62 @@ describe("the notice for a teammate's group of files (ghost check)", () => {
   });
 });
 
+describe("an ordinary word the phrase filter fears is never shown as a redaction marker", () => {
+  const REDACTED = "redacted";
+
+  test("a path under overrides/ is named by its own file name, and two such files stay two", () => {
+    // Arrange: "override" is one of the filter's branches
+    const first = tripwireCollision(tripwireRow(), "src/overrides/button.tsx");
+    const second = tripwireCollision(tripwireRow(), "src/overrides/input.tsx");
+
+    // Act
+    const grown = withCollisionNotices(withCollisionNotices(state(), [first]), [second]);
+    const notice = renderCollisionNotice(first, NOW);
+
+    // Assert
+    expect(notice).toContain("is working on button.tsx");
+    expect(grown.collisionNotices?.[0]?.fileCount).toBe(2);
+    expect(JSON.stringify(grown.collisionNotices)).not.toContain(REDACTED);
+  });
+
+  test("a FILE NAME that reads like an instruction is called 'a file you touched'", () => {
+    // Act
+    const notice = noticeOf(tripwireRow(), "src/override-everything.ts");
+
+    // Assert
+    expect(notice).toContain("is working on a file you touched");
+    expect(notice).not.toContain(REDACTED);
+  });
+
+  test("a branch that reads like an instruction is not printed at all", () => {
+    // Arrange
+    const group = tripwireCollision(tripwireRow({ branch: "fix/override-timeout" }), FILE);
+
+    // Act
+    const notice = renderCollisionNotice(group, NOW);
+
+    // Assert
+    expect(notice).not.toContain("on branch");
+    expect(notice).not.toContain(REDACTED);
+    // ...and nothing of it is stored: the marker is a rendering, never data
+    expect(group.branch).toBeNull();
+  });
+
+  test("a person whose name trips the filter is 'A teammate' on every surface", () => {
+    // Arrange: "act as" sits inside "Pact Ashley"
+    const group = tripwireCollision(tripwireRow({ developerName: "Pact Ashley" }), FILE);
+
+    // Act
+    const notice = renderCollisionNotice(group, NOW);
+    const indicator = renderOverlapIndicator([group]);
+
+    // Assert
+    expect(notice.startsWith("crosscheck: A teammate is working on")).toBe(true);
+    expect(indicator).toBe("⚠ overlap: A teammate · 1 file");
+    expect(group.name).not.toContain(REDACTED);
+  });
+});
+
 describe("teammate-derived fields cannot forge the notice's structure", () => {
   test("a hostile name, branch and path keep the notice one line with one verdict", () => {
     // Arrange: every separator the notice owns, planted in every field

@@ -23469,15 +23469,15 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a branch withheld for presence opt-out is printed in the person's notice",
     file: `${CORE}/src/hints/collision-notice.ts`,
-    from: "  if (raw === LOCATION_WITHHELD || isDetachedBranch(raw)) {",
-    to: "  if (isDetachedBranch(raw)) {",
+    from: "const isNameableBranch = (raw: string): boolean => raw !== LOCATION_WITHHELD && !isDetachedBranch(raw);",
+    to: "const isNameableBranch = (raw: string): boolean => !isDetachedBranch(raw);",
     test: `${CORE}/test/collision-notice.test.ts`,
     because: "the projection's marker is printed as a branch, and the notice tells the reader the teammate opted out",
   },
   {
     label: "a teammate's raw display name reaches the person's notice",
     file: `${CORE}/src/hints/collision-notice.ts`,
-    from: "  const name = raw === undefined ? \"\" : bareUntrusted(raw, COLLISION_NOTICE_NAME_CHARS);",
+    from: "  const name = raw === undefined ? \"\" : personField(raw, COLLISION_NOTICE_NAME_CHARS);",
     to: "  const name = raw === undefined ? \"\" : raw;",
     test: `${CORE}/test/collision-notice.test.ts`,
     because: "a name carrying a newline, a separator or a bidi override forges a second line or verdict in what the person reads",
@@ -23485,15 +23485,15 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a teammate's raw branch reaches the person's notice",
     file: `${CORE}/src/hints/collision-notice.ts`,
-    from: "  const branch = bareUntrusted(raw, COLLISION_NOTICE_BRANCH_CHARS);",
-    to: "  const branch = raw;",
+    from: "  const branch = isNameableBranch(raw) ? personField(raw, COLLISION_NOTICE_BRANCH_CHARS) : \"\";",
+    to: "  const branch = isNameableBranch(raw) ? raw : \"\";",
     test: `${CORE}/test/collision-notice.test.ts`,
     because: "the branch field is the teammate's own text, printed outside any frame",
   },
   {
     label: "the session state keeps a hub-sent path unsanitized and unbounded",
     file: `${CORE}/src/hints/collision-notice.ts`,
-    from: "const storedPath = (path: string): string => bareUntrusted(path, COLLISION_NOTICE_PATH_CHARS);",
+    from: "const storedPath = (path: string): string => capped(bareCleaned(path), COLLISION_NOTICE_PATH_CHARS);",
     to: "const storedPath = (path: string): string => path;",
     test: `${CORE}/test/collision-notice.test.ts`,
     because: "a ghost row's shared value is written into the state file as the hub sent it, at any length",
@@ -23501,7 +23501,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a file name read back from the state file is printed unsanitized",
     file: `${CORE}/src/hints/collision-notice.ts`,
-    from: "  const shown = first === undefined ? \"\" : bareUntrusted(basename(first), COLLISION_NOTICE_FILE_CHARS);",
+    from: "  const shown = first === undefined ? \"\" : personField(basename(first), COLLISION_NOTICE_FILE_CHARS);",
     to: "  const shown = first === undefined ? \"\" : basename(first);",
     test: `${CORE}/test/collision-notice.test.ts`,
     because: "a tampered or older state file is trusted more than a hub row, and its path forges structure",
@@ -23595,6 +23595,23 @@ export const MUTATIONS: readonly Mutation[
     to: "  const isPartial = group.partial === true;",
     test: `${CORE}/test/collision-notice.test.ts`,
     because: "COV-9: the statusline and the relay stop saying the overlap may be wider while the record still has a hole",
+  },
+  // ── Review of feat/collision-visible, M1: no redaction marker for a person ──
+  {
+    label: "a name, branch or file name that reads like an instruction reaches the person",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  return cleaned.length === 0 || tripsPhraseFilter(cleaned) ? \"\" : capped(cleaned, maxChars);",
+    to: "  return cleaned.length === 0 ? \"\" : capped(cleaned, maxChars);",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "an instruction-shaped field is printed outside any frame on the one line a person reads",
+  },
+  {
+    label: "the state stores the redaction marker in place of a path",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "const storedPath = (path: string): string => capped(bareCleaned(path), COLLISION_NOTICE_PATH_CHARS);",
+    to: "const storedPath = (path: string): string => (tripsPhraseFilter(path) ? \"[redacted]\" : capped(bareCleaned(path), COLLISION_NOTICE_PATH_CHARS));",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "two files under overrides/ collapse into one marker, and the person is told one file where there are two",
   },
 ];
 
@@ -23804,7 +23821,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/claim-surface.test.ts 1
  * PRINTS: packages/connector-core/test/claim-validity-parity.test.ts 2
  * PRINTS: packages/connector-core/test/claim-validity-render.test.ts 2
- * PRINTS: packages/connector-core/test/collision-notice.test.ts 12
+ * PRINTS: packages/connector-core/test/collision-notice.test.ts 14
  * PRINTS: packages/connector-core/test/collision-state.test.ts 4
  * PRINTS: packages/connector-core/test/commit-evidence.test.ts 1
  * PRINTS: packages/connector-core/test/conference-cost.test.ts 1

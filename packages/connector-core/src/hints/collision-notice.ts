@@ -43,7 +43,7 @@ import {
 } from "../constants.ts";
 import { formatGhostAge } from "../briefing/ghost.ts";
 import { cutWellFormed } from "../briefing/cut.ts";
-import { bareUntrusted } from "../briefing/sanitize.ts";
+import { bareCleaned, tripsPhraseFilter } from "../briefing/sanitize.ts";
 import { hasIncompleteRung } from "../coverage/render.ts";
 import { isDetachedBranch } from "../git/detached-branch.ts";
 import type { CoverageRecord } from "../http/coverage.ts";
@@ -92,26 +92,49 @@ export const PARTIAL_RECORD_CLAUSE =
 export const collisionKey = (developerId: string, workContextId: string): string =>
   JSON.stringify([developerId, workContextId]);
 
+/** Cut at `maxChars` with a visible ellipsis, never through an astral pair. */
+const capped = (text: string, maxChars: number): string =>
+  text.length <= maxChars ? text : `${cutWellFormed(text, maxChars - ELLIPSIS.length)}${ELLIPSIS}`;
+
+/**
+ * A PATH as the session state stores it: every bare strip, capped, and NO
+ * phrase decision. The redaction marker is a rendering, never data — stored,
+ * `src/overrides/button.tsx` and `src/overrides/input.tsx` would both become
+ * the same marker and one teammate on two files would count as one.
+ */
+const storedPath = (path: string): string => capped(bareCleaned(path), COLLISION_NOTICE_PATH_CHARS);
+
+/**
+ * A field as the PERSON reads it — and, for a name or a branch, as the state
+ * stores it: every bare strip, then the phrase filter on the WHOLE value (a
+ * cap applied first could cut the phrase off), "" when nothing survives or
+ * the value reads like an instruction, and each caller says what stands in
+ * its place. Never `[redacted …]` on a person's screen or in the state file:
+ * a colleague called "Pact Ashley" or a branch `fix/override-timeout` is an
+ * ordinary word the filter fears, not an attack worth a marker.
+ */
+const personField = (raw: string, maxChars: number): string => {
+  const cleaned = bareCleaned(raw);
+  return cleaned.length === 0 || tripsPhraseFilter(cleaned) ? "" : capped(cleaned, maxChars);
+};
+
 const displayName = (raw: string | undefined): string => {
-  const name = raw === undefined ? "" : bareUntrusted(raw, COLLISION_NOTICE_NAME_CHARS);
+  const name = raw === undefined ? "" : personField(raw, COLLISION_NOTICE_NAME_CHARS);
   return name.length === 0 ? UNKNOWN_TEAMMATE : name;
 };
 
 /**
- * The branch a notice may print, or null. Null for the projection's opt-out
- * marker (tested on the RAW value, before any sanitizer could reshape it), for
- * a detached HEAD, and for anything that sanitizes to nothing.
+ * Whether a branch may be named at all: never the projection's opt-out marker
+ * (tested on the RAW value, before any strip could reshape it), never a
+ * detached HEAD.
  */
+const isNameableBranch = (raw: string): boolean => raw !== LOCATION_WITHHELD && !isDetachedBranch(raw);
+
+/** The branch a notice may print and the state may keep, or null — which also covers a phrase hit. */
 const visibleBranch = (raw: string): string | null => {
-  if (raw === LOCATION_WITHHELD || isDetachedBranch(raw)) {
-    return null;
-  }
-  const branch = bareUntrusted(raw, COLLISION_NOTICE_BRANCH_CHARS);
+  const branch = isNameableBranch(raw) ? personField(raw, COLLISION_NOTICE_BRANCH_CHARS) : "";
   return branch.length === 0 ? null : branch;
 };
-
-/** A path as the state keeps it: the reader's own, bounded, never shown whole. */
-const storedPath = (path: string): string => bareUntrusted(path, COLLISION_NOTICE_PATH_CHARS);
 
 /**
  * The tripwire's one row, as the group the person is told about — with the
@@ -126,7 +149,7 @@ export const tripwireCollision = (
   return {
     key: collisionKey(session.developerId, session.workContextId),
     developerId: session.developerId,
-    name: displayName(session.developerName),
+    name: personField(session.developerName, COLLISION_NOTICE_NAME_CHARS),
     files: path.length === 0 ? [] : [path],
     fileCount: 1,
     branch: visibleBranch(session.branch),
@@ -167,7 +190,7 @@ export const ghostCollisions = (entries: readonly GhostCheckEntry[]): readonly C
       {
         key: collisionKey(entry.developerId, entry.workContextId),
         developerId: entry.developerId,
-        name: displayName(entry.developerName),
+        name: personField(entry.developerName ?? "", COLLISION_NOTICE_NAME_CHARS),
         files,
         fileCount: ghostFileCount(entry, files.length),
         branch: null,
@@ -193,7 +216,7 @@ const basename = (path: string): string => path.split("/").filter((part) => part
 export const renderCollisionNotice = (group: CollisionNotice, now: Date): string => {
   const name = displayName(group.name);
   const [first] = group.files;
-  const shown = first === undefined ? "" : bareUntrusted(basename(first), COLLISION_NOTICE_FILE_CHARS);
+  const shown = first === undefined ? "" : personField(basename(first), COLLISION_NOTICE_FILE_CHARS);
   const file = shown.length === 0 ? UNNAMED_FILE : shown;
   const isGroup = group.fileCount > 1;
   const what = isGroup ? `${String(group.fileCount)} files you also touched, e.g. ${file}` : file;
@@ -219,9 +242,6 @@ export const renderSubagentCollisionRelay = (groups: readonly CollisionNotice[],
   groups.length === 0
     ? ""
     : [SUBAGENT_RELAY_HEADER, renderCollisionNotices(groups, now), COLLISION_RELAY_SENTENCE].join("\n");
-
-const capped = (text: string, max: number): string =>
-  text.length <= max ? text : `${cutWellFormed(text, max - ELLIPSIS.length)}${ELLIPSIS}`;
 
 interface OverlapPerson {
   readonly developerId: string;
