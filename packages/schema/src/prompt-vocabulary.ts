@@ -46,7 +46,14 @@ export const CONTINUATION_SIGNAL_WORDS: readonly string[] = [
   // round 4, M4: Spanish and French — "bueno, el login ya funciona, sigue", "d'accord, vas-y"
   "sigue", "sigamos", "seguimos", "continua", "adelante", "reprends", "continuez", "vas-y", "allez-y",
 ];
-export const CONTINUATION_CLAUSE_WORDS: readonly string[] = ["next", "los", "passt"];
+/**
+ * The clause words, and the RESTART VERBS among them (round 4, C1 follow-up):
+ * "API Error: 529 Overloaded. retry" hands the session back as "next" does,
+ * and its "529" and "overloaded" reached the rate-limit tree. Only a clause
+ * of nothing else signals: "retry limit for failed imports is too low" and
+ * "rerun the checkout e2e tests" are tasks.
+ */
+export const CONTINUATION_CLAUSE_WORDS: readonly string[] = ["next", "los", "passt", "retry", "rerun", "restart", "resume"];
 /**
  * Words in a row that carry the session on, folded. Round 4 (M1) added the
  * point the work stopped at — "pick up where you stopped", "mach da weiter

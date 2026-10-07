@@ -34,6 +34,10 @@ describe("a continuation signal, anywhere in the prompt", () => {
     ["Ich weiß nicht mehr genau where we left off"],
     ["rate limited again lol, try again"],
     ["overloaded wieder, nochmal versuchen"],
+    ["API Error: 529 Overloaded. retry"],
+    ["Request failed with status 503 — rerun"],
+    ["session expired, restart please"],
+    ["resume"],
   ])("%p carries the session on", (prompt) => {
     expect(hasContinuationSignal(prompt)).toBe(true);
   });
@@ -63,6 +67,9 @@ describe("a continuation signal, anywhere in the prompt", () => {
     ["pick up the new signing key from the vault", "pick up beside no point the work stopped at"],
     ["the export left off the header row", "left off without where"],
     ["try the retry button with a slow network", "try beside no again"],
+    ["retry limit for failed imports is too low", "a restart verb beside words of the task"],
+    ["rerun the checkout e2e tests", "a restart verb beside words of the task"],
+    ["the worker should restart after an OOM kill", "a restart verb in a sentence about the worker"],
   ])("%p does not — %s", (prompt) => {
     expect(hasContinuationSignal(prompt)).toBe(false);
   });

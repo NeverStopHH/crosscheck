@@ -20391,6 +20391,14 @@ export const MUTATIONS: readonly Mutation[
     because: "\"refresh.ts\" is counted as \"refresh.t\", where the database keeps the host whole (round 4, L1 follow-up)",
   },
   {
+    label: "a restart verb hands nothing back",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "export const CONTINUATION_CLAUSE_WORDS: readonly string[] = [\"next\", \"los\", \"passt\", \"retry\", \"rerun\", \"restart\", \"resume\"];",
+    to: "export const CONTINUATION_CLAUSE_WORDS: readonly string[] = [\"next\", \"los\", \"passt\"];",
+    test: `${SCHEMA}/test/continuation.test.ts`,
+    because: "\"API Error: 529 Overloaded. retry\" is pointed at the rate-limit tree on the error it reports (round 4, C1 follow-up; C089)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     // RETARGETED (round 3, M7): the query is the prompt's window now.
@@ -20736,7 +20744,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/causal-guarantees.test.ts 7
  * PRINTS: packages/schema/test/claim.test.ts 1
  * PRINTS: packages/schema/test/content-floor.test.ts 9
- * PRINTS: packages/schema/test/continuation.test.ts 12
+ * PRINTS: packages/schema/test/continuation.test.ts 13
  * PRINTS: packages/schema/test/english-stem.test.ts 4
  * PRINTS: packages/schema/test/evidence-resolution.test.ts 8
  * PRINTS: packages/schema/test/file-ref.test.ts 5
