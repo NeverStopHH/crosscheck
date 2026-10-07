@@ -46,10 +46,12 @@ import { agentTexts, personLines } from "./release-gate/host.ts";
 import type { HookRun, HostSession } from "./release-gate/host.ts";
 import { dumpDatabase, startHub } from "./release-gate/hub.ts";
 import type { TestHub } from "./release-gate/hub.ts";
+import { GENERATED_CLASSES, runGeneratedCase } from "./release-gate/scenario-generated.ts";
+import type { GeneratedWorld } from "./release-gate/scenario-generated.ts";
 import { MIKE_BRANCH, STALE_BRANCH, TOPIC_BRANCH, runLongSessionCase } from "./release-gate/scenario-long-session.ts";
 import type { LongSessionPlan, LongSessionWorld } from "./release-gate/scenario-long-session.ts";
 import { conferenceOverlaps, contextsOf, findMarker, ghostRows, targetsOf } from "./release-gate/team.ts";
-import type { ConferenceOverlap, ContextRow, GhostRow, TargetRow } from "./release-gate/team.ts";
+import type { ConferenceOverlap, ContextRow, GateDeveloper, GhostRow, TargetRow } from "./release-gate/team.ts";
 
 /** A whole case — hundreds of real hook runs against a real hub — per beforeAll. */
 const CASE_TIMEOUT_MS = 300_000;
@@ -187,6 +189,17 @@ const collisionNoise = (
 };
 
 const SILENT = { personLines: [], tripwire: [], briefingGhosts: [], statuslines: [] };
+
+interface OverlapRows {
+  readonly ghost: readonly GhostRow[];
+  readonly conference: readonly ConferenceOverlap[];
+}
+
+/** Every overlap row the hub would show any of `readers` on `repo`. */
+const overlapRows = async (on: TestHub, readers: readonly GateDeveloper[], repo: string): Promise<OverlapRows> => ({
+  ghost: (await Promise.all(readers.map(async (reader) => ghostRows(on, reader, repo)))).flat(),
+  conference: (await Promise.all(readers.map(async (reader) => conferenceOverlaps(on, reader, repo)))).flat(),
+});
 
 interface CoverageRow {
   readonly source: string;
@@ -457,6 +470,50 @@ describe("N1 — same scale, zero shared files: silent", () => {
   });
 });
 
+describe("N2 — overlap only in lockfiles and generated code: silent", () => {
+  let world: GeneratedWorld;
+  let rows: OverlapRows;
+
+  beforeAll(async () => {
+    world = await runGeneratedCase(hub);
+    cleanups.push(...world.cleanup);
+    rows = await overlapRows(hub, [world.mike, world.nick], world.repo.repoId);
+  }, CASE_TIMEOUT_MS);
+
+  test("setup: both developers' own work reached the hub, and each hand edit of a generated file asked the tripwire", async () => {
+    const targets = await targetsOf(hub.db, world.repo.repoId);
+    expect(targets.some((target) => target.developer === "Mike" && target.value === "apps/streaming/feed.ts")).toBe(true);
+    expect(targets.some((target) => target.developer === "Nick" && target.value === "apps/numlabs/sync.ts")).toBe(true);
+    expect([...world.nickEdits.keys()]).toEqual(GENERATED_CLASSES.map((entry) => entry.path));
+  });
+
+  /** NEW GAP — no branch addresses these; the rule that would is specified in release-gate/scenario-generated.ts. */
+  const UNRECOGNISED_TODAY = new Set([
+    "apps/practice/package-lock.json",
+    "packages/api/src/__generated__/schema.ts",
+    "packages/proto/src/messages_pb.ts",
+  ]);
+  for (const entry of GENERATED_CLASSES) {
+    const classTest = UNRECOGNISED_TODAY.has(entry.path) ? expectedFailure : test;
+    classTest(`N2 ${entry.name}: Nick's hand edit is told nothing about Mike, and no overlap row offers the file`, () => {
+      const edit = world.nickEdits.get(entry.path) ?? [];
+      expect([...agentTexts(edit), ...personLines(edit)].filter((text) => text.includes("Mike"))).toEqual([]);
+      const offered = [...rows.ghost, ...rows.conference].filter((row) =>
+        row.sharedTargets.some((target) => target.value === entry.path),
+      );
+      expect(offered).toEqual([]);
+    });
+  }
+
+  // NEW GAP — no branch: the generated-target rule (spec in release-gate/scenario-generated.ts).
+  expectedFailure("N2: the whole case is silent — no collision output, no statusline overlap, no overlap row", () => {
+    expect(
+      collisionNoise([world.mikeSession, world.nickSession], ["Mike", "Nick"], [world.mikeStatusline, world.nickStatusline]),
+    ).toEqual(SILENT);
+    expect(rows.ghost).toEqual([]);
+    expect(rows.conference).toEqual([]);
+  });
+});
 
 
 
