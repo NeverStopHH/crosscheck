@@ -382,6 +382,7 @@ export {
   classifyPrompt,
   isContentFreePrompt,
   isGermanPrompt,
+  isWeakWord,
   promptTerms,
   promptTokens,
 } from "./prompt-terms.ts";

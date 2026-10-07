@@ -239,6 +239,10 @@ const strengthOf = (context: HintContextCandidate, selfDeveloperId: string | nul
     Math.max(0, ...[wireStatementOf(context), ...recountBodies(context, selfDeveloperId)].map((statement) => statementMatch(recount, statement).topical)),
   // The tree's own statement breaks a tie on the count (round 4, M1).
   own: context.workContext.matchedTerms ?? statementMatch(recount, wireStatementOf(context)).topical,
+  // And last, every shared word, a weak one among them (round 4, decision 3).
+  shared:
+    context.sharedTerms ??
+    Math.max(0, ...[wireStatementOf(context), ...recountBodies(context, selfDeveloperId)].map((statement) => statementMatch(recount, statement).floor)),
 });
 
 /**

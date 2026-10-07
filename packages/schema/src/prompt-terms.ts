@@ -21,7 +21,8 @@
  */
 import { hasContinuationSignal } from "./continuation.ts";
 import { humanPromptText } from "./harness-turn.ts";
-import { isContinuationTrigger, isRestartVerb, isSteeringWord, wordClassOf } from "./session-control.ts";
+import { WEAK_WORDS } from "./prompt-vocabulary.ts";
+import { foldWord, isContinuationTrigger, isRestartVerb, isSteeringWord, wordClassOf } from "./session-control.ts";
 import type { WordClass } from "./session-control.ts";
 import { commandArguments } from "./slash-command.ts";
 import { ENGLISH_FUNCTION_WORDS, ENGLISH_STOP_WORDS, GERMAN_FUNCTION_WORDS } from "./stop-words.ts";
@@ -116,6 +117,13 @@ const classifiedWindow = (text: string): string => {
   return `${head}\n${tail}`;
 };
 
+const WEAK: ReadonlySet<string> = new Set(WEAK_WORDS);
+/** A year of the last century or this one: a date's part, never a topic ("3000" is a port, "429" a status). */
+const YEAR = /^(?:19|20)\d\d$/u;
+
+/** A generic development word or a year: a term, never a TOPICAL one (round 4, decision 3). */
+export const isWeakWord = (term: string): boolean => WEAK.has(foldWord(term)) || YEAR.test(term);
+
 /** Words that never name a task: steering, triggers and filler (round 3, H1). */
 const isSteeringClass = (wordClass: WordClass | null): boolean =>
   wordClass === "trigger" || wordClass === "steering" || wordClass === "filler";
@@ -178,7 +186,7 @@ export const promptTerms = (text: string): PromptTerms => {
   return {
     content,
     unclassed: content.filter((_, index) => classes[index] === null),
-    topical: content.filter((_, index) => !isSteeringClass(classes[index] ?? null)),
+    topical: content.filter((term, index) => !isSteeringClass(classes[index] ?? null) && !isWeakWord(term)),
     ranked: rankedTerms(scored, termsOf, classOf),
     isGerman,
     isContentFree: isSessionCommand(tokens, content, classes),
@@ -201,7 +209,9 @@ const rankedTerms = (
       }),
     ),
   ];
-  return [...kept.filter((term) => classOf(term) === null), ...kept.filter((term) => classOf(term) !== null)];
+  // Unclassed words first, then class and WEAK words (round 4, decision 3).
+  const isFirst = (term: string): boolean => classOf(term) === null && !isWeakWord(term);
+  return [...kept.filter(isFirst), ...kept.filter((term) => !isFirst(term))];
 };
 
 /**

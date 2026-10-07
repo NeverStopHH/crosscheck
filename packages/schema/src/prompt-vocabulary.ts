@@ -99,6 +99,51 @@ export const META_WORDS: readonly string[] = [
 ];
 
 /**
+ * WEAK WORDS (hold-out review round 4, decision 3): generic development words
+ * that never count as TOPICAL on their own. Unlike the closed classes they
+ * make no prompt content-free — "add pagination" is a task — and they stay
+ * terms, so one can be the second shared word beside a topical one; but a
+ * statement that shares only weak words and words that are never terms
+ * clears nothing. Built from the round-4 hold-out's failures — "add
+ * pagination to the users admin table" was shown the SSO tree's decision on
+ * add and users, "add an endpoint GET /v1/me that returns the current user"
+ * the thumbnail tree's on get and user, "upgrade react to 19" was pointed at
+ * the Gradle tree, a log paste reached the date-picker tree on "new" — and
+ * the reviewer's list, plus judgement; measured over the corpus and both
+ * hold-outs, it costs no task its right tree and removes 16 wrong trees from
+ * the floor. Folded, inflections written out. Kept OUT on purpose: the words
+ * M1 names as topics of a task (token, rate, limit, refresh, deploy, logs),
+ * "test", "build", "fails", which the right trees share, and "time(s)" and
+ * "start", which name topics in "times out" and "cold start". A four-digit
+ * year 1900–2099 is weak as well (prompt-terms.ts), a status code is not.
+ */
+export const WEAK_WORDS: readonly string[] = [
+  // the reviewer's verbs and their forms
+  "add", "adds", "added", "adding", "update", "updates", "updated", "updating", "upgrade", "upgrades",
+  "upgraded", "upgrading", "remove", "removes", "removed", "removing", "change", "changes", "changed",
+  "changing", "create", "creates", "created", "creating", "get", "gets", "getting", "set", "sets", "use",
+  "uses", "used", "using", "make", "makes", "making", "made", "handle", "handles", "handled", "handling",
+  "support", "supports", "supported", "supporting",
+  // the reviewer's nouns
+  "new", "newer", "user", "users", "page", "pages", "maximum", "max", "minimum", "min", "size", "sizes",
+  "file", "files", "data", "value", "values", "item", "items", "list", "lists", "version", "versions",
+  // judgement: a task's generic verbs, the work and its parts
+  "need", "needs", "needed", "want", "wants", "wanted", "work", "works", "worked", "working", "implement",
+  "implements", "implemented", "implementing", "fix", "fixes", "fixed", "fixing", "write", "writes",
+  "writing", "written", "run", "runs", "running", "ran", "show", "shows", "showing", "shown", "check",
+  "checks", "checked", "checking", "review", "reviews", "reviewed", "pr", "prs", "call", "calls", "called",
+  "return", "returns", "returned", "returning", "old", "number", "numbers", "field", "fields",
+  "things", "stuff", "way", "ways", "current", "currently", "issue", "issues", "problem",
+  "problems", "bug", "bugs", "error", "errors", "feature", "features", "code", "part", "parts", "case",
+  "cases", "option", "options", "first", "second", "third", "last", "best", "more", "less", "done",
+  "ready", "right", "correct", "detail", "details",
+  // German
+  "neu", "neuen", "neuer", "neues", "hinzufugen", "hinzugefugt", "andern", "geandert", "anderung",
+  "anderungen", "erstellen", "erstellt", "nutzer", "benutzer", "seite", "seiten", "datei", "dateien",
+  "daten", "wert", "werte", "liste", "listen", "fehler", "probleme", "aktuell", "aktuelle", "funktioniert",
+];
+
+/**
  * RESTART VERBS (hold-out review round 3, C1): what sets the session's own
  * work going again. They keep their classes — "retry" and "restart" are meta
  * words, "rerun" an operation, "resume" a trigger — and the verdict reads one

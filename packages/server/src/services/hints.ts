@@ -809,6 +809,7 @@ const strengthOfCandidate = (candidate: { readonly row: { readonly tier: SearchT
   isExact: candidate.row.tier === "exact",
   topical: candidate.topicalTerms,
   own: candidate.ownTerms,
+  shared: candidate.sharedTerms,
 });
 
 /** One query's candidates, each of which clears the floor on its own. */

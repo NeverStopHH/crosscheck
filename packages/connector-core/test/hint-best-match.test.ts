@@ -146,6 +146,15 @@ describe("a finding only from the one strongest tree, on a word only it says (C2
     expect(pickedId([usage, checkout])).toBe("clm_c");
   });
 
+  test("round 4, decision 3: on equal topical counts, the tree that shares more words — a weak one among them — is the one strongest", () => {
+    // Arrange — "invoice rendering times out under load": both titles say two topical words, one says "times" too
+    const labels = { ...tree("wc_labels", [observation("clm_l", "wc_labels", 2)], { treeTerms: 2, topicalTerms: 2 }), sharedTerms: 2 };
+    const timeout = { ...tree("wc_timeout", [observation("clm_t", "wc_timeout", 2)], { treeTerms: 2, topicalTerms: 2 }), sharedTerms: 3 };
+
+    // Act + Assert
+    expect(pickedId([labels, timeout])).toBe("pointer:wc_timeout");
+  });
+
   test("a tie below the top is no tie", () => {
     const top = tree("wc_top", [decision("clm_top", "wc_top", 3)], { treeTerms: 3, topicalTerms: 4 });
     const first = tree("wc_a", [observation("clm_a", "wc_a", 2)], { treeTerms: 2, topicalTerms: 2 });

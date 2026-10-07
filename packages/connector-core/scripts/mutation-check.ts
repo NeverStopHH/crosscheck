@@ -19136,9 +19136,10 @@ export const MUTATIONS: readonly Mutation[
     label: "an exact target counts no more than words",
     // RETARGETED (round 4, C2): the comparison is the schema's, for the hub and the selector.
     // RETARGETED (round 4, M1): one comparison, the own statement third.
+    // RETARGETED (round 4, decision 3): the shared words fourth.
     file: `${SCHEMA}/src/substance-trust.ts`,
-    from: "  Number(right.isExact) - Number(left.isExact) || right.topical - left.topical || right.own - left.own;",
-    to: "  right.topical - left.topical || right.own - left.own;",
+    from: "  Number(right.isExact) - Number(left.isExact) || right.topical - left.topical || right.own - left.own || right.shared - left.shared;",
+    to: "  right.topical - left.topical || right.own - left.own || right.shared - left.shared;",
     test: `${CORE}/test/hint-best-match.test.ts`,
     because: "a tree that touched the file the prompt named loses to one that merely shares its words (H3 + M6)",
   },
@@ -19251,7 +19252,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the ranked terms keep the prompt's order",
     file: `${SCHEMA}/src/prompt-terms.ts`,
-    from: "  return [...kept.filter((term) => classOf(term) === null), ...kept.filter((term) => classOf(term) !== null)];",
+    // RETARGETED (round 4, decision 3): weak words rank after the topical ones too.
+    from: "  return [...kept.filter(isFirst), ...kept.filter((term) => !isFirst(term))];",
     to: "  return kept;",
     test: `${SCHEMA}/test/prompt-terms.test.ts`,
     because: "a long prompt's limit chatter takes the counted slots before its topic (M7)",
@@ -19867,16 +19869,16 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a task's meta words are no topic again",
     file: `${SCHEMA}/src/prompt-terms.ts`,
-    from: "    topical: content.filter((_, index) => !isSteeringClass(classes[index] ?? null)),",
-    to: "    topical: content.filter((_, index) => classes[index] === null),",
+    from: "    topical: content.filter((term, index) => !isSteeringClass(classes[index] ?? null) && !isWeakWord(term)),",
+    to: "    topical: content.filter((term, index) => classes[index] === null && !isWeakWord(term)),",
     test: `${SERVER}/test/hint-candidate-floor.test.ts`,
     because: "\"token refresh broken\" and \"rate limit not enforced\" reach no tree, since token, rate and limit count for nothing (round 4, M1)",
   },
   {
     label: "a slip of a steering word is topical",
     file: `${SCHEMA}/src/prompt-terms.ts`,
-    from: "    topical: content.filter((_, index) => !isSteeringClass(classes[index] ?? null)),",
-    to: "    topical: content,",
+    from: "    topical: content.filter((term, index) => !isSteeringClass(classes[index] ?? null) && !isWeakWord(term)),",
+    to: "    topical: content.filter((term) => !isWeakWord(term)),",
     test: `${SCHEMA}/test/prompt-terms.test.ts`,
     because: "\"contineu\" agrees with a tree that says \"continue\" as if it were a topic (round 4, M1)",
   },
@@ -19915,8 +19917,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the tree's own statement breaks no tie",
     file: `${SCHEMA}/src/substance-trust.ts`,
-    from: "  Number(right.isExact) - Number(left.isExact) || right.topical - left.topical || right.own - left.own;",
-    to: "  Number(right.isExact) - Number(left.isExact) || right.topical - left.topical;",
+    from: "  Number(right.isExact) - Number(left.isExact) || right.topical - left.topical || right.own - left.own || right.shared - left.shared;",
+    to: "  Number(right.isExact) - Number(left.isExact) || right.topical - left.topical || right.shared - left.shared;",
     test: `${CORE}/test/hint-best-match.test.ts`,
     because: "\"Retry-Limit im Checkout erhöhen\" ties four trees and gets nothing, though only one tree's title says checkout (round 4, M1)",
   },
@@ -19959,6 +19961,70 @@ export const MUTATIONS: readonly Mutation[
     to: "  ",
     test: `${SCHEMA}/test/continuation.test.ts`,
     because: "\"rate limited again lol, try again\" reaches the rate-limit tree now that a task's meta words count (round 4, M1)",
+  },
+  {
+    label: "a weak word is a topic",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "    topical: content.filter((term, index) => !isSteeringClass(classes[index] ?? null) && !isWeakWord(term)),",
+    to: "    topical: content.filter((_, index) => !isSteeringClass(classes[index] ?? null)),",
+    test: `${SCHEMA}/test/weak-words.test.ts`,
+    because: "\"add pagination to the users admin table\" is shown the SSO tree's decision on add and users (round 4, decision 3)",
+  },
+  {
+    label: "a year is a topic",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "export const isWeakWord = (term: string): boolean => WEAK.has(foldWord(term)) || YEAR.test(term);",
+    to: "export const isWeakWord = (term: string): boolean => WEAK.has(foldWord(term));",
+    test: `${SCHEMA}/test/weak-words.test.ts`,
+    because: "a log paste reaches the date-picker tree on \"2026\" (round 4, decision 3)",
+  },
+  {
+    label: "every four-digit number is a year",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "const YEAR = /^(?:19|20)\\d\\d$/u;",
+    to: "const YEAR = /^\\d{4}$/u;",
+    test: `${SCHEMA}/test/weak-words.test.ts`,
+    because: "\"port 3000 refused\" loses the port it is about (round 4, decision 3)",
+  },
+  {
+    label: "a weak word ranks among the topical ones",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "  const isFirst = (term: string): boolean => classOf(term) === null && !isWeakWord(term);",
+    to: "  const isFirst = (term: string): boolean => classOf(term) === null;",
+    test: `${SCHEMA}/test/weak-words.test.ts`,
+    because: "a long prompt's add, new and users take the counted slots before its topic (round 4, decision 3)",
+  },
+  {
+    label: "the reviewer's verbs are topics",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "  \"add\", \"adds\", \"added\", \"adding\", ",
+    to: "  ",
+    test: `${SCHEMA}/test/weak-words.test.ts`,
+    because: "\"add an index on orders\" agrees with every tree that adds something (round 4, decision 3)",
+  },
+  {
+    label: "the shared words break no tie",
+    file: `${SCHEMA}/src/substance-trust.ts`,
+    from: "  Number(right.isExact) - Number(left.isExact) || right.topical - left.topical || right.own - left.own || right.shared - left.shared;",
+    to: "  Number(right.isExact) - Number(left.isExact) || right.topical - left.topical || right.own - left.own;",
+    test: `${CORE}/test/hint-best-match.test.ts`,
+    because: "\"invoice rendering times out under load\" ties the timeout and the labels trees, and gets nothing (round 4, decision 3)",
+  },
+  {
+    label: "the selector counts no shared word for strength",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  shared:\n    context.sharedTerms ??\n",
+    to: "  shared:\n    0 *\n",
+    test: `${CORE}/test/hint-best-match.test.ts`,
+    because: "of two trees equal on every topical count, the one that also says the prompt's weak words is not named (round 4, decision 3)",
+  },
+  {
+    label: "the hub counts no shared word for strength",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  shared: candidate.sharedTerms,",
+    to: "  shared: 0,",
+    test: `${SERVER}/test/hint-strong-match.test.ts`,
+    because: "the tree that says \"new users\" too is cut before the one that does not (round 4, decision 3)",
   },
   {
     label: "the connector asks a hub about a content-free prompt",
@@ -20216,7 +20282,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/git-timeout.test.ts 4
  * PRINTS: packages/connector-core/test/guarantee-declarations.test.ts 28
  * PRINTS: packages/connector-core/test/guarantee-doctor.test.ts 3
- * PRINTS: packages/connector-core/test/hint-best-match.test.ts 9
+ * PRINTS: packages/connector-core/test/hint-best-match.test.ts 11
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 2
  * PRINTS: packages/connector-core/test/hint-harness-turn.test.ts 7
@@ -20317,6 +20383,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/substance-sentence.test.ts 13
  * PRINTS: packages/schema/test/telemetry-loss.test.ts 2
  * PRINTS: packages/schema/test/typing-slip.test.ts 11
+ * PRINTS: packages/schema/test/weak-words.test.ts 5
  * PRINTS: packages/server/test/absences.test.ts 7
  * PRINTS: packages/server/test/calibration.test.ts 1
  * PRINTS: packages/server/test/causal-guarantees.test.ts 23
@@ -20354,7 +20421,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-harness-turn.test.ts 2
  * PRINTS: packages/server/test/hint-long-prompt.test.ts 4
  * PRINTS: packages/server/test/hint-pushable-ranking.test.ts 5
- * PRINTS: packages/server/test/hint-strong-match.test.ts 11
+ * PRINTS: packages/server/test/hint-strong-match.test.ts 12
  * PRINTS: packages/server/test/hint-topical-floor.test.ts 4
  * PRINTS: packages/server/test/hint-withheld-bodies.test.ts 5
  * PRINTS: packages/server/test/hints.test.ts 6

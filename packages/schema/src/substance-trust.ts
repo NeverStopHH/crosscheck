@@ -92,17 +92,22 @@ export const isStrongSubstanceMatch = (match: SubstanceMatch): boolean =>
  * its OWN statement shares: of two trees a claim each ties on, the one whose
  * title and intent say the prompt is the one about it. Since M1 counts a
  * task's meta words, "Retry-Limit im Checkout erhöhen" shares two words with
- * four trees, and only the checkout-retries tree's title says both.
+ * four trees, and only the checkout-retries tree's title says both. Last
+ * (round 4, decision 3) the most query words one statement shares, a weak
+ * word among them: a weak word is never the topical one, but of two trees
+ * equal on every topical count, the one that also says "times" in "invoice
+ * rendering times out" says more of the prompt.
  */
 export interface TreeStrength {
   readonly isExact: boolean;
   readonly topical: number;
   readonly own: number;
+  readonly shared: number;
 }
 
 /** Stronger first: negative when `left` is the stronger tree, zero on a tie. */
 export const compareTreeStrength = (left: TreeStrength, right: TreeStrength): number =>
-  Number(right.isExact) - Number(left.isExact) || right.topical - left.topical || right.own - left.own;
+  Number(right.isExact) - Number(left.isExact) || right.topical - left.topical || right.own - left.own || right.shared - left.shared;
 
 export const isAtLeastAsStrongTree = (strength: TreeStrength, than: TreeStrength): boolean =>
   compareTreeStrength(strength, than) <= 0;

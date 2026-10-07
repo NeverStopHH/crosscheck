@@ -65,8 +65,9 @@ const ACCEPTED_WRONG_TREE_SUBSTANCE: ReadonlyMap<string, string> = new Map();
  * finding or pointer — the hub's order between equals is search rank, not
  * relevance. Named, so the decision's cost stays visible.
  */
-const TIED_TASKS: ReadonlyMap<string, string> = new Map([
-  ["t100", "\"review the rate limiting middleware PR\": the middleware tree and the review-checklist tree each say two words, on their own statements too"],
+const TIED_TASKS: ReadonlyMap<string, string> = new Map<string, string>([
+  // t077 and t126 untied when M1 counted a task's meta words; t100, "review the
+  // rate limiting middleware PR", when "review" and "PR" became weak words.
 ]);
 
 /**

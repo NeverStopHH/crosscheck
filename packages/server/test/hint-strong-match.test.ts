@@ -221,6 +221,27 @@ describe("the hub's bound keeps the strongest candidates, not the search's first
     expect(body.data.candidates).toHaveLength(3);
   });
 
+  test("on equal topical counts, the tree that shares more words — weak ones among them — comes first (decision 3)", async () => {
+    // Arrange — both titles say invoice, pdf, rendering and fails; the older one, which the
+    // search's decay ranks second, says "new users" too
+    const { harness, developer: nick } = await createHarnessWithSession();
+    const records = [
+      recordEnvelope("work_context", validWorkContextBody({ id: "wc_safari", title: "Invoice PDF rendering fails in Safari", description: "Browser" })),
+      recordEnvelope("work_context", validWorkContextBody({ id: "wc_new_users", title: "Invoice PDF rendering fails for new users", description: "Signup", createdAt: OLD_ISO })),
+    ];
+    const seeded = await postRecords(harness, nick, { records });
+    expect(seeded.data?.accepted).toBe(records.length);
+    const robin = await addTestDeveloperWithSession(harness, "Robin", "robin@example.com", { id: "ses_02" });
+    const search = new URLSearchParams({ repo: VALID_SESSION_BODY.repo, query: "invoice pdf rendering fails for new users" });
+
+    // Act
+    const response = await harness.app.request(`/api/hints/candidates?${search.toString()}`, jsonRequest("GET", robin.apiKey));
+    const body = (await response.json()) as { data: { candidates: readonly WireCandidate[] } };
+
+    // Assert
+    expect(body.data.candidates.map((candidate) => candidate.workContext.id)).toEqual(["wc_new_users", "wc_safari"]);
+  });
+
   test("on equal counts, the tree whose own statement says the prompt is the one strongest, and its finding ships", async () => {
     // Arrange — a claim of each shares three words; only the render tree's title says any
     const { harness, developer: nick } = await createHarnessWithSession();

@@ -282,6 +282,22 @@ describe("a prompt of session-steering words only matches nothing, typos or not 
   );
 
   test.each([
+    ["add pagination to the users admin table", "Add users to enterprise tenants with SAML"],
+    ["add an endpoint GET /v1/me that returns the current user", "Thumbnail worker gets stuck on user uploads"],
+  ])("round 4, decision 3: %p shares only weak words with the tree titled %p, and reaches none", async (prompt, title) => {
+    // Arrange
+    const { harness, robin } = await seedTree({ title, description: "Platform" }, [
+      { id: "clm_weak", body: "The batch endpoint was left out of the middleware." },
+    ]);
+
+    // Act
+    const candidates = await fetchCandidates(harness, robin, { query: prompt });
+
+    // Assert
+    expect(candidates).toEqual([]);
+  });
+
+  test.each([
     ["token refresh broken", "JWT token refresh fails after signing key rotation"],
     ["rate limit not enforced", "Rate limit for the public API"],
   ])("round 4, M1: %p reaches the tree titled %p", async (prompt, title) => {

@@ -98,10 +98,11 @@ describe("content terms are the words left after the stop lists", () => {
     ["token refresh broken", ["token", "refresh", "broken"]],
     ["rate limit not enforced", ["rate", "limit", "enforced"]],
     ["token refresh fails after key rotation", ["token", "refresh", "fails", "key", "rotation"]],
-    ["run the checkout e2e tests", ["run", "checkout", "e2e", "tests"]],
+    // "run" and "show" are weak (round 4, decision 3; weak-words.test.ts)
+    ["run the checkout e2e tests", ["checkout", "e2e", "tests"]],
     ["why does the usage limit reset", ["usage", "limit", "reset"]],
-    ["deploy logs show nothing after the cutover", ["deploy", "logs", "show", "cutover"]],
-  ])("in a TASK, the topical terms of %p are its content terms of every class but steering (round 4, M1)", (prompt, topical) => {
+    ["deploy logs show nothing after the cutover", ["deploy", "logs", "cutover"]],
+  ])("in a TASK, the topical terms of %p are its content terms of every class but steering and the weak words (round 4, M1)", (prompt, topical) => {
     expect(promptTerms(prompt).topical).toEqual(topical);
   });
 
