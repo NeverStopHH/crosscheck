@@ -42,7 +42,10 @@ describe("every registered shape is recognised from its own sample", () => {
       "# Autonomous loop check",
       "# Autonomous loop tick",
       "<agent-message>",
+      "<bash-input>",
       "<bash-notification>",
+      "<bash-stderr>",
+      "<bash-stdout>",
       "<command-args>",
       "<command-message>",
       "<command-name>",
@@ -138,6 +141,37 @@ describe("the round-4 harness turns are nobody's prompt (M2)", () => {
 
   test("a hook's name mid-line is the human's", () => {
     expect(humanPromptText("why does the PostToolUse: hook fail on save")).toBe("why does the PostToolUse: hook fail on save");
+  });
+});
+
+/**
+ * A `!` COMMAND'S ECHO IS THE HARNESS'S (round 5, H1): Claude Code hands the
+ * model the command as <bash-input> and its output as <bash-stdout> and
+ * <bash-stderr>, as a user turn. "On branch feat/orders-csv-export … nothing
+ * to commit" reached the CSV-export tree on the branch name.
+ */
+describe("a shell command's echo is nobody's prompt (round 5, H1)", () => {
+  test.each([
+    ["the command", "<bash-input>git status</bash-input>"],
+    [
+      "its output, with an empty error stream",
+      "<bash-stdout>On branch feat/orders-csv-export\nYour branch is up to date with 'origin/feat/orders-csv-export'.\n\nnothing to commit, working tree clean</bash-stdout><bash-stderr></bash-stderr>",
+    ],
+    ["its error stream alone", "<bash-stderr>error: pathspec 'packages/api/src/auth' did not match any file(s) known to git</bash-stderr>"],
+  ])("%s", (_, turn) => {
+    // Arrange, Act, Assert — the whole turn is the harness's
+    expect(isHarnessTurn(turn)).toBe(true);
+  });
+
+  test("the human's question after the output is kept", () => {
+    // Arrange
+    const turn = "<bash-stdout>3 failed, 41 passed</bash-stdout>\nwhy does the checkout e2e fail on CI";
+
+    // Act
+    const human = humanPromptText(turn);
+
+    // Assert
+    expect(human).toBe("why does the checkout e2e fail on CI");
   });
 });
 

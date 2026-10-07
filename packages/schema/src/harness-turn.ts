@@ -75,6 +75,12 @@ export const HARNESS_SHAPES: readonly HarnessShape[] = [
   element("local-command-stdout", "<local-command-stdout>Compacted. ctrl+r to see full summary</local-command-stdout>"),
   element("local-command-stderr", "<local-command-stderr>Error: /model requires an argument</local-command-stderr>"),
   element("bash-notification", "<bash-notification><shell-id>bash_3</shell-id><status>completed</status></bash-notification>"),
+  // round 5, H1: a `!` command's echo and its output, which Claude Code hands
+  // the model as a user turn — "On branch feat/orders-csv-export" reached the
+  // CSV-export tree
+  element("bash-input", "<bash-input>git status</bash-input>"),
+  element("bash-stdout", "<bash-stdout>On branch feat/orders-csv-export\nnothing to commit, working tree clean</bash-stdout>"),
+  element("bash-stderr", "<bash-stderr>fatal: not a git repository</bash-stderr>"),
   head(SYSTEM_NOTIFICATION_MARKER, `${SYSTEM_NOTIFICATION_MARKER}\nMonitor event: CI checks pass`),
   head("[Cross-session idle notice]", '[Cross-session idle notice] "s1" is idle now.'),
   head("# Autonomous loop tick", "# Autonomous loop tick (dynamic pacing)\nCheck the deploy."),

@@ -20467,6 +20467,31 @@ export const MUTATIONS: readonly Mutation[
     test: `${SCHEMA}/test/prompt-terms.test.ts`,
     because: "a prompt with no stop word of either language is stripped of German function words it never had",
   },
+  // ── round 5 fixes (burned hold-out review-hints5) ──
+  {
+    label: "a `!` command's echo is the human's prompt",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "  element(\"bash-input\", \"<bash-input>git status</bash-input>\"),\n",
+    to: "",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "\"<bash-input>git status</bash-input>\" reaches the hub as a task (round 5, H1)",
+  },
+  {
+    label: "a `!` command's output is the human's prompt",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "  element(\"bash-stdout\", \"<bash-stdout>On branch feat/orders-csv-export\\nnothing to commit, working tree clean</bash-stdout>\"),\n",
+    to: "",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "\"On branch feat/orders-csv-export … nothing to commit\" reaches the CSV-export tree on the branch name (round 5, H1; C250)",
+  },
+  {
+    label: "a `!` command's error stream is the human's prompt",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "  element(\"bash-stderr\", \"<bash-stderr>fatal: not a git repository</bash-stderr>\"),\n",
+    to: "",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "a failing `!` command's stderr reaches the tree its paths name (round 5, H1)",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
