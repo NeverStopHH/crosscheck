@@ -23554,6 +23554,39 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/collision-notice.test.ts`,
     because: "the once-per-(teammate, file group) rule is gone and the person is told on every hook",
   },
+  // ── Review of feat/collision-visible, M3: the record survives corruption ──
+  {
+    label: "a malformed told-groups list makes the session state unreadable",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "      return parsed.success ? [parsed.data] : [];\n    }),\n  )\n  .optional()\n  .catch(undefined);",
+    to: "      return parsed.success ? [parsed.data] : [];\n    }),\n  )\n  .optional();",
+    test: `${CORE}/test/collision-state.test.ts`,
+    because: "a null state silences every hook of the session, the tripwire and the briefing included",
+  },
+  {
+    label: "one malformed told group drops every told group",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "      const parsed = CollisionNoticeSchema.safeParse(entry);\n      return parsed.success ? [parsed.data] : [];",
+    to: "      return [CollisionNoticeSchema.parse(entry)];",
+    test: `${CORE}/test/collision-state.test.ts`,
+    because: "the person is told again about every teammate the session already named",
+  },
+  {
+    label: "a malformed relay queue makes the session state unreadable",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "    entries.filter((entry): entry is string => typeof entry === \"string\" && entry.length > 0),\n  )\n  .optional()\n  .catch(undefined);",
+    to: "    entries.filter((entry): entry is string => typeof entry === \"string\" && entry.length > 0),\n  )\n  .optional();",
+    test: `${CORE}/test/collision-state.test.ts`,
+    because: "a null state silences every hook of the session, the tripwire and the briefing included",
+  },
+  {
+    label: "one malformed relay key is handed on as a key",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "    entries.filter((entry): entry is string => typeof entry === \"string\" && entry.length > 0),",
+    to: "    entries as string[],",
+    test: `${CORE}/test/collision-state.test.ts`,
+    because: "a number or an object travels as a group key into the main thread's relay",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -23763,6 +23796,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/claim-validity-parity.test.ts 2
  * PRINTS: packages/connector-core/test/claim-validity-render.test.ts 2
  * PRINTS: packages/connector-core/test/collision-notice.test.ts 11
+ * PRINTS: packages/connector-core/test/collision-state.test.ts 4
  * PRINTS: packages/connector-core/test/commit-evidence.test.ts 1
  * PRINTS: packages/connector-core/test/conference-cost.test.ts 1
  * PRINTS: packages/connector-core/test/conference-report.test.ts 3

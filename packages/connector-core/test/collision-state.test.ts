@@ -57,7 +57,56 @@ const readWith = async (fields: Record<string, unknown>) => {
   return readSessionState(home, KEY);
 };
 
+describe("the told groups are read entry by entry", () => {
+  test.each([
+    ["garbage", "garbage"],
+    ["null", null],
+    ["an object", {}],
+    ["a number", 42],
+  ] as const)("notices that are %s read as none, and the state survives", async (_label, value) => {
+    // Act
+    const state = await readWith({ collisionNotices: value });
+
+    // Assert
+    expect(state).not.toBeNull();
+    expect(state?.repoId).toBe("github.com/acme/api");
+    expect(state?.collisionNotices ?? []).toEqual([]);
+  });
+
+  test("a mixed list keeps every valid group and drops the rest", async () => {
+    // Arrange: a number, an empty key, a file list with an empty path, a valid group
+    const mixed = [42, { key: "" }, { ...VALID_NOTICE, files: [""] }, VALID_NOTICE, null];
+
+    // Act
+    const state = await readWith({ collisionNotices: mixed });
+
+    // Assert
+    expect(state?.collisionNotices).toEqual([VALID_NOTICE]);
+  });
+
+  test("a valid queue beside broken notices is kept", async () => {
+    // Act
+    const state = await readWith({ collisionNotices: "garbage", collisionRelayQueue: [VALID_KEY] });
+
+    // Assert
+    expect(state?.collisionRelayQueue).toEqual([VALID_KEY]);
+  });
+});
+
 describe("the relay queue is read entry by entry", () => {
+  test.each([
+    ["garbage", "garbage"],
+    ["null", null],
+    ["a number", 42],
+  ] as const)("a queue that is %s reads as none, and the state survives", async (_label, value) => {
+    // Act
+    const state = await readWith({ collisionRelayQueue: value });
+
+    // Assert
+    expect(state).not.toBeNull();
+    expect(state?.collisionRelayQueue ?? []).toEqual([]);
+  });
+
   test("a mixed queue keeps its valid keys and drops the rest", async () => {
     // Act
     const state = await readWith({ collisionRelayQueue: [VALID_KEY, 7, "", null, { key: VALID_KEY }] });
