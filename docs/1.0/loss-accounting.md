@@ -593,6 +593,20 @@ The MCP tool calls it after its argument, secret, echo and contract checks. The 
 and a status the tool's arguments refuse writes nothing there too. Tests pin all three cases: a 500 or a timeout
 keeps the new status, and an ignored post puts the old one back.
 
+**One host session key on two machines is a residual, counted** (review-2 round 8, M6). A cloud agent and a local
+resume of the same conversation share a host session key, so both machines register the same life id. They capture
+and flush as usual, and the hub's order for that session breaks (`epoch_split`, two epochs). One machine's
+SessionEnd ends the life the other still writes under, and that machine's records are refused as late writes. It
+then heals to the next life, which the first machine's later resume lands on, and that one splits too. This is
+accepted for now, because nothing is silent:
+
+- every record either machine captured is on the hub, or counted in that machine's loss ledger;
+- the broken order is there for every reader of the session (`connector-core/test/two-machines.test.ts`).
+
+The fix is an installation discriminator in the life id: a per-machine id minted once into the crosscheck home and
+folded into `cc_<key>`. Two machines would then register two lives of one conversation, never one life twice.
+Alternatively, the hub could refuse a live re-register that comes from another installation.
+
 **The hub's author-side refusals have a word, and a cooldown sends nothing** (review-2 LOW-5). A record whose own
 session or work context the hub never saw is refused with `sessionId: session "…" not found` (also
 `authorSessionId:`) or `workContextId: work context "…" not found` — the body's session, not the producer's — and
