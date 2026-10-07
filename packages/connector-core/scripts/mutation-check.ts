@@ -19791,8 +19791,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "passt is no continuation",
     file: `${SCHEMA}/src/prompt-vocabulary.ts`,
-    from: "export const CONTINUATION_CLAUSE_WORDS: readonly string[] = [\"next\", \"los\", \"passt\"];",
-    to: "export const CONTINUATION_CLAUSE_WORDS: readonly string[] = [\"next\", \"los\"];",
+    // RETARGETED (round 4, C1 follow-up): the restart verbs joined the list.
+    from: "export const CONTINUATION_CLAUSE_WORDS: readonly string[] = [\"next\", \"los\", \"passt\", \"retry\", \"rerun\", \"restart\", \"resume\"];",
+    to: "export const CONTINUATION_CLAUSE_WORDS: readonly string[] = [\"next\", \"los\", \"retry\", \"rerun\", \"restart\", \"resume\"];",
     test: `${SCHEMA}/test/continuation.test.ts`,
     because: "\"passt so\" hands the session back as surely as \"weiter\" (round 4, C1)",
   },
