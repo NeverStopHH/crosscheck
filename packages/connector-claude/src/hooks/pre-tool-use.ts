@@ -244,7 +244,7 @@ const askBeforeEdit = async (ctx: HookContext, budget: HookBudget): Promise<stri
   // needs is in hand, so no slow step sits between marking a group told and
   // the line leaving the hook.
   const groups = found.sessions.map((session) => tripwireCollision(session, file, found.coverage));
-  const notices = await tellPerson(ctx, budget, groups);
+  const notices = await tellPerson(ctx, budget, onePerKey(groups));
   if (reason === null && notices.length === 0) {
     return "";
   }
@@ -296,6 +296,14 @@ const statedReason = async (
   }
   return reason;
 };
+
+/**
+ * One group per (teammate, work context) — a hub answer that lists the same
+ * pair twice, two windows on one piece of work, is ONE line for the person
+ * (round 2, L7).
+ */
+const onePerKey = (groups: readonly CollisionNotice[]): readonly CollisionNotice[] =>
+  groups.filter((group, index) => groups.findIndex((other) => other.key === group.key) === index);
 
 /**
  * Every group the hub named is recorded — a new file of a told group grows

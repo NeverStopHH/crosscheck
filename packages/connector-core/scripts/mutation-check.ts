@@ -24332,6 +24332,15 @@ export const MUTATIONS: readonly Mutation[
     test: `${CONNECTOR}/test/subagent-return-cost.test.ts`,
     because: "a foreground subagent's collision waits for the next prompt again, after the reply that should have mentioned it",
   },
+  // ── Review of feat/collision-visible, round 2, L7: one line per teammate context ──
+  {
+    label: "a teammate listed twice in one tripwire answer is told twice",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "groups.filter((group, index) => groups.findIndex((other) => other.key === group.key) === index);",
+    to: "groups;",
+    test: `${CONNECTOR}/test/collision-teammates-hook.test.ts`,
+    because: "a teammate with two windows open on the same work reads as two overlaps on the person's line",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {

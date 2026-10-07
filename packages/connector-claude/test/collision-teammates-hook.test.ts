@@ -58,6 +58,18 @@ describe("two teammates on one file", () => {
     expect(third).toBe("");
   });
 
+  test("the same teammate's work listed twice in one answer — two windows — is one line (round 2, L7)", async () => {
+    // Arrange: two of Nick's sessions on the same work context
+    const { repo, hub, env } = await collisionFixture("ct-twice");
+    hub.setTripwireSessions([activeTeammateSession(), { ...activeTeammateSession(), sessionId: "cc_nick_2" }]);
+
+    // Act
+    const output = parsed(await runHook("pre-tool-use", editPayload(repo, OVERLAP_FILE), env));
+
+    // Assert
+    expect(output.systemMessage).toBe(NICK_NOTICE);
+  });
+
   test("a teammate who starts on an already-asked file later is told when they appear", async () => {
     // Arrange: Nick alone first
     const { repo, home, hub, env } = await collisionFixture("ct-later");
