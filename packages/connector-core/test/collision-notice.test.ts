@@ -326,6 +326,31 @@ describe("teammate-derived fields cannot forge the notice's structure", () => {
     expect(group.files[0]?.length ?? 0).toBeLessThanOrEqual(COLLISION_NOTICE_PATH_CHARS);
   });
 
+  test("a path past the cap is cut from the LEFT, so the file name the person reads survives", () => {
+    // Arrange: a monorepo path far longer than what the state keeps
+    const longPath = `${"packages/very-long-directory-name/".repeat(7)}PlayerMappingGrid.tsx`;
+
+    // Act
+    const group = tripwireCollision(tripwireRow(), longPath);
+    const notice = renderCollisionNotice(group, NOW);
+
+    // Assert
+    expect(group.files[0]?.endsWith("/PlayerMappingGrid.tsx")).toBe(true);
+    expect(group.files[0]?.length ?? 0).toBeLessThanOrEqual(COLLISION_NOTICE_PATH_CHARS);
+    expect(notice).toContain("is working on PlayerMappingGrid.tsx");
+  });
+
+  test("the left cut never splits an astral pair", () => {
+    // Arrange: 300 code units of surrogate pairs, so a naive tail starts mid-pair
+    const astral = "\u{1F600}".repeat(150);
+
+    // Act
+    const [stored] = tripwireCollision(tripwireRow(), astral).files;
+
+    // Assert
+    expect(/\p{Cs}/u.test(stored ?? "")).toBe(false);
+  });
+
   test.each(INJECTION_CORPUS.map((entry) => [entry.id, entry.payload] as const))(
     "%s holds the character invariants on both notice shapes",
     (_id, payload) => {

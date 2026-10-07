@@ -23493,7 +23493,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the session state keeps a hub-sent path unsanitized and unbounded",
     file: `${CORE}/src/hints/collision-notice.ts`,
-    from: "const storedPath = (path: string): string => capped(bareCleaned(path), COLLISION_NOTICE_PATH_CHARS);",
+    from: "const storedPath = (path: string): string => cappedFromLeft(bareCleaned(path), COLLISION_NOTICE_PATH_CHARS);",
     to: "const storedPath = (path: string): string => path;",
     test: `${CORE}/test/collision-notice.test.ts`,
     because: "a ghost row's shared value is written into the state file as the hub sent it, at any length",
@@ -23608,10 +23608,27 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the state stores the redaction marker in place of a path",
     file: `${CORE}/src/hints/collision-notice.ts`,
-    from: "const storedPath = (path: string): string => capped(bareCleaned(path), COLLISION_NOTICE_PATH_CHARS);",
-    to: "const storedPath = (path: string): string => (tripsPhraseFilter(path) ? \"[redacted]\" : capped(bareCleaned(path), COLLISION_NOTICE_PATH_CHARS));",
+    from: "const storedPath = (path: string): string => cappedFromLeft(bareCleaned(path), COLLISION_NOTICE_PATH_CHARS);",
+    to: "const storedPath = (path: string): string => (tripsPhraseFilter(path) ? \"[redacted]\" : cappedFromLeft(bareCleaned(path), COLLISION_NOTICE_PATH_CHARS));",
     test: `${CORE}/test/collision-notice.test.ts`,
     because: "two files under overrides/ collapse into one marker, and the person is told one file where there are two",
+  },
+  // ── Review of feat/collision-visible, L1 ───────────────────────────────
+  {
+    label: "a deep path is cut from the right and the file name is lost",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "const storedPath = (path: string): string => cappedFromLeft(bareCleaned(path), COLLISION_NOTICE_PATH_CHARS);",
+    to: "const storedPath = (path: string): string => capped(bareCleaned(path), COLLISION_NOTICE_PATH_CHARS);",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "a monorepo path past the cap keeps its directories and drops PlayerMappingGrid.tsx, the one word the person needed",
+  },
+  {
+    label: "the left cut of a stored path splits an astral pair",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  return `${ELLIPSIS}${isLowSurrogate(tail.charCodeAt(0)) ? tail.slice(1) : tail}`;",
+    to: "  return `${ELLIPSIS}${tail}`;",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "a lone surrogate is written into the state file and rendered on the person's line",
   },
 ];
 
@@ -23821,7 +23838,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/claim-surface.test.ts 1
  * PRINTS: packages/connector-core/test/claim-validity-parity.test.ts 2
  * PRINTS: packages/connector-core/test/claim-validity-render.test.ts 2
- * PRINTS: packages/connector-core/test/collision-notice.test.ts 14
+ * PRINTS: packages/connector-core/test/collision-notice.test.ts 16
  * PRINTS: packages/connector-core/test/collision-state.test.ts 4
  * PRINTS: packages/connector-core/test/commit-evidence.test.ts 1
  * PRINTS: packages/connector-core/test/conference-cost.test.ts 1

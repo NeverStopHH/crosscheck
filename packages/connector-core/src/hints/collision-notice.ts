@@ -96,13 +96,29 @@ export const collisionKey = (developerId: string, workContextId: string): string
 const capped = (text: string, maxChars: number): string =>
   text.length <= maxChars ? text : `${cutWellFormed(text, maxChars - ELLIPSIS.length)}${ELLIPSIS}`;
 
+const isLowSurrogate = (unit: number): boolean => unit >= 0xdc00 && unit <= 0xdfff;
+
 /**
- * A PATH as the session state stores it: every bare strip, capped, and NO
- * phrase decision. The redaction marker is a rendering, never data — stored,
+ * Cut from the LEFT at `maxChars`: the TAIL survives behind a visible
+ * ellipsis — for a path that is the file name, the one part the person reads
+ * — and never from inside an astral pair.
+ */
+const cappedFromLeft = (text: string, maxChars: number): string => {
+  if (text.length <= maxChars) {
+    return text;
+  }
+  const tail = text.slice(text.length - (maxChars - ELLIPSIS.length));
+  return `${ELLIPSIS}${isLowSurrogate(tail.charCodeAt(0)) ? tail.slice(1) : tail}`;
+};
+
+/**
+ * A PATH as the session state stores it: every bare strip, cut from the left
+ * so the file name survives a deep monorepo path, and NO phrase decision. The
+ * redaction marker is a rendering, never data — stored,
  * `src/overrides/button.tsx` and `src/overrides/input.tsx` would both become
  * the same marker and one teammate on two files would count as one.
  */
-const storedPath = (path: string): string => capped(bareCleaned(path), COLLISION_NOTICE_PATH_CHARS);
+const storedPath = (path: string): string => cappedFromLeft(bareCleaned(path), COLLISION_NOTICE_PATH_CHARS);
 
 /**
  * A field as the PERSON reads it — and, for a name or a branch, as the state
