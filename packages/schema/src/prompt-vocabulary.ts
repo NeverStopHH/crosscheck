@@ -237,4 +237,6 @@ export const NEAR_MISS_WORDS: readonly string[] = [
   "abgelaufene", "fahrer", "gerader", "kontinent", "kontingenz",
   // round 4, M4: the system dictionary's words one slip from the Spanish and French class words
   "alle", "contestee", "contester", "limited", "limiter", "limnite", "repress", "viola",
+  // round 5, L1: the system dictionary's word one slip from the signal word "proceeding"
+  "preceding",
 ];

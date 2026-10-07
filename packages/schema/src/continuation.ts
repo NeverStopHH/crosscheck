@@ -43,10 +43,16 @@ const signalWordsOf = (text: string): readonly string[] =>
     .map((word) => foldWord(word.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "")))
     .filter((word) => word.length > 0);
 
+/**
+ * A slip a hand makes of a signal word — before the near misses are set
+ * aside. Exported for the near-miss list's own test: every entry there must
+ * still be a slip of some class or signal word (session-control.test.ts).
+ */
+export const isSignalSlip = (word: string): boolean =>
+  CONTINUATION_SIGNAL_WORDS.some((signal) => isTypingSlipOf(word, signal) || isShortSwapSlipOf(word, signal));
+
 /** A word that signals anywhere, as written or as a slip a hand makes. */
-const isSignalWord = (word: string): boolean =>
-  SIGNALS.has(word) ||
-  (!NEAR_MISSES.has(word) && CONTINUATION_SIGNAL_WORDS.some((signal) => isTypingSlipOf(word, signal) || isShortSwapSlipOf(word, signal)));
+const isSignalWord = (word: string): boolean => SIGNALS.has(word) || (!NEAR_MISSES.has(word) && isSignalSlip(word));
 
 /** A clause word as written, or its swapped pair. */
 const isClauseWord = (word: string): boolean =>

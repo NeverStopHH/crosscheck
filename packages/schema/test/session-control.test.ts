@@ -13,6 +13,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 
+import { isSignalSlip } from "../src/continuation.ts";
 import { NEAR_MISS_WORDS } from "../src/prompt-vocabulary.ts";
 import {
   exactClassOf,
@@ -155,7 +156,8 @@ describe("a slip never maps a real word", () => {
   });
 
   test("every near-miss entry is still a slip the rule would make, and no class word", () => {
-    const dead = NEAR_MISS_WORDS.filter((word) => exactClassOf(word) !== null || slipTargetOf(word) === null);
+    // A slip of a class word, or of a continuation signal word (round 5, L1: "preceding").
+    const dead = NEAR_MISS_WORDS.filter((word) => exactClassOf(word) !== null || (slipTargetOf(word) === null && !isSignalSlip(word)));
     expect(dead).toEqual([]);
     expect(NEAR_MISS_WORDS.every((word) => word === foldWord(word))).toBe(true);
   });

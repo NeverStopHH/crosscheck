@@ -20492,6 +20492,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${SCHEMA}/test/harness-turn.test.ts`,
     because: "a failing `!` command's stderr reaches the tree its paths name (round 5, H1)",
   },
+  {
+    label: "a word one slip from proceeding carries the session on",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "  // round 5, L1: the system dictionary's word one slip from the signal word \"proceeding\"\n  \"preceding\",\n",
+    to: "",
+    test: `${SCHEMA}/test/continuation.test.ts`,
+    because: "\"the preceding migration dropped the index\" is floored as a continuation (round 5, L1)",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {

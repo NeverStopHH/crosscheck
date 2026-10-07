@@ -6,9 +6,14 @@
  * of the report. Whatever else such a prompt says, it is not asked about.
  */
 import { describe, expect, test } from "bun:test";
+import { existsSync, readFileSync } from "node:fs";
 
-import { hasContinuationSignal } from "../src/continuation.ts";
+import { hasContinuationSignal, isSignalSlip } from "../src/continuation.ts";
 import { promptTerms } from "../src/prompt-terms.ts";
+import { CONTINUATION_SIGNAL_WORDS, NEAR_MISS_WORDS } from "../src/prompt-vocabulary.ts";
+import { foldWord } from "../src/session-control.ts";
+
+const DICTIONARY = "/usr/share/dict/words";
 
 describe("a continuation signal, anywhere in the prompt", () => {
   test.each([
@@ -70,8 +75,29 @@ describe("a continuation signal, anywhere in the prompt", () => {
     ["retry limit for failed imports is too low", "a restart verb beside words of the task"],
     ["rerun the checkout e2e tests", "a restart verb beside words of the task"],
     ["the worker should restart after an OOM kill", "a restart verb in a sentence about the worker"],
+    ["the preceding migration dropped the index", "one slip from proceeding is a word of its own (round 5, L1)"],
   ])("%p does not — %s", (prompt) => {
     expect(hasContinuationSignal(prompt)).toBe(false);
+  });
+});
+
+/**
+ * A SLIP NEVER MAPS A REAL WORD, for the signal words too (round 5, L1): the
+ * system dictionary's "preceding" read as a slip of "proceeding", so "the
+ * preceding migration dropped the index" was floored as a continuation.
+ */
+describe("a signal word's slip never maps a real word", () => {
+  test.skipIf(!existsSync(DICTIONARY))("the system dictionary, every word", () => {
+    // Arrange
+    const words = readFileSync(DICTIONARY, "utf8").split("\n").filter((word) => word.length > 0).map(foldWord);
+    const signals = new Set(CONTINUATION_SIGNAL_WORDS);
+    const nearMisses = new Set(NEAR_MISS_WORDS);
+
+    // Act
+    const collisions = words.filter((word) => !signals.has(word) && !nearMisses.has(word) && isSignalSlip(word));
+
+    // Assert
+    expect(collisions).toEqual([]);
   });
 });
 
