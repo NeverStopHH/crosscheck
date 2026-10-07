@@ -56,10 +56,12 @@
  * — and twice for a teammate collision (review L3): PreToolUse marks a group
  * told, and the main thread's hooks drain a subagent's queued relay
  * (hooks/collision-relay.ts), only while the envelope spares room to carry
- * the line out:
+ * the line out — and once more by UserPromptSubmit, which holds the prompt's
+ * own hub calls to what the envelope spares once a queued relay was drained
+ * first (round 2, M3):
  *
  * VERIFY: grep -rn 'budget\.spareMs()' packages/connector-claude/src | wc -l | tr -d ' '
- * PRINTS: 11
+ * PRINTS: 12
  */
 import { describe, expect, test } from "bun:test";
 

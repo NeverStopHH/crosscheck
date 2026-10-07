@@ -24504,6 +24504,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-pilot.test.ts 6
  * PRINTS: packages/cli/test/doctor-search-rebuild.test.ts 2
  * PRINTS: packages/cli/test/doctor-sharing.test.ts 4
+ * PRINTS: packages/cli/test/doctor-subagent-return.test.ts 5
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
  * PRINTS: packages/cli/test/doctor-verdict-legality.test.ts 2
  * PRINTS: packages/cli/test/doctor.test.ts 1
@@ -24579,8 +24580,13 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/capture-latency.test.ts 1
  * PRINTS: packages/connector-claude/test/collision-notice-hook.test.ts 12
  * PRINTS: packages/connector-claude/test/collision-order-hook.test.ts 4
+ * PRINTS: packages/connector-claude/test/collision-prompt-render.test.ts 1
  * PRINTS: packages/connector-claude/test/collision-relay-hook.test.ts 3
- * PRINTS: packages/connector-claude/test/collision-teammates-hook.test.ts 3
+ * PRINTS: packages/connector-claude/test/collision-relay-slow-hub.test.ts 3
+ * PRINTS: packages/connector-claude/test/collision-relay-unconfirmed.test.ts 3
+ * PRINTS: packages/connector-claude/test/collision-statusline-unnamed.test.ts 3
+ * PRINTS: packages/connector-claude/test/collision-teammates-hook.test.ts 4
+ * PRINTS: packages/connector-claude/test/collision-tripwire-ttl.test.ts 3
  * PRINTS: packages/connector-claude/test/collision-visibility-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/conclusion-corpus.test.ts 6
  * PRINTS: packages/connector-claude/test/conference-prompt.test.ts 1
@@ -24591,6 +24597,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/failure-hook.test.ts 2
  * PRINTS: packages/connector-claude/test/fingerprint.test.ts 1
  * PRINTS: packages/connector-claude/test/foreign-model.test.ts 1
+ * PRINTS: packages/connector-claude/test/ghost-notice.test.ts 1
  * PRINTS: packages/connector-claude/test/ghost-worker.test.ts 5
  * PRINTS: packages/connector-claude/test/global-wiring-silence.test.ts 2
  * PRINTS: packages/connector-claude/test/hint-hook.test.ts 4
@@ -24622,7 +24629,8 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/stop-git-touches.test.ts 1
  * PRINTS: packages/connector-claude/test/stop-hook.test.ts 2
  * PRINTS: packages/connector-claude/test/stop-latency.test.ts 1
- * PRINTS: packages/connector-claude/test/subagent-return-hook.test.ts 3
+ * PRINTS: packages/connector-claude/test/subagent-return-cost.test.ts 4
+ * PRINTS: packages/connector-claude/test/subagent-return-hook.test.ts 7
  * PRINTS: packages/connector-claude/test/summarizer-argv.test.ts 3
  * PRINTS: packages/connector-claude/test/summarizer-child-guard.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-worker-env.test.ts 1
@@ -24647,7 +24655,12 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/claim-surface.test.ts 1
  * PRINTS: packages/connector-core/test/claim-validity-parity.test.ts 2
  * PRINTS: packages/connector-core/test/claim-validity-render.test.ts 2
+ * PRINTS: packages/connector-core/test/collision-indicator.test.ts 4
+ * PRINTS: packages/connector-core/test/collision-notice-bounds.test.ts 1
  * PRINTS: packages/connector-core/test/collision-notice.test.ts 30
+ * PRINTS: packages/connector-core/test/collision-person-strip.test.ts 7
+ * PRINTS: packages/connector-core/test/collision-relay-presence.test.ts 5
+ * PRINTS: packages/connector-core/test/collision-state-eviction.test.ts 6
  * PRINTS: packages/connector-core/test/collision-state.test.ts 4
  * PRINTS: packages/connector-core/test/commit-evidence.test.ts 1
  * PRINTS: packages/connector-core/test/conference-cost.test.ts 1
@@ -24744,6 +24757,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/target-paths.test.ts 1
  * PRINTS: packages/connector-core/test/tool-window-pairing.test.ts 6
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
+ * PRINTS: packages/connector-core/test/tripwire-recheck.test.ts 3
  * PRINTS: packages/connector-core/test/verdict-wire.test.ts 2
  * PRINTS: packages/connector-core/test/working-days.test.ts 3
  * PRINTS: packages/connector-cursor/test/briefing-parity.test.ts 1
