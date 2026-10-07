@@ -18560,6 +18560,22 @@ export const MUTATIONS: readonly Mutation[
     because: "review-2 round 8 H2: a spool sent as abandoned keeps its clock unstarted until session-reap, however late that comes",
   },
   {
+    label: "SessionEnd's own end leaves its life deliverable into (M1)",
+    file: `${CORE}/src/flows/end-session.ts`,
+    from: "    await removeFile(end.markerPath);\n    await recordRefusedLife(input.home, input.repoKey, end.sessionId, input.now());\n",
+    to: "    await removeFile(end.markerPath);\n",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 8 M1, seed 782: a reload's re-fire beside SessionEnd spools a record a successor files into the ended session",
+  },
+  {
+    label: "a deferred end that lands leaves its life deliverable into (M1)",
+    file: `${CORE}/src/spool/reap.ts`,
+    from: "    await recordRefusedLife(home, key, parsed.data.crosscheckSessionId, now);\n",
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 8 M1: a record of the life appended after reap ended it is filed into the ended session",
+  },
+  {
     label: "a spool that is not there is stamped released",
     file: `${CORE}/src/spool/release.ts`,
     from: "  if ((await Bun.file(path).exists()) || !(await Bun.file(spoolDataPath(home, key, slug)).exists())) {",
@@ -18837,7 +18853,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
  * PRINTS: packages/connector-core/test/session-heal.test.ts 31
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 2
- * PRINTS: packages/connector-core/test/session-lives.test.ts 33
+ * PRINTS: packages/connector-core/test/session-lives.test.ts 35
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2

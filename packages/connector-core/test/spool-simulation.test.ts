@@ -107,7 +107,6 @@ const said = (verdicts: readonly Verdict[]): readonly string[] =>
 const OPEN: ReadonlyMap<number, string> = new Map<number, string>([
   [134, "L2"],
   [184, "L1"],
-  [782, "M1"],
   [1255, "L1"],
   [1384, "L1"],
   [1605, "L1"],
@@ -319,7 +318,6 @@ interface Found extends Probe {
   readonly racy?: boolean;
 }
 
-const M1 = "M1 (SessionEnd marks its own life refused)";
 const M3 = "M3 (a reaped state leaves its title and status)";
 const L1 = "L1 (a re-fire keeps the status set_intent wrote)";
 const L2 = "L2 (concurrent SessionStarts share one epoch)";
@@ -360,7 +358,6 @@ const ROUND_7: readonly Found[] = [
       par(start(0), end(0)),
       par(intent(0, "implementing"), end(0)),
     ],
-    open: M1,
   },
   {
     name: "seed 10895 (I4, M3): a reaped host's work context reverted the status set_intent set",

@@ -531,6 +531,12 @@ spool `MAX_SPOOL_AGE_DAYS` after that stamp, never sooner. A spool its own Sessi
 from its last write, as before. The probe's backlog is now delivered over the successor's hooks, and none of it
 expires (`connector-core/test/release-clock.test.ts`).
 
+**A life SessionEnd ended is written down as refused** (review-2 round 8, M1). Every refusal as ended wrote the life
+into the refused-lives note, but the end the connector sends itself never did. A record of the life appended after its
+end was sent by a successor and filed into the ended session. That record comes from a reload's SessionStart re-fire
+beside the old process's SessionEnd, or from a hook still in flight (seed 782, probe C1). SessionEnd's own end, and the
+deferred end reap sends from its marker, now record the life once the hub took the end.
+
 **The hub's author-side refusals have a word, and a cooldown sends nothing** (review-2 LOW-5). A record whose own
 session or work context the hub never saw is refused with `sessionId: session "…" not found` (also
 `authorSessionId:`) or `workContextId: work context "…" not found` — the body's session, not the producer's — and

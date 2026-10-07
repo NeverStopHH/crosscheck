@@ -33,6 +33,7 @@ import { readSessionSpool } from "../spool/files.ts";
 import { readOwedWorkContext } from "../spool/owed-work-context.ts";
 import { flushSpool } from "../spool/flush.ts";
 import { readTelemetryLossReport } from "../spool/loss-report.ts";
+import { recordRefusedLife } from "../spool/refused-lives.ts";
 import { seqAt } from "../capture/seq.ts";
 import { lifeRungOf, recordEndedLife } from "../state/session-lineage.ts";
 import { allocateSeq, closeSessionState, crosscheckSessionIdFor, readSessionState } from "../state/session-state.ts";
@@ -118,7 +119,13 @@ const writeDownEnd = async (input: EndSessionFlowInput, end: LifeEnd, standing: 
   await recordEndedLife(input.home, input.hostSessionKey, end.sessionId, input.now());
 };
 
-/** Tells the hub one life is over; its marker goes once the hub took it. */
+/**
+ * Tells the hub one life is over; its marker goes once the hub took it — and
+ * the life is written down as refused (review-2 round 8, M1): a record of it a
+ * parallel process appends after this end, a reload's SessionStart re-fire
+ * beside it, is withheld from every later flush rather than filed into the
+ * ended session (spool/refused-lives.ts).
+ */
 const endOnHub = async (
   input: EndSessionFlowInput,
   end: LifeEnd,
@@ -127,6 +134,7 @@ const endOnHub = async (
   const result = await endSession(input.hub, end.sessionId, end.seq, losses);
   if (result.ok) {
     await removeFile(end.markerPath);
+    await recordRefusedLife(input.home, input.repoKey, end.sessionId, input.now());
   }
   return result.ok;
 };

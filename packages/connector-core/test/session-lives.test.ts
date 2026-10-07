@@ -1119,3 +1119,62 @@ describe("a SessionStart that re-fires inside a live conversation", () => {
     expect((await readDropDetail(fx.home, fx.key)).byReason).toEqual({ withheld: 1 });
   });
 });
+
+/**
+ * A LIFE SESSIONEND ENDED (review-2 round 8, M1, seed 782 and probe C1). Its
+ * own end never wrote the life down as refused, so a record of it appended
+ * after the end — a reload's SessionStart re-fire beside the old process's
+ * SessionEnd — was sent by a successor and filed into the ended session.
+ */
+describe("a life SessionEnd ended (review-2 round 8, M1)", () => {
+  const straggler = (fx: Fixture, life: { workContextId: string; crosscheckSessionId: string }, file: string) =>
+    appendRecords(
+      fx.home,
+      fx.key,
+      fx.hostSessionKey,
+      [targetRecord(life.workContextId, "file", file, producerOf(life.crosscheckSessionId), new Date())],
+      new Date(),
+    );
+
+  test("withholds a record appended after its own end landed, never files it into the ended session", async () => {
+    // Arrange: a life that ends cleanly, then a parallel process's straggler of it
+    const fx = await fixture("own-end-refused");
+    const life = await register(fx);
+    await flushAsHook(fx);
+    const ended = await endViaFlow(fx);
+    await straggler(fx, life, "src/after-end.ts");
+
+    // Act: another conversation's flush
+    const other = await register(fx, fx.hub, `${fx.hostSessionKey}-other`);
+    await flushSpool(fx.hub, { sessionId: other.crosscheckSessionId, developerId }, BUDGET_MS);
+
+    // Assert
+    expect(ended.ended).toBe(true);
+    expect(await targetsOf(life.workContextId)).toEqual([]);
+    expect((await readDropDetail(fx.home, fx.key)).byReason).toEqual({ withheld: 1 });
+  });
+
+  test("and once its deferred end lands from reap", async () => {
+    // Arrange: SessionEnd deferred while the hub refused records; a successor
+    // delivers the backlog and its SessionStart's reap ends the life
+    const fx = await fixture("deferred-end-refused");
+    const life = await register(fx);
+    await flushAsHook(fx);
+    await captureTarget(fx, "src/late.ts");
+    refuseRecords = true;
+    await endViaFlow(fx, fx.proxied);
+    refuseRecords = false;
+    const other = await register(fx, fx.hub, `${fx.hostSessionKey}-other`);
+    await flushSpool(fx.hub, { sessionId: other.crosscheckSessionId, developerId }, BUDGET_MS);
+    await reapAsSessionStart(fx);
+    await straggler(fx, life, "src/after-deferred-end.ts");
+
+    // Act
+    await flushSpool(fx.hub, { sessionId: other.crosscheckSessionId, developerId }, BUDGET_MS);
+
+    // Assert
+    expect(await isEnded(life.crosscheckSessionId)).toBe(true);
+    expect(await targetsOf(life.workContextId)).toEqual(["src/late.ts"]);
+    expect((await readDropDetail(fx.home, fx.key)).byReason).toEqual({ withheld: 1 });
+  });
+});
