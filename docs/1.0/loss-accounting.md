@@ -88,8 +88,9 @@ loss change a verdict, `suspect`, an absence, a hint, a solved match, or an empt
 | 24 | derived text refused (summarizer / intent / ghost: secret, echo, empty, not-a-sentence) | `session-state.ts:385-400`, `summarizer*`, `intent*`, `ghost*` counters | session state, doctor per rung | no | no — proof §4.8.7 | none |
 | 25 | hint deliveries, tripwire, landed notices lost in the spool | any of #1–#7 | with the spool | with the spool | informational — but every spool loss is reported regardless (the ledger keeps counts, not kinds, for #1–#5) | covered by #1–#7 |
 | 26 | hub's `session` / `hint` kinds "not ingestable" | `records.ts:64-69` | answered `ignored` | — | no connector sends them | covered by #6 |
+| 27 | a touch past `MAX_TOPICS_PER_SESSION` topics in one life (DESIGN.md §3 "One session, many topics") | `flows/topic-rules.ts` `planTopics`; booked `flows/capture-touched-files.ts`, `flows/git-lane.ts` | capture-loss ledger `topic_overflow` (detail `topic-cap`), session state `topicOverflowCount` | yes | **yes, its topic only** — the target IS delivered, under the session's own context, so no file is lost; what is lost is which piece of work it belonged to, and an overlap or a landing read off that context is the session's, not the topic's | report → `telemetry_lost` under `topic_overflow` |
 
-Rows 6, 8, 9, 10, 14, 18, 19 are the uncounted or unreported paths this note connects. Rows 11, 12, 13, 15, 16,
+Rows 6, 8, 9, 10, 14, 18, 19, 27 are the uncounted or unreported paths this note connects. Rows 11, 12, 13, 15, 16,
 17, 23, 24 stay local, each with a proof in §4.8. Rows 1–5, 7 were counted and stop at doctor; they travel now.
 
 ## 4. Target model
@@ -113,6 +114,7 @@ export const LOSS_KINDS = [
   "hook_timed_out",       // hooks that exceeded their budget before capture could finish (hooks, not records)
   "host_contract_drift",  // host payloads that lacked a field capture needs (payloads, not records)
   "wire_unobserved",      // ACP wire lines the observer could not read (lines, not records)
+  "topic_overflow",       // touches filed under the session's own context because the life's topic cap was reached (row 27)
   "unattributed",         // counted before the ledger kept reasons, or a kind this hub does not know
 ] as const;
 export const MAX_LOSS_COUNT = 2_147_483_647;               // int4, the type of loss_total (review C1)
@@ -1004,6 +1006,14 @@ which is the one place the distinction can be acted on.
 **An old hub strips the field with a 200** (§4.2's directive). The connector cannot see that from the call, so
 doctor derives it from data it already fetches (§5.2). Coverage from such a hub is 03's own `unknown /
 hub_did_not_report` or its five real rows, unchanged.
+
+**Topics against an old hub** (DESIGN.md §3 "One session, many topics"). A topic's work context is an ordinary
+`work_context` record whose body carries two more fields, `branch` and `baseCommit`; the body schema is a loose
+object, so a hub from before topics stores the context and drops the two fields — the topic arrives, titled, and
+its drift is measured from the session's commit as before. The git lane's commit half sends `source:
+"git_commit"`, a value an old hub's target schema does not know: it answers `rejected` and the flush counts each
+such target under `hub_rejected` (row 5) — counted, never silent, and the remedy is the hub upgrade. A new hub takes an old connector's records unchanged: no `branch`, no `baseCommit`, every target under
+the session's one context (`server/test/topic-contexts.test.ts`, back-compat).
 
 ### 4.8 What stays local, with the proof that it cannot affect a judgment
 
