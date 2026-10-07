@@ -24,6 +24,7 @@ import { sql } from "drizzle-orm";
 
 import type { CoverageRecord, CoverageSourceRecord } from "../src/services/coverage.ts";
 import {
+  TEST_START_ISO,
   VALID_SESSION_BODY,
   createTestDeveloper,
   createTestHarness,
@@ -247,5 +248,63 @@ describe("a hidden session never moves an instant the unsafe way", () => {
     const nickView = agentEventOf((await dataOf<{ coverage: CoverageRecord }>(harness, nick, absencesUrl)).coverage);
     // Assert: older than the truth, the direction that can only look staler.
     expect(nickView).toMatchObject({ state: "complete", observedAt: nickHeartbeat });
+  });
+});
+
+describe("the agent rung's start never moves when only she acts (review round 5, M3)", () => {
+  // Withheld only while her gap was in scope, the start flipped between
+  // Nick's own instant and null as she heartbeat, ended or lost records —
+  // a presence signal in the one field the differential accepted whole.
+  // Now it is withheld for as long as she has a session on the repo at all,
+  // so whatever her sessions do, Nick reads the same start (never a later
+  // one than the truth) and Ken, who may see both, reads his own.
+  type KenAct = "goes quiet" | "goes quiet later" | "heartbeats" | "ends cleanly" | "reports a loss";
+  const ACTS: readonly KenAct[] = ["goes quiet", "goes quiet later", "heartbeats", "ends cleanly", "reports a loss"];
+
+  /** Nick's session went quiet two hours ago; Ken, opted out, has a session too, and acts. */
+  const world = async (act: KenAct): Promise<{ readonly nick: CoverageSourceRecord; readonly ken: CoverageSourceRecord }> => {
+    const { harness, nick, ken } = await seed();
+    await registerTestSession(harness, nick.apiKey, { id: "ses_nick" });
+    if (act !== "goes quiet later") {
+      await registerTestSession(harness, ken.apiKey, { id: "ses_ken" });
+    }
+    harness.clock.advanceSeconds(2 * HOUR_SECONDS);
+    if (act === "goes quiet later") {
+      await registerTestSession(harness, ken.apiKey, { id: "ses_ken" });
+      harness.clock.advanceSeconds(HOUR_SECONDS);
+    }
+    if (act === "heartbeats") {
+      const beat = await harness.app.request("/api/sessions/ses_ken/heartbeat", jsonRequest("POST", ken.apiKey, { status: "implementing" }));
+      expect(beat.status).toBe(200);
+    }
+    if (act === "ends cleanly") {
+      await endCleanly(harness, ken, "ses_ken");
+    }
+    if (act === "reports a loss") {
+      const lossAt = new Date(harness.clock.now().getTime() - HOUR_SECONDS * 1000).toISOString();
+      await registerTestSession(harness, ken.apiKey, {
+        id: "ses_ken",
+        losses: { total: 3, kinds: { spool_expired: 3 }, oldestAt: lossAt, newestAt: lossAt },
+      });
+    }
+    const read = async (developer: TestDeveloper): Promise<CoverageSourceRecord> =>
+      agentEventOf((await dataOf<{ coverage: CoverageRecord }>(harness, developer, absencesUrl)).coverage);
+    return { nick: await read(nick), ken: await read(ken) };
+  };
+
+  test("whatever Ken's session does, Nick reads one start for the rung", async () => {
+    // Act
+    const seen = await Promise.all(ACTS.map(async (act) => [act, (await world(act)).nick.gapSince] as const));
+
+    // Assert
+    expect(seen).toEqual(ACTS.map((act) => [act, null] as const));
+  });
+
+  test("Ken, who may be told about both sessions, reads the true start", async () => {
+    // Act
+    const { ken } = await world("goes quiet later");
+
+    // Assert: Nick's own silence, two hours before Ken's.
+    expect(ken).toMatchObject({ state: "incomplete", gapSince: TEST_START_ISO });
   });
 });

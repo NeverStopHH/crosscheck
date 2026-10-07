@@ -57,8 +57,21 @@ interface Action {
   readonly name: string;
   /** Shared work: may show what it says and when it was created, never her instants. */
   readonly content?: true;
+  /**
+   * The rows this action CREATES, as the paths their creation instant sits
+   * at (review round 5, M3): the only lines that may carry her action's
+   * instant. Absent: it creates no row whose creation is shown.
+   */
+  readonly creates?: RegExp;
   readonly run: (world: OptedOutWorld) => Promise<void>;
 }
+
+/**
+ * Where a claim's own creation instant sits on every route that lists one —
+ * the row's `createdAt`, never a field nested inside the row (a session's,
+ * an author's): those are not the claim's creation.
+ */
+const CLAIM_CREATION = /\.(?:claims|evidence|ruledOut)\[\]\.createdAt=|^[-+] data\.claim\.createdAt=/;
 
 const nowIso = (world: OptedOutWorld): string => world.harness.clock.now().toISOString();
 const MS_PER_HOUR = 3_600_000;
@@ -161,6 +174,7 @@ const ACTIONS: readonly Action[] = [
   {
     name: "publish a claim",
     content: true,
+    creates: CLAIM_CREATION,
     run: (w) => records(w, [live("claim", validClaimBody({ id: "clm_robin_diff_new", workContextId: ROBIN_HOST_CONTEXT, authorSessionId: ROBIN_LIVE, kind: "observation", body: "Refresh retries hit the stale cache entry", createdAt: nowIso(w) }))], "claim"),
   },
   {
@@ -215,9 +229,19 @@ const masked = (world: OptedOutWorld, text: string): string =>
     .replace(/data-token="[0-9a-f]+"/g, 'data-token="<csrf>"')
     .replace(UUID, (uuid) => (FIXED_UUID.test(uuid) ? uuid : "<uuid>"));
 
+/**
+ * A coverage row by its rung (`coverage.sources[agent_event]`), so a residual
+ * can name the rung it accepts: the agent rung's start and the git rung's
+ * are different facts (review round 5, M3).
+ */
+const memberKey = (prefix: string, item: unknown): string => {
+  const source = prefix.endsWith(".sources") && item !== null && typeof item === "object" ? (item as { source?: unknown }).source : undefined;
+  return typeof source === "string" ? `${prefix}[${source}]` : `${prefix}[]`;
+};
+
 const flatten = (value: unknown, prefix: string): readonly string[] => {
   if (Array.isArray(value)) {
-    return value.flatMap((item) => flatten(item, `${prefix}[]`));
+    return value.flatMap((item) => flatten(item, memberKey(prefix, item)));
   }
   if (value !== null && typeof value === "object") {
     return Object.entries(value as Record<string, unknown>).flatMap(([key, item]) =>
@@ -284,9 +308,10 @@ interface Residual {
 
 const RESIDUALS: readonly Residual[] = [
   // visibility.ts «coverage»: honest coverage that SOME session went quiet or
-  // reported — the agent_event rung's state, its reason, whether the gap is
-  // withheld and whether its start may be printed. Never whose, never when.
-  { name: "coverage", line: /coverage\.sources\[\]\.(?:state|reason|withheld|gapSince)=/ },
+  // reported — the agent_event rung's state, its reason and whether the gap
+  // is withheld. Never whose, never when: its start is NOT here (review
+  // round 5, M3) — nothing she does may move it.
+  { name: "coverage", line: /coverage\.sources\[agent_event\]\.(?:state|reason|withheld)=/ },
   // visibility.ts «pilot»: team-level pilot counts — sessions, deliveries,
   // pulls and the integrity counters, and which prior work was opened.
   {
@@ -304,13 +329,14 @@ const RESIDUALS: readonly Residual[] = [
     line: /./,
   },
   // visibility.ts «evidence»: what her SessionStart's commit evidence found
-  // counts for everyone (review round 5, C1) — the rung's state, reason and
-  // the instant a viewer may be told, the absence findings — never when she
+  // counts for everyone (review round 5, C1) — the git rung's state, reason,
+  // the instant a viewer may be told and the start the census names (an
+  // absentee's, never hers), the absence findings — never when she
   // collected it.
   {
     name: "evidence",
     actions: ["report commit evidence"],
-    line: /coverage\.sources\[\]\.(?:state|reason|observedAt)=|^[-+] data\.absences\[\]\./,
+    line: /coverage\.sources\[git\]\.(?:state|reason|observedAt|gapSince)=|^[-+] data\.absences\[\]\./,
   },
   // visibility.ts «content» and «words»: what her shared work says — the
   // claim, the target's path, the intent's words, the pin's surface, a
@@ -320,13 +346,16 @@ const RESIDUALS: readonly Residual[] = [
 ];
 
 /**
- * The fields whose instant is the shared row's own creation (visibility.ts
- * «creation») — never a target's: its createdAt is when her session touched
- * the file, which is an edit instant, not a creation the policy accepts.
+ * A line that is the creation instant of a row THIS action created
+ * (visibility.ts «creation»), at that row's own path (Action.creates) — never
+ * a field of the same name nested in it, never a row that existed before
+ * (review round 5, M3: a context whose createdAt became her heartbeat read
+ * as a creation), and never a target's: its createdAt is when her session
+ * touched the file, an edit instant the policy does not accept.
  */
-const CREATION_FIELD = /(?:^[-+] |[.\]])(?:createdAt|solvedAt|expiresAt)=/;
 const TARGET_ROW = /(?:matchedTargets|targets)\[\]\./;
-const isCreationLine = (line: string): boolean => CREATION_FIELD.test(line) && !TARGET_ROW.test(line);
+const isCreationLine = (action: Action, line: string): boolean =>
+  action.creates !== undefined && action.creates.test(line) && !TARGET_ROW.test(line);
 
 /** Every difference no residual accepts, for one action, as `action · route: line`. */
 const unaccepted = (action: Action, base: Walked, acted: Walked): readonly string[] => {
@@ -348,7 +377,7 @@ const unaccepted = (action: Action, base: Walked, acted: Walked): readonly strin
       // A content line may carry her action's instant only as the shared
       // row's creation time — and only when the action shares work.
       const carriesHerInstant =
-        instantsNear(line, actionInstant, now).length > 0 && !(action.content === true && isCreationLine(line));
+        instantsNear(line, actionInstant, now).length > 0 && !(action.content === true && isCreationLine(action, line));
       return accepted && !carriesHerInstant
         ? []
         : [`${action.name} · ${label(answer)}: ${carriesHerInstant ? "carries her action's instant: " : ""}${line.slice(0, 220)}`];

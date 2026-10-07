@@ -164,8 +164,11 @@ drained a spool is what put trace's candidate inside the window (`server/test/co
 rung's instants (`gapSince`, `observedAt`) come only from sessions the viewer may be told about (`visiblePresenceCondition`,
 services/visibility.ts). An opted-out teammate's session still counts towards the state, named or in the window, but its heartbeat
 is presence and is not printed (`server/test/coverage-instant-privacy.test.ts`). `gapSince` is the earliest instant, so a hidden
-gap or loss withholds it (null) rather than leave a later, told one standing. `observedAt` is the newest heartbeat the viewer may
-be told about, so it can only read older than the truth.
+gap or loss must withhold it (null) rather than leave a later, told one standing — and it is withheld for as long as the repo
+has ANY session of a developer the viewer may not be told about, gapped or live (review round 5, M3): withheld only while her
+gap was in scope, the start flipped between a told instant and null as she heartbeat, which said whether she was quiet. The
+cost is the agent rung's start on a repo an opted-out teammate works on; the state and reason are unchanged. `observedAt` is
+the newest heartbeat the viewer may be told about, so it can only read older than the truth.
 
 **And the distribution is measured before merge, not argued about** — COV-11. If `complete` proves unreachable even scoped, §5.1
 and §10.4 are re-decided **with data**, not by the noise argument, whose premise this section inverts.

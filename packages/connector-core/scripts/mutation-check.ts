@@ -16603,17 +16603,20 @@ export const MUTATIONS: readonly Mutation[
     file: `${SERVER}/src/services/coverage.ts`,
     // Re-pointed by the final review: a hidden gap now withholds gapSince
     // whole instead of filtering it, which stated a later start than the truth.
-    from: "  const isGapSinceWithheld = toCount(row?.hiddenGaps) > 0 || toCount(row?.hiddenLosses) > 0;",
-    to: "  const isGapSinceWithheld = toCount(row?.hiddenLosses) > 0;",
+    // Re-pointed again by review round 5, M3: withheld while she has any
+    // session on the repo; the mutant withholds for her loss alone.
+    from: "  const gapSince = (await hasHiddenSessionOnRepo(deps, repo, isTold))\n",
+    to: "  const gapSince = (lost > toldLost)\n",
     test: `${SERVER}/test/coverage-instant-privacy.test.ts`,
     because: "get_diagnosis prints when an opted-out claim author last ran an agent",
   },
   {
     label: "an opted-out session's loss dates the agent rung's gap",
     file: `${SERVER}/src/services/coverage.ts`,
-    // Re-pointed by the final review, for the same reason.
-    from: "  const isGapSinceWithheld = toCount(row?.hiddenGaps) > 0 || toCount(row?.hiddenLosses) > 0;",
-    to: "  const isGapSinceWithheld = toCount(row?.hiddenGaps) > 0;",
+    // Re-pointed by the final review, for the same reason, and by review
+    // round 5, M3: the mutant withholds for her gap alone.
+    from: "  const gapSince = (await hasHiddenSessionOnRepo(deps, repo, isTold))\n",
+    to: "  const gapSince = (gaps > toCount(row?.toldGaps))\n",
     test: `${SERVER}/test/coverage-instant-privacy.test.ts`,
     because: "an opted-out teammate's machine ledger dates the gap every teammate reads",
   },
@@ -19054,6 +19057,41 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/location-index-rebuild.test.ts`,
     because: "every toggle leaves the contexts it rebuilt without a vector",
   },
+  // ── Review round 5, M3: the boundary's own strength ───────────────────
+  {
+    // The reviewer's m3: her quiet session's start, five minutes off, in
+    // the field the differential accepted whole.
+    label: "the withheld agent start carries her quiet session's start, five minutes off",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "  const gapSince = (await hasHiddenSessionOnRepo(deps, repo, isTold))\n    ? null\n",
+    to:
+      "  const gapSince = (await hasHiddenSessionOnRepo(deps, repo, isTold))\n" +
+      "    ? toIso((await deps.db.select({ at: sql`min(${agentSessions.lastHeartbeatAt}) filter (where ${isGap} and not ${isTold}) + interval '5 minutes'` }).from(agentSessions).where(inScope(scope)))[0]?.at)\n",
+    test: `${SERVER}/test/coverage-instant-privacy.test.ts`,
+    because:
+      "a colleague reads when her session went quiet, offset past the guard's " +
+      "one-minute tolerance, and it moves every time she goes quiet again",
+  },
+  {
+    label: "the agent start is withheld only while her gap is in scope",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "  const gapSince = (await hasHiddenSessionOnRepo(deps, repo, isTold))\n",
+    to: "  const gapSince = (gaps > toCount(row?.toldGaps) || lost > toldLost)\n",
+    test: `${SERVER}/test/live-location-differential.test.ts`,
+    because:
+      "the start flips between a colleague's own instant and null as she " +
+      "heartbeats: whether she is quiet, read off one field",
+  },
+  {
+    label: "a context's creation reads as her newest claim's",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "        createdAt: row.createdAt,\n",
+    to: "        createdAt: (claimsByContext.get(row.id) ?? [])[0]?.createdAt ?? row.createdAt,\n",
+    test: `${SERVER}/test/live-location-differential.test.ts`,
+    because:
+      "her action's instant rides a row that existed before it under a " +
+      "creation-shaped name, which the differential took for a creation",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19363,7 +19401,7 @@ interface Outcome {
  * PRINTS: packages/server/test/conference.test.ts 3
  * PRINTS: packages/server/test/coverage-answer-sessions.test.ts 10
  * PRINTS: packages/server/test/coverage-compat-0.10.test.ts 2
- * PRINTS: packages/server/test/coverage-instant-privacy.test.ts 6
+ * PRINTS: packages/server/test/coverage-instant-privacy.test.ts 7
  * PRINTS: packages/server/test/coverage-judgeable.test.ts 2
  * PRINTS: packages/server/test/coverage-losses.test.ts 15
  * PRINTS: packages/server/test/coverage-measurement.test.ts 2
@@ -19390,7 +19428,7 @@ interface Outcome {
  * PRINTS: packages/server/test/landed-context.test.ts 22
  * PRINTS: packages/server/test/landed-notices.test.ts 34
  * PRINTS: packages/server/test/live-location-cost.test.ts 3
- * PRINTS: packages/server/test/live-location-differential.test.ts 3
+ * PRINTS: packages/server/test/live-location-differential.test.ts 5
  * PRINTS: packages/server/test/live-location-privacy.test.ts 27
  * PRINTS: packages/server/test/live-location-projection.test.ts 7
  * PRINTS: packages/server/test/live-location-prose.test.ts 2

@@ -477,6 +477,20 @@ const earliestIso = (left: string | null, right: string | null): string | null =
       : right;
 
 /**
+ * Whether this repo has EVER had a session of a developer this viewer may not
+ * be told about (review round 5, M3): any session, in the window or not, gapped
+ * or live, so nothing that session does changes the answer.
+ */
+const hasHiddenSessionOnRepo = async (deps: Deps, repo: string, isTold: SQL): Promise<boolean> => {
+  const rows = await deps.db
+    .select({ id: agentSessions.id })
+    .from(agentSessions)
+    .where(and(eq(agentSessions.repo, repo), sql`not ${isTold}`))
+    .limit(1);
+  return rows.length > 0;
+};
+
+/**
  * The wire's reason for a withheld gap (review round 5, H4): fixed whatever
  * her session did, and a word every released connector reads as a gap.
  */
@@ -583,11 +597,19 @@ const inScope = (scope: SessionScope): SQL =>
  * instant, so a hidden gap or loss withholds it whole rather than leave a
  * told, later one standing. `observedAt` is the newest heartbeat the viewer
  * may be told about: older than the truth is the staler, safe direction.
+ *
+ * AND NEVER MOVED BY HER (review round 5, M3). Withheld only while her gap
+ * was in scope, the start flipped between a told instant and null as she
+ * heartbeat, ended or lost records: whether she was quiet, read off the one
+ * field nobody named. It is withheld for as long as the repo has ANY session
+ * of a developer this viewer may not be told about, whatever that session
+ * does, so the start a viewer reads depends on nothing she does on it.
  */
 const readAgentEventCoverage = async (
   deps: Deps,
   now: Date,
   viewerDeveloperId: string,
+  repo: string,
   since: Date,
   scope: SessionScope,
 ): Promise<CoverageSourceRecord> => {
@@ -600,10 +622,8 @@ const readAgentEventCoverage = async (
       reporting: sql`count(*) filter (where ${scope.window})`,
       gaps: sql`count(*) filter (where ${isGap})`,
       gapSince: sql`min(${agentSessions.lastHeartbeatAt}) filter (where ${isGap})`,
-      hiddenGaps: sql`count(*) filter (where ${isGap} and not ${isTold})`,
       lost: sql`count(*) filter (where ${isLost})`,
       lossSince: sql`min(${agentSessions.lossOldestAt}) filter (where ${isLost})`,
-      hiddenLosses: sql`count(*) filter (where ${isLost} and not ${isTold})`,
       observedAt: sql`max(${agentSessions.lastHeartbeatAt}) filter (where ${isTold})`,
       // The REASON is the told sessions' alone (review round 4, H1): her
       // gap counts towards the state and is never named.
@@ -619,7 +639,6 @@ const readAgentEventCoverage = async (
   const gaps = toCount(row?.gaps);
   const lost = toCount(row?.lost);
   const toldLost = toCount(row?.toldLost);
-  const isGapSinceWithheld = toCount(row?.hiddenGaps) > 0 || toCount(row?.hiddenLosses) > 0;
   if (gaps === 0 && lost === 0) {
     return toCount(row?.reporting) === 0
       ? sourceRecord("agent_event", "unknown", "no_session_in_window")
@@ -631,7 +650,7 @@ const readAgentEventCoverage = async (
           observedAt,
         );
   }
-  const gapSince = isGapSinceWithheld
+  const gapSince = (await hasHiddenSessionOnRepo(deps, repo, isTold))
     ? null
     : earliestIso(
         lost > 0 ? toIso(row?.lossSince) : null,
@@ -806,7 +825,7 @@ export const readCoverage = async (
   const paths = scopePaths(options.scope);
   const scope = sessionScope(deps, now, repo, since, paths, options.answerSessionIds ?? []);
   const [agentEvent, git, order] = await Promise.all([
-    readAgentEventCoverage(deps, now, viewerDeveloperId, since, scope),
+    readAgentEventCoverage(deps, now, viewerDeveloperId, repo, since, scope),
     readGitCoverage(deps, now, viewerDeveloperId, repo),
     readCoverageOrder(
       deps.db,

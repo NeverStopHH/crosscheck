@@ -26,10 +26,11 @@
  *               created, and a solved tree's solvedAt (its newest claim's
  *               creation): the shared row's own time
  *   «coverage»  honest coverage that SOME session went quiet or reported:
- *               the agent_event rung's state, its reason, and whether its
- *               start may be printed — never whose session, never when
- *               (a withheld gap: `session_silent` with `withheld: true`,
- *               services/coverage.ts)
+ *               the agent_event rung's state, its reason and whether its
+ *               gap is withheld (`session_silent` with `withheld: true`) —
+ *               never whose session, never when: its start is withheld for
+ *               as long as she has a session on the repo, so nothing she
+ *               does moves it (services/coverage.ts)
  *   «pilot»     team-level pilot counts: sessions, deliveries and pulls,
  *               the integrity counters, which prior work was opened
  *   «sequence»  event sequence gaps (the feed's ids, below)
