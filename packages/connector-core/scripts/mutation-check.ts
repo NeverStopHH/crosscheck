@@ -17274,7 +17274,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an end no longer writes down the life it closed",
     file: `${CORE}/src/flows/end-session.ts`,
-    from: "  await recordEndedLife(input.home, input.hostSessionKey, end.sessionId, input.now());\n",
+    from: "  await recordEndedLife(\n    input.home,\n    input.hostSessionKey,\n    end.sessionId,\n    input.now(),\n    isSeqStamp(end.seq) ? end.seq.epoch : null,\n  );\n",
     to: "",
     test: `${CONNECTOR}/test/resumed-session.test.ts`,
     because: "every resume walks every ended life again from the base id, one register call each, on the hook whose latency the developer feels",
@@ -18339,18 +18339,82 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a state-less register ignores the epoch it reserved",
     file: `${CORE}/src/flows/register-session.ts`,
-    from: "  const fresh = (previous === null ? await readReservedEpoch(input) : null) ?? mintedEpoch;",
-    to: "  const fresh = mintedEpoch;",
+    from: "  (await readReservedEpoch(input)) ?? (await readEndedLifeEpoch(",
+    to: "  (await readEndedLifeEpoch(",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review-2 round 7, simulation seed 113 (I3): a SessionStart killed after its register splits the session's epoch for good",
   },
   {
     label: "a register reserves no epoch before its POST",
     file: `${CORE}/src/flows/register-session.ts`,
-    from: "    await reserveEpoch(input, fresh);\n",
+    from: "  await reserveEpoch(input, seqEpoch);\n",
     to: "",
     test: `${CORE}/test/spool-simulation.test.ts`,
     because: "review-2 round 7, simulation seed 113 (I3): nothing on disk names the epoch the hub filed session.started under",
+  },
+  {
+    label: "two SessionStarts of one conversation decide their epochs side by side",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "    (await underSessionStateLock<WireEpoch | null>(input.home, input.hostSessionKey, null, decide)) ??\n",
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 8, L2 (seeds 134, 11285): both read before either reserved, and the state took the epoch the hub did not",
+  },
+  {
+    label: "a re-fire reserves its fresh mint, not the epoch its register carries",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "  await reserveEpoch(input, seqEpoch);\n",
+    to: "  await reserveEpoch(input, fresh);\n",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 8, L2 (seed 11683): a re-fire killed after climbing to the next life left its epoch nowhere once SessionEnd deleted the state",
+  },
+  {
+    label: "a re-fire whose state SessionEnd deleted starts the next life on a fresh mint",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "    const startEpoch = previous?.crosscheckSessionId === crosscheckSessionId ? fresh : seqEpoch;",
+    to: "    const startEpoch = fresh;",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 8, L2 (seeds 1933, 11974): session.started under the carried epoch, every later event under the mint",
+  },
+  {
+    label: "a re-fire whose own life's state SessionEnd deleted restarts its counter under the carried epoch",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "    const startEpoch = previous?.crosscheckSessionId === crosscheckSessionId ? fresh : seqEpoch;",
+    to: "    const startEpoch = seqEpoch;",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 8, L2: positions the life already handed out under that epoch are handed out again",
+  },
+  {
+    label: "a publish that finds nothing to carry ignores the epoch the register sent",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "      await writeSessionState(home, withCarriedCapture({ ...state, seqEpoch: startEpoch }, previous));",
+    to: "      await writeSessionState(home, withCarriedCapture(state, previous));",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 8, L2 (seed 1933): a SessionEnd beside the re-fire deleted the state, and its publish split the next life",
+  },
+  {
+    label: "a state-less register ignores the epoch the conversation's last life ended on",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "  (await readReservedEpoch(input)) ?? (await readEndedLifeEpoch(input.home, input.hostSessionKey));",
+    to: "  readReservedEpoch(input);",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 8, L2 (seed 11974): a resume onto a life a heal registered unheard files a second epoch into it",
+  },
+  {
+    label: "an end writes down the life it closed without its epoch",
+    file: `${CORE}/src/flows/end-session.ts`,
+    from: "    isSeqStamp(end.seq) ? end.seq.epoch : null,\n",
+    to: "    null,\n",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 8, L2 (seed 11974): the resume finds no epoch for the life the unheard heal opened",
+  },
+  {
+    label: "the lineage drops the epoch it was handed",
+    file: `${CORE}/src/state/session-lineage.ts`,
+    from: "      `${JSON.stringify({ crosscheckSessionId, ...(epoch === null ? {} : { epoch }), at: now.toISOString() })}\\n`,",
+    to: "      `${JSON.stringify({ crosscheckSessionId, at: now.toISOString() })}\\n`,",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 8, L2 (seed 11974): the epoch written at the end never reaches the resume",
   },
   {
     label: "the state takes a fresh mint beside the reserved epoch on the wire",
@@ -18990,7 +19054,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
  * PRINTS: packages/connector-core/test/session-heal.test.ts 31
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 2
- * PRINTS: packages/connector-core/test/session-lives.test.ts 38
+ * PRINTS: packages/connector-core/test/session-lives.test.ts 46
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2

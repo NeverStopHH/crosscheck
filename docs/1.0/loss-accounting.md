@@ -620,6 +620,32 @@ and 11268 at production timing, all `par[intent ‖ start]`. Two reads close it:
 Before the fix, 97 of 128 replays of the 16 seeds broke I4; after it, none did. The fixed scenarios are ordinary tests
 now, and `session-lives.test.ts` pins both windows.
 
+**One life, one epoch, whatever runs beside its SessionStart** (review-2 round 8, L2). The hub filed a life's
+`session.started` under one epoch while the state took another, so I3 broke with `epoch_split`. Five seeds found
+three ways in:
+
+- **Two SessionStarts at once** (seeds 134, 11285). Both read before either reserved, so each minted its own epoch. The
+  register that landed and the state that was published first could disagree. The register now reads and reserves
+  under the state lock, and the second finds the first's reservation.
+- **A SessionEnd beside a re-fire** (1933, 11683). The end deleted the state while the re-fire's register was out.
+  The register had climbed to the next life under the carried epoch, and its publish found nothing to carry, so it
+  started the state on a fresh mint. Two changes close this:
+  - the reservation now names whatever goes out, a carried epoch too;
+  - a publish that finds nothing to carry starts on the epoch the register sent (`publishSessionState`'s
+    `startEpoch`).
+
+  A life the state already named keeps the fresh mint. Its counter is gone with the file, and its positions under the
+  carried epoch were handed out. A split there costs comparability and never re-issues a position, which a test pins.
+  The busy-lock fallback is unchanged.
+- **A resume onto a life a heal opened unheard** (11974, production timing). A heal registered the next life under
+  the state's epoch and stopped listening before the hub answered, so the state never moved. SessionEnd then ended the
+  old life and deleted the file, and the resume landed on the open life under a fresh mint. The lineage that
+  SessionEnd writes now carries the ended life's epoch. A state-less register takes its reservation first, then that
+  epoch, and mints only when neither exists.
+
+Before the fix, 35 of 40 replays of the five seeds broke I3; after it, none did. Their fixed scenarios are ordinary
+tests, and no seed is open in the sweep any more.
+
 **The hub's author-side refusals have a word, and a cooldown sends nothing** (review-2 LOW-5). A record whose own
 session or work context the hub never saw is refused with `sessionId: session "…" not found` (also
 `authorSessionId:`) or `workContextId: work context "…" not found` — the body's session, not the producer's — and

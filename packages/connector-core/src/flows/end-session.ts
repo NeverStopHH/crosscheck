@@ -38,6 +38,7 @@ import { recordRefusedLife } from "../spool/refused-lives.ts";
 import { seqAt } from "../capture/seq.ts";
 import { lifeRungOf, recordEndedLife } from "../state/session-lineage.ts";
 import { allocateSeq, closeSessionState, crosscheckSessionIdFor, readSessionState } from "../state/session-state.ts";
+import { isSeqStamp } from "@crosscheck/schema";
 import type { SeqField } from "@crosscheck/schema";
 
 export interface EndSessionFlowInput {
@@ -94,8 +95,16 @@ const writeDownEnd = async (input: EndSessionFlowInput, end: LifeEnd, standing: 
   // The life this end closes, written down BEFORE its state goes: the state
   // file is what named it, and a host that resumes this conversation under
   // the same id must start its next life one rung up, not on this one — an
-  // end reported here is final on the hub (state/session-lineage.ts).
-  await recordEndedLife(input.home, input.hostSessionKey, end.sessionId, input.now());
+  // end reported here is final on the hub (state/session-lineage.ts). With
+  // the epoch the life was on, which the next life keeps (review-2 round 8,
+  // L2): a heal may have registered it under that epoch already.
+  await recordEndedLife(
+    input.home,
+    input.hostSessionKey,
+    end.sessionId,
+    input.now(),
+    isSeqStamp(end.seq) ? end.seq.epoch : null,
+  );
 };
 
 /**

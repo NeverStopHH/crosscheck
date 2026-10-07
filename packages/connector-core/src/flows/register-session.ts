@@ -39,6 +39,7 @@ import {
   ladderStart,
   lifeRungOf,
   lifeSessionId,
+  readEndedLifeEpoch,
   readEndedLifeRung,
 } from "../state/session-lineage.ts";
 import {
@@ -47,6 +48,7 @@ import {
   crosscheckSessionIdFor,
   publishSessionState,
   readSessionState,
+  underSessionStateLock,
   workContextIdFor,
 } from "../state/session-state.ts";
 import type { SessionState } from "../state/session-state.ts";
@@ -295,6 +297,38 @@ const reserveEpoch = async (input: RegisterSessionFlowInput, epoch: string): Pro
   );
 };
 
+/**
+ * The epoch a state-less register owes the hub: one it reserved and never
+ * named in a state file, else the one the conversation's last ended life was
+ * on (state/session-lineage.ts readEndedLifeEpoch). Null: mint one.
+ */
+const readUnnamedEpoch = async (input: RegisterSessionFlowInput): Promise<string | null> =>
+  (await readReservedEpoch(input)) ?? (await readEndedLifeEpoch(input.home, input.hostSessionKey));
+
+/** The epoch a fire's register sends, the state it was read from, and the fire's own fresh one. */
+interface WireEpoch {
+  readonly previous: SessionState | null;
+  readonly fresh: string;
+  readonly seqEpoch: string;
+}
+
+/**
+ * THE EPOCH THE REGISTER SENDS, READ AND RESERVED IN ONE STEP (review-2 round
+ * 8, L2). Two SessionStarts of one conversation that both read before either
+ * reserved minted two epochs: the register that landed filed `session.started`
+ * under one, and the state took the other. Under the state lock the second
+ * finds the first's reservation. The reservation names whatever goes out, a
+ * carried epoch too: a re-fire killed after its register climbed to the next
+ * life left that life's epoch nowhere else once SessionEnd deleted the state.
+ */
+const decideWireEpoch = async (input: RegisterSessionFlowInput, minted: string): Promise<WireEpoch> => {
+  const previous = await readSessionState(input.home, input.hostSessionKey);
+  const fresh = (previous === null ? await readUnnamedEpoch(input) : null) ?? minted;
+  const seqEpoch = carriedSeqEpoch(previous, input, fresh);
+  await reserveEpoch(input, seqEpoch);
+  return { previous, fresh, seqEpoch };
+};
+
 /** The session-start recipe: register → state BEFORE append → work context. */
 export const registerSessionFlow = async (
   input: RegisterSessionFlowInput,
@@ -316,18 +350,18 @@ export const registerSessionFlow = async (
   // under the foreign epoch and the hub answers `broken / epoch_split` for
   // every pair in that session, permanently. Read here, before the POST,
   // because the POST is what carries it (carriedSeqEpoch's header).
-  const previous = await readSessionState(input.home, input.hostSessionKey);
+  //
   // ...AND A REGISTER KILLED BEFORE ITS STATE WAS WRITTEN LEFT ITS EPOCH ON THE
   // HUB (review-2 round 7, found by the spool simulation): `session.started`
   // under it, nothing on disk naming it, and the next SessionStart's fresh
   // mint split the session for good. The epoch is reserved before the POST,
   // and a state-less register takes the reservation it finds — nothing was
-  // ever positioned under it but `session.started` at 0.
-  const fresh = (previous === null ? await readReservedEpoch(input) : null) ?? mintedEpoch;
-  const seqEpoch = carriedSeqEpoch(previous, input, fresh);
-  if (seqEpoch === fresh) {
-    await reserveEpoch(input, fresh);
-  }
+  // ever positioned under it but `session.started` at 0. A busy lock decides
+  // without it, as before the lock was taken here.
+  const decide = (): Promise<WireEpoch> => decideWireEpoch(input, mintedEpoch);
+  const { previous, fresh, seqEpoch } =
+    (await underSessionStateLock<WireEpoch | null>(input.home, input.hostSessionKey, null, decide)) ??
+    (await decide());
   const ladder = await registerSessionLadder({
     ...input,
     // `session.started` AT POSITION ZERO (spec 01 §3.2), and this is the only
@@ -448,7 +482,15 @@ export const registerSessionFlow = async (
     // capture counters and the worktree-root cache across the fire; the
     // per-fire lists (briefing pointers, the hint seen-set) start empty again,
     // which is what withBriefingSolvedRefs' header specifies.
-    await publishSessionState(input.home, stateInput);
+    //
+    // A PUBLISH THAT FINDS NOTHING TO CARRY STARTS ON THE EPOCH THE REGISTER
+    // SENT (review-2 round 8, L2): a SessionEnd beside this fire deleted the
+    // state while its register was out, and the fresh mint above split the
+    // life it climbed to from the `session.started` it filed. Only for a life
+    // the state did not name before: that one's positions under the carried
+    // epoch were handed out, and its counter is gone with the file.
+    const startEpoch = previous?.crosscheckSessionId === crosscheckSessionId ? fresh : seqEpoch;
+    await publishSessionState(input.home, stateInput, startEpoch);
   }
   // The state names the epoch now; the reservation has done its job.
   await removeFile(sessionEpochPathForSlug(input.home, sessionSlug(input.hostSessionKey)));

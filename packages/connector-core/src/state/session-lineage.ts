@@ -55,6 +55,7 @@ const RUNG_PATTERN = /^[1-9][0-9]{0,8}$/;
 
 const LineageSchema = z.looseObject({
   crosscheckSessionId: z.string().min(1),
+  epoch: z.string().min(1).optional(),
 });
 
 /** The crosscheck session id of a host session's `rung`-th life. */
@@ -135,6 +136,19 @@ export const readEndedLifeRung = async (
 };
 
 /**
+ * The epoch the life this host session ended last was on, if written down
+ * (review-2 round 8, L2, seed 11974). A heal's register of the next life goes
+ * out under the state's epoch, and one the hub took after the heal stopped
+ * listening left that life open under it with no state naming it once
+ * SessionEnd deleted the file. The resume that lands on it takes this epoch,
+ * not a fresh mint: nothing was positioned in that life but `session.started`.
+ */
+export const readEndedLifeEpoch = async (home: string, hostSessionKey: string): Promise<string | null> => {
+  const parsed = LineageSchema.safeParse(await readJsonOrNull(lineagePath(home, hostSessionKey)));
+  return parsed.success ? (parsed.data.epoch ?? null) : null;
+};
+
+/**
  * Written at the END of a life, never at its start: a life that is still
  * running is named by its state file, and a lineage file exists only for host
  * sessions that ended and may come back. Fail-open — a lost write costs the
@@ -145,11 +159,12 @@ export const recordEndedLife = async (
   hostSessionKey: string,
   crosscheckSessionId: string,
   now: Date,
+  epoch: string | null = null,
 ): Promise<void> => {
   try {
     await writePrivateFile(
       lineagePath(home, hostSessionKey),
-      `${JSON.stringify({ crosscheckSessionId, at: now.toISOString() })}\n`,
+      `${JSON.stringify({ crosscheckSessionId, ...(epoch === null ? {} : { epoch }), at: now.toISOString() })}\n`,
     );
   } catch {
     // The ladder still finds the next life without it.

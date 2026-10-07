@@ -80,6 +80,8 @@ let refuseRegisters = false;
 let refuseRecords = false;
 let refuseEnds = false;
 let registerDelayMs = 0;
+/** One answer per register, in arrival order, ahead of the dials above: a race's script. */
+let registerScript: readonly ("slow" | "refused")[] = [];
 const registerIds: string[] = [];
 const cleanups: string[] = [];
 
@@ -225,8 +227,13 @@ beforeAll(async () => {
       const body = request.method === "GET" ? undefined : await request.arrayBuffer();
       if (request.method === "POST" && pathname === "/api/sessions") {
         registerIds.push((JSON.parse(new TextDecoder().decode(body)) as { id: string }).id);
-        if (refuseRegisters) {
+        const scripted = registerScript[0];
+        registerScript = registerScript.slice(1);
+        if (refuseRegisters || scripted === "refused") {
           return Response.json({ ok: false, error: { code: "unavailable", message: "down" } }, { status: 503 });
+        }
+        if (scripted === "slow") {
+          await Bun.sleep(WALK_DELAY_MS);
         }
         if (registerDelayMs > 0) {
           await Bun.sleep(registerDelayMs);
@@ -1084,6 +1091,33 @@ describe("a SessionStart killed between its register and its state (review-2 rou
     expect(await readSessionCausalOrder(db, lifeId)).toMatchObject({ state: "usable", epochs: 1 });
     expect(await Bun.file(sessionEpochPathForSlug(fx.home, sessionSlug(fx.hostSessionKey))).exists()).toBe(false);
   });
+
+  test("is followed by one that keeps that epoch even while the state lock stays busy (review-2 round 8, L2)", async () => {
+    // Arrange: the same, the reservation the only thing naming E
+    const fx = await fixture("reserved-epoch-busy");
+    const epoch = crypto.randomUUID();
+    await registerSession(fx.hub, {
+      id: `cc_${fx.hostSessionKey}`,
+      agentKind: "acp:test",
+      repo: REPO_ID,
+      branch: BRANCH,
+      baseCommit: BASE_COMMIT,
+      status: "analyzing",
+      seq: { epoch, n: 0 },
+    });
+    const reservation = sessionEpochPathForSlug(fx.home, sessionSlug(fx.hostSessionKey));
+    await mkdir(dirname(reservation), { recursive: true });
+    await writeFile(reservation, `${JSON.stringify({ epoch })}\n`);
+
+    // Act: the next SessionStart decides and publishes past a lock another holder keeps
+    await withLock(sessionStateLockPath(fx.home, fx.hostSessionKey), null, async () => {
+      await register(fx);
+      return null;
+    });
+
+    // Assert: the fallback wrote the reserved epoch, not a fresh mint
+    expect((await stateOf(fx))?.seqEpoch).toBe(epoch);
+  });
 });
 
 describe("a SessionStart that re-fires inside a live conversation", () => {
@@ -1186,6 +1220,141 @@ describe("a SessionStart that re-fires inside a live conversation", () => {
     expect(next.crosscheckSessionId).toBe(`${life.crosscheckSessionId}~r1`);
     expect(await targetsOf(life.workContextId)).toEqual([]);
     expect((await readDropDetail(fx.home, fx.key)).byReason).toEqual({ withheld: 1 });
+  });
+});
+
+/**
+ * ONE EPOCH FOR ONE LIFE, WHATEVER RUNS BESIDE ITS SESSIONSTART (review-2
+ * round 8, L2, seeds 134, 1933, 11285, 11683 and 11974). Two SessionStarts of
+ * one conversation each minted an epoch, and the life's `session.started` and
+ * its state could take different ones. A SessionEnd that deleted the state
+ * while a re-fire's register was out left the re-fire's publish nothing to
+ * carry, and it started the state on a fresh mint beside the carried epoch its
+ * register had sent.
+ */
+describe("a SessionStart beside another SessionStart or a SessionEnd (review-2 round 8, L2)", () => {
+  const causalOrderOf = async (fx: Fixture) => {
+    const state = await stateOf(fx);
+    if (state === null) throw new Error("no session state");
+    await captureTarget(fx, "src/after-the-race.ts");
+    await flushAsHook(fx, fx.proxied);
+    return readSessionCausalOrder(db, state.crosscheckSessionId);
+  };
+
+  test("two at once take one epoch: the register that lands and the state agree", async () => {
+    // Arrange: the first register to arrive is slow and lands; the second is refused at once
+    const fx = await fixture("two-starts");
+    registerScript = ["slow", "refused"];
+
+    // Act: two SessionStarts of one conversation at once, then an edit
+    await Promise.all([register(fx, fx.proxied), register(fx, fx.proxied)]);
+    registerScript = [];
+    const order = await causalOrderOf(fx);
+
+    // Assert
+    expect(order).toMatchObject({ state: "usable", epochs: 1 });
+  });
+
+  test("a re-fire whose state a SessionEnd deletes starts the next life on the epoch its register sent", async () => {
+    // Arrange: a life the hub ended; the re-fire's walk to the next life is slow
+    const fx = await fixture("start-beside-end");
+    const life = await register(fx, fx.proxied);
+    await flushAsHook(fx, fx.proxied);
+    const epoch = (await stateOf(fx))?.seqEpoch;
+    await endSession(fx.hub, life.crosscheckSessionId);
+    registerDelayMs = WALK_DELAY_MS;
+
+    // Act: SessionStart re-fires; SessionEnd deletes the state while its register is out
+    const refire = register(fx, fx.proxied);
+    await Bun.sleep(WALK_HEAD_START_MS);
+    await endViaFlow(fx);
+    const next = await refire;
+    registerDelayMs = 0;
+    const order = await causalOrderOf(fx);
+
+    // Assert: the next life holds one epoch, the one the conversation was on
+    expect(next.crosscheckSessionId).toBe(`${life.crosscheckSessionId}~r1`);
+    expect((await stateOf(fx))?.seqEpoch).toBe(epoch);
+    expect(order).toMatchObject({ state: "usable", epochs: 1 });
+  });
+
+  test("a re-fire whose own life's state a SessionEnd deletes hands out no position that life already holds", async () => {
+    // Arrange: a live life with two positioned edits on the hub; the hub
+    // refuses its end, so it stays live; the re-fire's register is slow
+    const fx = await fixture("own-life-beside-end");
+    const life = await register(fx, fx.proxied);
+    await captureTarget(fx, "src/one.ts");
+    await captureTarget(fx, "src/two.ts");
+    await flushAsHook(fx, fx.proxied);
+    registerDelayMs = WALK_DELAY_MS;
+    refuseEnds = true;
+
+    // Act: SessionStart re-fires on the life; SessionEnd deletes the state while its register is out
+    const refire = register(fx, fx.proxied);
+    await Bun.sleep(WALK_HEAD_START_MS);
+    await endViaFlow(fx, fx.proxied);
+    const same = await refire;
+    registerDelayMs = 0;
+    refuseEnds = false;
+    await captureTarget(fx, "src/three.ts");
+    await flushAsHook(fx, fx.proxied);
+
+    // Assert: the counter is gone with the file, so the life's order is not
+    // comparable across the fire — and no record lost its position to a
+    // position the life had already handed out
+    const conflicts = await raw<{ id: string }>(
+      "select id from session_events where session_id = $1 and seq_reason = 'epoch_conflict'",
+      [life.crosscheckSessionId],
+    );
+    expect(same.crosscheckSessionId).toBe(life.crosscheckSessionId);
+    expect(conflicts).toEqual([]);
+  });
+
+  test("a resume onto a life a heal registered unheard keeps the epoch the hub filed it under (seed 11974)", async () => {
+    // Arrange: life 0 on epoch E; a heal's register of ~r1 under E landed
+    // after the heal stopped listening, so the state never moved; SessionEnd
+    // ends life 0 and deletes the state
+    const fx = await fixture("unheard-heal");
+    const life = await register(fx);
+    const epoch = (await stateOf(fx))?.seqEpoch ?? "";
+    const next = `${life.crosscheckSessionId}~r1`;
+    await registerSession(fx.hub, {
+      id: next,
+      agentKind: "acp:test",
+      repo: REPO_ID,
+      branch: BRANCH,
+      baseCommit: BASE_COMMIT,
+      status: "analyzing",
+      seq: { epoch, n: 0 },
+    });
+    await endViaFlow(fx);
+
+    // Act: the conversation resumes, and an edit follows
+    const resumed = await register(fx);
+    const order = await causalOrderOf(fx);
+
+    // Assert: the resume is on ~r1, under the epoch its session.started holds
+    expect(resumed.crosscheckSessionId).toBe(next);
+    expect((await stateOf(fx))?.seqEpoch).toBe(epoch);
+    expect(order).toMatchObject({ state: "usable", epochs: 1 });
+  });
+
+  test("a re-fire reserves the epoch it carries, so a register killed after its POST names it on disk", async () => {
+    // Arrange: a live life; the re-fire's register is slow
+    const fx = await fixture("refire-reserves");
+    await register(fx, fx.proxied);
+    const epoch = (await stateOf(fx))?.seqEpoch;
+    registerDelayMs = WALK_DELAY_MS;
+
+    // Act: read the reservation while the re-fire's register is out
+    const refire = register(fx, fx.proxied);
+    await Bun.sleep(WALK_HEAD_START_MS);
+    const reserved = await Bun.file(sessionEpochPathForSlug(fx.home, sessionSlug(fx.hostSessionKey))).text();
+    await refire;
+    registerDelayMs = 0;
+
+    // Assert
+    expect(JSON.parse(reserved)).toMatchObject({ epoch });
   });
 });
 

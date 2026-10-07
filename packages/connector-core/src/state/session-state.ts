@@ -825,17 +825,25 @@ export const withCarriedCapture = (
  * that stays busy falls back to the plain create — publishing state is not
  * optional (spool reap infers "no writer left" from its absence), so the
  * counters lose rather than the file.
+ *
+ * `startEpoch` is the epoch a publish that finds nothing to carry starts on,
+ * under the lock (review-2 round 8, L2): the register's caller knows which
+ * epoch the life's `session.started` went out under, and a SessionEnd that
+ * deleted the state while the register was out leaves nothing else to name
+ * it. The busy-lock fallback keeps `state` as it is — it may overwrite a
+ * state it never read, and only a fresh epoch is safe beside a counter at 0.
  */
 export const publishSessionState = async (
   home: string,
   state: SessionStateInput,
+  startEpoch: string | null = state.seqEpoch ?? null,
 ): Promise<void> => {
   const published = await withSessionStateLock(
     sessionStateLockPath(home, state.hostSessionKey),
     false,
     async () => {
       const previous = await readSessionState(home, state.hostSessionKey);
-      await writeSessionState(home, withCarriedCapture(state, previous));
+      await writeSessionState(home, withCarriedCapture({ ...state, seqEpoch: startEpoch }, previous));
       return true;
     },
   );

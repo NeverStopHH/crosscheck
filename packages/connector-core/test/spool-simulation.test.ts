@@ -104,14 +104,7 @@ const said = (verdicts: readonly Verdict[]): readonly string[] =>
  * Seeds still failing, and the fix each waits for: the sweep skips them, and
  * their fixed scenarios below are marked `failing` until that fix lands.
  */
-const OPEN: ReadonlyMap<number, string> = new Map<number, string>([
-  [134, "L2"],
-  [1933, "L2"],
-  // At production timing the sweep found more of L2's class, each racy: par[start ‖ start], par[start ‖ end].
-  [11974, "L2"],
-  [11285, "L2"],
-  [11683, "L2"],
-]);
+const OPEN: ReadonlyMap<number, string> = new Map<number, string>([]);
 
 describe("the spool, simulated", () => {
   test(
@@ -304,8 +297,6 @@ interface Found extends Probe {
   readonly racy?: boolean;
 }
 
-const L2 ="L2 (concurrent SessionStarts share one epoch)";
-
 /**
  * WHAT THE ROUND-7 REVIEW'S EXTENDED SWEEP FOUND, shrunk: each named by its
  * seed, the invariant it broke and the finding it is (H1, M1, M3, L1, L2), and
@@ -386,26 +377,18 @@ const ROUND_7: readonly Found[] = [
   {
     name: "seed 134 (I3, L2): two SessionStarts of one host session at once, a register refused",
     events: [fault("registersDown", 2, 1), par(start(1), start(1))],
-    open: L2,
-    racy: true,
   },
   {
     name: "seed 1933 (I3, L2): a SessionStart beside a SessionEnd after a crashed end",
     events: [start(0), crash(4, "before"), end(0), par(start(0), end(0))],
-    open: L2,
-    racy: true,
   },
   {
     name: "seed 11285 (I3, L2): two SessionStarts at once after a crash, registers refused",
     events: [crash(1, "before"), fault("registersDown", 2, 2), par(start(0), start(0))],
-    open: L2,
-    racy: true,
   },
   {
     name: "seed 11683 (I3, L2): an edit beside a resume after an ended life",
     events: [start(0), hubEnd(0), crash(3, "after"), start(0), end(0), par(edit(0), start(0))],
-    open: L2,
-    racy: true,
   },
   {
     name: "seed 1018 (checker): SessionEnd beside a successor's SessionStart, read as live",
@@ -458,10 +441,8 @@ const ROUND_7: readonly Found[] = [
     events: [start(0), par(start(0), intent(0, "blocked")), par(edit(0), { kind: "flush", c: 0 })],
   },
   {
-    name: "seed 11974 (I3, L2, production timing): a resume beside SessionEnd behind a slow hub",
+    name: "seed 11974 (I3, L2, production timing): a resume onto the life a heal's unheard register opened, behind a slow hub",
     events: [start(0), slow(600, 1, 1), hubEnd(0), edit(0), end(0), par(start(0), end(0))],
-    open: L2,
-    racy: true,
   },
 ];
 
