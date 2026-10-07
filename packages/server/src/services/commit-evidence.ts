@@ -1,13 +1,11 @@
 import { and, eq, gt, lt, or, sql } from "drizzle-orm";
-import type { SQL } from "drizzle-orm";
-import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { MAX_COMMIT_CLOCK_SKEW_MS } from "@crosscheck/schema";
 import type { CommitEvidence } from "@crosscheck/schema";
 
 import type { SeqField } from "@crosscheck/schema";
 
 import { COMMIT_EVIDENCE_RETENTION_DAYS } from "../constants.ts";
-import { commitEvidence, developers } from "../db/schema.ts";
+import { commitEvidence } from "../db/schema.ts";
 import { recordSessionEvent } from "./session-events.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
@@ -20,10 +18,6 @@ interface Deps {
 
 const MS_PER_HOUR = 3_600_000;
 const MS_PER_DAY = 24 * MS_PER_HOUR;
-
-/** Is the developer this column names opted out of presence? */
-const isOptedOut = (developerId: SQL | AnyPgColumn): SQL =>
-  sql`exists (select 1 from ${developers} where ${developers.id} = ${developerId} and ${developers.presenceOptOut})`;
 
 /** Matching key discipline: developers.email is compared lowercased too. */
 export const normalizeEmail = (email: string): string =>
@@ -112,12 +106,12 @@ export const ingestCommitEvidence = async (
             collectedAt: sql`excluded.collected_at`,
             reportedBy: sql`excluded.reported_by`,
           },
-          // A TOLD COLLECTOR'S ROW IS NOT REPLACED BY A HIDDEN ONE'S (review
-          // round 4, H2). Colleagues count only rows a told developer
-          // collected (coverage.ts, absences.ts); replacing Nick's row about
-          // Ken with hers would take his evidence away from everyone she is
-          // hidden from, and the gap would say she had reported.
-          setWhere: sql`${commitEvidence.collectedAt} <= excluded.collected_at AND NOT (${isOptedOut(sql`excluded.reported_by`)} AND NOT ${isOptedOut(commitEvidence.reportedBy)})`,
+          // AN OPTED-OUT COLLECTOR'S REPORT IS STORED LIKE ANYONE'S (review
+          // round 5, C1): it counts toward the rung and the findings for every
+          // reader, and only its collected_at — when her SessionStart ran — is
+          // withheld from viewers she is hidden from (coverage.ts,
+          // absences.ts). Missing evidence may never make coverage look better.
+          setWhere: sql`${commitEvidence.collectedAt} <= excluded.collected_at`,
         });
     }
     // `commit.observed` — the ONE canonical event whose session cannot come

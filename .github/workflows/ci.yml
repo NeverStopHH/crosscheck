@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1671
+    # PRINTS: 1673
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -400,7 +400,7 @@ jobs:
     # PRINTS: packages/server/src/routes/ui-ceremony.ts 5
     # PRINTS: packages/server/src/routes/ui-passkeys.tsx 1
     # PRINTS: packages/server/src/routes/work-contexts.ts 9
-    # PRINTS: packages/server/src/services/absences.ts 11
+    # PRINTS: packages/server/src/services/absences.ts 12
     # PRINTS: packages/server/src/services/calibration.ts 1
     # PRINTS: packages/server/src/services/causal-guarantees.ts 11
     # PRINTS: packages/server/src/services/ci-coverage.ts 3
@@ -412,7 +412,7 @@ jobs:
     # PRINTS: packages/server/src/services/conference.ts 8
     # PRINTS: packages/server/src/services/contradictions.ts 1
     # PRINTS: packages/server/src/services/coverage-order.ts 5
-    # PRINTS: packages/server/src/services/coverage.ts 37
+    # PRINTS: packages/server/src/services/coverage.ts 38
     # PRINTS: packages/server/src/services/developer-lookup.ts 2
     # PRINTS: packages/server/src/services/developer-settings.ts 2
     # PRINTS: packages/server/src/services/developers.ts 13
@@ -467,7 +467,7 @@ jobs:
     # PRINTS: packages/server/test/verdict-latency.test.ts 1
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file.split("/").pop(),(m.get(x.file.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
-    # PRINTS: absences.ts 13
+    # PRINTS: absences.ts 14
     # PRINTS: answer-question.ts 1
     # PRINTS: args.ts 2
     # PRINTS: ask-teammate.ts 1
@@ -506,7 +506,7 @@ jobs:
     # PRINTS: cost.ts 2
     # PRINTS: counts.ts 1
     # PRINTS: coverage-order.ts 5
-    # PRINTS: coverage.ts 40
+    # PRINTS: coverage.ts 41
     # PRINTS: crosscheck.ts 1
     # PRINTS: declarations.ts 5
     # PRINTS: delivery-id.ts 2

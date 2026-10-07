@@ -18629,8 +18629,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the git rung is dated by an opted-out collector's SessionStart",
     file: `${SERVER}/src/services/coverage.ts`,
-    from: "      total: sql`count(*) filter (where ${isToldCollector})`,\n      newest: sql`max(${commitEvidence.collectedAt}) filter (where ${isToldCollector})`,",
-    to: "      total: sql`count(*)`,\n      newest: sql`max(${commitEvidence.collectedAt})`,",
+    from: "      toldNewest: sql`max(${commitEvidence.collectedAt}) filter (where ${isToldCollector})`,",
+    to: "      toldNewest: sql`max(${commitEvidence.collectedAt})`,",
     test: `${SERVER}/test/live-location-surfaces.test.ts`,
     because:
       "every coverage record's git observedAt is the second her session " +
@@ -18639,30 +18639,30 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the git rung is dated by an opted-out collector's SessionStart (guard)",
     file: `${SERVER}/src/services/coverage.ts`,
-    from: "      total: sql`count(*) filter (where ${isToldCollector})`,\n      newest: sql`max(${commitEvidence.collectedAt}) filter (where ${isToldCollector})`,",
-    to: "      total: sql`count(*)`,\n      newest: sql`max(${commitEvidence.collectedAt})`,",
+    from: "      toldNewest: sql`max(${commitEvidence.collectedAt}) filter (where ${isToldCollector})`,",
+    to: "      toldNewest: sql`max(${commitEvidence.collectedAt})`,",
     test: `${SERVER}/test/live-location-privacy.test.ts`,
     because: "every route that carries coverage carries her SessionStart",
   },
   {
     label: "an absence finding says when an opted-out collector's session started",
     file: `${SERVER}/src/services/absences.ts`,
-    from: "    visiblePresenceCondition(viewerDeveloperId, commitEvidence.reportedBy),\n  );",
-    to: "  );",
+    from: "      evidenceCollectedAt: row.isToldCollector ? row.collectedAt.toISOString() : LOCATION_WITHHELD,",
+    to: "      evidenceCollectedAt: row.collectedAt.toISOString(),",
     test: `${SERVER}/test/live-location-surfaces.test.ts`,
     because:
       "the briefing's «commit evidence 5d old» and each finding's " +
       "evidenceCollectedAt are her SessionStart",
   },
   {
-    label: "an opted-out collector's report replaces a told one's about the same author",
+    label: "an opted-out collector's report is refused where a told one's stands",
     file: `${SERVER}/src/services/commit-evidence.ts`,
-    from: "AND NOT (${isOptedOut(sql`excluded.reported_by`)} AND NOT ${isOptedOut(commitEvidence.reportedBy)})`,",
-    to: "`,",
-    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    from: "          setWhere: sql`${commitEvidence.collectedAt} <= excluded.collected_at`,",
+    to: "          setWhere: sql`${commitEvidence.collectedAt} <= excluded.collected_at AND NOT exists (select 1 from developers d where d.id = excluded.reported_by and d.presence_opt_out)`,",
+    test: `${SERVER}/test/commit-evidence-opt-out.test.ts`,
     because:
-      "Nick's evidence about Ken is overwritten by hers and vanishes for every " +
-      "colleague, so the rung says somebody hidden reported",
+      "Ken's commit an hour ago is known only from her SessionStart; dropping " +
+      "her report leaves Nick's four-day-old row, and Ken reads as reported (C1)",
   },
   // ── Review round 4, H1: a hidden session is counted, never named ──────
   {
@@ -18768,8 +18768,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the git rung is dated by an opted-out collector's SessionStart (differential)",
     file: `${SERVER}/src/services/coverage.ts`,
-    from: "      total: sql`count(*) filter (where ${isToldCollector})`,\n      newest: sql`max(${commitEvidence.collectedAt}) filter (where ${isToldCollector})`,",
-    to: "      total: sql`count(*)`,\n      newest: sql`max(${commitEvidence.collectedAt})`,",
+    from: "      toldNewest: sql`max(${commitEvidence.collectedAt}) filter (where ${isToldCollector})`,",
+    to: "      toldNewest: sql`max(${commitEvidence.collectedAt})`,",
     test: `${SERVER}/test/live-location-differential.test.ts`,
     because: "the rung's observedAt moves to the second her report was collected, which no residual names",
   },
@@ -18784,6 +18784,25 @@ export const MUTATIONS: readonly Mutation[
       "Nick's and Ken's own rows read «untitled work» and «withheld (presence " +
       "opt-out)» the moment one teammate opts out, and a guard that looks only " +
       "for her location has nothing to say about it",
+  },
+  // ── Review round 5, C1: withheld evidence never makes coverage better ──
+  {
+    label: "an opted-out collector's evidence is left out of the git rung's count",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "      total: sql`count(*)`,\n      newest: sql`max(${commitEvidence.collectedAt})`,",
+    to: "      total: sql`count(*) filter (where ${isToldCollector})`,\n      newest: sql`max(${commitEvidence.collectedAt}) filter (where ${isToldCollector})`,",
+    test: `${SERVER}/test/commit-evidence-opt-out.test.ts`,
+    because:
+      "with her rows uncounted a colleague's rung reads complete while the " +
+      "commit only her SessionStart saw goes unreported (principle 5)",
+  },
+  {
+    label: "an opted-out collector's evidence is left out of the absence findings",
+    file: `${SERVER}/src/services/absences.ts`,
+    from: "    sql`(${developers.id} IS NULL OR (${visiblePresenceCondition(viewerDeveloperId, developers.id)} AND ${notMutedCondition(viewerDeveloperId, developers.id)}))`,\n  );",
+    to: "    sql`(${developers.id} IS NULL OR (${visiblePresenceCondition(viewerDeveloperId, developers.id)} AND ${notMutedCondition(viewerDeveloperId, developers.id)}))`,\n    visiblePresenceCondition(viewerDeveloperId, commitEvidence.reportedBy),\n  );",
+    test: `${SERVER}/test/commit-evidence-opt-out.test.ts`,
+    because: "«Ken inactive» disappears for every colleague because the one who saw his commit opted out",
   },
 ];
 
@@ -19090,6 +19109,7 @@ interface Outcome {
  * PRINTS: packages/server/test/claim-binding-ingest.test.ts 1
  * PRINTS: packages/server/test/claim-revalidations.test.ts 10
  * PRINTS: packages/server/test/claim-validity.test.ts 2
+ * PRINTS: packages/server/test/commit-evidence-opt-out.test.ts 3
  * PRINTS: packages/server/test/conference.test.ts 3
  * PRINTS: packages/server/test/coverage-answer-sessions.test.ts 10
  * PRINTS: packages/server/test/coverage-instant-privacy.test.ts 5
@@ -19120,7 +19140,7 @@ interface Outcome {
  * PRINTS: packages/server/test/live-location-differential.test.ts 3
  * PRINTS: packages/server/test/live-location-privacy.test.ts 27
  * PRINTS: packages/server/test/live-location-projection.test.ts 3
- * PRINTS: packages/server/test/live-location-surfaces.test.ts 40
+ * PRINTS: packages/server/test/live-location-surfaces.test.ts 39
  * PRINTS: packages/server/test/live-location-told.test.ts 1
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/passkey-announcements.test.ts 1

@@ -61,6 +61,8 @@ interface Action {
 }
 
 const nowIso = (world: OptedOutWorld): string => world.harness.clock.now().toISOString();
+const MS_PER_HOUR = 3_600_000;
+const hourBefore = (world: OptedOutWorld): string => new Date(world.harness.clock.now().getTime() - MS_PER_HOUR).toISOString();
 
 const expectOk = async (response: Response, what: string): Promise<void> => {
   if (response.status < 200 || response.status >= 300) {
@@ -109,8 +111,10 @@ const ACTIONS: readonly Action[] = [
     run: (w) => records(w, [live("landed_evidence", { repo: REPO, defaultBranch: "main", checkedAt: nowIso(w), commits: [SECRET_SHA] })], "landed"),
   },
   {
+    // What git log said at her SessionStart: commits from an hour back —
+    // published history — collected now, which is hers.
     name: "report commit evidence",
-    run: (w) => records(w, [live("commit_evidence", { repo: REPO, collectedAt: nowIso(w), windowDays: 14, authors: [{ name: "Ken", email: "ken@example.com", latestCommitAt: nowIso(w), commitCount: 1 }, { name: "Sam", email: "sam@example.com", latestCommitAt: nowIso(w), commitCount: 4 }] })], "commit evidence"),
+    run: (w) => records(w, [live("commit_evidence", { repo: REPO, collectedAt: nowIso(w), windowDays: 14, authors: [{ name: "Ken", email: "ken@example.com", latestCommitAt: hourBefore(w), commitCount: 1 }, { name: "Sam", email: "sam@example.com", latestCommitAt: hourBefore(w), commitCount: 4 }] })], "commit evidence"),
   },
   {
     name: "revalidate a teammate's claim",
@@ -298,6 +302,15 @@ const RESIDUALS: readonly Residual[] = [
     actions: ["report landed work"],
     route: /^GET \/(?:api\/conference|api\/work-contexts(?:\/:id(?:\/diagnosis)?)?|api\/solved-matches|ui\/work-contexts\/:id)$/,
     line: /./,
+  },
+  // visibility.ts «evidence»: what her SessionStart's commit evidence found
+  // counts for everyone (review round 5, C1) — the rung's state, reason and
+  // the instant a viewer may be told, the absence findings — never when she
+  // collected it.
+  {
+    name: "evidence",
+    actions: ["report commit evidence"],
+    line: /coverage\.sources\[\]\.(?:state|reason|observedAt)=|^[-+] data\.absences\[\]\./,
   },
   // visibility.ts «content» and «words»: what her shared work says — the
   // claim, the target's path, the intent's words, the pin's surface, a

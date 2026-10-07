@@ -31,7 +31,6 @@ import {
   ROBIN_NEW_FILE,
   ROBIN_PIN,
   NICK_CONTEXT,
-  NICK_EVIDENCE_AT,
   NICK_SESSION,
   REVALIDATED_AT,
   REPO,
@@ -521,11 +520,11 @@ describe("a withheld title is not in the search index (review round 4, H4)", () 
   });
 });
 
-describe("commit evidence counts only what a told developer collected (review round 4, H2)", () => {
+describe("her commit evidence counts; only WHEN she collected is withheld (review round 5, C1)", () => {
   interface Absences {
     readonly data: {
-      readonly absences: readonly { readonly name?: string; readonly developerName?: string; readonly evidenceCollectedAt: string }[];
-      readonly coverage: { readonly sources: readonly { readonly source: string; readonly observedAt: string | null }[] };
+      readonly absences: readonly { readonly kind: string; readonly name: string; readonly evidenceCollectedAt: string }[];
+      readonly coverage: { readonly sources: readonly { readonly source: string; readonly state: string; readonly observedAt: string | null }[] };
     };
   }
   const absencesOf = (body: string): Absences["data"] => (JSON.parse(body) as Absences).data;
@@ -537,17 +536,19 @@ describe("commit evidence counts only what a told developer collected (review ro
     const own = await getAs(world, "robin", url("/api/absences", { repo: REPO }));
 
     expect(secretsIn(nick.body)).toEqual([]);
-    expect(absencesOf(nick.body).coverage.sources.find((row) => row.source === "git")?.observedAt).toBe(NICK_EVIDENCE_AT);
     expect(secretsIn(own.body)).toContain("commit evidence");
   });
 
-  test("an author only her report names is not counted for a colleague", async () => {
+  test("an author only her report names counts for a colleague too, as unreported work", async () => {
     const world = await seedOptedOutWorld();
 
-    const nick = await getAs(world, "nick", url("/api/absences", { repo: REPO }));
+    const nick = absencesOf((await getAs(world, "nick", url("/api/absences", { repo: REPO }))).body);
 
-    expect(nick.body).not.toContain("sam@example.com");
-    expect(nick.body).not.toContain("\"Sam\"");
+    expect(nick.absences.find((finding) => finding.name === "Sam")).toMatchObject({
+      kind: "unconnected",
+      evidenceCollectedAt: LOCATION_WITHHELD,
+    });
+    expect(nick.coverage.sources.find((row) => row.source === "git")?.state).toBe("incomplete");
   });
 });
 

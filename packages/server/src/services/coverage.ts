@@ -696,17 +696,20 @@ const readGitCoverage = async (
   viewerDeveloperId: string,
   repo: string,
 ): Promise<CoverageSourceRecord> => {
-  // EVIDENCE COLLECTED BY TOLD DEVELOPERS ONLY (review round 4, H2). A row's
-  // collected_at is its collector's SessionStart — when they were at their
-  // machine — and an opted-out collector's is hers to keep: her rows neither
-  // date nor count the rung for anybody she is hidden from. reported_by is
-  // the collector, attributable on every row (NOT NULL), so there is no
-  // unknown-collector case to decide.
+  // EVERY ROW COUNTS; ONLY A TOLD COLLECTOR'S INSTANT PRINTS (review round
+  // 5, C1). A row's collected_at is its collector's SessionStart — when they
+  // were at their machine — so an opted-out collector's is hers to keep. But
+  // her ROW is evidence like anyone's: the state below is decided over all of
+  // them, because evidence withheld from the count would make the rung read
+  // better than it is. The printed instant is the newest a viewer may be told
+  // (older than the truth at worst: the staler, safe direction), null when
+  // none. reported_by is the collector on every row (NOT NULL).
   const isToldCollector = visiblePresenceCondition(viewerDeveloperId, commitEvidence.reportedBy);
   const rows = await deps.db
     .select({
-      total: sql`count(*) filter (where ${isToldCollector})`,
-      newest: sql`max(${commitEvidence.collectedAt}) filter (where ${isToldCollector})`,
+      total: sql`count(*)`,
+      newest: sql`max(${commitEvidence.collectedAt})`,
+      toldNewest: sql`max(${commitEvidence.collectedAt}) filter (where ${isToldCollector})`,
     })
     .from(commitEvidence)
     .where(eq(commitEvidence.repo, repo));
@@ -715,20 +718,21 @@ const readGitCoverage = async (
     return sourceRecord("git", "unknown", "no_commit_evidence");
   }
   const newest = toIso(row?.newest);
+  const printable = toIso(row?.toldNewest);
   const staleBefore = now.getTime() - ABSENCE_EVIDENCE_MAX_AGE_DAYS * MS_PER_DAY;
   if (newest === null || Date.parse(newest) < staleBefore) {
-    return sourceRecord("git", "incomplete", "evidence_stale", newest, newest);
+    return sourceRecord("git", "incomplete", "evidence_stale", printable, printable);
   }
   const census = await readAbsenceCensus(deps, viewerDeveloperId, repo);
   if (census.unreportedAuthors === 0) {
-    return sourceRecord("git", "complete", "commits_reported", null, newest);
+    return sourceRecord("git", "complete", "commits_reported", null, printable);
   }
   return sourceRecord(
     "git",
     "incomplete",
     "commit_authors_unreported",
     censusGap(census),
-    newest,
+    printable,
   );
 };
 

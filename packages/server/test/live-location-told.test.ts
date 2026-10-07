@@ -35,12 +35,17 @@ const parsedJson = (text: string): unknown => {
 };
 
 /**
- * Claims of a TEAMMATE that carry a revalidation reading SHE took (the seed's
- * re-check of clm_nick, opted-out-world.ts): the reading is its reporter's
- * (services/claim-validity.ts), so its instant is hers to withhold, inside a
- * row that is not hers.
+ * HER ACTS INSIDE A TEAMMATE'S ROW, whose instant is hers to withhold:
+ *   - a revalidation reading she took of a teammate's claim (the seed's
+ *     re-check of clm_nick): a reading is its reporter's
+ *     (services/claim-validity.ts)
+ *   - commit evidence her SessionStart collected about a teammate or an
+ *     outside committer (the seed's report naming Ken and Sam): the row
+ *     counts for everyone, and when she collected it is hers
+ *     (services/absences.ts, review round 5, C1)
  */
 const CLAIMS_SHE_REVALIDATED: ReadonlySet<string> = new Set(["clm_nick"]);
+const AUTHORS_SHE_REPORTED: ReadonlySet<string> = new Set(["Ken", "Sam"]);
 
 /** Does this value name her: her id, her name or a row id of hers? */
 const namesHer = (world: OptedOutWorld, value: unknown): boolean =>
@@ -56,10 +61,15 @@ const isHerRow = (world: OptedOutWorld, row: Row): boolean =>
     (item) => namesHer(world, item) || (isRow(item) && Object.values(item).some((inner) => namesHer(world, inner))),
   );
 
-/** A claim (or a position holding one) whose reading she took. */
-const carriesHerReading = (row: Row): boolean => {
+/** The field of this row that carries an act of hers, if it is such a row. */
+const herActField = (row: Row): string | null => {
   const claim = isRow(row["claim"]) ? row["claim"] : row;
-  return typeof claim["id"] === "string" && CLAIMS_SHE_REVALIDATED.has(claim["id"]);
+  if (typeof claim["id"] === "string" && CLAIMS_SHE_REVALIDATED.has(claim["id"])) {
+    return "validity.lastRevalidatedAt";
+  }
+  return typeof row["evidenceCollectedAt"] === "string" && typeof row["name"] === "string" && AUTHORS_SHE_REPORTED.has(row["name"])
+    ? "evidenceCollectedAt"
+    : null;
 };
 
 /**
@@ -72,20 +82,20 @@ const strayForms = (
   value: unknown,
   path: string,
   insideHers: boolean,
-  herReading: boolean,
+  actField: string | null,
 ): readonly string[] => {
   if (typeof value === "string") {
-    const isHerReadingTime = herReading && path.endsWith("validity.lastRevalidatedAt");
-    return carriesWithheldForm(value) && !insideHers && !isHerReadingTime ? [path] : [];
+    const isHerActTime = actField !== null && path.endsWith(actField);
+    return carriesWithheldForm(value) && !insideHers && !isHerActTime ? [path] : [];
   }
   if (Array.isArray(value)) {
-    return value.flatMap((item, index) => strayForms(world, item, `${path}[${String(index)}]`, false, false));
+    return value.flatMap((item, index) => strayForms(world, item, `${path}[${String(index)}]`, false, null));
   }
   if (isRow(value)) {
     const hers = insideHers || isHerRow(world, value);
-    const reading = herReading || carriesHerReading(value);
+    const field = actField ?? herActField(value);
     return Object.entries(value).flatMap(([key, item]) =>
-      strayForms(world, item, path === "" ? key : `${path}.${key}`, hers, reading),
+      strayForms(world, item, path === "" ? key : `${path}.${key}`, hers, field),
     );
   }
   return [];
@@ -95,7 +105,7 @@ const strayForms = (
 const strayFormsIn = (world: OptedOutWorld, answer: Answer): readonly string[] => {
   const json = parsedJson(answer.body);
   if (json !== undefined) {
-    return strayForms(world, json, "", false, false).map((path) => `${label(answer)}: ${path}`);
+    return strayForms(world, json, "", false, null).map((path) => `${label(answer)}: ${path}`);
   }
   return carriesWithheldForm(answer.body) && !ROBIN_ROW.test(answer.body)
     ? [`${label(answer)}: a withheld form on a page that names none of her work`]

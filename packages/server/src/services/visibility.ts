@@ -35,6 +35,13 @@
  *   «landed»    that her work landed, TO THE DAY, and what follows from
  *               it: the conference leaves landed work out, the page says
  *               landed
+ *   «evidence»  what her SessionStart's commit evidence found: it counts
+ *               for every reader like anyone's — the git rung's state and
+ *               the absence findings — because evidence withheld from the
+ *               count would make coverage look better (review round 5, C1).
+ *               WHEN she collected it is withheld: an absence finding's
+ *               evidenceCollectedAt reads LOCATION_WITHHELD, and the rung
+ *               prints the newest instant a viewer may be told
  *   «content»   what her shared work says — a claim, a target's path, an
  *   «words»     intent, a pin's surface, a status, a revalidation's
  *               finding — the words she writes herself, and the counts and

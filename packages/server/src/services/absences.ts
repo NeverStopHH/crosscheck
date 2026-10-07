@@ -17,7 +17,7 @@ import {
 } from "../db/schema.ts";
 import { isCloudAgentEmail, resolvesToDeveloper } from "./cloud-agent-identity.ts";
 import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
-import { cloudAgentForEmail } from "@crosscheck/schema";
+import { LOCATION_WITHHELD, cloudAgentForEmail } from "@crosscheck/schema";
 import type { CloudAgentId } from "@crosscheck/schema";
 import type { SQL } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
@@ -47,10 +47,6 @@ const absenceEvidenceWhere = (
     // Privacy (header): matched members respect opt-out and the viewer's
     // mutes; unmatched rows (developers.id NULL) have no subject to check.
     sql`(${developers.id} IS NULL OR (${visiblePresenceCondition(viewerDeveloperId, developers.id)} AND ${notMutedCondition(viewerDeveloperId, developers.id)}))`,
-    // And its COLLECTOR (review round 4, H2): evidenceCollectedAt is the
-    // collector's SessionStart, so an opted-out collector's rows count for
-    // nobody she is hidden from — the git rung reads the same rule.
-    visiblePresenceCondition(viewerDeveloperId, commitEvidence.reportedBy),
   );
 
 /**
@@ -181,6 +177,9 @@ export const listAbsences = async (
       authorEmail: commitEvidence.authorEmail,
       latestCommitAt: commitEvidence.latestCommitAt,
       collectedAt: commitEvidence.collectedAt,
+      // Whether this viewer may be told WHEN the row was collected: the
+      // collector's SessionStart (review round 5, C1). The row counts either way.
+      isToldCollector: sql<boolean>`${visiblePresenceCondition(viewerDeveloperId, commitEvidence.reportedBy)}`,
       developerId: developers.id,
       developerName: developers.name,
     })
@@ -210,7 +209,9 @@ export const listAbsences = async (
   const findings = rows.flatMap((row): readonly AbsenceFinding[] => {
     const base = {
       latestCommitAt: row.latestCommitAt.toISOString(),
-      evidenceCollectedAt: row.collectedAt.toISOString(),
+      // The marker, not null: every reader takes this as a non-empty string,
+      // and an age it cannot parse reads "unknown".
+      evidenceCollectedAt: row.isToldCollector ? row.collectedAt.toISOString() : LOCATION_WITHHELD,
     };
     if (row.developerId === null || row.developerName === null) {
       const cloudAgent = cloudAgentForEmail(row.authorEmail);
