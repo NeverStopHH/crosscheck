@@ -13,9 +13,10 @@ import { runHook } from "../src/index.ts";
 import {
   COLLISION_RELAY_SENTENCE,
   SUBAGENT_RELAY_HEADER,
+  collisionKey,
   tripwireCollision,
 } from "@crosscheck/connector-core/hints/collision-notice.ts";
-import { COLLISION_NOTICE_MAX_LINES } from "@crosscheck/connector-core/constants.ts";
+import { COLLISION_NOTICE_MAX_LINES, MAX_COLLISION_NOTICES } from "@crosscheck/connector-core/constants.ts";
 import {
   readSessionState,
   updateSessionState,
@@ -34,7 +35,7 @@ import {
   presentNow,
   promptPayload,
 } from "./fixtures/collision-fixture.ts";
-import { TEAMMATE_DEVELOPER_ID } from "../../connector-core/test/fixtures/hint-hub.ts";
+import { CANDIDATE_CONTEXT_ID, TEAMMATE_DEVELOPER_ID } from "../../connector-core/test/fixtures/hint-hub.ts";
 
 /** Two past the person's line cap. */
 const SEVEN = 7;
@@ -139,6 +140,86 @@ describe("a foreground subagent's return", () => {
       expect(agent).toContain(`crosscheck: ${group.name} is working on`);
     }
     expect(agent).not.toContain("more teammate overlap");
+  });
+
+  test("queued groups the record had to let go are still counted to both copies (round 2, L6)", async () => {
+    // Arrange: Nick queued, two more the 32-group cap had to drop
+    const fix = await collisionFixture("sr-dropped");
+    await runHook("pre-tool-use", editPayload(fix.repo, OVERLAP_FILE, SUBAGENT), fix.env);
+    await updateSessionState(fix.home, SESSION_ID, (fresh) => ({ ...fresh, collisionRelayDropped: 2 }));
+    await presentNow(fix, [TEAMMATE_DEVELOPER_ID]);
+
+    // Act
+    const output = parsed(await runHook("subagent-return", agentReturned(fix.repo), fix.env));
+
+    // Assert
+    const more = "crosscheck: +2 more teammate overlaps not shown";
+    expect(output.systemMessage).toBe([NICK_NOTICE, more].join("\n"));
+    expect(output.hookSpecificOutput?.additionalContext).toBe(
+      [SUBAGENT_RELAY_HEADER, NICK_NOTICE, more, COLLISION_RELAY_SENTENCE].join("\n"),
+    );
+    const state = await readSessionState(fix.home, SESSION_ID);
+    expect(state?.collisionRelayDropped).toBe(0);
+  });
+
+  test("a queue key whose group the record no longer holds is counted, not relayed as nothing (round 2, L6)", async () => {
+    // Arrange: an older writer left a key with no group behind it
+    const fix = await collisionFixture("sr-orphan");
+    await updateSessionState(fix.home, SESSION_ID, (fresh) => ({
+      ...fresh,
+      collisionRelayQueue: [JSON.stringify(["dev_gone", "wc_gone"])],
+    }));
+
+    // Act
+    const output = parsed(await runHook("subagent-return", agentReturned(fix.repo), fix.env));
+
+    // Assert
+    expect(output.systemMessage).toBe("crosscheck: +1 more teammate overlap not shown");
+  });
+
+  test("a drop tally with an empty queue is still owned up to (round 2, L6)", async () => {
+    // Arrange
+    const fix = await collisionFixture("sr-tally-only");
+    await updateSessionState(fix.home, SESSION_ID, (fresh) => ({ ...fresh, collisionRelayDropped: 2 }));
+
+    // Act
+    const output = parsed(await runHook("subagent-return", agentReturned(fix.repo), fix.env));
+
+    // Assert
+    expect(output.systemMessage).toBe("crosscheck: +2 more teammate overlaps not shown");
+  });
+
+  test("a subagent's hit on a record full of queued groups keeps its own facts for the drain (round 2, L6)", async () => {
+    // Arrange: 32 groups already queued for the main thread
+    const fix = await collisionFixture("sr-full");
+    const queued = Array.from({ length: MAX_COLLISION_NOTICES }, (_, index) =>
+      tripwireCollision(
+        {
+          sessionId: `cc_q${String(index)}`,
+          developerId: `dev_q${String(index)}`,
+          developerName: `Q${String(index)}`,
+          branch: "feat/q",
+          status: "implementing",
+          lastHeartbeatAt: new Date().toISOString(),
+          workContextId: `wc_q${String(index)}`,
+          workContextTitle: "t",
+        },
+        `src/q${String(index)}.ts`,
+      ),
+    );
+    await updateSessionState(fix.home, SESSION_ID, (fresh) =>
+      withCollisionNotices(withQueuedCollisionRelays(fresh, queued.map((group) => group.key)), queued),
+    );
+
+    // Act: a subagent runs into Nick
+    await runHook("pre-tool-use", editPayload(fix.repo, OVERLAP_FILE, SUBAGENT), fix.env);
+
+    // Assert: Nick's facts are kept beside his queued key, and the oldest queued group is counted
+    const state = await readSessionState(fix.home, SESSION_ID);
+    const nickKey = collisionKey(TEAMMATE_DEVELOPER_ID, CANDIDATE_CONTEXT_ID);
+    expect(state?.collisionNotices?.some((group) => group.key === nickKey && group.name === "Nick")).toBe(true);
+    expect(state?.collisionRelayQueue).toContain(nickKey);
+    expect(state?.collisionRelayDropped).toBe(1);
   });
 
   test("a subagent's OWN subagent returning leaves the queue for the main thread", async () => {

@@ -458,7 +458,9 @@ const claimReasons = async (ctx: HookContext, file: string, found: FoundReasons)
 /**
  * The groups recorded as told — and, when this hook runs inside a SUBAGENT,
  * the new ones queued for the main thread's next prompt, which is where the
- * person's conversation is (hooks/user-prompt-submit.ts drains it).
+ * person's conversation is (hooks/user-prompt-submit.ts drains it). Queued
+ * FIRST, then remembered (round 2, L6): the record's cap evicts merely told
+ * groups before queued ones, so it has to know the new ones are queued.
  */
 const rememberGroups = (
   ctx: HookContext,
@@ -466,10 +468,10 @@ const rememberGroups = (
   groups: readonly CollisionNotice[],
   told: readonly string[],
 ): SessionState => {
-  const remembered = withCollisionNotices(state, groups);
-  return ctx.payload.agent_id === undefined || told.length === 0
-    ? remembered
-    : withQueuedCollisionRelays(remembered, told);
+  const queued = ctx.payload.agent_id === undefined || told.length === 0
+    ? state
+    : withQueuedCollisionRelays(state, told);
+  return withCollisionNotices(queued, groups);
 };
 
 /**

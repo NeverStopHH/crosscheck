@@ -732,6 +732,13 @@ const SessionStateObjectSchema = z.looseObject({
    */
   collisionRelayQueue: TolerantKeyListSchema,
   /**
+   * Queued groups the record had to let go of before the main thread drained
+   * them (round 2, L6): only when MAX_COLLISION_NOTICES queued groups left no
+   * merely told one to evict first. COUNTED, so the relay's `+N more` still
+   * says they existed; reset by the drain.
+   */
+  collisionRelayDropped: z.number().int().min(0).optional().catch(undefined),
+  /**
    * The (file, teammate work context) pairs the tripwire already ASKED about
    * (review M4) — the live half's once-per rule, which used to be per FILE
    * alone in `tripwireAskedFiles`, so a second teammate on a file already
@@ -994,6 +1001,7 @@ export const withCarriedCapture = (
         // thread is lost to a compact.
         ...(previous.collisionNotices === undefined ? {} : { collisionNotices: previous.collisionNotices }),
         ...(previous.collisionRelayQueue === undefined ? {} : { collisionRelayQueue: previous.collisionRelayQueue }),
+        ...(previous.collisionRelayDropped === undefined ? {} : { collisionRelayDropped: previous.collisionRelayDropped }),
       };
 
 /**
@@ -1510,10 +1518,41 @@ const mergedCollision = (told: CollisionNotice, group: CollisionNotice): Collisi
   };
 };
 
+/** `count` more queued groups the record could not keep, added to the tally the relay reports. */
+const withRelayDrops = (state: SessionState, count: number): Partial<SessionState> =>
+  count <= 0 ? {} : { collisionRelayDropped: (state.collisionRelayDropped ?? 0) + count };
+
+/**
+ * The FIFO cap of MAX_COLLISION_NOTICES, MERELY TOLD groups first (round 2,
+ * L6): a group still queued for the main thread is never evicted while a told
+ * one can go — the drain reads the queued group's facts from this list, and a
+ * queue key without them was relayed as nothing. A queued group the cap must
+ * take anyway leaves the queue too and is COUNTED.
+ */
+const withinNoticeCap = (state: SessionState, merged: readonly CollisionNotice[]): SessionState => {
+  const overflow = merged.length - MAX_COLLISION_NOTICES;
+  if (overflow <= 0) {
+    return { ...state, collisionNotices: [...merged] };
+  }
+  const queue = state.collisionRelayQueue ?? [];
+  const evictable = merged.filter((notice) => !queue.includes(notice.key)).slice(0, overflow);
+  const forced = merged.filter((notice) => queue.includes(notice.key)).slice(0, overflow - evictable.length);
+  const gone = new Set([...evictable, ...forced].map((notice) => notice.key));
+  return {
+    ...state,
+    collisionNotices: merged.filter((notice) => !gone.has(notice.key)),
+    ...(forced.length === 0 ? {} : { collisionRelayQueue: queue.filter((key) => !gone.has(key)) }),
+    ...withRelayDrops(state, forced.length),
+  };
+};
+
 /**
  * Remembers the groups as told. A group already told GROWS — a second file of
  * the same teammate context joins it, which is what the statusline counts —
- * and a new one is appended; FIFO-capped at MAX_COLLISION_NOTICES, oldest out.
+ * and a new one is appended; capped at MAX_COLLISION_NOTICES, oldest TOLD
+ * group out first (`withinNoticeCap`). A subagent's new groups are queued
+ * BEFORE they are remembered (hooks/pre-tool-use.ts), so the cap knows them
+ * for queued.
  */
 export const withCollisionNotices = (
   state: SessionState,
@@ -1525,29 +1564,32 @@ export const withCollisionNotices = (
       ? [...notices, group]
       : notices.map((notice) => (notice.key === group.key ? mergedCollision(told, group) : notice));
   }, state.collisionNotices ?? []);
-  return {
-    ...state,
-    collisionNotices: merged.length <= MAX_COLLISION_NOTICES ? [...merged] : merged.slice(merged.length - MAX_COLLISION_NOTICES),
-  };
+  return withinNoticeCap(state, merged);
 };
 
-/** A subagent's newly told groups, queued for the main thread (deduped, capped). */
+/**
+ * A subagent's newly told groups, queued for the main thread (deduped,
+ * capped at MAX_COLLISION_NOTICES, oldest out) — and every key the cap pushes
+ * out is COUNTED (round 2, L6), never dropped in silence.
+ */
 export const withQueuedCollisionRelays = (
   state: SessionState,
   keys: readonly string[],
 ): SessionState => {
   const merged = [...new Set([...(state.collisionRelayQueue ?? []), ...keys])];
+  const overflow = merged.length - MAX_COLLISION_NOTICES;
   return {
     ...state,
-    collisionRelayQueue:
-      merged.length <= MAX_COLLISION_NOTICES ? merged : merged.slice(merged.length - MAX_COLLISION_NOTICES),
+    collisionRelayQueue: overflow <= 0 ? merged : merged.slice(overflow),
+    ...withRelayDrops(state, overflow),
   };
 };
 
-/** The queue emptied — what the main thread's prompt hook writes once it took the keys. */
+/** The queue emptied and its drop tally spent — what the main thread's drain writes once it took them. */
 export const withDrainedCollisionRelays = (state: SessionState): SessionState => ({
   ...state,
   collisionRelayQueue: [],
+  collisionRelayDropped: 0,
 });
 
 /** A (file, group) pair the tripwire asked about — FIFO-capped like the asked files. */

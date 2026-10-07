@@ -24,7 +24,7 @@ import {
   updateSessionState,
   withDrainedCollisionRelays,
 } from "@crosscheck/connector-core/state/session-state.ts";
-import type { CollisionNotice } from "@crosscheck/connector-core/state/session-state.ts";
+import type { CollisionNotice, SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
 export interface CollisionRelay {
@@ -55,13 +55,36 @@ const asPresentNow = async (
   return relayedCollisions(groups, live, now);
 };
 
+/** What a drain took: the queued groups still remembered, and how many it could only count. */
+interface TakenRelay {
+  readonly groups: readonly CollisionNotice[];
+  readonly hidden: number;
+}
+
+const NOTHING_TAKEN: TakenRelay = { groups: [], hidden: 0 };
+
+/** Whether a state has anything for the main thread: a queued key, or a drop to own up to. */
+export const hasPendingRelay = (state: SessionState): boolean =>
+  (state.collisionRelayQueue ?? []).length > 0 || (state.collisionRelayDropped ?? 0) > 0;
+
+/**
+ * The queued groups the record still holds, and the rest COUNTED (round 2,
+ * L6): those the cap had to drop, and any queue key whose group is gone.
+ */
+const takenFrom = (state: SessionState): TakenRelay => {
+  const queue = state.collisionRelayQueue ?? [];
+  const groups = (state.collisionNotices ?? []).filter((notice) => queue.includes(notice.key));
+  return { groups, hidden: (state.collisionRelayDropped ?? 0) + queue.length - groups.length };
+};
+
 /**
  * The queue taken and emptied in ONE locked transform, so a racing sibling
- * finds it empty, and only groups still remembered are said. A hook inside a
- * subagent (its payload carries `agent_id`) leaves the queue for the main
- * thread. Drained only while the spare budget lasts (review L3): a queue left
- * alone waits for the next hook, a queue drained into an abandoned hook is
- * lost. Fail open: a busy lock relays later, never twice.
+ * finds it empty, and only groups still remembered are said — the rest are
+ * counted into the `+N more` line. A hook inside a subagent (its payload
+ * carries `agent_id`) leaves the queue for the main thread. Drained only
+ * while the spare budget lasts (review L3): a queue left alone waits for the
+ * next hook, a queue drained into an abandoned hook is lost. Fail open: a
+ * busy lock relays later, never twice.
  */
 export const drainCollisionRelay = async (ctx: HookContext, budget: HookBudget): Promise<CollisionRelay> => {
   try {
@@ -69,23 +92,23 @@ export const drainCollisionRelay = async (ctx: HookContext, budget: HookBudget):
       return NO_RELAY;
     }
     const state = await readSessionState(ctx.config.home, ctx.payload.session_id);
-    if (state === null || (state.collisionRelayQueue ?? []).length === 0) {
+    if (state === null || !hasPendingRelay(state)) {
       return NO_RELAY;
     }
-    const taken: { value: readonly CollisionNotice[] } = { value: [] };
+    const taken: { value: TakenRelay } = { value: NOTHING_TAKEN };
     const drained = await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => {
-      const queue = fresh.collisionRelayQueue ?? [];
-      if (queue.length === 0) {
+      if (!hasPendingRelay(fresh)) {
         return null;
       }
-      taken.value = (fresh.collisionNotices ?? []).filter((notice) => queue.includes(notice.key));
+      taken.value = takenFrom(fresh);
       return withDrainedCollisionRelays(fresh);
     });
-    const groups = drained ? await asPresentNow(ctx, taken.value) : [];
-    return groups.length > 0
+    const { hidden } = taken.value;
+    const groups = drained ? await asPresentNow(ctx, taken.value.groups) : [];
+    return groups.length > 0 || hidden > 0
       ? {
-          agent: renderSubagentCollisionRelay(groups, ctx.now()),
-          person: renderCollisionNotices(groups, ctx.now()),
+          agent: renderSubagentCollisionRelay(groups, ctx.now(), hidden),
+          person: renderCollisionNotices(groups, ctx.now(), hidden),
         }
       : NO_RELAY;
   } catch {
