@@ -24173,6 +24173,15 @@ export const MUTATIONS: readonly Mutation[
     test: `${CONNECTOR}/test/subagent-return-hook.test.ts`,
     because: "the groups past the person's five lines are drained and marked told, and named to nobody at all",
   },
+  // ── Review of feat/collision-visible, round 2: reviewer mutation R7 ──
+  {
+    label: "the char cap reserves no room for the +N more line (reviewer R7)",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "    return candidate.join(\"\\n\").length + room <= COLLISION_NOTICE_MAX_CHARS ? candidate : fitted;",
+    to: "    return candidate.join(\"\\n\").length <= COLLISION_NOTICE_MAX_CHARS ? candidate : fitted;",
+    test: `${CORE}/test/collision-notice-bounds.test.ts`,
+    because: "five maximum-length lines fit and the tail that counts the sixth pushes the person's message past its bound",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
