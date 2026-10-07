@@ -78,11 +78,28 @@ export const formatGhostAge = (ageMs: number): string => {
 };
 
 /**
+ * THE QUALIFIER a large change's row carries, in the one spelling both the
+ * ghost line and the conference page print. The hub never drops a large
+ * change (server services/ghost-overlap.ts): a file shared with a rename is
+ * weaker evidence than one shared with a plan, so the reader is told the
+ * size and decides — the number is the hub's count of files the change
+ * touched, never a score.
+ */
+export const largeChangeClause = (files: number): string =>
+  `part of a large change touching ${String(files)} files`;
+
+/** The hub's size of a large change, or null when the row is focused or carries none. */
+export const largeChangeOf = (files: number | null | undefined): number | null =>
+  files === null || files === undefined || files <= 0 ? null : files;
+
+/**
  * The overlap clauses, strongest first — a shared failure, then the shared
- * values by name, then how many words of the reader's own intent matched. Empty means this row has no reason
- * a reader could check, and the caller drops it rather than printing a name
- * with no "why": a warning nobody can evaluate is the prediction theatre
- * this feature was built to avoid.
+ * values by name and, beside them, how large a change they sit in, then how
+ * many words of the reader's own intent matched. Empty means this row has no
+ * reason a reader could check, and the caller drops it rather than printing a
+ * name with no "why": a warning nobody can evaluate is the prediction theatre
+ * this feature was built to avoid. The size alone is no reason — it only
+ * qualifies one.
  */
 const overlapClauses = (entry: GhostCheckEntry): readonly string[] => {
   const sample = entry.sharedTargets;
@@ -112,7 +129,12 @@ const overlapClauses = (entry: GhostCheckEntry): readonly string[] => {
   const hits = entry.intentTokenHits;
   const words =
     hits > 0 ? [`${String(hits)} word${hits === 1 ? "" : "s"} of your intent`] : [];
-  return [...failure, ...values, ...words];
+  // Right after what it qualifies: the shared failure and files are the
+  // evidence, and this says how much weight a rename's share of them carries.
+  const size = largeChangeOf(entry.largeChangeFiles);
+  const large =
+    size === null || failure.length + values.length === 0 ? [] : [largeChangeClause(size)];
+  return [...failure, ...values, ...large, ...words];
 };
 
 /**

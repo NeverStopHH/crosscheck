@@ -955,6 +955,15 @@ export const GhostCheckEntrySchema = z.looseObject({
    * count below it — so the renderer needs no copy of that constant.
    */
   intentTokenHits: z.number().int().min(0).catch(0),
+  /**
+   * The files THEIR change touched when it is a LARGE CHANGE, else null: the
+   * qualifier the line prints ("part of a large change touching 180 files").
+   * The hub QUALIFIES a large change and never drops it (server
+   * services/ghost-overlap.ts), so this is wording, never a reason a row is
+   * missing. Optional and tolerant: an older hub sends none, and a value this
+   * build cannot read costs the qualifier, not the row.
+   */
+  largeChangeFiles: z.number().int().min(0).nullable().optional().catch(undefined),
 });
 
 export type GhostCheckEntry = z.infer<typeof GhostCheckEntrySchema>;
@@ -2544,6 +2553,13 @@ export const ConferenceOverlapSchema = z.looseObject({
   workContextIdB: z.string().min(1),
   sharedTargets: z.array(GhostSharedTargetSchema).catch([]),
   sharedTargetCount: z.number().int().min(0).catch(0),
+  /**
+   * Each side's size when it is a LARGE CHANGE, else null — the pair's
+   * qualifier, as on the ghost line (GhostCheckEntrySchema.largeChangeFiles),
+   * and as tolerant.
+   */
+  largeChangeFilesA: z.number().int().min(0).nullable().optional().catch(undefined),
+  largeChangeFilesB: z.number().int().min(0).nullable().optional().catch(undefined),
 });
 
 export type ConferenceOverlap = z.infer<typeof ConferenceOverlapSchema>;

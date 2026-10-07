@@ -417,27 +417,51 @@ export const GHOST_ACTIVE_WINDOW_DAYS = 7;
 export const GHOST_MAX_OWN_CONTEXTS = 3;
 
 /**
- * A work context that TOUCHED more target values than this inside the
- * surface's window is EXCLUDED from both sides of the SHARED-TARGET tier —
- * mine and theirs alike. The INTENT tier is deliberately untouched by it:
- * that tier shares no value, so the argument below does not reach it
- * (services/ghost-overlap.ts listIntentHits).
+ * A work context that TOUCHED more FILES than this inside the surface's window
+ * is a LARGE CHANGE — a mass rename, a formatter run, a long implementation —
+ * and an overlap with it is QUALIFIED, NEVER DROPPED: the row says how many
+ * files the change touched and ranks after the focused rows
+ * (services/ghost-overlap.ts listLargeChanges), but every file it shares with
+ * the reader still produces it. The INTENT tier is untouched by it: that tier
+ * shares no file, so the argument below does not reach it.
+ *
+ * QUALIFIED, NOT EXCLUDED (owner's reviewer, 2026-10-07: "a large surface must
+ * never mean not collision-relevant"). This number was ConE's filter — pull
+ * requests touching more than 50 files, their 90th percentile of change size,
+ * are dropped — and applied as a filter it hid the pilot owner's 180-file
+ * worktree context from every ghost check and conference while a teammate
+ * edited two of its files. Sharing a file with a rename IS weaker evidence
+ * that two designs collide than sharing one with a focused plan, which is
+ * what the ranking keeps; it is not NO evidence, and the reader is the one who
+ * decides whether a rename through their files matters.
  *
  * Inside the window, because a ConE pull request is one change and a work
  * context is not (pilot finding, 2026-10-05): a long-lived worktree session
- * touches hundreds of files over weeks, and counted over its life it read as
- * a sweep and vanished from every collision check. A file counts when it was
- * first seen or touched again in the window (notASweepCondition); an
- * opted-out owner is counted by all her files, her times unread.
+ * touches hundreds of files over weeks, and only what it touches now says
+ * whether it is a large change now. A file counts when it was first seen or
+ * touched again in the window; an opted-out owner is counted by all her
+ * files, her times unread.
  *
- * It is a sweep, not a plan: a mass rename, a formatter run, a dependency
- * bump. Sharing a file with a sweep says nothing about whether two designs
- * collide, and a sweep shares files with everybody, so admitting one would
- * make every session on the repo collide with it. This is ConE's own filter
- * (pull requests touching more than 50 files are dropped, their 90th
- * percentile of change size) applied to the unit we have.
+ * The name is the one this line has always had — tests, reviews and other
+ * branches spell it — and it is a LINE now, not a max anything is cut at.
  */
 export const GHOST_MAX_CONTEXT_TARGETS = 50;
+
+/**
+ * The values of ONE context a comparison reads from its own side, newest
+ * touch first — the reader's own contexts on a ghost check, each context of
+ * the page on a conference. The other side is never read whole: it is LOOKED
+ * UP by these values (work_context_targets_kind_value_idx), so what an
+ * overlap costs is this side's values times GHOST_HOT_TARGET_MAX_CONTEXTS,
+ * whatever the size of the change on the other side.
+ *
+ * Per context, so one renaming worktree of the reader's cannot spend the
+ * probe their other worktree's plan needs; newest first, so what a cut drops
+ * is the reader's oldest touches and never today's. Four times the
+ * large-change line, so the pilot incident's 180-file context is compared
+ * whole from either side.
+ */
+export const GHOST_MAX_PROBE_VALUES = 200;
 
 /**
  * A target value shared by more work contexts than this is dropped before
@@ -460,7 +484,7 @@ export const GHOST_MAX_CONTEXT_TARGETS = 50;
  * It is also the fan-out bound, and the honest statement of it is a PRODUCT
  * rather than a sentence about one value: every surviving value is shared by
  * at most this many contexts, and the reader holds at most
- * GHOST_MAX_OWN_CONTEXTS x GHOST_MAX_CONTEXT_TARGETS of them, so the pair
+ * GHOST_MAX_OWN_CONTEXTS x GHOST_MAX_PROBE_VALUES of them, so the pair
  * query's whole answer is bounded by the three together (GHOST_MAX_PAIR_ROWS,
  * which says what that costs when the bound is read as a budget instead). The
  * defect measured on the solved surface at 1.2 s
@@ -510,11 +534,14 @@ export const GHOST_MAX_INTENT_CANDIDATES = 20;
 /**
  * Read bound on shared-target pair rows — ARITHMETIC rather than a budget,
  * and it has to be. The reader holds at most GHOST_MAX_OWN_CONTEXTS x
- * GHOST_MAX_CONTEXT_TARGETS distinct values (the sweep rule makes that a
- * ceiling rather than a hope), and every value that survives the hot rule is
- * carried by at most GHOST_HOT_TARGET_MAX_CONTEXTS foreign contexts the
- * reader may be told about. Their product is the most rows the pair query can
- * return, so this window cannot cut.
+ * GHOST_MAX_PROBE_VALUES distinct values (the probe is ranked within each
+ * context, which makes that a ceiling rather than a hope), and every value
+ * that survives the hot rule is carried by at most
+ * GHOST_HOT_TARGET_MAX_CONTEXTS foreign contexts the reader may be told
+ * about. Their product is the most rows the pair query can return, so this
+ * window cannot cut — and no factor of it is the size of anybody else's
+ * change: a teammate's 180-file context costs the rows it shares with the
+ * reader, never its 180.
  *
  * A SMALLER NUMBER IS NOT A SAFE ONE, and the 400 that stood here was not.
  * The reasoning it rested on was about ONE hot value, and no single value can
@@ -527,12 +554,12 @@ export const GHOST_MAX_INTENT_CANDIDATES = 20;
  * is not a short list but an EMPTY one. That shape is pinned by "a crowd of
  * warm values never empties the pair window" in test/ghost-overlap.test.ts.
  *
- * VERIFY: bun -e 'const s=await import("./packages/server/src/constants.ts");console.log(s.GHOST_MAX_PAIR_ROWS === s.GHOST_MAX_OWN_CONTEXTS * s.GHOST_MAX_CONTEXT_TARGETS * s.GHOST_HOT_TARGET_MAX_CONTEXTS, s.GHOST_MAX_PAIR_ROWS)'
- * PRINTS: true 3000
+ * VERIFY: bun -e 'const s=await import("./packages/server/src/constants.ts");console.log(s.GHOST_MAX_PAIR_ROWS === s.GHOST_MAX_OWN_CONTEXTS * s.GHOST_MAX_PROBE_VALUES * s.GHOST_HOT_TARGET_MAX_CONTEXTS, s.GHOST_MAX_PAIR_ROWS)'
+ * PRINTS: true 12000
  */
 export const GHOST_MAX_PAIR_ROWS =
   GHOST_MAX_OWN_CONTEXTS *
-  GHOST_MAX_CONTEXT_TARGETS *
+  GHOST_MAX_PROBE_VALUES *
   GHOST_HOT_TARGET_MAX_CONTEXTS;
 
 /** Findings one response carries, strongest reason first. */

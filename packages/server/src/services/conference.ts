@@ -45,14 +45,15 @@
  * BOUNDED END TO END, and the bounds are arithmetic rather than hope:
  * CONFERENCE_MAX_CONTEXTS contexts, each contributing at most
  * CONFERENCE_MAX_CLAIMS_PER_CONTEXT claims through ONE indexed lookup of its
- * own, at most GHOST_MAX_CONTEXT_TARGETS target values, and pairwise
- * comparison over that same slice (66 pairs at the cap) rather than a join
- * that could fan out. The duplicated-work RULE is the ghost check's own —
- * one shared error fingerprint, or GHOST_MIN_SHARED_TARGETS shared files or
- * symbols, with hot values and sweeps dropped (services/ghost-overlap.ts
- * states the ConE reasoning and this imports its predicates rather than
- * re-typing them) — applied between two DEVELOPERS' contexts instead of from
- * one reader's side.
+ * own, a probe of at most GHOST_MAX_PROBE_VALUES target values that the other
+ * contexts of the page are looked up by, and pairwise comparison over that
+ * same slice (66 pairs at the cap) rather than a join that could fan out. The
+ * duplicated-work RULE is the ghost check's own — one shared error
+ * fingerprint, or GHOST_MIN_SHARED_TARGETS shared files or symbols, with hot
+ * values dropped and LARGE CHANGES QUALIFIED, never dropped
+ * (services/ghost-overlap.ts states the ConE reasoning and this imports its
+ * predicates rather than re-typing them) — applied between two DEVELOPERS'
+ * contexts instead of from one reader's side.
  */
 import { and, asc, count, desc, eq, gt, gte, inArray, isNull, ne, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
@@ -70,7 +71,6 @@ import {
   CONFERENCE_MAX_QUESTIONS,
   GHOST_FINGERPRINT_MIN_SHARED,
   GHOST_HOT_TARGET_MAX_CONTEXTS,
-  GHOST_MAX_CONTEXT_TARGETS,
   GHOST_MAX_SHARED_SHOWN,
   GHOST_MIN_SHARED_TARGETS,
 } from "../constants.ts";
@@ -85,14 +85,14 @@ import {
 import { listContradictions } from "./contradictions.ts";
 import type { ContradictionView } from "./contradictions.ts";
 import {
-  OVERLAP_TARGET_KINDS,
   activityExpression,
-  notASweepCondition,
+  listLargeChanges,
+  listProbeValues,
   targetValueCondition,
 } from "./ghost-overlap.ts";
-import type { OverlapKind, SharedValue } from "./ghost-overlap.ts";
+import type { ContextValues, OverlapKind, SharedValue } from "./ghost-overlap.ts";
 import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
-import { activitySeenBy, locationHiddenFrom, projectRow, targetInWindowSeenBy } from "./live-location.ts";
+import { activitySeenBy, locationHiddenFrom, projectRow } from "./live-location.ts";
 import type { HiddenLocations } from "./live-location.ts";
 import { visiblePresenceCondition } from "./visibility.ts";
 import type { EvidenceAxes } from "@crosscheck/schema";
@@ -151,6 +151,13 @@ export interface ConferenceOverlapView {
   readonly workContextIdB: string;
   readonly sharedTargets: readonly { readonly kind: string; readonly value: string }[];
   readonly sharedTargetCount: number;
+  /**
+   * The files each side's change touched in the window when that side is a
+   * LARGE CHANGE (over GHOST_MAX_CONTEXT_TARGETS), else null — the qualifier
+   * the report prints beside the pair. Never a reason the pair is missing.
+   */
+  readonly largeChangeFilesA: number | null;
+  readonly largeChangeFilesB: number | null;
 }
 
 /**
@@ -382,30 +389,26 @@ const listContextClaims = async (
   );
 };
 
-interface ContextTargets {
-  readonly workContextId: string;
-  readonly targets: readonly SharedValue[];
-}
-
 /**
- * The strong target values of the slice, with the SWEEP rule applied in the
- * query: a context that touched more than GHOST_MAX_CONTEXT_TARGETS values in
- * the window is a rename or a formatter run and contributes nothing, on this
- * side exactly as on the ghost check's.
+ * Which contexts of the page HOLD each probed value — the half of the
+ * comparison that is looked up, never read whole. Every context's probe
+ * (listProbeValues) is looked up in every other context of the page, so a
+ * pair is found when EITHER side's probe holds what they share: a large
+ * change's file that is not among its own newest touches is found through
+ * the focused side's probe, which is what "every file it shares still
+ * produces the overlap" costs — and the cost is the probes, never the size
+ * of the change.
  *
- * Only the values touched in the window, by the sweep rule's own clock
- * (pilot finding, 2026-10-05): the cap bounds exactly those, so the ceiling
- * below stays arithmetic for a long-lived context that is under the cap now
- * and over it for its life. An owner hidden from the reader keeps every value
- * and is counted by all of them, her times unread (targetInWindowSeenBy).
+ * Arithmetic: a context holds a value at most once (the targets primary
+ * key), so the page holds at most ids x values rows of these.
  */
-const listSliceTargets = async (
+const listMembers = async (
   deps: Deps,
-  viewerDeveloperId: string,
   ids: readonly string[],
-  cutoff: Date,
-): Promise<readonly ContextTargets[]> => {
-  if (ids.length === 0) {
+  values: readonly SharedValue[],
+): Promise<readonly ContextValues[]> => {
+  const condition = targetValueCondition(values);
+  if (ids.length === 0 || condition === undefined) {
     return [];
   }
   const rows = await deps.db
@@ -415,24 +418,13 @@ const listSliceTargets = async (
       value: workContextTargets.value,
     })
     .from(workContextTargets)
-    .innerJoin(workContexts, eq(workContexts.id, workContextTargets.workContextId))
-    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
-    .where(
-      and(
-        inArray(workContextTargets.workContextId, [...ids]),
-        inArray(workContextTargets.kind, [...OVERLAP_TARGET_KINDS]),
-        targetInWindowSeenBy(viewerDeveloperId, agentSessions.developerId, workContextTargets, cutoff),
-        notASweepCondition(workContextTargets.workContextId, viewerDeveloperId, cutoff),
-      ),
-    )
+    .where(and(inArray(workContextTargets.workContextId, [...ids]), condition))
     .orderBy(
       asc(workContextTargets.workContextId),
       asc(workContextTargets.kind),
       asc(workContextTargets.value),
     )
-    // Every surviving context is under the cap, so this is what all of them
-    // together can hold — no context can spend another's share.
-    .limit(ids.length * GHOST_MAX_CONTEXT_TARGETS);
+    .limit(ids.length * values.length);
   const byContext = new Map<string, SharedValue[]>();
   for (const row of rows) {
     byContext.set(row.workContextId, [
@@ -440,9 +432,9 @@ const listSliceTargets = async (
       { kind: row.kind as OverlapKind, value: row.value },
     ]);
   }
-  return [...byContext.entries()].map(([workContextId, targets]) => ({
+  return [...byContext.entries()].map(([workContextId, held]) => ({
     workContextId,
-    targets,
+    values: held,
   }));
 };
 
@@ -484,6 +476,11 @@ const listHotValues = async (
 
 const valueKey = (target: SharedValue): string => `${target.kind} ${target.value}`;
 
+/** Each value once: the page's probes overlap wherever two contexts share. */
+const uniqueValues = (values: readonly SharedValue[]): readonly SharedValue[] => [
+  ...new Map(values.map((target) => [valueKey(target), target])).values(),
+];
+
 /**
  * Duplicated work: pairs of contexts belonging to DIFFERENT developers that
  * share an error fingerprint, or GHOST_MIN_SHARED_TARGETS files or symbols.
@@ -492,23 +489,24 @@ const valueKey = (target: SharedValue): string => `${target.kind} ${target.value
  * same files is how a person works, not duplicated work — the same argument
  * self-exclusion makes on every unasked surface, made here about the pair
  * rather than about the reader.
+ *
+ * A LARGE CHANGE PAIRS LIKE ANY OTHER CONTEXT (services/ghost-overlap.ts
+ * states why): its size is the pair's qualifier and puts it after the
+ * focused pairs, and nothing else. `members` holds only values that are not
+ * hot (listHotValues ran over the probes first).
  */
 const pairOverlaps = (
   contexts: readonly Omit<ConferenceContextView, "claims">[],
-  sliceTargets: readonly ContextTargets[],
-  hotValues: ReadonlySet<string>,
+  members: readonly ContextValues[],
+  large: ReadonlyMap<string, number>,
 ): readonly ConferenceOverlapView[] => {
   const owner = new Map(contexts.map((context) => [context.id, context.developerId]));
-  const cool = new Map(
-    sliceTargets.map((entry) => [
-      entry.workContextId,
-      entry.targets.filter((target) => !hotValues.has(valueKey(target))),
-    ]),
-  );
+  const held = new Map(members.map((entry) => [entry.workContextId, entry.values]));
   const ids = contexts.map((context) => context.id);
   const found: {
     readonly view: ConferenceOverlapView;
     readonly fingerprints: number;
+    readonly isLarge: boolean;
   }[] = [];
   for (let left = 0; left < ids.length; left += 1) {
     for (let right = left + 1; right < ids.length; right += 1) {
@@ -517,8 +515,8 @@ const pairOverlaps = (
       if (owner.get(idA) === owner.get(idB)) {
         continue;
       }
-      const theirs = new Set((cool.get(idB) ?? []).map(valueKey));
-      const shared = (cool.get(idA) ?? []).filter((target) =>
+      const theirs = new Set((held.get(idB) ?? []).map(valueKey));
+      const shared = (held.get(idA) ?? []).filter((target) =>
         theirs.has(valueKey(target)),
       );
       const fingerprints = shared.filter(
@@ -532,6 +530,7 @@ const pairOverlaps = (
       }
       found.push({
         fingerprints,
+        isLarge: large.has(idA) || large.has(idB),
         view: {
           workContextIdA: idA,
           workContextIdB: idB,
@@ -546,14 +545,19 @@ const pairOverlaps = (
             )
             .slice(0, GHOST_MAX_SHARED_SHOWN),
           sharedTargetCount: shared.length,
+          largeChangeFilesA: large.get(idA) ?? null,
+          largeChangeFilesB: large.get(idB) ?? null,
         },
       });
     }
   }
+  // The ghost check's order (ghost-overlap.ts byStrength): a shared failure
+  // first whatever its size, then focused pairs before large changes.
   return found
     .sort(
       (one, other) =>
         other.fingerprints - one.fingerprints ||
+        Number(one.isLarge) - Number(other.isLarge) ||
         other.view.sharedTargetCount - one.view.sharedTargetCount ||
         one.view.workContextIdA.localeCompare(other.view.workContextIdA),
     )
@@ -657,9 +661,10 @@ export const readConference = async (
     listOpenQuestions(deps, viewerDeveloperId, repo, hidden),
   ]);
   const ids = contexts.map((context) => context.id);
-  const [claimLists, sliceTargets, contradictions] = await Promise.all([
+  const [claimLists, probes, large, contradictions] = await Promise.all([
     Promise.all(ids.map((id) => listContextClaims(deps, id, hidden))),
-    listSliceTargets(deps, viewerDeveloperId, ids, cutoff),
+    listProbeValues(deps.db, viewerDeveloperId, ids),
+    listLargeChanges(deps.db, viewerDeveloperId, ids, cutoff),
     // SECOND, because it needs the slice. The deliberate-pull posture again:
     // no `excludeMutedForDeveloperId`, the same call findContradictionById
     // makes, for the same reason. But bounded to the contexts this report
@@ -672,17 +677,21 @@ export const readConference = async (
       liveSideWorkContextIds: ids,
     }),
   ]);
-  const hotValues = await listHotValues(
+  // Rarity over the probes, then who on the page holds the cool ones: each
+  // read bounded by the probes, none by the size of any context's change.
+  const probed = uniqueValues(probes.flatMap((probe) => probe.values));
+  const hotValues = await listHotValues(deps, repo, probed);
+  const members = await listMembers(
     deps,
-    repo,
-    sliceTargets.flatMap((entry) => entry.targets),
+    ids,
+    probed.filter((target) => !hotValues.has(valueKey(target))),
   );
   return {
     contexts: contexts.map((context, index) => ({
       ...context,
       claims: claimLists[index] ?? [],
     })),
-    overlaps: pairOverlaps(contexts, sliceTargets, hotValues),
+    overlaps: pairOverlaps(contexts, members, large),
     questions: questionRows,
     contradictions,
     contextsInWindow: window.total,

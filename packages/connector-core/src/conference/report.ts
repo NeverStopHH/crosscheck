@@ -56,6 +56,7 @@ import {
   MAX_TITLE_CHARS,
 } from "../constants.ts";
 import { QUOTED_DATA_NOTICE, formatAge } from "../briefing/render.ts";
+import { largeChangeClause, largeChangeOf } from "../briefing/ghost.ts";
 import {
   LOCATION_WITHHELD,
   NO_AXES_FROM_HUB,
@@ -380,8 +381,17 @@ const overlapSection = (input: ConferenceReportInput): readonly string[] => {
       if (clauses.length === 0) {
         return [];
       }
+      // A large change pairs like any other context (the hub never drops
+      // one); the pair says WHICH side is one, and how large, beside the
+      // files it qualifies.
+      const qualifiers = [
+        { name: left.developerName, files: largeChangeOf(overlap.largeChangeFilesA) },
+        { name: right.developerName, files: largeChangeOf(overlap.largeChangeFilesB) },
+      ].flatMap((side) =>
+        side.files === null ? [] : [`${nameOf(side.name)}'s side is ${largeChangeClause(side.files)}`],
+      );
       return [
-        `- ${nameOf(left.developerName)} and ${nameOf(right.developerName)} ${clauses.join(", ")}`,
+        `- ${nameOf(left.developerName)} and ${nameOf(right.developerName)} ${[clauses.join(", "), ...qualifiers].join("; ")}`,
         leftLine,
         rightLine,
       ];

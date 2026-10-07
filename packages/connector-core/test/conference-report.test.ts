@@ -308,6 +308,36 @@ describe("the conference report", () => {
     );
     expect(report).not.toContain("sha256:");
   });
+
+  test("a large change pairs like any other, and the line says which side is one", () => {
+    // Arrange: Ken's side of the pair is a 180-file change.
+    const nick = contextWith(CONTEXT_A, "Nick", "Token refresh rework", "A finding");
+    const ken = contextWith(CONTEXT_B, "Ken", "Orchestration worktree", "Another finding");
+    const overlap = {
+      workContextIdA: CONTEXT_A,
+      workContextIdB: CONTEXT_B,
+      sharedTargets: [
+        { kind: "file", value: "src/auth/session.ts" },
+        { kind: "file", value: "src/auth/token.ts" },
+      ],
+      sharedTargetCount: 2,
+    };
+    const reportWith = (largeChangeFilesB: number | null): string =>
+      renderConferenceReport({
+        repoId: "github.com/acme/api",
+        corpus: corpusWith({ contexts: [nick, ken], overlaps: [{ ...overlap, largeChangeFilesA: null, largeChangeFilesB }] }),
+        findings: [],
+        modelOutcome: { kind: "none" },
+        now: NOW,
+      });
+
+    // Act + Assert: the pair, qualified on Ken's side only; the control
+    // without a size prints the same pair bare.
+    expect(reportWith(180)).toContain(
+      "- Nick and Ken both changed src/auth/session.ts, src/auth/token.ts; Ken's side is part of a large change touching 180 files",
+    );
+    expect(reportWith(null)).toContain("- Nick and Ken both changed src/auth/session.ts, src/auth/token.ts\n");
+  });
 });
 
 /**
