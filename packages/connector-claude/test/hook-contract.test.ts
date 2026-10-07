@@ -430,7 +430,9 @@ describe("the drift watcher itself", () => {
     [
       "field names in bold rather than in backticks",
       (hooks: string): string => hooks.replace(/`([a-zA-Z_]+)`/g, "**$1**"),
-      4,
+      // 4 became 6 when the collision notice added the `agent_id` input and
+      // the `systemMessage` output probes, both table rows in backticks.
+      6,
     ],
     [
       "every heading promoted one level",
@@ -447,8 +449,10 @@ describe("the drift watcher itself", () => {
       // hand — 16 before M17, 26 after it, 20 on the other side of the merge,
       // 22 and 27 as the two sides pinned it, and none of those is the answer
       // for the union of both. 33 became 35 when the tool-window pairing key
-      // added a `tool_use_id` probe to the PreToolUse and PostToolUse sections.
-      35,
+      // added a `tool_use_id` probe to the PreToolUse and PostToolUse sections,
+      // and 37 when the collision notice added `agent_id` (Common input
+      // fields) and `systemMessage` (JSON output), both under `### ` headings.
+      37,
     ],
   ] as const)(
     "KNOWN LIMIT: a formatting-only rewrite reports drift (%s)",

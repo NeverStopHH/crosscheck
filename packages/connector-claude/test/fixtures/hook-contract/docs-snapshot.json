@@ -9,6 +9,8 @@
   "common.input.session_id": true,
   "common.input.cwd": true,
   "common.input.hook_event_name": true,
+  "common.input.agent_id": true,
+  "common.output.systemMessage": true,
   "SessionStart.input.source": true,
   "SessionStart.input.session_title": true,
   "SessionStart.output.hookSpecificOutput": true,

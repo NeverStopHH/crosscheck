@@ -28,9 +28,17 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
       resolveWorkContextTitle(payload, "feat/x", "github.com/acme/api"),
   },
   // The prompt-hint path is the core `selectAndRenderHint` flow since Block 5
-  // (registered in core as hint-flow); user-prompt-submit.ts no longer touches
-  // the render layer itself, so a row here would be a decorative registration
-  // the registry test rejects.
+  // (registered in core as hint-flow). user-prompt-submit.ts touches the
+  // render layer again for ONE thing of its own, the subagent collision relay
+  // registered below.
+  {
+    kind: "composite",
+    name: "claude-subagent-collision-relay",
+    delivery: "unsolicited",
+    module: "src/hooks/user-prompt-submit.ts",
+    note: "emits renderSubagentCollisionRelay output verbatim (core's collision-subagent-relay surface) ahead of the prompt's own delivery, joined by a blank line; the groups it renders are the session state's own records of rows the tripwire already projected",
+    corpusCoveredBy: ["test/collision-notice-hook.test.ts"],
+  },
   // `claude-ghost-draft` is no longer registered here: the ghost worker moved
   // to connector-core (src/derive/ghost/worker.ts) so Cursor and ACP can pay
   // the same debt, and its registration moved with it (core's
@@ -51,14 +59,14 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     name: "claude-tripwire-ask",
     delivery: "unsolicited",
     module: "src/hooks/pre-tool-use.ts",
-    note: "emits renderTripwireReason output verbatim as both permissionDecisionReason and additionalContext (the same rendered string, #25), plus appendOutcomeClause where the hub records outcomes; both registered core surfaces, covered in test/tripwire-hook.test.ts",
+    note: "emits renderTripwireReason output verbatim as both permissionDecisionReason and additionalContext (the same rendered string, #25), plus appendOutcomeClause where the hub records outcomes; for a teammate group new to the session, renderCollisionNotice output verbatim as systemMessage and the renderer-owned COLLISION_RELAY_SENTENCE after the model's copy only; all registered core surfaces, covered in test/tripwire-hook.test.ts and test/collision-notice-hook.test.ts",
   },
   {
     kind: "composite",
     name: "claude-statusline",
     delivery: "unsolicited",
     module: "src/statusline/statusline.ts",
-    note: "teammate names via groupTeammates (sanitize inside toGroup); a terminal line, capped and joined from sanitized fields",
+    note: "teammate names via groupTeammates (sanitize inside toGroup); a terminal line, capped and joined from sanitized fields, led by renderOverlapIndicator output verbatim (core's collision-overlap-indicator surface) in a bound of its own",
   },
   // doctor/status moved to packages/cli in Block 8; their composite
   // registrations (cli-doctor, cli-status) moved with them into that

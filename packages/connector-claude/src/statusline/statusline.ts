@@ -15,7 +15,9 @@ import {
 } from "@crosscheck/connector-core/state/presence-cache.ts";
 import type { LastSeenEntry } from "@crosscheck/connector-core/state/presence-cache.ts";
 import { recordStatuslineRendered } from "@crosscheck/connector-core/state/fired-markers.ts";
+import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
+import { renderOverlapIndicator } from "@crosscheck/connector-core/hints/collision-notice.ts";
 import { prepareHook } from "../hooks/runner.ts";
 import type { HookContext } from "../hooks/runner.ts";
 
@@ -174,6 +176,26 @@ const renderForContext = async (ctx: HookContext): Promise<string> => {
 };
 
 /**
+ * `⚠ overlap: Mike · 3 files` while THIS session has told its person about a
+ * teammate collision (hints/collision-notice.ts; pilot, 2026-10-07) — read
+ * from the session's own state file, which the session id on stdin names, so
+ * no hub call and no budget. Names only, never a branch: the record outlives
+ * the moment its row was projected, and every name in it came from a row the
+ * hub's opt-out and mute filters had already passed. LEADING, in a bound of
+ * its own, so it never takes the characters of the capture-health indicator
+ * the line exists for. Fail open: no state, no segment.
+ */
+const overlapSegment = async (ctx: HookContext): Promise<string> => {
+  try {
+    const state = await readSessionState(ctx.config.home, ctx.payload.session_id);
+    const indicator = renderOverlapIndicator(state?.collisionNotices ?? []);
+    return indicator.length === 0 ? "" : `${indicator} · `;
+  } catch {
+    return "";
+  }
+};
+
+/**
  * Human-facing chrome, zero token cost. Prints one line or nothing, and always
  * succeeds — a dead hub must be visible, not silent (DESIGN.md §10 risk 5).
  */
@@ -186,7 +208,8 @@ export const runStatusline = async (
     if (ctx === null) {
       return "";
     }
-    const line = await renderForContext(ctx);
+    const [overlap, presence] = await Promise.all([overlapSegment(ctx), renderForContext(ctx)]);
+    const line = `${overlap}${presence}`;
     // The RENDERED fact, which nothing recorded before (trial finding H7).
     // `doctor`'s `statusline registered` line reads the settings file and
     // reports what it says — and the statusline is a terminal-TUI feature, so

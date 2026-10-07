@@ -25,9 +25,23 @@
 | `permission_mode` | Current permission mode                        |
 | `hook_event_name` | Name of the event that fired                   |
 
+Inside a subagent, two additional fields are included:
+
+| Field        | Description                                              |
+| :----------- | :------------------------------------------------------- |
+| `agent_id`   | Unique identifier for the subagent                       |
+| `agent_type` | Agent name                                               |
+
 ### Exit code output
 
 Exit 0 means success.
+
+### JSON output
+
+| Field           | Default | Description                                 |
+| :-------------- | :------ | :------------------------------------------ |
+| `continue`      | `true`  | If `false`, Claude stops processing         |
+| `systemMessage` | none    | Warning message shown to the user           |
 
 ## Hook events
 

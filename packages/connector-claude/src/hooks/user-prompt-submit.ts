@@ -43,6 +43,20 @@
  * which cannot reach a Claude-specific worker) or the intent worker itself
  * (already detached, and its job is the intent).
  *
+ * AND ONE THING THAT RIDES BESIDE WHICHEVER OF THE THREE SPOKE: a teammate
+ * collision a SUBAGENT of this session ran into (hooks/pre-tool-use.ts queues
+ * it). The subagent's own context is not the conversation the person reads —
+ * 91% of the pilot owner's edits were made by subagents, and every tripwire
+ * hit among them reached nobody — so the main thread is handed the facts and
+ * the one relay sentence here, first, drained under the lock so a group is
+ * relayed exactly once. This hook and not Stop: Stop is registered async (its
+ * gate must never hold the model), and the reference delivers an async hook's
+ * fields to Claude only "on the next conversation turn" and never shows them
+ * to the person — which is this hook, and it also fires when a background
+ * subagent reports back. It is a few renderer-owned lines, so it does not
+ * count as the one injection; it costs one state read, and a lock round only
+ * when something is queued.
+ *
  * This hook is the Claude-specific shell: payload fields in,
  * `hookSpecificOutput` envelope out.
  */
@@ -59,10 +73,13 @@ import {
 import { deliverDeferredBriefing } from "@crosscheck/connector-core/flows/briefing.ts";
 import { deliverDraftNudge } from "@crosscheck/connector-core/flows/draft-nudge.ts";
 import { selectAndRenderHint } from "@crosscheck/connector-core/flows/hint.ts";
+import { renderSubagentCollisionRelay } from "@crosscheck/connector-core/hints/collision-notice.ts";
 import {
   readSessionState,
   updateSessionState,
+  withDrainedCollisionRelays,
 } from "@crosscheck/connector-core/state/session-state.ts";
+import type { CollisionNotice } from "@crosscheck/connector-core/state/session-state.ts";
 import { hasGhostAllowance, withGhostClaimed } from "@crosscheck/connector-core/derive/ghost/gate.ts";
 import { isSubstantivePrompt, withIntentFire } from "@crosscheck/connector-core/derive/intent/gate.ts";
 import { resolveSummarizerTimeoutMs } from "@crosscheck/connector-core/model/runner.ts";
@@ -86,13 +103,64 @@ const GHOST_WORKER_ENTRY_PATH = resolve(
   "worker-entry.ts",
 );
 
-const envelope = (text: string): string =>
-  JSON.stringify({
-    hookSpecificOutput: {
-      hookEventName: "UserPromptSubmit",
-      additionalContext: text,
-    },
-  });
+interface PromptOutput {
+  readonly hookSpecificOutput: {
+    readonly hookEventName: "UserPromptSubmit";
+    readonly additionalContext: string;
+  };
+}
+
+/**
+ * An OBJECT, serialized once in `handleUserPromptSubmit`, so the subagent
+ * relay can ride beside whatever the prompt carries without re-reading JSON.
+ */
+const envelope = (text: string): PromptOutput => ({
+  hookSpecificOutput: {
+    hookEventName: "UserPromptSubmit",
+    additionalContext: text,
+  },
+});
+
+/** The relay first, then the prompt's own delivery; "" when neither spoke. */
+const serialize = (output: PromptOutput | "", relay: string): string => {
+  const text = [relay, output === "" ? "" : output.hookSpecificOutput.additionalContext]
+    .filter((part) => part.length > 0)
+    .join("\n\n");
+  return text.length === 0 ? "" : JSON.stringify(envelope(text));
+};
+
+/**
+ * The teammate groups this session's SUBAGENTS ran into, handed to the main
+ * thread once: the queue is taken and emptied in ONE locked transform, so a
+ * racing sibling finds it empty, and only groups still remembered are said.
+ * A prompt inside a subagent (none fires today, but the payload would say so)
+ * leaves the queue for the main thread. Fail open: a busy lock relays next
+ * prompt, never twice.
+ */
+const relaySubagentCollisions = async (ctx: HookContext): Promise<string> => {
+  try {
+    if (ctx.payload.agent_id !== undefined) {
+      return "";
+    }
+    const state = await readSessionState(ctx.config.home, ctx.payload.session_id);
+    if (state === null || (state.collisionRelayQueue ?? []).length === 0) {
+      return "";
+    }
+    const taken: { value: readonly CollisionNotice[] } = { value: [] };
+    const drained = await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => {
+      const queue = fresh.collisionRelayQueue ?? [];
+      if (queue.length === 0) {
+        return null;
+      }
+      taken.value = (fresh.collisionNotices ?? []).filter((notice) => queue.includes(notice.key));
+      return withDrainedCollisionRelays(fresh);
+    });
+    return drained ? renderSubagentCollisionRelay(taken.value, ctx.now()) : "";
+  } catch {
+    // Fail open: the prompt hook's own job (briefing or hint) is untouched.
+    return "";
+  }
+};
 
 /**
  * Fire-and-forget, through the SHARED door (core derive/spawn.ts): the child
@@ -202,7 +270,7 @@ const maybeSpawnGhostWorker = async (ctx: HookContext): Promise<void> => {
   }
 };
 
-const deliverPromptContext = async (ctx: HookContext, budget: HookBudget): Promise<string> => {
+const deliverPromptContext = async (ctx: HookContext, budget: HookBudget): Promise<PromptOutput | ""> => {
   // The derived-intent fire delivers nothing and runs first, so it happens
   // on the first substantive prompt whatever else this hook goes on to emit.
   await maybeSpawnIntentWorker(ctx);
@@ -262,9 +330,12 @@ export const handleUserPromptSubmit = async (
   ctx: HookContext,
   budget: HookBudget,
 ): Promise<string> => {
+  // A subagent's collision first: taken from the queue before anything else
+  // reads state, so what the main thread is handed is what was waiting.
+  const relay = await relaySubagentCollisions(ctx);
   // Delivers nothing, like the two fires above: the background fetch of the
   // landing branches (hooks/landing-fetch.ts), beside the prompt's own work so
   // it adds no wall clock of its own.
   const [output] = await Promise.all([deliverPromptContext(ctx, budget), requestLandingFetchFor(ctx)]);
-  return output;
+  return serialize(output, relay);
 };

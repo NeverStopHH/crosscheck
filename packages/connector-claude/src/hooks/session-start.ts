@@ -20,9 +20,16 @@ import { UNKNOWN_DEVELOPER_ID } from "@crosscheck/connector-core/capture/records
 import type { Producer } from "@crosscheck/connector-core/capture/records.ts";
 import { containsSecret } from "@crosscheck/connector-core/capture/secret-scan.ts";
 import { seqAt, withSeq } from "@crosscheck/connector-core/capture/seq.ts";
-import { allocateSeq } from "@crosscheck/connector-core/state/session-state.ts";
+import {
+  allocateSeq,
+  newCollisionKeys,
+  updateSessionState,
+  withCollisionNotices,
+} from "@crosscheck/connector-core/state/session-state.ts";
+import type { CollisionNotice } from "@crosscheck/connector-core/state/session-state.ts";
+import { ghostCollisions, renderCollisionNotices } from "@crosscheck/connector-core/hints/collision-notice.ts";
 import { endSession } from "@crosscheck/connector-core/http/hub.ts";
-import type { PresenceEntry, WorkContextEntry } from "@crosscheck/connector-core/http/hub.ts";
+import type { GhostCheckEntry, PresenceEntry, WorkContextEntry } from "@crosscheck/connector-core/http/hub.ts";
 import { guaranteeDeclarationFor } from "@crosscheck/connector-core/guarantees/declarations.ts";
 import {
   assembleBriefing,
@@ -216,6 +223,33 @@ const deferredEnder =
     // belongs to the capture branch — `flows/heartbeat.ts` is untouched here.
     return result.status === HTTP_NOT_FOUND ? "gone" : "retry";
   };
+
+/**
+ * THE PERSON IS TOLD about the briefing's ghost rows that share FILES with
+ * this session (pilot, 2026-10-07): the briefing itself is `additionalContext`,
+ * which the reference says "doesn't appear as a chat message in the
+ * interface". One line per teammate group (hints/collision-notice.ts), only
+ * for rows the emitted briefing really shows, and only for groups this
+ * session has not told its person about — a compact or resume re-fires this
+ * hook inside the same session and keeps the record (withCarriedCapture).
+ * One locked write, and none at all when no shown row has a file in it.
+ */
+const tellPersonOfGhosts = async (
+  ctx: HookContext,
+  shown: readonly GhostCheckEntry[],
+): Promise<string> => {
+  const groups = ghostCollisions(shown);
+  if (groups.length === 0) {
+    return "";
+  }
+  const told: { value: readonly CollisionNotice[] } = { value: [] };
+  const written = await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => {
+    const fresher = newCollisionKeys(fresh, groups);
+    told.value = groups.filter((group) => fresher.includes(group.key));
+    return withCollisionNotices(fresh, groups);
+  });
+  return written ? renderCollisionNotices(told.value, ctx.now()) : "";
+};
 
 /**
  * Order is the contract here: everything the developer actually sees — the
@@ -423,6 +457,8 @@ export const handleSessionStart = async (
     shownLandedNoticeIds: assembled.shownLandedNoticeIds,
     now,
   });
+  // What the PERSON sees, decided before any maintenance like the briefing.
+  const notice = await tellPersonOfGhosts(ctx, assembled.shownGhosts);
 
   // Maintenance last, on the leftover budget: the briefing above is what this
   // hook exists for, and it is already in hand when the drain starts.
@@ -481,6 +517,7 @@ export const handleSessionStart = async (
     return "";
   }
   return JSON.stringify({
+    ...(notice.length === 0 ? {} : { systemMessage: notice }),
     hookSpecificOutput: {
       hookEventName: "SessionStart",
       additionalContext: briefing,

@@ -56,6 +56,21 @@
  * (capture/touched-root.ts, trial finding #17): an edit in a linked worktree
  * of the same repo trips the wire; before, it resolved to null against the
  * session's checkout and the wire stayed silent.
+ *
+ * THE PERSON IS TOLD TOO (pilot, 2026-10-07: every collision reached an
+ * agent's context and no person). The first live hit on a teammate's work
+ * context in a session adds a top-level `systemMessage` — the hooks
+ * reference's "Warning message shown to the user", the one field that reaches
+ * the person in both modes and on every platform — rendered by core
+ * hints/collision-notice.ts from the same projected row the ask is built
+ * from, and ONE renderer-owned sentence at the end of `additionalContext`
+ * asking the agent to say it in its next reply. Once per (teammate, work
+ * context) per session, claimed inside the same locked transform as the ask's
+ * own marker, so it costs no lock round of its own. A hit inside a SUBAGENT
+ * (`agent_id` on the payload) is also QUEUED for the main thread's next
+ * UserPromptSubmit (hooks/user-prompt-submit.ts): the docs promise nothing
+ * about where a subagent hook's `systemMessage` shows, and the subagent's
+ * context is not the conversation the person reads.
  */
 import { isDenied, resolveDenylist } from "@crosscheck/connector-core/capture/denylist.ts";
 import { extractFilePaths, isEditTool } from "../capture/tool-events.ts";
@@ -72,15 +87,23 @@ import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
 import { renderEditWarning } from "@crosscheck/connector-core/hints/render.ts";
 import { appendOutcomeClause } from "@crosscheck/connector-core/hints/outcome-clause.ts";
 import {
+  COLLISION_RELAY_SENTENCE,
+  renderCollisionNotice,
+  tripwireCollision,
+} from "@crosscheck/connector-core/hints/collision-notice.ts";
+import {
+  newCollisionKeys,
   openToolWindow,
   readSessionState,
   updateSessionState,
+  withCollisionNotices,
   withKnownWorktreeRoot,
   withLandedAsked,
   withLandedClean,
+  withQueuedCollisionRelays,
   withTripwireAsked,
 } from "@crosscheck/connector-core/state/session-state.ts";
-import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import type { CollisionNotice, SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { toolWindowKey } from "@crosscheck/connector-core/state/tool-window-key.ts";
 import { resolveTouchedRoots } from "@crosscheck/connector-core/capture/touched-root.ts";
 import { toRepoRelative } from "@crosscheck/connector-core/capture/target-paths.ts";
@@ -254,7 +277,7 @@ const askBeforeEdit = async (ctx: HookContext, budget: HookBudget): Promise<stri
   if (won.teammate !== null) {
     await recordTripwireAsk(ctx, state, won.teammate);
   }
-  return askOutput(ctx, reason);
+  return askOutput(ctx, reason, won.notice === null ? null : renderCollisionNotice(won.notice, ctx.now()));
 };
 
 export const handlePreToolUse = async (ctx: HookContext, budget: HookBudget): Promise<string> => {
@@ -290,6 +313,13 @@ interface FoundReasons extends Reasons {
 }
 
 const NO_REASONS: Reasons = { teammate: null, landed: null };
+
+/** What a claim won, plus the teammate group the PERSON is told about for the first time. */
+interface ClaimedReasons extends Reasons {
+  readonly notice: CollisionNotice | null;
+}
+
+const NO_CLAIM: ClaimedReasons = { ...NO_REASONS, notice: null };
 
 /**
  * Asks only the questions this session has not been stopped for yet, in
@@ -357,23 +387,48 @@ const rememberClean = async (ctx: HookContext, key: string): Promise<void> => {
  * emitting, same honest direction as the hint delivery: a crash between the
  * two costs one ask, never a nag loop. Returns only the reasons THIS call
  * won — the only ones it may state.
+ *
+ * The PERSON'S notice is claimed in the same transform, on the same fresh
+ * state: a won live half records its teammate group (a second file of a told
+ * group only grows it — what the statusline counts) and states it only when
+ * the group is new to this session. From a subagent, a new group is queued for
+ * the main thread as well.
  */
-const claimReasons = async (ctx: HookContext, file: string, found: Reasons): Promise<Reasons> => {
+const claimReasons = async (ctx: HookContext, file: string, found: FoundReasons): Promise<ClaimedReasons> => {
   // A holder rather than a plain `let`, so the assignment inside the
   // callback is visible after it.
-  const won: { value: Reasons } = { value: NO_REASONS };
+  const won: { value: ClaimedReasons } = { value: NO_CLAIM };
   const isWritten = await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => {
     const teammate =
       found.teammate !== null && !fresh.tripwireAskedFiles.includes(file) ? found.teammate : null;
     const landed = found.landed !== null && !fresh.landedAskedFiles.includes(file) ? found.landed : null;
-    won.value = { teammate, landed };
+    const group = teammate === null ? null : tripwireCollision(teammate, file, found.coverage);
+    const told = group === null ? [] : newCollisionKeys(fresh, [group]);
+    won.value = { teammate, landed, notice: told.length > 0 ? group : null };
     if (teammate === null && landed === null) {
       return null;
     }
-    const withLive = teammate === null ? fresh : withTripwireAsked(fresh, file);
+    const withLive = group === null ? fresh : withTripwireAsked(rememberGroup(ctx, fresh, group, told), file);
     return landed === null ? withLive : withLandedAsked(withLive, file);
   });
-  return isWritten ? won.value : NO_REASONS;
+  return isWritten ? won.value : NO_CLAIM;
+};
+
+/**
+ * The group recorded as told — and, when this hook runs inside a SUBAGENT and
+ * the group is new, queued for the main thread's next prompt, which is where
+ * the person's conversation is (hooks/user-prompt-submit.ts drains it).
+ */
+const rememberGroup = (
+  ctx: HookContext,
+  state: SessionState,
+  group: CollisionNotice,
+  told: readonly string[],
+): SessionState => {
+  const remembered = withCollisionNotices(state, [group]);
+  return ctx.payload.agent_id === undefined || told.length === 0
+    ? remembered
+    : withQueuedCollisionRelays(remembered, told);
 };
 
 /**
@@ -518,8 +573,14 @@ const recordLandedStop = async (
  * briefed but never blocked — the only honest fallback, since headless
  * cannot be auto-detected. The ladder still stops at "ask": ASK_DECISION is
  * this module's one decision literal and `notice` emits no decision at all.
+ *
+ * A NEW teammate group adds the person's line as `systemMessage` — in BOTH
+ * modes, because it blocks nothing and a notice-mode session is the one where
+ * no permission prompt ever shows the person the reason — and the relay
+ * sentence after the model's copy only, never inside the reason the person
+ * reads in the prompt.
  */
-const askOutput = (ctx: HookContext, reason: string): string => {
+const askOutput = (ctx: HookContext, reason: string, notice: string | null): string => {
   const hookSpecificOutput =
     resolveTripwireMode(ctx.env) === TRIPWIRE_MODE_NOTICE
       ? { hookEventName: "PreToolUse", additionalContext: reason }
@@ -529,5 +590,15 @@ const askOutput = (ctx: HookContext, reason: string): string => {
           permissionDecisionReason: reason,
           additionalContext: reason,
         };
-  return JSON.stringify({ hookSpecificOutput });
+  return JSON.stringify(
+    notice === null
+      ? { hookSpecificOutput }
+      : { systemMessage: notice, hookSpecificOutput: withRelaySentence(hookSpecificOutput) },
+  );
 };
+
+/** The model's copy plus the one request; an output without a model copy is left as it is. */
+const withRelaySentence = <T extends { readonly additionalContext?: string }>(output: T): T =>
+  output.additionalContext === undefined
+    ? output
+    : { ...output, additionalContext: `${output.additionalContext}\n${COLLISION_RELAY_SENTENCE}` };

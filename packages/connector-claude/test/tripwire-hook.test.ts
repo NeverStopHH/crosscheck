@@ -17,6 +17,7 @@ import { makeHome, makeRepo, writeRepoFile } from "../../connector-core/test/hel
 import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import { readSpoolLines } from "@crosscheck/connector-core/spool/files.ts";
 import { outcomeClause } from "@crosscheck/connector-core/hints/outcome-clause.ts";
+import { COLLISION_RELAY_SENTENCE } from "@crosscheck/connector-core/hints/collision-notice.ts";
 import {
   hintDeliveryId,
   tripwireDeliveryId,
@@ -206,9 +207,11 @@ describe("the tripwire asks — once — on live teammate overlap", () => {
     const stdout = await runHook("pre-tool-use", editPayload(repo, OVERLAP_FILE), env);
 
     // Assert: the model-facing field carries the reason AND the get_diagnosis id
+    // — the reason verbatim, plus, on this first hit of the teammate's work,
+    // the one relay sentence (test/collision-notice-hook.test.ts)
     const decision = decisionOf(stdout);
     expect(decision?.permissionDecision).toBe("ask");
-    expect(decision?.additionalContext).toBe(decision?.permissionDecisionReason);
+    expect(decision?.additionalContext).toBe(`${decision?.permissionDecisionReason ?? ""}\n${COLLISION_RELAY_SENTENCE}`);
     expect(decision?.additionalContext).toContain("get_diagnosis");
     expect(decision?.additionalContext).toContain("Nick");
   });
@@ -276,7 +279,8 @@ describe("the ask ends with the outcome clause where the hub records outcomes (0
     const decision = decisionOf(stdout);
     expect(decision?.permissionDecision).toBe("ask");
     expect(decision?.permissionDecisionReason?.split("\n").at(-1)).toBe(outcomeClause(CANDIDATE_CONTEXT_ID));
-    expect(decision?.additionalContext).toBe(decision?.permissionDecisionReason);
+    // The model's copy is the same text, then the relay sentence a first hit carries.
+    expect(decision?.additionalContext).toBe(`${decision?.permissionDecisionReason ?? ""}\n${COLLISION_RELAY_SENTENCE}`);
     expect(decision?.additionalContext?.split("mark_hint_outcome").length).toBe(2);
   });
 
@@ -291,8 +295,10 @@ describe("the ask ends with the outcome clause where the hub records outcomes (0
       CROSSCHECK_TRIPWIRE: "notice",
     });
 
-    // Assert
-    expect(decisionOf(stdout)?.additionalContext?.split("\n").at(-1)).toBe(outcomeClause(CANDIDATE_CONTEXT_ID));
+    // Assert: the clause ends the ask's own text; the relay sentence follows it
+    const lines = decisionOf(stdout)?.additionalContext?.split("\n") ?? [];
+    expect(lines.at(-2)).toBe(outcomeClause(CANDIDATE_CONTEXT_ID));
+    expect(lines.at(-1)).toBe(COLLISION_RELAY_SENTENCE);
   });
 
   test("a hub that does not say it records outcomes gets the ask without the clause", async () => {
