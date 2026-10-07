@@ -88,15 +88,17 @@ export const isStrongSubstanceMatch = (match: SubstanceMatch): boolean =>
 /**
  * A TREE'S STRENGTH (round 3, H3 + M6): an exact target first — the prompt
  * named something the tree touched, a fact — then the most topical query
- * words one of its statements shares, then (round 4, M1) the topical words
- * its OWN statement shares: of two trees a claim each ties on, the one whose
- * title and intent say the prompt is the one about it. Since M1 counts a
- * task's meta words, "Retry-Limit im Checkout erhöhen" shares two words with
- * four trees, and only the checkout-retries tree's title says both. Last
- * (round 4, decision 3) the most query words one statement shares, a weak
- * word among them: a weak word is never the topical one, but of two trees
- * equal on every topical count, the one that also says "times" in "invoice
- * rendering times out" says more of the prompt.
+ * words one of its statements shares, then (round 4, decision 3; round 5,
+ * M2) the most query words one statement shares, a weak word among them: a
+ * weak word is never the topical one, but of two trees equal on the topical
+ * count, the one that also says "times" in "invoice rendering times out"
+ * says more of the prompt — and "deleted users' uploads are still in S3"
+ * shares four words with the account-deletion tree and two with the upload
+ * tree, whose title says one more of them. Last (round 4, M1) the topical
+ * words its OWN statement shares: of two trees a claim each ties on, the one
+ * whose title and intent say the prompt is the one about it — "Retry-Limit
+ * im Checkout erhöhen" shares two words with four trees, and only the
+ * checkout-retries tree's title says both.
  */
 export interface TreeStrength {
   readonly isExact: boolean;
@@ -107,7 +109,7 @@ export interface TreeStrength {
 
 /** Stronger first: negative when `left` is the stronger tree, zero on a tie. */
 export const compareTreeStrength = (left: TreeStrength, right: TreeStrength): number =>
-  Number(right.isExact) - Number(left.isExact) || right.topical - left.topical || right.own - left.own || right.shared - left.shared;
+  Number(right.isExact) - Number(left.isExact) || right.topical - left.topical || right.shared - left.shared || right.own - left.own;
 
 export const isAtLeastAsStrongTree = (strength: TreeStrength, than: TreeStrength): boolean =>
   compareTreeStrength(strength, than) <= 0;
@@ -119,6 +121,12 @@ export const isAtLeastAsStrongTree = (strength: TreeStrength, than: TreeStrength
  * and pdf with the timeout tree's title and with the labels tree's title
  * alike, and the hub's order between them is search rank, not relevance.
  * The hub's withholding and the connector's selector call this one rule.
+ *
+ * KEPT SILENT ON A TIE (round 5, M2): a pointer at the first of two tied
+ * trees was measured and refused — the golden corpus's pr_pool_fresh_wins
+ * expects silence, and the round-4 hold-out's "das mit dem token refresh
+ * hast du gut erklärt danke" (C200) became a content-free hint. Ties are
+ * rarer since the shared words break them before the tree's own statement.
  */
 export const strongestTreeIndex = (strengths: readonly TreeStrength[]): number | null => {
   const best = strengths.reduce<number | null>(

@@ -136,6 +136,16 @@ describe("a finding only from the one strongest tree, on a word only it says (C2
     expect(pickedId([first, second])).toBe("silence");
   });
 
+  test("round 5, M2: on equal topical counts, the tree sharing more words wins before the one whose own statement shares more", () => {
+    // Arrange — K028's shape, "deleted users' uploads are still in S3": the
+    // upload tree's title says one more word, the deletion tree shares four
+    const uploads = { ...tree("wc_uploads", [observation("clm_up", "wc_uploads", 2)], { treeTerms: 2, topicalTerms: 2 }), sharedTerms: 2 };
+    const deletion = { ...tree("wc_deletion", [observation("clm_del", "wc_deletion", 2)], { treeTerms: 1, topicalTerms: 2 }), sharedTerms: 4 };
+
+    // Act + Assert
+    expect(pickedId([uploads, deletion])).toBe("pointer:wc_deletion");
+  });
+
   test("round 4, M1: on equal counts, the tree whose own statement shares more is the one strongest", () => {
     // Arrange — "Retry-Limit im Checkout erhöhen": a claim of each tree shares
     // two words, the checkout-retries tree's own title both of them

@@ -19148,9 +19148,10 @@ export const MUTATIONS: readonly Mutation[
     // RETARGETED (round 4, C2): the comparison is the schema's, for the hub and the selector.
     // RETARGETED (round 4, M1): one comparison, the own statement third.
     // RETARGETED (round 4, decision 3): the shared words fourth.
+    // RETARGETED (round 5, M2): the shared words third, the own statement fourth.
     file: `${SCHEMA}/src/substance-trust.ts`,
-    from: "  Number(right.isExact) - Number(left.isExact) || right.topical - left.topical || right.own - left.own || right.shared - left.shared;",
-    to: "  right.topical - left.topical || right.own - left.own || right.shared - left.shared;",
+    from: "  Number(right.isExact) - Number(left.isExact) || right.topical - left.topical || right.shared - left.shared || right.own - left.own;",
+    to: "  right.topical - left.topical || right.shared - left.shared || right.own - left.own;",
     test: `${CORE}/test/hint-best-match.test.ts`,
     because: "a tree that touched the file the prompt named loses to one that merely shares its words (H3 + M6)",
   },
@@ -19944,7 +19945,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the tree's own statement breaks no tie",
     file: `${SCHEMA}/src/substance-trust.ts`,
-    from: "  Number(right.isExact) - Number(left.isExact) || right.topical - left.topical || right.own - left.own || right.shared - left.shared;",
+    // RETARGETED (round 5, M2): the own statement breaks the tie the shared words leave.
+    from: "  Number(right.isExact) - Number(left.isExact) || right.topical - left.topical || right.shared - left.shared || right.own - left.own;",
     to: "  Number(right.isExact) - Number(left.isExact) || right.topical - left.topical || right.shared - left.shared;",
     test: `${CORE}/test/hint-best-match.test.ts`,
     because: "\"Retry-Limit im Checkout erhöhen\" ties four trees and gets nothing, though only one tree's title says checkout (round 4, M1)",
@@ -20033,7 +20035,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the shared words break no tie",
     file: `${SCHEMA}/src/substance-trust.ts`,
-    from: "  Number(right.isExact) - Number(left.isExact) || right.topical - left.topical || right.own - left.own || right.shared - left.shared;",
+    // RETARGETED (round 5, M2): the shared words third.
+    from: "  Number(right.isExact) - Number(left.isExact) || right.topical - left.topical || right.shared - left.shared || right.own - left.own;",
     to: "  Number(right.isExact) - Number(left.isExact) || right.topical - left.topical || right.own - left.own;",
     test: `${CORE}/test/hint-best-match.test.ts`,
     because: "\"invoice rendering times out under load\" ties the timeout and the labels trees, and gets nothing (round 4, decision 3)",
@@ -20678,6 +20681,22 @@ export const MUTATIONS: readonly Mutation[
     to: "  \"makefile\",",
     test: `${SCHEMA}/test/exact-token.test.ts`,
     because: "\"the Dockerfile\" alone matches the Docker tree's docker/postgres/Dockerfile (round 5, M4; K090)",
+  },
+  {
+    label: "the own statement decides before the shared words",
+    file: `${SCHEMA}/src/substance-trust.ts`,
+    from: "  Number(right.isExact) - Number(left.isExact) || right.topical - left.topical || right.shared - left.shared || right.own - left.own;",
+    to: "  Number(right.isExact) - Number(left.isExact) || right.topical - left.topical || right.own - left.own || right.shared - left.shared;",
+    test: `${CORE}/test/hint-best-match.test.ts`,
+    because: "\"deleted users' uploads are still in S3\" is pointed at the upload tree its title says one more word of, not the deletion tree that shares four (round 5, M2; K028)",
+  },
+  {
+    label: "the ranking order is the old one",
+    file: `${SCHEMA}/src/substance-trust.ts`,
+    from: "  Number(right.isExact) - Number(left.isExact) || right.topical - left.topical || right.shared - left.shared || right.own - left.own;",
+    to: "  Number(right.isExact) - Number(left.isExact) || right.topical - left.topical || right.own - left.own || right.shared - left.shared;",
+    test: `${SCHEMA}/test/substance-match.test.ts`,
+    because: "the hub sorts its bound and withholds its bodies by the own statement before the shared words (round 5, M2)",
   },
 ];
 

@@ -46,6 +46,8 @@
  * which no other candidate says, and the tree's own statement shares one
  * (`@crosscheck/schema` isStrongSubstanceMatch, strongestTreeIndex: the
  * hub's withholding calls the same two rules). Otherwise the pointer at it.
+ * What breaks a tie is the schema's order (round 5, M2: the shared words
+ * before the tree's own statement).
  */
 import {
   HINT_MIN_EVIDENCE_REFS,

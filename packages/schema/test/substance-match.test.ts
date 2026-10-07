@@ -53,6 +53,7 @@ describe("the one strongest tree (C2)", () => {
     [[words(2, 2, 2), words(2, 2, 2)], null, "equal on every count: a tie"],
     [[words(3, 0), words(2, 2)], 0, "the count first, the own statement second"],
     [[words(2, 2, 2), words(2, 2, 3)], 1, "then the shared words a weak one among them (decision 3)"],
+    [[words(2, 2, 2), words(2, 1, 4)], 1, "the shared words before the own statement (round 5, M2)"],
   ] as const)("%o: %p — %s", (strengths, index) => {
     expect(strongestTreeIndex(strengths)).toBe(index);
   });
