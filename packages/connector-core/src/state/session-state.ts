@@ -1482,6 +1482,26 @@ export const withRootHead = (state: SessionState, head: RootHeadFold): SessionSt
   });
 };
 
+/**
+ * A SHELL RAN IN THIS ROOT (DESIGN.md "One session, many topics"): a Bash
+ * call's `cp`, `mv`, redirect, generator or `git commit` names no file to any
+ * edit event, so nothing is parsed out of it — the root is marked, and the
+ * next Stop or SubagentStop sweeps it FIRST (flows/git-lane.ts), the git lane
+ * doing the capture. A root no touch has judged yet is entered under the
+ * repo id the hook already resolved for its cwd; its first touch, if this is
+ * it, opens the lane's window there.
+ */
+export const withBashTouch = (state: SessionState, root: string, repoId: string, at: string): SessionState => {
+  const previous = state.knownWorktreeRoots.find((entry) => entry.root === root);
+  const base: KnownRootEntry = previous ?? { root, repoId, attempts: 1, stamp: null, ...EMPTY_ROOT_TOPIC };
+  return withRootEntry(state, {
+    ...base,
+    bashTouchedAt: at,
+    firstTouchedAt: base.firstTouchedAt ?? at,
+    lastTouchedAt: at,
+  });
+};
+
 /** Remembers a probe key that answered "nothing", same FIFO cap as the markers. */
 export const withLandedClean = (
   state: SessionState,

@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1819
+    # PRINTS: 1821
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -239,7 +239,7 @@ jobs:
     # PRINTS: hooks/git-lane.ts 1
     # PRINTS: hooks/landed-why.ts 2
     # PRINTS: hooks/post-tool-use-failure.ts 5
-    # PRINTS: hooks/post-tool-use.ts 12
+    # PRINTS: hooks/post-tool-use.ts 13
     # PRINTS: hooks/pre-tool-use.ts 18
     # PRINTS: hooks/runner.ts 7
     # PRINTS: hooks/session-start.ts 4
@@ -286,7 +286,7 @@ jobs:
     # PRINTS: flows/claim-revalidation.ts 2
     # PRINTS: flows/claim-surface.ts 1
     # PRINTS: flows/end-session.ts 13
-    # PRINTS: flows/git-lane.ts 6
+    # PRINTS: flows/git-lane.ts 7
     # PRINTS: flows/heal-session.ts 22
     # PRINTS: flows/heartbeat.ts 3
     # PRINTS: flows/hint.ts 5
@@ -581,7 +581,7 @@ jobs:
     # PRINTS: ghost-overlap.ts 4
     # PRINTS: ghost.ts 2
     # PRINTS: git-lane-cost.ts 2
-    # PRINTS: git-lane.ts 7
+    # PRINTS: git-lane.ts 8
     # PRINTS: git-queries.ts 15
     # PRINTS: git.ts 4
     # PRINTS: heal-session.ts 22
@@ -649,7 +649,7 @@ jobs:
     # PRINTS: pin.ts 11
     # PRINTS: pins.ts 12
     # PRINTS: post-tool-use-failure.ts 5
-    # PRINTS: post-tool-use.ts 12
+    # PRINTS: post-tool-use.ts 13
     # PRINTS: post.ts 1
     # PRINTS: pre-tool-use.ts 18
     # PRINTS: precision.ts 2

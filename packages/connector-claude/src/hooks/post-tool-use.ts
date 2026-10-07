@@ -23,8 +23,10 @@ import {
   closedToolWindow,
   readSessionState,
   updateSessionState,
+  withBashTouch,
   withSeenTargets,
 } from "@crosscheck/connector-core/state/session-state.ts";
+import { realpathBestEffort } from "@crosscheck/connector-core/config/paths.ts";
 import { toolWindowKey } from "@crosscheck/connector-core/state/tool-window-key.ts";
 import { seqAt } from "@crosscheck/connector-core/capture/seq.ts";
 import { MAX_TARGETS_PER_INVOCATION } from "@crosscheck/connector-core/constants.ts";
@@ -322,11 +324,19 @@ export const handlePostToolUse = async (
   // here: nothing was positioned at all, and the record says
   // `allocation_failed` for itself.
   const lostBracket = editFired && seq !== null && seq.after === undefined;
+  // A SHELL RAN HERE (DESIGN.md "One session, many topics"): no command is
+  // parsed — the cwd's root is marked, and the next Stop or SubagentStop
+  // sweeps it first, the git lane capturing whatever the shell changed,
+  // created or committed there (core flows/git-lane.ts). Only a root of this
+  // session's repo: the foreign-repo exit above already returned.
+  const bashRoot = isBashTool(ctx.payload.tool_name) ? await realpathBestEffort(ctx.identity.root) : null;
+  const withShell = (fresh: SessionState): SessionState =>
+    bashRoot === null ? fresh : withBashTouch(fresh, bashRoot, ctx.identity.repoId, now.toISOString());
   await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => ({
     // Files this call captured into a life the flush then healed away from
     // were withheld with it: they stay unseen, so the next life captures them
     // — and so do the topics it opened (withTopicCapture registers none then).
-    ...withCaptureBookkeeping(withTopicCapture(withSeenTargets(fresh, fresh.crosscheckSessionId === state.crosscheckSessionId ? files : []), topics), {
+    ...withCaptureBookkeeping(withTopicCapture(withSeenTargets(withShell(fresh), fresh.crosscheckSessionId === state.crosscheckSessionId ? files : []), topics), {
       resolution,
       capturedCount: files.length,
       editFired,

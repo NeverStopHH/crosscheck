@@ -14843,7 +14843,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "Claude's Bash and git lanes are dropped from file.modified",
     file: `${CORE}/src/guarantees/declarations.ts`,
-    from: '    lane("post_tool_unbracketed", [CLAUDE_POST_TOOL]),\n    lane("observing", [`${CLAUDE}/hooks/stop.ts`]),\n',
+    from: '    lane("post_tool_unbracketed", [CLAUDE_POST_TOOL]),\n    lane("observing", [`${CLAUDE}/hooks/git-lane.ts`]),\n',
     to: "",
     test: `${CORE}/test/guarantee-declarations.test.ts`,
     because: "Claude declares file.modified guaranteed while a Bash call and the Stop git diff allocate for it (CSK-7)",
@@ -17578,8 +17578,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a file captured into the refused life stays seen in the next one",
     file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
-    from: "withSeenTargets(fresh, fresh.crosscheckSessionId === state.crosscheckSessionId ? files : [])",
-    to: "withSeenTargets(fresh, files)",
+    from: "withSeenTargets(withShell(fresh), fresh.crosscheckSessionId === state.crosscheckSessionId ? files : [])",
+    to: "withSeenTargets(withShell(fresh), files)",
     test: `${CONNECTOR}/test/resumed-session.test.ts`,
     because: "an edit made in the hook the hub refused is never captured into the healed life, however often the file is edited again",
   },
@@ -19680,6 +19680,25 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/topic-contexts.test.ts`,
     because: "a file a codemod changed and a shell committed reads as `both`, claiming an Edit nobody reported",
   },
+  {
+    // DESIGN.md "One session, many topics", item 4.
+    label: "a Bash call leaves its root unmarked",
+    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
+    from: "  const bashRoot = isBashTool(ctx.payload.tool_name) ? await realpathBestEffort(ctx.identity.root) : null;",
+    to: "  const bashRoot: string | null = null;",
+    test: `${CONNECTOR}/test/topic-git-lane.test.ts`,
+    because:
+      "a worktree only a shell ever touched is never known to the session, and the git " +
+      "lane never sweeps its cp, mv, generator output or commits",
+  },
+  {
+    label: "a bash-touched root is not swept ahead of the rest",
+    file: `${CORE}/src/flows/git-lane.ts`,
+    from: "    .filter((entry) => entry.bashTouchedAt !== null)",
+    to: "    .filter(() => false)",
+    test: `${CONNECTOR}/test/topic-git-lane.test.ts`,
+    because: "SubagentStop sweeps only its cwd, and a subagent whose shell worked elsewhere has its work wait for a Stop",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19855,7 +19874,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/summarizer-child-guard.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-worker-env.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-worker.test.ts 2
- * PRINTS: packages/connector-claude/test/topic-git-lane.test.ts 7
+ * PRINTS: packages/connector-claude/test/topic-git-lane.test.ts 9
  * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 4
  * PRINTS: packages/connector-core/test/absence-render.test.ts 7

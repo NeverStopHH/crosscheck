@@ -180,6 +180,66 @@ describe("Stop sweeps every root the session touched", () => {
   });
 });
 
+describe("a shell's work with no edit event at all (item 4: Bash coverage)", () => {
+  const bash = (fix: Fixture, cwd: string, command: string): Promise<string> =>
+    runHook(
+      "post-tool-use",
+      hookPayload(cwd, { hook_event_name: "PostToolUse", tool_name: "Bash", tool_input: { command }, tool_response: {} }),
+      env(fix.home, WIDE_TIMEOUT_MS),
+    );
+
+  test("a Bash call marks its cwd's root, and the next Stop sweeps it first and captures the shell's cp and commit", async () => {
+    // Arrange: the session never edits sibling 0 — a shell copies and commits there
+    const fix = await ownerShape("lane-bash", 1);
+    const sibling = fix.siblings[0] ?? "";
+    await sessionStart(fix);
+    await writeRepoFile(sibling, "src/source.ts", "export const s = 1;\n");
+    await git(sibling, ["add", "src/source.ts"]);
+    await git(sibling, ["commit", "-m", "source"]);
+    await copyFile(join(sibling, "src/source.ts"), join(sibling, "src/copy.ts"));
+    await bash(fix, sibling, "cp src/source.ts src/copy.ts && git commit -m source");
+
+    // Act
+    const marked = (await readSessionState(fix.home, SESSION_ID))?.knownWorktreeRoots.find(
+      (entry) => entry.bashTouchedAt !== null,
+    );
+    await stop(fix);
+
+    // Assert: the mark named the root, the sweep found both, under the topic,
+    // and spent the mark
+    expect(marked?.branch ?? null).toBeNull();
+    expect(marked?.repoId).toBe(REPO_ID);
+    const records = await spooled(fix);
+    expect(targetsUnder(records, topicIdOf(records, "feat/topic-0"))).toEqual([
+      ["src/copy.ts", "git_diff"],
+      ["src/source.ts", "git_commit"],
+    ]);
+    const after = (await readSessionState(fix.home, SESSION_ID))?.knownWorktreeRoots.find((entry) => entry.root === marked?.root);
+    expect(after?.bashTouchedAt).toBeNull();
+    expect(after?.gitSweptAt).not.toBeNull();
+  });
+
+  test("SubagentStop from the start checkout still sweeps the root a subagent's shell touched", async () => {
+    // Arrange
+    const fix = await ownerShape("lane-bash-subagent", 1);
+    const sibling = fix.siblings[0] ?? "";
+    await sessionStart(fix);
+    await writeRepoFile(sibling, "src/generated.ts", "export const g = 1;\n");
+    await bash(fix, sibling, "bun run codegen");
+
+    // Act: the subagent's own cwd reads as the start checkout
+    await runHook(
+      "subagent-stop",
+      hookPayload(fix.main, { hook_event_name: "SubagentStop", stop_hook_active: false }),
+      env(fix.home, WIDE_TIMEOUT_MS),
+    );
+
+    // Assert
+    const records = await spooled(fix);
+    expect(targetsUnder(records, topicIdOf(records, "feat/topic-0"))).toEqual([["src/generated.ts", "git_diff"]]);
+  });
+});
+
 describe("SubagentStop sweeps the subagent's own root", () => {
   test("a subagent's shell work in a worktree the session never edited lands under that worktree's topic", async () => {
     // Arrange: the subagent ran in sibling 0 and only through a shell
