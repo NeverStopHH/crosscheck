@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1759
+    # PRINTS: 1764
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -382,7 +382,7 @@ jobs:
     # PRINTS: packages/schema/src/commit-evidence.ts 2
     # PRINTS: packages/schema/src/delivery-id.ts 2
     # PRINTS: packages/schema/src/enums.ts 2
-    # PRINTS: packages/schema/src/envelope.ts 1
+    # PRINTS: packages/schema/src/envelope.ts 2
     # PRINTS: packages/schema/src/evidence-axes.ts 1
     # PRINTS: packages/schema/src/file-ref.ts 5
     # PRINTS: packages/schema/src/landed-context.ts 3
@@ -448,8 +448,8 @@ jobs:
     # PRINTS: packages/server/src/services/presence.ts 1
     # PRINTS: packages/server/src/services/questions.ts 8
     # PRINTS: packages/server/src/services/record-handlers.ts 22
-    # PRINTS: packages/server/src/services/record-receipts.ts 4
-    # PRINTS: packages/server/src/services/records.ts 4
+    # PRINTS: packages/server/src/services/record-receipts.ts 6
+    # PRINTS: packages/server/src/services/records.ts 6
     # PRINTS: packages/server/src/services/refusal.ts 3
     # PRINTS: packages/server/src/services/retention-registry.ts 9
     # PRINTS: packages/server/src/services/retention.ts 24
@@ -545,7 +545,7 @@ jobs:
     # PRINTS: engine.ts 24
     # PRINTS: entry.ts 1
     # PRINTS: enums.ts 2
-    # PRINTS: envelope.ts 1
+    # PRINTS: envelope.ts 2
     # PRINTS: events.ts 1
     # PRINTS: evidence-axes.ts 3
     # PRINTS: exec.ts 1
@@ -652,8 +652,8 @@ jobs:
     # PRINTS: questions.ts 10
     # PRINTS: reap.ts 15
     # PRINTS: record-handlers.ts 22
-    # PRINTS: record-receipts.ts 4
-    # PRINTS: records.ts 5
+    # PRINTS: record-receipts.ts 6
+    # PRINTS: records.ts 7
     # PRINTS: recover.ts 4
     # PRINTS: refusal.ts 3
     # PRINTS: refused-lives.ts 7

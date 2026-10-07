@@ -26,13 +26,21 @@ export const ProducerSchema = z.looseObject({
 
 
 /**
+ * The longest envelope id the hub takes (review-2 round 9, M5). Connectors
+ * mint `env_<uuid>`, 40 characters. The hub keeps a receipt per id in a btree,
+ * whose rows cannot pass 2704 bytes: a 4.3 kB id landed its record and then
+ * failed the receipt's INSERT, a 500 for the batch on every retry.
+ */
+const ENVELOPE_ID_MAX_LENGTH = 128;
+
+/**
  * Wire envelope for every crosscheck record (DESIGN.md §5).
  * Consumers MUST ignore unknown fields and unknown kinds — forward compatibility
  * is a protocol rule, not a convenience.
  */
 export const EnvelopeSchema = z.looseObject({
   cx: z.string().regex(VERSION_PATTERN),
-  id: z.string().min(1),
+  id: z.string().min(1).max(ENVELOPE_ID_MAX_LENGTH),
   ts: z.iso.datetime(),
   producer: ProducerSchema,
   kind: z.string().min(1),

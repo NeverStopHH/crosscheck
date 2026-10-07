@@ -19166,6 +19166,46 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/record-receipts-boot.test.ts`,
     because: "review-2 round 9, M4: a hub restarted after weeks off keeps their receipts until its timer's first pass",
   },
+  {
+    label: "the hub looks up receipts for every raw envelope id (M5)",
+    file: `${SERVER}/src/services/records.ts`,
+    from: "  const held = await heldReceipts(deps, developerId, receiptIdsOf(parsed));",
+    to: '  const held = await heldReceipts(deps, developerId, inputs.flatMap((input) => (typeof (input as { id?: unknown }).id === "string" ? [(input as { id: string }).id] : [])));',
+    test: `${SERVER}/test/record-receipts.test.ts`,
+    because: "review-2 round 9, M5: a NUL in one id fails the read before a single envelope is parsed, and the batch with it",
+  },
+  {
+    label: "the hub looks up receipts for an unknown kind's id (M5)",
+    file: `${SERVER}/src/services/records.ts`,
+    from: "(record.ok && !record.unknownKind ? [record.envelope.id] : [])",
+    to: "(record.ok ? [record.envelope.id] : [])",
+    test: `${SERVER}/test/record-receipts.test.ts`,
+    because: "review-2 round 9, M5: no schema screened an unknown kind's id for a NUL, and the read fails for every re-send beside it",
+  },
+  {
+    label: "the envelope id has no length cap (M5)",
+    file: `${SCHEMA}/src/envelope.ts`,
+    from: "  id: z.string().min(1).max(ENVELOPE_ID_MAX_LENGTH),",
+    to: "  id: z.string().min(1),",
+    test: `${SERVER}/test/unstorable-text.test.ts`,
+    because: "review-2 round 9, M5: a 4.3 kB id lands its record and fails the receipt's INSERT, a 500 on every retry",
+  },
+  {
+    label: "a receipt read that fails fails the batch (M5)",
+    file: `${SERVER}/src/services/record-receipts.ts`,
+    from: '    console.error("[crosscheck] reading record receipts failed; this flush is answered without them", error);\n    return new Map();\n',
+    to: "    throw error;\n",
+    test: `${SERVER}/test/record-receipts.test.ts`,
+    because: "review-2 round 9, M5: a receipt only spares a re-send its refusal, and its failure takes the batch down",
+  },
+  {
+    label: "a receipt write that fails fails the batch (M5)",
+    file: `${SERVER}/src/services/record-receipts.ts`,
+    from: '    console.error("[crosscheck] writing record receipts failed; their records landed without them", error);\n',
+    to: "    throw error;\n",
+    test: `${SERVER}/test/record-receipts.test.ts`,
+    because: "review-2 round 9, M5: records that landed are answered 500, re-sent, and the spool pins behind them",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19518,7 +19558,7 @@ interface Outcome {
  * PRINTS: packages/server/test/questions.test.ts 8
  * PRINTS: packages/server/test/record-receipts-bloat.test.ts 1
  * PRINTS: packages/server/test/record-receipts-boot.test.ts 1
- * PRINTS: packages/server/test/record-receipts.test.ts 7
+ * PRINTS: packages/server/test/record-receipts.test.ts 11
  * PRINTS: packages/server/test/records.test.ts 2
  * PRINTS: packages/server/test/retention-registry.test.ts 2
  * PRINTS: packages/server/test/search-filters.test.ts 10
@@ -19544,7 +19584,7 @@ interface Outcome {
  * PRINTS: packages/server/test/suspect.test.ts 5
  * PRINTS: packages/server/test/team-settings.test.ts 2
  * PRINTS: packages/server/test/ui-passkeys.test.ts 9
- * PRINTS: packages/server/test/unstorable-text.test.ts 1
+ * PRINTS: packages/server/test/unstorable-text.test.ts 2
  * PRINTS: packages/server/test/upgrade.test.ts 1
  * PRINTS: packages/server/test/verdict-latency.test.ts 1
  * PRINTS: packages/server/test/verdict.test.ts 3

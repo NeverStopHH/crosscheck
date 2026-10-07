@@ -9,6 +9,7 @@ import type {
   LandedEvidence,
   LandedNoticeDelivery,
   LandedStop,
+  ParseRecordResult,
   Question,
   QuestionAnswer,
   SeqField,
@@ -311,20 +312,21 @@ interface IngestOneResult {
 
 const TAKEN: ReadonlySet<RecordStatus> = new Set(["accepted", "duplicate"]);
 
-/** The envelope ids a flush carries, read before any of it is parsed. */
-const envelopeIdsOf = (inputs: readonly unknown[]): readonly string[] =>
-  inputs.flatMap((input) => {
-    const id = (input as { id?: unknown } | null)?.id;
-    return typeof id === "string" ? [id] : [];
-  });
+/**
+ * The envelope ids a flush carries that a receipt may name: only those of
+ * envelopes that parsed as a known kind (review-2 round 9, M5), which
+ * parseRecord has screened for text no column can hold. The raw ids used to
+ * go to SQL first, and a NUL in one failed the batch.
+ */
+const receiptIdsOf = (records: readonly ParseRecordResult[]): readonly string[] =>
+  records.flatMap((record) => (record.ok && !record.unknownKind ? [record.envelope.id] : []));
 
 const ingestOne = async (
   deps: Deps,
   developerId: string,
-  input: unknown,
+  parsed: ParseRecordResult,
   held: ReadonlyMap<string, Held>,
 ): Promise<IngestOneResult> => {
-  const parsed = parseRecord(input);
   if (!parsed.ok) {
     return { outcome: { status: "rejected", issues: parsed.issues } };
   }
@@ -412,12 +414,13 @@ export const ingestRecords = async (
   const touchedContexts = new Set<string>();
   const liveProducers = new Set<string>();
   const taken: Receipt[] = [];
-  const held = await heldReceipts(deps, developerId, envelopeIdsOf(inputs));
-  for (let index = 0; index < inputs.length; index += 1) {
+  const parsed = inputs.map(parseRecord);
+  const held = await heldReceipts(deps, developerId, receiptIdsOf(parsed));
+  for (const [index, record] of parsed.entries()) {
     const { outcome, touched, liveProducer, receipt } = await ingestOne(
       deps,
       developerId,
-      inputs[index],
+      record,
       held,
     );
     results.push({ index, ...outcome });

@@ -114,6 +114,46 @@ describe("an envelope the hub already took", () => {
   });
 });
 
+/**
+ * A RECEIPT ONLY SPARES A RE-SEND ITS REFUSAL (review-2 round 9, M5), so the
+ * hub reads and writes them best-effort: a read or a write that fails answers
+ * the batch as a hub without receipts would, never with a 500.
+ */
+describe("a receipt the hub cannot read or write", () => {
+  test("costs the batch nothing: its records are answered as without receipts", async () => {
+    // Arrange: a hub whose receipts table is gone
+    const { harness, developer } = await createHarnessWithSession();
+    await harness.db.execute(sql`DROP TABLE record_receipts`);
+
+    // Act
+    const result = await postRecords(harness, developer, {
+      records: [recordEnvelope("work_context", validWorkContextBody()), recordEnvelope("target", target("src/a.ts"))],
+    });
+
+    // Assert
+    expect(result.status).toBe(200);
+    expect(result.data?.results.map((entry) => entry.status)).toEqual(["accepted", "accepted"]);
+  });
+
+  test("is never looked up for an unknown kind's id: a NUL there costs its neighbours none of their receipts", async () => {
+    // Arrange: a target taken, its answer lost; then the life ends
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(harness, developer, { records: [recordEnvelope("work_context", validWorkContextBody())] });
+    const held = recordEnvelope("target", target("src/held.ts"));
+    await statusOf(harness, developer, held);
+    await endProducer(harness, developer);
+
+    // Act: the re-send beside a record of a kind this hub does not know, whose id carries a NUL
+    const result = await postRecords(harness, developer, {
+      records: [held, recordEnvelope("telemetry_blob", { anything: true }, { id: `env_${String.fromCharCode(0)}later` })],
+    });
+
+    // Assert
+    expect(result.status).toBe(200);
+    expect(result.data?.results.map((entry) => entry.status)).toEqual(["duplicate", "ignored"]);
+  });
+});
+
 const receiptCount = async (harness: TestHarness): Promise<number> =>
   Number(((await harness.db.execute(sql`select count(*)::int as n from record_receipts`)).rows[0] as { n: unknown }).n);
 

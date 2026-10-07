@@ -35,7 +35,12 @@ export interface Held {
   readonly resultId: string | null;
 }
 
-/** The receipts this developer holds among one flush's envelope ids. */
+/**
+ * The receipts this developer holds among one flush's envelope ids.
+ * BEST-EFFORT, like the write below (review-2 round 9, M5): a receipt only
+ * spares a re-send its refusal, so a read that fails answers the flush as a
+ * hub without receipts would, never with a 500 for the whole batch.
+ */
 export const heldReceipts = async (
   deps: Deps,
   developerId: string,
@@ -44,17 +49,23 @@ export const heldReceipts = async (
   if (ids.length === 0) {
     return new Map();
   }
-  const rows = await deps.db
-    .select({ id: recordReceipts.id, resultId: recordReceipts.resultId })
-    .from(recordReceipts)
-    .where(and(eq(recordReceipts.developerId, developerId), inArray(recordReceipts.id, [...ids])));
-  return new Map(rows.map((row) => [row.id, { resultId: row.resultId }]));
+  try {
+    const rows = await deps.db
+      .select({ id: recordReceipts.id, resultId: recordReceipts.resultId })
+      .from(recordReceipts)
+      .where(and(eq(recordReceipts.developerId, developerId), inArray(recordReceipts.id, [...ids])));
+    return new Map(rows.map((row) => [row.id, { resultId: row.resultId }]));
+  } catch (error) {
+    console.error("[crosscheck] reading record receipts failed; this flush is answered without them", error);
+    return new Map();
+  }
 };
 
 /**
  * Writes the receipts of what a flush took — and only ever over this
  * developer's own receipt. One row per id: the same envelope twice in one
- * flush would otherwise touch its row twice in one statement.
+ * flush would otherwise touch its row twice in one statement. Best-effort:
+ * a receipt that does not land costs a later re-send its `duplicate`.
  */
 export const writeReceipts = async (deps: Deps, developerId: string, taken: readonly Receipt[]): Promise<void> => {
   const byId = new Map(taken.map((receipt) => [receipt.id, receipt]));
@@ -62,14 +73,18 @@ export const writeReceipts = async (deps: Deps, developerId: string, taken: read
     return;
   }
   const receivedAt = deps.now();
-  await deps.db
-    .insert(recordReceipts)
-    .values([...byId.values()].map((receipt) => ({ ...receipt, developerId, receivedAt })))
-    .onConflictDoUpdate({
-      target: recordReceipts.id,
-      set: { resultId: sql`excluded.result_id`, receivedAt: sql`excluded.received_at` },
-      setWhere: sql`${recordReceipts.developerId} = excluded.developer_id`,
-    });
+  try {
+    await deps.db
+      .insert(recordReceipts)
+      .values([...byId.values()].map((receipt) => ({ ...receipt, developerId, receivedAt })))
+      .onConflictDoUpdate({
+        target: recordReceipts.id,
+        set: { resultId: sql`excluded.result_id`, receivedAt: sql`excluded.received_at` },
+        setWhere: sql`${recordReceipts.developerId} = excluded.developer_id`,
+      });
+  } catch (error) {
+    console.error("[crosscheck] writing record receipts failed; their records landed without them", error);
+  }
 };
 
 /** The oldest RECORD_RECEIPT_PRUNE_CHUNK receipts past the cutoff, deleted: how many went. */

@@ -612,6 +612,15 @@ loop that never yields reads no request until it is done. Against a million rece
 live ones, a query issued during the prune waited 12 ms at most (p99 1 ms). Before the yield it was not served until the
 prune ended, five seconds later.
 
+**A bad envelope id refuses its own record, never the batch** (review-2 round 9, M5). Ingest read the receipts for the
+raw ids of a whole flush before it parsed a single envelope. A NUL in one id failed that read, and with it the batch: a
+500 where that record alone used to be refused. A 4.3 kB id passed every check, landed its record, and then failed the
+receipt's INSERT, because a btree row holds 2704 bytes; that batch answered 500 on every retry and pinned its spool. Now
+only the ids of envelopes that parsed as a known kind are looked up, and those `parseRecord` has screened for text no
+column can hold. The envelope schema caps an id at 128 characters (connectors mint `env_<uuid>`, 40). The receipt read
+and write are best-effort: a receipt only spares a re-send its refusal, so one that cannot be read or written leaves the
+flush answered as a hub without receipts would answer it.
+
 **Three clocks that were one** (review-2 round 8, H1 and H2). The refused-lives note dropped an entry
 `MAX_SPOOL_AGE_DAYS` after it was written. A flush reads a silent host session as abandoned after the same span. Reap
 expired a spool whose data file was that old. So when a host died:
