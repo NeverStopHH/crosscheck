@@ -579,7 +579,7 @@ const toMatchViews = async (
           const validity = validityOf(cause, validities);
           return cause === undefined || validity === null
             ? validity
-            : projectRow(hidden, { developerId: cause.authorDeveloperId, kind: "claim" }, validity);
+            : projectRow(hidden, { developerId: cause.authorDeveloperId, kind: "claim_validity" }, validity);
         })(),
       },
     ];

@@ -451,7 +451,7 @@ const buildPosition = async (
     supersededByClaimId,
     validity: projectRow(
       hidden,
-      { developerId: loaded.view.authorDeveloperId, kind: "claim" },
+      { developerId: loaded.view.authorDeveloperId, kind: "claim_validity" },
       claimValidity(loaded.binding, revalidations.get(side.id), supersededByClaimId),
     ),
   };

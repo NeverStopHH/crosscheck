@@ -10,6 +10,8 @@
 import { describe, expect, test } from "bun:test";
 import { LOCATION_WITHHELD, WITHHELD_TITLE } from "@crosscheck/schema";
 
+import { contradictionIdFor } from "../src/services/contradictions.ts";
+
 import {
   createTestDeveloper,
   jsonRequest,
@@ -28,6 +30,7 @@ import {
   KEN_SESSION,
   LANDED_AT,
   LOCAL_REPO,
+  ROBIN_FINGERPRINT,
   ROBIN_NEW_FILE,
   ROBIN_PIN,
   NICK_CONTEXT,
@@ -470,6 +473,32 @@ describe("a revalidation is its REPORTER's reading (review round 4, H3)", () => 
       lastRevalidatedAt: world.harness.clock.now().toISOString(),
       observedAtCommit: null,
     });
+  });
+
+  test("the same reading reaches the referee brief and the solved pointer whole, where a validity is a row of its own (review round 5, L1)", async () => {
+    // Arrange: Nick's pull reads her claim and her root causes.
+    const world = await seedOptedOutWorld();
+    const entry = (claimId: string) => ({ claimId, result: "unchanged", basis: "context_targets", refCommit: NICK_REF, touchingCommits: [], touchingTotal: 0 });
+    const reading = await world.harness.app.request("/api/claim-revalidations", jsonRequest("POST", world.nick.apiKey, {
+      repo: REPO,
+      revalidated: 3,
+      total: 3,
+      entries: [entry("clm_robin"), entry("clm_robin_root"), entry("clm_robin_root_checked")],
+    }));
+    expect(reading.status).toBe(200);
+    const nicksReading = { refCommit: NICK_REF, lastRevalidatedAt: world.harness.clock.now().toISOString() };
+
+    // Act
+    const brief = await getAs(world, "nick", `/api/contradictions/${contradictionIdFor("clm_nick", "clm_robin")}/brief`);
+    const solved = await getAs(world, "nick", url("/api/solved-matches", { repo: REPO, fingerprint: ROBIN_FINGERPRINT }));
+
+    // Assert
+    const positions = (JSON.parse(brief.body) as { data: { brief: { positionA: { claim: { id: string }; validity: unknown }; positionB: { claim: { id: string }; validity: unknown } } } }).data.brief;
+    const hers = [positions.positionA, positions.positionB].find((position) => position.claim.id === "clm_robin");
+    expect(hers?.validity).toMatchObject(nicksReading);
+    const matches = (JSON.parse(solved.body) as { data: { matches: readonly { rootCauseValidity: unknown }[] } }).data.matches;
+    expect(matches.length).toBeGreaterThan(0);
+    expect(matches[0]?.rootCauseValidity).toMatchObject(nicksReading);
   });
 });
 

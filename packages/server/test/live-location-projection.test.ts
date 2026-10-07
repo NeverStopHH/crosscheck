@@ -113,6 +113,28 @@ describe("a hidden owner's row is withheld by value, not by name", () => {
     expect(target).toEqual({ createdAt: null });
   });
 
+  test("the allowlist names PATHS: a createdAt nested in her claim is not the claim's (review round 5, L1)", () => {
+    // Arrange: the reviewer's m1b — her session's start, nested in her claim
+    // under the name the claim's own creation goes by.
+    const row = {
+      createdAt: INSTANT,
+      authorSession: { createdAt: "2026-07-24T08:00:00.000Z" },
+      validity: { refCommit: "c0ffee1", lastRevalidatedAt: INSTANT, touchingCommits: ["0123abc4567def"], observedAt: INSTANT },
+    };
+
+    // Act
+    const claim: Projected = projectRow(HIDDEN, { developerId: ROBIN, kind: "claim" }, row);
+    const validity: Projected = projectRow(HIDDEN, { developerId: ROBIN, kind: "claim_validity" }, row.validity);
+
+    // Assert
+    expect(claim).toEqual({
+      createdAt: INSTANT,
+      authorSession: { createdAt: LOCATION_WITHHELD },
+      validity: { refCommit: "c0ffee1", lastRevalidatedAt: INSTANT, touchingCommits: ["0123abc4567def"], observedAt: null },
+    });
+    expect(validity).toEqual({ refCommit: "c0ffee1", lastRevalidatedAt: INSTANT, touchingCommits: ["0123abc4567def"], observedAt: null });
+  });
+
   test("her activity counter reads as the first observation", () => {
     const seen: Projected = projectRow(HIDDEN, { developerId: ROBIN, kind: "claim" }, { dedupCount: 7 });
 

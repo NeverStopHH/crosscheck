@@ -17878,8 +17878,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a referee brief carries an opted-out author's HEAD as a claim's commit",
     file: `${SERVER}/src/services/referee.ts`,
-    from: "    validity: projectRow(\n      hidden,\n      { developerId: loaded.view.authorDeveloperId, kind: \"claim\" },",
-    to: "    validity: projectRow(\n      new Map(),\n      { developerId: loaded.view.authorDeveloperId, kind: \"claim\" },",
+    from: "    validity: projectRow(\n      hidden,\n      { developerId: loaded.view.authorDeveloperId, kind: \"claim_validity\" },",
+    to: "    validity: projectRow(\n      new Map(),\n      { developerId: loaded.view.authorDeveloperId, kind: \"claim_validity\" },",
     test: `${SERVER}/test/live-location-privacy.test.ts`,
     because:
       "a claim bound to its session's base names the author's live HEAD, and " +
@@ -17898,7 +17898,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a solved pointer carries an opted-out author's HEAD as its root cause's commit",
     file: `${SERVER}/src/services/solved-matches.ts`,
-    from: "            : projectRow(hidden, { developerId: cause.authorDeveloperId, kind: \"claim\" }, validity);",
+    from: "            : projectRow(hidden, { developerId: cause.authorDeveloperId, kind: \"claim_validity\" }, validity);",
     to: "            : validity;",
     test: `${SERVER}/test/live-location-privacy.test.ts`,
     because:
@@ -18446,7 +18446,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a row kind's allowlist shows every instant on the row",
     file: `${SERVER}/src/services/live-location.ts`,
-    from: "  if (value === undefined || value === null || p.shown.has(key)) {",
+    from: "  if (value === undefined || value === null || p.shown.has(path)) {",
     to: "  if (value === undefined || value === null || p.shown.size > 0) {",
     test: `${SERVER}/test/live-location-surfaces.test.ts`,
     because:
@@ -18476,7 +18476,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "nested rows pass through the projection unread",
     file: `${SERVER}/src/services/live-location.ts`,
-    from: "  return [[key, isPlainObject(value) ? projectObject(p, value) : value]];",
+    from: "  return [[key, isPlainObject(value) ? projectObject({ ...p, path }, value) : value]];",
     to: "  return [[key, value]];",
     test: `${SERVER}/test/live-location-projection.test.ts`,
     because:
@@ -18593,8 +18593,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a teammate's own reading of her claim is withheld as if it were hers",
     file: `${SERVER}/src/services/live-location.ts`,
-    from: "  claim: [\"createdAt\", \"touchingCommits\", \"refCommit\", \"lastRevalidatedAt\"],",
-    to: "  claim: [\"createdAt\", \"touchingCommits\"],",
+    from: "  claim: [\"createdAt\", \"validity.touchingCommits\", \"validity.refCommit\", \"validity.lastRevalidatedAt\"],",
+    to: "  claim: [\"createdAt\", \"validity.touchingCommits\"],",
     test: `${SERVER}/test/live-location-surfaces.test.ts`,
     because:
       "Nick re-checks Robin's claim against his own clone and is then told " +
@@ -19092,6 +19092,31 @@ export const MUTATIONS: readonly Mutation[
       "her action's instant rides a row that existed before it under a " +
       "creation-shaped name, which the differential took for a creation",
   },
+  // ── Review round 5, L1: the allowlist names paths ─────────────────────
+  {
+    label: "the allowlist matches a field by its name at any depth again",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  if (value === undefined || value === null || p.shown.has(path)) {",
+    to: "  if (value === undefined || value === null || [...p.shown].some((entry) => entry.split(\".\").at(-1) === key)) {",
+    test: `${SERVER}/test/live-location-projection.test.ts`,
+    because: "a createdAt nested in her claim — her session's start — passes as the claim's own creation",
+  },
+  {
+    label: "the referee's validity row is judged as a claim view",
+    file: `${SERVER}/src/services/referee.ts`,
+    from: "      { developerId: loaded.view.authorDeveloperId, kind: \"claim_validity\" },",
+    to: "      { developerId: loaded.view.authorDeveloperId, kind: \"claim\" },",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because: "the default-branch commits that touched her claim's files, published history, are dropped from the brief",
+  },
+  {
+    label: "a solved match's root-cause validity is judged as a claim view",
+    file: `${SERVER}/src/services/solved-matches.ts`,
+    from: "            : projectRow(hidden, { developerId: cause.authorDeveloperId, kind: \"claim_validity\" }, validity);",
+    to: "            : projectRow(hidden, { developerId: cause.authorDeveloperId, kind: \"claim\" }, validity);",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because: "a teammate's own reading of her root cause loses its ref and instant on the solved-tree pointer",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19430,9 +19455,9 @@ interface Outcome {
  * PRINTS: packages/server/test/live-location-cost.test.ts 3
  * PRINTS: packages/server/test/live-location-differential.test.ts 5
  * PRINTS: packages/server/test/live-location-privacy.test.ts 27
- * PRINTS: packages/server/test/live-location-projection.test.ts 7
+ * PRINTS: packages/server/test/live-location-projection.test.ts 8
  * PRINTS: packages/server/test/live-location-prose.test.ts 2
- * PRINTS: packages/server/test/live-location-surfaces.test.ts 39
+ * PRINTS: packages/server/test/live-location-surfaces.test.ts 41
  * PRINTS: packages/server/test/live-location-told.test.ts 1
  * PRINTS: packages/server/test/location-index-rebuild.test.ts 7
  * PRINTS: packages/server/test/normalized-doc.test.ts 1

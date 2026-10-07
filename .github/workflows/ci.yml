@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1704
+    # PRINTS: 1707
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -426,7 +426,7 @@ jobs:
     # PRINTS: packages/server/src/services/landed-context.ts 22
     # PRINTS: packages/server/src/services/landed-notices.ts 28
     # PRINTS: packages/server/src/services/landed.ts 1
-    # PRINTS: packages/server/src/services/live-location.ts 30
+    # PRINTS: packages/server/src/services/live-location.ts 31
     # PRINTS: packages/server/src/services/normalized-doc.ts 3
     # PRINTS: packages/server/src/services/passkeys.ts 7
     # PRINTS: packages/server/src/services/pilot-candidates.ts 16
@@ -439,7 +439,7 @@ jobs:
     # PRINTS: packages/server/src/services/questions.ts 9
     # PRINTS: packages/server/src/services/record-handlers.ts 24
     # PRINTS: packages/server/src/services/records.ts 2
-    # PRINTS: packages/server/src/services/referee.ts 3
+    # PRINTS: packages/server/src/services/referee.ts 4
     # PRINTS: packages/server/src/services/refusal.ts 3
     # PRINTS: packages/server/src/services/retention-registry.ts 9
     # PRINTS: packages/server/src/services/retention.ts 24
@@ -450,7 +450,7 @@ jobs:
     # PRINTS: packages/server/src/services/sessions.ts 16
     # PRINTS: packages/server/src/services/skeleton-identity.ts 8
     # PRINTS: packages/server/src/services/solved-counts.ts 1
-    # PRINTS: packages/server/src/services/solved-matches.ts 12
+    # PRINTS: packages/server/src/services/solved-matches.ts 13
     # PRINTS: packages/server/src/services/solved.ts 1
     # PRINTS: packages/server/src/services/suspect.ts 4
     # PRINTS: packages/server/src/services/team-settings.ts 2
@@ -588,7 +588,7 @@ jobs:
     # PRINTS: landing-branches.ts 7
     # PRINTS: latency.ts 1
     # PRINTS: ledger-read.ts 2
-    # PRINTS: live-location.ts 30
+    # PRINTS: live-location.ts 31
     # PRINTS: lock.ts 2
     # PRINTS: loss-ledger.ts 10
     # PRINTS: loss-refusals.ts 1
@@ -638,7 +638,7 @@ jobs:
     # PRINTS: record-handlers.ts 24
     # PRINTS: records.ts 4
     # PRINTS: recover.ts 4
-    # PRINTS: referee.ts 3
+    # PRINTS: referee.ts 4
     # PRINTS: refusal.ts 3
     # PRINTS: register-session.ts 4
     # PRINTS: release-preflight.ts 5
@@ -679,7 +679,7 @@ jobs:
     # PRINTS: slice.ts 2
     # PRINTS: solved-counts.ts 1
     # PRINTS: solved-hint.ts 4
-    # PRINTS: solved-matches.ts 12
+    # PRINTS: solved-matches.ts 13
     # PRINTS: solved.ts 1
     # PRINTS: spawn.ts 2
     # PRINTS: ssh-hostname.ts 2

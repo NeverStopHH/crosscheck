@@ -140,9 +140,17 @@ export const isTitleWithheldFromIndex = async (
  *                    claim reaches him whole
  *
  * A row of no listed kind shows NONE of its instants.
+ *
+ * PATHS, NOT NAMES (review round 5, L1): an entry is the field's path from
+ * the row's root. Matched by name at any depth, a claim's `createdAt` let
+ * through a `createdAt` nested in the claim — her session's, say — under the
+ * name the claim's own creation goes by. A claim's validity is listed where
+ * it sits inside a claim view, and as `claim_validity` where it is a row of
+ * its own (the referee's, a solved match's root cause).
  */
 const SHOWN_FOR_HIDDEN = {
-  claim: ["createdAt", "touchingCommits", "refCommit", "lastRevalidatedAt"],
+  claim: ["createdAt", "validity.touchingCommits", "validity.refCommit", "validity.lastRevalidatedAt"],
+  claim_validity: ["touchingCommits", "refCommit", "lastRevalidatedAt"],
   work_context: ["createdAt", "solvedAt"],
   edge: ["createdAt"],
   question: ["createdAt", "expiresAt"],
@@ -360,7 +368,11 @@ interface Projection {
   readonly forms: WithheldForms;
   readonly reportedBranches: readonly string[];
   readonly shown: ReadonlySet<string>;
+  /** Where in the row this part sits: "" at the root, `validity` inside it. */
+  readonly path: string;
 }
+
+const pathOf = (p: Projection, key: string): string => (p.path === "" ? key : `${p.path}.${key}`);
 
 const isPlainObject = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !(value instanceof Date) && !Array.isArray(value);
@@ -396,7 +408,8 @@ const projectEntry = (
   p: Projection,
   [key, value]: readonly [string, unknown],
 ): readonly (readonly [string, unknown])[] => {
-  if (value === undefined || value === null || p.shown.has(key)) {
+  const path = pathOf(p, key);
+  if (value === undefined || value === null || p.shown.has(path)) {
     return [[key, value]];
   }
   if (TITLE_FIELDS.has(key)) {
@@ -414,9 +427,9 @@ const projectEntry = (
     return form === "omit" ? [] : [[key, withheldValue(form)]];
   }
   if (Array.isArray(value)) {
-    return [[key, projectList(p, key, value)]];
+    return [[key, projectList({ ...p, path }, key, value)]];
   }
-  return [[key, isPlainObject(value) ? projectObject(p, value) : value]];
+  return [[key, isPlainObject(value) ? projectObject({ ...p, path }, value) : value]];
 };
 
 /**
@@ -476,5 +489,5 @@ export const projectRow = <R extends object>(
     return row;
   }
   const shown: ReadonlySet<string> = new Set(owner.kind === undefined ? [] : SHOWN_FOR_HIDDEN[owner.kind]);
-  return projectObject({ owner, forms, reportedBranches, shown }, row) as R;
+  return projectObject({ owner, forms, reportedBranches, shown, path: "" }, row) as R;
 };
