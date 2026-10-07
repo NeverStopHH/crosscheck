@@ -236,6 +236,25 @@ describe("--stale-base", () => {
   });
 });
 
+describe("a connector's word against an operator's", () => {
+  test("a base the connector said was new keeps its stamp when named; only the override clears it", async () => {
+    // Arrange: wc_new_work's connector said its base was NOT on main.
+    const { harness } = await seedHub();
+
+    // Act
+    const named = await run(harness, [...DATA_DIR, "--scope", "all", "--stale-base", NEW_WORK_BASE, "--apply"]);
+    const keptAfterNamed = (await landedIds(harness.db)).includes("wc_new_work");
+    const overridden = await run(harness, [...DATA_DIR, "--scope", "all", "--stale-base-override", NEW_WORK_BASE, "--apply"]);
+    const keptAfterOverride = (await landedIds(harness.db)).includes("wc_new_work");
+
+    // Assert
+    expect(named.output).toContain("operator-named base 0");
+    expect(keptAfterNamed).toBe(true);
+    expect(overridden.output).toContain("operator override 1");
+    expect(keptAfterOverride).toBe(false);
+  });
+});
+
 describe("--data-dir", () => {
   test("must name an existing hub data dir, never a typo or another flag", async () => {
     // Arrange: a missing path, a directory that is not a data dir, and the

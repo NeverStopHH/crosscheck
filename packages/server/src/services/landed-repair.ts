@@ -15,14 +15,20 @@
  *   - default:  the session is ON the default branch the operator names
  *               (`--default-branch`), which the rule never lands either;
  *   - named:    the operator names the commit (`--stale-base`) — a known
- *               stale detached commit, say;
+ *               stale detached commit, say — for a session whose connector
+ *               did not say its base was new;
  *   - stale:    a clone dates the base more than LANDED_STALE_BASE_HOURS
  *               before the session took it (`--git-dir`; base_changed_at,
  *               else its start), for a session whose connector said nothing
  *               — the bound the ingest applies.
+ *   - override: the operator names the commit with `--stale-base-override`,
+ *               which clears it even where the connector said its base was
+ *               new — the one way to overrule that word, and a separate flag
+ *               so nobody does it by naming a base.
  * A base the connector said was NOT on the default branch keeps its stamp
- * against a date: its word is the better evidence. Without evidence a stamp
- * stays — the repair corrects what it can show, and guesses nothing.
+ * against a date AND against a plain `--stale-base`: its word is the better
+ * evidence. Without evidence a stamp stays — the repair corrects what it can
+ * show, and guesses nothing.
  */
 import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { isDefaultBranch, isDetachedBranch } from "@crosscheck/schema";
@@ -31,7 +37,7 @@ import { agentSessions, workContexts } from "../db/schema.ts";
 import type { DbExecutor } from "../db/client.ts";
 import { isStaleBase } from "./landed.ts";
 
-export const FALSE_LANDING_REASONS = ["flagged", "detached", "default", "named", "stale"] as const;
+export const FALSE_LANDING_REASONS = ["flagged", "detached", "default", "named", "stale", "override"] as const;
 export type FalseLandingReason = (typeof FALSE_LANDING_REASONS)[number];
 
 export interface LandedContextRow {
@@ -48,6 +54,8 @@ export interface RepairEvidence {
   readonly defaultBranch: string | null;
   /** Commits the operator knows were stale checkouts. */
   readonly namedBases: ReadonlySet<string>;
+  /** The same, overruling a connector that said its base was new. */
+  readonly overriddenBases: ReadonlySet<string>;
   /** Committer dates from a clone; null when none was given — age not judged. */
   readonly baseCommittedAt: ReadonlyMap<string, Date> | null;
 }
@@ -107,13 +115,14 @@ export const falseLandingReason = (
   if (isDefaultBranch(row.branch, evidence.defaultBranch)) {
     return "default";
   }
-  if (evidence.namedBases.has(row.baseCommit)) {
+  if (row.baseOnDefault !== false && evidence.namedBases.has(row.baseCommit)) {
     return "named";
   }
   const committedAt = evidence.baseCommittedAt?.get(row.baseCommit);
-  return row.baseOnDefault === null && committedAt !== undefined && isStaleBase(committedAt, row.baseAdoptedAt)
-    ? "stale"
-    : null;
+  if (row.baseOnDefault === null && committedAt !== undefined && isStaleBase(committedAt, row.baseAdoptedAt)) {
+    return "stale";
+  }
+  return evidence.overriddenBases.has(row.baseCommit) ? "override" : null;
 };
 
 /** What the operator's `--stale-base` prefixes name among the judged bases. */

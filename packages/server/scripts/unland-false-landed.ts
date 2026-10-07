@@ -28,7 +28,9 @@
  * are not, and the output says so. `--stale-base` names a commit known to be
  * a stale checkout, by its full sha or a prefix of 7+ hex digits; repeatable.
  * A prefix matching two landed bases stops the run before anything is
- * judged, and one matching none is said.
+ * judged, and one matching none is said. A context whose connector said its
+ * base was NEW keeps its stamp when named; `--stale-base-override <sha>`,
+ * a separate flag on purpose, is the one way to clear it.
  */
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -44,10 +46,11 @@ import {
   resolveNamedBases,
   unlandContexts,
 } from "../src/services/landed-repair.ts";
-import type { RepairPlan, RepairScope } from "../src/services/landed-repair.ts";
+import type { NamedBases, RepairPlan, RepairScope } from "../src/services/landed-repair.ts";
 
 const USAGE =
-  "usage: unland-false-landed.ts --data-dir <dir> [--scope open|all] [--default-branch <ref>] [--git-dir <clone>] [--stale-base <sha>]... [--apply]";
+  "usage: unland-false-landed.ts --data-dir <dir> [--scope open|all] [--default-branch <ref>] [--git-dir <clone>] " +
+  "[--stale-base <sha>]... [--stale-base-override <sha>]... [--force] [--apply]";
 /** What a dry run judges when no scope is named. */
 const DRY_RUN_SCOPE: RepairScope = "all";
 const SCOPE_LINES: Readonly<Record<RepairScope, string>> = {
@@ -90,12 +93,21 @@ interface Options {
   readonly defaultBranch: string | null;
   readonly gitDir: string | null;
   readonly staleBases: readonly string[];
+  /** --stale-base-override: named bases that overrule a connector's "new base". */
+  readonly overrideBases: readonly string[];
   readonly apply: boolean;
 }
 
 type Parsed = { readonly ok: true; readonly options: Options } | { readonly ok: false; readonly error: string };
 
-const VALUE_FLAGS = new Set(["--data-dir", "--scope", "--default-branch", "--git-dir", "--stale-base"]);
+const VALUE_FLAGS = new Set([
+  "--data-dir",
+  "--scope",
+  "--default-branch",
+  "--git-dir",
+  "--stale-base",
+  "--stale-base-override",
+]);
 
 const SWITCHES = new Set(["--apply", "--force"]);
 
@@ -139,9 +151,10 @@ const parseArgs = (argv: readonly string[]): Parsed => {
     return { ok: false, error: "--data-dir is required: name the (stopped, copied) hub data dir" };
   }
   const staleBases = valuesOf("--stale-base");
-  const notASha = staleBases.find((sha) => !COMMIT_SHA_PATTERN.test(sha));
+  const overrideBases = valuesOf("--stale-base-override");
+  const notASha = [...staleBases, ...overrideBases].find((sha) => !COMMIT_SHA_PATTERN.test(sha));
   if (notASha !== undefined) {
-    return { ok: false, error: "--stale-base takes a commit sha" };
+    return { ok: false, error: "--stale-base and --stale-base-override take a commit sha" };
   }
   const scope = valuesOf("--scope").at(-1);
   if (scope !== undefined && !isRepairScope(scope)) {
@@ -160,6 +173,7 @@ const parseArgs = (argv: readonly string[]): Parsed => {
       defaultBranch: valuesOf("--default-branch").at(-1) ?? null,
       gitDir: valuesOf("--git-dir").at(-1) ?? null,
       staleBases: staleBases.map((sha) => sha.toLowerCase()),
+      overrideBases: overrideBases.map((sha) => sha.toLowerCase()),
       apply,
     },
   };
@@ -174,6 +188,7 @@ const reasonLine = (plan: RepairPlan, options: Options, judgedAge: boolean): str
       : `on the default branch ${String(plan.byReason.default)}`,
     `operator-named base ${String(plan.byReason.named)}`,
     judgedAge ? `stale base ${String(plan.byReason.stale)}` : "stale base not judged (no --git-dir)",
+    `operator override ${String(plan.byReason.override)}`,
   ].join(" · ");
 
 /**
@@ -186,20 +201,30 @@ const datedLine = (bases: readonly string[], dates: ReadonlyMap<string, Date>): 
   return `git dates: ${String(dated)} of ${String(bases.length)} bases dated, ${String(bases.length - dated)} not in that clone`;
 };
 
+/**
+ * What one flag's prefixes named, said line by line: an ambiguous prefix
+ * (true is returned — the run must stop) and an unmatched one.
+ */
+const reportNamed = (flag: string, named: NamedBases, deps: UnlandDeps): boolean => {
+  for (const { prefix, matches } of named.ambiguous) {
+    deps.write(`${flag} ${prefix} matches ${String(matches)} landed bases: give more of the sha`);
+  }
+  for (const prefix of named.unmatched) {
+    deps.write(`${flag} ${prefix} matches no landed base`);
+  }
+  return named.ambiguous.length > 0;
+};
+
 const runOnHub = async (db: Db, options: Options, deps: UnlandDeps): Promise<number> => {
   deps.write(SCOPE_LINES[options.scope]);
   const rows = await listLandedContexts(db, options.scope);
   const bases = [...new Set(rows.map((row) => row.baseCommit))];
   const named = resolveNamedBases(options.staleBases, bases);
-  if (named.ambiguous.length > 0) {
+  const overridden = resolveNamedBases(options.overrideBases, bases);
+  const namedAmbiguous = reportNamed("--stale-base", named, deps);
+  if (reportNamed("--stale-base-override", overridden, deps) || namedAmbiguous) {
     // A guess would un-land a context nobody named: nothing is judged at all.
-    for (const { prefix, matches } of named.ambiguous) {
-      deps.write(`--stale-base ${prefix} matches ${String(matches)} landed bases: give more of the sha`);
-    }
     return EXIT_USAGE;
-  }
-  for (const prefix of named.unmatched) {
-    deps.write(`--stale-base ${prefix} matches no landed base`);
   }
   const baseCommittedAt = options.gitDir === null ? null : await deps.readCommitDates(options.gitDir, bases);
   if (baseCommittedAt !== null) {
@@ -208,6 +233,7 @@ const runOnHub = async (db: Db, options: Options, deps: UnlandDeps): Promise<num
   const plan = planLandedRepair(rows, {
     defaultBranch: options.defaultBranch,
     namedBases: named.resolved,
+    overriddenBases: overridden.resolved,
     baseCommittedAt,
   });
   deps.write(`landed contexts: ${String(plan.landed)}`);

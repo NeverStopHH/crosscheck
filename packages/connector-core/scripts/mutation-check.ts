@@ -23577,8 +23577,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the landed repair un-lands a session that said its base was new, on its date",
     file: `${SERVER}/src/services/landed-repair.ts`,
-    from: "  return row.baseOnDefault === null && committedAt !== undefined && isStaleBase(committedAt, row.baseAdoptedAt)",
-    to: "  return committedAt !== undefined && isStaleBase(committedAt, row.baseAdoptedAt)",
+    from: "  if (row.baseOnDefault === null && committedAt !== undefined && isStaleBase(committedAt, row.baseAdoptedAt)) {",
+    to: "  if (committedAt !== undefined && isStaleBase(committedAt, row.baseAdoptedAt)) {",
     test: `${SERVER}/test/landed-repair.test.ts`,
     because: "a real landing is undone on a heuristic its connector's own word contradicts",
   },
@@ -23858,8 +23858,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the landed repair names a base by a prefix two bases share",
     file: `${SERVER}/scripts/unland-false-landed.ts`,
-    from: "  if (named.ambiguous.length > 0) {",
-    to: "  if (false) {",
+    from: "  return named.ambiguous.length > 0;\n};",
+    to: "  return false;\n};",
     test: `${SERVER}/test/landed-repair.test.ts`,
     because: "an ambiguous short sha un-lands a context the operator never named",
   },
@@ -23870,6 +23870,23 @@ export const MUTATIONS: readonly Mutation[
     to: "    lowered.filter(({ key }) => key === prefix.toLowerCase()).map(({ base }) => base);",
     test: `${SERVER}/test/landed-repair.test.ts`,
     because: "the short sha an operator copies from git log silently names nothing",
+  },
+  // A connector's "new base" against an operator's name (the review's OM7).
+  {
+    label: "a named base clears a stamp its connector said was new",
+    file: `${SERVER}/src/services/landed-repair.ts`,
+    from: "  if (row.baseOnDefault !== false && evidence.namedBases.has(row.baseCommit)) {",
+    to: "  if (evidence.namedBases.has(row.baseCommit)) {",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "a real landing is undone by a sha the operator typed for a different reason, with no override asked",
+  },
+  {
+    label: "the landed repair's override clears nothing",
+    file: `${SERVER}/src/services/landed-repair.ts`,
+    from: "  return evidence.overriddenBases.has(row.baseCommit) ? \"override\" : null;",
+    to: "  return null;",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "the one documented way to overrule a connector's word does nothing",
   },
 ];
 
@@ -24253,7 +24270,7 @@ interface Outcome {
  * PRINTS: packages/server/test/key-rotation.test.ts 6
  * PRINTS: packages/server/test/landed-context.test.ts 22
  * PRINTS: packages/server/test/landed-notices.test.ts 34
- * PRINTS: packages/server/test/landed-repair.test.ts 18
+ * PRINTS: packages/server/test/landed-repair.test.ts 20
  * PRINTS: packages/server/test/landed.test.ts 15
  * PRINTS: packages/server/test/live-location-cost.test.ts 3
  * PRINTS: packages/server/test/live-location-differential.test.ts 5
