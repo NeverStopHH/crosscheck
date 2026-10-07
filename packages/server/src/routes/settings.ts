@@ -91,7 +91,7 @@ export const settingsRoutes = (deps: AppDeps): Hono<AppEnv> => {
   router.use("*", developerAuth(deps));
 
   router.get("/", async (c) => {
-    const settings = await getDeveloperSettings(deps.db, c.get("developer").id);
+    const settings = await getDeveloperSettings(deps.db, c.get("developer").id, deps.now());
     return ok(c, settings);
   });
 

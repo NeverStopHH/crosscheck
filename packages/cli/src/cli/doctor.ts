@@ -76,6 +76,7 @@ import {
   formatCloudAgentLink,
 } from "@crosscheck/connector-core/briefing/render.ts";
 import { bareUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
+import { presenceReenabledLine } from "@crosscheck/connector-core/briefing/presence-notice.ts";
 import { getCiVerdict } from "@crosscheck/connector-core/http/hub.ts";
 import type { CiCoverage } from "@crosscheck/connector-core/http/hub.ts";
 import { CI_PROVIDERS, CI_KNOWN_PROVIDERS } from "@crosscheck/schema";
@@ -1742,6 +1743,15 @@ const checkPrivacy = async (ctx: HubContext): Promise<Check> => {
   const result = await getPrivacySettings(ctx);
   if (!result.ok) {
     return check("PASS", "privacy settings", "not measured");
+  }
+  // Hub hardening, item 6: an opt-out switched back off through the API key
+  // may have been an agent's doing, so it is a WARN until it ages out or the
+  // person switches presence off again. The words are doctor's own; the hub
+  // sent an instant, re-serialised here.
+  const reenabled =
+    result.data.presenceReenabledAt === null ? null : presenceReenabledLine(result.data.presenceReenabledAt);
+  if (reenabled !== null) {
+    return check("WARN", "privacy settings", reenabled);
   }
   const presencePart = result.data.presenceOptOut
     ? "presence hidden (opt-out)"

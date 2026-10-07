@@ -303,12 +303,14 @@ describe("presence opt-out: the whole attributed event feed", () => {
       attributedTo(own, robin.developerId).map((event) => event.kind),
     ).toEqual(ROBIN_FEED_KINDS);
 
-    // Act + Assert: live switch — opting back in restores every hidden row.
+    // Act + Assert: live switch — opting back in restores every hidden row,
+    // and is itself recorded: switching an opt-out off is never silent (hub
+    // hardening, item 6; presence-reenable.test.ts).
     await setOptOut(harness, robin, false);
     const restored = await fetchEvents(harness, nick.apiKey);
     expect(
       attributedTo(restored, robin.developerId).map((event) => event.kind),
-    ).toEqual(ROBIN_FEED_KINDS);
+    ).toEqual([...ROBIN_FEED_KINDS, "presence_reenabled"]);
   });
 });
 

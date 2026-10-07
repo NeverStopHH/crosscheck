@@ -569,6 +569,10 @@ export const EVENT_KINDS = {
   // Ids and who did it only — never key material. A rotation is a team-level
   // security fact (a leaked key was retired), so it belongs in the feed.
   DEVELOPER_KEY_ROTATED: "developer_key_rotated",
+  // A presence opt-out switched back OFF (services/developer-settings.ts).
+  // The hub cannot tell the person from an agent holding the key, so the
+  // less private direction is never silent. Ids only.
+  PRESENCE_REENABLED: "presence_reenabled",
   SESSION_STARTED: "session_started",
   SESSION_ENDED: "session_ended",
   WORK_CONTEXT_CREATED: "work_context_created",
@@ -598,7 +602,15 @@ export type EventKind = (typeof EVENT_KINDS)[keyof typeof EVENT_KINDS];
  * opted-out person's feed rows would be an activity timeline again. Each
  * kind listed must carry no live-location field (no branch, HEAD, base
  * commit or heartbeat); `developer_key_rotated` carries the developer id and
- * `by`. Its instant is the residual visibility.ts names «security».
+ * `by`, `presence_reenabled` the developer id alone. Their instants are the
+ * residual visibility.ts names «security».
+ *
+ *   - developer_key_rotated: a credential changed. A leaked key retired, or
+ *     a key the person did not rotate replaced, is what the team must see.
+ *   - presence_reenabled: a works-council opt-out undone. It is the one
+ *     settings change an agent holding the key could make to expose its
+ *     person, so it is a credential act in effect, and it must outlive the
+ *     next opt-out too.
  *
  * Passkey enrolment and revocation, suspension and reinstatement, and other
  * credential revocations belong here too the day they become feed events.
@@ -606,7 +618,19 @@ export type EventKind = (typeof EVENT_KINDS)[keyof typeof EVENT_KINDS];
  * /api/passkeys/announcements and /ui/passkeys, which apply no presence
  * filter at all.
  */
-export const SECURITY_EVENT_KINDS: readonly EventKind[] = [EVENT_KINDS.DEVELOPER_KEY_ROTATED];
+export const SECURITY_EVENT_KINDS: readonly EventKind[] = [
+  EVENT_KINDS.DEVELOPER_KEY_ROTATED,
+  EVENT_KINDS.PRESENCE_REENABLED,
+];
+
+/**
+ * How long the person is told that their presence opt-out was switched back
+ * off (`presenceReenabledAt` on GET /api/settings: the SessionStart briefing,
+ * `crosscheck status` and doctor). The passkey announcement's window
+ * (PASSKEY_ANNOUNCEMENT_DAYS), for the same reason: a person away for days
+ * still finds it waiting. Switching presence off again ends it at once.
+ */
+export const PRESENCE_REENABLE_NOTICE_DAYS = 7;
 // ── Agent conferences (VISION.md §2) ────────────────────────────────────────
 
 /**

@@ -55,6 +55,7 @@ export interface FeedEntry {
 const EVENT_PHRASES: Readonly<Record<string, string>> = {
   [EVENT_KINDS.DEVELOPER_CREATED]: "joined the hub",
   [EVENT_KINDS.DEVELOPER_KEY_ROTATED]: "rotated their API key",
+  [EVENT_KINDS.PRESENCE_REENABLED]: "had their presence opt-out switched off through an API key",
   [EVENT_KINDS.SESSION_STARTED]: "started a session",
   [EVENT_KINDS.SESSION_ENDED]: "ended a session",
   [EVENT_KINDS.WORK_CONTEXT_CREATED]: "opened work context",

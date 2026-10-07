@@ -2239,8 +2239,13 @@ export const PrivacySettingsSchema = z
     presenceOptOut: z.boolean(),
     mutes: z.array(z.unknown()).default([]),
     emails: z.array(z.unknown()).default([]),
+    // When the opt-out was last switched back off (hub developer-settings.ts).
+    // An older hub sends nothing, and a value that is not an ISO instant
+    // reads as nothing: tolerant, so it never costs the settings read.
+    presenceReenabledAt: z.iso.datetime().nullable().optional().catch(null),
   })
   .transform((value) => ({
+    presenceReenabledAt: value.presenceReenabledAt ?? null,
     presenceOptOut: value.presenceOptOut,
     mutes: value.mutes
       .map((item) => MutedDeveloperSchema.safeParse(item))
@@ -2256,6 +2261,8 @@ export interface PrivacySettings {
   readonly presenceOptOut: boolean;
   readonly mutes: readonly MutedDeveloper[];
   readonly emails: readonly OwnEmail[];
+  /** ISO instant the opt-out was last switched back off while presence is on, or null. */
+  readonly presenceReenabledAt: string | null;
 }
 
 export const getPrivacySettings = (

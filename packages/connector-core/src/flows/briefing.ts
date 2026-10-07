@@ -1,6 +1,6 @@
 /**
  * `assembleBriefing` (DESIGN-agent-agnostic.md §1.3) — the session-start
- * briefing recipe as an extracted function: eight parallel hub GETs → drift for
+ * briefing recipe as an extracted function: one block of parallel hub GETs → drift for
  * the teammates that will actually be shown → `renderBriefing` → the solved
  * pointers the EMITTED text really contains.
  *
@@ -52,10 +52,12 @@ import {
   getGhostChecks,
   getLandedNotices,
   getPresence,
+  getPrivacySettings,
   getQuestions,
   getSolvedPointers,
   getWorkContexts,
 } from "../http/hub.ts";
+import { presenceReenabledBriefingLine } from "../briefing/presence-notice.ts";
 import { withBriefingOutcomeClause } from "../hints/outcome-clause.ts";
 import type { HubResult } from "../http/client.ts";
 import type {
@@ -153,6 +155,7 @@ export const assembleBriefing = async (
     questionsResult,
     ghostChecksResult,
     landedNoticesResult,
+    privacyResult,
   ] = await Promise.all([
     getPresence(hub, repoId),
     // The window, passed EXPLICITLY (trial finding M8): the hub's default is
@@ -180,6 +183,10 @@ export const assembleBriefing = async (
     // Landed changes, step 4: the author's notices, addressed to this reader.
     // Same block, same one timeout; an older hub renders no section.
     input.tellsNotices === false ? Promise.resolve(NO_NOTICES) : getLandedNotices(hub, repoId),
+    // Hub hardening, item 6: whether the reader's presence opt-out was
+    // switched back off through an API key. Same block, same one timeout; an
+    // older hub sends no such field, and the briefing says nothing.
+    getPrivacySettings(hub),
   ]);
   const presence = presenceResult.ok ? presenceResult.data : [];
   const workContexts = contextsResult.ok ? contextsResult.data : [];
@@ -205,6 +212,8 @@ export const assembleBriefing = async (
   const questions = questionsResult.ok ? questionsResult.data.inbox : [];
   const ghostChecks = ghostChecksResult.ok ? ghostChecksResult.data : [];
   const landedNotices = landedNoticesResult.ok ? landedNoticesResult.data : [];
+  const reenabledAt = privacyResult.ok ? privacyResult.data.presenceReenabledAt : null;
+  const presenceNotice = reenabledAt === null ? null : presenceReenabledBriefingLine(reenabledAt);
 
   // Only the teammates that will actually be shown cost a git process; the
   // optional rider shares the fan-out window, so both together still cost one
@@ -233,6 +242,7 @@ export const assembleBriefing = async (
     ghostChecks,
     landedNotices,
     ...(coverageLine === null ? {} : { coverageLine }),
+    ...(presenceNotice === null ? {} : { presenceNotice }),
   });
 
   const shownSolvedIds = solvedMatches

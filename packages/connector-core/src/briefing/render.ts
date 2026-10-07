@@ -170,6 +170,13 @@ export interface BriefingInput {
    * spliced in beside the header, where the fitter cannot reach it.
    */
   readonly coverageLine?: string | undefined;
+  /**
+   * That the reader's presence opt-out was switched back off through an API
+   * key (briefing/presence-notice.ts), ALREADY RENDERED. Like the coverage
+   * line it is no Section: a security notice the budget could cut would be a
+   * silent undo again, so it sits beside the header too.
+   */
+  readonly presenceNotice?: string | undefined;
 }
 
 interface Section {
@@ -1415,8 +1422,15 @@ export const renderBriefing = (input: BriefingInput): string => {
     input.coverageLine === undefined || input.coverageLine.length === 0
       ? []
       : [input.coverageLine];
+  // The presence notice speaks even when nothing else does: an undone opt-out
+  // is news to the reader whatever the repo is doing.
+  const presenceLines =
+    input.presenceNotice === undefined || input.presenceNotice.length === 0
+      ? []
+      : [input.presenceNotice];
   if (
     coverageLines.length === 0 &&
+    presenceLines.length === 0 &&
     sections.every((section) => section.lines.length === 0)
   ) {
     return "";
@@ -1430,6 +1444,7 @@ export const renderBriefing = (input: BriefingInput): string => {
   const header = `crosscheck facts about ${repoLabel.length === 0 ? UNKNOWN_REPO : repoLabel}. ${QUOTED_DATA_NOTICE}`;
   const lines = sections.reduce<readonly string[]>(appendSection, [
     header,
+    ...presenceLines,
     ...coverageLines,
   ]);
   return lines.length <= 1 ? "" : lines.join("\n");

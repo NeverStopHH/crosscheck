@@ -24150,10 +24150,67 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a work-activity event is exempt from the presence opt-out",
     file: `${SERVER}/src/constants.ts`,
-    from: "export const SECURITY_EVENT_KINDS: readonly EventKind[] = [EVENT_KINDS.DEVELOPER_KEY_ROTATED];",
-    to: "export const SECURITY_EVENT_KINDS: readonly EventKind[] = [EVENT_KINDS.DEVELOPER_KEY_ROTATED, EVENT_KINDS.SESSION_STARTED];",
+    from: "  EVENT_KINDS.PRESENCE_REENABLED,\n];",
+    to: "  EVENT_KINDS.PRESENCE_REENABLED,\n  EVENT_KINDS.SESSION_STARTED,\n];",
     test: `${SERVER}/test/security-events-feed.test.ts`,
     because: "an opted-out person's session starts reach every colleague's feed, the activity timeline the opt-out exists to withhold",
+  },
+  // A presence opt-out could be undone silently with the API key (hub hardening, item 6).
+  {
+    label: "a presence re-enable is silent",
+    file: `${SERVER}/src/services/developer-settings.ts`,
+    from: "    if (before[0]?.presenceOptOut === true && !optOut) {",
+    to: "    if (false) {",
+    test: `${SERVER}/test/presence-reenable.test.ts`,
+    because: "an agent holding the key switches a works-council opt-out off and nobody, the person included, is told",
+  },
+  {
+    label: "a presence re-enable is never told to the person",
+    file: `${SERVER}/src/services/developer-settings.ts`,
+    from: "    presenceReenabledAt: presenceOptOut ? null : await latestPresenceReenable(db, developerId, noticeSince),",
+    to: "    presenceReenabledAt: null,",
+    test: `${SERVER}/test/presence-reenable.test.ts`,
+    because: "the event sits in the feed while the one person it concerns hears nothing on briefing, status or doctor",
+  },
+  {
+    label: "a presence re-enable leaves the feed with the next opt-out",
+    file: `${SERVER}/src/constants.ts`,
+    from: "  EVENT_KINDS.PRESENCE_REENABLED,\n];",
+    to: "];",
+    test: `${SERVER}/test/presence-reenable.test.ts`,
+    because: "the agent undoes the opt-out, then restores it, and the record of the undo vanishes from every colleague's feed",
+  },
+  {
+    label: "the briefing never carries the presence notice",
+    file: `${CORE}/src/flows/briefing.ts`,
+    from: "    ...(presenceNotice === null ? {} : { presenceNotice }),\n",
+    to: "",
+    test: `${CORE}/test/briefing-presence-notice.test.ts`,
+    because: "the SessionStart briefing, the one surface every session shows, says nothing of an undone opt-out",
+  },
+  {
+    label: "a briefing with only the presence notice stays silent",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "    presenceLines.length === 0 &&\n",
+    to: "",
+    test: `${CORE}/test/briefing-presence-notice.test.ts`,
+    because: "on a quiet repo, the usual case, the notice is rendered away with the rest of an empty briefing",
+  },
+  {
+    label: "doctor passes a presence opt-out switched back off",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: '  if (reenabled !== null) {\n    return check("WARN", "privacy settings", reenabled);',
+    to: '  if (false) {\n    return check("WARN", "privacy settings", reenabled);',
+    test: `${CLI}/test/presence-reenabled-cli.test.ts`,
+    because: "doctor prints PASS presence visible over an opt-out an agent undid",
+  },
+  {
+    label: "status leaves out a presence opt-out switched back off",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "        ...(reenabledLine === null ? [] : [reenabledLine]),\n",
+    to: "",
+    test: `${CLI}/test/presence-reenabled-cli.test.ts`,
+    because: "status says presence: visible and nothing about who made it so",
   },
 ];
 
@@ -24256,6 +24313,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pin-waive-hostile-hub.test.ts 1
  * PRINTS: packages/cli/test/pins-cli.test.ts 6
+ * PRINTS: packages/cli/test/presence-reenabled-cli.test.ts 2
  * PRINTS: packages/cli/test/publish-workflow.test.ts 2
  * PRINTS: packages/cli/test/release-preflight.test.ts 5
  * PRINTS: packages/cli/test/revalidate-cli.test.ts 1
@@ -24352,6 +24410,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 25
  * PRINTS: packages/connector-core/test/briefing-flow.test.ts 3
  * PRINTS: packages/connector-core/test/briefing-notice.test.ts 1
+ * PRINTS: packages/connector-core/test/briefing-presence-notice.test.ts 2
  * PRINTS: packages/connector-core/test/briefing-presence-topics.test.ts 6
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 5
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 3
@@ -24569,6 +24628,7 @@ interface Outcome {
  * PRINTS: packages/server/test/pilot-substance-channel.test.ts 2
  * PRINTS: packages/server/test/pins.test.ts 4
  * PRINTS: packages/server/test/presence-optout.test.ts 2
+ * PRINTS: packages/server/test/presence-reenable.test.ts 3
  * PRINTS: packages/server/test/presence.test.ts 1
  * PRINTS: packages/server/test/questions.test.ts 8
  * PRINTS: packages/server/test/records.test.ts 2

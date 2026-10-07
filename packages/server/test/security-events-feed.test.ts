@@ -90,6 +90,6 @@ describe("the presence opt-out hides work activity, never a security event", () 
   });
 
   test("the exempt set is credential changes only, never work activity", () => {
-    expect(SECURITY_EVENT_KINDS).toEqual(["developer_key_rotated"]);
+    expect(SECURITY_EVENT_KINDS).toEqual(["developer_key_rotated", "presence_reenabled"]);
   });
 });

@@ -13,6 +13,7 @@ import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { renderIntent } from "@crosscheck/connector-core/briefing/intent.ts";
 import { formatQuestionCounts } from "@crosscheck/connector-core/briefing/questions.ts";
+import { presenceReenabledLine } from "@crosscheck/connector-core/briefing/presence-notice.ts";
 import { formatSolvedCounts } from "@crosscheck/connector-core/hints/precision.ts";
 import {
   countOf,
@@ -477,9 +478,16 @@ export const runStatus = async (
     liveStates: liveStates.states,
     now,
   });
+  // Hub hardening, item 6: an opt-out switched back off through the API key
+  // is told here, where the person looks, since an agent could have done it.
+  const reenabledLine =
+    privacy.ok && privacy.data.presenceReenabledAt !== null
+      ? presenceReenabledLine(privacy.data.presenceReenabledAt)
+      : null;
   const privacyLines = privacy.ok
     ? [
         presenceStateLine(privacy.data.presenceOptOut),
+        ...(reenabledLine === null ? [] : [reenabledLine]),
         `muted: ${
           privacy.data.mutes.length === 0
             ? "(none)"
