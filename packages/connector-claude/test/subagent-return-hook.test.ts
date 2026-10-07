@@ -24,8 +24,10 @@ import {
   collisionFixture,
   editPayload,
   parsed,
+  presentNow,
   promptPayload,
 } from "./fixtures/collision-fixture.ts";
+import { TEAMMATE_DEVELOPER_ID } from "../../connector-core/test/fixtures/hint-hub.ts";
 
 afterEach(cleanupCollisionFixtures);
 
@@ -47,9 +49,11 @@ const hubCalls = (calls: object): number =>
 
 describe("a foreground subagent's return", () => {
   test("hands the main thread its queued collision in the same turn — the person's line and the agent's facts", async () => {
-    // Arrange: a subagent ran into Nick's work
-    const { repo, home, hub, env } = await collisionFixture("sr-drain");
+    // Arrange: a subagent ran into Nick's work, and presence still lists him
+    const fix = await collisionFixture("sr-drain");
+    const { repo, home, hub, env } = fix;
     await runHook("pre-tool-use", editPayload(repo, OVERLAP_FILE, SUBAGENT), env);
+    await presentNow(fix, [TEAMMATE_DEVELOPER_ID]);
     const before = hubCalls(hub.calls);
 
     // Act

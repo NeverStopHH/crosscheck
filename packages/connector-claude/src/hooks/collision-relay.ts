@@ -3,6 +3,7 @@
  * of the owner's edits were made by subagents). hooks/pre-tool-use.ts queues
  * the teammate groups a subagent ran into; this drains the queue for the
  * MAIN thread, once, from whichever of its sync hooks gets there first —
+ * named only when live presence confirms the teammate, unnamed otherwise —
  * UserPromptSubmit (which also fires when a background subagent reports
  * back) or the PostToolUse hook on the subagent tools, which fires the moment
  * a foreground subagent RETURNS (hooks/subagent-return.ts).
@@ -12,11 +13,11 @@
  * rendered by core hints/collision-notice.ts; this module composes nothing.
  */
 import {
+  relayedCollisions,
   renderCollisionNotices,
   renderSubagentCollisionRelay,
-  stillPresent,
-  withoutStaleLocation,
 } from "@crosscheck/connector-core/hints/collision-notice.ts";
+import type { RenderableCollision } from "@crosscheck/connector-core/hints/collision-notice.ts";
 import { isCacheFresh, readPresenceCache } from "@crosscheck/connector-core/state/presence-cache.ts";
 import {
   readSessionState,
@@ -36,22 +37,22 @@ export interface CollisionRelay {
 export const NO_RELAY: CollisionRelay = { agent: "", person: "" };
 
 /**
- * A queued group held to presence AS IT IS NOW (review M2): the hub's
- * presence answer drops a teammate who opted out, one the reader muted, and
- * one whose session ended — and cannot say which — so a FRESH answer that no
- * longer lists the teammate drops the group whole: privacy wins over a late
- * line. A stale or missing answer says nothing either way; then only the
- * location goes once the hit is older than the presence TTL. One local file
- * read, no hub call.
+ * A queued group held to presence AS IT IS NOW (review M2, round 2 H1): the
+ * hub's presence answer drops a teammate who opted out, one the reader muted,
+ * and one whose session ended — and cannot say which — so only a FRESH answer
+ * that lists the teammate names them. Anything else — an answer without them,
+ * a stale cache, no cache — is relayed UNNAMED (core `relayedCollisions`): a
+ * queued hit is never turned into nothing, and the same queue says the same
+ * thing whatever the cache's age. One local file read, no hub call.
  */
 const asPresentNow = async (
   ctx: HookContext,
   groups: readonly CollisionNotice[],
-): Promise<readonly CollisionNotice[]> => {
+): Promise<readonly RenderableCollision[]> => {
   const now = ctx.now();
   const cache = await readPresenceCache(ctx.config.home, ctx.repoKey);
-  const listed = cache !== null && isCacheFresh(cache, now) ? stillPresent(groups, cache.entries) : groups;
-  return listed.map((group) => withoutStaleLocation(group, now));
+  const live = cache !== null && isCacheFresh(cache, now) ? cache.entries : [];
+  return relayedCollisions(groups, live, now);
 };
 
 /**

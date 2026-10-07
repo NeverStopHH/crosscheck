@@ -11,6 +11,7 @@ import { runHook, runStatusline } from "../src/index.ts";
 import { readSessionState, updateSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { COLLISION_INDICATOR_MAX_CHARS } from "@crosscheck/connector-core/constants.ts";
 import { assertUntrustedCharacters } from "../../connector-core/test/fixtures/untrusted-invariants.ts";
+import { TEAMMATE_DEVELOPER_ID } from "../../connector-core/test/fixtures/hint-hub.ts";
 import {
   NICK_NOTICE,
   OVERLAP_FILE,
@@ -32,12 +33,14 @@ afterEach(cleanupCollisionFixtures);
 describe("a subagent's queued collision outlives a compact", () => {
   test("queued before the compact, relayed at the first prompt after it", async () => {
     // Arrange
-    const { repo, home, env } = await collisionFixture("cr-compact");
+    const fix = await collisionFixture("cr-compact");
+    const { repo, home, env } = fix;
     await runHook("pre-tool-use", editPayload(repo, OVERLAP_FILE, SUBAGENT), env);
 
     // Act
     await runHook("session-start", sessionStartPayload(repo, "compact"), env);
     const carried = await readSessionState(home, SESSION_ID);
+    await presentNow(fix, [TEAMMATE_DEVELOPER_ID]);
     const prompt = parsed(await runHook("user-prompt-submit", promptPayload(repo), env));
 
     // Assert
@@ -49,10 +52,12 @@ describe("a subagent's queued collision outlives a compact", () => {
 describe("the main thread is handed only what a subagent queued", () => {
   test("a group the main thread was told in place is not relayed with a subagent's", async () => {
     // Arrange: the main thread meets Nick itself; a subagent then meets Ken
-    const { repo, hub, env } = await collisionFixture("cr-only-queued");
+    const fix = await collisionFixture("cr-only-queued");
+    const { repo, hub, env } = fix;
     await runHook("pre-tool-use", editPayload(repo, OVERLAP_FILE), env);
     hub.setTripwireSessions([kenSession()]);
     await runHook("pre-tool-use", editPayload(repo, SECOND_FILE, SUBAGENT), env);
+    await presentNow(fix, [TEAMMATE_DEVELOPER_ID, "dev_ken"]);
 
     // Act
     const prompt = parsed(await runHook("user-prompt-submit", promptPayload(repo), env));

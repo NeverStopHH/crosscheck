@@ -211,12 +211,25 @@ export const MIKE_GHOST_NOTICE =
 export const sessionStartPayload = (repo: string, source: string): string =>
   JSON.stringify({ session_id: SESSION_ID, cwd: repo, hook_event_name: "SessionStart", source });
 
+/** How a presence answer in the cache was fetched, and what its rows say. */
+export interface PresenceAnswer {
+  /** When the answer was fetched — the default, now, is a FRESH cache. */
+  readonly fetchedAt?: Date;
+  readonly branch?: string;
+  readonly lastHeartbeatAt?: Date;
+}
+
 /**
- * A FRESH presence answer in the cache the statusline and the relay read,
- * naming exactly these developers as present — what the hub's presence
- * endpoint says once it has dropped the opted-out, the muted and the ended.
+ * A presence answer in the cache the statusline and the relay read, naming
+ * exactly these developers as present — what the hub's presence endpoint says
+ * once it has dropped the opted-out, the muted and the ended. Fresh unless
+ * `fetchedAt` says otherwise.
  */
-export const presentNow = async (fixture: CollisionFixture, developerIds: readonly string[]): Promise<void> => {
+export const presentNow = async (
+  fixture: CollisionFixture,
+  developerIds: readonly string[],
+  answer: PresenceAnswer = {},
+): Promise<void> => {
   await writePresenceCache(
     fixture.home,
     repoKey(fixture.hub.url, REPO_ID),
@@ -224,14 +237,18 @@ export const presentNow = async (fixture: CollisionFixture, developerIds: readon
       sessionId: `cc_${developerId}`,
       developerId,
       developerName: developerId,
-      branch: "feat/x",
+      branch: answer.branch ?? "feat/x",
       status: "implementing",
-      lastHeartbeatAt: new Date().toISOString(),
+      lastHeartbeatAt: (answer.lastHeartbeatAt ?? new Date()).toISOString(),
       isSelf: false,
     })),
-    new Date(),
+    answer.fetchedAt ?? new Date(),
   );
 };
+
+/** The relayed line for a teammate live presence did not confirm, on OVERLAP_FILE. */
+export const UNNAMED_REFRESH_NOTICE =
+  "crosscheck: A teammate recently worked on refresh.ts — talk to your team before you change it";
 
 /** A second live teammate, Ken, on his own work context. */
 export const kenSession = (): Record<string, unknown> => ({

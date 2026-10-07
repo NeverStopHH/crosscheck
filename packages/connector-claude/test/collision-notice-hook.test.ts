@@ -148,12 +148,14 @@ describe("a tripwire hit is told to the person, not only to the agent", () => {
 
 describe("a SUBAGENT's hit reaches the main thread", () => {
   test("queued at the subagent's ask, delivered once at the main thread's next prompt", async () => {
-    // Arrange
-    const { repo, home, env } = await fixture("cn-sub");
+    // Arrange: Nick still listed by a fresh presence answer at the drain
+    const fix = await fixture("cn-sub");
+    const { repo, home, env } = fix;
 
     // Act
     const ask = parsed(await runHook("pre-tool-use", editPayload(repo, OVERLAP_FILE, SUBAGENT), env));
     const queued = await readSessionState(home, SESSION_ID);
+    await presentNow(fix, [TEAMMATE_DEVELOPER_ID]);
     const first = parsed(await runHook("user-prompt-submit", promptPayload(repo), env));
     const second = await runHook("user-prompt-submit", promptPayload(repo), env);
 
@@ -189,9 +191,11 @@ describe("a SUBAGENT's hit reaches the main thread", () => {
 
   test("two subagents on two files of one teammate's work are relayed as one", async () => {
     // Arrange
-    const { repo, env } = await fixture("cn-sub-dedup");
+    const fix = await fixture("cn-sub-dedup");
+    const { repo, env } = fix;
     await runHook("pre-tool-use", editPayload(repo, OVERLAP_FILE, SUBAGENT), env);
     await runHook("pre-tool-use", editPayload(repo, SECOND_FILE, { ...SUBAGENT, agent_id: "agent-def456" }), env);
+    await presentNow(fix, [TEAMMATE_DEVELOPER_ID]);
 
     // Act
     const relay = parsed(await runHook("user-prompt-submit", promptPayload(repo), env)).hookSpecificOutput
@@ -202,10 +206,12 @@ describe("a SUBAGENT's hit reaches the main thread", () => {
   });
 
   test("a withheld branch is not named on the main thread either", async () => {
-    // Arrange
-    const { repo, hub, env } = await fixture("cn-sub-optout");
+    // Arrange: the presence answer withholds his location as the tripwire row did
+    const fix = await fixture("cn-sub-optout");
+    const { repo, hub, env } = fix;
     hub.setTripwireSessions([{ ...activeTeammateSession(), branch: LOCATION_WITHHELD }]);
     await runHook("pre-tool-use", editPayload(repo, OVERLAP_FILE, SUBAGENT), env);
+    await presentNow(fix, [TEAMMATE_DEVELOPER_ID], { branch: LOCATION_WITHHELD });
 
     // Act
     const relay = parsed(await runHook("user-prompt-submit", promptPayload(repo), env)).hookSpecificOutput

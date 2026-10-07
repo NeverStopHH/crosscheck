@@ -30,9 +30,11 @@ import {
   ghostFixture,
   mikeGhostRow,
   parsed,
+  presentNow,
   promptPayload,
   sessionStartPayload,
 } from "./fixtures/collision-fixture.ts";
+import { TEAMMATE_DEVELOPER_ID } from "../../connector-core/test/fixtures/hint-hub.ts";
 
 const SPENT: HookBudget = { spareMs: () => 0 };
 const AMPLE: HookBudget = { spareMs: () => 60_000 };
@@ -80,9 +82,11 @@ describe("the tripwire's notice is claimed last", () => {
 
 describe("the subagent relay is drained last", () => {
   test("with the spare spent, the queue waits for the next prompt instead of draining into nothing", async () => {
-    // Arrange: a subagent's hit is queued
-    const { repo, home, env } = await collisionFixture("co-relay");
+    // Arrange: a subagent's hit is queued, and presence still lists Nick
+    const fix = await collisionFixture("co-relay");
+    const { repo, home, env } = fix;
     await handlePreToolUse(await contextFor(editPayload(repo, OVERLAP_FILE, SUBAGENT), env), AMPLE);
+    await presentNow(fix, [TEAMMATE_DEVELOPER_ID]);
 
     // Act
     const spent = await handleUserPromptSubmit(await contextFor(promptPayload(repo), env), SPENT);

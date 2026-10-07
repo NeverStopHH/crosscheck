@@ -35,6 +35,7 @@ import {
   renderTripwireReason,
 } from "./hints/render.ts";
 import {
+  anonymousCollision,
   ghostCollisions,
   renderCollisionNotices,
   renderOverlapIndicator,
@@ -1135,6 +1136,9 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
           // ...and the LANDED shape, which words the same fields differently
           tripwireCollision({ ...tripwireSessionWith(payload), landedAt: ISO }, payload),
           ...ghostCollisions([ghostCheckWith(payload)]),
+          // ...and the UNNAMED shape a relay falls back to when live presence
+          // cannot confirm the teammate (round 2, H1): only the file remains
+          anonymousCollision(tripwireCollision(tripwireSessionWith(payload), payload, CORPUS_COVERAGE)),
         ],
         NOW,
       ),

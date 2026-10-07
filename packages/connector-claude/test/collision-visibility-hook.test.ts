@@ -4,9 +4,10 @@
  * already filtered — but the record outlives the moment: a teammate who opts
  * out, is muted or ends their session later must not keep being named. The
  * statusline names only teammates the hub's presence answer still lists, and
- * a relayed subagent hit is dropped when a fresh presence answer no longer
- * lists the teammate, and loses branch and age once it is older than the
- * presence TTL.
+ * a relayed subagent hit names the teammate only while a fresh presence
+ * answer lists them — otherwise it is relayed unnamed (round 2, H1;
+ * test/collision-relay-unconfirmed.test.ts) — and loses branch and age once
+ * it is older than the presence TTL.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 
@@ -19,6 +20,7 @@ import {
   OVERLAP_FILE,
   SESSION_ID,
   SUBAGENT,
+  UNNAMED_REFRESH_NOTICE,
   cleanupCollisionFixtures,
   collisionFixture,
   editPayload,
@@ -74,7 +76,7 @@ describe("the statusline names only teammates the hub still lists as present", (
 });
 
 describe("a relayed subagent hit is held to presence as it is now", () => {
-  test("dropped whole when a fresh presence answer no longer lists the teammate", async () => {
+  test("relayed unnamed when a fresh presence answer no longer lists the teammate", async () => {
     // Arrange
     const fix = await collisionFixture("cv-relay-hidden");
     await runHook("pre-tool-use", editPayload(fix.repo, OVERLAP_FILE, SUBAGENT), fix.env);
@@ -84,6 +86,7 @@ describe("a relayed subagent hit is held to presence as it is now", () => {
     const prompt = await runHook("user-prompt-submit", promptPayload(fix.repo), fix.env);
 
     // Assert
+    expect(parsed(prompt).systemMessage).toBe(UNNAMED_REFRESH_NOTICE);
     expect(prompt).not.toContain("Nick");
   });
 
@@ -107,6 +110,7 @@ describe("a relayed subagent hit is held to presence as it is now", () => {
       { ...activeTeammateSession(), lastHeartbeatAt: new Date(Date.now() - PRESENCE_TTL_MS - 60_000).toISOString() },
     ]);
     await runHook("pre-tool-use", editPayload(fix.repo, OVERLAP_FILE, SUBAGENT), fix.env);
+    await presentNow(fix, [TEAMMATE_DEVELOPER_ID]);
 
     // Act
     const output = parsed(await runHook("user-prompt-submit", promptPayload(fix.repo), fix.env));

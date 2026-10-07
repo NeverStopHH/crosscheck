@@ -334,22 +334,43 @@ const ageClause = (iso: string | null, now: Date): string => {
 const basename = (path: string): string => path.split("/").filter((part) => part.length > 0).at(-1) ?? "";
 
 /**
+ * A group as a RENDERER takes it: a told group, or one whose teammate live
+ * presence could not confirm at the moment it is shown LATER (round 2, H1),
+ * which is told UNNAMED — no name, no branch, no age — rather than not at
+ * all. Never stored: `anonymous` exists only between the relay and the line.
+ */
+export type RenderableCollision = CollisionNotice & { readonly anonymous?: true };
+
+/** The group with everything that says WHO and WHERE dropped; the file stays. */
+export const anonymousCollision = (group: CollisionNotice): RenderableCollision => ({
+  ...group,
+  name: "",
+  branch: null,
+  lastActiveAt: null,
+  anonymous: true,
+});
+
+/**
  * ONE LINE for the person:
- * `crosscheck: Mike is working on PlayerMappingGrid.tsx on branch feat/x (last active 3m ago) — talk before you both change it`.
+ * `crosscheck: Mike is working on PlayerMappingGrid.tsx on branch feat/x (last active 3m ago) — talk before you both change it`,
+ * or, unconfirmed, `crosscheck: A teammate recently worked on PlayerMappingGrid.tsx — talk to your team before you change it`.
  * Every field is sanitized HERE, at render, whatever the group was built
  * from — a group read back from a state file is no more trusted than a row.
  */
-export const renderCollisionNotice = (group: CollisionNotice, now: Date): string => {
-  const name = displayName(group.name);
+export const renderCollisionNotice = (group: RenderableCollision, now: Date): string => {
   const [first] = group.files;
   const shown = first === undefined ? "" : personField(basename(first), COLLISION_NOTICE_FILE_CHARS);
   const file = shown.length === 0 ? UNNAMED_FILE : shown;
   const isGroup = group.fileCount > 1;
   const what = isGroup ? `${String(group.fileCount)} files you also touched, e.g. ${file}` : file;
-  const branch = group.branch === null ? null : visibleBranch(group.branch);
-  const where = branch === null ? "" : ` on branch ${branch}`;
   const pronoun = isGroup ? "them" : "it";
   const partial = group.partial === true ? PARTIAL_RECORD_CLAUSE : "";
+  if (group.anonymous === true) {
+    return `crosscheck: ${UNKNOWN_TEAMMATE} recently worked on ${what} — talk to your team before you change ${pronoun}${partial}`;
+  }
+  const name = displayName(group.name);
+  const branch = group.branch === null ? null : visibleBranch(group.branch);
+  const where = branch === null ? "" : ` on branch ${branch}`;
   // LANDED work is a change already made, not a plan in flight: the person
   // is told what merged, and the advice drops "both" — only they are about
   // to change it. No age: a heartbeat says nothing about when it merged.
@@ -389,6 +410,36 @@ export const withoutStaleLocation = (group: CollisionNotice, now: Date): Collisi
     : { ...group, branch: null, lastActiveAt: null };
 };
 
+/** What a later surface reads of a presence answer: who, and whether it is the reader. */
+export interface PresenceFact {
+  readonly developerId: string;
+  readonly isSelf: boolean;
+}
+
+/** The presence row that confirms this group's teammate, if the answer has one. */
+const confirmingEntry = <T extends PresenceFact>(group: CollisionNotice, presence: readonly T[]): T | undefined =>
+  presence.find((entry) => !entry.isSelf && entry.developerId === group.developerId);
+
+/**
+ * A subagent's queued groups as the MAIN thread is told them (round 2, H1).
+ * A queued hit is never turned into nothing: presence drops a teammate who
+ * opted out, one the reader muted AND one whose session simply ended, and
+ * cannot say which — so a teammate a FRESH presence answer lists is named,
+ * and every other group (an answer without them, or no fresh answer at all)
+ * is told unnamed: the file stays, the name, branch and age go. Deterministic
+ * — the same queue says the same thing whatever the cache's age — and
+ * private for the opted-out and the muted. `presence` is [] when no fresh
+ * answer is in hand.
+ */
+export const relayedCollisions = (
+  groups: readonly CollisionNotice[],
+  presence: readonly PresenceFact[],
+  now: Date,
+): readonly RenderableCollision[] =>
+  groups.map((group) =>
+    confirmingEntry(group, presence) === undefined ? anonymousCollision(group) : withoutStaleLocation(group, now),
+  );
+
 /** The renderer's own tail for the groups a bounded output does not name. */
 const moreLine = (count: number): string =>
   `crosscheck: +${String(count)} more teammate overlap${count === 1 ? "" : "s"} not shown`;
@@ -402,7 +453,7 @@ const MORE_LINE_ROOM = moreLine(MAX_COLLISION_NOTICES).length + 1;
  * all (review L4), whole lines only, the rest counted on a line of their own:
  * a cut line would lose the "talk before" half that is the point of it.
  */
-export const renderCollisionNotices = (groups: readonly CollisionNotice[], now: Date): string => {
+export const renderCollisionNotices = (groups: readonly RenderableCollision[], now: Date): string => {
   const lines = groups.map((group) => renderCollisionNotice(group, now));
   const kept = lines.slice(0, COLLISION_NOTICE_MAX_LINES).reduce<readonly string[]>((fitted, line) => {
     const candidate = [...fitted, line];
@@ -418,7 +469,7 @@ export const renderCollisionNotices = (groups: readonly CollisionNotice[], now: 
  * in the renderer's words), and the one relay sentence. Empty when there is
  * nothing to relay.
  */
-export const renderSubagentCollisionRelay = (groups: readonly CollisionNotice[], now: Date): string =>
+export const renderSubagentCollisionRelay = (groups: readonly RenderableCollision[], now: Date): string =>
   groups.length === 0
     ? ""
     : [SUBAGENT_RELAY_HEADER, renderCollisionNotices(groups, now), COLLISION_RELAY_SENTENCE].join("\n");
