@@ -13,8 +13,15 @@ import { runHook } from "../src/index.ts";
 import {
   COLLISION_RELAY_SENTENCE,
   SUBAGENT_RELAY_HEADER,
+  tripwireCollision,
 } from "@crosscheck/connector-core/hints/collision-notice.ts";
-import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import { COLLISION_NOTICE_MAX_LINES } from "@crosscheck/connector-core/constants.ts";
+import {
+  readSessionState,
+  updateSessionState,
+  withCollisionNotices,
+  withQueuedCollisionRelays,
+} from "@crosscheck/connector-core/state/session-state.ts";
 import {
   NICK_NOTICE,
   OVERLAP_FILE,
@@ -28,6 +35,9 @@ import {
   promptPayload,
 } from "./fixtures/collision-fixture.ts";
 import { TEAMMATE_DEVELOPER_ID } from "../../connector-core/test/fixtures/hint-hub.ts";
+
+/** Two past the person's line cap. */
+const SEVEN = 7;
 
 afterEach(cleanupCollisionFixtures);
 
@@ -92,6 +102,43 @@ describe("a foreground subagent's return", () => {
 
     // Assert
     expect(output).toBe("");
+  });
+
+  test("seven queued groups: the person reads five and a count, the agent is handed all seven (round 2, L10)", async () => {
+    // Arrange: seven teammates a subagent ran into, all still present
+    const fix = await collisionFixture("sr-seven");
+    const groups = Array.from({ length: SEVEN }, (_, index) =>
+      tripwireCollision(
+        {
+          sessionId: `cc_${String(index)}`,
+          developerId: `dev_${String(index)}`,
+          developerName: `T${String(index)}`,
+          branch: "feat/refresh-fix",
+          status: "implementing",
+          lastHeartbeatAt: new Date().toISOString(),
+          workContextId: `wc_${String(index)}`,
+          workContextTitle: "t",
+        },
+        `src/file${String(index)}.ts`,
+      ),
+    );
+    await updateSessionState(fix.home, SESSION_ID, (fresh) =>
+      withQueuedCollisionRelays(withCollisionNotices(fresh, groups), groups.map((group) => group.key)),
+    );
+    await presentNow(fix, groups.map((group) => group.developerId));
+
+    // Act
+    const output = parsed(await runHook("subagent-return", agentReturned(fix.repo), fix.env));
+
+    // Assert
+    const person = (output.systemMessage ?? "").split("\n");
+    expect(person).toHaveLength(COLLISION_NOTICE_MAX_LINES + 1);
+    expect(person.at(-1)).toBe(`crosscheck: +${String(SEVEN - COLLISION_NOTICE_MAX_LINES)} more teammate overlaps not shown`);
+    const agent = output.hookSpecificOutput?.additionalContext ?? "";
+    for (const group of groups) {
+      expect(agent).toContain(`crosscheck: ${group.name} is working on`);
+    }
+    expect(agent).not.toContain("more teammate overlap");
   });
 
   test("a subagent's OWN subagent returning leaves the queue for the main thread", async () => {

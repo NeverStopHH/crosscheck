@@ -39,7 +39,6 @@ import {
   COLLISION_NOTICE_FILE_CHARS,
   COLLISION_NOTICE_MAX_CHARS,
   COLLISION_NOTICE_MAX_LINES,
-  MAX_COLLISION_NOTICES,
   PRESENCE_TTL_MS,
   COLLISION_NOTICE_NAME_CHARS,
   COLLISION_NOTICE_PATH_CHARS,
@@ -473,35 +472,60 @@ export const relayedCollisions = (
 const moreLine = (count: number): string =>
   `crosscheck: +${String(count)} more teammate overlap${count === 1 ? "" : "s"} not shown`;
 
-/** Room the tail line can take: its longest spelling, for a count of the whole relay queue. */
-const MORE_LINE_ROOM = moreLine(MAX_COLLISION_NOTICES).length + 1;
+/** The tail, when anything goes unnamed. */
+const moreTail = (count: number): readonly string[] => (count > 0 ? [moreLine(count)] : []);
+
+/**
+ * The person's lines that fit: at most COLLISION_NOTICE_MAX_LINES, and each
+ * candidate keeps room for the tail line ITS OWN rest would need — the count
+ * of lines left out plus `hidden` (groups the record could not keep) — so the
+ * whole, tail included, stays inside COLLISION_NOTICE_MAX_CHARS.
+ */
+const fittedLines = (lines: readonly string[], hidden: number): readonly string[] =>
+  lines.slice(0, COLLISION_NOTICE_MAX_LINES).reduce<readonly string[]>((fitted, line) => {
+    const candidate = [...fitted, line];
+    const rest = lines.length - candidate.length + hidden;
+    const room = rest > 0 ? moreLine(rest).length + 1 : 0;
+    return candidate.join("\n").length + room <= COLLISION_NOTICE_MAX_CHARS ? candidate : fitted;
+  }, []);
 
 /**
  * Several groups, one line each — the shape a hook's `systemMessage` carries —
  * at most COLLISION_NOTICE_MAX_LINES of them and COLLISION_NOTICE_MAX_CHARS in
  * all (review L4), whole lines only, the rest counted on a line of their own:
  * a cut line would lose the "talk before" half that is the point of it.
+ * `hidden` counts groups that never reached this render at all (a relay
+ * queue the record had to cut; state/session-state.ts) into the same tail.
  */
-export const renderCollisionNotices = (groups: readonly RenderableCollision[], now: Date): string => {
+export const renderCollisionNotices = (groups: readonly RenderableCollision[], now: Date, hidden = 0): string => {
   const lines = groups.map((group) => renderCollisionNotice(group, now));
-  const kept = lines.slice(0, COLLISION_NOTICE_MAX_LINES).reduce<readonly string[]>((fitted, line) => {
-    const candidate = [...fitted, line];
-    return candidate.join("\n").length + MORE_LINE_ROOM <= COLLISION_NOTICE_MAX_CHARS ? candidate : fitted;
-  }, []);
-  const rest = lines.length - kept.length;
-  return [...kept, ...(rest > 0 ? [moreLine(rest)] : [])].join("\n");
+  const kept = fittedLines(lines, hidden);
+  return [...kept, ...moreTail(lines.length - kept.length + hidden)].join("\n");
 };
 
 /**
  * What the MAIN thread is handed for groups its subagents ran into: a header
- * saying where they came from, the person-facing line per group (the facts,
- * in the renderer's words), and the one relay sentence. Empty when there is
+ * saying where they came from, the person-facing line for EVERY group (the
+ * facts, in the renderer's words), and the one relay sentence. Uncapped
+ * (round 2, L10): the person's copy keeps its few lines and its `+N more`,
+ * but the groups past that cap are drained and marked told all the same, so
+ * the agent is the one place the rest are named — at most the
+ * MAX_COLLISION_NOTICES groups a session remembers. Empty when there is
  * nothing to relay.
  */
-export const renderSubagentCollisionRelay = (groups: readonly RenderableCollision[], now: Date): string =>
-  groups.length === 0
+export const renderSubagentCollisionRelay = (
+  groups: readonly RenderableCollision[],
+  now: Date,
+  hidden = 0,
+): string =>
+  groups.length === 0 && hidden === 0
     ? ""
-    : [SUBAGENT_RELAY_HEADER, renderCollisionNotices(groups, now), COLLISION_RELAY_SENTENCE].join("\n");
+    : [
+        SUBAGENT_RELAY_HEADER,
+        ...groups.map((group) => renderCollisionNotice(group, now)),
+        ...moreTail(hidden),
+        COLLISION_RELAY_SENTENCE,
+      ].join("\n");
 
 interface OverlapPerson {
   readonly developerId: string;

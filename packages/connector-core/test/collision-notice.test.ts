@@ -652,13 +652,14 @@ describe("many groups at once stay a few lines (review L4)", () => {
     expect(lines.at(-1)).toBe("crosscheck: +3 more teammate overlaps not shown");
   });
 
-  test("the relay carries the same cap between its header and its request", () => {
-    // Act
+  test("the agent's copy names every group between its header and its request (round 2, L10)", () => {
+    // Act: one group past the person's line cap
     const lines = renderSubagentCollisionRelay(groupsOf(COLLISION_NOTICE_MAX_LINES + 1), NOW).split("\n");
 
-    // Assert
+    // Assert: drained and marked told, so the agent is where the sixth is named
     expect(lines).toHaveLength(COLLISION_NOTICE_MAX_LINES + 3);
-    expect(lines.at(-2)).toBe("crosscheck: +1 more teammate overlap not shown");
+    expect(lines.filter((line) => line.startsWith("crosscheck: Mike is working on"))).toHaveLength(COLLISION_NOTICE_MAX_LINES + 1);
+    expect(lines.some((line) => line.includes("more teammate overlap"))).toBe(false);
     expect(lines.at(-1)).toBe(COLLISION_RELAY_SENTENCE);
   });
 
@@ -683,7 +684,10 @@ describe("many groups at once stay a few lines (review L4)", () => {
 
     // Assert
     expect(person.length).toBeLessThanOrEqual(COLLISION_NOTICE_MAX_CHARS);
-    expect(agent.length).toBeLessThanOrEqual(COLLISION_NOTICE_MAX_CHARS + SUBAGENT_RELAY_HEADER.length + COLLISION_RELAY_SENTENCE.length + 2);
+    // The agent's copy is uncapped in lines (round 2, L10) and bounded by the
+    // queue itself: every line is at its own field caps.
+    expect(agent.split("\n")).toHaveLength(MAX_COLLISION_NOTICES + 2);
+    expect(Math.max(...agent.split("\n").map((line) => line.length))).toBeLessThanOrEqual(COLLISION_NOTICE_MAX_CHARS);
     expect(person.split("\n").at(-1)).toMatch(/^crosscheck: \+\d+ more teammate overlaps not shown$/);
   });
 });

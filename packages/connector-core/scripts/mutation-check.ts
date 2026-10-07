@@ -23767,15 +23767,15 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a relay of the whole queue prints every group on its own line",
     file: `${CORE}/src/hints/collision-notice.ts`,
-    from: "  const kept = lines.slice(0, COLLISION_NOTICE_MAX_LINES).reduce<readonly string[]>((fitted, line) => {",
-    to: "  const kept = lines.reduce<readonly string[]>((fitted, line) => {",
+    from: "  lines.slice(0, COLLISION_NOTICE_MAX_LINES).reduce<readonly string[]>((fitted, line) => {",
+    to: "  lines.reduce<readonly string[]>((fitted, line) => {",
     test: `${CORE}/test/collision-notice.test.ts`,
     because: "thirty-two subagent collisions drain as thirty-two lines on the person's screen, and the person stops reading at the fourth",
   },
   {
     label: "the collision lines are bounded in count but not in characters",
     file: `${CORE}/src/hints/collision-notice.ts`,
-    from: "    return candidate.join(\"\\n\").length + MORE_LINE_ROOM <= COLLISION_NOTICE_MAX_CHARS ? candidate : fitted;",
+    from: "    return candidate.join(\"\\n\").length + room <= COLLISION_NOTICE_MAX_CHARS ? candidate : fitted;",
     to: "    return candidate;",
     test: `${CORE}/test/collision-notice.test.ts`,
     because: "five lines of maximum-length names, branches and paths are a wall of text no person reads",
@@ -23783,7 +23783,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the groups past the cap vanish without a count",
     file: `${CORE}/src/hints/collision-notice.ts`,
-    from: "  return [...kept, ...(rest > 0 ? [moreLine(rest)] : [])].join(\"\\n\");",
+    from: "  return [...kept, ...moreTail(lines.length - kept.length + hidden)].join(\"\\n\");",
     to: "  return kept.join(\"\\n\");",
     test: `${CORE}/test/collision-notice.test.ts`,
     because: "the person reads five overlaps as all of them, and the sixth teammate is never named or counted",
@@ -24163,6 +24163,15 @@ export const MUTATIONS: readonly Mutation[
     to: "return { line: failureLine(failureHead(result.status, result.kind), captureAge), present: cache?.entries ?? [] };",
     test: `${CONNECTOR}/test/collision-statusline-unnamed.test.ts`,
     because: "an hour-old answer names a teammate who opted out since, on the line the person glances at",
+  },
+  // ── Review of feat/collision-visible, round 2, L10: the agent's copy names every group ──
+  {
+    label: "the agent's copy of a relay is capped like the person's",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "        ...groups.map((group) => renderCollisionNotice(group, now)),\n        ...moreTail(hidden),",
+    to: "        renderCollisionNotices(groups, now, hidden),",
+    test: `${CONNECTOR}/test/subagent-return-hook.test.ts`,
+    because: "the groups past the person's five lines are drained and marked told, and named to nobody at all",
   },
 ];
 
