@@ -313,6 +313,21 @@ const mergeIntent = (
   return next;
 };
 
+/**
+ * A TOPIC'S BRANCH AND BASE COMMIT ARE WRITTEN ONCE (DESIGN.md "One session,
+ * many topics"): what the session's first touch of the topic saw. A record
+ * without them — a connector from before topics, or a copy that does not
+ * carry them — says nothing about the topic and keeps what is stored; one that
+ * carries them fills a context that had none, and never moves one that had.
+ */
+const topicFieldsOf = (
+  current: Pick<WorkContextRow, "branch" | "baseCommit">,
+  body: WorkContext,
+): Pick<WorkContextRow, "branch" | "baseCommit"> => ({
+  branch: current.branch ?? body.branch ?? null,
+  baseCommit: current.baseCommit ?? body.baseCommit ?? null,
+});
+
 const workContextChanges = (
   current: WorkContextRow,
   body: WorkContext,
@@ -322,6 +337,7 @@ const workContextChanges = (
     description: body.description ?? null,
     intent: mergeIntent(current.intent ?? null, body.intent),
     status: body.status,
+    ...topicFieldsOf(current, body),
   };
   // Accepted v0 limitation: JSON.stringify intent comparison is key-order
   // sensitive, so a semantically equal intent with reordered keys counts as
@@ -330,7 +346,9 @@ const workContextChanges = (
     next.title !== current.title ||
     next.description !== current.description ||
     JSON.stringify(next.intent) !== JSON.stringify(current.intent) ||
-    next.status !== current.status;
+    next.status !== current.status ||
+    next.branch !== current.branch ||
+    next.baseCommit !== current.baseCommit;
   return hasChange ? next : null;
 };
 
@@ -484,6 +502,10 @@ export const ingestWorkContext = async (
         description: body.description ?? null,
         intent: body.intent ?? null,
         status: body.status,
+        // A topic's branch and base commit (DESIGN.md "One session, many
+        // topics"); null from a connector before topics.
+        branch: body.branch ?? null,
+        baseCommit: body.baseCommit ?? null,
         createdAt: new Date(body.createdAt),
         updatedAt:
           body.updatedAt === undefined ? null : new Date(body.updatedAt),

@@ -106,6 +106,7 @@ export {
   MAX_INTENT_CHAIN_VERSIONS,
   MAX_INTENT_SCOPE_ENTRIES,
   MAX_INTENT_SUMMARY_CHARS,
+  MAX_TOPIC_BRANCH_CHARS,
   TargetSchema,
   WorkContextSchema,
 } from "./session.ts";

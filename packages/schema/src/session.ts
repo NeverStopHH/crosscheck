@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { DERIVED_CONFIDENCE_CAP } from "./claim.ts";
+import { COMMIT_SHA_PATTERN } from "./commit-sha.ts";
 import { SeqStampSchema } from "./seq.ts";
 import { MAX_PIN_FILES, MAX_PIN_PATH_CHARS } from "./pin.ts";
 import {
@@ -153,10 +154,32 @@ export const IntentSchema = z
     }
   });
 
+/**
+ * The longest branch a TOPIC work context may name. Git itself bounds a ref
+ * only by the filesystem, so this is a wire bound, not git's: long enough for
+ * any branch a person types, short enough that a hostile body cannot use the
+ * field as a payload.
+ */
+export const MAX_TOPIC_BRANCH_CHARS = 255;
+
 export const WorkContextSchema = z.looseObject({
   id: nonEmptyId,
   sessionId: nonEmptyId,
   title: z.string().min(1),
+  /**
+   * WHICH TOPIC THIS CONTEXT IS (DESIGN.md "One session, many topics"). A
+   * session that edits several sibling worktrees on several branches sends
+   * one work context per (repo, branch) it touched, and each names its
+   * branch and the commit HEAD named when the session first touched it — the
+   * session row's own branch and base commit are the START checkout's, which
+   * says nothing about a topic opened later somewhere else.
+   *
+   * OPTIONAL, AND ADDITIVE: a connector from before topics sends one context
+   * per session and neither field, and the hub then falls back to the
+   * session's own branch and base commit, exactly as it always has.
+   */
+  branch: z.string().min(1).max(MAX_TOPIC_BRANCH_CHARS).optional(),
+  baseCommit: z.string().regex(COMMIT_SHA_PATTERN).optional(),
   description: z.string().optional(),
   /**
    * Optional and NOT nullable on the wire: a work_context record without the

@@ -27,6 +27,7 @@ import {
   spoolPendingEndPath,
   writePrivateFile,
 } from "../config/paths.ts";
+import { readHeadFile } from "../git/repo-identity.ts";
 import { registerSession } from "../http/hub.ts";
 import type { HubContext } from "../http/client.ts";
 import { appendRecords } from "../spool/append.ts";
@@ -484,6 +485,12 @@ export const registerSessionFlow = async (
     workContextStatus: status,
     // The producer of the work context SessionEnd may send for this life (L7).
     agentKind: input.agentKind,
+    // THE START TOPIC (flows/topic-contexts.ts): the branch this checkout is
+    // on, read from its HEAD file exactly as every touched root's is, so the
+    // session's own touches are recognised as its own and every sibling
+    // worktree's branch opens a topic of its own. A re-fire of the same life
+    // keeps the first one (withCarriedCapture).
+    startBranch: (await readHeadFile(input.repoRoot))?.branch ?? input.branch,
     // THE EPOCH IS MINTED ON THE INPUT, not inside publishSessionState (spec
     // 01 §3.4). publishSessionState's busy-lock FALLBACK writes this object
     // verbatim, with no carry at all — "the counters lose rather than the

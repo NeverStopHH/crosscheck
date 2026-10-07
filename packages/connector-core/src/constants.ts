@@ -263,6 +263,23 @@ export const MAX_KNOWN_WORKTREE_ROOTS = 16;
 export const DETACHED_LABEL_SHA_CHARS = 9;
 
 /**
+ * TOPICS ONE LIFE OF A SESSION MAY OPEN (DESIGN.md "One session, many
+ * topics"): one work context per (repo, branch) the session touched, beside
+ * the session's own. A session past this files further topics' touches under
+ * its own context and counts each one (`topic_overflow` in the capture-loss
+ * ledger) — delivered, but no longer told apart.
+ *
+ * WHY A CAP AT ALL: every topic is a work context on the hub and an entry in
+ * the session state read on every hook, and a runaway — a script checking out
+ * a branch per file — must not mint hundreds of either. Twenty-four is twice
+ * the worktrees the owner's busiest week ran from one session.
+ */
+export const MAX_TOPICS_PER_SESSION = 24;
+
+/** Hex characters of sha256(repo, branch) a topic's work-context id carries. */
+export const TOPIC_KEY_HEX_CHARS = 12;
+
+/**
  * Tool-call ids an ACP session remembers as ALREADY having booked their
  * edit-tool fire (capture/engine.ts). One fire belongs to one tool CALL, not
  * to one wire row: an agent may announce a call with no `kind`, reveal

@@ -423,6 +423,7 @@ const kindParts = (capture: CaptureLossSummary): readonly (string | null)[] => {
   const hooks = capture.byKind["hook_timed_out"] ?? 0;
   const drift = capture.byKind["host_contract_drift"] ?? 0;
   const wire = capture.byKind["wire_unobserved"] ?? 0;
+  const topics = capture.byKind["topic_overflow"] ?? 0;
   return [
     hooks === 0
       ? null
@@ -433,6 +434,9 @@ const kindParts = (capture: CaptureLossSummary): readonly (string | null)[] => {
     wire === 0
       ? null
       : `${plural(wire, "ACP wire line")} could not be read by the observer`,
+    topics === 0
+      ? null
+      : `${plural(topics, "touch", "touches")} filed under the session's own work context past its topic cap — delivered, but not told apart by branch`,
     // Review H3: these were counted into the report and printed nowhere.
     capture.malformed === 0
       ? null

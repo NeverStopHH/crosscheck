@@ -4111,14 +4111,17 @@ export const MUTATIONS: readonly Mutation[
     // checkout and is dropped, and only the outside-root counter ticks.
     label: "the shared capture flow forgets the file's own worktree root",
     file: `${CORE}/src/flows/capture-touched-files.ts`,
+    // ONE SPELLING FOR BOTH PATHS since topics (DESIGN.md "One session, many
+    // topics"): the per-topic writes and the single-context fallback both
+    // take `resolveRootFrom`, so this one edit breaks every host either way.
     from:
-      "    ...(resolution === null\n" +
-      "      ? {}\n" +
-      "      : {\n" +
-      "          resolveRoot: (path: string): string | null =>\n" +
-      "            resolution.rootByPath.get(path) ?? null,\n" +
-      "        }),\n",
-    to: "",
+      "  resolution === null\n" +
+      "    ? {}\n" +
+      "    : {\n" +
+      "        resolveRoot: (path: string): string | null =>\n" +
+      "          resolution.rootByPath.get(path) ?? null,\n" +
+      "      };\n",
+    to: "  {};\n",
     test: `${CURSOR}/test/worktree-capture.test.ts`,
     because:
       "every connector is back to the H1 defect at once — a session at " +
@@ -18950,8 +18953,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a flush writes its acknowledgement into another conversation's state",
     file: `${CORE}/src/spool/work-context-ack.ts`,
-    from: "    return fresh.crosscheckSessionId === flusherSessionId && isNew ? { ...fresh, workContextAcked: last } : null;",
-    to: "    return isNew ? { ...fresh, workContextAcked: last } : null;",
+    from: "    if (fresh.crosscheckSessionId !== flusherSessionId) {\n      return null;\n    }\n    const last",
+    to: "    if (false) {\n      return null;\n    }\n    const last",
     test: `${CORE}/test/release-clock.test.ts`,
     because: "review-2 round 8, L7: the write revives an abandoned host's state, and its backlog is held from every successor",
   },
@@ -18966,8 +18969,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "set_intent writes down no status the hub accepted",
     file: `${CORE}/src/mcp/tools/intent-write.ts`,
-    from: '    workContextAcked: result?.status === "accepted" ? { id: own.workContextId, status } : fresh.workContextAcked,',
-    to: "    workContextAcked: fresh.workContextAcked,",
+    from: '    return result?.status === "accepted" ? withAcked(moved, own, status) : moved;',
+    to: "    return moved;",
     test: `${CORE}/test/set-intent.test.ts`,
     because: "review-2 round 8, L7: SessionEnd compares the state's status with the one before set_intent's",
   },
@@ -18998,8 +19001,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a spooled work context goes with the title it was spooled with (R7-M9)",
     file: `${CORE}/src/spool/owed-work-context.ts`,
-    from: '          title: textOr(state.workContextTitle, body["title"]),',
-    to: '          title: textOr(body["title"], state.workContextTitle),',
+    from: '          title: textOr(said.title, body["title"]),',
+    to: '          title: textOr(body["title"], said.title),',
     test: `${CORE}/test/owed-work-context.test.ts`,
     because: "review-2 round 8, L10: a re-fire on a new branch renames the hub's work context away from the title its state holds",
   },
@@ -19483,6 +19486,123 @@ export const MUTATIONS: readonly Mutation[
       "the session's own work context reads `main @ api` while it sits detached at an " +
       "old commit, and teammates read the stale branch as what it is working on",
   },
+  {
+    // DESIGN.md "One session, many topics", item 2.
+    label: "every sibling worktree's branch files under the session's own work context",
+    file: `${CORE}/src/flows/topic-contexts.ts`,
+    from: "  life.startBranch === null\n    ? root === life.sessionRoot\n    : key === topicKeyOf(life.repoId, life.startBranch);",
+    to: "  true;",
+    test: `${CONNECTOR}/test/worktree-capture.test.ts`,
+    because:
+      "one long-lived session's work in a dozen worktrees lands in one 278-target sweep " +
+      "every overlap check ignores, titled after the start checkout",
+  },
+  {
+    label: "a topic's work context is never spooled ahead of its targets",
+    file: `${CORE}/src/flows/capture-touched-files.ts`,
+    from: "  if (plan.opened.length === 0) {\n    return true;\n  }",
+    to: "  if (true) {\n    return true;\n  }",
+    test: `${CORE}/test/topic-contexts.test.ts`,
+    because:
+      "every target of a new topic names a work context the hub has never been sent, and " +
+      "is refused `work context not found` and spent",
+  },
+  {
+    label: "a previous life's topics stand as this life's registrations",
+    file: `${CORE}/src/flows/topic-contexts.ts`,
+    from: "    life.topics.filter((topic) => topic.sessionId === life.sessionId).map((topic) => [topic.key, topic]),",
+    to: "    life.topics.map((topic) => [topic.key, topic]),",
+    test: `${CORE}/test/topic-contexts.test.ts`,
+    because:
+      "after a heal to the next life every topic's targets name the refused life's " +
+      "context, which the hub files into a session it ended — or refuses",
+  },
+  {
+    label: "a heal keeps the refused life's topic registry",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: "      topicContexts: [],\n      seenTargets: [],",
+    to: "      seenTargets: [],",
+    test: `${CORE}/test/topic-contexts.test.ts`,
+    because:
+      "the healed state still lists topics whose contexts were spooled for the refused " +
+      "life, so nothing owes the next life its topics' contexts",
+  },
+  {
+    label: "a session opens topics without bound",
+    file: `${CORE}/src/flows/topic-contexts.ts`,
+    from: "    const hasRoom = known.size + opened.size < MAX_TOPICS_PER_SESSION;",
+    to: "    const hasRoom = true;",
+    test: `${CORE}/test/topic-contexts.test.ts`,
+    because:
+      "a script that checks out a branch per file mints a work context per file on the " +
+      "hub and an entry per file in a state read on every hook",
+  },
+  {
+    label: "a touch past the topic cap is filed under the session with nothing counted",
+    file: `${CORE}/src/flows/capture-touched-files.ts`,
+    from: "  if (plan.overflowed > 0 && input.editFired !== false) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/topic-contexts.test.ts`,
+    because: "touches lose their topic and no ledger, report or doctor line says so",
+  },
+  {
+    label: "one path in two topics is deduplicated as one touch",
+    file: `${CORE}/src/flows/topic-contexts.ts`,
+    from: "  key === null ? path : `${seenPrefixOf(key)}${path}`;",
+    to: "  path;",
+    test: `${CORE}/test/topic-contexts.test.ts`,
+    because:
+      "the same file edited on two branches in two worktrees is captured for the first " +
+      "and silently never for the second",
+  },
+  {
+    label: "a spooled topic context goes with the session's title",
+    file: `${CORE}/src/spool/owed-work-context.ts`,
+    from: "    ? { title: state.workContextTitle, status: state.workContextStatus }\n    : topicSaid(state, body[\"id\"]);",
+    to: "    ? { title: state.workContextTitle, status: state.workContextStatus }\n    : { title: state.workContextTitle, status: state.workContextStatus };",
+    test: `${CORE}/test/topic-contexts.test.ts`,
+    because: "every topic is renamed at flush to the start checkout's title, and the topics are one name again",
+  },
+  {
+    label: "set_intent writes to the session's own context whatever topic was touched last",
+    file: `${CORE}/src/flows/topic-contexts.ts`,
+    from: "  return newest === null || sessionAt > newest.lastTouchedAt ? { kind: \"session\" } : { kind: \"topic\", topic: newest };",
+    to: "  return { kind: \"session\" };",
+    test: `${CORE}/test/topic-contexts.test.ts`,
+    because: "the declared goal lands on the start checkout's context, nowhere near the branch it is about",
+  },
+  {
+    label: "set_intent on a topic moves the session's status",
+    file: `${CORE}/src/mcp/tools/intent-write.ts`,
+    from: "const withStatus = (fresh: SessionState, own: TitledWorkContext, status: string): SessionState =>\n  own.topicKey === undefined",
+    to: "const withStatus = (fresh: SessionState, own: TitledWorkContext, status: string): SessionState =>\n  true",
+    test: `${CORE}/test/topic-contexts.test.ts`,
+    because: "a status meant for one branch's work is written over the session's own, and every later copy of it carries the wrong one",
+  },
+  {
+    label: "the hub drops a topic's branch on create",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "        branch: body.branch ?? null,",
+    to: "        branch: null,",
+    test: `${SERVER}/test/topic-contexts.test.ts`,
+    because: "a topic reads as the session's own context on every surface, its branch nowhere",
+  },
+  {
+    label: "a later copy of a topic moves its branch",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "  branch: current.branch ?? body.branch ?? null,",
+    to: "  branch: body.branch ?? current.branch ?? null,",
+    test: `${SERVER}/test/topic-contexts.test.ts`,
+    because: "a stray copy re-labels a topic's work with another branch's name",
+  },
+  {
+    label: "a topic's drift is measured from the start checkout's commit",
+    file: `${SERVER}/src/services/topic-base-commit.ts`,
+    from: "sql<string>`coalesce(${workContexts.baseCommit}, ${agentSessions.baseCommit})`",
+    to: "sql<string>`${agentSessions.baseCommit}`",
+    test: `${SERVER}/test/topic-contexts.test.ts`,
+    because: "every topic of a detached long-lived session reads as drifted from a weeks-old commit it never worked on",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19658,7 +19778,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/summarizer-worker-env.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 6
- * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 3
+ * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 4
  * PRINTS: packages/connector-core/test/absence-render.test.ts 7
  * PRINTS: packages/connector-core/test/body-redaction.test.ts 5
  * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 2
@@ -19765,6 +19885,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/staleness-axis.test.ts 1
  * PRINTS: packages/connector-core/test/target-paths.test.ts 1
  * PRINTS: packages/connector-core/test/tool-window-pairing.test.ts 6
+ * PRINTS: packages/connector-core/test/topic-contexts.test.ts 9
  * PRINTS: packages/connector-core/test/topic-heads.test.ts 2
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
  * PRINTS: packages/connector-core/test/verdict-wire.test.ts 2
@@ -19867,6 +19988,7 @@ interface Outcome {
  * PRINTS: packages/server/test/solved-ranking.test.ts 3
  * PRINTS: packages/server/test/suspect.test.ts 5
  * PRINTS: packages/server/test/team-settings.test.ts 2
+ * PRINTS: packages/server/test/topic-contexts.test.ts 3
  * PRINTS: packages/server/test/ui-passkeys.test.ts 9
  * PRINTS: packages/server/test/unstorable-text.test.ts 2
  * PRINTS: packages/server/test/upgrade.test.ts 1

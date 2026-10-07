@@ -601,6 +601,51 @@ const SessionStateObjectSchema = z.looseObject({
    * that a machine losing brackets stops reading exactly like one that is not.
    */
   toolWindowMisses: z.number().int().min(0).default(0),
+  /**
+   * THE TOPICS THIS LIFE HAS OPENED (DESIGN.md "One session, many topics";
+   * flows/topic-contexts.ts). One long-lived session edits sibling worktrees
+   * on many branches, and filing all of it under one context made a sweep
+   * every overlap check ignores. Each entry is one (repo, branch) the life
+   * touched outside its start topic, and the work context it spooled for it —
+   * spooled BEFORE its first target, which is why an entry is written only
+   * after that append persisted.
+   *
+   * PER LIFE: `sessionId` is the life that registered it, and an entry of any
+   * other life is no registration at all — a heal moves to the next life, and
+   * its topics' work contexts are owed again, spooled ahead of the next
+   * target each one gets (flows/heal-session.ts clears the list). Capped at
+   * MAX_TOPICS_PER_SESSION; `status` and `ackedStatus` are the topic's own,
+   * for set_intent, the flush-time rewrite and SessionEnd's last word.
+   */
+  topicContexts: z
+    .array(
+      z.object({
+        key: z.string().min(1),
+        sessionId: z.string().min(1),
+        workContextId: z.string().min(1),
+        branch: z.string().min(1),
+        title: z.string().min(1),
+        status: z.string().min(1),
+        baseCommit: z.string().min(1).nullable().default(null),
+        root: z.string().min(1),
+        registeredAt: z.string().min(1),
+        lastTouchedAt: z.string().min(1),
+        ackedStatus: z.string().min(1).nullable().default(null),
+      }),
+    )
+    .default([]),
+  /**
+   * The branch the START checkout was on when this life registered, read
+   * from its HEAD file exactly as a touched root's is — the topic whose
+   * touches file under the session's own work context. Null on a state from
+   * before topics: the session's own checkout then files there whatever its
+   * branch, and every other root opens a topic.
+   */
+  startBranch: z.string().min(1).nullable().default(null),
+  /** When a touch last filed under the session's own context — set_intent's "most recent topic" needs both sides. */
+  sessionTouchedAt: z.string().min(1).nullable().default(null),
+  /** Touches filed under the session's own context because the topic cap was reached (counted, never silent). */
+  topicOverflowCount: z.number().int().min(0).default(0),
 });
 
 /**
@@ -614,6 +659,9 @@ export const SessionStateSchema = z.preprocess(
 );
 
 export type SessionState = z.infer<typeof SessionStateObjectSchema>;
+
+/** One topic a life opened (`topicContexts`). */
+export type TopicContext = SessionState["topicContexts"][number];
 
 /**
  * What a WRITER may pass: the defaulted fields are optional, exactly as they
@@ -838,8 +886,16 @@ export const withCarriedCapture = (
               workContextStatus: previous.workContextStatus ?? state.workContextStatus,
               // ...and what the hub acknowledged of it (L7).
               workContextAcked: previous.workContextAcked,
+              // ...and the topics it opened, whose work contexts are spooled
+              // already: a re-fire that dropped them would spool every one
+              // again, and one that re-read the start branch would move the
+              // life's own topic under it (DESIGN.md "One session, many topics").
+              topicContexts: previous.topicContexts,
+              startBranch: previous.startBranch ?? state.startBranch ?? null,
+              sessionTouchedAt: previous.sessionTouchedAt,
             }
           : {}),
+        topicOverflowCount: previous.topicOverflowCount,
       };
 
 /** The epoch and counter a state that carries nothing starts on. */
@@ -1684,5 +1740,9 @@ export const deriveSessionState = (
     toolWindows: [],
     toolWindowEvictions: 0,
     toolWindowMisses: 0,
+    topicContexts: [],
+    startBranch: null,
+    sessionTouchedAt: null,
+    topicOverflowCount: 0,
   };
 };

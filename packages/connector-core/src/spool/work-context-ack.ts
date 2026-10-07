@@ -63,13 +63,41 @@ export const noteWorkContextAcked = async (
     return;
   }
   await updateSessionState(home, hostSessionKey, (fresh) => {
+    if (fresh.crosscheckSessionId !== flusherSessionId) {
+      return null;
+    }
     const last = acked.filter((ack) => ack.id === fresh.workContextId).at(-1);
     const isNew =
       last !== undefined &&
       (fresh.workContextAcked?.id !== last.id || fresh.workContextAcked.status !== last.status);
-    return fresh.crosscheckSessionId === flusherSessionId && isNew ? { ...fresh, workContextAcked: last } : null;
+    // ...and each of the life's TOPICS, on its own entry (DESIGN.md "One
+    // session, many topics"): SessionEnd's last word covers them too.
+    const topics = fresh.topicContexts.map((topic) => {
+      const ack = acked.filter((entry) => entry.id === topic.workContextId).at(-1);
+      return ack === undefined || ack.status === topic.ackedStatus || topic.sessionId !== fresh.crosscheckSessionId
+        ? topic
+        : { ...topic, ackedStatus: ack.status };
+    });
+    const isTopicNew = topics.some((topic, index) => topic !== fresh.topicContexts[index]);
+    return isNew || isTopicNew
+      ? { ...fresh, ...(isNew ? { workContextAcked: last } : {}), topicContexts: topics }
+      : null;
   });
 };
+
+/**
+ * The life's topics whose last accepted status is not the one the state
+ * holds — set_intent moved it and its post may have landed and did not, with
+ * no later sender coming (L7, per topic). A topic the hub never acknowledged
+ * at all is not behind: its spooled copy goes as the state holds it.
+ */
+export const topicsBehindState = (state: SessionState): SessionState["topicContexts"] =>
+  state.topicContexts.filter(
+    (topic) =>
+      topic.sessionId === state.crosscheckSessionId &&
+      topic.ackedStatus !== null &&
+      topic.ackedStatus !== topic.status,
+  );
 
 /**
  * Whether the hub last accepted ANOTHER status for the state's work context

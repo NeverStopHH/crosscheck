@@ -271,6 +271,15 @@ export const workContexts = pgTable("work_contexts", {
    * reads it beside `session_id` (services/coverage.ts touchedScope).
    */
   updatedBySessionId: text("updated_by_session_id").references(() => agentSessions.id),
+  /**
+   * THE TOPIC this context is (DESIGN.md "One session, many topics"): the
+   * branch its files were edited on and the commit HEAD named at the
+   * session's first touch of it. Null for a context from a connector before
+   * topics — one context per session — and every reader then falls back to
+   * the owning session's own branch and base commit, as it always did.
+   */
+  branch: text("branch"),
+  baseCommit: text("base_commit"),
 }, (table) => [
   // `session_id` is a foreign key, which Postgres does NOT index on its own.
   // services/presence.ts reads the newest context of every live session to

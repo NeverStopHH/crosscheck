@@ -33,6 +33,7 @@ describe("LOSS_KINDS", () => {
       "hook_timed_out",
       "host_contract_drift",
       "wire_unobserved",
+      "topic_overflow",
       "unattributed",
     ]);
     expect(isLossKind(UNATTRIBUTED_LOSS_KIND)).toBe(true);

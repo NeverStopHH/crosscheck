@@ -17,6 +17,7 @@ import {
 } from "./claim-validity.ts";
 import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
 import { readIntentChain } from "./intent-ledger.ts";
+import { contextBaseCommit } from "./topic-base-commit.ts";
 import { notMutedCondition } from "./visibility.ts";
 import type { ClaimRevalidationReading } from "./claim-validity.ts";
 import type { ClaimValidity, EvidenceAxes } from "@crosscheck/schema";
@@ -63,11 +64,19 @@ export interface WorkContextView {
   readonly intent: Record<string, unknown> | null;
   readonly status: string;
   /**
-   * The owning session's base commit — what the connector's drift label and
-   * landed ancestry check run against. "" only if the join ever misses
-   * (unreachable through ingest, same argument as the claim author join).
+   * The base commit the context's work stands on — what the connector's drift
+   * label and landed ancestry check run against: the TOPIC's own when it
+   * carried one, else the owning session's (services/topic-base-commit.ts).
+   * "" only if the join ever misses (unreachable through ingest, same
+   * argument as the claim author join).
    */
   readonly baseCommit: string;
+  /**
+   * The branch a TOPIC context was edited on (DESIGN.md "One session, many
+   * topics"); null for the session's own context and for one from a
+   * connector before topics.
+   */
+  readonly branch: string | null;
   /** Merged-branch detection (DESIGN.md §5); null while unobserved. */
   readonly landedAt: string | null;
   readonly createdAt: string;
@@ -264,6 +273,7 @@ const toWorkContextView = (
   intent: row.intent ?? null,
   status: row.status,
   baseCommit,
+  branch: row.branch ?? null,
   landedAt: toIsoOrNull(row.landedAt),
   createdAt: row.createdAt.toISOString(),
   updatedAt: toIsoOrNull(row.updatedAt),
@@ -371,7 +381,7 @@ export const listWorkContextsByRepo = async (
       workContext: workContexts,
       developerId: agentSessions.developerId,
       developerName: developers.name,
-      baseCommit: agentSessions.baseCommit,
+      baseCommit: contextBaseCommit,
       // Scalar subqueries rather than the LEFT JOIN + GROUP BY this query used
       // to carry: the join multiplied every context by its claims (100,000
       // rows aggregated to answer about 10,000) and could only ever count ONE
@@ -508,7 +518,7 @@ export const getDiagnosis = async (
   const contextRows = await db
     .select({
       workContext: workContexts,
-      baseCommit: agentSessions.baseCommit,
+      baseCommit: contextBaseCommit,
       repo: agentSessions.repo,
     })
     .from(workContexts)

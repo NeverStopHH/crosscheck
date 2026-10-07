@@ -45,15 +45,26 @@
 // VERIFY: for f in $(grep -rl --include='*.ts' 'captureFileTargets({' packages/*/src | sort); do grep -q 'resolveRoot' "$f" && echo "$f ok" || echo "$f MISSING"; done
 // PRINTS: packages/connector-core/src/flows/capture-git-touches.ts ok
 // PRINTS: packages/connector-core/src/flows/capture-touched-files.ts ok
+import { MAX_TARGETS_PER_INVOCATION } from "../constants.ts";
 import { sessionSlug } from "../config/paths.ts";
+import { workContextRecord } from "../capture/records.ts";
 import { resolveTouchedRoots } from "../capture/touched-root.ts";
+import { appendRecords } from "../spool/append.ts";
 import { recordDrop } from "../spool/drops.ts";
+import { recordCaptureLoss } from "../state/loss-ledger.ts";
 import type {
   KnownWorktreeRoot,
+  ResolveTouchedRootsInput,
   TouchedRootsResolution,
 } from "../capture/touched-root.ts";
+import type { SeqRange } from "../state/session-state.ts";
 import { captureFileTargets } from "./capture-targets.ts";
 import type { CaptureFileTargetsInput } from "./capture-targets.ts";
+import { planTopics, seenPathsOf, topicSeenKey } from "./topic-contexts.ts";
+import type { Filing, TopicCapture, TopicLife, TopicPlan } from "./topic-contexts.ts";
+
+/** The capture-loss detail a topic overflow is booked under (state/loss-ledger.ts). */
+const TOPIC_OVERFLOW_DETAIL = "topic-cap";
 
 export interface CaptureTouchedFilesInput
   extends Omit<CaptureFileTargetsInput, "resolveRoot"> {
@@ -69,17 +80,162 @@ export interface CaptureTouchedFilesInput
   readonly identityRepoId: string;
   /** The caller's per-session root cache, read at the call's start. */
   readonly knownWorktreeRoots: readonly KnownWorktreeRoot[];
+  /**
+   * THE LIFE THE TOUCHES FILE UNDER, BY TOPIC (flows/topic-contexts.ts). Absent,
+   * every path files under `workContextId` — one context per session, the
+   * shape before topics. Every connector passes it.
+   */
+  readonly topics?: TopicLife;
+  /** The pre-pass, real by default; injected only by a test that has no git. */
+  readonly resolveRoots?: (input: ResolveTouchedRootsInput) => Promise<TouchedRootsResolution>;
 }
 
 export interface CaptureTouchedFilesResult {
-  /** Repo-relative ids actually spooled — fold these into the seen-set. */
+  /**
+   * Seen-set entries for what was actually spooled — repo-relative ids, and
+   * a topic's prefixed with it (`topicSeenKey`). Fold these into the seen-set.
+   */
   readonly captured: readonly string[];
   /**
    * The pre-pass result, or null when there were no paths to resolve. Feed it
    * to `withCaptureBookkeeping` inside the caller's single locked write.
    */
   readonly resolution: TouchedRootsResolution | null;
+  /**
+   * What the event did to the life's topics, for `withTopicCapture` in the
+   * same write — null when no topics were asked for or nothing resolved.
+   */
+  readonly topics: TopicCapture | null;
 }
+
+/**
+ * THE #17 RESOLUTION AS `captureFileTargets` TAKES IT, spelled once for both
+ * paths below: absent when there was nothing to resolve, never an explicit
+ * undefined (the header says why the spread is load-bearing).
+ */
+const resolveRootFrom = (
+  resolution: TouchedRootsResolution | null,
+): Pick<CaptureFileTargetsInput, "resolveRoot"> =>
+  resolution === null
+    ? {}
+    : {
+        resolveRoot: (path: string): string | null =>
+          resolution.rootByPath.get(path) ?? null,
+      };
+
+/** The rest of a block, after `used` of its positions went to earlier records. */
+const seqAfter = (seq: SeqRange | null | undefined, used: number): SeqRange | null =>
+  seq === null || seq === undefined ? null : { ...seq, from: seq.from + used, count: Math.max(0, seq.count - used) };
+
+/**
+ * THE CONTEXTS FIRST. Each topic this event opens gets its work context in the
+ * spool AHEAD of any target that names it — the hub refuses a target whose
+ * context it has not been sent (`work context … not found`), so the order is
+ * not a nicety. An append that did not persist leaves those topics unopened:
+ * their paths file under the session's own context instead, never under a
+ * context the spool does not hold.
+ */
+const spoolOpenedTopics = async (
+  input: CaptureTouchedFilesInput,
+  plan: TopicPlan,
+): Promise<boolean> => {
+  if (plan.opened.length === 0) {
+    return true;
+  }
+  const appended = await appendRecords(
+    input.home,
+    input.repoKey,
+    input.hostSessionKey,
+    plan.opened.map((topic) =>
+      workContextRecord(
+        {
+          workContextId: topic.workContextId,
+          sessionId: topic.sessionId,
+          title: topic.title,
+          status: topic.status,
+          branch: topic.branch,
+          baseCommit: topic.baseCommit,
+        },
+        input.producer,
+        input.now,
+      ),
+    ),
+    input.now,
+  );
+  return appended.persisted;
+};
+
+/** Paths grouped by the context they file under, in first-touch order. */
+const groupsOf = (
+  paths: readonly string[],
+  filingByPath: ReadonlyMap<string, Filing>,
+  fallback: Filing,
+  unopened: ReadonlySet<string>,
+): ReadonlyMap<string, { readonly filing: Filing; readonly paths: readonly string[] }> => {
+  const groups = new Map<string, { readonly filing: Filing; readonly paths: string[] }>();
+  for (const path of paths) {
+    const planned = filingByPath.get(path);
+    if (planned === undefined) {
+      continue;
+    }
+    const filing = planned.key !== null && unopened.has(planned.key) ? fallback : planned;
+    const group = groups.get(filing.workContextId) ?? { filing, paths: [] };
+    group.paths.push(path);
+    groups.set(filing.workContextId, group);
+  }
+  return groups;
+};
+
+/**
+ * ONE EVENT, SEVERAL TOPICS: the contexts first, then one target write per
+ * context, sharing the event's one cap and one position block — the second
+ * group's targets take the positions after the first's, and its cap is what
+ * the first left. A touch past the topic cap files under the session's own
+ * context and is booked `topic_overflow`: delivered, its topic counted lost.
+ */
+const captureByTopic = async (
+  input: CaptureTouchedFilesInput,
+  resolution: TouchedRootsResolution,
+  life: TopicLife,
+): Promise<{ readonly captured: readonly string[]; readonly topics: TopicCapture }> => {
+  const plan = await planTopics(life, resolution, input.paths, input.now);
+  const isOpened = await spoolOpenedTopics(input, plan);
+  const session: Filing = { key: null, workContextId: life.sessionWorkContextId };
+  const unopened = new Set(isOpened ? [] : plan.opened.map((topic) => topic.key));
+  const captured: string[] = [];
+  for (const { filing, paths } of groupsOf(input.paths, plan.filingByPath, session, unopened).values()) {
+    const collected = await captureFileTargets({
+      ...input,
+      paths,
+      ...resolveRootFrom(resolution),
+      workContextId: filing.workContextId,
+      seenTargets: seenPathsOf(input.seenTargets, filing.key),
+      seq: seqAfter(input.seq, captured.length),
+      maxTargets: MAX_TARGETS_PER_INVOCATION - captured.length,
+    });
+    captured.push(...collected.map((path) => topicSeenKey(filing.key, path)));
+  }
+  if (plan.overflowed > 0 && input.editFired !== false) {
+    await recordCaptureLoss(input.home, {
+      kind: "topic_overflow",
+      count: plan.overflowed,
+      key: input.repoKey,
+      detail: TOPIC_OVERFLOW_DETAIL,
+      now: input.now,
+    });
+  }
+  return {
+    captured,
+    topics: {
+      sessionId: life.sessionId,
+      opened: isOpened ? plan.opened : [],
+      touched: new Map([...plan.touched].filter(([key]) => !unopened.has(key))),
+      sessionTouched: plan.sessionTouched || unopened.size > 0,
+      overflowed: plan.overflowed,
+      at: input.now.toISOString(),
+    },
+  };
+};
 
 export const captureTouchedFiles = async (
   input: CaptureTouchedFilesInput,
@@ -89,6 +245,8 @@ export const captureTouchedFiles = async (
     identityRoot,
     identityRepoId,
     knownWorktreeRoots,
+    topics: life,
+    resolveRoots = resolveTouchedRoots,
     ...targets
   } = input;
   // Skipped entirely when there is nothing to resolve: an event with no paths
@@ -96,7 +254,7 @@ export const captureTouchedFiles = async (
   const resolution =
     targets.paths.length === 0
       ? null
-      : await resolveTouchedRoots({
+      : await resolveRoots({
           paths: targets.paths,
           cwd: targets.cwd,
           sessionRepoRoot: targets.repoRoot,
@@ -104,16 +262,13 @@ export const captureTouchedFiles = async (
           identityRoot,
           identityRepoId,
           knownWorktreeRoots,
+          now: targets.now,
         });
-  const captured = await captureFileTargets({
-    ...targets,
-    ...(resolution === null
-      ? {}
-      : {
-          resolveRoot: (path: string): string | null =>
-            resolution.rootByPath.get(path) ?? null,
-        }),
-  });
+  const byTopic =
+    resolution === null || life === undefined ? null : await captureByTopic(input, resolution, life);
+  const captured =
+    byTopic?.captured ??
+    (await captureFileTargets({ ...targets, ...resolveRootFrom(resolution) }));
   // AN EDIT OUTSIDE EVERY ROOT OF THIS REPO IS A COUNTED DROP
   // (docs/1.0/loss-accounting.md §3 row 10): the session-state counter
   // `outsideRootDrops` keeps doctor's diagnosis line, and this ledger line is
@@ -135,5 +290,5 @@ export const captureTouchedFiles = async (
       targets.now,
     );
   }
-  return { captured, resolution };
+  return { captured, resolution, topics: byTopic?.topics ?? null };
 };

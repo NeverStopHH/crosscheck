@@ -147,6 +147,10 @@ const sessionState = (repoRoot: string): SessionState => ({
   toolWindows: [],
   toolWindowEvictions: 0,
   toolWindowMisses: 0,
+  topicContexts: [],
+  startBranch: null,
+  sessionTouchedAt: null,
+  topicOverflowCount: 0,
   probedFingerprints: [],
 });
 

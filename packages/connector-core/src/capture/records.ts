@@ -41,6 +41,13 @@ export interface WorkContextRecordInput {
    * has — so a registration or recovery re-send can never wipe one.
    */
   readonly intent?: Intent | undefined;
+  /**
+   * A TOPIC's branch and the commit HEAD named at the session's first touch
+   * of it (flows/topic-contexts.ts). Absent on the session's own context, and
+   * on a topic whose commit could not be read — never a guess.
+   */
+  readonly branch?: string | undefined;
+  readonly baseCommit?: string | null | undefined;
 }
 
 export const workContextRecord = (
@@ -56,6 +63,8 @@ export const workContextRecord = (
       title: input.title,
       status: input.status,
       ...(input.intent === undefined ? {} : { intent: input.intent }),
+      ...(input.branch === undefined ? {} : { branch: input.branch }),
+      ...(input.baseCommit === undefined || input.baseCommit === null ? {} : { baseCommit: input.baseCommit }),
       createdAt: now.toISOString(),
     },
     producer,

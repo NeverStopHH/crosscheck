@@ -33,6 +33,7 @@ import {
   MAX_INTENT_SCOPE_ENTRIES,
   MAX_INTENT_SUMMARY_CHARS,
   MAX_PIN_PATH_CHARS,
+  MAX_TOPIC_BRANCH_CHARS,
   SessionStatusSchema,
 } from "@crosscheck/schema";
 
@@ -48,6 +49,8 @@ import { containsSecret } from "../../capture/secret-scan.ts";
 import { isEchoOfDeliveredHint } from "../../hints/echo.ts";
 import { getGhostChecks } from "../../http/hub.ts";
 import { readSessionState, updateSessionState, withGhostNotices } from "../../state/session-state.ts";
+import { intentTargetOf } from "../../flows/topic-contexts.ts";
+import type { IntentTarget } from "../../flows/topic-contexts.ts";
 import { writeIntent } from "./intent-write.ts";
 import type { TitledWorkContext } from "./intent-write.ts";
 import { NO_SESSION, contractFailure, requireOwnContext } from "./publish-claim.ts";
@@ -113,6 +116,20 @@ export const ArgsSchema = z.object({
     .describe(
       "When re-declaring: one sentence on why the goal changed. Teammates' " +
         "agents read it beside the sentence it replaced.",
+    ),
+  /**
+   * WHICH TOPIC (DESIGN.md "One session, many topics"): one session works
+   * several branches in several worktrees, and each is its own work context.
+   * Absent, the intent lands on the topic this session touched most recently.
+   */
+  topic: z
+    .string()
+    .min(1)
+    .max(MAX_TOPIC_BRANCH_CHARS)
+    .optional()
+    .describe(
+      "Optional: the branch this intent is about, when this session works several " +
+        "branches. Omitted, it goes to the branch whose files this session edited last.",
     ),
 });
 
@@ -216,6 +233,55 @@ const deliverGhostNotice = async (
 };
 
 
+/**
+ * The context this intent is written to: the session's own (title and status
+ * from its state, as always), or one of its topics (flows/topic-contexts.ts
+ * `intentTargetOf`). Null when a named branch is no topic of this life.
+ */
+const targetOf = async (
+  ctx: McpContext,
+  own: OwnWorkContext & { readonly workContextTitle: string; readonly workContextStatus: string },
+  named: string | undefined,
+): Promise<TitledWorkContext | null> => {
+  const state = await readSessionState(ctx.config.home, own.hostSessionKey);
+  const isOwnLife = state !== null && state.crosscheckSessionId === own.crosscheckSessionId;
+  const target: IntentTarget = isOwnLife
+    ? intentTargetOf(state, named)
+    : named === undefined
+      ? { kind: "session" }
+      : { kind: "unknown", branches: [] };
+  if (target.kind === "unknown") {
+    return null;
+  }
+  if (target.kind === "session") {
+    return { ...own, workContextTitle: own.workContextTitle, workContextStatus: own.workContextStatus };
+  }
+  return {
+    ...own,
+    workContextId: target.topic.workContextId,
+    workContextTitle: target.topic.title,
+    workContextStatus: target.topic.status,
+    topicKey: target.topic.key,
+    branch: target.topic.branch,
+    baseCommit: target.topic.baseCommit,
+  };
+};
+
+/** The refusal for a branch this life never touched — naming the ones it did, never guessing. */
+export const UNKNOWN_TOPIC_REFUSAL =
+  "This session has no topic on that branch, so the intent was not recorded. Name one " +
+  "of the branches this session has edited files on, or leave `topic` out to write to " +
+  "the one it edited last.";
+
+const unknownTopicText = async (ctx: McpContext, own: OwnWorkContext, named: string): Promise<string> => {
+  const state = await readSessionState(ctx.config.home, own.hostSessionKey);
+  const target = state === null ? null : intentTargetOf(state, named);
+  const branches = target?.kind === "unknown" ? target.branches : [];
+  return branches.length === 0
+    ? UNKNOWN_TOPIC_REFUSAL
+    : quotingText(UNKNOWN_TOPIC_REFUSAL, `Its branches: ${branches.map((branch) => quoted(branch, MAX_TOPIC_BRANCH_CHARS)).join(", ")}.`);
+};
+
 export const run = async (ctx: McpContext, args: unknown): Promise<ToolResult> => {
   const parsed = parseArgs(ArgsSchema, args, definition.name);
   if (!parsed.ok) {
@@ -281,14 +347,21 @@ export const run = async (ctx: McpContext, args: unknown): Promise<ToolResult> =
   if (!rules.ok) {
     return contractFailure(rules.messages);
   }
+  // WHICH CONTEXT (DESIGN.md "One session, many topics"): the named topic, or
+  // the one this life touched last — the session's own when that was its own
+  // checkout. A branch this life never touched is refused with the ones it did.
+  const target = await targetOf(
+    ctx,
+    { ...own, workContextTitle: own.workContextTitle, workContextStatus: own.workContextStatus },
+    parsed.value.topic,
+  );
+  if (target === null) {
+    return toolFailure(await unknownTopicText(ctx, own, parsed.value.topic ?? ""));
+  }
   // The write itself — the status into the state first, the post, what each
   // answer leaves in the state — is mcp/tools/intent-write.ts, which the spool
   // simulation calls too (review-2 round 8, M5).
-  const titled: TitledWorkContext = {
-    ...own,
-    workContextTitle: own.workContextTitle,
-    workContextStatus: own.workContextStatus,
-  };
+  const titled: TitledWorkContext = target;
   const written = await writeIntent(
     {
       home: ctx.config.home,
@@ -322,6 +395,7 @@ export const run = async (ctx: McpContext, args: unknown): Promise<ToolResult> =
   }
   const outcome = written.result;
   const ghost = await deliverGhostNotice(ctx, own);
+  const workContextId = titled.workContextId;
   // Audit row M14, the author's half. An intent is LABEL class — every surface
   // that shows it blanks it WHOLE when the phrase filter matches — so without
   // this note the author reads their own sentence back from this tool while
@@ -334,7 +408,7 @@ export const run = async (ctx: McpContext, args: unknown): Promise<ToolResult> =
   if (outcome?.status === "duplicate") {
     return toolText(
       quotingText(
-        `That intent is already recorded on your work context ${safeId(own.workContextId)}: ${framed}. Nothing changed.`,
+        `That intent is already recorded on your work context ${safeId(workContextId)}: ${framed}. Nothing changed.`,
         ...notes,
         ...ghost,
       ),
@@ -342,7 +416,7 @@ export const run = async (ctx: McpContext, args: unknown): Promise<ToolResult> =
   }
   return toolText(
     quotingText(
-      `Recorded your intent on work context ${safeId(own.workContextId)}: ${framed}.`,
+      `Recorded your intent on work context ${safeId(workContextId)}: ${framed}.`,
       "It is declared (confidence 1) and replaces any intent crosscheck derived from your " +
         "first prompt; teammates' briefings, prompt hints and the file-overlap tripwire " +
         "now show it. Calling set_intent again supersedes it.",

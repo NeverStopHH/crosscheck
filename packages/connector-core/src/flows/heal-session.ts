@@ -218,6 +218,12 @@ const swapLife = (
       crosscheckSessionId: sessionId,
       workContextId: workContextIdFor(sessionId),
       developerId: developerId ?? fresh.developerId,
+      // THE TOPICS START EMPTY TOO (DESIGN.md "One session, many topics"),
+      // for the seen-set's reason below: a topic's work context was spooled
+      // for the refused life, and may never have reached the hub. Cleared,
+      // every topic's context is OWED again — the next touch in it spools its
+      // context ahead of its target, under this life (flows/topic-contexts.ts).
+      topicContexts: [],
       seenTargets: [],
     });
     return "swapped";

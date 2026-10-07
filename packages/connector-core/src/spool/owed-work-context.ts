@@ -44,7 +44,7 @@ import type { HubContext } from "../http/client.ts";
 import { postRecords } from "../http/hub.ts";
 import type { IngestSummary, RecordResult } from "../http/hub.ts";
 import { lifeRungOf } from "../state/session-lineage.ts";
-import { crosscheckSessionIdFor, underSessionStateLock } from "../state/session-state.ts";
+import { crosscheckSessionIdFor, underSessionStateLock, workContextIdFor } from "../state/session-state.ts";
 import { recordDrop } from "./drops.ts";
 import { rejectCauseOf } from "./reject-cause.ts";
 
@@ -240,6 +240,8 @@ export interface LifeState {
   readonly crosscheckSessionId?: unknown;
   readonly workContextTitle?: unknown;
   readonly workContextStatus?: unknown;
+  /** The topics the life opened (state/session-state.ts), each with its own title and status. */
+  readonly topicContexts?: unknown;
 }
 
 /**
@@ -282,16 +284,32 @@ export const withLifeState = (record: Record<string, unknown>, state: LifeState 
   if (record["kind"] !== "work_context" || body === undefined || state === null) {
     return record;
   }
-  return body["sessionId"] !== state.crosscheckSessionId
+  if (body["sessionId"] !== state.crosscheckSessionId) {
+    return record;
+  }
+  // ONE LIFE, SEVERAL CONTEXTS (DESIGN.md "One session, many topics"): the
+  // life's own context goes with the life's title and status, a TOPIC's with
+  // its own — never the session's title over a topic's `<branch> @ <repo>`.
+  const said = body["id"] === workContextIdFor(String(state.crosscheckSessionId))
+    ? { title: state.workContextTitle, status: state.workContextStatus }
+    : topicSaid(state, body["id"]);
+  return said === null
     ? record
     : {
         ...record,
         body: {
           ...body,
-          title: textOr(state.workContextTitle, body["title"]),
-          status: textOr(state.workContextStatus, body["status"]),
+          title: textOr(said.title, body["title"]),
+          status: textOr(said.status, body["status"]),
         },
       };
+};
+
+/** What the life's state says of one of its topics' contexts, or null when it names no such topic. */
+const topicSaid = (state: LifeState, workContextId: unknown): { readonly title: unknown; readonly status: unknown } | null => {
+  const topics = Array.isArray(state.topicContexts) ? (state.topicContexts as readonly Record<string, unknown>[]) : [];
+  const topic = topics.find((entry) => entry["workContextId"] === workContextId);
+  return topic === undefined ? null : { title: topic["title"], status: topic["status"] };
 };
 
 /**

@@ -9,6 +9,7 @@ import {
 } from "../capture/tool-events.ts";
 import { captureFailure } from "@crosscheck/connector-core/flows/capture-targets.ts";
 import { captureTouchedFiles } from "@crosscheck/connector-core/flows/capture-touched-files.ts";
+import { topicLifeOf, withTopicCapture } from "@crosscheck/connector-core/flows/topic-contexts.ts";
 import { heartbeatMaybe } from "@crosscheck/connector-core/flows/heartbeat.ts";
 import { registerSessionFlow } from "@crosscheck/connector-core/flows/register-session.ts";
 import { guaranteeDeclarationFor } from "@crosscheck/connector-core/guarantees/declarations.ts";
@@ -244,7 +245,7 @@ export const handlePostToolUse = async (
   // The §1.3 flows: targets first, then the fingerprint — the same spool order
   // the combined batch used to produce. Claude-side stays exactly the payload
   // parsing: which fields carry paths, what counts as a failure response.
-  const { captured: files, resolution } = await captureTouchedFiles({
+  const { captured: files, resolution, topics } = await captureTouchedFiles({
     seq,
     home: ctx.config.home,
     repoKey: ctx.repoKey,
@@ -261,6 +262,9 @@ export const handlePostToolUse = async (
     identityRoot: ctx.identity.root,
     identityRepoId: ctx.identity.repoId,
     knownWorktreeRoots: state.knownWorktreeRoots,
+    // ONE CONTEXT PER TOPIC (core flows/topic-contexts.ts): an edit in a
+    // sibling worktree on another branch files under that branch's context.
+    topics: topicLifeOf(state),
   });
   if (failed) {
     await captureFailure({
@@ -320,8 +324,9 @@ export const handlePostToolUse = async (
   const lostBracket = editFired && seq !== null && seq.after === undefined;
   await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => ({
     // Files this call captured into a life the flush then healed away from
-    // were withheld with it: they stay unseen, so the next life captures them.
-    ...withCaptureBookkeeping(withSeenTargets(fresh, fresh.crosscheckSessionId === state.crosscheckSessionId ? files : []), {
+    // were withheld with it: they stay unseen, so the next life captures them
+    // — and so do the topics it opened (withTopicCapture registers none then).
+    ...withCaptureBookkeeping(withTopicCapture(withSeenTargets(fresh, fresh.crosscheckSessionId === state.crosscheckSessionId ? files : []), topics), {
       resolution,
       capturedCount: files.length,
       editFired,

@@ -19,6 +19,7 @@ import { settleOwedOnIntent } from "../../spool/owed-work-context.ts";
 import { recordRefusedLife } from "../../spool/refused-lives.ts";
 import { rejectCauseOf } from "../../spool/reject-cause.ts";
 import { allocateSeq, updateSessionState, withRecordedIntent } from "../../state/session-state.ts";
+import type { SessionState } from "../../state/session-state.ts";
 import type { OwnWorkContext } from "../session.ts";
 import { issuesOf, resultAt } from "./shared.ts";
 import type { HubFailure } from "./shared.ts";
@@ -40,7 +41,38 @@ export interface IntentWriteDeps {
 export interface TitledWorkContext extends OwnWorkContext {
   readonly workContextTitle: string;
   readonly workContextStatus: string;
+  /**
+   * Set when the target is one of the life's TOPICS (flows/topic-contexts.ts
+   * `intentTargetOf`): its status then lives in that topic's registry entry,
+   * not in the session's, and the post carries the topic's branch and base
+   * commit so a hub that has not seen the topic yet creates it whole.
+   */
+  readonly topicKey?: string;
+  readonly branch?: string;
+  readonly baseCommit?: string | null;
 }
+
+/** The status field this write moves: the session's own, or one topic's entry. */
+const withStatus = (fresh: SessionState, own: TitledWorkContext, status: string): SessionState =>
+  own.topicKey === undefined
+    ? { ...fresh, workContextStatus: status }
+    : {
+        ...fresh,
+        topicContexts: fresh.topicContexts.map((topic) =>
+          topic.key === own.topicKey && topic.sessionId === own.crosscheckSessionId ? { ...topic, status } : topic,
+        ),
+      };
+
+/** What the hub accepted, written where SessionEnd's last word reads it: the session's ack, or the topic's. */
+const withAcked = (fresh: SessionState, own: TitledWorkContext, status: string): SessionState =>
+  own.topicKey === undefined
+    ? { ...fresh, workContextAcked: { id: own.workContextId, status } }
+    : {
+        ...fresh,
+        topicContexts: fresh.topicContexts.map((topic) =>
+          topic.key === own.topicKey && topic.sessionId === own.crosscheckSessionId ? { ...topic, ackedStatus: status } : topic,
+        ),
+      };
 
 export interface IntentWrite {
   readonly summary: string;
@@ -67,8 +99,8 @@ const mayHaveLanded = (failure: HubFailure): boolean =>
     : failure.kind === "malformed" || failure.status >= HTTP_SERVER_ERROR;
 
 /** The work context's status as the session's state records it — what every other sender reads. */
-const writeStatus = (deps: IntentWriteDeps, own: OwnWorkContext, status: string): Promise<boolean> =>
-  updateSessionState(deps.home, own.hostSessionKey, (fresh) => ({ ...fresh, workContextStatus: status }));
+const writeStatus = (deps: IntentWriteDeps, own: TitledWorkContext, status: string): Promise<boolean> =>
+  updateSessionState(deps.home, own.hostSessionKey, (fresh) => withStatus(fresh, own, status));
 
 export const writeIntent = async (
   deps: IntentWriteDeps,
@@ -82,6 +114,8 @@ export const writeIntent = async (
     title: own.workContextTitle,
     status,
     intent: write.intent,
+    ...(own.branch === undefined ? {} : { branch: own.branch }),
+    ...(own.baseCommit === undefined || own.baseCommit === null ? {} : { baseCommit: own.baseCommit }),
     createdAt: own.startedAt,
   };
   const producer = { sessionId: own.crosscheckSessionId, developerId: own.developerId };
@@ -138,13 +172,14 @@ export const writeIntent = async (
   // ghost worker will compare (`workContextIntent`), the debt that makes it
   // run (`ghostPending`), and the acknowledgement below. Best-effort like
   // every state update on this path.
-  await updateSessionState(deps.home, own.hostSessionKey, (fresh) => ({
-    ...withRecordedIntent(fresh, write.summary),
-    workContextStatus: write.status === undefined ? fresh.workContextStatus : status,
+  await updateSessionState(deps.home, own.hostSessionKey, (fresh) => {
+    const recorded = withRecordedIntent(fresh, write.summary);
+    const moved = write.status === undefined ? recorded : withStatus(recorded, own, status);
     // ...and the status the hub acknowledged, which SessionEnd compares the
-    // state's with (spool/work-context-ack.ts, review-2 round 8, L7).
-    workContextAcked: result?.status === "accepted" ? { id: own.workContextId, status } : fresh.workContextAcked,
-  }));
+    // state's with (spool/work-context-ack.ts, review-2 round 8, L7) — for a
+    // topic, on that topic's own entry.
+    return result?.status === "accepted" ? withAcked(moved, own, status) : moved;
+  });
   // The hub holds this work context now, as set_intent just wrote it: a debt a
   // heal left for it is paid (spool/owed-work-context.ts), and no later flush
   // sends a copy over this status (review-2 round 7, M1).

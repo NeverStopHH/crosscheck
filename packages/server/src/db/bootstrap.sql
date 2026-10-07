@@ -213,6 +213,15 @@ ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS landed_at timestamptz;
 -- first update. ALTER so an existing hub gets it too.
 ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS updated_by_session_id text REFERENCES agent_sessions(id);
 
+-- THE TOPIC a work context is (DESIGN.md "One session, many topics"): one
+-- session edits sibling worktrees on several branches and sends one context
+-- per (repo, branch), each naming its branch and the commit HEAD named at the
+-- session's first touch. Null for a context from a connector before topics,
+-- whose readers fall back to the session's own branch and base commit. ALTER
+-- so an existing hub gets both.
+ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS branch text;
+ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS base_commit text;
+
 -- Similarity-detected contradiction candidates (DESIGN.md §3 ingest gate).
 -- A TABLE for these, and only these: they exist only while an embedder is
 -- configured, and recomputing pairwise cosine at read time would be O(n²) over

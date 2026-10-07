@@ -51,6 +51,13 @@ export const LOSS_KINDS = [
   "host_contract_drift",
   /** ACP wire lines the observer could not read (lines, not records). */
   "wire_unobserved",
+  /**
+   * Touches filed under the session's own work context because the session
+   * had opened MAX_TOPICS_PER_SESSION topics already (touches, not records):
+   * delivered, but no longer told apart by branch (DESIGN.md "One session,
+   * many topics").
+   */
+  "topic_overflow",
   /** Counted before the ledger kept reasons, or a kind this hub does not know. */
   "unattributed",
 ] as const;
