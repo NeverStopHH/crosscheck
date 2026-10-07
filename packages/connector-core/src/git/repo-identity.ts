@@ -337,7 +337,7 @@ export const readHeadFile = async (root: string): Promise<HeadFile | null> => {
 };
 
 /** The shared git dir a linked worktree's refs live in — its `commondir` file, or the git dir itself. */
-const commonDirOf = async (gitDir: string): Promise<string> => {
+export const commonDirOf = async (gitDir: string): Promise<string> => {
   const pointer = await readTrimmed(join(gitDir, "commondir"));
   if (pointer === null || pointer.length === 0) {
     return gitDir;
@@ -359,12 +359,21 @@ export const resolveHeadCommit = async (head: HeadFile): Promise<string | null> 
   if (!head.content.startsWith(SYMBOLIC_REF_PREFIX)) {
     return COMMIT_ID_PATTERN.test(head.content) ? head.content : null;
   }
-  const ref = head.content.slice(SYMBOLIC_REF_PREFIX.length).trim();
+  return resolveRefCommit(head.gitDir, head.content.slice(SYMBOLIC_REF_PREFIX.length).trim());
+};
+
+/**
+ * The commit a ref names, from git's files: the loose ref in the worktree's
+ * own git dir or the shared one, else its `packed-refs` line. Null for a ref
+ * that names nothing — which is how a RENAMED branch's old name reads
+ * (flows/topic-rules.ts, rule b).
+ */
+export const resolveRefCommit = async (gitDir: string, ref: string): Promise<string | null> => {
   if (!isPlainRef(ref)) {
     return null;
   }
-  const commonDir = await commonDirOf(head.gitDir);
-  for (const dir of [head.gitDir, commonDir]) {
+  const commonDir = await commonDirOf(gitDir);
+  for (const dir of [gitDir, commonDir]) {
     const loose = await readTrimmed(join(dir, ref));
     if (loose !== null && COMMIT_ID_PATTERN.test(loose)) {
       return loose;

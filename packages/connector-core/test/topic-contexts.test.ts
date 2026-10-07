@@ -23,7 +23,7 @@ import { fallbackWorkContextTitle, registerSessionFlow } from "../src/flows/regi
 import { sessionHealer } from "../src/flows/heal-session.ts";
 import {
   intentTargetOf,
-  topicKeyOf,
+  mintTopicId,
   topicLifeOf,
   topicSeenKey,
   topicWorkContextIdFor,
@@ -120,16 +120,21 @@ const capture = async (
 const spooledOf = async (home: string, hubUrl: string = HUB): Promise<readonly { kind: string; body: Record<string, unknown> }[]> =>
   (await readSpoolLines(home, repoKey(hubUrl, REPO_ID))).map((line) => JSON.parse(line) as { kind: string; body: Record<string, unknown> });
 
+/** The id the rules mint for the first topic a life opens in `/cx-topics/<worktree>`. */
+const firstTopicIn = (worktree: string): string => mintTopicId(REPO_ID, `/cx-topics/${worktree}`, 1);
+
 const topicEntry = (
   sessionId: string,
   sessionWorkContextId: string,
   branch: string,
   at: string = NOW.toISOString(),
 ): TopicContext => ({
-  key: topicKeyOf(REPO_ID, branch),
+  key: mintTopicId(REPO_ID, `/cx-topics/${branch}`, 1),
   sessionId,
-  workContextId: topicWorkContextIdFor(sessionWorkContextId, topicKeyOf(REPO_ID, branch)),
+  workContextId: topicWorkContextIdFor(sessionWorkContextId, mintTopicId(REPO_ID, `/cx-topics/${branch}`, 1)),
   branch,
+  branches: [branch],
+  head: "b".repeat(40),
   title: `${branch} @ api`,
   status: "implementing",
   baseCommit: "b".repeat(40),
@@ -153,14 +158,14 @@ describe("where a touch files", () => {
 
     // Assert: the topic's context first, then each target under its own context
     const records = await spooledOf(home);
-    const topicId = topicWorkContextIdFor(state.workContextId, topicKeyOf(REPO_ID, "feat/one"));
+    const topicId = topicWorkContextIdFor(state.workContextId, firstTopicIn("wt1"));
     expect(records.map((record) => [record.kind, record.body["workContextId"] ?? record.body["id"]])).toEqual([
       ["work_context", topicId],
       ["target", state.workContextId],
       ["target", topicId],
     ]);
     expect(records[0]?.body).toMatchObject({ title: "feat/one @ api", branch: "feat/one", baseCommit: "a".repeat(40) });
-    expect(result.captured).toEqual(["src/a.ts", topicSeenKey(topicKeyOf(REPO_ID, "feat/one"), "src/a.ts")]);
+    expect(result.captured).toEqual(["src/a.ts", topicSeenKey(firstTopicIn("wt1"), "src/a.ts")]);
     expect(result.topics?.opened.map((topic) => topic.branch)).toEqual(["feat/one"]);
   });
 
@@ -175,7 +180,7 @@ describe("where a touch files", () => {
     // Arrange: the first topic has already seen src/a.ts
     const home = await makeHome("topic-seen");
     cleanups.push(home);
-    const state = stateAt({ seenTargets: [topicSeenKey(topicKeyOf(REPO_ID, "feat/one"), "src/a.ts")] });
+    const state = stateAt({ seenTargets: [topicSeenKey(firstTopicIn("wt1"), "src/a.ts")] });
 
     // Act
     const result = await capture(home, state, ["/cx-topics/wt1/src/a.ts", "/cx-topics/wt2/src/a.ts"], (root) =>
@@ -183,7 +188,7 @@ describe("where a touch files", () => {
     );
 
     // Assert: wt1's already seen, wt2's captured
-    expect(result.captured).toEqual([topicSeenKey(topicKeyOf(REPO_ID, "feat/two"), "src/a.ts")]);
+    expect(result.captured).toEqual([topicSeenKey(firstTopicIn("wt2"), "src/a.ts")]);
   });
 
   test("past the cap a touch files under the session's own context and is counted", async () => {
@@ -215,7 +220,8 @@ describe("the registry is per life", () => {
     const outcome = {
       sessionId: state.crosscheckSessionId,
       opened: [topicEntry(state.crosscheckSessionId, state.workContextId, "feat/one")],
-      touched: new Map([[topicKeyOf(REPO_ID, "feat/one"), "/cx-topics/wt1"]]),
+      relabeled: [],
+      touched: new Map([[firstTopicIn("feat/one"), "/cx-topics/wt1"]]),
       sessionTouched: false,
       overflowed: 0,
       at: NOW.toISOString(),
@@ -231,20 +237,20 @@ describe("the registry is per life", () => {
   });
 
   test("another life's entries are never a registration: the next life opens its topic again", async () => {
-    // Arrange: the registry still holds the PREVIOUS life's topic
+    // Arrange: the registry still holds the PREVIOUS life's topic, in the very worktree touched next
     const home = await makeHome("topic-life");
     cleanups.push(home);
     const stale = stateAt({
       crosscheckSessionId: "cc_topics~r1",
       workContextId: "wc_cc_topics~r1",
-      topicContexts: [topicEntry("cc_topics", "wc_cc_topics", "feat/one")],
+      topicContexts: [{ ...topicEntry("cc_topics", "wc_cc_topics", "feat/one"), root: "/cx-topics/wt1" }],
     });
 
     // Act
     await capture(home, stale, ["/cx-topics/wt1/src/a.ts"], () => "feat/one");
 
     // Assert: the new life's context goes first, and the target names it
-    const ownId = topicWorkContextIdFor("wc_cc_topics~r1", topicKeyOf(REPO_ID, "feat/one"));
+    const ownId = topicWorkContextIdFor("wc_cc_topics~r1", firstTopicIn("wt1"));
     expect((await spooledOf(home)).map((record) => [record.kind, record.body["id"] ?? record.body["workContextId"]])).toEqual([
       ["work_context", ownId],
       ["target", ownId],
@@ -390,7 +396,7 @@ describe("against a hub", () => {
     await fx.flush();
 
     // Assert: the next life's topic context reached the hub ahead of its target
-    const nextId = topicWorkContextIdFor(`wc_${fx.life.crosscheckSessionId}~r1`, topicKeyOf(REPO_ID, "feat/one"));
+    const nextId = topicWorkContextIdFor(`wc_${fx.life.crosscheckSessionId}~r1`, firstTopicIn("wt1"));
     expect(healed.crosscheckSessionId).toBe(`${fx.life.crosscheckSessionId}~r1`);
     expect(healed.topicContexts).toEqual([]);
     const targets = await raw<{ value: string }>("select value from work_context_targets where work_context_id = $1", [nextId]);

@@ -276,8 +276,21 @@ export const DETACHED_LABEL_SHA_CHARS = 9;
  */
 export const MAX_TOPICS_PER_SESSION = 24;
 
-/** Hex characters of sha256(repo, branch) a topic's work-context id carries. */
+/**
+ * Hex characters of sha256(repo, worktree root) a topic's minted id leads
+ * with — the id is that root key and the topic's ordinal in the root, never
+ * the branch (flows/topic-contexts.ts), so a rename cannot change it.
+ */
 export const TOPIC_KEY_HEX_CHARS = 12;
+
+/**
+ * How much of a worktree's HEAD log (`<gitdir>/logs/HEAD`) the topic rules
+ * read to ask "does this commit descend from that one" without spawning git
+ * (git/head-history.ts) — the newest part, a quarter megabyte: thousands of
+ * moves, and one read, made only when a root shows a branch its topics do not
+ * already name.
+ */
+export const MAX_HEAD_LOG_BYTES = 262_144;
 
 /**
  * Tool-call ids an ACP session remembers as ALREADY having booked their

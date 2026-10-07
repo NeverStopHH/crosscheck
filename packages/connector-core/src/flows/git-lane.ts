@@ -50,15 +50,9 @@ import { recordCaptureLoss } from "../state/loss-ledger.ts";
 import type { SeqRange, SessionState } from "../state/session-state.ts";
 import { readGitCommits, readGitTouches, spoolGitTouches } from "./capture-git-touches.ts";
 import type { CaptureGitTouchesInput } from "./capture-git-touches.ts";
-import {
-  mergeTopicCaptures,
-  openedTopicRecords,
-  planTopics,
-  seenPathsOf,
-  topicLifeOf,
-  topicSeenKey,
-} from "./topic-contexts.ts";
+import { mergeTopicCaptures, openedTopicRecords, seenPathsOf, topicLifeOf, topicSeenKey } from "./topic-contexts.ts";
 import type { Filing, TopicCapture, TopicLife } from "./topic-contexts.ts";
+import { planTopics } from "./topic-rules.ts";
 
 /** One root the lane sweeps, and the window it reads it in. */
 export interface GitLaneRoot {
@@ -201,7 +195,7 @@ const readRoot = async (input: SweepGitRootsInput, lane: GitLaneRoot): Promise<R
 /**
  * Every path of one root resolves against that root, on the branch its HEAD
  * names — the session's own spelled as its state spells it, which is how the
- * topic rule recognises it (flows/topic-contexts.ts `isStartTopic`).
+ * topic rules recognise its start topic (flows/topic-rules.ts `candidatesOf`).
  */
 const resolutionOf = (read: RootRead, paths: readonly string[], state: SessionState, now: Date): TouchedRootsResolution => {
   const root = read.lane.isSessionRoot ? state.repoRoot : read.lane.root;
@@ -250,7 +244,7 @@ const spoolRoot = async (
   if (first === undefined) {
     return null;
   }
-  const plan = await planTopics(life, resolutionOf(read, paths, input.state, input.now), paths, input.now);
+  const plan = await planTopics(life, resolutionOf(read, paths, input.state, input.now), paths, input.now, read.lane.root);
   const session: Filing = { key: null, workContextId: life.sessionWorkContextId };
   const isOpened =
     plan.opened.length === 0 ||
@@ -282,6 +276,7 @@ const spoolRoot = async (
     topic: {
       sessionId: life.sessionId,
       opened: isOpened ? plan.opened : [],
+      relabeled: plan.relabeled,
       touched: filing.key === null ? new Map() : new Map([[filing.key, read.lane.root]]),
       sessionTouched: filing.key === null,
       overflowed: plan.overflowed,

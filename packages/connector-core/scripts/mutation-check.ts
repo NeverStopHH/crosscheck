@@ -19491,9 +19491,9 @@ export const MUTATIONS: readonly Mutation[
   {
     // DESIGN.md "One session, many topics", item 2.
     label: "every sibling worktree's branch files under the session's own work context",
-    file: `${CORE}/src/flows/topic-contexts.ts`,
-    from: "  life.startBranch === null\n    ? root === life.sessionRoot\n    : key === topicKeyOf(life.repoId, life.startBranch);",
-    to: "  true;",
+    file: `${CORE}/src/flows/topic-rules.ts`,
+    from: "  if (branch === null || (life.startBranch === null && rootKey === life.sessionRoot)) {",
+    to: "  if (true) {",
     test: `${CONNECTOR}/test/worktree-capture.test.ts`,
     because:
       "one long-lived session's work in a dozen worktrees lands in one 278-target sweep " +
@@ -19511,9 +19511,9 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "a previous life's topics stand as this life's registrations",
-    file: `${CORE}/src/flows/topic-contexts.ts`,
-    from: "    life.topics.filter((topic) => topic.sessionId === life.sessionId).map((topic) => [topic.key, topic]),",
-    to: "    life.topics.map((topic) => [topic.key, topic]),",
+    file: `${CORE}/src/flows/topic-rules.ts`,
+    from: "  const topics = [...life.topics.filter((topic) => topic.sessionId === life.sessionId), ...opened]",
+    to: "  const topics = [...life.topics, ...opened]",
     test: `${CORE}/test/topic-contexts.test.ts`,
     because:
       "after a heal to the next life every topic's targets name the refused life's " +
@@ -19531,9 +19531,9 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "a session opens topics without bound",
-    file: `${CORE}/src/flows/topic-contexts.ts`,
-    from: "    const hasRoom = known.size + opened.size < MAX_TOPICS_PER_SESSION;",
-    to: "    const hasRoom = true;",
+    file: `${CORE}/src/flows/topic-rules.ts`,
+    from: "      if (live.length + opened.length >= MAX_TOPICS_PER_SESSION) {",
+    to: "      if (false) {",
     test: `${CORE}/test/topic-contexts.test.ts`,
     because:
       "a script that checks out a branch per file mints a work context per file on the " +
@@ -19550,7 +19550,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "one path in two topics is deduplicated as one touch",
     file: `${CORE}/src/flows/topic-contexts.ts`,
-    from: "  key === null ? path : `${seenPrefixOf(key)}${path}`;",
+    from: "  id === null ? path : `${seenPrefixOf(id)}${path}`;",
     to: "  path;",
     test: `${CORE}/test/topic-contexts.test.ts`,
     because:
@@ -19580,6 +19580,103 @@ export const MUTATIONS: readonly Mutation[
     to: "const withStatus = (fresh: SessionState, own: TitledWorkContext, status: string): SessionState =>\n  true",
     test: `${CORE}/test/topic-contexts.test.ts`,
     because: "a status meant for one branch's work is written over the session's own, and every later copy of it carries the wrong one",
+  },
+  {
+    // DESIGN.md "One session, many topics" — the topic rules (flows/topic-rules.ts).
+    label: "a topic's id encodes its branch",
+    file: `${CORE}/src/flows/topic-rules.ts`,
+    from: "        const id = mintTopicId(life.repoId, head.root, ordinal);",
+    to: "        const id = mintTopicId(life.repoId, `${head.root}\\n${decision.branch}`, ordinal);",
+    test: `${CORE}/test/topic-rules.test.ts`,
+    because: "a branch rename re-keys the topic, and its history on the hub splits into two contexts nobody joins",
+  },
+  {
+    label: "a worktree's second topic takes its first topic's id",
+    file: `${CORE}/src/flows/topic-rules.ts`,
+    from: "        const ordinal = 1 + [...live, ...opened].filter((topic) => topic.root === head.root).length;",
+    to: "        const ordinal = 1;",
+    test: `${CORE}/test/topic-rules.test.ts`,
+    because: "a new piece of work in the same worktree is spooled under the old topic's context id, and the two merge on the hub",
+  },
+  {
+    label: "a branch already in a topic's affinity is decided again on every touch",
+    file: `${CORE}/src/flows/topic-rules.ts`,
+    from: "  if (known !== undefined) {\n    return keep(known, null);\n  }",
+    to: "  if (false) {\n    return keep(known, null);\n  }",
+    test: `${CORE}/test/topic-rules.test.ts`,
+    because: "the second file a topic touches opens a topic of its own, and one branch's work is scattered over a context per file",
+  },
+  {
+    label: "a branch renamed in place opens a new topic",
+    file: `${CORE}/src/flows/topic-rules.ts`,
+    from: "  if (isDetached(branch) || (await isRenamedAway(last, gitDir))) {",
+    to: "  if (isDetached(branch)) {",
+    test: `${CORE}/test/topic-rules.test.ts`,
+    because: "`git branch -m` cuts one piece of work into two topics, and the second starts with none of the first's files",
+  },
+  {
+    label: "a detached HEAD on top of a topic's work opens a topic of its own",
+    file: `${CORE}/src/flows/topic-rules.ts`,
+    from: "  if (isDetached(branch) || (await isRenamedAway(last, gitDir))) {",
+    to: "  if (await isRenamedAway(last, gitDir)) {",
+    test: `${CORE}/test/topic-rules.test.ts`,
+    because: "a rebase or a bisect step detaches HEAD on top of the work, and every touch there leaves its topic",
+  },
+  {
+    label: "a branch that continues a topic's work never keeps the topic",
+    file: `${CORE}/src/flows/topic-rules.ts`,
+    from: "  return overlaps(paths, seenPathsOf(life.seenTargets, last.id)) ? keep(last, relabel) : { kind: \"open\", branch, commit };",
+    to: "  return { kind: \"open\", branch, commit };",
+    test: `${CORE}/test/topic-rules.test.ts`,
+    because: "a follow-up branch editing the same files opens a fresh topic, and the overlap with the first is lost",
+  },
+  {
+    label: "a branch on top of a topic keeps the topic whatever files it touches",
+    file: `${CORE}/src/flows/topic-rules.ts`,
+    from: "  return overlaps(paths, seenPathsOf(life.seenTargets, last.id)) ? keep(last, relabel) : { kind: \"open\", branch, commit };",
+    to: "  return keep(last, relabel);",
+    test: `${CORE}/test/topic-rules.test.ts`,
+    because: "every new branch cut from the work in that worktree is folded into the old topic, and two pieces of work hide each other",
+  },
+  {
+    label: "a branch or detached HEAD on an older commit joins the topic",
+    file: `${CORE}/src/flows/topic-rules.ts`,
+    from: "  if (!(await descendsInHeadLog(gitDir, last.head, commit))) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/topic-rules.test.ts`,
+    because: "a branch cut from before the topic's work is filed as that work, though it holds none of it",
+  },
+  {
+    label: "the session's own checkout is never a candidate for its own moves",
+    file: `${CORE}/src/flows/topic-rules.ts`,
+    from: "    rootKey === life.sessionRoot && life.startBranch !== null",
+    to: "    false",
+    test: `${CORE}/test/topic-rules.test.ts`,
+    because: "the start checkout's own touches open a topic beside the session's context, and a detach in place splits the session",
+  },
+  {
+    label: "a branch the rules attached is forgotten",
+    file: `${CORE}/src/flows/topic-contexts.ts`,
+    from: "    .filter((relabel) => relabel.id === topic.key)",
+    to: "    .filter(() => false)",
+    test: `${CORE}/test/topic-rules.test.ts`,
+    because: "the affinity never grows, the rules run on every touch, and a second rename no longer finds its topic",
+  },
+  {
+    label: "a commit on top of a topic reads as no descent",
+    file: `${CORE}/src/git/head-history.ts`,
+    from: "const FORWARD_MESSAGES = [\"commit:\", ",
+    to: "const FORWARD_MESSAGES = [",
+    test: `${CORE}/test/topic-rules.test.ts`,
+    because: "the first commit after a rename opens a new topic, and the rename rule never holds",
+  },
+  {
+    label: "a checkout reads as descent",
+    file: `${CORE}/src/git/head-history.ts`,
+    from: "const FORWARD_MESSAGES = [\"commit:\", ",
+    to: "const FORWARD_MESSAGES = [\"checkout:\", \"commit:\", ",
+    test: `${CORE}/test/topic-rules.test.ts`,
+    because: "any branch checked out in the worktree descends from anything, and unrelated work is folded into the topic",
   },
   {
     label: "the hub drops a topic's branch on create",
@@ -20002,6 +20099,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/tool-window-pairing.test.ts 6
  * PRINTS: packages/connector-core/test/topic-contexts.test.ts 9
  * PRINTS: packages/connector-core/test/topic-heads.test.ts 2
+ * PRINTS: packages/connector-core/test/topic-rules.test.ts 12
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
  * PRINTS: packages/connector-core/test/verdict-wire.test.ts 2
  * PRINTS: packages/connector-core/test/work-context-ack.test.ts 3

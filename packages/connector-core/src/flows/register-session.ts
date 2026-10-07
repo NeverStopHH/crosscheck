@@ -27,7 +27,7 @@ import {
   spoolPendingEndPath,
   writePrivateFile,
 } from "../config/paths.ts";
-import { readHeadFile } from "../git/repo-identity.ts";
+import { readHeadFile, resolveHeadCommit } from "../git/repo-identity.ts";
 import { registerSession } from "../http/hub.ts";
 import type { HubContext } from "../http/client.ts";
 import { appendRecords } from "../spool/append.ts";
@@ -458,6 +458,7 @@ export const registerSessionFlow = async (
   // the state, or SessionEnd's end has not landed, and the hub still holds
   // the life under that epoch with those positions handed out.
   const restored = previous === null ? await readMarkedPosition(input, crosscheckSessionId) : null;
+  const startHeadFile = await readHeadFile(input.repoRoot);
 
   // BEFORE the first append, always: `reap` decides that a spool file has no
   // writer left by finding no session state file for it, and that inference
@@ -489,8 +490,11 @@ export const registerSessionFlow = async (
     // on, read from its HEAD file exactly as every touched root's is, so the
     // session's own touches are recognised as its own and every sibling
     // worktree's branch opens a topic of its own. A re-fire of the same life
-    // keeps the first one (withCarriedCapture).
-    startBranch: (await readHeadFile(input.repoRoot))?.branch ?? input.branch,
+    // keeps the first one (withCarriedCapture). Its commit is what the topic
+    // rules ask a later branch or detached HEAD there to descend from
+    // (flows/topic-rules.ts).
+    startBranch: startHeadFile?.branch ?? input.branch,
+    startHead: startHeadFile === null ? null : await resolveHeadCommit(startHeadFile),
     // THE EPOCH IS MINTED ON THE INPUT, not inside publishSessionState (spec
     // 01 §3.4). publishSessionState's busy-lock FALLBACK writes this object
     // verbatim, with no carry at all — "the counters lose rather than the

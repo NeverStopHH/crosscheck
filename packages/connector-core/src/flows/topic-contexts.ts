@@ -11,24 +11,32 @@
  * one 278-target "sweep" every overlap check and the conference ignore
  * (GHOST_MAX_CONTEXT_TARGETS), under a title that named none of the work.
  *
- * THE RULE. A touch files under the TOPIC of the root it landed in: the
- * (repo, branch) that root is on, read from its HEAD file. The session's own
- * start topic — the branch its checkout was on when the life registered —
- * keeps the session's own work context, so a session that never leaves its
- * checkout looks exactly as it always has. Every other topic gets a context
- * of its own:
+ * THE MODEL. A touch files under a TOPIC: a piece of work in one worktree.
+ * A branch is the strongest SIGNAL of which piece of work, not its identity —
+ * branches are renamed, work moves to a follow-up branch, a HEAD is detached
+ * on top of it — so a topic carries:
  *
- *   - a DETERMINISTIC id, `wc_<life>~t<sha256(repo, branch)>` — a crash, a
- *     retry or a sibling hook opening the same topic all name one context;
- *   - titled `<branch> @ <repo>`, the session's fallback title shape; a root
- *     whose HEAD cannot be read has no branch to title, and its touch files
- *     under the session's own context — the session's own title source;
- *   - carrying its branch and the commit HEAD named at the first touch, so
- *     the hub measures drift and landing from the topic, not from the start
- *     checkout's old commit (server services/topic-base-commit.ts);
- *   - spooled BEFORE its first target, and registered in the session state
- *     only once that append persisted: a target never names a context the
- *     spool does not already hold ahead of it.
+ *   - a STABLE id, MINTED when its (repo, worktree root, branch) is first seen
+ *     in a life (`mintTopicId`): the root's key and the topic's ordinal in
+ *     that root, never the branch, so no rename can change it. Its work
+ *     context is `wc_<life>~t<id>`. Deterministic, so a crash, a retry or a
+ *     sibling hook opening the same topic from the same state name one
+ *     context;
+ *   - an AFFINITY: the root, every branch the rules attached to it, the
+ *     commit it was last seen at, and the files it touched (its seen-set
+ *     entries). Which topic a touch belongs to is a deterministic lookup in
+ *     it, and the four rules that grow it are flows/topic-rules.ts;
+ *   - a title, `<branch> @ <repo>` of the branch it was opened on, and that
+ *     branch and the commit at the first touch on the wire, so the hub
+ *     measures drift and landing from the topic, not from the start
+ *     checkout's old commit (server services/topic-base-commit.ts).
+ *
+ * The session's own START topic — its checkout at registration — keeps the
+ * session's own work context, so a session that never leaves its checkout
+ * looks exactly as it always has. A topic's context is spooled BEFORE its
+ * first target, and registered in the session state only once that append
+ * persisted: a target never names a context the spool does not hold ahead of
+ * it.
  *
  * PER LIFE. Topics belong to the life that opened them (`~rN`): a heal moves
  * the session to its next life and clears the registry (flows/heal-session
@@ -36,35 +44,37 @@
  * target it gets — the same reason the seen-set starts empty on a heal.
  *
  * CAPPED. MAX_TOPICS_PER_SESSION per life; a touch past it files under the
- * session's own context and is counted (`topic_overflow`), never dropped.
+ * session's own context and is counted (`topic_overflow`), never dropped. A
+ * topic is never excluded for its SIZE: nothing here counts its files.
  */
 import type { Envelope } from "@crosscheck/schema";
 
-import { MAX_TOPICS_PER_SESSION, TOPIC_KEY_HEX_CHARS } from "../constants.ts";
+import { TOPIC_KEY_HEX_CHARS } from "../constants.ts";
 import { workContextRecord } from "../capture/records.ts";
 import type { Producer } from "../capture/records.ts";
-import { resolveHeadCommit } from "../git/repo-identity.ts";
-import type { RootHead, TouchedRootsResolution } from "../capture/touched-root.ts";
 import type { SessionState, TopicContext } from "../state/session-state.ts";
-import { fallbackWorkContextTitle } from "./register-session.ts";
 
-/** What separates a topic's key from its session's work-context id, and marks a topic's seen-set entries. */
+/** What separates a topic's id from its session's work-context id, and marks a topic's seen-set entries. */
 export const TOPIC_ID_SEPARATOR = "~t";
 
 /** The status a topic opens with when the life's state names none. */
 const DEFAULT_TOPIC_STATUS = "implementing";
 
-/** sha256 of (repo, branch), short: the same topic is the same key on every machine and every life. */
-export const topicKeyOf = (repoId: string, branch: string): string =>
+/** sha256 of (repo, worktree root), short: a worktree's key — hashed, so no path is readable from it. */
+export const rootKeyOf = (repoId: string, root: string): string =>
   new Bun.CryptoHasher("sha256")
-    .update(`${repoId}\n${branch}`)
+    .update(`${repoId}\n${root}`)
     .digest("hex")
     .slice(0, TOPIC_KEY_HEX_CHARS);
 
-export const topicWorkContextIdFor = (sessionWorkContextId: string, key: string): string =>
-  `${sessionWorkContextId}${TOPIC_ID_SEPARATOR}${key}`;
+/** A topic's MINTED id: its root's key and its 1-based ordinal among the life's topics in that root. */
+export const mintTopicId = (repoId: string, root: string, ordinal: number): string =>
+  `${rootKeyOf(repoId, root)}.${String(ordinal)}`;
 
-const seenPrefixOf = (key: string): string => `${TOPIC_ID_SEPARATOR}${key}/`;
+export const topicWorkContextIdFor = (sessionWorkContextId: string, id: string): string =>
+  `${sessionWorkContextId}${TOPIC_ID_SEPARATOR}${id}`;
+
+const seenPrefixOf = (id: string): string => `${TOPIC_ID_SEPARATOR}${id}/`;
 
 /**
  * A captured path's SEEN-SET entry: the bare path under the session's own
@@ -72,17 +82,21 @@ const seenPrefixOf = (key: string): string => `${TOPIC_ID_SEPARATOR}${key}/`;
  * edited in two worktrees on two branches is two topics' touches, and a bare
  * entry for the first would silently swallow the second.
  */
-export const topicSeenKey = (key: string | null, path: string): string =>
-  key === null ? path : `${seenPrefixOf(key)}${path}`;
+export const topicSeenKey = (id: string | null, path: string): string =>
+  id === null ? path : `${seenPrefixOf(id)}${path}`;
 
 /** The paths a context's seen-set entries name: the session's bare ones, or one topic's. */
-export const seenPathsOf = (seen: readonly string[], key: string | null): readonly string[] => {
-  if (key === null) {
+export const seenPathsOf = (seen: readonly string[], id: string | null): readonly string[] => {
+  if (id === null) {
     return seen.filter((entry) => !entry.startsWith(TOPIC_ID_SEPARATOR));
   }
-  const prefix = seenPrefixOf(key);
+  const prefix = seenPrefixOf(id);
   return seen.filter((entry) => entry.startsWith(prefix)).map((entry) => entry.slice(prefix.length));
 };
+
+/** Every branch a topic answers to: the one it was opened on, and its affinity's. */
+export const labelsOf = (topic: Pick<TopicContext, "branch" | "branches">): readonly string[] =>
+  topic.branches.includes(topic.branch) ? topic.branches : [topic.branch, ...topic.branches];
 
 /** What the capture flow must know of the life it files under. */
 export interface TopicLife {
@@ -93,8 +107,14 @@ export interface TopicLife {
   /** The session's own checkout, spelled as the resolution spells it. */
   readonly sessionRoot: string;
   readonly startBranch: string | null;
+  /** The start topic's affinity beyond `startBranch`, and its last commit. */
+  readonly startBranches: readonly string[];
+  readonly startHead: string | null;
+  readonly sessionTouchedAt: string | null;
   /** The registry as the state holds it; entries of another life are ignored. */
   readonly topics: readonly TopicContext[];
+  /** The files each topic touched, for the overlap rule (flows/topic-rules.ts). */
+  readonly seenTargets: readonly string[];
   /** The status a topic opened now starts with: the life's own. */
   readonly status: string;
 }
@@ -105,7 +125,11 @@ export const topicLifeOf = (state: SessionState): TopicLife => ({
   sessionWorkContextId: state.workContextId,
   sessionRoot: state.repoRoot,
   startBranch: state.startBranch,
+  startBranches: state.startBranches ?? [],
+  startHead: state.startHead ?? null,
+  sessionTouchedAt: state.sessionTouchedAt,
   topics: state.topicContexts,
+  seenTargets: state.seenTargets,
   status: state.workContextStatus ?? DEFAULT_TOPIC_STATUS,
 });
 
@@ -115,10 +139,19 @@ export interface Filing {
   readonly workContextId: string;
 }
 
+/** A branch the rules attached to an existing topic — `id` null is the start topic. */
+export interface Relabel {
+  readonly id: string | null;
+  readonly label: string;
+  readonly head: string | null;
+}
+
 export interface TopicPlan {
   readonly filingByPath: ReadonlyMap<string, Filing>;
   /** Topics this event opens, in first-touch order: their contexts are spooled first. */
   readonly opened: readonly TopicContext[];
+  /** Branches attached to topics that already existed (rules b, c, d). */
+  readonly relabeled: readonly Relabel[];
   /** Every topic this event touched → the root it touched it in. */
   readonly touched: ReadonlyMap<string, string>;
   /** True when some path filed under the session's own context. */
@@ -126,89 +159,6 @@ export interface TopicPlan {
   /** Touches filed under the session's own context only because the cap was reached. */
   readonly overflowed: number;
 }
-
-/**
- * The START topic files under the session's own context. A state from before
- * topics knows no start branch, so there the session's own checkout does,
- * whatever branch it is on now.
- */
-const isStartTopic = (life: TopicLife, root: string, key: string): boolean =>
-  life.startBranch === null
-    ? root === life.sessionRoot
-    : key === topicKeyOf(life.repoId, life.startBranch);
-
-const openTopic = async (
-  life: TopicLife,
-  key: string,
-  branch: string,
-  head: RootHead,
-  now: Date,
-): Promise<TopicContext> => ({
-  key,
-  sessionId: life.sessionId,
-  workContextId: topicWorkContextIdFor(life.sessionWorkContextId, key),
-  branch,
-  title: fallbackWorkContextTitle(branch, life.repoId),
-  status: life.status,
-  // The commit this topic's first touch stands on — the root's HEAD now,
-  // which is its first-touch commit when the root itself is new.
-  baseCommit: (head.head === null ? null : await resolveHeadCommit(head.head)) ?? head.firstHead,
-  root: head.root,
-  registeredAt: now.toISOString(),
-  lastTouchedAt: now.toISOString(),
-  ackedStatus: null,
-});
-
-/**
- * WHERE EVERY PATH OF ONE EVENT FILES. Pure over the resolution the capture
- * flow already holds — the HEAD of each root was read there, so nothing here
- * spawns git; the one read is a new topic's commit, from git's own files.
- */
-export const planTopics = async (
-  life: TopicLife,
-  resolution: TouchedRootsResolution,
-  paths: readonly string[],
-  now: Date,
-): Promise<TopicPlan> => {
-  const session: Filing = { key: null, workContextId: life.sessionWorkContextId };
-  const known = new Map(
-    life.topics.filter((topic) => topic.sessionId === life.sessionId).map((topic) => [topic.key, topic]),
-  );
-  const opened = new Map<string, TopicContext>();
-  const touched = new Map<string, string>();
-  const filingByPath = new Map<string, Filing>();
-  let sessionTouched = false;
-  let overflowed = 0;
-  for (const path of paths) {
-    const root = resolution.rootByPath.get(path);
-    if (root === undefined) {
-      continue;
-    }
-    const head = resolution.headByRoot.get(root);
-    const branch = head?.branch ?? null;
-    if (head === undefined || branch === null || isStartTopic(life, root, topicKeyOf(life.repoId, branch))) {
-      filingByPath.set(path, session);
-      sessionTouched = true;
-      continue;
-    }
-    const key = topicKeyOf(life.repoId, branch);
-    const existing = known.get(key) ?? opened.get(key);
-    const hasRoom = known.size + opened.size < MAX_TOPICS_PER_SESSION;
-    if (existing === undefined && !hasRoom) {
-      filingByPath.set(path, session);
-      sessionTouched = true;
-      overflowed += 1;
-      continue;
-    }
-    const topic = existing ?? (await openTopic(life, key, branch, head, now));
-    if (existing === undefined) {
-      opened.set(key, topic);
-    }
-    touched.set(key, head.root);
-    filingByPath.set(path, { key, workContextId: topic.workContextId });
-  }
-  return { filingByPath, opened: [...opened.values()], touched, sessionTouched, overflowed };
-};
 
 /** The work_context records of topics just opened — what goes into the spool ahead of their first targets. */
 export const openedTopicRecords = (
@@ -231,6 +181,19 @@ export const openedTopicRecords = (
     ),
   );
 
+/** One event's topic outcome, as the caller folds it into its single locked state write. */
+export interface TopicCapture {
+  /** The life the event filed under. */
+  readonly sessionId: string;
+  /** Topics whose context the spool now holds. */
+  readonly opened: readonly TopicContext[];
+  readonly relabeled: readonly Relabel[];
+  readonly touched: ReadonlyMap<string, string>;
+  readonly sessionTouched: boolean;
+  readonly overflowed: number;
+  readonly at: string;
+}
+
 /** Several events' topic outcomes as one — a Stop sweeping several roots folds them in one write. */
 export const mergeTopicCaptures = (captures: readonly TopicCapture[]): TopicCapture | null => {
   const [first] = captures;
@@ -240,6 +203,7 @@ export const mergeTopicCaptures = (captures: readonly TopicCapture[]): TopicCapt
   return {
     sessionId: first.sessionId,
     opened: captures.flatMap((capture) => capture.opened),
+    relabeled: captures.flatMap((capture) => capture.relabeled),
     touched: new Map(captures.flatMap((capture) => [...capture.touched])),
     sessionTouched: captures.some((capture) => capture.sessionTouched),
     overflowed: captures.reduce((sum, capture) => sum + capture.overflowed, 0),
@@ -247,20 +211,38 @@ export const mergeTopicCaptures = (captures: readonly TopicCapture[]): TopicCapt
   };
 };
 
-/** One event's topic outcome, as the caller folds it into its single locked state write. */
-export interface TopicCapture {
-  /** The life the event filed under. */
-  readonly sessionId: string;
-  /** Topics whose context the spool now holds. */
-  readonly opened: readonly TopicContext[];
-  readonly touched: ReadonlyMap<string, string>;
-  readonly sessionTouched: boolean;
-  readonly overflowed: number;
-  readonly at: string;
-}
+const withLabel = (labels: readonly string[], label: string): readonly string[] =>
+  labels.includes(label) ? labels : [...labels, label];
+
+/** A topic with the rules' attachment folded in: the branch joins its affinity, its commit moves on. */
+const relabeledTopic = (topic: TopicContext, relabels: readonly Relabel[]): TopicContext =>
+  relabels
+    .filter((relabel) => relabel.id === topic.key)
+    .reduce<TopicContext>(
+      (current, relabel) => ({
+        ...current,
+        branches: [...withLabel(labelsOf(current), relabel.label)],
+        head: relabel.head ?? current.head,
+      }),
+      topic,
+    );
+
+/** The start topic with the rules' attachment folded in. */
+const withStartRelabels = (state: SessionState, relabels: readonly Relabel[]): SessionState => {
+  const own = relabels.filter((relabel) => relabel.id === null);
+  if (own.length === 0) {
+    return state;
+  }
+  return {
+    ...state,
+    startBranches: [...own.reduce<readonly string[]>((labels, relabel) => withLabel(labels, relabel.label), state.startBranches ?? [])],
+    startHead: own.at(-1)?.head ?? state.startHead ?? null,
+  };
+};
 
 /**
- * The registry after one event: topics it opened added, the ones it touched
+ * The registry after one event: topics it opened added, branches the rules
+ * attached folded into their topics' affinity, the topics it touched
  * stamped. A capture for a life the state no longer names — a heal moved the
  * session on mid-hook — registers nothing for the new life: its topics were
  * opened for the old one, and the new life owes its own. The overflow count
@@ -278,10 +260,11 @@ export const withTopicCapture = (state: SessionState, capture: TopicCapture | nu
   const added = capture.opened.filter((topic) => !live.some((known) => known.key === topic.key));
   const stamped = [...live, ...added].map((topic) => {
     const root = capture.touched.get(topic.key);
-    return root === undefined ? topic : { ...topic, root, lastTouchedAt: capture.at };
+    const relabeled = relabeledTopic(topic, capture.relabeled);
+    return root === undefined ? relabeled : { ...relabeled, root, lastTouchedAt: capture.at };
   });
   return {
-    ...state,
+    ...withStartRelabels(state, capture.relabeled),
     topicContexts: stamped,
     sessionTouchedAt: capture.sessionTouched ? capture.at : state.sessionTouchedAt,
     topicOverflowCount: overflowCount,
@@ -295,22 +278,24 @@ export type IntentTarget =
   | { readonly kind: "unknown"; readonly branches: readonly string[] };
 
 /**
- * set_intent's TARGET (DESIGN.md "One session, many topics"): the topic named
- * by branch when one is named, else the one this life touched MOST RECENTLY —
- * the session's own context when that was its own checkout or when no topic
- * was ever opened. Naming the start branch names the session's own context.
- * A name this life never touched is `unknown`, with the branches it did.
+ * set_intent's TARGET (DESIGN.md "One session, many topics"): the topic whose
+ * affinity holds the named branch when one is named, else the one this life
+ * touched MOST RECENTLY — the session's own context when that was its own
+ * checkout or when no topic was ever opened. A branch of the start topic
+ * names the session's own context. A name this life never touched is
+ * `unknown`, with the branches it did.
  */
 export const intentTargetOf = (state: SessionState, named?: string): IntentTarget => {
   const live = state.topicContexts.filter((topic) => topic.sessionId === state.crosscheckSessionId);
   if (named !== undefined) {
-    const topic = live.find((entry) => entry.branch === named);
+    const topic = live.find((entry) => labelsOf(entry).includes(named));
     if (topic !== undefined) {
       return { kind: "topic", topic };
     }
-    return named === state.startBranch
+    const startLabels = state.startBranch === null ? [] : [state.startBranch, ...(state.startBranches ?? [])];
+    return startLabels.includes(named)
       ? { kind: "session" }
-      : { kind: "unknown", branches: live.map((entry) => entry.branch) };
+      : { kind: "unknown", branches: live.flatMap((entry) => labelsOf(entry)) };
   }
   const newest = live.reduce<TopicContext | null>(
     (best, topic) => (best === null || topic.lastTouchedAt > best.lastTouchedAt ? topic : best),

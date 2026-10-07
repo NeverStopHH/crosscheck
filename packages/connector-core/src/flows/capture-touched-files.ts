@@ -59,8 +59,9 @@ import type {
 import { seqAfter } from "../capture/seq.ts";
 import { captureFileTargets } from "./capture-targets.ts";
 import type { CaptureFileTargetsInput } from "./capture-targets.ts";
-import { openedTopicRecords, planTopics, seenPathsOf, topicSeenKey } from "./topic-contexts.ts";
+import { openedTopicRecords, seenPathsOf, topicSeenKey } from "./topic-contexts.ts";
 import type { Filing, TopicCapture, TopicLife, TopicPlan } from "./topic-contexts.ts";
+import { planTopics } from "./topic-rules.ts";
 
 /** The capture-loss detail a topic overflow is booked under (state/loss-ledger.ts). */
 const TOPIC_OVERFLOW_DETAIL = "topic-cap";
@@ -180,7 +181,7 @@ const captureByTopic = async (
   resolution: TouchedRootsResolution,
   life: TopicLife,
 ): Promise<{ readonly captured: readonly string[]; readonly topics: TopicCapture }> => {
-  const plan = await planTopics(life, resolution, input.paths, input.now);
+  const plan = await planTopics(life, resolution, input.paths, input.now, input.cwd);
   const isOpened = await spoolOpenedTopics(input, plan);
   const session: Filing = { key: null, workContextId: life.sessionWorkContextId };
   const unopened = new Set(isOpened ? [] : plan.opened.map((topic) => topic.key));
@@ -211,6 +212,7 @@ const captureByTopic = async (
     topics: {
       sessionId: life.sessionId,
       opened: isOpened ? plan.opened : [],
+      relabeled: plan.relabeled,
       touched: new Map([...plan.touched].filter(([key]) => !unopened.has(key))),
       sessionTouched: plan.sessionTouched || unopened.size > 0,
       overflowed: plan.overflowed,

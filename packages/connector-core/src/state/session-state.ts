@@ -623,10 +623,20 @@ const SessionStateObjectSchema = z.looseObject({
   topicContexts: z
     .array(
       z.object({
+        // The topic's MINTED id (flows/topic-contexts.ts `mintTopicId`): its
+        // root's key and its ordinal in that root — never its branch, so a
+        // rename keeps it.
         key: z.string().min(1),
         sessionId: z.string().min(1),
         workContextId: z.string().min(1),
+        // The branch the topic was opened on — its title's, and its wire
+        // `branch` — and its AFFINITY: every branch the rules attached to it
+        // since (a rename, a continuation, a detached HEAD on top of it).
         branch: z.string().min(1),
+        branches: z.array(z.string().min(1)).default([]),
+        // The commit the topic was last seen at: what "descends from the
+        // topic's HEAD" is asked of (git/head-history.ts).
+        head: z.string().min(1).nullable().default(null),
         title: z.string().min(1),
         status: z.string().min(1),
         baseCommit: z.string().min(1).nullable().default(null),
@@ -645,6 +655,14 @@ const SessionStateObjectSchema = z.looseObject({
    * branch, and every other root opens a topic.
    */
   startBranch: z.string().min(1).nullable().default(null),
+  /**
+   * The start topic's own affinity, beside `startBranch`: the commit it was
+   * last seen at and the branches the topic rules attached to it since — a
+   * rename of the start branch, a detached HEAD on top of it. Optional, so a
+   * state from before them reads as the start branch alone.
+   */
+  startHead: z.string().min(1).nullable().optional(),
+  startBranches: z.array(z.string().min(1)).optional(),
   /** When a touch last filed under the session's own context — set_intent's "most recent topic" needs both sides. */
   sessionTouchedAt: z.string().min(1).nullable().default(null),
   /** Touches filed under the session's own context because the topic cap was reached (counted, never silent). */
@@ -895,6 +913,8 @@ export const withCarriedCapture = (
               // life's own topic under it (DESIGN.md "One session, many topics").
               topicContexts: previous.topicContexts,
               startBranch: previous.startBranch ?? state.startBranch ?? null,
+              startHead: previous.startHead ?? state.startHead ?? null,
+              startBranches: previous.startBranches ?? state.startBranches ?? [],
               sessionTouchedAt: previous.sessionTouchedAt,
             }
           : {}),
