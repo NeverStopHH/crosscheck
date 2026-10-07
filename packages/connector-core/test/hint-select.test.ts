@@ -70,6 +70,7 @@ const fileTarget = (
 
 interface SelectOverrides {
   readonly seenRefIds?: readonly string[];
+  readonly hintedRefIds?: readonly string[];
   readonly deliveredCount?: number;
   readonly selfDeveloperId?: string | null;
 }
@@ -81,6 +82,7 @@ const select = (
   selectHint({
     candidates,
     seenRefIds: overrides.seenRefIds ?? [],
+    ...(overrides.hintedRefIds === undefined ? {} : { hintedRefIds: overrides.hintedRefIds }),
     deliveredCount: overrides.deliveredCount ?? 0,
     // Not `??` — an EXPLICIT null must reach the selector (unknown identity).
     selfDeveloperId:
@@ -328,6 +330,25 @@ describe("seen-set dedup and session cap", () => {
     // context again is noise, not news.
     const selection = select([context()], { seenRefIds: ["clm_1"], deliveredCount: 1 });
     expect(selection.kind).toBe("silence");
+  });
+
+  /**
+   * THE SAME TREE IS NEVER HINTED TWICE IN A SESSION (round 4, decision 11):
+   * the round-4 hold-out's scripted sessions hinted one tree twice in 24 of
+   * them — a pointer, and its finding on the next prompt.
+   */
+  test("a tree a hint pointed at this session shows no finding of it later", () => {
+    expect(select([context()], { seenRefIds: ["wc_1"], hintedRefIds: ["wc_1"] }).kind).toBe("silence");
+  });
+
+  test("a tree whose finding was shown shows no second finding", () => {
+    const second = claim({ id: "clm_2" });
+    expect(select([context({}, [claim(), second])], { seenRefIds: ["clm_1"], hintedRefIds: ["clm_1"], deliveredCount: 1 }).kind).toBe("silence");
+  });
+
+  test("a tree only the briefing pointed at still shows its finding — the briefing is no hint", () => {
+    const selection = select([context()], { seenRefIds: ["wc_1"], hintedRefIds: [] });
+    expect(selection.kind).toBe("claim");
   });
 
   test("a pointered context is never pointered twice", () => {

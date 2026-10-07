@@ -97,11 +97,9 @@
       "kind": "prompt",
       "reader": "Riley",
       "prompt": "why does src/auth/refresh.ts still 500 after the key rotation",
-      "expect": "substance",
-      "expectClaimId": "clm_auth_root",
-      "expectContextId": "wc_auth",
+      "expect": "silence",
       "seenClaimIds": ["clm_auth_neg"],
-      "rationale": "Seen-set dedup: the already-delivered negative is skipped and the next unseen injectable claim (the evidence-backed root cause) arrives instead of a repeat."
+      "rationale": "Relabelled from substance (hold-out review round 4, decision 11): the same tree is never hinted twice in a session. A hint already delivered this tree's negative, so its root cause does not follow on the next prompt; the round-4 hold-out's scripted sessions showed one tree twice in 24 of them."
     },
     {
       "id": "pr_auth_cap",

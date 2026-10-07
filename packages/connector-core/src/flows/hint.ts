@@ -478,6 +478,8 @@ const hintFromAnswer = async (
     // claims inside it — hints/select.ts).
     candidates: answered.candidates,
     seenRefIds: [...state.deliveredHintRefs, ...state.briefingSolvedRefs],
+    // The session's own hints, never the briefing's (round 4, decision 11).
+    hintedRefIds: state.deliveredHintRefs,
     deliveredCount: state.deliveredHintRefs.length,
     selfDeveloperId: state.developerId,
     // What an old hub's candidates are recounted on (hold-out review, H4).

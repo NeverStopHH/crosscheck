@@ -20301,6 +20301,30 @@ export const MUTATIONS: readonly Mutation[
     because: "a quote pasted with its reply's indentation is scored as the human's words (round 4, L3)",
   },
   {
+    label: "a tree is hinted twice in a session",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  if (!isUnpointed(context, new Set(input.hintedRefIds ?? input.seenRefIds))) {\n    return SILENCE;\n  }\n",
+    to: "",
+    test: `${CORE}/test/hint-select.test.ts`,
+    because: "a tree pointed at on one prompt pushes its finding on the next — 24 of the round-4 hold-out's scripted sessions (decision 11)",
+  },
+  {
+    label: "the briefing's pointers count as the session's hints",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  if (!isUnpointed(context, new Set(input.hintedRefIds ?? input.seenRefIds))) {",
+    to: "  if (!isUnpointed(context, new Set(input.seenRefIds))) {",
+    test: `${CORE}/test/hint-substance-flow.test.ts`,
+    because: "a solved tree the briefing named never shows the finding a prompt later asks for (round 4, decision 11)",
+  },
+  {
+    label: "the flow hands the selector no hinted refs",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "    hintedRefIds: state.deliveredHintRefs,\n",
+    to: "",
+    test: `${CORE}/test/hint-substance-flow.test.ts`,
+    because: "the briefing's solved pointers silence the findings of their trees for the whole session (round 4, decision 11)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     // RETARGETED (round 3, M7): the query is the prompt's window now.
@@ -20568,8 +20592,8 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-old-hub-floor.test.ts 15
  * PRINTS: packages/connector-core/test/hint-query-window.test.ts 4
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4
- * PRINTS: packages/connector-core/test/hint-select.test.ts 8
- * PRINTS: packages/connector-core/test/hint-substance-flow.test.ts 10
+ * PRINTS: packages/connector-core/test/hint-select.test.ts 9
+ * PRINTS: packages/connector-core/test/hint-substance-flow.test.ts 12
  * PRINTS: packages/connector-core/test/hint-substance-render.test.ts 3
  * PRINTS: packages/connector-core/test/hint-substance-select.test.ts 17
  * PRINTS: packages/connector-core/test/hint-substance-trust-parity.test.ts 1

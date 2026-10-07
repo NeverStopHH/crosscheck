@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1881
+    # PRINTS: 1884
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -281,7 +281,7 @@ jobs:
     # PRINTS: flows/claim-surface.ts 1
     # PRINTS: flows/end-session.ts 3
     # PRINTS: flows/heartbeat.ts 1
-    # PRINTS: flows/hint.ts 34
+    # PRINTS: flows/hint.ts 35
     # PRINTS: flows/register-session.ts 4
     # PRINTS: flows/solved-hint.ts 4
     # PRINTS: git/check-ignore.ts 1
@@ -297,7 +297,7 @@ jobs:
     # PRINTS: hints/delivery.ts 8
     # PRINTS: hints/precision.ts 2
     # PRINTS: hints/render.ts 29
-    # PRINTS: hints/select.ts 41
+    # PRINTS: hints/select.ts 43
     # PRINTS: http/client.ts 4
     # PRINTS: http/coverage.ts 3
     # PRINTS: http/hub.ts 14
@@ -576,7 +576,7 @@ jobs:
     # PRINTS: harness-turn.ts 25
     # PRINTS: heartbeat.ts 1
     # PRINTS: hint-deliveries.ts 5
-    # PRINTS: hint.ts 38
+    # PRINTS: hint.ts 39
     # PRINTS: hints.ts 53
     # PRINTS: hook-budget.ts 2
     # PRINTS: hub.ts 14
@@ -679,7 +679,7 @@ jobs:
     # PRINTS: search-tokens.ts 4
     # PRINTS: search.ts 13
     # PRINTS: secret-scan.ts 1
-    # PRINTS: select.ts 41
+    # PRINTS: select.ts 43
     # PRINTS: seq-cost.ts 8
     # PRINTS: session-control.ts 9
     # PRINTS: session-events.ts 9

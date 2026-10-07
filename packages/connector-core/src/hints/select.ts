@@ -131,6 +131,13 @@ export interface SelectHintInput {
   readonly candidates: readonly HintContextCandidate[];
   /** Refs (claim and context ids) already delivered this session. */
   readonly seenRefIds: readonly string[];
+  /**
+   * Of those, the refs a HINT delivered (round 4, decision 11) — the
+   * session's own deliveries, not the briefing's: the same tree is never
+   * hinted twice in a session, finding or pointer. Absent, every seen ref
+   * counts.
+   */
+  readonly hintedRefIds?: readonly string[];
   /** Hints already delivered this session — the 5/session cap counts this. */
   readonly deliveredCount: number;
   /** The reader; their own claims are knowledge, not hints. */
@@ -490,6 +497,13 @@ export const selectHint = (input: SelectHintInput): HintSelection => {
   const strongestIndex = strongestTreeIndex(pointable.map((context) => strengthOf(context, selfDeveloperId, recount)));
   const context = strongestIndex === null ? undefined : pointable[strongestIndex];
   if (context === undefined) {
+    return SILENCE;
+  }
+  // THE SAME TREE IS NEVER HINTED TWICE IN A SESSION (round 4, decision 11):
+  // a tree a hint pointed at, or showed a finding of, says nothing more — the
+  // round-4 hold-out's scripted sessions showed one tree twice in 24 of them.
+  // A tree only the briefing named still shows its finding.
+  if (!isUnpointed(context, new Set(input.hintedRefIds ?? input.seenRefIds))) {
     return SILENCE;
   }
 

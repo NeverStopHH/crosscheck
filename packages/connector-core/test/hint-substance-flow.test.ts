@@ -269,6 +269,45 @@ describe("a weak match keeps today's pointer-only form", () => {
   });
 });
 
+describe("the same tree is never hinted twice in a session (round 4, decision 11)", () => {
+  /** The session's state with one ref set as delivered, by a hint or by the briefing. */
+  const withRefs = async (f: Fixture, refs: { readonly hinted?: readonly string[]; readonly briefing?: readonly string[] }): Promise<void> => {
+    const state = await readSessionState(f.home, HOST_KEY);
+    if (state === null) {
+      throw new Error("no session state");
+    }
+    await writeSessionState(f.home, { ...state, deliveredHintRefs: [...(refs.hinted ?? [])], briefingSolvedRefs: [...(refs.briefing ?? [])] });
+  };
+
+  test("a tree a hint pointed at earlier shows no finding of it now", async () => {
+    // Arrange — the tree was pointed at on an earlier prompt
+    const f = await fixture("sf-repeat");
+    f.hub.setCandidates([decisionTree(4)]);
+    const tree = decisionTree(4)["workContext"] as { readonly id: string };
+    await withRefs(f, { hinted: [tree.id] });
+
+    // Act
+    const text = await selectAndRenderHint(flowInput(f));
+
+    // Assert
+    expect(text).toBe("");
+  });
+
+  test("a tree only the briefing pointed at still shows its finding", async () => {
+    // Arrange — the briefing named the tree; no hint did
+    const f = await fixture("sf-briefing-only");
+    f.hub.setCandidates([decisionTree(4)]);
+    const tree = decisionTree(4)["workContext"] as { readonly id: string };
+    await withRefs(f, { briefing: [tree.id] });
+
+    // Act
+    const text = await selectAndRenderHint(flowInput(f));
+
+    // Assert
+    expect(text).toContain("crosscheck hint:");
+  });
+});
+
 describe("a finding that cannot fit beside its trailers is pointed at, never cut", () => {
   /** The longest id a hub sends, so the pointer line is at its widest. */
   const LONG_ID = `wc_${"a".repeat(61)}`;

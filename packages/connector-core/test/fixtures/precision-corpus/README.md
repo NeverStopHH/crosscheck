@@ -57,6 +57,10 @@ Settled, and kept under its old id so the history stays findable:
   tie at the top say nothing — the hub's order between equals is search
   rank, not relevance, and the round-4 hold-out showed 9 of 182 tasks a
   finding from the tree that order put first — so the probe expects SILENCE.
+- `pr_auth_seen` (01): with the tree's negative already delivered, its root
+  cause USED TO arrive on the next prompt. Round 4 (decision 11) made a tree
+  hinted once in a session say nothing more — the round-4 hold-out's scripted
+  sessions showed one tree twice in 24 of them — so the probe expects SILENCE.
 
 Two findings were REWORDED in the same change, not relabelled: since C2 a
 finding is shown only when it shares two topical words with the prompt
