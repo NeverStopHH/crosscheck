@@ -17,7 +17,7 @@ import type { LastSeenEntry } from "@crosscheck/connector-core/state/presence-ca
 import { recordStatuslineRendered } from "@crosscheck/connector-core/state/fired-markers.ts";
 import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
-import { renderOverlapIndicator, stillPresent } from "@crosscheck/connector-core/hints/collision-notice.ts";
+import { renderOverlapIndicator } from "@crosscheck/connector-core/hints/collision-notice.ts";
 import { prepareHook } from "../hooks/runner.ts";
 import type { HookContext } from "../hooks/runner.ts";
 
@@ -184,15 +184,18 @@ const renderForContext = async (ctx: HookContext): Promise<RenderedPresence> => 
  * no hub call and no budget. Names only, never a branch — and only teammates
  * the presence answer this line is drawn from STILL lists (review M2): the
  * record outlives the moment its row was projected, and presence drops a
- * teammate who opted out, one the reader muted, and one whose session ended,
- * so a hub that could not be read names nobody. LEADING, in a bound of its
- * own, so it never takes the characters of the capture-health indicator the
- * line exists for. Fail open: no state, no segment.
+ * teammate who opted out, one the reader muted, and one who went offline or
+ * ended their session. Those are COUNTED instead — `⚠ overlap: 1 teammate ·
+ * 3 files` (round 2, M1): the pilot's teammate was offline, and an indicator
+ * that hid him hid the overlap. A hub that could not be read names nobody and
+ * still counts everybody. LEADING, in a bound of its own, so it never takes
+ * the characters of the capture-health indicator the line exists for. Fail
+ * open: no state, no segment.
  */
 const overlapSegment = async (ctx: HookContext, present: readonly PresenceEntry[]): Promise<string> => {
   try {
     const state = await readSessionState(ctx.config.home, ctx.payload.session_id);
-    const indicator = renderOverlapIndicator(stillPresent(state?.collisionNotices ?? [], present));
+    const indicator = renderOverlapIndicator(state?.collisionNotices ?? [], present);
     return indicator.length === 0 ? "" : `${indicator} · `;
   } catch {
     return "";

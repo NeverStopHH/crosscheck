@@ -59,7 +59,7 @@ const personSurfaces = (payload: string): readonly string[] => {
   const asGhost = ghostCollisions([ghost(payload, payload)]);
   return [
     ...[asName, asBranch, asFile, ...asGhost].map((group) => renderCollisionNotice(group, NOW)),
-    renderOverlapIndicator([asName]),
+    renderOverlapIndicator([asName], [{ developerId: asName.developerId, isSelf: false }]),
   ];
 };
 

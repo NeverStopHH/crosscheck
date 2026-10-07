@@ -3,7 +3,8 @@
  * feat/collision-visible, M2). A group is recorded from a row the hub had
  * already filtered — but the record outlives the moment: a teammate who opts
  * out, is muted or ends their session later must not keep being named. The
- * statusline names only teammates the hub's presence answer still lists, and
+ * statusline names only teammates the hub's presence answer still lists and
+ * counts the rest (round 2, M1; test/collision-statusline-unnamed.test.ts), and
  * a relayed subagent hit names the teammate only while a fresh presence
  * answer lists them — otherwise it is relayed unnamed (round 2, H1;
  * test/collision-relay-unconfirmed.test.ts) — and loses branch and age once
@@ -48,7 +49,7 @@ describe("the statusline names only teammates the hub still lists as present", (
     expect(line.startsWith("⚠ overlap: Nick · 1 file · ")).toBe(true);
   });
 
-  test("Nick opted out, was muted or ended since: the hub drops him, and so does the indicator", async () => {
+  test("Nick opted out, was muted or ended since: the hub drops him, and the indicator drops his name and keeps the count", async () => {
     // Arrange: the presence answer no longer lists him
     const fix = await collisionFixture("cv-hidden");
     await runHook("pre-tool-use", editPayload(fix.repo, OVERLAP_FILE), fix.env);
@@ -58,11 +59,11 @@ describe("the statusline names only teammates the hub still lists as present", (
     const line = await statusline(fix.repo, fix.env);
 
     // Assert
-    expect(line).not.toContain("overlap");
+    expect(line.startsWith("⚠ overlap: 1 teammate · 1 file · ")).toBe(true);
     expect(line).not.toContain("Nick");
   });
 
-  test("a hub the statusline cannot read names nobody", async () => {
+  test("a hub the statusline cannot read names nobody, and still counts the overlap", async () => {
     // Arrange: no presence cache, and this hub answers presence with garbage
     const fix = await collisionFixture("cv-unknown");
     await runHook("pre-tool-use", editPayload(fix.repo, OVERLAP_FILE), fix.env);
@@ -71,7 +72,8 @@ describe("the statusline names only teammates the hub still lists as present", (
     const line = await statusline(fix.repo, fix.env);
 
     // Assert
-    expect(line).not.toContain("overlap");
+    expect(line.startsWith("⚠ overlap: 1 teammate · 1 file · ")).toBe(true);
+    expect(line).not.toContain("Nick");
   });
 });
 

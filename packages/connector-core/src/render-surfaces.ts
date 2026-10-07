@@ -1155,17 +1155,21 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
       renderSubagentCollisionRelay([tripwireCollision(tripwireSessionWith(payload), payload)], NOW),
   },
   {
-    // The statusline's segment: names only, one group per person, bounded.
+    // The statusline's segment: names only, one group per person, bounded —
+    // the tripwire's teammate presence lists, so named, and the ghost row's
+    // third teammate it does not, so counted (round 2, M1).
     kind: "corpus",
     name: "collision-overlap-indicator",
     delivery: "unsolicited",
     module: "src/hints/collision-notice.ts",
     framing: "bare",
-    render: (payload) =>
-      renderOverlapIndicator([
-        tripwireCollision(tripwireSessionWith(payload), payload),
-        ...ghostCollisions([{ ...ghostCheckWith(payload), developerId: "dev_third" }]),
-      ]),
+    render: (payload) => {
+      const named = tripwireCollision(tripwireSessionWith(payload), payload);
+      return renderOverlapIndicator(
+        [named, ...ghostCollisions([{ ...ghostCheckWith(payload), developerId: "dev_third" }])],
+        [{ developerId: named.developerId, isSelf: false }],
+      );
+    },
   },
   {
     // The landed-change half of the same ask (docs/1.0/landed-changes.md):

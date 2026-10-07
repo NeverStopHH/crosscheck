@@ -528,10 +528,25 @@ const byPerson = (groups: readonly CollisionNotice[]): readonly OverlapPerson[] 
     );
   }, []);
 
+/** `3 files`, `1 teammate`: a count and its noun. */
+const countOf = (count: number, noun: string): string => `${String(count)} ${noun}${count === 1 ? "" : "s"}`;
+
 const personLabel = (person: OverlapPerson): string => {
   const count = Math.max(person.fileCount, person.files.size);
   const name = capped(displayName(person.name), STATUSLINE_NAME_CHARS);
-  return `${name} · ${String(count)} file${count === 1 ? "" : "s"}`;
+  return `${name} · ${countOf(count, "file")}`;
+};
+
+/**
+ * The people live presence does NOT confirm, counted and never named (round
+ * 2, M1): `1 teammate · 3 files`, or `+1 teammate · 3 files` after the
+ * names. Files counted once across them, plus the files a record holds only
+ * as a count (a ghost row's sample is a bounded head).
+ */
+const unnamedLabel = (people: readonly OverlapPerson[], afterNames: boolean): string => {
+  const files = new Set(people.flatMap((person) => [...person.files]));
+  const countedOnly = people.reduce((total, person) => total + Math.max(0, person.fileCount - person.files.size), 0);
+  return `${afterNames ? "+" : ""}${countOf(people.length, "teammate")} · ${countOf(files.size + countedOnly, "file")}`;
 };
 
 /**
@@ -539,13 +554,30 @@ const personLabel = (person: OverlapPerson): string => {
  * this session told its person about nobody. People, not groups; at most
  * COLLISION_INDICATOR_MAX_NAMES by name, the rest counted, the whole bounded.
  * No branch, ever: the indicator outlives the moment the row was projected.
+ *
+ * NAMED ONLY WHILE PRESENCE LISTS THEM (review M2): `presence` is the answer
+ * the same statusline line is drawn from — [] when the hub could not be read
+ * or a booked 401 makes the cache untrustworthy — and a teammate it does not
+ * list (opted out, muted, offline, ended) is COUNTED, never named (round 2,
+ * M1): the pilot's collision was with a teammate who was offline, and an
+ * indicator that showed nothing then showed nothing in the one case it exists
+ * for.
  */
-export const renderOverlapIndicator = (groups: readonly CollisionNotice[]): string => {
+export const renderOverlapIndicator = (
+  groups: readonly CollisionNotice[],
+  presence: readonly { readonly developerId: string; readonly isSelf: boolean }[],
+): string => {
   const people = byPerson(groups);
   if (people.length === 0) {
     return "";
   }
-  const shown = people.slice(0, COLLISION_INDICATOR_MAX_NAMES).map(personLabel).join(", ");
-  const rest = people.length - Math.min(people.length, COLLISION_INDICATOR_MAX_NAMES);
-  return capped(`⚠ overlap: ${shown}${rest > 0 ? ` +${String(rest)}` : ""}`, COLLISION_INDICATOR_MAX_CHARS);
+  const listed = new Set(stillPresent(groups, presence).map((group) => group.developerId));
+  const named = people.filter((person) => listed.has(person.developerId));
+  const unnamed = people.filter((person) => !listed.has(person.developerId));
+  const shown = named.slice(0, COLLISION_INDICATOR_MAX_NAMES).map(personLabel).join(", ");
+  const rest = named.length - Math.min(named.length, COLLISION_INDICATOR_MAX_NAMES);
+  const names = shown.length === 0 ? "" : `${shown}${rest > 0 ? ` +${String(rest)}` : ""}`;
+  const counted = unnamed.length === 0 ? "" : unnamedLabel(unnamed, names.length > 0);
+  const segment = [names, counted].filter((part) => part.length > 0).join(", ");
+  return capped(`⚠ overlap: ${segment}`, COLLISION_INDICATOR_MAX_CHARS);
 };

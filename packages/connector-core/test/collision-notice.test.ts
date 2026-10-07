@@ -93,6 +93,10 @@ const state = (): SessionState =>
 const noticeOf = (row: TripwireSession, file = FILE): string =>
   renderCollisionNotice(tripwireCollision(row, file), NOW);
 
+/** The indicator as a statusline with every one of these teammates present draws it. */
+const indicatorOf = (groups: readonly CollisionNotice[]): string =>
+  renderOverlapIndicator(groups, groups.map((group) => ({ developerId: group.developerId, isSelf: false })));
+
 describe("the notice a person reads when the tripwire fires", () => {
   test("names the teammate, the file, the branch and the age, and asks for a conversation", () => {
     // Arrange
@@ -298,7 +302,7 @@ describe("an ordinary word the phrase filter fears is never shown as a redaction
 
     // Act
     const notice = renderCollisionNotice(group, NOW);
-    const indicator = renderOverlapIndicator([group]);
+    const indicator = indicatorOf([group]);
 
     // Assert
     expect(notice.startsWith("crosscheck: A teammate is working on")).toBe(true);
@@ -406,7 +410,7 @@ describe("teammate-derived fields cannot forge the notice's structure", () => {
 
       // Act
       const notices = [tripwire, ...ghost].map((group) => renderCollisionNotice(group, NOW));
-      const indicator = renderOverlapIndicator([tripwire, ...ghost]);
+      const indicator = indicatorOf([tripwire, ...ghost]);
 
       // Assert: the renderer's own words carry none of these but the one
       // parenthesis pair around the age, so any other hit is a field's
@@ -619,7 +623,7 @@ describe("a name read back from the state file is cleaned again before the statu
       };
 
       // Act
-      const indicator = renderOverlapIndicator([raw]);
+      const indicator = indicatorOf([raw]);
 
       // Assert
       expect(indicator.startsWith("⚠ overlap: ")).toBe(true);
@@ -690,7 +694,7 @@ describe("the statusline's overlap indicator", () => {
     const [ghost] = ghostCollisions([ghostRow()]);
 
     // Act
-    const indicator = renderOverlapIndicator(ghost === undefined ? [] : [ghost]);
+    const indicator = indicatorOf(ghost === undefined ? [] : [ghost]);
 
     // Assert
     expect(indicator).toBe("⚠ overlap: Mike · 3 files");
@@ -698,7 +702,7 @@ describe("the statusline's overlap indicator", () => {
 
   test("nothing told, nothing shown", () => {
     // Act / Assert
-    expect(renderOverlapIndicator([])).toBe("");
+    expect(renderOverlapIndicator([], [])).toBe("");
   });
 
   test("one teammate's two groups are one person, their files counted once", () => {
@@ -711,7 +715,7 @@ describe("the statusline's overlap indicator", () => {
     const told = groups.reduce((next, group) => withCollisionNotices(next, [group]), state());
 
     // Act
-    const indicator = renderOverlapIndicator(told.collisionNotices ?? []);
+    const indicator = indicatorOf(told.collisionNotices ?? []);
 
     // Assert
     expect(indicator).toBe("⚠ overlap: Mike · 2 files");
@@ -727,7 +731,7 @@ describe("the statusline's overlap indicator", () => {
     );
 
     // Act
-    const indicator = renderOverlapIndicator(people);
+    const indicator = indicatorOf(people);
 
     // Assert
     expect(indicator).toBe(
@@ -747,7 +751,7 @@ describe("the statusline's overlap indicator", () => {
       );
 
       // Act
-      const indicator = renderOverlapIndicator(groups);
+      const indicator = indicatorOf(groups);
 
       // Assert
       expect(indicator.length).toBeLessThanOrEqual(COLLISION_INDICATOR_MAX_CHARS);
