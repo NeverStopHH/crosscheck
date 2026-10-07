@@ -342,16 +342,16 @@ describe("the flow recounts on the prompt's own content terms", () => {
       expect(await hintFor("ohf-long-two", `${LONG_LEAD}. The zebrafrobnicator and the quuxinator`, "The zebrafrobnicator cache poisons the quuxinator on every warm start")).toBe("");
     });
 
-    test("the recount counts what was sent: a word cut out of a long prompt's window counts for nothing", async () => {
-      // Arrange — the task sits in the middle of a paste the route's cap cuts to its head and tail
+    test("round 4, H1: the recount counts what was sent, and a long prompt's middle is sent now", async () => {
+      // Arrange — the task sits in the middle of a paste the route's cap once cut to its head and tail
       const filler = "office ".repeat(200);
       const prompt = `${filler}The zebrafrobnicator cache poisons the quuxinator. ${filler}`;
 
       // Act
       const hint = await hintFor("ohf-window", prompt, "The zebrafrobnicator cache poisons the quuxinator on every warm start");
 
-      // Assert — the hub never saw those words, and neither does the recount
-      expect(hint).toBe("");
+      // Assert — the ranked terms of all of it went on the wire, and the recount counts them
+      expect(hint).toContain("crosscheck pointer");
     });
 
     test("words no statement on the wire says take no counted slot: the task after forty of them still counts (M7)", async () => {

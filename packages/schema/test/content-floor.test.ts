@@ -55,6 +55,7 @@ describe("a closed-class word's inflection is no topic (L1) — only an INFLECTE
     ["wrong", "no closed word's"],
     ["cache", "no closed word's"],
     ["refresh", "its own lexeme, though \"refreshed\" is a meta word"],
+    ["renewal", "a derivation, no inflection, though it stems to the meta word \"renewed\"'s lexeme (H1: K094)"],
     ["limits", "a closed word as written"],
     ["usage", "a closed word as written, however the stemmer cuts it"],
   ])("%p is not — %s", (word) => {

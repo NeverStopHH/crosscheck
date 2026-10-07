@@ -1,10 +1,10 @@
 /**
- * A PROMPT TOO LONG FOR THE WIRE GOES AS ITS HEAD AND ITS TAIL (DESIGN.md §4,
- * hold-out review round 3, M7). The hub's route caps the query at
- * MAX_SEARCH_QUERY_CHARS, and the connector used to send the first that many
- * characters: a context dump in front of "… the daily quota reset cron runs
- * twice. Please fix it." left the task past the cut, and the hub never saw it.
- * A task is written first or last, so both ends travel, cut at word bounds.
+ * A PROMPT TOO LONG FOR THE WIRE (DESIGN.md §4, hold-out review round 3, M7;
+ * round 4, H1). The hub's route caps the query at MAX_SEARCH_QUERY_CHARS, and
+ * the connector used to send the first that many characters: a context dump
+ * in front of "… the daily quota reset cron runs twice. Please fix it." left
+ * the task past the cut, and the hub never saw it. Round 3 sent the head and
+ * the tail; round 4 sends the ranked terms of all of it.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
@@ -77,31 +77,66 @@ describe("the prompt is classified once per hook (round 3, L4)", () => {
   });
 });
 
-describe("the query window (M7)", () => {
-  test("a prompt past the cap sends its head and its tail, the task at the end included", async () => {
+/**
+ * A LONG PROMPT GOES AS THE RANKED TERMS OF ALL OF IT (hold-out review round
+ * 4, H1). Its head and its tail were not enough: the round-4 hold-out's K094,
+ * a 3 137-character German report of a double-billing night, says "utc",
+ * "scheduler", "renewal" and "unique constraint" in its middle, and the
+ * window sent the subscription-renewal tree's words to a deploy tree instead.
+ * The hub only ever counted terms; the terms of the whole classified text —
+ * task clauses only, topical words first — are what goes on the wire, cut
+ * between words at the route's cap.
+ */
+describe("the query of a long prompt: its ranked terms, all of it (round 4, H1)", () => {
+  const MIDDLE = "Oh, and the subscription renewal cron runs in Berlin time; it should run in UTC with a unique constraint per period. ";
+
+  test("a task in the middle of a long prompt goes on the wire, every one of its words", async () => {
     // Arrange
-    const prompt = `${OPENING}${NOISE.repeat(30)}${TASK}`;
+    const prompt = `${OPENING}${NOISE.repeat(15)}${MIDDLE}${NOISE.repeat(15)}${TASK}`;
     expect(prompt.length).toBeGreaterThan(MAX_SEARCH_QUERY_CHARS);
 
     // Act
-    const sent = await sentQuery("qw-long", prompt);
+    const sent = (await sentQuery("qw-long", prompt)).split(" ");
+
+    // Assert — the middle's words and the end's, none of them cut away
+    expect(sent).toEqual(expect.arrayContaining(["subscription", "renewal", "cron", "berlin", "utc", "unique", "constraint", "quota", "reset"]));
+  });
+
+  test("the query is the prompt's ranked terms, topical first, within the cap", async () => {
+    // Arrange
+    const prompt = `${OPENING}${NOISE.repeat(15)}${MIDDLE}${NOISE.repeat(15)}${TASK}`;
+
+    // Act
+    const sent = await sentQuery("qw-ranked", prompt);
 
     // Assert
     expect(sent.length).toBeLessThanOrEqual(MAX_SEARCH_QUERY_CHARS);
-    expect(sent.startsWith(OPENING)).toBe(true);
-    expect(sent.endsWith(TASK)).toBe(true);
+    expect(sent).toBe(classifyPrompt(prompt).terms.ranked.join(" "));
   });
 
-  test("the cut falls between words, never inside one", async () => {
-    // Arrange
-    const prompt = `${OPENING}${NOISE.repeat(30)}${TASK}`;
+  test("ranked terms past the cap are cut between terms, never inside one", async () => {
+    // Arrange — six hundred distinct words, far more terms than the cap carries
+    const prompt = Array.from({ length: 600 }, (_, index) => `zebraword${String(index)}`).join(" ");
 
     // Act
-    const words = (await sentQuery("qw-words", prompt)).split(/\s+/u);
+    const sent = await sentQuery("qw-cut", prompt);
 
-    // Assert — every word sent is a word of the prompt
-    const written = new Set(prompt.split(/\s+/u));
-    expect(words.filter((word) => !written.has(word))).toEqual([]);
+    // Assert — a prefix of the ranked terms, whole terms only
+    const ranked = classifyPrompt(prompt).terms.ranked;
+    expect(sent.length).toBeLessThanOrEqual(MAX_SEARCH_QUERY_CHARS);
+    expect(sent.split(" ")).toEqual(ranked.slice(0, sent.split(" ").length));
+    expect(sent.length).toBeGreaterThan(MAX_SEARCH_QUERY_CHARS - "zebraword600".length - 1);
+  });
+
+  test("a path in a long prompt travels whole, first, for the exact tier that matches targets on whole tokens", async () => {
+    // Arrange
+    const prompt = `${OPENING}${NOISE.repeat(15)}The cache lives in src/auth/refresh.ts, see "lib/jwks.ts". ${NOISE.repeat(15)}${TASK}`;
+
+    // Act
+    const sent = (await sentQuery("qw-path", prompt)).split(" ");
+
+    // Assert
+    expect(sent.slice(0, 2)).toEqual(["src/auth/refresh.ts", "lib/jwks.ts"]);
   });
 
   test("a prompt within the cap goes whole", async () => {

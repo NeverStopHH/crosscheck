@@ -11,7 +11,12 @@
  */
 import { describe, expect, test } from "bun:test";
 
-import { HINT_LONG_PROMPT_KNOWN_TERMS, HINT_LONG_PROMPT_MIN_TOPICAL, HINT_MAX_EXAMINED_TERMS } from "../src/services/hints.ts";
+import {
+  HINT_LONG_PROMPT_KNOWN_TERMS,
+  HINT_LONG_PROMPT_MIN_TOPICAL,
+  HINT_MAX_COUNTED_TERMS,
+  HINT_MAX_EXAMINED_TERMS,
+} from "../src/services/hints.ts";
 import { SEARCH_MAX_QUERY_TOKENS } from "../src/services/search.ts";
 import {
   addTestDeveloperWithSession,
@@ -70,6 +75,18 @@ describe("the task behind the chatter (M7)", () => {
   test("the control: the chatter alone finds nothing", async () => {
     const { harness, robin } = await seed();
     expect(await candidateIds(harness, robin, CHATTER)).toEqual([]);
+  });
+
+  test("words nobody on the team wrote take no counted slot, however many come first", async () => {
+    // Arrange — more topical words nobody wrote than the hub counts, then the task
+    const { harness, robin } = await seed();
+    const unknown = Array.from({ length: HINT_MAX_COUNTED_TERMS + 8 }, (_, index) => `xqtopic${String(index)}`).join(" ");
+
+    // Act
+    const ids = await candidateIds(harness, robin, `${unknown}. ${TASK}`);
+
+    // Assert — the task's words are the known ones, and counted
+    expect(ids).toEqual([WORK_CONTEXT_ID]);
   });
 
   /** A target tree, and a tree whose description makes twenty chatter words known. */

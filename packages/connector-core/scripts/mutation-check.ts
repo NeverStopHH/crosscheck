@@ -17437,8 +17437,8 @@ export const MUTATIONS: readonly Mutation[
     // RETARGETED (round 3, M7): the query is the prompt's window now.
     // RETARGETED (round 3, L4): the verdict is the hook's one classification.
     // RETARGETED (round 4, C1): a continuation signal stays home beside it.
-    from: "  const promptQuery = terms.isContentFree || terms.hasContinuation ? \"\" : queryWindow(humanText);",
-    to: "  const promptQuery = queryWindow(humanText);",
+    from: "  const promptQuery = terms.isContentFree || terms.hasContinuation ? \"\" : queryOf(humanText, terms.ranked);",
+    to: "  const promptQuery = queryOf(humanText, terms.ranked);",
     test: `${CORE}/test/hint-intent-fallback.test.ts`,
     because: "\"ok ja\" leaves the machine as a search query and costs a hub call it can never use",
   },
@@ -19262,8 +19262,9 @@ export const MUTATIONS: readonly Mutation[
     label: "the hub searches on the prompt's own order, command clauses included",
     file: `${SERVER}/src/services/hints.ts`,
     // RETARGETED (round 3, follow-up): the hub's floor terms come from one helper.
-    from: "  floorTermsOf(terms, await listKnownTerms(db, repo, terms.ranked));",
-    to: "  floorTermsOf(terms, await listKnownTerms(db, repo, terms.content));",
+    // RETARGETED (round 4, H1): the helper reads the known terms first, the window after.
+    from: "  const known = await listKnownTerms(db, repo, terms.ranked);",
+    to: "  const known = await listKnownTerms(db, repo, terms.content);",
     test: `${SERVER}/test/hint-long-prompt.test.ts`,
     because: "\"keep it short please\" lends \"short\" to a tree titled \"Short redis keys\" (M7)",
   },
@@ -19271,8 +19272,9 @@ export const MUTATIONS: readonly Mutation[
     label: "the hub counts words nobody on the team wrote",
     file: `${SERVER}/src/services/hints.ts`,
     // RETARGETED (round 3, follow-up): the hub's floor terms come from one helper.
-    from: "  floorTermsOf(terms, await listKnownTerms(db, repo, terms.ranked));",
-    to: "  floorTermsOf(terms, terms.ranked);",
+    // RETARGETED (round 4, H1): the helper reads the known terms first, the window after.
+    from: "  const known = await listKnownTerms(db, repo, terms.ranked);",
+    to: "  const known = terms.ranked;",
     test: `${SERVER}/test/hint-long-prompt.test.ts`,
     because: "a morning's chatter fills the counted slots and the redis task behind it finds nothing (t066, M7)",
   },
@@ -19296,8 +19298,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the connector sends only a long prompt's head",
     file: `${CORE}/src/flows/hint.ts`,
-    from: "  return `${head}${QUERY_WINDOW_JOIN}${tail}`;",
-    to: "  return text.slice(0, MAX_SEARCH_QUERY_CHARS);",
+    // RETARGETED (round 4, H1): a long prompt goes as the ranked terms of all of it.
+    from: "    : [...new Set([...pathTokensOf(text), ...ranked])].reduce((query, term) => {",
+    to: "    : text.slice(0, MAX_SEARCH_QUERY_CHARS) || [...new Set([...pathTokensOf(text), ...ranked])].reduce((query, term) => {",
     test: `${CORE}/test/hint-query-window.test.ts`,
     because: "\"the daily quota reset cron runs twice\" after two thousand characters of chatter never reaches the hub (t072, M7)",
   },
@@ -19323,8 +19326,8 @@ export const MUTATIONS: readonly Mutation[
     // RETARGETED (round 3, follow-up): the shared rule compares lexemes.
     // RETARGETED (round 4, M1): only for an inflected word that is no class word as written.
     file: `${SCHEMA}/src/content-floor.ts`,
-    from: "  return lexeme !== folded && exactClassOf(folded) === null && CLOSED_LEXEMES.has(lexeme);",
-    to: "  return lexeme !== folded && exactClassOf(folded) === null && CLOSED_CLASS_WORDS.includes(folded);",
+    from: "  return INFLECTION_ENDING.test(folded) && exactClassOf(folded) === null && CLOSED_LEXEMES.has(termLexeme(folded));",
+    to: "  return INFLECTION_ENDING.test(folded) && exactClassOf(folded) === null && CLOSED_CLASS_WORDS.includes(folded);",
     test: `${SERVER}/test/hint-closed-stems.test.ts`,
     because: "\"shows\" is never \"show\", and the dashboard tree is pointed at for a limit report (L1)",
   },
@@ -19693,8 +19696,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the connector asks a hub about a prompt that carries the session on",
     file: `${CORE}/src/flows/hint.ts`,
-    from: "  const promptQuery = terms.isContentFree || terms.hasContinuation ? \"\" : queryWindow(humanText);",
-    to: "  const promptQuery = terms.isContentFree ? \"\" : queryWindow(humanText);",
+    from: "  const promptQuery = terms.isContentFree || terms.hasContinuation ? \"\" : queryOf(humanText, terms.ranked);",
+    to: "  const promptQuery = terms.isContentFree ? \"\" : queryOf(humanText, terms.ranked);",
     test: `${CORE}/test/hint-intent-fallback.test.ts`,
     because: "\"cool, cache fix is merged, next\" reaches a teammate's cache tree on the words of a status report (round 4, C1)",
   },
@@ -19901,16 +19904,17 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an uninflected word is read as a closed word's inflection",
     file: `${SCHEMA}/src/content-floor.ts`,
-    from: "  return lexeme !== folded && exactClassOf(folded) === null && CLOSED_LEXEMES.has(lexeme);",
-    to: "  return exactClassOf(folded) === null && CLOSED_LEXEMES.has(lexeme);",
+    // RETARGETED (round 4, H1): an inflection is told by its ending.
+    from: "  return INFLECTION_ENDING.test(folded) && exactClassOf(folded) === null && CLOSED_LEXEMES.has(termLexeme(folded));",
+    to: "  return exactClassOf(folded) === null && CLOSED_LEXEMES.has(termLexeme(folded));",
     test: `${SCHEMA}/test/content-floor.test.ts`,
-    because: "\"refresh\" is no topic because the meta word \"refreshed\" stems to it (round 4, M1)",
+    because: "\"refresh\" and \"renewal\" are no topic because the meta words \"refreshed\" and \"renewed\" stem to them, and K094 misses its tree (round 4, M1, H1)",
   },
   {
     label: "a class word as written is read as its own inflection",
     file: `${SCHEMA}/src/content-floor.ts`,
-    from: "  return lexeme !== folded && exactClassOf(folded) === null && CLOSED_LEXEMES.has(lexeme);",
-    to: "  return lexeme !== folded && CLOSED_LEXEMES.has(lexeme);",
+    from: "  return INFLECTION_ENDING.test(folded) && exactClassOf(folded) === null && CLOSED_LEXEMES.has(termLexeme(folded));",
+    to: "  return INFLECTION_ENDING.test(folded) && CLOSED_LEXEMES.has(termLexeme(folded));",
     test: `${SCHEMA}/test/content-floor.test.ts`,
     because: "\"usage\" and \"limits\" are no topic in a task, since the stemmer cuts them (round 4, M1)",
   },
@@ -20027,13 +20031,45 @@ export const MUTATIONS: readonly Mutation[
     because: "the tree that says \"new users\" too is cut before the one that does not (round 4, decision 3)",
   },
   {
+    label: "a long prompt's paths travel only as split words",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "    : [...new Set([...pathTokensOf(text), ...ranked])].reduce((query, term) => {",
+    to: "    : [...new Set([...ranked])].reduce((query, term) => {",
+    test: `${CORE}/test/hint-query-window.test.ts`,
+    because: "a long prompt naming src/auth/refresh.ts never reaches the exact tier that matches the file the tree touched (round 4, H1)",
+  },
+  {
+    label: "a long prompt's terms overrun the route's cap",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "        return longer.length <= MAX_SEARCH_QUERY_CHARS ? longer : query;",
+    to: "        return longer;",
+    test: `${CORE}/test/hint-query-window.test.ts`,
+    because: "the hub refuses the query with a 400, and a long prompt gets no hint at all (round 4, H1)",
+  },
+  {
+    label: "the hub relaxes the long-prompt floor on a window",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    floor: await hubFloorTermsOf(deps.db, input.repo, terms, input.query.length >= HINT_WINDOW_QUERY_MIN_CHARS),",
+    to: "    floor: await hubFloorTermsOf(deps.db, input.repo, terms),",
+    test: `${SERVER}/test/hint-candidate-floor.test.ts`,
+    because: "an older connector's head and tail of a long report count two known words, and two topical ones point (round 4, H1)",
+  },
+  {
+    label: "the hub's window rule counts only what the window knows",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  return floorTermsOf(terms, known, isWindow ? Math.max(known.length, HINT_LONG_PROMPT_KNOWN_TERMS + 1) : known.length);",
+    to: "  return floorTermsOf(terms, known, known.length);",
+    test: `${SERVER}/test/hint-candidate-floor.test.ts`,
+    because: "a window of a long prompt is held to a short prompt's floor (round 4, H1)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     // RETARGETED (round 3, M7): the query is the prompt's window now.
     // RETARGETED (round 3, L4): the verdict is the hook's one classification.
     // RETARGETED (round 4, C1): the continuation signal beside it stays.
-    from: "  const promptQuery = terms.isContentFree || terms.hasContinuation ? \"\" : queryWindow(humanText);",
-    to: "  const promptQuery = humanText.length === 0 || terms.hasContinuation ? \"\" : queryWindow(humanText);",
+    from: "  const promptQuery = terms.isContentFree || terms.hasContinuation ? \"\" : queryOf(humanText, terms.ranked);",
+    to: "  const promptQuery = humanText.length === 0 || terms.hasContinuation ? \"\" : queryOf(humanText, terms.ranked);",
     test: `${CORE}/test/hint-intent-fallback.test.ts`,
     because: "a 0.10.0 hub, which knows no steering word, points \"mache weiter\" at the tree that says mache (L5)",
   },
@@ -20288,7 +20324,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-harness-turn.test.ts 7
  * PRINTS: packages/connector-core/test/hint-intent-fallback.test.ts 7
  * PRINTS: packages/connector-core/test/hint-old-hub-floor.test.ts 15
- * PRINTS: packages/connector-core/test/hint-query-window.test.ts 2
+ * PRINTS: packages/connector-core/test/hint-query-window.test.ts 4
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4
  * PRINTS: packages/connector-core/test/hint-select.test.ts 8
  * PRINTS: packages/connector-core/test/hint-substance-flow.test.ts 10
@@ -20410,7 +20446,7 @@ interface Outcome {
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/fence-waivers.test.ts 1
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
- * PRINTS: packages/server/test/hint-candidate-floor.test.ts 9
+ * PRINTS: packages/server/test/hint-candidate-floor.test.ts 11
  * PRINTS: packages/server/test/hint-closed-stems.test.ts 2
  * PRINTS: packages/server/test/hint-content-floor.test.ts 7
  * PRINTS: packages/server/test/hint-content-terms.test.ts 3

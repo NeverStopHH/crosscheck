@@ -60,21 +60,25 @@ const CLOSED_LEXEMES: ReadonlySet<string> = new Set(
   CLOSED_CLASS_WORDS.filter((word) => !ENGLISH_STOP_WORDS.has(word)).map(termLexeme),
 );
 
+/** The endings an English inflection is written with: shows, stopped, running. */
+const INFLECTION_ENDING = /(?:s|ed|ing)$/u;
+
 /**
  * A CLOSED-CLASS WORD'S INFLECTION IS NO TOPIC (round 3, L1): the schema
  * classes a word as written, and the match is on lexemes, so "stopped" — no
  * class word as written — matched "stops" as the conversation word "stop".
  * Compared folded, the form the class words are kept in.
  *
- * ONLY AN INFLECTED PROMPT WORD (round 4, M1): one whose lexeme is not the
- * word itself, and that is no class word as written — those are topical in a
- * task now. "refresh" is its own lexeme, so it is a topic though the meta
- * word "refreshed" shares it; "shows", "stopped" and "deploys" stay none.
+ * ONLY AN INFLECTED PROMPT WORD (round 4, M1): one with an inflection's
+ * ending, and no class word as written — those are topical in a task now.
+ * "refresh" is a topic though the meta word "refreshed" shares its lexeme;
+ * "shows", "stopped" and "deploys" stay none; and "renewal" is a derivation,
+ * a topic though the stemmer cuts it to "renewed"'s lexeme (round 4, H1: it
+ * was the word that carried K094 to the subscription-renewal tree).
  */
 export const isClosedInflection = (term: string): boolean => {
   const folded = foldWord(term);
-  const lexeme = termLexeme(folded);
-  return lexeme !== folded && exactClassOf(folded) === null && CLOSED_LEXEMES.has(lexeme);
+  return INFLECTION_ENDING.test(folded) && exactClassOf(folded) === null && CLOSED_LEXEMES.has(termLexeme(folded));
 };
 
 /** The lexemes a text says: its words, lower-cased, less the database's English stop words. */

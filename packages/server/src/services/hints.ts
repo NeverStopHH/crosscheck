@@ -46,6 +46,7 @@ import { resolvedEvidenceCounts } from "./evidence-resolution.ts";
 import { claimValidity, loadRevalidations } from "./claim-validity.ts";
 import { presenceCutoff } from "./presence.ts";
 import {
+  SEARCH_MAX_QUERY_CHARS,
   TIER_CANDIDATES,
   exactTargetTokenConditions,
   exactTokens,
@@ -56,6 +57,7 @@ import { pushableClaimCondition } from "./pushable-claims.ts";
 import { DECLARED_PROVENANCE } from "./similarity-gate.ts";
 import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
 import {
+  HINT_LONG_PROMPT_KNOWN_TERMS,
   HINT_MAX_EXAMINED_TERMS,
   HINT_MIN_SHARED_TERMS,
   compareTreeStrength,
@@ -797,12 +799,24 @@ export const contentFloorOf = async (
 };
 
 /**
+ * A QUERY THAT FILLS THE ROUTE'S CAP IS A WINDOW (round 4, H1): of a prompt
+ * longer than the wire carries — the head and tail an older connector sends,
+ * or this connector's ranked terms cut at the cap — so its known words are a
+ * keyhole onto the prompt's, and the long-prompt floor holds whatever they
+ * count. A prompt a person types to within a tenth of the cap is long anyway.
+ */
+export const HINT_WINDOW_QUERY_MIN_CHARS = Math.floor(SEARCH_MAX_QUERY_CHARS * 0.9);
+
+/**
  * A prompt's floor terms ON THIS HUB: its ranked terms that some work context
  * or claim of the repo says at all, by the database's own index (M7), under
- * the one rule (`@crosscheck/schema` floorTermsOf).
+ * the one rule (`@crosscheck/schema` floorTermsOf) — held to the long-prompt
+ * floor when the query is a window (H1).
  */
-export const hubFloorTermsOf = async (db: Db, repo: string, terms: PromptTerms): Promise<FloorTerms> =>
-  floorTermsOf(terms, await listKnownTerms(db, repo, terms.ranked));
+export const hubFloorTermsOf = async (db: Db, repo: string, terms: PromptTerms, isWindow = false): Promise<FloorTerms> => {
+  const known = await listKnownTerms(db, repo, terms.ranked);
+  return floorTermsOf(terms, known, isWindow ? Math.max(known.length, HINT_LONG_PROMPT_KNOWN_TERMS + 1) : known.length);
+};
 
 /** A candidate's strength by the one rule (`@crosscheck/schema` TreeStrength): exact, best statement, own statement. */
 const strengthOfCandidate = (candidate: { readonly row: { readonly tier: SearchTier } } & CandidateFloor): TreeStrength => ({
@@ -970,7 +984,7 @@ export const listHintCandidates = async (
   }
   return matchCandidates(deps, callerDeveloperId, {
     text: humanText,
-    floor: await hubFloorTermsOf(deps.db, input.repo, terms),
+    floor: await hubFloorTermsOf(deps.db, input.repo, terms, input.query.length >= HINT_WINDOW_QUERY_MIN_CHARS),
     repo: input.repo,
     on: "prompt",
   });

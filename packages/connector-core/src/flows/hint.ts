@@ -270,28 +270,42 @@ const selectNotice = (
     .find((notice) => notice.commits.length > 0);
 };
 
-/** What joins a long prompt's head to its tail on the wire. */
-const QUERY_WINDOW_JOIN = "\n";
-
-/** The head's share of the window, the tail taking the rest. */
-const QUERY_WINDOW_HEAD_CHARS = Math.floor((MAX_SEARCH_QUERY_CHARS - QUERY_WINDOW_JOIN.length) / 2);
+/** What joins a long prompt's terms on the wire. */
+const QUERY_TERM_JOIN = " ";
 
 /**
- * THE QUERY WINDOW (hold-out review round 3, M7): a prompt the hub's route
- * cap cannot carry whole goes as its HEAD and its TAIL, each cut between
- * words. A task is written first or last; a context dump in front of "… the
- * daily quota reset cron runs twice. Please fix it." used to leave the task
- * past the first MAX_SEARCH_QUERY_CHARS characters, unseen by the hub.
+ * THE QUERY OF A LONG PROMPT (hold-out review round 3, M7; round 4, H1): a
+ * prompt the hub's route cap cannot carry whole goes as the RANKED TERMS OF
+ * ALL OF IT — the content words of every clause that is no command to the
+ * session, topical words first (@crosscheck/schema promptTerms().ranked) —
+ * joined by spaces and cut between terms at MAX_SEARCH_QUERY_CHARS. The hub
+ * only ever counts terms, so nothing it reads is lost; what the round-3 head
+ * and tail lost was the middle — K094 of the round-4 hold-out, a 3 137-
+ * character report whose "utc", "scheduler", "renewal" and "unique
+ * constraint" sat past the head and before the tail.
  */
-const queryWindow = (text: string): string => {
-  if (text.length <= MAX_SEARCH_QUERY_CHARS) {
-    return text;
-  }
-  const tailChars = MAX_SEARCH_QUERY_CHARS - QUERY_WINDOW_JOIN.length - QUERY_WINDOW_HEAD_CHARS;
-  const head = text.slice(0, QUERY_WINDOW_HEAD_CHARS).replace(/\S*$/u, "").trimEnd();
-  const tail = text.slice(text.length - tailChars).replace(/^\S*/u, "").trimStart();
-  return `${head}${QUERY_WINDOW_JOIN}${tail}`;
-};
+const queryOf = (text: string, ranked: readonly string[]): string =>
+  text.length <= MAX_SEARCH_QUERY_CHARS
+    ? text
+    : [...new Set([...pathTokensOf(text), ...ranked])].reduce((query, term) => {
+        const longer = query.length === 0 ? term : `${query}${QUERY_TERM_JOIN}${term}`;
+        return longer.length <= MAX_SEARCH_QUERY_CHARS ? longer : query;
+      }, "");
+
+/** A path or a file name as written, quotes and sentence marks off its ends: "src/auth/refresh.ts". */
+const PATH_TOKEN = /^[\p{L}\p{N}_-]+(?:[./][\p{L}\p{N}_-]+)+$/u;
+
+/**
+ * The path-shaped words of a long prompt, whole and first (round 4, H1): the
+ * hub's exact tier matches a target on a whole whitespace token, and its
+ * terms split "src/auth/refresh.ts" into words, so the path travels as
+ * written in front of the terms.
+ */
+const pathTokensOf = (text: string): readonly string[] =>
+  text
+    .split(/\s+/u)
+    .map((word) => word.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ""))
+    .filter((word) => PATH_TOKEN.test(word) && /\p{L}/u.test(word));
 
 /**
  * The counters a turn the prompt path stood down on is booked under (M7) —
@@ -339,7 +353,7 @@ export const selectAndRenderHint = async (
   // AND A PROMPT THAT CARRIES THE SESSION ON IS NOT ASKED ABOUT (round 4,
   // C1): "cache fix is merged, next" reports on the session's own work and
   // hands it back — no call, whatever else it says.
-  const promptQuery = terms.isContentFree || terms.hasContinuation ? "" : queryWindow(humanText);
+  const promptQuery = terms.isContentFree || terms.hasContinuation ? "" : queryOf(humanText, terms.ranked);
   // NOTHING STANDS IN for a prompt that said nothing — not the session's
   // intent either (owner decision, review 1006b M6): no call at all, and the
   // turn is counted as floored whatever the session's budget (M7).

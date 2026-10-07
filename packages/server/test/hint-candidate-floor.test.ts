@@ -12,7 +12,7 @@
  */
 import { describe, expect, test } from "bun:test";
 
-import { HINT_MAX_COUNTED_TERMS } from "../src/services/hints.ts";
+import { HINT_MAX_COUNTED_TERMS, HINT_WINDOW_QUERY_MIN_CHARS } from "../src/services/hints.ts";
 import {
   addTestDeveloperWithSession,
   createHarnessWithSession,
@@ -396,6 +396,21 @@ describe("the hub's own bounds before any search (hold-out review, L2)", () => {
   test("the control: two shared words find the tree", async () => {
     const { harness, robin } = await lateWordTree();
     expect(ids(await fetchCandidates(harness, robin, { query: "zebrafrobnicator quuxinator" }))).toEqual([WORK_CONTEXT_ID]);
+  });
+
+  test("round 4, H1: a query that fills the route's cap is a window of something longer, held to the long-prompt floor", async () => {
+    // Arrange — words nobody on the team wrote, so only two are known: a
+    // query this long is a window, and its known words are a keyhole
+    const { harness, robin } = await lateWordTree();
+    const unknown = Array.from({ length: 200 }, (_, index) => `qqword${String(index)}`).join(" ");
+    const query = `${unknown} zebrafrobnicator quuxinator`.slice(-HINT_WINDOW_QUERY_MIN_CHARS);
+    expect(query.length).toBe(HINT_WINDOW_QUERY_MIN_CHARS);
+
+    // Act
+    const candidates = await fetchCandidates(harness, robin, { query });
+
+    // Assert — two topical words; a long prompt needs three
+    expect(candidates).toEqual([]);
   });
 
   test(`only the first ${String(HINT_MAX_COUNTED_TERMS)} KNOWN terms are counted — words past them are not searched (M7)`, async () => {
