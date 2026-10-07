@@ -44,11 +44,18 @@ export const PROMPT_MIN_TOKEN_CHARS = 3;
  */
 const isCapitalPair = (token: string): boolean => /^\p{Lu}{2}$/u.test(token);
 
-/** Lower-cased letter/digit runs of at least PROMPT_MIN_TOKEN_CHARS, or two capitals, in order. */
+/**
+ * A letter and a digit are a word in two characters (round 4, L2): "s3",
+ * "k8", "v2" name their topic, and the database keeps them whole. A
+ * two-digit number stays below the floor — a date's or a count's part.
+ */
+const isLetterDigitPair = (token: string): boolean => /^(?:\p{L}\p{N}|\p{N}\p{L})$/u.test(token);
+
+/** Lower-cased letter/digit runs of at least PROMPT_MIN_TOKEN_CHARS, two capitals or a letter and a digit, in order. */
 export const promptTokens = (text: string): readonly string[] =>
   text
     .split(/[^\p{L}\p{N}]+/u)
-    .filter((token) => token.length >= PROMPT_MIN_TOKEN_CHARS || isCapitalPair(token))
+    .filter((token) => token.length >= PROMPT_MIN_TOKEN_CHARS || isCapitalPair(token) || isLetterDigitPair(token))
     .map((token) => token.toLowerCase());
 
 const countWhere = (tokens: readonly string[], predicate: (token: string) => boolean): number =>

@@ -18490,16 +18490,18 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "two capitals fall below the length floor again",
     file: `${SCHEMA}/src/prompt-terms.ts`,
-    from: "    .filter((token) => token.length >= PROMPT_MIN_TOKEN_CHARS || isCapitalPair(token))",
-    to: "    .filter((token) => token.length >= PROMPT_MIN_TOKEN_CHARS)",
+    // RETARGETED (round 4, L2): a letter and a digit share the line.
+    from: "    .filter((token) => token.length >= PROMPT_MIN_TOKEN_CHARS || isCapitalPair(token) || isLetterDigitPair(token))",
+    to: "    .filter((token) => token.length >= PROMPT_MIN_TOKEN_CHARS || isLetterDigitPair(token))",
     test: `${SCHEMA}/test/prompt-terms.test.ts`,
     because: "\"CI rot\", \"DB down\" and \"CI?\" lose the word they are about and are floored as content-free (M6)",
   },
   {
     label: "the hub never counts a two-capital word as shared",
     file: `${SCHEMA}/src/prompt-terms.ts`,
-    from: "    .filter((token) => token.length >= PROMPT_MIN_TOKEN_CHARS || isCapitalPair(token))",
-    to: "    .filter((token) => token.length >= PROMPT_MIN_TOKEN_CHARS)",
+    // RETARGETED (round 4, L2): a letter and a digit share the line.
+    from: "    .filter((token) => token.length >= PROMPT_MIN_TOKEN_CHARS || isCapitalPair(token) || isLetterDigitPair(token))",
+    to: "    .filter((token) => token.length >= PROMPT_MIN_TOKEN_CHARS || isLetterDigitPair(token))",
     test: `${SERVER}/test/hint-content-terms.test.ts`,
     because: "\"CI rot auf main\" shares only \"main\" with the CI tree and is never pointed at it (M6)",
   },
@@ -20266,6 +20268,22 @@ export const MUTATIONS: readonly Mutation[
     because: "the reader's own trees lend known words no candidate can say (round 4, L1)",
   },
   {
+    label: "a letter and a digit are no word",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "    .filter((token) => token.length >= PROMPT_MIN_TOKEN_CHARS || isCapitalPair(token) || isLetterDigitPair(token))",
+    to: "    .filter((token) => token.length >= PROMPT_MIN_TOKEN_CHARS || isCapitalPair(token))",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"s3 upload over 5gb fails\" loses the bucket it is about (round 4, L2)",
+  },
+  {
+    label: "any two characters with a digit are a word",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "const isLetterDigitPair = (token: string): boolean => /^(?:\\p{L}\\p{N}|\\p{N}\\p{L})$/u.test(token);",
+    to: "const isLetterDigitPair = (token: string): boolean => /^(?:\\p{L}\\p{N}|\\p{N}\\p{L}|\\p{N}\\p{N})$/u.test(token);",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "a log line's \"10\" and \"06\" agree with every tree that counts ten of something (round 4, L2)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     // RETARGETED (round 3, M7): the query is the prompt's window now.
@@ -20618,7 +20636,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1
- * PRINTS: packages/schema/test/prompt-terms.test.ts 31
+ * PRINTS: packages/schema/test/prompt-terms.test.ts 33
  * PRINTS: packages/schema/test/session-control.test.ts 7
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/schema/test/slash-command.test.ts 4

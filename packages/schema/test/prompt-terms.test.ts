@@ -126,6 +126,18 @@ describe("content terms are the words left after the stop lists", () => {
     expect(isContentFreePrompt(prompt)).toBe(false);
   });
 
+  test.each([
+    ["s3 upload over 5gb fails", ["s3", "upload", "over", "5gb", "fails"]],
+    ["k8 pods restart, v2 api down", ["k8", "pods", "restart", "v2", "api", "down"]],
+    ["the S3 bucket", ["the", "s3", "bucket"]],
+  ])("round 4, L2: two characters with a digit are a word, as the database keeps them: %p", (prompt, tokens) => {
+    expect(promptTokens(prompt)).toEqual(tokens);
+  });
+
+  test("L2: a two-digit number stays below the floor — a date's or a count's part, never a topic", () => {
+    expect(promptTokens("2026-10-06 at 08:15, 10 000 rows")).toEqual(["2026", "000", "rows"]);
+  });
+
   test("two lower-case letters stay too short to be a word", () => {
     expect(promptTokens("npm ci kaputt, db leer")).toEqual(["npm", "kaputt", "leer"]);
   });
