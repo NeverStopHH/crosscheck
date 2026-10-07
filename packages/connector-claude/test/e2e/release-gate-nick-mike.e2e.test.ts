@@ -244,11 +244,19 @@ describe("P1 — the pilot collision must warn both people", () => {
     seen = await observe(world);
   }, CASE_TIMEOUT_MS);
 
-  test("setup: Nick's ONE session is detached and its own context carries the stale title (reproduces a)", () => {
+  test("setup: Nick's ONE session is detached at a main commit a stale branch still points at (the shape of a)", async () => {
     const own = seen.contexts.filter((context) => context.developer === "Nick" && !context.id.includes("~t"));
     expect(own, "Nick's long session must own exactly one session context").toHaveLength(1);
     expect(own[0]?.sessionBranch.startsWith("detached@"), "agentic-main must be a DETACHED HEAD").toBe(true);
-    expect(own[0]?.title.startsWith(STALE_BRANCH), "the session title must be the stale branch at HEAD").toBe(true);
+    const head = await gitIn(world.roots.nickStart, ["rev-parse", "HEAD"]);
+    expect(await gitIn(world.roots.nickStart, ["rev-parse", STALE_BRANCH])).toBe(head);
+    await gitIn(world.roots.nickStart, ["merge-base", "--is-ancestor", head, "origin/main"]);
+  });
+
+  // fixed by feat/topic-contexts (07cbf301: a detached session is never titled after a branch that merely points at its commit).
+  expectedFailure("a: no context of Nick's is titled after the stale branch (pilot: wrong title a)", () => {
+    const stale = seen.contexts.filter((context) => context.developer === "Nick" && context.title.includes(STALE_BRANCH));
+    expect(stale.map((context) => context.title)).toEqual([]);
   });
 
   test("setup: Nick touched 190 files — 172 by subagents, 12 on the main thread, 6 only by Bash", () => {
@@ -288,8 +296,11 @@ describe("P1 — the pilot collision must warn both people", () => {
     expect(mentions(personLines(world.moments.mikeNext), "Nick"), "no systemMessage naming Nick reached Mike").toBe(true);
   });
 
-  // fixed by feat/collision-visible (the channel) + feat/topic-contexts (the topic).
-  expectedFailure("1b: the line Mike reads names Nick's topic feat/numlabs-practices, never the stale title (pilot: wrong title a)", () => {
+  // NEW GAP — no branch: even with feat/collision-visible + feat/topic-contexts merged, the
+  // person's line is "Nick is working on mappingSchema.ts", topic-less. The tripwire row still
+  // carries the SESSION's branch (hints.ts listTargetSessions: agent_sessions.branch, detached
+  // here, so never printed), not the topic's (work_contexts.branch); a ghost row carries none.
+  test("1b: the line Mike reads names Nick's topic feat/numlabs-practices, never the stale title (pilot: wrong title a)", () => {
     const person = personLines(world.moments.mikeNext);
     expect(mentions(person, TOPIC_BRANCH), `person lines: ${JSON.stringify(person)}`).toBe(true);
     expect(mentions(person, STALE_BRANCH)).toBe(false);
@@ -301,6 +312,17 @@ describe("P1 — the pilot collision must warn both people", () => {
     expect(aboutNick.length, "Mike's agent must be told of a collision with Nick at all").toBeGreaterThan(0);
     expect(mentions(aboutNick, TOPIC_BRANCH), `agent texts: ${JSON.stringify(aboutNick)}`).toBe(true);
     expect(mentions(aboutNick, STALE_BRANCH)).toBe(false);
+  });
+
+  // A pointer is only worth handing over if it opens something: every `get_diagnosis <id>` in
+  // the collision Mike's agent is told must name a work context the hub holds.
+  test("1e: every get_diagnosis pointer in Mike's collision opens a context that exists", () => {
+    const known = new Set(seen.contexts.map((context) => context.id));
+    const pointers = collisionTextsFor(world.moments.mikeNext).flatMap((text) =>
+      [...text.matchAll(/get_diagnosis (\S+)/g)].map((match) => (match[1] ?? "").replace(/\.$/, "")),
+    );
+    expect(pointers.length, "the collision must hand Mike's agent a pointer").toBeGreaterThan(0);
+    expect(pointers.filter((id) => !known.has(id)), `known: ${JSON.stringify([...known])}`).toEqual([]);
   });
 
   // fixed by feat/collision-visible (statusline) + Sweep ≠ Ignore (the 11-file ghost row) + feat/topic-contexts (the 3 Bash files).
