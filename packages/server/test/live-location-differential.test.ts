@@ -30,6 +30,7 @@ import { call, label, walk } from "./live-location-walk.ts";
 import type { Answer } from "./live-location-walk.ts";
 import {
   CREATED_AT,
+  FILE,
   HOST_CREATED_AT,
   HOST_TITLE,
   NICK_CONTEXT,
@@ -37,6 +38,7 @@ import {
   ROBIN_CONTEXT,
   ROBIN_HOST_CONTEXT,
   ROBIN_LIVE,
+  ROBIN_OLD_CONTEXT,
   SECRET_BRANCH,
   SECRET_SHA,
   instantsNear,
@@ -181,6 +183,14 @@ const ACTIONS: readonly Action[] = [
     name: "edit a file",
     content: true,
     run: (w) => records(w, [live("target", { workContextId: ROBIN_HOST_CONTEXT, kind: "file", value: "src/auth/keys.ts" })], "edit"),
+  },
+  {
+    // A file her old context already holds, touched again: nothing new is
+    // learned, only WHEN she was there — the re-touch moves the target's
+    // last_seen_at (the landed branch's targetTouchedAt), which suspect, the
+    // conference and the ghost sweep window by for owners they may see.
+    name: "touch a file again",
+    run: (w) => records(w, [live("target", { workContextId: ROBIN_OLD_CONTEXT, kind: "file", value: FILE })], "re-touch"),
   },
   {
     name: "pin a surface",

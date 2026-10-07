@@ -23922,6 +23922,18 @@ export const MUTATIONS: readonly Mutation[
     test: `${CONNECTOR}/test/solved-hook.test.ts`,
     because: "the detached SessionStart pays the probe's wall clock on the path that carries the briefing",
   },
+  {
+    // The batch merge of the landed branch with the opt-out: the boundary
+    // test's own re-touch action, beside the suspect test's anchor above.
+    label: "a colleague's suspect run moves when an opted-out teammate re-touches an old file",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  sql<Date | null>`(case when ${visiblePresenceCondition(viewerDeveloperId, ownerDeveloperId)} then ${targetTouchedAt(target)} end)`;",
+    to: "  sql<Date | null>`${targetTouchedAt(target)}`;",
+    test: `${SERVER}/test/live-location-differential.test.ts`,
+    because:
+      "touching a file of her old context again brings that context into a colleague's " +
+      "suspect window, which says when she was there",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -24309,7 +24321,7 @@ interface Outcome {
  * PRINTS: packages/server/test/landed-repair.test.ts 20
  * PRINTS: packages/server/test/landed.test.ts 15
  * PRINTS: packages/server/test/live-location-cost.test.ts 3
- * PRINTS: packages/server/test/live-location-differential.test.ts 5
+ * PRINTS: packages/server/test/live-location-differential.test.ts 6
  * PRINTS: packages/server/test/live-location-privacy.test.ts 27
  * PRINTS: packages/server/test/live-location-projection.test.ts 9
  * PRINTS: packages/server/test/live-location-prose.test.ts 3

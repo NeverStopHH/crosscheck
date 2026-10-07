@@ -459,6 +459,12 @@ const seedRobin = async (harness: TestHarness, robin: TestDeveloper): Promise<vo
   );
   harness.clock.advanceSeconds(CREATED_OFFSET_S - STARTED_OFFSET_S);
   assertAccepted(await postRecords(harness, robin, { records: robinWork() }), "Robin");
+  // Her old context's files were touched when it was: outside every window by
+  // their touch too (the landed branch windows by targetTouchedAt), so a
+  // re-touch is the only thing that could bring it back into one.
+  await harness.db.execute(
+    sql`UPDATE work_context_targets SET created_at = ${OLD_CREATED_AT}::timestamptz, last_seen_at = NULL WHERE work_context_id = ${ROBIN_OLD_CONTEXT}`,
+  );
 };
 
 /** Her live heartbeat, then her live context's update — the two newest instants. */
