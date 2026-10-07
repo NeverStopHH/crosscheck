@@ -37,6 +37,24 @@ describe("words match on their english lexemes, as the hub's database matches th
     expect([...textLexemes("The workers were evicting cached entries")].sort()).toEqual(["cach", "entri", "evict", "worker"]);
   });
 
+  test.each([
+    ["The cron runs in Europe/Berlin time", ["cron", "europe/berlin", "run", "time"]],
+    ["see src/auth/refresh.ts and lib/jwks.ts", ["lib/jwks.ts", "see", "src/auth/refresh.ts"]],
+    ["/health returns 404", ["/health", "404", "return"]],
+    ["api.example.com is down", ["api.example.com"]],
+    ["mail foo@bar.com today", ["foo@bar.com", "mail", "today"]],
+    ["fetch https://x.com/a/b now", ["/a/b", "fetch", "x.com", "x.com/a/b"]],
+    ["e.g. the node.js build, (src/a.ts), \"Europe/Berlin\".", ["build", "e.g", "europe/berlin", "node.js", "src/a.ts"]],
+  ])("round 4, L1: a path, a host, an address is ONE word to the database, and to the floor: %p", (text, lexemes) => {
+    // As PostgreSQL's parser reads them (ts_debug: file, host, email, url):
+    // "europe" never matches "Europe/Berlin" on the hub, so it never does here
+    expect([...textLexemes(text)].sort()).toEqual(lexemes);
+  });
+
+  test("a hyphenated word keeps its parts, as the database's does", () => {
+    expect(textLexemes("Retry-After header").has("retri")).toBe(true);
+  });
+
   test("a word with a digit is matched as written, as the database's simple dictionary keeps it", () => {
     expect(textLexemes("HTTP 429 on e2e runs").has("429")).toBe(true);
     expect(textLexemes("HTTP 429 on e2e runs").has("e2e")).toBe(true);

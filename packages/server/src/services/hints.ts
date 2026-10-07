@@ -811,10 +811,17 @@ export const HINT_WINDOW_QUERY_MIN_CHARS = Math.floor(SEARCH_MAX_QUERY_CHARS * 0
  * A prompt's floor terms ON THIS HUB: its ranked terms that some work context
  * or claim of the repo says at all, by the database's own index (M7), under
  * the one rule (`@crosscheck/schema` floorTermsOf) — held to the long-prompt
- * floor when the query is a window (H1).
+ * floor when the query is a window (H1), and known only from what a
+ * statement the reader may see says (L1).
  */
-export const hubFloorTermsOf = async (db: Db, repo: string, terms: PromptTerms, isWindow = false): Promise<FloorTerms> => {
-  const known = await listKnownTerms(db, repo, terms.ranked);
+export const hubFloorTermsOf = async (
+  db: Db,
+  repo: string,
+  terms: PromptTerms,
+  isWindow = false,
+  readerDeveloperId?: string,
+): Promise<FloorTerms> => {
+  const known = await listKnownTerms(db, repo, terms.ranked, readerDeveloperId);
   return floorTermsOf(terms, known, isWindow ? Math.max(known.length, HINT_LONG_PROMPT_KNOWN_TERMS + 1) : known.length);
 };
 
@@ -984,7 +991,7 @@ export const listHintCandidates = async (
   }
   return matchCandidates(deps, callerDeveloperId, {
     text: humanText,
-    floor: await hubFloorTermsOf(deps.db, input.repo, terms, input.query.length >= HINT_WINDOW_QUERY_MIN_CHARS),
+    floor: await hubFloorTermsOf(deps.db, input.repo, terms, input.query.length >= HINT_WINDOW_QUERY_MIN_CHARS, callerDeveloperId),
     repo: input.repo,
     on: "prompt",
   });
@@ -997,30 +1004,54 @@ export const listHintCandidates = async (
  * on the team wrote cannot match on any statement, so leaving it out changes
  * no count; it only stops taking a slot. One query, one GIN probe per term,
  * at most HINT_MAX_EXAMINED_TERMS of them.
+ *
+ * ONLY WHAT A FLOOR STATEMENT SAYS (round 4, L1): a context's own statement —
+ * title, description, intent — and its visible pushable claims, never the
+ * reader's own work. The normalized document the GIN index covers also holds
+ * a context's status, its claims' kinds, its target paths' parts and its
+ * drafts: words no statement the floor counts on says, which a connector
+ * recounting an old hub never sees, and which filled counted slots and made a
+ * short prompt long. The index stays the prefilter; the statement decides.
  */
-const listKnownTerms = async (db: Db, repo: string, ranked: readonly string[]): Promise<readonly string[]> => {
+const listKnownTerms = async (
+  db: Db,
+  repo: string,
+  ranked: readonly string[],
+  readerDeveloperId?: string,
+): Promise<readonly string[]> => {
   const examined = ranked.slice(0, HINT_MAX_EXAMINED_TERMS);
   if (examined.length === 0) {
     return [];
   }
+  const lexeme = sql.raw("query.lexeme");
+  const visibleOwner = readerDeveloperId === undefined ? [] : [ne(agentSessions.developerId, readerDeveloperId), notMutedCondition(readerDeveloperId, agentSessions.developerId)];
+  const statementSays = db
+    .select({ one: sql`1` })
+    .from(workContexts)
+    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
+    .where(and(eq(agentSessions.repo, repo), sql`${workContexts.tsv} @@ ${lexeme}`, sql`${contextStatement} @@ ${lexeme}`, ...visibleOwner));
+  const claimSays = db
+    .select({ one: sql`1` })
+    .from(claims)
+    .innerJoin(workContexts, eq(claims.workContextId, workContexts.id))
+    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
+    .innerJoin(claimAuthors, eq(claims.authorSessionId, claimAuthors.id))
+    .where(
+      and(
+        eq(agentSessions.repo, repo),
+        sql`${claims.tsv} @@ ${lexeme}`,
+        pushableClaimCondition(),
+        notSuperseded(db),
+        ...visibleOwner,
+        ...(readerDeveloperId === undefined ? [] : [notMutedCondition(readerDeveloperId, claimAuthors.developerId)]),
+      ),
+    );
   const result = await db.execute<{ word: string }>(sql`
     SELECT term.word AS word
     FROM unnest(ARRAY[${sql.join(examined.map((word) => sql`${word}`), sql`, `)}]::text[]) WITH ORDINALITY AS term(word, position)
     CROSS JOIN LATERAL (SELECT plainto_tsquery('english', term.word) AS lexeme) AS query
     WHERE numnode(query.lexeme) > 0
-      AND (
-        EXISTS (
-          SELECT 1 FROM work_contexts AS context
-          JOIN agent_sessions AS owner ON owner.id = context.session_id
-          WHERE owner.repo = ${repo} AND context.tsv @@ query.lexeme
-        )
-        OR EXISTS (
-          SELECT 1 FROM claims AS claim
-          JOIN work_contexts AS context ON context.id = claim.work_context_id
-          JOIN agent_sessions AS owner ON owner.id = context.session_id
-          WHERE owner.repo = ${repo} AND claim.tsv @@ query.lexeme
-        )
-      )
+      AND (EXISTS (${statementSays}) OR EXISTS (${claimSays}))
     ORDER BY term.position`);
   return result.rows.map((row) => row.word);
 };

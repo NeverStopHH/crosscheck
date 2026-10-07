@@ -11,11 +11,14 @@
  */
 import { describe, expect, test } from "bun:test";
 
+import { knownTermsIn, promptTerms } from "@crosscheck/schema";
+
 import {
   HINT_LONG_PROMPT_KNOWN_TERMS,
   HINT_LONG_PROMPT_MIN_TOPICAL,
   HINT_MAX_COUNTED_TERMS,
   HINT_MAX_EXAMINED_TERMS,
+  hubFloorTermsOf,
 } from "../src/services/hints.ts";
 import { SEARCH_MAX_QUERY_TOKENS } from "../src/services/search.ts";
 import {
@@ -59,6 +62,79 @@ const candidateIds = async (harness: TestHarness, robin: TestDeveloper, query: s
   const body = (await response.json()) as { data: { candidates: readonly { workContext: { id: string } }[] } };
   return body.data.candidates.map((candidate) => candidate.workContext.id);
 };
+
+/**
+ * THE KNOWN WORDS ARE THE WORDS A STATEMENT SAYS (round 4, L1): the hub
+ * probed the context's normalized document, which also holds its status, its
+ * claims' kinds, the parts of its target paths and its drafts — words no
+ * statement a floor counts on says, and a connector recounting an old hub
+ * never sees. They filled counted slots and made a short prompt long. The
+ * probe now reads what the floor reads: a context's own statement and its
+ * visible pushable claims, never the reader's own work.
+ */
+describe("the hub knows only the words a statement says (L1)", () => {
+  test("a status, a claim's kind, a target path's parts and a draft are no known words", async () => {
+    // Arrange
+    const { harness, developer: nick } = await createHarnessWithSession();
+    const records = [
+      recordEnvelope("work_context", validWorkContextBody({ title: "Nightly export", description: "Reports", status: "analyzing" })),
+      recordEnvelope("target", { workContextId: WORK_CONTEXT_ID, kind: "file", value: "src/zebraquux/quokkapath.ts" }),
+      recordEnvelope("claim", validClaimBody({ id: "clm_obs", body: "The nightly export stalls on large reports." })),
+      recordEnvelope("claim", validClaimBody({ id: "clm_draft", captureMode: "auto", provenance: "derived", confidence: 0.4, body: "The marmotdraft exporter leaks memory." })),
+    ];
+    const seeded = await postRecords(harness, nick, { records });
+    expect(seeded.data?.accepted).toBe(records.length);
+
+    // Act
+    const floor = await hubFloorTermsOf(harness.db, VALID_SESSION_BODY.repo, promptTerms("export zebraquux quokkapath marmotdraft analyzing observation"));
+
+    // Assert
+    expect(floor.all).toEqual(["export"]);
+  });
+
+  test("the hub's known words and the floor's own count agree, word for word, on paths and hosts too", async () => {
+    // Arrange — statements a connector sees on the wire, with a path, a host and an address
+    const { harness, developer: nick } = await createHarnessWithSession();
+    const title = "Renewal cron runs in Europe/Berlin";
+    const body = "The scheduler on api.example.com fires twice; see src/billing/renewal.ts or mail ops@example.com.";
+    const records = [
+      recordEnvelope("work_context", validWorkContextBody({ title, description: "Billing" })),
+      recordEnvelope("claim", validClaimBody({ id: "clm_cron", body })),
+    ];
+    const seeded = await postRecords(harness, nick, { records });
+    expect(seeded.data?.accepted).toBe(records.length);
+    const terms = promptTerms("the renewal cron in europe berlin fires twice on the scheduler, see billing renewal ops example");
+
+    // Act
+    const hub = await hubFloorTermsOf(harness.db, VALID_SESSION_BODY.repo, terms);
+
+    // Assert — the hub's index and the shared lexeme rule know the same words
+    expect(hub.all).toEqual(knownTermsIn(terms.ranked, [`${title} Billing`, body]));
+    expect(hub.all).not.toContain("europe");
+  });
+
+  test("the reader's own work lends no known word", async () => {
+    // Arrange — the reader's own tree says "ownword"; a teammate's says "export"
+    const { harness, developer: nick } = await createHarnessWithSession();
+    const seeded = await postRecords(harness, nick, { records: [recordEnvelope("work_context", validWorkContextBody({ title: "Nightly export", description: "Reports" }))] });
+    expect(seeded.data?.accepted).toBe(1);
+    const robin = await addTestDeveloperWithSession(harness, "Robin", "robin@example.com", { id: "ses_02" });
+    const own = await postRecords(harness, robin, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody({ id: "wc_robin", sessionId: "ses_02", title: "Ownword dashboard", description: "Mine" }), {
+          sessionId: "ses_02",
+        }),
+      ],
+    });
+    expect(own.data?.accepted).toBe(1);
+
+    // Act
+    const floor = await hubFloorTermsOf(harness.db, VALID_SESSION_BODY.repo, promptTerms("export ownword"), false, robin.developerId);
+
+    // Assert
+    expect(floor.all).toEqual(["export"]);
+  });
+});
 
 describe("the task behind the chatter (M7)", () => {
   test("a task after forty words of chatter still finds its tree", async () => {

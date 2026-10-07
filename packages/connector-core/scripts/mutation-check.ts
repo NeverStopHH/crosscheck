@@ -19268,8 +19268,9 @@ export const MUTATIONS: readonly Mutation[
     file: `${SERVER}/src/services/hints.ts`,
     // RETARGETED (round 3, follow-up): the hub's floor terms come from one helper.
     // RETARGETED (round 4, H1): the helper reads the known terms first, the window after.
-    from: "  const known = await listKnownTerms(db, repo, terms.ranked);",
-    to: "  const known = await listKnownTerms(db, repo, terms.content);",
+    // RETARGETED (round 4, L1): the known terms are the reader's visible statements'.
+    from: "  const known = await listKnownTerms(db, repo, terms.ranked, readerDeveloperId);",
+    to: "  const known = await listKnownTerms(db, repo, terms.content, readerDeveloperId);",
     test: `${SERVER}/test/hint-long-prompt.test.ts`,
     because: "\"keep it short please\" lends \"short\" to a tree titled \"Short redis keys\" (M7)",
   },
@@ -19278,7 +19279,8 @@ export const MUTATIONS: readonly Mutation[
     file: `${SERVER}/src/services/hints.ts`,
     // RETARGETED (round 3, follow-up): the hub's floor terms come from one helper.
     // RETARGETED (round 4, H1): the helper reads the known terms first, the window after.
-    from: "  const known = await listKnownTerms(db, repo, terms.ranked);",
+    // RETARGETED (round 4, L1): the known terms are the reader's visible statements'.
+    from: "  const known = await listKnownTerms(db, repo, terms.ranked, readerDeveloperId);",
     to: "  const known = terms.ranked;",
     test: `${SERVER}/test/hint-long-prompt.test.ts`,
     because: "a morning's chatter fills the counted slots and the redis task behind it finds nothing (t066, M7)",
@@ -19614,8 +19616,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a text's English stop words say their stems",
     file: `${SCHEMA}/src/content-floor.ts`,
-    from: "      .filter((word) => word.length > 0 && !ENGLISH_STOP_WORDS.has(word))",
-    to: "      .filter((word) => word.length > 0)",
+    // RETARGETED (round 4, L1): a word's parts are filtered, a whole path or host kept.
+    from: "    .filter((part) => part.length > 0 && !ENGLISH_STOP_WORDS.has(part))",
+    to: "    .filter((part) => part.length > 0)",
     test: `${SCHEMA}/test/content-floor.test.ts`,
     because: "a statement says words the database drops, and a term that stems like one matches where the hub's index never would (round 3, follow-up)",
   },
@@ -20055,8 +20058,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the hub relaxes the long-prompt floor on a window",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "    floor: await hubFloorTermsOf(deps.db, input.repo, terms, input.query.length >= HINT_WINDOW_QUERY_MIN_CHARS),",
-    to: "    floor: await hubFloorTermsOf(deps.db, input.repo, terms),",
+    // RETARGETED (round 4, L1): the reader rides beside the window.
+    from: "    floor: await hubFloorTermsOf(deps.db, input.repo, terms, input.query.length >= HINT_WINDOW_QUERY_MIN_CHARS, callerDeveloperId),",
+    to: "    floor: await hubFloorTermsOf(deps.db, input.repo, terms, false, callerDeveloperId),",
     test: `${SERVER}/test/hint-candidate-floor.test.ts`,
     because: "an older connector's head and tail of a long report count two known words, and two topical ones point (round 4, H1)",
   },
@@ -20212,6 +20216,54 @@ export const MUTATIONS: readonly Mutation[
     to: "",
     test: `${SCHEMA}/test/prompt-terms.test.ts`,
     because: "\"merci beaucoup, c'est tout pour aujourd'hui\" reaches the hub as a task about today (round 4, M4)",
+  },
+  {
+    label: "a path's parts are words of the text",
+    file: `${SCHEMA}/src/content-floor.ts`,
+    from: "  if (WHOLE_WORD.test(word)) {\n    return [word];\n  }\n",
+    to: "",
+    test: `${SCHEMA}/test/content-floor.test.ts`,
+    because: "\"europe\" matches \"Europe/Berlin\" in the floor's count while the hub's index never knows it (round 4, L1)",
+  },
+  {
+    label: "a URL's protocol and parts are words of the text",
+    file: `${SCHEMA}/src/content-floor.ts`,
+    from: "  const url = URL_WORD.exec(word);",
+    to: "  const url = null as RegExpExecArray | null;",
+    test: `${SCHEMA}/test/content-floor.test.ts`,
+    because: "\"https\" and the path's words count, where the database keeps the host and the path whole (round 4, L1)",
+  },
+  {
+    label: "a path keeps the quotes around it",
+    file: `${SCHEMA}/src/content-floor.ts`,
+    from: "      .map((word) => word.replace(/^[^\\p{L}\\p{N}/]+|[^\\p{L}\\p{N}]+$/gu, \"\"))",
+    to: "      .map((word) => word)",
+    test: `${SCHEMA}/test/content-floor.test.ts`,
+    because: "\"Europe/Berlin\" in quotes is no path, and its parts count again (round 4, L1)",
+  },
+  {
+    label: "the hub knows a word only a status, a kind or a target says",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    .where(and(eq(agentSessions.repo, repo), sql`${workContexts.tsv} @@ ${lexeme}`, sql`${contextStatement} @@ ${lexeme}`, ...visibleOwner));",
+    to: "    .where(and(eq(agentSessions.repo, repo), sql`${workContexts.tsv} @@ ${lexeme}`, ...visibleOwner));",
+    test: `${SERVER}/test/hint-long-prompt.test.ts`,
+    because: "\"analyzing\", \"observation\" and a path's parts take counted slots no statement says (round 4, L1)",
+  },
+  {
+    label: "the hub knows a draft's words",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "        sql`${claims.tsv} @@ ${lexeme}`,\n        pushableClaimCondition(),\n",
+    to: "        sql`${claims.tsv} @@ ${lexeme}`,\n",
+    test: `${SERVER}/test/hint-long-prompt.test.ts`,
+    because: "an unreviewed draft's words make a prompt long on the hub and not on a connector's recount (round 4, L1)",
+  },
+  {
+    label: "the hub knows the reader's own words",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  const visibleOwner = readerDeveloperId === undefined ? [] : [ne(agentSessions.developerId, readerDeveloperId), notMutedCondition(readerDeveloperId, agentSessions.developerId)];",
+    to: "  const visibleOwner = readerDeveloperId === undefined ? [] : [notMutedCondition(readerDeveloperId, agentSessions.developerId)];",
+    test: `${SERVER}/test/hint-long-prompt.test.ts`,
+    because: "the reader's own trees lend known words no candidate can say (round 4, L1)",
   },
   {
     label: "the connector asks a hub about a content-free prompt",
@@ -20557,7 +20609,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/causal-guarantees.test.ts 7
  * PRINTS: packages/schema/test/claim.test.ts 1
- * PRINTS: packages/schema/test/content-floor.test.ts 5
+ * PRINTS: packages/schema/test/content-floor.test.ts 8
  * PRINTS: packages/schema/test/continuation.test.ts 12
  * PRINTS: packages/schema/test/english-stem.test.ts 4
  * PRINTS: packages/schema/test/evidence-resolution.test.ts 8
@@ -20610,7 +20662,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-evidence-backed.test.ts 13
  * PRINTS: packages/server/test/hint-floor-integrity.test.ts 4
  * PRINTS: packages/server/test/hint-harness-turn.test.ts 2
- * PRINTS: packages/server/test/hint-long-prompt.test.ts 4
+ * PRINTS: packages/server/test/hint-long-prompt.test.ts 7
  * PRINTS: packages/server/test/hint-pushable-ranking.test.ts 5
  * PRINTS: packages/server/test/hint-strong-match.test.ts 12
  * PRINTS: packages/server/test/hint-topical-floor.test.ts 4

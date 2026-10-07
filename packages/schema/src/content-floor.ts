@@ -81,14 +81,49 @@ export const isClosedInflection = (term: string): boolean => {
   return INFLECTION_ENDING.test(folded) && exactClassOf(folded) === null && CLOSED_LEXEMES.has(termLexeme(folded));
 };
 
-/** The lexemes a text says: its words, lower-cased, less the database's English stop words. */
+/** A URL as the database's parser reads it: the protocol dropped, the host and its path kept whole (L1). */
+const URL_WORD = /^[a-z][a-z0-9+.-]*:\/\/([^/]+)(\/.*)?$/u;
+
+/**
+ * A WORD THE DATABASE'S PARSER KEEPS WHOLE (round 4, L1): a path
+ * ("Europe/Berlin", "/health", "src/auth/refresh.ts"), a host or dotted name
+ * ("api.example.com", "node.js", "v1.2", "4.5") and an address — ts_debug's
+ * file, host, version, float and email tokens. Its parts are no words of the
+ * text: "europe" never matches "Europe/Berlin" on the hub, so it never does
+ * here, and the hub's known terms and this count agree.
+ */
+const WHOLE_WORD = /^\/?[\p{L}\p{N}_-]+(?:[./@][\p{L}\p{N}_-]+)+$|^\/[\p{L}\p{N}_-]+$/u;
+
+/** One whitespace-delimited word's lexemes, as the database's parser and stemmer make them. */
+const wordLexemes = (word: string): readonly string[] => {
+  const url = URL_WORD.exec(word);
+  if (url !== null) {
+    const host = url[1] ?? "";
+    const path = url[2] ?? "";
+    return path.length > 0 ? [`${host}${path}`, host, path] : [host];
+  }
+  if (WHOLE_WORD.test(word)) {
+    return [word];
+  }
+  return word
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((part) => part.length > 0 && !ENGLISH_STOP_WORDS.has(part))
+    .map(termLexeme);
+};
+
+/**
+ * The lexemes a text says: its words, lower-cased, less the database's English
+ * stop words — a path, a host or an address whole, as the database keeps it
+ * (L1), quotes and sentence marks off a word's ends.
+ */
 export const textLexemes = (text: string): ReadonlySet<string> =>
   new Set(
     text
       .toLowerCase()
-      .split(/[^\p{L}\p{N}]+/u)
-      .filter((word) => word.length > 0 && !ENGLISH_STOP_WORDS.has(word))
-      .map(termLexeme),
+      .split(/\s+/u)
+      .map((word) => word.replace(/^[^\p{L}\p{N}/]+|[^\p{L}\p{N}]+$/gu, ""))
+      .filter((word) => word.length > 0)
+      .flatMap(wordLexemes),
   );
 
 /** Of the ranked terms, those some text says — in order, at most HINT_MAX_EXAMINED_TERMS of them looked at. */
