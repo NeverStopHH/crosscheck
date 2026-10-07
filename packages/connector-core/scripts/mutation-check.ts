@@ -19679,6 +19679,39 @@ export const MUTATIONS: readonly Mutation[
     because: "any branch checked out in the worktree descends from anything, and unrelated work is folded into the topic",
   },
   {
+    // DESIGN.md "One session, many topics", item 6: the same rules on every host.
+    label: "a Cursor edit in a sibling worktree files under the session's own context",
+    file: `${CURSOR}/src/handlers/file-edit.ts`,
+    from: "    topics: topicLifeOf(state),\n  });",
+    to: "  });",
+    test: `${CURSOR}/test/worktree-capture.test.ts`,
+    because: "a Cursor conversation's work in every worktree is one context again, titled after its start checkout",
+  },
+  {
+    label: "Cursor never registers the topics it opened",
+    file: `${CURSOR}/src/handlers/file-edit.ts`,
+    from: "    ...withCaptureBookkeeping(withTopicCapture(withSeenTargets(fresh, fresh.crosscheckSessionId === state.crosscheckSessionId ? files : []), topics), {",
+    to: "    ...withCaptureBookkeeping(withSeenTargets(fresh, fresh.crosscheckSessionId === state.crosscheckSessionId ? files : []), {",
+    test: `${CURSOR}/test/worktree-capture.test.ts`,
+    because: "every Cursor edit in a topic re-opens it and re-spools its context, and set_intent finds no topic to write to",
+  },
+  {
+    label: "an ACP edit in a sibling worktree files under the session's own context",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "      ...(life === undefined ? {} : { topics: life }),",
+    to: "      ...{},",
+    test: `${ACP}/test/worktree-capture.test.ts`,
+    because: "an ACP session's work in every worktree is one context again, titled after its start checkout",
+  },
+  {
+    label: "ACP never registers the topics it opened",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "        withCaptureBookkeeping(withTopicCapture(withSeenTargets(fresh, captured), topics), {",
+    to: "        withCaptureBookkeeping(withSeenTargets(fresh, captured), {",
+    test: `${ACP}/test/worktree-capture.test.ts`,
+    because: "every ACP edit in a topic re-opens it and re-spools its context, and set_intent finds no topic to write to",
+  },
+  {
     label: "the hub drops a topic's branch on create",
     file: `${SERVER}/src/services/record-handlers.ts`,
     from: "        branch: body.branch ?? null,",
@@ -19934,7 +19967,7 @@ interface Outcome {
  * PRINTS: packages/connector-acp/test/transparency.test.ts 1
  * PRINTS: packages/connector-acp/test/turn-slice.test.ts 2
  * PRINTS: packages/connector-acp/test/wire-loss.test.ts 3
- * PRINTS: packages/connector-acp/test/worktree-capture.test.ts 5
+ * PRINTS: packages/connector-acp/test/worktree-capture.test.ts 7
  * PRINTS: packages/connector-claude/test/at7-attempt.test.ts 5
  * PRINTS: packages/connector-claude/test/at7-detect.test.ts 13
  * PRINTS: packages/connector-claude/test/at7-driver.test.ts 5
@@ -20113,7 +20146,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/handlers.test.ts 4
  * PRINTS: packages/connector-cursor/test/injection.test.ts 4
  * PRINTS: packages/connector-cursor/test/resumed-session.test.ts 3
- * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
+ * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 9
  * PRINTS: packages/schema/test/causal-guarantees.test.ts 7
  * PRINTS: packages/schema/test/claim.test.ts 1
  * PRINTS: packages/schema/test/file-ref.test.ts 5

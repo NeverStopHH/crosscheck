@@ -15,11 +15,12 @@
  * one edit. It stays a failure/injection row.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { MAX_WORKTREE_ROOT_RESOLVE_ATTEMPTS } from "@crosscheck/connector-core/constants.ts";
+import { mintTopicId, topicSeenKey } from "@crosscheck/connector-core/flows/topic-contexts.ts";
 import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { realpathBestEffort } from "@crosscheck/connector-core/config/paths.ts";
@@ -140,10 +141,12 @@ describe("a cursor conversation at checkout A editing a file in worktree B", () 
     );
 
     // Assert: the ladder still answers no-directive JSON, and the target landed
+    // — seen under worktree B's OWN TOPIC (core flows/topic-contexts.ts): B is
+    // checked out on its own HEAD, so its seen-set entry carries that topic
     expect(stdout).toBe("{}");
     expect(await targetsIn(home)).toEqual([EDITED_FILE]);
     const state = await readSessionState(home, HOST_KEY);
-    expect(state?.seenTargets).toEqual([EDITED_FILE]);
+    expect(state?.seenTargets).toEqual([topicSeenKey(mintTopicId(REPO_ID, await realpath(worktree), 1), EDITED_FILE)]);
     expect(state?.editToolFires).toBe(1);
     expect(state?.targetsCapturedCount).toBe(1);
     expect(state?.lastPostToolUseTool).toBe("afterFileEdit");
@@ -525,5 +528,51 @@ describe("the session's worktree-root cache is fed to the resolver", () => {
     expect(state?.outsideRootDrops).toBe(3);
     expect(state?.foreignRepoDrops).toBe(0);
     expect(state?.editToolFires).toBe(3);
+  });
+});
+
+describe("one cursor conversation, many topics (DESIGN.md)", () => {
+  interface Spooled {
+    readonly kind: string;
+    readonly body: { readonly id?: string; readonly branch?: string; readonly title?: string; readonly workContextId?: string; readonly value?: string };
+  }
+
+  test("edits in two sibling worktrees on two branches open two topic contexts, each spooled before its target", async () => {
+    // Arrange: the conversation's checkout on main, two siblings each on a branch
+    const { main, worktree, home } = await repoWithWorktree("cur-topics");
+    await git(worktree, ["switch", "-c", "feat/topic-a"]);
+    const second = join(await mkdtemp(join(tmpdir(), "cx-cur-wt-topics-b-")), "second");
+    await git(main, ["worktree", "add", "-b", "feat/topic-b", second]);
+    paths.push(join(second, ".."));
+    const files = [
+      await writeRepoFile(worktree, "src/a.ts", "export const a = 1;\n"),
+      await writeRepoFile(second, "src/b.ts", "export const b = 1;\n"),
+      await writeRepoFile(main, "src/own.ts", "export const own = 1;\n"),
+    ];
+    await writeSessionState(home, sessionState(main, { startBranch: "main" }));
+
+    // Act
+    for (const file of files) {
+      await runCursorHook("afterFileEdit", editPayload(main, file), env(home));
+    }
+
+    // Assert: each topic's context ahead of its target; the checkout's own under the session's
+    const state = await readSessionState(home, HOST_KEY);
+    const records = (await readSpoolLines(home, repoKey(DEAD_HUB_URL, REPO_ID))).map((line) => JSON.parse(line) as Spooled);
+    const shape = records
+      .filter((record) => record.kind === "work_context" || record.kind === "target")
+      .map((record) => (record.kind === "target" ? `target ${record.body.value ?? ""} → ${record.body.workContextId ?? ""}` : `context ${record.body.id ?? ""} ${record.body.branch ?? ""}`));
+    const [topicA, topicB] = state?.topicContexts ?? [];
+    expect(state?.topicContexts.map((topic) => [topic.branch, topic.title])).toEqual([
+      ["feat/topic-a", "feat/topic-a @ api"],
+      ["feat/topic-b", "feat/topic-b @ api"],
+    ]);
+    expect(shape.slice(-5)).toEqual([
+      `context ${topicA?.workContextId ?? ""} feat/topic-a`,
+      `target src/a.ts → ${topicA?.workContextId ?? ""}`,
+      `context ${topicB?.workContextId ?? ""} feat/topic-b`,
+      `target src/b.ts → ${topicB?.workContextId ?? ""}`,
+      `target src/own.ts → ${state?.workContextId ?? ""}`,
+    ]);
   });
 });

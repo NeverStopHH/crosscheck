@@ -114,7 +114,10 @@ import {
   acpHostSessionKey,
 } from "@crosscheck/connector-core/state/host-session-key.ts";
 import { withCaptureBookkeeping } from "@crosscheck/connector-core/state/capture-bookkeeping.ts";
+import { topicLifeOf, withTopicCapture } from "@crosscheck/connector-core/flows/topic-contexts.ts";
+import type { TopicLife } from "@crosscheck/connector-core/flows/topic-contexts.ts";
 import {
+  readSessionState,
   updateSessionState,
   withSeenTargets,
 } from "@crosscheck/connector-core/state/session-state.ts";
@@ -289,8 +292,8 @@ interface CaptureSession {
   readonly seenTargets: Set<string>;
   /**
    * The #17 per-session worktree-root cache, in memory beside `seenTargets`
-   * and for the same reason: the engine deliberately never reads its state
-   * file back. Newly resolved roots are ALSO persisted through the one
+   * and for the same reason: the engine deliberately reads nothing back from
+   * its state file but the topic registry (`topicLifeFor`). Newly resolved roots are ALSO persisted through the one
    * `updateSessionState` below, so `crosscheck doctor` can see them and a
    * Claude or Cursor hook on the same home is not affected — but a resumed
    * session (`session/load`) starts this twin empty and pays git once more
@@ -698,6 +701,24 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     readonly toolLabel: string | null;
   }
 
+  /**
+   * THE LIFE THE TOUCHES FILE UNDER, BY TOPIC (core flows/topic-contexts.ts) —
+   * the one thing this engine reads back from its state file. The topic
+   * registry has writers outside this process (set_intent in the MCP server
+   * moves a topic's status, a heal clears it), so the state is its single
+   * truth, and one small read per captured event is what parity with the
+   * Claude and Cursor hooks costs. The seen-set stays the in-memory one. A
+   * state that is gone, or names another life than this twin, files every
+   * touch under the session's own context, as before topics.
+   */
+  const topicLifeFor = async (session: CaptureSession, home: string): Promise<TopicLife | undefined> => {
+    const state = await readSessionState(home, session.hostSessionKey);
+    if (state === null || state.crosscheckSessionId !== session.crosscheckSessionId) {
+      return undefined;
+    }
+    return { ...topicLifeOf(state), seenTargets: [...session.seenTargets] };
+  };
+
   /** The in-memory root cache, dedup-by-root and FIFO-capped like seenTargets. */
   const rememberWorktreeRoots = (
     session: CaptureSession,
@@ -758,7 +779,8 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     // "cwd sits in a sibling worktree" candidate can never apply here and
     // every out-of-checkout path takes the bounded fs walk. The per-session
     // cache above is what keeps that once per root rather than once per edit.
-    const { captured, resolution } = await captureTouchedFiles({
+    const life = await topicLifeFor(session, session.config.home);
+    const { captured, resolution, topics } = await captureTouchedFiles({
       seq,
       home: session.config.home,
       repoKey: session.repoKey ?? "",
@@ -775,6 +797,7 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
       identityRoot: session.identity.root,
       identityRepoId: session.identity.repoId,
       knownWorktreeRoots: session.knownWorktreeRoots,
+      ...(life === undefined ? {} : { topics: life }),
     });
     for (const path of captured) {
       session.seenTargets.add(path);
@@ -796,13 +819,14 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     const booksSomething =
       captured.length > 0 ||
       event.editFired ||
+      (topics !== null && (topics.opened.length > 0 || topics.relabeled.length > 0 || topics.overflowed > 0)) ||
       (resolution !== null &&
         (resolution.foreignDrops > 0 ||
           resolution.outsideDrops > 0 ||
           resolution.newlyResolved.length > 0));
     if (booksSomething) {
       await updateSessionState(session.config.home, session.hostSessionKey, (fresh) =>
-        withCaptureBookkeeping(withSeenTargets(fresh, captured), {
+        withCaptureBookkeeping(withTopicCapture(withSeenTargets(fresh, captured), topics), {
           resolution,
           capturedCount: captured.length,
           editFired: event.editFired,

@@ -41,6 +41,7 @@
  * builds.
  */
 import { captureTouchedFiles } from "@crosscheck/connector-core/flows/capture-touched-files.ts";
+import { topicLifeOf, withTopicCapture } from "@crosscheck/connector-core/flows/topic-contexts.ts";
 import { MAX_TARGETS_PER_INVOCATION } from "@crosscheck/connector-core/constants.ts";
 import { allocateSeq } from "@crosscheck/connector-core/state/session-state.ts";
 import { heartbeatMaybe } from "@crosscheck/connector-core/flows/heartbeat.ts";
@@ -107,7 +108,7 @@ export const handleAfterFileEdit = async (
           ctx.hostSessionKey,
           MAX_TARGETS_PER_INVOCATION,
         );
-  const { captured: files, resolution } = await captureTouchedFiles({
+  const { captured: files, resolution, topics } = await captureTouchedFiles({
     seq,
     home: ctx.config.home,
     repoKey: ctx.repoKey,
@@ -129,6 +130,9 @@ export const handleAfterFileEdit = async (
     identityRoot: ctx.identity.root,
     identityRepoId: ctx.identity.repoId,
     knownWorktreeRoots: state.knownWorktreeRoots,
+    // ONE CONTEXT PER TOPIC (core flows/topic-contexts.ts), exactly as on
+    // Claude: an edit in a sibling worktree files under its topic's context.
+    topics: topicLifeOf(state),
   });
   // Claude's PostToolUse hosts capture + drain + heartbeat in one event;
   // Cursor splits the event, each split keeps the drain — `spareMs`, not the
@@ -155,8 +159,9 @@ export const handleAfterFileEdit = async (
   // the #18/#20 capture counters fold in here too: ONE write per event.
   await updateSessionState(ctx.config.home, ctx.hostSessionKey, (fresh) => ({
     // Files this event captured into a life the flush then healed away from
-    // were withheld with it: they stay unseen, so the next life captures them.
-    ...withCaptureBookkeeping(withSeenTargets(fresh, fresh.crosscheckSessionId === state.crosscheckSessionId ? files : []), {
+    // were withheld with it: they stay unseen, so the next life captures them
+    // — and so do the topics it opened (withTopicCapture registers none then).
+    ...withCaptureBookkeeping(withTopicCapture(withSeenTargets(fresh, fresh.crosscheckSessionId === state.crosscheckSessionId ? files : []), topics), {
       resolution,
       capturedCount: files.length,
       editFired: true,

@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1835
+    # PRINTS: 1839
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -211,7 +211,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/wiring-removal.ts 7
     # PRINTS: packages/cli/src/cli/wiring-scope.ts 3
     # PRINTS: packages/connector-acp/src/capabilities.ts 3
-    # PRINTS: packages/connector-acp/src/capture/engine.ts 24
+    # PRINTS: packages/connector-acp/src/capture/engine.ts 26
     # PRINTS: packages/connector-acp/src/derive/slice.ts 2
     # PRINTS: packages/connector-acp/src/doctor.ts 2
     # PRINTS: packages/connector-acp/src/fd-io.ts 1
@@ -380,7 +380,7 @@ jobs:
     # PRINTS: packages/connector-cursor/src/derive/triggers.ts 2
     # PRINTS: packages/connector-cursor/src/doctor.ts 10
     # PRINTS: packages/connector-cursor/src/handlers/before-submit-prompt.ts 1
-    # PRINTS: packages/connector-cursor/src/handlers/file-edit.ts 4
+    # PRINTS: packages/connector-cursor/src/handlers/file-edit.ts 6
     # PRINTS: packages/connector-cursor/src/handlers/recover.ts 4
     # PRINTS: packages/connector-cursor/src/handlers/session-start.ts 4
     # PRINTS: packages/connector-cursor/src/handlers/stop.ts 1
@@ -557,7 +557,7 @@ jobs:
     # PRINTS: drops.ts 11
     # PRINTS: end-marker.ts 2
     # PRINTS: end-session.ts 13
-    # PRINTS: engine.ts 24
+    # PRINTS: engine.ts 26
     # PRINTS: entry.ts 1
     # PRINTS: enums.ts 2
     # PRINTS: envelope.ts 2
@@ -572,7 +572,7 @@ jobs:
     # PRINTS: fetch-switch.ts 4
     # PRINTS: fetch-trigger.ts 3
     # PRINTS: fetch-worker.ts 23
-    # PRINTS: file-edit.ts 4
+    # PRINTS: file-edit.ts 6
     # PRINTS: file-ref.ts 5
     # PRINTS: fix-diff.ts 7
     # PRINTS: fixture.ts 1

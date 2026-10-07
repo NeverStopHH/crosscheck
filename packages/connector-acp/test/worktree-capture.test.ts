@@ -21,7 +21,7 @@
  *      counter twice and corrupt the ratio the WARN is measured on.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -29,6 +29,7 @@ import {
   DOCTOR_CAPTURE_SILENT_FIRES_WARN,
   MAX_WORKTREE_ROOT_RESOLVE_ATTEMPTS,
 } from "@crosscheck/connector-core/constants.ts";
+import { mintTopicId, topicSeenKey } from "@crosscheck/connector-core/flows/topic-contexts.ts";
 import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 
 import {
@@ -84,6 +85,14 @@ const repoWithWorktree = async (
   return { main, worktree };
 };
 
+/**
+ * A file captured in worktree B is seen under B's OWN TOPIC (core flows/
+ * topic-contexts.ts): B is checked out on its own HEAD, so the rules open a
+ * topic for it, and its seen-set entry carries that topic's id.
+ */
+const seenInWorktree = async (repoId: string | undefined, worktree: string, file: string): Promise<string> =>
+  topicSeenKey(mintTopicId(repoId ?? "", await realpath(worktree), 1), file);
+
 const harnessAt = async (label: string, repo: string): Promise<Harness> => {
   const home = await makeHome(label);
   cleanups.push(home);
@@ -121,7 +130,7 @@ describe("an ACP session at checkout A editing a file in worktree B", () => {
     // Assert
     expect(h.capture.counters().targets).toBe(1);
     const state = await readSessionState(h.home, hostKey);
-    expect(state?.seenTargets).toEqual([EDITED_FILE]);
+    expect(state?.seenTargets).toEqual([await seenInWorktree(state?.repoId, worktree, EDITED_FILE)]);
     expect(state?.editToolFires).toBe(1);
     expect(state?.targetsCapturedCount).toBe(1);
     expect(state?.lastPostToolUseTool).toBe("edit");
@@ -161,7 +170,7 @@ describe("an ACP session at checkout A editing a file in worktree B", () => {
 
     // Assert
     const state = await readSessionState(h.home, hostKey);
-    expect(state?.seenTargets).toEqual(["src/written.ts"]);
+    expect(state?.seenTargets).toEqual([await seenInWorktree(state?.repoId, worktree, "src/written.ts")]);
     expect(state?.editToolFires).toBe(1);
     expect(state?.targetsCapturedCount).toBe(1);
     expect(state?.lastPostToolUseTool).toBe("fs/write_text_file");
@@ -200,7 +209,7 @@ describe("an ACP session at checkout A editing a file in worktree B", () => {
     const state = await readSessionState(h.home, hostKey);
     expect(state?.editToolFires).toBe(2);
     expect(state?.targetsCapturedCount).toBe(1);
-    expect(state?.seenTargets).toEqual([EDITED_FILE]);
+    expect(state?.seenTargets).toEqual([await seenInWorktree(state?.repoId, worktree, EDITED_FILE)]);
   });
 
   test("one edit arriving pending then completed ticks the fire counter ONCE", async () => {
@@ -244,7 +253,7 @@ describe("an ACP session at checkout A editing a file in worktree B", () => {
     const state = await readSessionState(h.home, hostKey);
     expect(state?.editToolFires).toBe(1);
     expect(state?.targetsCapturedCount).toBe(1);
-    expect(state?.seenTargets).toEqual([EDITED_FILE]);
+    expect(state?.seenTargets).toEqual([await seenInWorktree(state?.repoId, worktree, EDITED_FILE)]);
   });
 
   test("a repeated edit row carrying NO tool-call id still ticks once", async () => {
@@ -282,7 +291,7 @@ describe("an ACP session at checkout A editing a file in worktree B", () => {
     const state = await readSessionState(h.home, hostKey);
     expect(state?.editToolFires).toBe(1);
     expect(state?.targetsCapturedCount).toBe(1);
-    expect(state?.seenTargets).toEqual([EDITED_FILE]);
+    expect(state?.seenTargets).toEqual([await seenInWorktree(state?.repoId, worktree, EDITED_FILE)]);
   });
 
   test("an edit announced with no kind still books its fire", async () => {
@@ -589,5 +598,60 @@ describe("the ACP session's worktree-root cache", () => {
     expect(after?.editToolFires).toBe(0);
     expect(after?.targetsCapturedCount).toBe(0);
     expect(after?.lastPostToolUseTool).toBe(before?.lastPostToolUseTool ?? null);
+  });
+});
+
+describe("one ACP session, many topics (DESIGN.md)", () => {
+  /** The test hub's own rows, read straight off its database. */
+  const rows = async <T>(text: string, params: readonly unknown[]): Promise<readonly T[]> =>
+    (
+      await (hub.db as unknown as { $client: { query: (q: string, p: readonly unknown[]) => Promise<{ rows: T[] }> } }).$client.query(
+        text,
+        params,
+      )
+    ).rows;
+
+  test("edits in two sibling worktrees on two branches reach the hub under two topic contexts", async () => {
+    // Arrange: the session's checkout on main, two siblings each on a branch
+    const { main, worktree } = await repoWithWorktree("acp-topics");
+    await git(worktree, ["switch", "-c", "feat/topic-a"]);
+    const second = join(await mkdtemp(join(tmpdir(), "cx-acp-wt-topics-b-")), "second");
+    await git(main, ["worktree", "add", "-b", "feat/topic-b", second]);
+    cleanups.push(join(second, ".."));
+    await writeRepoFile(worktree, "src/a.ts", "export const a = 1;\n");
+    await writeRepoFile(second, "src/b.ts", "export const b = 1;\n");
+    await writeRepoFile(main, "src/own.ts", "export const own = 1;\n");
+    const h = await harnessAt("acp-topics", main);
+    const sessionId = "sess_topics";
+    const hostKey = `acp-fake-agent--${sessionId}`;
+
+    // Act: one edit per checkout, each its own tool call
+    handshake(h, sessionId, main);
+    for (const [index, path] of [join(worktree, "src/a.ts"), join(second, "src/b.ts"), join(main, "src/own.ts")].entries()) {
+      h.capture.offer("a2c", editUpdate(sessionId, path, { toolCallId: `call_topic_${String(index)}` }));
+    }
+    await h.capture.settle();
+
+    // Assert: a context per topic on the hub, each target under its own
+    const state = await readSessionState(h.home, hostKey);
+    if (state === null) throw new Error("no state");
+    const contexts = await rows<{ id: string; branch: string | null; title: string }>(
+      "select id, branch, title from work_contexts where session_id = $1",
+      [state.crosscheckSessionId],
+    );
+    const targets = await rows<{ value: string; work_context_id: string }>(
+      "select value, work_context_id from work_context_targets where work_context_id = any($1)",
+      [contexts.map((context) => context.id)],
+    );
+    const contextOf = (value: string): string | undefined => targets.find((target) => target.value === value)?.work_context_id;
+    const branchOf = (value: string): string | null | undefined =>
+      contexts.find((context) => context.id === contextOf(value))?.branch;
+    expect(state.topicContexts.map((topic) => topic.branch)).toEqual(["feat/topic-a", "feat/topic-b"]);
+    expect(contexts.filter((context) => context.id !== state.workContextId).map((context) => context.title).sort()).toEqual([
+      "feat/topic-a @ api",
+      "feat/topic-b @ api",
+    ]);
+    expect([branchOf("src/a.ts"), branchOf("src/b.ts")]).toEqual(["feat/topic-a", "feat/topic-b"]);
+    expect(contextOf("src/own.ts")).toBe(state.workContextId);
   });
 });
