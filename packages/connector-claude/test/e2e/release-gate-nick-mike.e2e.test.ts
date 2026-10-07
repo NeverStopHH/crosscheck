@@ -24,16 +24,18 @@
  * real assertion and, in a comment, the branch that fixes it: the test turns
  * red the moment that fix lands, and its marker must then be removed.
  * "Sweep ≠ Ignore" (a large surface may lower the rank or qualify an overlap
- * row, never exclude it) is in progress on fix/false-landed-stamp and
- * committed nowhere yet. A plain `test` that fails is a gap no branch
+ * row, never exclude it) is fix/false-landed-stamp 0d29e41e, not yet merged
+ * into feat/crosscheck-batch-1006. A plain `test` that fails is a gap no branch
  * addresses — except N2, whose desired silence is kept as an expected
  * failure on purpose: the rule that would give it is specified, not built
  * (release-gate/scenario-generated.ts). `RELEASE_GATE_AUDIT=1` runs every
  * expected failure as a plain test, to print why each one fails.
  *
- * RUNTIME: about two minutes — some 1,400 real hook runs, sequential on
- * purpose (parallel hooks of one session contend for its state lock, and a
- * busy lock is fail-open silence, i.e. nondeterministic capture).
+ * RUNTIME: about two and a half minutes — some 1,400 real hook runs,
+ * sequential on purpose (parallel hooks of one session contend for its state
+ * lock, and a busy lock is fail-open silence, i.e. nondeterministic capture),
+ * plus one deliberate wait per long session: a subagent that outlasts the
+ * presence cache (release-gate/scenario-long-session.ts says why).
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
@@ -333,12 +335,20 @@ describe("P1 — the pilot collision must warn both people", () => {
   // ── 2. Nick is told, including what only a subagent saw ────────────────
   // fixed by feat/collision-visible (relay at subagent return / next prompt).
   expectedFailure("2a: Nick's main thread tells NICK of a hit first seen by a subagent (pilot: 91% subagent edits, hits stayed there)", () => {
-    expect(mentions(personLines(world.moments.nickReturnAndPrompt), "Mike")).toBe(true);
+    const person = personLines(world.moments.nickReturnAndPrompt);
+    const shared = world.files.nickMappingByEdit.map((path) => path.split("/").at(-1) ?? path);
+    expect(person.some((line) => shared.some((name) => line.includes(name))), JSON.stringify(person)).toBe(true);
   });
 
-  // fixed by feat/collision-visible.
-  expectedFailure("2b: the relayed line names Mike's branch feat/streaming-practice-beta", () => {
-    expect(mentions(personLines(world.moments.nickReturnAndPrompt), MIKE_BRANCH)).toBe(true);
+  // NEW GAP — collision-visible names the teammate in a relay only while the main thread's
+  // presence cache is fresh (PRESENCE_CACHE_TTL_MS, 10 s; 53a55a9f), and subagent-return makes
+  // no hub call. A subagent that runs longer, with no statusline render in between, is relayed
+  // as "A teammate recently worked on …": Nick learns neither who nor where. It passed at
+  // 01f3e285 and fails from 53a55a9f on, so no branch delivers it.
+  test("2b: the relayed line names Mike and his branch feat/streaming-practice-beta", () => {
+    const person = personLines(world.moments.nickReturnAndPrompt);
+    expect(mentions(person, "Mike"), JSON.stringify(person)).toBe(true);
+    expect(mentions(person, MIKE_BRANCH)).toBe(true);
   });
 
   // fixed by feat/collision-visible.
@@ -353,12 +363,12 @@ describe("P1 — the pilot collision must warn both people", () => {
   });
 
   // ── 4. The overlap survives Nick's size ─────────────────────────────────
-  // fixed by Sweep ≠ Ignore (fix/false-landed-stamp, in progress).
+  // fixed by Sweep ≠ Ignore (fix/false-landed-stamp 0d29e41e).
   expectedFailure("4a: Mike's ghost check lists Nick's work despite 190 files (pilot: sweep filter c)", () => {
     expect(nickRows(seen.mikeGhost).length, JSON.stringify(seen.mikeGhost)).toBeGreaterThan(0);
   });
 
-  // fixed by Sweep ≠ Ignore (fix/false-landed-stamp, in progress).
+  // fixed by Sweep ≠ Ignore (fix/false-landed-stamp 0d29e41e).
   expectedFailure("4b: the conference pairs Mike's and Nick's contexts despite 190 files (pilot: sweep filter c)", () => {
     const nickIds = new Set(seen.contexts.filter((context) => context.developer === "Nick").map((context) => context.id));
     const mikeIds = new Set(seen.contexts.filter((context) => context.developer === "Mike").map((context) => context.id));
@@ -370,7 +380,7 @@ describe("P1 — the pilot collision must warn both people", () => {
     expect(pairs.length).toBeGreaterThan(0);
   });
 
-  // fixed by Sweep ≠ Ignore (fix/false-landed-stamp, in progress).
+  // fixed by Sweep ≠ Ignore (fix/false-landed-stamp 0d29e41e).
   expectedFailure("4c: the overlap row says Nick's change is large rather than hiding it (Sweep ≠ Ignore)", () => {
     const rows = nickRows(seen.mikeGhost);
     expect(rows.length).toBeGreaterThan(0);
@@ -649,15 +659,20 @@ describe("N5 — a 300-file formatting sweep sharing one file: warns, qualified,
     expect(mentions(personLines(world.nickSharedEdit), "Mike")).toBe(true);
   });
 
-  // fixed by Sweep ≠ Ignore (fix/false-landed-stamp, in progress).
-  expectedFailure("N5.3: the overlap with Mike is qualified as a large change, in the row or the line", () => {
+  // NEW GAP — Sweep ≠ Ignore (fix/false-landed-stamp 0d29e41e) qualifies and ranks the GHOST and
+  // CONFERENCE rows (`largeChangeFiles`); the tripwire row (server hints.ts listTargetSessions)
+  // and the person's line built from it carry no size, and a one-file overlap never reaches a
+  // ghost row (two-file floor). Nothing qualifies the warning Nick actually gets.
+  test("N5.3: the overlap with Mike is qualified as a large change, in the row or the line", () => {
     const mikeRow = sharedAnswer().find((row) => row["developerName"] === "Mike") ?? {};
     const mikeLines = personLines(world.nickSharedEdit).filter((line) => line.includes("Mike"));
     expect(isQualifiedAsLarge(mikeRow) || mikeLines.some((line) => LARGE_WORD.test(line) || /\b\d{3,} files\b/.test(line))).toBe(true);
   });
 
-  // fixed by Sweep ≠ Ignore (fix/false-landed-stamp, in progress) + feat/collision-visible for the line.
-  expectedFailure("N5.4: the sweep ranks below Tina's focused overlap, though Mike's heartbeat is fresher", () => {
+  // NEW GAP — the tripwire answer is ordered by heartbeat only (collision-visible: freshest
+  // first), so the fresher sweep leads; 0d29e41e's "ranks after the focused rows" covers the
+  // ghost and conference rows, not this one.
+  test("N5.4: the sweep ranks below Tina's focused overlap, though Mike's heartbeat is fresher", () => {
     const order = sharedAnswer().map((row) => row["developerName"]);
     expect(order.indexOf("Tina")).toBeLessThan(order.indexOf("Mike"));
     const text = personLines(world.nickSharedEdit).join("\n");

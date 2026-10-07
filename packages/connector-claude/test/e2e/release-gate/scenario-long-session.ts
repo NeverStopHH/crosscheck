@@ -30,6 +30,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { renderRepoConfig } from "@crosscheck/connector-core/config/repo-config.ts";
+import { PRESENCE_CACHE_TTL_MS } from "@crosscheck/connector-core/constants.ts";
 
 import { MIKE, NICK } from "../../../../connector-core/test/fixtures/landing-repos.ts";
 import {
@@ -88,6 +89,9 @@ const MAPPING_NAMES = [
 const BASH_MAPPING_COUNT = 3;
 /** Mike creates this one; it is in nobody's seed. */
 const NEW_MAPPING_FILE = "columns.ts";
+
+/** How far past the presence cache's freshness the mapping subagent runs. */
+const SUBAGENT_OVERRUN_MS = 1_500;
 
 const range = (count: number, from = 1): readonly number[] => Array.from({ length: count }, (_, index) => index + from);
 const pad = (value: number): string => String(value).padStart(3, "0");
@@ -386,10 +390,16 @@ export const runLongSessionCase = async (hub: TestHub, plan: LongSessionPlan): P
   await mikeDay(mikeSession, at.mikeWorktree, 2, [...files.mikeMapping.slice(6), ...files.mikeOthers.slice(9)]);
 
   // A subagent edits the eight shared files Mike just worked on — the hits.
+  // It runs longer than the presence cache stays fresh, as a real subagent
+  // does (minutes), with no statusline render in between (an IDE session has
+  // none): whatever the main thread is told at its return cannot lean on a
+  // presence answer fetched just before. Deterministic either side of the
+  // window rather than racing it.
   nickSession.label("nick-subagent-mapping");
   const returned = await nickSession.subagent("mapping-port", async (actor) => {
     await editAll(nickSession, at.nickTopic, files.nickMappingByEdit, actor, "mapping port");
     await editAll(nickSession, at.nickTopic, files.nickModulesEdited.slice(0, 40), actor, "mapping port");
+    await Bun.sleep(PRESENCE_CACHE_TTL_MS + SUBAGENT_OVERRUN_MS);
   });
   const nickSubagentHits = nickSession.runs().filter((run) => run.label === "nick-subagent-mapping");
   nickSession.label("nick-next-prompt");
