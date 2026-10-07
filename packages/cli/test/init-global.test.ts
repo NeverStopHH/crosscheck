@@ -10,7 +10,7 @@
  * needing --cursor remembered.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { runCli } from "../src/index.ts";
@@ -287,6 +287,29 @@ describe("crosscheck init --global", () => {
     expect(removal.stdout).toContain(`no crosscheck entries in ${cursorMcpPath}`);
     expect(await readFile(cursorMcpPath, "utf8")).toBe(own);
     expect(await backupsIn(cursorDir)).toEqual([]);
+  });
+
+  test("a 0600 ~/.claude.json's backups stay 0600 through install and --remove — never wider than the original", async () => {
+    // Arrange: Claude Code's own state file, private, with an account and a token
+    const { home, env, mcpPath } = await fixture();
+    await writeFile(
+      mcpPath,
+      `${JSON.stringify({ oauthAccount: { emailAddress: "dev@example.com" }, mcpServers: { docs: { command: "docs", env: { DOCS_TOKEN: "synthetic-secret" } } } }, null, 2)}\n`,
+      "utf8",
+    );
+    await chmod(mcpPath, 0o600);
+
+    // Act
+    await runCli(GLOBAL_ARGS, env, "/");
+    await Bun.sleep(5);
+    await runCli(["init", "--global", "--remove"], env, "/");
+
+    // Assert: one backup per rewrite, each exactly as private as the original
+    const backups = (await readdir(home)).filter((name) => name.startsWith(".claude.json.bak-"));
+    expect(backups.length).toBe(2);
+    for (const name of backups) {
+      expect((await stat(join(home, name))).mode & 0o777).toBe(0o600);
+    }
   });
 
   test("requires a login first — inert machine-wide wiring helps nobody", async () => {

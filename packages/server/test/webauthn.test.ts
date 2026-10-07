@@ -116,9 +116,11 @@ describe("which origins a hub accepts passkeys at (04a §7)", () => {
 
   test("plain http on a tailnet address is refused at startup, with what to do instead", () => {
     // The browser would refuse every ceremony there; a hub that started anyway
-    // would fail later, in front of a person, with no reason given.
-    expect(() => parseWebAuthnOrigins("http://100.64.0.7:7100", 7100)).toThrow(
-      /tailscale serve/,
+    // would fail later, in front of a person, with no reason given. A HOSTNAME,
+    // not an IP: an IP is refused earlier by its own rule (the case below), and
+    // would let this rule go missing unnoticed.
+    expect(() => parseWebAuthnOrigins("http://hub.tailnet.ts.net:7100", 7100)).toThrow(
+      /plain http off localhost/,
     );
   });
 

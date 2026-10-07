@@ -13,7 +13,7 @@
  */
 import { realpath } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
 
 import {
   CLAUDE_SETTINGS_DIR,
@@ -89,6 +89,71 @@ export const findUserLevelCollision = async (
   const userPath = userPaths[userCanonical.indexOf(projectCanonical[index] ?? "")] ?? projectPath;
   return { projectPath, userPath };
 };
+
+/**
+ * The repo's Claude pair IS the user-level install — $HOME as the work tree,
+ * or a project file linked into ~/.claude. There is then ONE install read
+ * under two names (review 2026-10-05: doctor called it double wiring and
+ * offered remedies the commands refuse, or that delete the only install).
+ */
+export interface OneInstall {
+  readonly root: string;
+  readonly collision: ScopeCollision;
+  /** True = the repo root is the home directory itself. */
+  readonly homeRoot: boolean;
+}
+
+/** The same question `init` and `init --remove` ask before they touch anything. */
+export const readOneInstall = async (root: string, env: Env): Promise<OneInstall | null> => {
+  const collision = await findUserLevelCollision(
+    await wiringPaths(await projectWiringFiles(root, false)),
+    env,
+  );
+  if (collision === null) {
+    return null;
+  }
+  const home = await canonicalPath(env["HOME"] ?? homedir());
+  return { root, collision, homeRoot: (await canonicalPath(root)) === home };
+};
+
+/** Why the project copy is the user-level install, in words. */
+export const oneInstallReason = (one: OneInstall): string =>
+  one.homeRoot
+    ? `this repo's root ${one.root} is your home directory`
+    : `${one.collision.projectPath} is ${one.collision.userPath} by another name`;
+
+export interface OutsideRepo {
+  /** The target as the command spelled it. */
+  readonly path: string;
+  /** Where it really leads, every symlink on the way resolved. */
+  readonly realPath: string;
+}
+
+/**
+ * The first target whose REAL location is outside the repo root — a
+ * symlinked file, or a symlinked parent directory (`.claude` or `.cursor`
+ * linked to a directory several checkouts share, review 2026-10-05). Writing
+ * there edits files the command was never asked about, so both commands
+ * refuse; null = every target lives inside the repo.
+ */
+export const findOutsideRepo = async (
+  paths: readonly string[],
+  root: string,
+): Promise<OutsideRepo | null> => {
+  const realRoot = await canonicalPath(root);
+  const located = await Promise.all(
+    paths.map(async (path) => ({ path, realPath: await canonicalPath(path) })),
+  );
+  return (
+    located.find(
+      ({ realPath }) => realPath !== realRoot && !realPath.startsWith(`${realRoot}${sep}`),
+    ) ?? null
+  );
+};
+
+/** The outside-the-repo refusal's shared half: which file, and where it really is. */
+export const outsideRepoSentence = (outside: OutsideRepo, root: string): string =>
+  `${outside.path} resolves to ${outside.realPath}, outside this repo (${root}) — a symlink on its path leads there — so nothing was changed`;
 
 /** The refusal's shared half: which file, and that nothing changed. */
 export const collisionSentence = (collision: ScopeCollision, root: string): string =>

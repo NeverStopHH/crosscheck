@@ -8,10 +8,16 @@
  * hooks stayed.
  *
  * This NEVER widens what is removed. It only names what was left, so a person
- * can decide: a command that ends in one of the subcommands crosscheck itself
- * writes (`… hook session-start`, `… statusline`, `… cursor-hook stop`),
- * read off the install plans rather than written out again, and an mcp
- * server under crosscheck's own key that its owner check did not accept.
+ * can decide: a command that NAMES crosscheck (a `crosscheck` word — the bin,
+ * `crosscheck-hub`, `@crosscheck/<pkg>`, a `…/crosscheck/…` or `crosscheck.ts`
+ * path) and ends in one of the subcommands crosscheck itself writes (`… hook
+ * session-start`, `… statusline`, `… cursor-hook stop`, read off the install
+ * plans), and an mcp server under crosscheck's own key that its owner check
+ * did not accept. The subcommand word alone is not enough: `npx -y ccusage
+ * statusline` ends the same way and is somebody else's statusline (review
+ * 2026-10-05). An unnamed `--command-prefix` wrapper's hooks are therefore
+ * not listed — its server under crosscheck's key is, and the line about it
+ * points at the hooks that share its launcher.
  */
 import { MCP_SERVER_KEY } from "@crosscheck/connector-core/constants.ts";
 import { buildSettingsPlan } from "@crosscheck/connector-claude";
@@ -31,8 +37,13 @@ const CLAUDE_SUBCOMMANDS: readonly string[] = [
   claudePlan.statusLine.command,
 ];
 
+/** A `crosscheck` word anywhere in the command — not a substring of another word. */
+const NAMES_CROSSCHECK = /(?:^|[^A-Za-z0-9_])crosscheck/i;
+
 const endsInSubcommand = (subcommands: readonly string[]) => (command: unknown): command is string =>
-  typeof command === "string" && subcommands.some((suffix) => command.trimEnd().endsWith(suffix));
+  typeof command === "string" &&
+  NAMES_CROSSCHECK.test(command) &&
+  subcommands.some((suffix) => command.trimEnd().endsWith(suffix));
 
 /** Hook and statusline commands left in a Claude settings object that look like crosscheck's. */
 export const claudeLookalikes = (settings: Record<string, unknown>): readonly string[] =>

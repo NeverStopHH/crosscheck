@@ -10,7 +10,8 @@
  * budget itself.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { repoKey } from "../src/index.ts";
@@ -42,6 +43,45 @@ const RESOLVING_TIMEOUT_MS = "250";
 const UNRESOLVED_TIMEOUT_MS = "1";
 
 const paths: string[] = [];
+
+/** Long enough that no budget in this file can wait out a single git spawn. */
+const SLOW_GIT_SECONDS = 1;
+
+/** The child that runs a hook with a slow git (fixtures/run-hook-in-child.ts says why). */
+const RUN_HOOK_IN_CHILD = join(import.meta.dir, "fixtures", "run-hook-in-child.ts");
+
+/**
+ * Runs a never-settling PostToolUse through the real runner with a `git`
+ * first on PATH that answers only after SLOW_GIT_SECONDS. These cases need
+ * the budget to win the race against repo identity on ANY machine: a 4 ms
+ * budget alone lost that race on a fast CI runner, where repo identity
+ * resolved in time. In a CHILD process, because Bun.spawn takes PATH from the
+ * environment a process started with, so a PATH swapped at runtime never
+ * reached the hook's git — the first version of this helper did exactly that
+ * and tested nothing on Linux.
+ */
+const runCutPostToolUse = async (stdin: string, env: Env): Promise<void> => {
+  const dir = await mkdtemp(join(tmpdir(), "cx-slow-git-"));
+  paths.push(dir);
+  const realGit = Bun.which("git");
+  if (realGit === null) {
+    throw new Error("git is not on PATH");
+  }
+  await writeFile(
+    join(dir, "git"),
+    `#!/bin/sh\nsleep ${String(SLOW_GIT_SECONDS)}\nexec "${realGit}" "$@"\n`,
+    { mode: 0o755 },
+  );
+  const child = Bun.spawn({
+    cmd: [process.execPath, RUN_HOOK_IN_CHILD, "post-tool-use", stdin, JSON.stringify(env)],
+    env: { ...process.env, PATH: `${dir}:${process.env["PATH"] ?? ""}` },
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  if ((await child.exited) !== 0) {
+    throw new Error(`the hook child failed: ${await new Response(child.stderr).text()}`);
+  }
+};
 
 afterEach(async () => {
   await Promise.all(paths.map((path) => rm(path, { recursive: true, force: true })));
@@ -110,8 +150,8 @@ describe("LOSS-12: a hook that runs out of budget is a counted loss, keyed when 
     // Arrange
     const { repo, home, env } = await fixture("timeout-unkeyed", UNRESOLVED_TIMEOUT_MS);
 
-    // Act
-    await runHookWith("post-tool-use", neverSettles, editPayload(repo), env);
+    // Act: git cannot answer inside the budget, so repo identity never lands
+    await runCutPostToolUse(editPayload(repo), env);
 
     // Assert
     const [line] = await ledgerLines(home);
@@ -140,8 +180,9 @@ describe("LOSS-12: a hook that runs out of budget is a counted loss, keyed when 
     const outside = await makeHome("timeout-outside");
     paths.push(outside);
 
-    // Act
-    await runHookWith("post-tool-use", neverSettles, editPayload(outside), env);
+    // Act: git cannot answer inside the budget, so the hook is really CUT —
+    // on a fast machine a plain directory resolved in time and nothing was cut
+    await runCutPostToolUse(editPayload(outside), env);
 
     // Assert: no connected repo could have lost this hook's capture
     expect(await Bun.file(lossLedgerPath(home)).exists()).toBe(false);
@@ -162,8 +203,8 @@ describe("LOSS-12: a hook that runs out of budget is a counted loss, keyed when 
       }),
     );
 
-    // Act
-    await runHookWith("post-tool-use", neverSettles, editPayload(repo), env);
+    // Act: cut before identity on any machine, so the state file is what keys it
+    await runCutPostToolUse(editPayload(repo), env);
 
     // Assert: keyed — no other repo on the machine is charged
     const [line] = await ledgerLines(home);

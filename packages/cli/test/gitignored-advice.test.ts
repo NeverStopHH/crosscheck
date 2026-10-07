@@ -239,6 +239,28 @@ describe("doctor's advice under a .gitignore", () => {
     expect(result.stdout).not.toContain("committed here");
   });
 
+  test.each([
+    ["registered at user scope", true],
+    ["registered nowhere else", false],
+  ])(
+    "after init --remove deleted the committed .mcp.json (tools %s), the mcp line says git restore — never run crosscheck init",
+    async (_shape, userScope) => {
+      // Arrange: the mixed shape, then the removal — git status shows ` D .mcp.json`
+      const { repo, home, env } = await mixedFixture();
+      if (userScope) {
+        await writeFile(join(home, ".claude.json"), `${JSON.stringify(OWNED_MCP, null, 2)}\n`, "utf8");
+      }
+      expect((await runCli(["init", "--remove"], env, repo)).exitCode).toBe(0);
+
+      // Act
+      const result = await runDoctor(env, repo, async () => null);
+
+      // Assert: init would recreate the ignored copy and the double wiring
+      expect(result.stdout).toContain("`git restore -- .mcp.json`");
+      expect(result.stdout).not.toContain("run crosscheck init, then commit the file");
+    },
+  );
+
   test("without a .gitignore the original remedy stands", async () => {
     // Arrange
     const { repo, env } = await fixture(false);

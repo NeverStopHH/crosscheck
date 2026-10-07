@@ -253,6 +253,8 @@ import { unreadableClause } from "./init-io.ts";
 import type { GlobalWiring } from "./doctor-global.ts";
 import { readProjectCopy } from "./project-copy.ts";
 import type { ProjectCopy } from "./project-copy.ts";
+import { oneInstallReason, readOneInstall } from "./wiring-scope.ts";
+import type { OneInstall } from "./wiring-scope.ts";
 import { getPilotReport } from "@crosscheck/connector-core/http/pilot.ts";
 import type {
   PilotFigure,
@@ -980,13 +982,20 @@ const ignoredSuffix = (ignored: boolean | null, path: string): string =>
     ? ` — WARNING: ${path} is gitignored in this repo, so committing it is impossible and teammates never receive it; they need \`crosscheck init --global\` on their own machines`
     : "";
 
+interface McpRegistrationFacts {
+  readonly userScopeRegistered: boolean;
+  readonly mcpIgnored: boolean | null;
+  /** Set when ~/.claude.json could not be read (doctor-global `userMcpUnknown`). */
+  readonly userScopeUnknown: string | null;
+  /** The repo's project files ARE the user-level ones: init refuses a project copy here. */
+  readonly oneInstall: OneInstall | null;
+}
+
 const checkMcpRegistration = async (
   repoRoot: string,
-  userScopeRegistered: boolean,
-  mcpIgnored: boolean | null,
-  /** Set when ~/.claude.json could not be read (doctor-global `userMcpUnknown`). */
-  userScopeUnknown: string | null,
+  facts: McpRegistrationFacts,
 ): Promise<Check> => {
+  const { userScopeRegistered, mcpIgnored, userScopeUnknown, oneInstall } = facts;
   const path = join(repoRoot, MCP_CONFIG_FILE);
   const raw = await readTextOrNull(path);
   if (raw === null) {
@@ -994,6 +1003,25 @@ const checkMcpRegistration = async (
     // the "not found" FAIL that says they are missing (review 2026-10-05).
     if (!userScopeRegistered && userScopeUnknown !== null) {
       return check("WARN", "mcp tools registered", `${path} not found, and ${userScopeUnknown}`);
+    }
+    // "run crosscheck init" is advice init refuses where the project files
+    // ARE the user-level ones ($HOME as the work tree, review 2026-10-05).
+    if (userScopeRegistered && oneInstall !== null) {
+      return check(
+        "PASS",
+        "mcp tools registered",
+        `via global install (user scope) — ${oneInstallReason(oneInstall)}, where crosscheck init refuses to write a project copy; the user-level install covers this repo`,
+      );
+    }
+    // Committed but gone from this checkout — `init --remove` deletes a
+    // tracked .mcp.json it emptied. "Run crosscheck init" would recreate the
+    // ignored settings copy and the double wiring with it; the team's file is
+    // one restore away (review 2026-10-05).
+    if ((await isPathTracked(repoRoot, MCP_CONFIG_FILE)) === true) {
+      const restore = `${path} is committed but deleted from this checkout — \`git restore -- ${MCP_CONFIG_FILE}\` brings the team's copy back, or commit the deletion if the team should stop using it`;
+      return userScopeRegistered
+        ? check("PASS", "mcp tools registered", `via global install (user scope, this machine only) — ${restore}`)
+        : check("FAIL", "mcp tools registered", restore);
     }
     // Finding #13: a missing PROJECT file is not a broken install when the
     // user scope registers the tools — but user scope covers only THIS
@@ -3677,6 +3705,9 @@ export const runDoctor = async (
   // install — lands in the early branch, and leaving the check out of it
   // would silence the one place it exists for.
   const globalWiring = await readGlobalWiring(env);
+  // The scope question the commands ask before touching anything: a repo
+  // whose project files ARE the user-level ones has ONE install.
+  const oneInstall = identity === null ? null : await readOneInstall(identity.root, env);
   if (config === null || identity === null) {
     const projectWired =
       identity === null
@@ -3698,17 +3729,18 @@ export const runDoctor = async (
         identity === null
           ? null
           : await projectCopyForRemedy(identity.root, projectWired, globalWiring),
+        oneInstall,
       ),
       check("FAIL", "hub reachable", "no hub configured"),
       ...(identity === null
         ? []
         : [
-            await checkMcpRegistration(
-              identity.root,
-              globalWiring.mcpRegistered,
-              await isPathIgnored(identity.root, MCP_CONFIG_FILE),
-              userMcpUnknown(globalWiring),
-            ),
+            await checkMcpRegistration(identity.root, {
+              userScopeRegistered: globalWiring.mcpRegistered,
+              mcpIgnored: await isPathIgnored(identity.root, MCP_CONFIG_FILE),
+              userScopeUnknown: userMcpUnknown(globalWiring),
+              oneInstall,
+            }),
           ]),
       mcpUsableCheck({
         configured: config !== null,
@@ -3983,6 +4015,7 @@ export const runDoctor = async (
         settingsInspection.launcherCommand !== null,
         globalWiring,
       ),
+      oneInstall,
     ),
     hubCheck,
     timeoutCheck(config.timeoutMs, owner),
@@ -3997,12 +4030,12 @@ export const runDoctor = async (
       agentProbe ?? defaultAgentProbe(cwd),
       now.getTime(),
     ),
-    await checkMcpRegistration(
-      identity.root,
-      globalWiring.mcpRegistered,
-      ignoreVerdicts.mcp,
-      userMcpUnknown(globalWiring),
-    ),
+    await checkMcpRegistration(identity.root, {
+      userScopeRegistered: globalWiring.mcpRegistered,
+      mcpIgnored: ignoreVerdicts.mcp,
+      userScopeUnknown: userMcpUnknown(globalWiring),
+      oneInstall,
+    }),
     await checkMcpUsable(identity.root, env, {
       configured: true,
       hubUrl: config.hubUrl,

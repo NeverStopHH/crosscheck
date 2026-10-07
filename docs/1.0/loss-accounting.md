@@ -1299,7 +1299,11 @@ flow through as strings. **01** owns the seq vocabulary; nothing here touches `s
    machine replaced the defaults can no longer pin a shipped-excluded file through the CLI — the conservative
    side, and the refusal points at the files those are made from. The first build of this extension judged
    "shipped" by the first matching rule's text and called every such file unrecorded everywhere; the adversarial
-   review of 2026-10-05 found both, and both are fixed. Anchors "the pin door judges a pin by this machine's
+   review of 2026-10-05 found both, and both are fixed. The final review then found the mirror image — a file
+   only THIS machine's own rule skips was still called unrecorded "no matter who did", though every teammate on
+   the shipped list records it — and one reason line printed over files of different reach. Each match now has
+   one of three reaches (both lists, this machine only, shipped list only), and every refusal, sweep and shadow
+   line names its files per reach with the sentence true of them. Anchors "the pin door judges a pin by this machine's
    denylist alone", "a shipped rule is recognised by its text instead of by a match", "a file only the shipped
    list excludes is called excluded on this machine", "the shadow line calls every shadowed file never captured
    by anyone", "a pin refused by shipped rules is told to change the config", "a sweep says no session records a

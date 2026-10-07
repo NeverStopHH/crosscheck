@@ -23,7 +23,13 @@ jobs:
       # The junit file is what the reporter step below reads (spec 05 §10 D4);
       # console output is unchanged — measured on bun 1.3.13, the XML is written
       # alongside it, not instead of it.
-      - run: bun test --reporter=junit --reporter-outfile=junit.xml
+      # The per-test timeout is raised for THIS run only: the whole suite in one
+      # process on a hosted macOS runner made sub-second tests take over 6 s
+      # (PR #74: a cold PGlite boot in the first file's beforeAll, two
+      # coverage-render cases). Local runs keep bun's 5 s default, so a test
+      # that is slow on a developer's machine still fails where it is written;
+      # the timing lanes below measure what speed has to.
+      - run: bun test --reporter=junit --reporter-outfile=junit.xml --timeout=20000
       - run: bun run typecheck
       # Runs on BOTH platforms deliberately: it walks every Unicode
       # Default_Ignorable code point through the briefing renderer, so it is also
@@ -151,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1777
+    # PRINTS: 1794
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -171,20 +177,20 @@ jobs:
     # PRINTS: packages/cli/src/ci-report/report.ts 4
     # PRINTS: packages/cli/src/ci-report/run.ts 4
     # PRINTS: packages/cli/src/cli/conference.ts 15
-    # PRINTS: packages/cli/src/cli/doctor-global.ts 3
+    # PRINTS: packages/cli/src/cli/doctor-global.ts 4
     # PRINTS: packages/cli/src/cli/doctor-landed-authors.ts 9
     # PRINTS: packages/cli/src/cli/doctor-landed.ts 2
     # PRINTS: packages/cli/src/cli/doctor-landing-fetch.ts 6
     # PRINTS: packages/cli/src/cli/doctor-losses.ts 6
     # PRINTS: packages/cli/src/cli/doctor-retention.ts 3
-    # PRINTS: packages/cli/src/cli/doctor.ts 57
+    # PRINTS: packages/cli/src/cli/doctor.ts 59
     # PRINTS: packages/cli/src/cli/index.ts 4
     # PRINTS: packages/cli/src/cli/init-global.ts 2
-    # PRINTS: packages/cli/src/cli/init-io.ts 5
-    # PRINTS: packages/cli/src/cli/init-remove-plan.ts 5
+    # PRINTS: packages/cli/src/cli/init-io.ts 8
+    # PRINTS: packages/cli/src/cli/init-remove-plan.ts 6
     # PRINTS: packages/cli/src/cli/init-remove-report.ts 8
-    # PRINTS: packages/cli/src/cli/init-remove.ts 5
-    # PRINTS: packages/cli/src/cli/init.ts 3
+    # PRINTS: packages/cli/src/cli/init-remove.ts 6
+    # PRINTS: packages/cli/src/cli/init.ts 6
     # PRINTS: packages/cli/src/cli/key.ts 6
     # PRINTS: packages/cli/src/cli/noise.ts 7
     # PRINTS: packages/cli/src/cli/passkey-status.ts 4
@@ -192,7 +198,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/pilot-label.ts 8
     # PRINTS: packages/cli/src/cli/pilot-render.ts 22
     # PRINTS: packages/cli/src/cli/pilot.ts 3
-    # PRINTS: packages/cli/src/cli/pin-observability.ts 12
+    # PRINTS: packages/cli/src/cli/pin-observability.ts 14
     # PRINTS: packages/cli/src/cli/pin-render.ts 7
     # PRINTS: packages/cli/src/cli/pin.ts 9
     # PRINTS: packages/cli/src/cli/project-copy.ts 9
@@ -201,9 +207,9 @@ jobs:
     # PRINTS: packages/cli/src/cli/suspect-render.ts 3
     # PRINTS: packages/cli/src/cli/terminal.ts 3
     # PRINTS: packages/cli/src/cli/verdict-render.ts 3
-    # PRINTS: packages/cli/src/cli/wiring-lookalikes.ts 1
+    # PRINTS: packages/cli/src/cli/wiring-lookalikes.ts 2
     # PRINTS: packages/cli/src/cli/wiring-removal.ts 7
-    # PRINTS: packages/cli/src/cli/wiring-scope.ts 1
+    # PRINTS: packages/cli/src/cli/wiring-scope.ts 3
     # PRINTS: packages/connector-acp/src/capabilities.ts 3
     # PRINTS: packages/connector-acp/src/capture/engine.ts 24
     # PRINTS: packages/connector-acp/src/derive/slice.ts 2
@@ -257,7 +263,7 @@ jobs:
     # PRINTS: config/config.ts 4
     # PRINTS: config/connected-repo.ts 3
     # PRINTS: config/hook-budget.ts 2
-    # PRINTS: config/paths.ts 2
+    # PRINTS: config/paths.ts 3
     # PRINTS: constants.ts 11
     # PRINTS: coverage/exempt-surfaces.ts 2
     # PRINTS: coverage/render.ts 20
@@ -377,7 +383,7 @@ jobs:
     # PRINTS: packages/connector-cursor/src/inject/output.ts 1
     # PRINTS: packages/connector-cursor/src/payload.ts 1
     # PRINTS: packages/connector-cursor/src/runner.ts 5
-    # PRINTS: packages/schema/src/causal-guarantees.ts 10
+    # PRINTS: packages/schema/src/causal-guarantees.ts 9
     # PRINTS: packages/schema/src/claim-revalidation.ts 1
     # PRINTS: packages/schema/src/commit-evidence.ts 2
     # PRINTS: packages/schema/src/delivery-id.ts 2
@@ -415,7 +421,7 @@ jobs:
     # PRINTS: packages/server/src/routes/work-contexts.ts 2
     # PRINTS: packages/server/src/services/absences.ts 10
     # PRINTS: packages/server/src/services/calibration.ts 1
-    # PRINTS: packages/server/src/services/causal-guarantees.ts 11
+    # PRINTS: packages/server/src/services/causal-guarantees.ts 12
     # PRINTS: packages/server/src/services/ci-coverage.ts 3
     # PRINTS: packages/server/src/services/ci-delta.ts 4
     # PRINTS: packages/server/src/services/claim-revalidations.ts 7
@@ -531,13 +537,13 @@ jobs:
     # PRINTS: developer-settings.ts 1
     # PRINTS: developers.ts 13
     # PRINTS: diagnosis.ts 6
-    # PRINTS: doctor-global.ts 3
+    # PRINTS: doctor-global.ts 4
     # PRINTS: doctor-landed-authors.ts 9
     # PRINTS: doctor-landed.ts 2
     # PRINTS: doctor-landing-fetch.ts 6
     # PRINTS: doctor-losses.ts 6
     # PRINTS: doctor-retention.ts 3
-    # PRINTS: doctor.ts 73
+    # PRINTS: doctor.ts 75
     # PRINTS: driver.ts 2
     # PRINTS: drops.ts 11
     # PRINTS: end-marker.ts 2
@@ -580,11 +586,11 @@ jobs:
     # PRINTS: hub.ts 12
     # PRINTS: index.ts 5
     # PRINTS: init-global.ts 2
-    # PRINTS: init-io.ts 5
-    # PRINTS: init-remove-plan.ts 5
+    # PRINTS: init-io.ts 8
+    # PRINTS: init-remove-plan.ts 6
     # PRINTS: init-remove-report.ts 8
-    # PRINTS: init-remove.ts 5
-    # PRINTS: init.ts 4
+    # PRINTS: init-remove.ts 6
+    # PRINTS: init.ts 7
     # PRINTS: injector.ts 5
     # PRINTS: install.ts 1
     # PRINTS: intent-budget.test.ts 1
@@ -617,7 +623,7 @@ jobs:
     # PRINTS: passkey-status.ts 4
     # PRINTS: passkeys.ts 8
     # PRINTS: passkeys.tsx 1
-    # PRINTS: paths.ts 2
+    # PRINTS: paths.ts 3
     # PRINTS: payload.ts 1
     # PRINTS: pilot-candidates.ts 15
     # PRINTS: pilot-label-figures.ts 12
@@ -629,7 +635,7 @@ jobs:
     # PRINTS: pilot-report.ts 19
     # PRINTS: pilot-session-set.ts 9
     # PRINTS: pilot.ts 34
-    # PRINTS: pin-observability.ts 12
+    # PRINTS: pin-observability.ts 14
     # PRINTS: pin-paths.ts 8
     # PRINTS: pin-render.ts 7
     # PRINTS: pin-sweep.ts 2
@@ -733,9 +739,9 @@ jobs:
     # PRINTS: waivers.ts 5
     # PRINTS: waivers.tsx 2
     # PRINTS: webauthn.ts 11
-    # PRINTS: wiring-lookalikes.ts 1
+    # PRINTS: wiring-lookalikes.ts 2
     # PRINTS: wiring-removal.ts 7
-    # PRINTS: wiring-scope.ts 1
+    # PRINTS: wiring-scope.ts 3
     # PRINTS: work-context-ack.ts 6
     # PRINTS: work-contexts.ts 2
     # PRINTS: worker-env.ts 1

@@ -74,11 +74,15 @@ export const runProjectRemove = async (
       exitCode: EXIT_ABORTED,
     };
   }
-  const planned = await planAll(targets);
+  const planned = await planAll(targets, root);
   if (!planned.ok) {
     return { stdout: `${planned.refusal}\n`, exitCode: EXIT_ABORTED };
   }
-  const plans = await saveOriginals(planned.plans, root, removalBackupDir(env, root));
+  const saved = await saveOriginals(planned.plans, root, removalBackupDir(env, root));
+  if (!saved.ok) {
+    return { stdout: `${saved.refusal}\n`, exitCode: EXIT_ABORTED };
+  }
+  const plans = saved.plans;
   const applied = await applyAll(plans);
   if (!applied.ok) {
     return { stdout: failureReport(applied), exitCode: EXIT_FAIL };

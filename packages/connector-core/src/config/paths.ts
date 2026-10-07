@@ -1,4 +1,4 @@
-import { chmod, mkdir, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
@@ -398,16 +398,18 @@ export type TextRead =
  * install" about a file nobody had read (review 2026-10-05).
  */
 export const readText = async (path: string): Promise<TextRead> => {
-  const file = Bun.file(path);
+  // `stat`, not `Bun.file().exists()`: exists() answers false on EACCES, so a
+  // file inside an untraversable directory (a mode-000 ~/.claude) read as
+  // absent (review 2026-10-05). Only "nothing there" is absent.
   try {
-    if (!(await file.exists())) {
-      return { kind: "absent" };
-    }
-  } catch {
-    return { kind: "unreadable" };
+    await stat(path);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === "ENOENT" || code === "ENOTDIR" ? { kind: "absent" } : { kind: "unreadable" };
   }
   try {
-    return { kind: "text", text: await file.text() };
+    // A directory where a file should be throws here: unreadable, not absent.
+    return { kind: "text", text: await Bun.file(path).text() };
   } catch {
     return { kind: "unreadable" };
   }

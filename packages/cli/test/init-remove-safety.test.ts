@@ -4,7 +4,7 @@
  * tree, and never claim a change it did not make (review 2026-10-05).
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmod, lstat, mkdir, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readdir, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { runCli } from "../src/index.ts";
@@ -95,6 +95,75 @@ describe("a project copy that is really the user-level install", () => {
   });
 });
 
+describe("a project directory symlinked outside the repo", () => {
+  const CURSOR_HOOKS = {
+    version: 1,
+    hooks: { sessionStart: [{ command: "crosscheck cursor-hook sessionStart" }] },
+  };
+
+  test("init --remove refuses a .claude linked to a shared directory, naming the real path — the shared file unchanged", async () => {
+    // Arrange: .claude -> a directory several checkouts share
+    const { repo, env } = await fixture("claude-dir-linked");
+    const shared = await tempDir("shared-claude");
+    const sharedSettings = join(shared, "settings.json");
+    const sharedBefore = await writeJson(sharedSettings, {
+      hooks: OWNED_HOOKS,
+      permissions: { allow: ["Bash(ls)"] },
+    });
+    await symlink(shared, join(repo, ".claude"));
+
+    // Act
+    const result = await runCli(["init", "--remove"], env, repo);
+
+    // Assert
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain(`resolves to ${sharedSettings}, outside this repo`);
+    expect(result.stdout).toContain("nothing was changed");
+    expect(result.stdout).not.toContain("load no crosscheck hooks");
+    expect(await read(sharedSettings)).toBe(sharedBefore);
+  });
+
+  test("init --remove --cursor refuses a .cursor linked to a shared directory, naming the real path", async () => {
+    // Arrange
+    const { repo, env } = await fixture("cursor-dir-linked");
+    const shared = await tempDir("shared-cursor");
+    const sharedHooks = join(shared, "hooks.json");
+    const sharedBefore = await writeJson(sharedHooks, CURSOR_HOOKS);
+    await symlink(shared, join(repo, ".cursor"));
+
+    // Act
+    const result = await runCli(["init", "--remove", "--cursor"], env, repo);
+
+    // Assert
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain(`resolves to ${sharedHooks}, outside this repo`);
+    expect(await read(sharedHooks)).toBe(sharedBefore);
+  });
+
+  test.each([
+    [".claude", [] as readonly string[]],
+    [".cursor", ["--cursor"] as readonly string[]],
+  ])(
+    "crosscheck init refuses to write through a %s linked outside the repo, and writes nothing",
+    async (dir, extra) => {
+      // Arrange
+      const { repo, env, repoConfigPath } = await fixture(`init-${dir.slice(1)}-linked`);
+      const shared = await tempDir(`init-shared-${dir.slice(1)}`);
+      await symlink(shared, join(repo, dir));
+
+      // Act
+      const result = await runCli([...INIT_ARGS, ...extra], env, repo);
+
+      // Assert
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toContain(`, outside this repo (${repo})`);
+      expect(result.stdout).toContain("nothing was changed");
+      expect(await readdir(shared)).toEqual([]);
+      expect(await exists(repoConfigPath)).toBe(false);
+    },
+  );
+});
+
 describe("the backup of a rewritten file", () => {
   test("never lands in the work tree; the original is saved privately under CROSSCHECK_HOME and named", async () => {
     // Arrange: the pilot shape — ignored project files, one holding a
@@ -122,6 +191,31 @@ describe("the backup of a rewritten file", () => {
     expect((await stat(saved)).mode & 0o777).toBe(0o600);
     expect(result.stdout).toContain(`${mcpPath}: removed the crosscheck mcp server; everything else in it is kept (original saved to ${saved})`);
   });
+});
+
+describe("an unwritable CROSSCHECK_HOME", () => {
+  test.skipIf(process.getuid?.() === 0)(
+    "refuses the removal, saying so, before anything in the repo is changed",
+    async () => {
+      // Arrange: a rewrite needs its original saved, and the backups can't be
+      const { repo, env, settingsPath } = await fixture("backup-dir-locked");
+      const settingsBefore = await writeJson(settingsPath, { hooks: OWNED_HOOKS, model: "opus" });
+      const crosscheckHome = env["CROSSCHECK_HOME"] ?? "";
+      await mkdir(crosscheckHome, { recursive: true });
+      await chmod(crosscheckHome, 0o500);
+
+      // Act
+      const result = await runCli(["init", "--remove"], env, repo).finally(() =>
+        chmod(crosscheckHome, 0o700),
+      );
+
+      // Assert
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toContain(`could not save the original of ${settingsPath}`);
+      expect(result.stdout).toContain("nothing was changed");
+      expect(await read(settingsPath)).toBe(settingsBefore);
+    },
+  );
 });
 
 describe("a write that fails mid-run", () => {

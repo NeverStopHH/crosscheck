@@ -15457,9 +15457,11 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "a re-register keeps the stronger reason of one state",
-    file: `${SCHEMA}/src/causal-guarantees.ts`,
-    from: "  ORDER_REASON_STRENGTH.indexOf(candidate) < ORDER_REASON_STRENGTH.indexOf(held);",
-    to: "  stateOfOrderReason(candidate) !== stateOfOrderReason(held) &&\n  ORDER_REASON_STRENGTH.indexOf(candidate) < ORDER_REASON_STRENGTH.indexOf(held);",
+    // The re-register's weaken moved into SQL with review L2; the schema fold
+    // this entry first mutated only folds one declaration (the entry above).
+    file: `${SERVER}/src/services/causal-guarantees.ts`,
+    from: "sql`${reasonRankSql(sessionCausalGuarantees.reason)} > ${ORDER_REASON_STRENGTH.indexOf(triple.reason)}`",
+    to: "sql`${reasonRankSql(sessionCausalGuarantees.reason)} < ${ORDER_REASON_STRENGTH.indexOf(triple.reason)}`",
     test: `${SERVER}/test/causal-guarantees.test.ts`,
     because: "a session that re-registers with derived_after_the_fact keeps reading ambiguous_session_possible",
   },
@@ -15618,7 +15620,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the pin door refuses without saying why an excluded file can never be guarded",
     file: `${CLI}/src/cli/pin-observability.ts`,
-    from: "    ...refusalWhyLines(denied).map((why) => `${why}.`),\n",
+    from: "    ...refusalWhyLines(denied, (shadow) => shadow.path).map((why) => `${why}.`),\n",
     to: "",
     test: `${CLI}/test/pin-denylist-door.test.ts`,
     because: "a refusal with no reason reads as a bug to route around, not as a blind spot",
@@ -16423,8 +16425,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the shadow line calls every shadowed file never captured by anyone",
     file: `${CLI}/src/cli/pin-observability.ts`,
-    from: "const here = shadows.filter((shadow) => shadow.here);",
-    to: "const here = shadows;",
+    from: "  !shadow.here ? \"elsewhere\" : shadow.shippedPattern === null ? \"here\" : \"everywhere\";",
+    to: "  \"everywhere\" as ShadowReach;",
     test: `${CLI}/test/pin-denylist-door.test.ts`,
     because: "'no matter who did' is printed for a file this machine records",
   },
@@ -16439,8 +16441,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a sweep says no session records a file this machine records",
     file: `${CLI}/src/cli/pin-observability.ts`,
-    from: "`${refusalWhyLines(moves).join(\"; \")}. Re-pin",
-    to: "`${DENYLIST_REFUSAL_WHY}. Re-pin",
+    from: "        ...refusalWhyLines(moves, (move) => move.newPath).map((why) => `${why}.`),\n",
+    to: "        `${DENYLIST_REFUSAL_WHY}.`,\n",
     test: `${CLI}/test/pin-denylist-door.test.ts`,
     because: "the sweep's reason is false on the machine that ran it",
   },
@@ -16590,16 +16592,19 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an opted-out session's heartbeat dates the agent rung's gap",
     file: `${SERVER}/src/services/coverage.ts`,
-    from: "      gapSince: sql`min(${agentSessions.lastHeartbeatAt}) filter (where ${isGap} and ${isTold})`,",
-    to: "      gapSince: sql`min(${agentSessions.lastHeartbeatAt}) filter (where ${isGap})`,",
+    // Re-pointed by the final review: a hidden gap now withholds gapSince
+    // whole instead of filtering it, which stated a later start than the truth.
+    from: "  const isGapSinceWithheld = toCount(row?.hiddenGaps) > 0 || toCount(row?.hiddenLosses) > 0;",
+    to: "  const isGapSinceWithheld = toCount(row?.hiddenLosses) > 0;",
     test: `${SERVER}/test/coverage-instant-privacy.test.ts`,
     because: "get_diagnosis prints when an opted-out claim author last ran an agent",
   },
   {
     label: "an opted-out session's loss dates the agent rung's gap",
     file: `${SERVER}/src/services/coverage.ts`,
-    from: "      lossSince: sql`min(${agentSessions.lossOldestAt}) filter (where ${isLost} and ${isTold})`,",
-    to: "      lossSince: sql`min(${agentSessions.lossOldestAt}) filter (where ${isLost})`,",
+    // Re-pointed by the final review, for the same reason.
+    from: "  const isGapSinceWithheld = toCount(row?.hiddenGaps) > 0 || toCount(row?.hiddenLosses) > 0;",
+    to: "  const isGapSinceWithheld = toCount(row?.hiddenGaps) > 0;",
     test: `${SERVER}/test/coverage-instant-privacy.test.ts`,
     because: "an opted-out teammate's machine ledger dates the gap every teammate reads",
   },
@@ -16719,7 +16724,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "init --remove never names entries it did not recognise as its own",
     file: `${CLI}/src/cli/wiring-lookalikes.ts`,
-    from: "  typeof command === \"string\" && subcommands.some((suffix) => command.trimEnd().endsWith(suffix));",
+    from: "  subcommands.some((suffix) => command.trimEnd().endsWith(suffix));",
     to: "  false;",
     test: `${CLI}/test/init-remove-verdict.test.ts`,
     because: "'no crosscheck entries' is printed for a file still running every crosscheck hook through a wrapper",
@@ -16814,9 +16819,9 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "init --cursor rewrites .cursor/hooks.json without saving its original",
-    file: `${CURSOR}/src/init/init.ts`,
-    from: "      const hooksBackup = await saveOriginal(hooksPath, hooksRead.raw, hooksNext);",
-    to: "      const hooksBackup = null;",
+    file: `${CLI}/src/cli/init.ts`,
+    from: "      ...cursorFiles,\n",
+    to: "",
     test: `${CLI}/test/init-backups.test.ts`,
     because: "the team's own Cursor hooks file is merged over with no recoverable copy anywhere",
   },
@@ -16824,8 +16829,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an unreadable file reads as absent",
     file: `${CORE}/src/config/paths.ts`,
-    from: "    return { kind: \"text\", text: await file.text() };\n  } catch {\n    return { kind: \"unreadable\" };",
-    to: "    return { kind: \"text\", text: await file.text() };\n  } catch {\n    return { kind: \"absent\" };",
+    from: "    return { kind: \"text\", text: await Bun.file(path).text() };\n  } catch {\n    return { kind: \"unreadable\" };",
+    to: "    return { kind: \"text\", text: await Bun.file(path).text() };\n  } catch {\n    return { kind: \"absent\" };",
     test: `${CLI}/test/user-level-unreadable.test.ts`,
     because: "an EACCES ~/.claude/settings.json reads as 'no user-level install' on every surface at once",
   },
@@ -19310,6 +19315,143 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/ddl-sync-record-receipts.test.ts`,
     because: "review-2 round 9, L3: an upgraded hub lets the first developer to send an id hold it",
   },
+  {
+    label: "a file only this machine's own rule skips is called unrecorded by everyone",
+    file: `${CLI}/src/cli/pin-observability.ts`,
+    from: "shadow.shippedPattern === null ? \"here\" : \"everywhere\"",
+    to: "\"everywhere\"",
+    test: `${CLI}/test/pin-denylist-door.test.ts`,
+    because: "status says no session records a file every teammate on the shipped list records, and nudges them to retire a working pin",
+  },
+  {
+    label: "one refusal reason is printed over files of different reach",
+    file: `${CLI}/src/cli/pin-observability.ts`,
+    from: "    const files = items.filter((item) => reachOf(item) === reach).map(pathOf);",
+    to: "    const files = items.map(pathOf);",
+    test: `${CLI}/test/pin-denylist-door.test.ts`,
+    because: "the refusal says two contradictory things about the same files",
+  },
+  // ── final review (2026-10-05) ──
+  {
+    label: "doctor calls one install read under two names double wiring",
+    file: `${CLI}/src/cli/doctor-global.ts`,
+    from: "  if (oneInstall !== null && wiring.hooksInstalled) {",
+    to: "  if (false) {",
+    test: `${CLI}/test/doctor-home-repo.test.ts`,
+    because: "a dotfiles user is told to remove a 'side' — init --remove refuses, init --global --remove deletes the only install",
+  },
+  {
+    label: "doctor tells a home work tree to run the init that refuses there",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    if (userScopeRegistered && oneInstall !== null) {",
+    to: "    if (false) {",
+    test: `${CLI}/test/doctor-home-repo.test.ts`,
+    because: "the mcp line sends the user to `crosscheck init`, which refuses to write a project copy into $HOME",
+  },
+  {
+    label: "doctor calls a home work tree's own install a link",
+    file: `${CLI}/src/cli/wiring-scope.ts`,
+    from: "  return { root, collision, homeRoot: (await canonicalPath(root)) === home };",
+    to: "  return { root, collision, homeRoot: false };",
+    test: `${CLI}/test/doctor-home-repo.test.ts`,
+    because: "the one fact the reader needs — the repo root IS the home directory — is replaced by a sentence about symlinks",
+  },
+  {
+    label: "a user-level backup is written wider than its original",
+    file: `${CLI}/src/cli/init-io.ts`,
+    from: "  await writeFile(`${path}.bak-${String(Date.now())}`, raw, { encoding: \"utf8\", mode });",
+    to: "  await writeFile(`${path}.bak-${String(Date.now())}`, raw, \"utf8\");",
+    test: `${CLI}/test/init-global.test.ts`,
+    because: "the 0600 ~/.claude.json's OAuth account and mcp tokens sit in a 0644 copy beside it",
+  },
+  {
+    label: "another tool's statusline is called crosscheck's for sharing the subcommand word",
+    file: `${CLI}/src/cli/wiring-lookalikes.ts`,
+    from: "  NAMES_CROSSCHECK.test(command) &&\n",
+    to: "",
+    test: `${CLI}/test/init-remove-verdict.test.ts`,
+    because: "`npx -y ccusage statusline` is flagged as crosscheck's and the verified closing line never prints",
+  },
+  {
+    label: "a file inside an untraversable directory reads as absent",
+    file: `${CORE}/src/config/paths.ts`,
+    from: "    return code === \"ENOENT\" || code === \"ENOTDIR\" ? { kind: \"absent\" } : { kind: \"unreadable\" };",
+    to: "    return { kind: \"absent\" };",
+    test: `${CORE}/test/read-text.test.ts`,
+    because: "a mode-000 ~/.claude reads as 'no user-level install' on every surface again",
+  },
+  {
+    label: "init --cursor treats an unreadable .cursor file as absent",
+    file: `${CURSOR}/src/init/init.ts`,
+    from: "  if (read.kind === \"unreadable\") {\n    return \"could not be read\";",
+    to: "  if (false) {\n    return \"could not be read\";",
+    test: `${CLI}/test/cursor-init.test.ts`,
+    because: "the Claude files and .crosscheck.json are written, then the Cursor write fails with EACCES: a half-installed repo",
+  },
+  {
+    label: "doctor tells a checkout that deleted the committed .mcp.json to run init",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    if ((await isPathTracked(repoRoot, MCP_CONFIG_FILE)) === true) {",
+    to: "    if (false) {",
+    test: `${CLI}/test/gitignored-advice.test.ts`,
+    because: "init recreates the ignored settings copy and the double wiring the removal just undid, while git restore was the fix",
+  },
+  {
+    label: "an unwritable CROSSCHECK_HOME crashes init with a bare EACCES",
+    file: `${CLI}/src/cli/init-io.ts`,
+    from: "    } catch (error) {\n      return {\n        ok: false,\n        refusal: `could not save the original of",
+    to: "    } catch (error) {\n      throw error;\n      return {\n        ok: false,\n        refusal: `could not save the original of",
+    test: `${CLI}/test/init-backups.test.ts`,
+    because: "\"crosscheck failed: EACCES … mkdir …/backups\" says nothing about whether the repo was changed",
+  },
+  {
+    label: "an unwritable CROSSCHECK_HOME crashes init --remove with a bare EACCES",
+    file: `${CLI}/src/cli/init-io.ts`,
+    from: "    } catch (error) {\n      return {\n        ok: false,\n        refusal: `could not save the original of",
+    to: "    } catch (error) {\n      throw error;\n      return {\n        ok: false,\n        refusal: `could not save the original of",
+    test: `${CLI}/test/init-remove-safety.test.ts`,
+    because: "the removal dies with a bare EACCES and nothing tells the developer the repo is untouched",
+  },
+  {
+    label: "init --remove carries on after failing to save an original",
+    file: `${CLI}/src/cli/init-remove.ts`,
+    from: "  if (!saved.ok) {",
+    to: "  if (false) {",
+    test: `${CLI}/test/init-remove-safety.test.ts`,
+    because: "a rewrite whose original could not be saved goes ahead with no recovery copy anywhere",
+  },
+  {
+    label: "crosscheck init writes the repo after failing to save an original",
+    file: `${CLI}/src/cli/init.ts`,
+    from: "  if (!saved.ok) {",
+    to: "  if (false) {",
+    test: `${CLI}/test/init-backups.test.ts`,
+    because: "the team's files are merged over with no copy of what they held",
+  },
+  {
+    label: "a target symlinked out of the repo passes as the repo's own",
+    file: `${CLI}/src/cli/wiring-scope.ts`,
+    from: "      ({ realPath }) => realPath !== realRoot && !realPath.startsWith(`${realRoot}${sep}`),",
+    to: "      () => false,",
+    test: `${CLI}/test/init-remove-safety.test.ts`,
+    because: "a .claude or .cursor linked to a shared directory is edited for every checkout that shares it",
+  },
+  {
+    label: "init --remove strips a shared file through a symlinked .claude directory",
+    file: `${CLI}/src/cli/init-remove-plan.ts`,
+    from: "    const outside = await findOutsideRepo([plan.path], root);\n    if (outside !== null) {",
+    to: "    const outside = await findOutsideRepo([plan.path], root);\n    if (false) {",
+    test: `${CLI}/test/init-remove-safety.test.ts`,
+    because: "another checkout's settings lose their hooks and this run reports sessions here load none",
+  },
+  {
+    label: "crosscheck init writes into a shared directory through a symlinked .claude",
+    file: `${CLI}/src/cli/init.ts`,
+    from: "  if (outside !== null) {",
+    to: "  if (false) {",
+    test: `${CLI}/test/init-remove-safety.test.ts`,
+    because: "every checkout sharing the linked directory is wired by one repo's install",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19368,11 +19510,13 @@ interface Outcome {
  * PRINTS: packages/cli/test/connector-capture-health.test.ts 3
  * PRINTS: packages/cli/test/coverage-cli.test.ts 5
  * PRINTS: packages/cli/test/cursor-doctor.test.ts 4
+ * PRINTS: packages/cli/test/cursor-init.test.ts 1
  * PRINTS: packages/cli/test/doctor-capture.test.ts 7
  * PRINTS: packages/cli/test/doctor-ci.test.ts 3
  * PRINTS: packages/cli/test/doctor-claim-binding.test.ts 4
  * PRINTS: packages/cli/test/doctor-evidence-axes.test.ts 1
  * PRINTS: packages/cli/test/doctor-global.test.ts 3
+ * PRINTS: packages/cli/test/doctor-home-repo.test.ts 3
  * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1
  * PRINTS: packages/cli/test/doctor-last-sync.test.ts 1
  * PRINTS: packages/cli/test/doctor-latency.test.ts 2
@@ -19383,11 +19527,11 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor.test.ts 12
  * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
- * PRINTS: packages/cli/test/gitignored-advice.test.ts 10
- * PRINTS: packages/cli/test/init-backups.test.ts 5
- * PRINTS: packages/cli/test/init-global.test.ts 2
- * PRINTS: packages/cli/test/init-remove-safety.test.ts 9
- * PRINTS: packages/cli/test/init-remove-verdict.test.ts 6
+ * PRINTS: packages/cli/test/gitignored-advice.test.ts 11
+ * PRINTS: packages/cli/test/init-backups.test.ts 7
+ * PRINTS: packages/cli/test/init-global.test.ts 3
+ * PRINTS: packages/cli/test/init-remove-safety.test.ts 14
+ * PRINTS: packages/cli/test/init-remove-verdict.test.ts 7
  * PRINTS: packages/cli/test/init-remove.test.ts 17
  * PRINTS: packages/cli/test/key-rotate.test.ts 6
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 9
@@ -19398,7 +19542,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
  * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 7
  * PRINTS: packages/cli/test/pilot-render.test.ts 19
- * PRINTS: packages/cli/test/pin-denylist-door.test.ts 14
+ * PRINTS: packages/cli/test/pin-denylist-door.test.ts 16
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pin-waive-hostile-hub.test.ts 1
  * PRINTS: packages/cli/test/pins-cli.test.ts 5
@@ -19562,6 +19706,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/precision-corpus.test.ts 1
  * PRINTS: packages/connector-core/test/question-delivery.test.ts 1
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3
+ * PRINTS: packages/connector-core/test/read-text.test.ts 1
  * PRINTS: packages/connector-core/test/register-guarantees.test.ts 2
  * PRINTS: packages/connector-core/test/register-seq.test.ts 3
  * PRINTS: packages/connector-core/test/reject-cause.test.ts 5

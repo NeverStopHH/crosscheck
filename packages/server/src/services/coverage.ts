@@ -131,7 +131,7 @@ export interface CoverageSourceRecord {
   readonly reason: CoverageReason;
   /** ISO; null unless `incomplete` — when observation demonstrably stopped. */
   readonly gapSince: string | null;
-  /** ISO; the newest thing this rung actually saw, null when it saw nothing. */
+  /** ISO; the newest thing this rung saw that this viewer may be told, null when none. */
   readonly observedAt: string | null;
 }
 
@@ -288,8 +288,8 @@ const toCount = (value: unknown): number => {
  * `gapSince` is the EARLIEST heartbeat among the sessions that stopped
  * reporting — "observation has been unreliable since at least this instant",
  * which is the direction that cannot overstate what was seen. `observedAt` is
- * the newest heartbeat of any session in the window, gap or not: the last
- * moment this rung saw anything at all.
+ * the newest heartbeat in scope, gap or not, among the sessions this viewer
+ * may be told about: the last moment the rung can say it saw anything.
  *
  * A REAP OUTRANKS A SILENCE when both are present. A reap is a decision this
  * hub made and can revoke, so it is the one a reader can act on.
@@ -554,6 +554,11 @@ const inScope = (scope: SessionScope): SQL =>
  * A session of a developer this viewer may not be told about still counts
  * towards the state — the gap is real whoever had it — and lends the record
  * no instant, whether the window or the answer brought it in.
+ *
+ * WITHHELD, NEVER MOVED LATER (final review): `gapSince` is the EARLIEST
+ * instant, so a hidden gap or loss withholds it whole rather than leave a
+ * told, later one standing. `observedAt` is the newest heartbeat the viewer
+ * may be told about: older than the truth is the staler, safe direction.
  */
 const readAgentEventCoverage = async (
   deps: Deps,
@@ -571,10 +576,12 @@ const readAgentEventCoverage = async (
       reporting: sql`count(*) filter (where ${scope.window})`,
       reaped: sql`count(*) filter (where ${agentSessions.reapedAt} is not null)`,
       gaps: sql`count(*) filter (where ${isGap})`,
-      gapSince: sql`min(${agentSessions.lastHeartbeatAt}) filter (where ${isGap} and ${isTold})`,
+      gapSince: sql`min(${agentSessions.lastHeartbeatAt}) filter (where ${isGap})`,
+      hiddenGaps: sql`count(*) filter (where ${isGap} and not ${isTold})`,
       lost: sql`count(*) filter (where ${isLost})`,
       ignored: sql`count(*) filter (where ${isLost} and ${ignoredKindCondition(agentSessions, since)})`,
-      lossSince: sql`min(${agentSessions.lossOldestAt}) filter (where ${isLost} and ${isTold})`,
+      lossSince: sql`min(${agentSessions.lossOldestAt}) filter (where ${isLost})`,
+      hiddenLosses: sql`count(*) filter (where ${isLost} and not ${isTold})`,
       observedAt: sql`max(${agentSessions.lastHeartbeatAt}) filter (where ${isTold})`,
     })
     .from(agentSessions)
@@ -583,6 +590,7 @@ const readAgentEventCoverage = async (
   const observedAt = toIso(row?.observedAt);
   const gaps = toCount(row?.gaps);
   const lost = toCount(row?.lost);
+  const isGapSinceWithheld = toCount(row?.hiddenGaps) > 0 || toCount(row?.hiddenLosses) > 0;
   if (gaps === 0 && lost === 0) {
     return toCount(row?.reporting) === 0
       ? sourceRecord("agent_event", "unknown", "no_session_in_window")
@@ -598,10 +606,12 @@ const readAgentEventCoverage = async (
     "agent_event",
     "incomplete",
     agentGapReason(lost, toCount(row?.ignored), toCount(row?.reaped)),
-    earliestIso(
-      lost > 0 ? toIso(row?.lossSince) : null,
-      gaps > 0 ? toIso(row?.gapSince) : null,
-    ),
+    isGapSinceWithheld
+      ? null
+      : earliestIso(
+          lost > 0 ? toIso(row?.lossSince) : null,
+          gaps > 0 ? toIso(row?.gapSince) : null,
+        ),
     observedAt,
   );
 };

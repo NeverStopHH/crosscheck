@@ -13,10 +13,11 @@ import {
   readJsonConfig,
   refusalMessage,
   renderJsonFile,
-  saveProjectOriginal,
+  saveProjectOriginals,
   writeConfigAtomically,
 } from "./init-io.ts";
 import type { RemovalTarget, Stripped } from "./wiring-removal.ts";
+import { findOutsideRepo, outsideRepoSentence } from "./wiring-scope.ts";
 
 export type FilePlan =
   | { readonly kind: "absent"; readonly path: string }
@@ -58,7 +59,10 @@ const planFile = (
 };
 
 /** EVERY file is read and validated before ANY is written. */
-export const planAll = async (targets: readonly RemovalTarget[]): Promise<PlanResult> => {
+export const planAll = async (
+  targets: readonly RemovalTarget[],
+  root: string,
+): Promise<PlanResult> => {
   const reads = await Promise.all(
     targets.map(async (target) => ({ target, read: await readJsonConfig(target.path) })),
   );
@@ -69,7 +73,7 @@ export const planAll = async (targets: readonly RemovalTarget[]): Promise<PlanRe
   const plans = reads.flatMap(({ target, read }) =>
     read.ok ? [planFile(target, read.value, read.raw)] : [],
   );
-  const linked = await linkRefusal(plans);
+  const linked = await linkRefusal(plans, root);
   return linked === null ? { ok: true, plans } : { ok: false, refusal: linked };
 };
 
@@ -80,8 +84,13 @@ export const planAll = async (targets: readonly RemovalTarget[]): Promise<PlanRe
  * either way the output would claim a change to a file it never made. The
  * target is named, and nothing is changed; a link to a file without
  * crosscheck entries is never touched, so it is no reason to refuse.
+ *
+ * The same holds one level up: a file whose real location is OUTSIDE the
+ * repo — `.claude` or `.cursor` itself a symlink to a shared directory — is
+ * somebody else's file too, whatever the link on its path (review
+ * 2026-10-05). Its real path is named, and nothing is changed.
  */
-const linkRefusal = async (plans: readonly FilePlan[]): Promise<string | null> => {
+const linkRefusal = async (plans: readonly FilePlan[], root: string): Promise<string | null> => {
   for (const plan of plans) {
     if (plan.kind !== "strip" && plan.kind !== "delete") {
       continue;
@@ -89,6 +98,10 @@ const linkRefusal = async (plans: readonly FilePlan[]): Promise<string | null> =
     if ((await lstat(plan.path)).isSymbolicLink()) {
       const target = await realpath(plan.path);
       return `${plan.path} is a symlink to ${target} — init --remove does not edit a file through a link (everything else that links to it would change too), so nothing was changed; remove crosscheck's entries from ${target} itself`;
+    }
+    const outside = await findOutsideRepo([plan.path], root);
+    if (outside !== null) {
+      return `${outsideRepoSentence(outside, root)}; init --remove edits only this repo's own files — remove crosscheck's entries from ${outside.realPath} itself`;
     }
   }
   return null;
@@ -109,23 +122,29 @@ export const saveOriginals = async (
   plans: readonly FilePlan[],
   root: string,
   backupDir: string,
-): Promise<readonly FilePlan[]> =>
-  Promise.all(
-    plans.map(async (plan) =>
+): Promise<
+  | { readonly ok: true; readonly plans: readonly FilePlan[] }
+  | { readonly ok: false; readonly refusal: string }
+> => {
+  const saved = await saveProjectOriginals(
+    backupDir,
+    root,
+    plans.flatMap((plan) =>
       plan.kind === "strip"
-        ? {
-            ...plan,
-            backup: await saveProjectOriginal(
-              backupDir,
-              root,
-              plan.path,
-              plan.raw,
-              renderJsonFile(plan.stripped.value),
-            ),
-          }
-        : plan,
+        ? [{ path: plan.path, raw: plan.raw, next: renderJsonFile(plan.stripped.value) }]
+        : [],
     ),
   );
+  if (!saved.ok) {
+    return saved;
+  }
+  return {
+    ok: true,
+    plans: plans.map((plan) =>
+      plan.kind === "strip" ? { ...plan, backup: saved.backups.get(plan.path) ?? null } : plan,
+    ),
+  };
+};
 
 const applyPlan = async (plan: FilePlan): Promise<void> => {
   if (plan.kind === "strip") {
@@ -186,7 +205,7 @@ export const unrecognisedLine = (path: string, commands: readonly string[]): rea
     : [
         `${path}: left ${commands.length === 1 ? "1 entry that looks" : `${String(commands.length)} entries that look`} like crosscheck's but ${commands.length === 1 ? "runs" : "run"} through a launcher it does not recognise as its own — NOT removed: ${commands
           .map((command) => `\`${command}\``)
-          .join(", ")}; if an \`init --command-prefix\` install wrote them, delete them by hand`,
+          .join(", ")}; if an \`init --command-prefix\` install wrote them, delete them by hand, with any hooks that run through the same launcher`,
       ];
 
 /** The leftovers a plan's file still holds, as lines (none for absent or deleted files). */

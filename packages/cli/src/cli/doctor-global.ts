@@ -32,6 +32,8 @@ import { readJsonConfig, unreadableClause } from "./init-io.ts";
 import type { ReadRefusal } from "./init-io.ts";
 import { doubleWiringRemedy } from "./project-copy.ts";
 import type { ProjectCopy } from "./project-copy.ts";
+import { oneInstallReason } from "./wiring-scope.ts";
+import type { OneInstall } from "./wiring-scope.ts";
 
 export interface GlobalWiring {
   readonly settingsPath: string;
@@ -179,11 +181,25 @@ export const globalInstallChecks = (
   wiring: GlobalWiring,
   projectWired: boolean | null,
   projectCopy: ProjectCopy | null = null,
+  /** The repo's project files ARE the user-level ones (wiring-scope.ts). */
+  oneInstall: OneInstall | null = null,
 ): readonly Check[] => {
   const name = "global install";
   const unknown = userLevelUnknown(wiring);
   if (unknown !== null) {
     return [check("WARN", name, unknown)];
+  }
+  // ONE install read under two names — never double wiring, and no remedy:
+  // `init --remove` refuses here and `init --global --remove` would delete
+  // the only install (review 2026-10-05).
+  if (oneInstall !== null && wiring.hooksInstalled) {
+    return [
+      check(
+        "PASS",
+        name,
+        `${wiring.settingsPath} — ${oneInstallReason(oneInstall)}, so its project files ARE this user-level install: one install, covering this repo and every other checkout on this machine${userMcpClause(wiring)}`,
+      ),
+    ];
   }
   if (wiring.hooksInstalled && projectWired === true) {
     // Worded from the project copy's facts (project-copy.ts says why each
