@@ -593,6 +593,24 @@ The MCP tool calls it after its argument, secret, echo and contract checks. The 
 and a status the tool's arguments refuse writes nothing there too. Tests pin all three cases: a 500 or a timeout
 keeps the new status, and an ignored post puts the old one back.
 
+**set_intent's state-first window, accepted** (review-2 round 8, L6). The status goes into the state BEFORE the post,
+because a set_intent killed between a post that landed and a later state write left the old status in the state. The
+next re-fire or debt then put that old status back on the hub (round 7, simulation seed 10). The cost is a window. From the
+state write until the post's answer, every other sender of the work context reads the new status:
+
+- a flush's spooled copy (`withLifeState`);
+- an owed debt (`owedRecordNow`);
+- a re-fire's register.
+
+Any of them may carry the new status to the hub first. When the post then surely never landed (`dns`, `refused` or
+`tls`), or the hub ignored or rejected it, set_intent puts the old status back in the state and says it failed. The hub
+may hold the new one until the next sender of that work context carries the state's old status over it. Nothing is
+lost or miscounted, but the hub can briefly show a status set_intent reported as failed. A post that may have landed
+(a 500, a timeout) keeps the new status in the state, so the two agree. Closing the window would mean holding every
+other sender of the work context for the post's round trip, and a status that converges is not worth that. The
+simulation's I4 holds the converged end to account: once a scenario has settled, the hub's status must be the newest
+the hub took from set_intent, or the newest set_intent left in the state.
+
 **One host session key on two machines is a residual, counted** (review-2 round 8, M6). A cloud agent and a local
 resume of the same conversation share a host session key, so both machines register the same life id. They capture
 and flush as usual, and the hub's order for that session breaks (`epoch_split`, two epochs). One machine's
