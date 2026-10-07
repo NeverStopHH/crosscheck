@@ -20118,8 +20118,9 @@ export const MUTATIONS: readonly Mutation[
     label: "a pasted image's marker stays in the prompt",
     file: `${SCHEMA}/src/harness-turn.ts`,
     // RETARGETED (round 4, M3): the strip also says which wrapper the text ends inside.
-    from: "  const stripped = kept.replace(MARKERS, \" \");",
-    to: "  const stripped = kept;",
+    // RETARGETED (round 4, L3): a quoted line goes beside the markers.
+    from: "  const stripped = kept.replace(MARKERS, \" \").replace(QUOTED_LINE, \"\");",
+    to: "  const stripped = kept.replace(QUOTED_LINE, \"\");",
     test: `${SCHEMA}/test/harness-turn.test.ts`,
     because: "\"[Image #1] [Image #2]\" is a prompt with words, and the session's fire is spent on it (round 4, M2)",
   },
@@ -20282,6 +20283,22 @@ export const MUTATIONS: readonly Mutation[
     to: "const isLetterDigitPair = (token: string): boolean => /^(?:\\p{L}\\p{N}|\\p{N}\\p{L}|\\p{N}\\p{N})$/u.test(token);",
     test: `${SCHEMA}/test/prompt-terms.test.ts`,
     because: "a log line's \"10\" and \"06\" agree with every tree that counts ten of something (round 4, L2)",
+  },
+  {
+    label: "a quote of the agent's answer is scored as the human's",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "  const stripped = kept.replace(MARKERS, \" \").replace(QUOTED_LINE, \"\");",
+    to: "  const stripped = kept.replace(MARKERS, \" \");",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "\"> The root cause is that the JWKS cache …\" above an \"ok\" reaches the JWKS tree on the agent's own words (round 4, L3)",
+  },
+  {
+    label: "an indented quote is the human's",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "const QUOTED_LINE = /^[\\p{Zs}\\t]*>.*$/gmu;",
+    to: "const QUOTED_LINE = /^>.*$/gmu;",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "a quote pasted with its reply's indentation is scored as the human's words (round 4, L3)",
   },
   {
     label: "the connector asks a hub about a content-free prompt",
@@ -20632,7 +20649,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/english-stem.test.ts 4
  * PRINTS: packages/schema/test/evidence-resolution.test.ts 8
  * PRINTS: packages/schema/test/file-ref.test.ts 5
- * PRINTS: packages/schema/test/harness-turn.test.ts 23
+ * PRINTS: packages/schema/test/harness-turn.test.ts 25
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1

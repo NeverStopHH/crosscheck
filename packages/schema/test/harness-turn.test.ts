@@ -76,6 +76,37 @@ describe("every registered shape is recognised from its own sample", () => {
  * "Caveat: …" reached the PDF-labels tree, "Stop hook feedback: Tests were
  * not run" the flaky-test tree.
  */
+/**
+ * A QUOTE OF THE AGENT'S OWN ANSWER IS NOT THE HUMAN'S TEXT (round 4, L3):
+ * "> The root cause is that the JWKS cache keeps the old key set …" followed
+ * by "ok" scored the agent's words, and reached the tree they came from.
+ * Only the text outside a "> " quote is the human's.
+ */
+describe("a quoted line is not the human's text (L3)", () => {
+  test("a quote and an acknowledgement leave the acknowledgement", () => {
+    const turn = "> The root cause is that the JWKS cache keeps the old key set for 24 hours, so refresh tokens signed with the new kid fail.\nok";
+    expect(humanPromptText(turn)).toBe("ok");
+  });
+
+  test("a question under a quote keeps the question", () => {
+    expect(humanPromptText("> Keep the previous signing key for a day.\n>> earlier: rotate weekly\nwhy does the refresh still fail on staging")).toBe(
+      "why does the refresh still fail on staging",
+    );
+  });
+
+  test("an indented quote is a quote too", () => {
+    expect(humanPromptText("the export is slow\n   > quoted answer")).toBe("the export is slow");
+  });
+
+  test("a > inside a line is the human's", () => {
+    expect(humanPromptText("why is p95 > 900 ms on search")).toBe("why is p95 > 900 ms on search");
+  });
+
+  test("a turn that only quotes says nothing", () => {
+    expect(humanPromptText("> The cache keeps the old key set.")).toBe("");
+  });
+});
+
 describe("the round-4 harness turns are nobody's prompt (M2)", () => {
   test.each([
     ["the slash-command echo", "<command-message>review is running…</command-message>\n<command-name>/review</command-name>"],

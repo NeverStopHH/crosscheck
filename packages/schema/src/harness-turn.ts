@@ -98,6 +98,15 @@ export const HARNESS_SHAPES: readonly HarnessShape[] = [
   marker("[Image #N]", "[Image #1]"),
 ];
 
+/**
+ * A QUOTED LINE — "> …" at a line's start, indented or nested — is not the
+ * human's text (round 4, L3): it quotes the agent's own answer back, and
+ * "> The root cause is that the JWKS cache keeps the old key set …" above an
+ * "ok" scored the agent's words and reached the tree they came from. A ">"
+ * inside a line ("p95 > 900 ms") is the human's.
+ */
+const QUOTED_LINE = /^[\p{Zs}\t]*>.*$/gmu;
+
 /** The markers' pattern: each name as written, its N any number. */
 const MARKERS = new RegExp(
   HARNESS_SHAPES.filter((shape) => shape.kind === "marker")
@@ -245,7 +254,7 @@ const humanTextOf = (prompt: string, mayLookPast: boolean): string => {
   const trimmed = prompt.trimStart();
   const window = trimmed.slice(0, HARNESS_SCAN_MAX_CHARS);
   const { kept, unclosed } = withoutElements(window);
-  const stripped = kept.replace(MARKERS, " ");
+  const stripped = kept.replace(MARKERS, " ").replace(QUOTED_LINE, "");
   const headAt = stripped.search(HEAD);
   const human = headAt === -1 ? stripped : stripped.slice(0, headAt);
   // THE WINDOW ENDED INSIDE A WRAPPER (M3): its close, and the human text
