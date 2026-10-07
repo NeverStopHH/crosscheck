@@ -93,3 +93,31 @@ export const ENGLISH_STOP_SUPPLEMENT: ReadonlySet<string> = new Set([
 
 /** What every prompt drops: english.stop and its supplement. */
 export const ENGLISH_FUNCTION_WORDS: ReadonlySet<string> = new Set([...ENGLISH_STOP_WORDS, ...ENGLISH_STOP_SUPPLEMENT]);
+
+/**
+ * SPANISH AND FRENCH FUNCTION WORDS (hold-out review round 4, M4): a SMALL
+ * list each — articles, pronouns, prepositions, conjunctions, the commonest
+ * auxiliaries and adverbs — dropped from a prompt that reads as that language,
+ * as German's are. Not the database's spanish.stop or french.stop: the hub
+ * stems in english, so these decide only which words are content terms, and
+ * a word of one or two letters ("el", "la", "de", "en") is below the token
+ * floor anyway. Written as typed, with and without their accents. The
+ * round-4 hold-out's "muchas gracias, eso es todo" and "oui c'est bon" kept
+ * "eso", "todo" and "est" as terms and reached the hub.
+ */
+export const SPANISH_FUNCTION_WORDS: ReadonlySet<string> = new Set([
+  "del", "los", "las", "una", "uno", "unos", "unas", "con", "por", "para", "que", "qué", "como", "cómo",
+  "cuando", "cuándo", "donde", "dónde", "porque", "pero", "muy", "más", "mas", "menos", "este", "esta",
+  "esto", "estos", "estas", "ese", "esa", "eso", "esos", "esas", "todo", "toda", "todos", "todas", "sus",
+  "mis", "tus", "nos", "les", "está", "están", "estan", "estaba", "estabas", "estoy", "estamos", "son",
+  "ser", "fue", "era", "hay", "sin", "sobre", "entre", "hasta", "desde", "después", "despues", "antes",
+  "también", "tambien", "aquí", "aqui", "ahí", "ahi", "algo", "nada", "otro", "otra", "otros", "otras",
+  "cada", "solo", "sólo", "ahora", "luego", "haciendo",
+]);
+export const FRENCH_FUNCTION_WORDS: ReadonlySet<string> = new Set([
+  "les", "des", "une", "aux", "avec", "pour", "par", "sur", "sous", "dans", "que", "qui", "quoi", "pas",
+  "plus", "moins", "ses", "son", "ces", "cette", "cet", "est", "sont", "été", "ete", "être", "etre",
+  "avoir", "ont", "avait", "était", "etait", "ils", "elle", "elles", "nous", "vous", "leur", "leurs",
+  "mais", "comme", "quand", "très", "tres", "aussi", "tout", "tous", "toute", "toutes", "rien", "encore",
+  "déjà", "deja", "après", "apres", "avant", "chez", "entre", "vers", "car", "donc", "puis", "ici",
+]);

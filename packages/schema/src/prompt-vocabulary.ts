@@ -23,6 +23,8 @@ export const CONTINUATION_TRIGGERS: readonly string[] = [
   "probier", "probiere", "probieren", "mach", "mache", "machen",
   // round 3, H1: the inflections a report of carrying on is written in
   "continued", "keeps", "kept", "tried", "tries", "retrying", "resumed",
+  // round 4, M4: Spanish and French, folded
+  "sigue", "sigamos", "seguimos", "continua", "adelante", "reprends", "continuez", "allez",
 ];
 
 /**
@@ -41,6 +43,8 @@ export const CONTINUATION_TRIGGERS: readonly string[] = [
 export const CONTINUATION_SIGNAL_WORDS: readonly string[] = [
   "continue", "continues", "continuing", "continued", "proceed", "proceeding", "weiter", "weida",
   "wiiter", "weitermachen", "weitergehen", "weiterarbeiten", "fortfahren", "fortsetzen",
+  // round 4, M4: Spanish and French — "bueno, el login ya funciona, sigue", "d'accord, vas-y"
+  "sigue", "sigamos", "seguimos", "continua", "adelante", "reprends", "continuez", "vas-y", "allez-y",
 ];
 export const CONTINUATION_CLAUSE_WORDS: readonly string[] = ["next", "los", "passt"];
 /**
@@ -72,6 +76,8 @@ export const FILLER_WORDS: readonly string[] = [
   "ahm", "ahh", "uhm", "umm", "uhh", "hmm", "komma", "punkt", "fragezeichen", "ausrufezeichen",
   "doppelpunkt", "neue", "zeile", "absatz", "comma", "period", "sorry", "sry", "jaja", "joa", "nee",
   "thing", "text",
+  // round 4, M4: the second half of French "aujourd'hui"
+  "hui",
 ];
 
 export const OTHER_STEERING: readonly string[] = [
@@ -83,6 +89,9 @@ export const OTHER_STEERING: readonly string[] = [
   "toll", "nochmal", "erneut", "einfach", "schon", "scho", "mal", "los", "nachsten", "nachste",
   "nachster", "naechsten", "naechste", "naechster", "schritt", "schritte", "einverstanden",
   "umsetzen", "klingt", "genau", "jawohl", "jawoll", "ok", "ja",
+  // round 4, M4: Spanish and French, folded
+  "vale", "gracias", "muchas", "favor", "perfecto", "bueno", "listo", "claro", "genial", "dale",
+  "siguiente", "beaucoup", "oui", "accord", "parfait", "bon", "voila", "bien", "suivant",
 ];
 
 export const META_WORDS: readonly string[] = [
@@ -96,6 +105,9 @@ export const META_WORDS: readonly string[] = [
   "left", "aufgehort",
   // round 3, H1: the clock and the limit reports the round-3 set showed missing
   "earlier", "vorher", "gleich", "uhr", "sec", "secs", "hit", "erreicht",
+  // round 4, M4: Spanish and French, folded ("aujourd'hui" is two tokens, its "hui" a filler)
+  "limite", "reinicio", "reinicia", "reinitialisee", "reinitialise", "sesion", "contexto", "contexte",
+  "hoy", "aujourd",
 ];
 
 /**
@@ -173,6 +185,12 @@ export const CONVERSATION_CONTROL: readonly string[] = [
   "still", "simply",
   // round 3, H1: German forms of words above the round-3 set showed missing
   "einfacher", "entscheidest",
+  // round 4, M4: Spanish and French, folded
+  "espera", "momento", "segunda", "segundo", "primera", "primero", "tercera", "tercero", "opcion",
+  "corto", "corta", "largo", "larga", "explicalo", "explica", "explicame", "espanol", "ingles",
+  "detalle", "detalles", "resumen", "attends", "attendez", "deuxieme", "premiere", "premier",
+  "troisieme", "explique", "expliquer", "simplement", "francais", "anglais", "points", "trois", "deux",
+  "dos", "tres",
 ];
 
 export const AGENT_OPERATION: readonly string[] = [
@@ -210,4 +228,6 @@ export const NEAR_MISS_WORDS: readonly string[] = [
   // the German sample
   "weitere", "weitet", "masche", "macher", "probiert", "probierte", "resumee", "verfugbare",
   "abgelaufene", "fahrer", "gerader", "kontinent", "kontingenz",
+  // round 4, M4: the system dictionary's words one slip from the Spanish and French class words
+  "alle", "contestee", "contester", "limited", "limiter", "limnite", "repress", "viola",
 ];

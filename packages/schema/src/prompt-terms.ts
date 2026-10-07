@@ -25,7 +25,13 @@ import { WEAK_WORDS } from "./prompt-vocabulary.ts";
 import { foldWord, isContinuationTrigger, isRestartVerb, isSteeringWord, wordClassOf } from "./session-control.ts";
 import type { WordClass } from "./session-control.ts";
 import { commandArguments } from "./slash-command.ts";
-import { ENGLISH_FUNCTION_WORDS, ENGLISH_STOP_WORDS, GERMAN_FUNCTION_WORDS } from "./stop-words.ts";
+import {
+  ENGLISH_FUNCTION_WORDS,
+  ENGLISH_STOP_WORDS,
+  FRENCH_FUNCTION_WORDS,
+  GERMAN_FUNCTION_WORDS,
+  SPANISH_FUNCTION_WORDS,
+} from "./stop-words.ts";
 
 /** Shorter tokens are not words to search on — the hub's and the connector's floor. */
 export const PROMPT_MIN_TOKEN_CHARS = 3;
@@ -48,10 +54,25 @@ export const promptTokens = (text: string): readonly string[] =>
 const countWhere = (tokens: readonly string[], predicate: (token: string) => boolean): number =>
   tokens.filter(predicate).length;
 
+/** More of a language's own function words than English-only stop words. */
+const readsAs = (tokens: readonly string[], words: ReadonlySet<string>): boolean =>
+  countWhere(tokens, (token) => words.has(token) && !ENGLISH_STOP_WORDS.has(token)) >
+  countWhere(tokens, (token) => ENGLISH_STOP_WORDS.has(token) && !words.has(token));
+
 /** More German-only stop words than English-only ones. */
-export const isGermanPrompt = (tokens: readonly string[]): boolean =>
-  countWhere(tokens, (token) => GERMAN_FUNCTION_WORDS.has(token) && !ENGLISH_STOP_WORDS.has(token)) >
-  countWhere(tokens, (token) => ENGLISH_STOP_WORDS.has(token) && !GERMAN_FUNCTION_WORDS.has(token));
+export const isGermanPrompt = (tokens: readonly string[]): boolean => readsAs(tokens, GERMAN_FUNCTION_WORDS);
+
+/**
+ * THE FUNCTION WORDS A PROMPT DROPS: English's always, and German's,
+ * Spanish's and French's when it reads as that language (round 4, M4).
+ */
+const functionWordsOf = (written: readonly string[]): ((token: string) => boolean) => {
+  const lists = [
+    ENGLISH_FUNCTION_WORDS,
+    ...[GERMAN_FUNCTION_WORDS, SPANISH_FUNCTION_WORDS, FRENCH_FUNCTION_WORDS].filter((words) => readsAs(written, words)),
+  ];
+  return (token: string): boolean => lists.some((words) => words.has(token));
+};
 
 export interface PromptTerms {
   /** Distinct content words, in order of first appearance. */
@@ -172,8 +193,7 @@ export const promptTerms = (text: string): PromptTerms => {
   const written = promptTokens(scored);
   const tokens = [...new Set(written)];
   const isGerman = isGermanPrompt(written);
-  const isFunctionWord = (token: string): boolean =>
-    ENGLISH_FUNCTION_WORDS.has(token) || (isGerman && GERMAN_FUNCTION_WORDS.has(token));
+  const isFunctionWord = functionWordsOf(written);
   // STEERING WORDS ARE NEVER TERMS (review 1006b, H1): not as a shared word
   // beside a real one. As written: a slip moves the verdict, never the terms.
   const termsOf = (words: readonly string[]): readonly string[] =>
@@ -224,11 +244,9 @@ const rankedTerms = (
  */
 export const isContentFreePrompt = (text: string): boolean => {
   const written = promptTokens(classifiedWindow(commandArguments(text)));
-  const isGerman = isGermanPrompt(written);
+  const isFunctionWord = functionWordsOf(written);
   const tokens = [...new Set(written)];
-  const content = tokens.filter(
-    (token) => !ENGLISH_FUNCTION_WORDS.has(token) && !(isGerman && GERMAN_FUNCTION_WORDS.has(token)) && !isSteeringWord(token),
-  );
+  const content = tokens.filter((token) => !isFunctionWord(token) && !isSteeringWord(token));
   return !content.some((term) => wordClassOf(term) === null) && isSessionCommand(tokens, content, content.map(wordClassOf));
 };
 

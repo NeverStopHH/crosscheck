@@ -17565,8 +17565,9 @@ export const MUTATIONS: readonly Mutation[
     label: "German function words count as shared task words",
     file: `${SCHEMA}/src/prompt-terms.ts`,
     // RETARGETED (round 3, M7): English function words are english.stop and its supplement.
-    from: "ENGLISH_FUNCTION_WORDS.has(token) || (isGerman && GERMAN_FUNCTION_WORDS.has(token));",
-    to: "ENGLISH_FUNCTION_WORDS.has(token) || false;",
+    // RETARGETED (round 4, M4): one helper names every language's function words.
+    from: "    ...[GERMAN_FUNCTION_WORDS, SPANISH_FUNCTION_WORDS, FRENCH_FUNCTION_WORDS].filter((words) => readsAs(written, words)),",
+    to: "    ...[SPANISH_FUNCTION_WORDS, FRENCH_FUNCTION_WORDS].filter((words) => readsAs(written, words)),",
     test: `${SERVER}/test/hint-candidate-floor.test.ts`,
     because: "\"passt, das ist nicht so wichtig, mach weiter\" agrees with a German team's decision on das/ist/nicht and pushes it as substance",
   },
@@ -19311,8 +19312,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the English supplement is not applied",
     file: `${SCHEMA}/src/prompt-terms.ts`,
-    from: "    ENGLISH_FUNCTION_WORDS.has(token) || (isGerman && GERMAN_FUNCTION_WORDS.has(token));",
-    to: "    ENGLISH_STOP_WORDS.has(token) || (isGerman && GERMAN_FUNCTION_WORDS.has(token));",
+    // RETARGETED (round 4, M4): one helper names every language's function words.
+    from: "    ENGLISH_FUNCTION_WORDS,\n    ...[GERMAN",
+    to: "    ENGLISH_STOP_WORDS,\n    ...[GERMAN",
     test: `${SCHEMA}/test/prompt-terms.test.ts`,
     because: "\"every\" and \"instead\" are topics, and a long status report matches a root cause on them (M7)",
   },
@@ -20164,6 +20166,54 @@ export const MUTATIONS: readonly Mutation[
     because: "a hundred megabytes of paste is lower-cased and searched on every prompt hook (round 4, M3)",
   },
   {
+    label: "a Spanish or French prompt keeps its function words",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "    ...[GERMAN_FUNCTION_WORDS, SPANISH_FUNCTION_WORDS, FRENCH_FUNCTION_WORDS].filter((words) => readsAs(written, words)),",
+    to: "    ...[GERMAN_FUNCTION_WORDS].filter((words) => readsAs(written, words)),",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"muchas gracias, eso es todo\" keeps \"eso\" and \"todo\" as task words and reaches the hub (round 4, M4)",
+  },
+  {
+    label: "every language's function words are dropped from every prompt",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "    ...[GERMAN_FUNCTION_WORDS, SPANISH_FUNCTION_WORDS, FRENCH_FUNCTION_WORDS].filter((words) => readsAs(written, words)),",
+    to: "    ...[GERMAN_FUNCTION_WORDS, SPANISH_FUNCTION_WORDS, FRENCH_FUNCTION_WORDS],",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"the con job in the readme\" loses \"con\", and an English task its words (round 4, M4)",
+  },
+  {
+    label: "a Spanish continuation is read as a task",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "  \"sigue\", \"sigamos\", \"seguimos\", \"continua\", \"adelante\", \"reprends\", \"continuez\", \"vas-y\", \"allez-y\",\n",
+    to: "",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"bueno, el login ya funciona, sigue\" reaches the login tree on a status report (round 4, M4)",
+  },
+  {
+    label: "Spanish and French thanks are task words",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "  \"vale\", \"gracias\", \"muchas\", \"favor\", \"perfecto\", \"bueno\", \"listo\", \"claro\", \"genial\", \"dale\",\n",
+    to: "",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"muchas gracias, eso es todo\" reaches the hub as a task (round 4, M4)",
+  },
+  {
+    label: "a Spanish or French request to wait or shorten is a task",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "  \"espera\", \"momento\", \"segunda\", \"segundo\", \"primera\", \"primero\", \"tercera\", \"tercero\", \"opcion\",\n",
+    to: "",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"espera un momento\" and \"la segunda opción\" reach the hub (round 4, M4)",
+  },
+  {
+    label: "a French or Spanish clock word is a topic",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "  \"hoy\", \"aujourd\",\n",
+    to: "",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"merci beaucoup, c'est tout pour aujourd'hui\" reaches the hub as a task about today (round 4, M4)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     // RETARGETED (round 3, M7): the query is the prompt's window now.
@@ -20177,8 +20227,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the session-command rule judges stop words too",
     file: `${SCHEMA}/src/prompt-terms.ts`,
-    from: "  const isFunctionWord = (token: string): boolean =>\n    ENGLISH_FUNCTION_WORDS.has(token) || (isGerman && GERMAN_FUNCTION_WORDS.has(token));",
-    to: "  const isFunctionWord = (_token: string): boolean => false;",
+    // RETARGETED (round 4, M4): one helper names every language's function words.
+    from: "  const isGerman = isGermanPrompt(written);\n  const isFunctionWord = functionWordsOf(written);",
+    to: "  const isGerman = isGermanPrompt(written);\n  const isFunctionWord = (_token: string): boolean => false;",
     test: `${SERVER}/test/hint-candidate-floor.test.ts`,
     because: "\"weiter\" and \"alles\" are not session commands, so no real prompt of them is ever content-free",
   },
@@ -20195,16 +20246,18 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the German stop list strips an English prompt",
     file: `${SCHEMA}/src/prompt-terms.ts`,
-    from: "ENGLISH_FUNCTION_WORDS.has(token) || (isGerman && GERMAN_FUNCTION_WORDS.has(token));",
-    to: "ENGLISH_FUNCTION_WORDS.has(token) || GERMAN_FUNCTION_WORDS.has(token);",
+    // RETARGETED (round 4, M4): one helper names every language's function words.
+    from: "    ...[GERMAN_FUNCTION_WORDS, SPANISH_FUNCTION_WORDS, FRENCH_FUNCTION_WORDS].filter((words) => readsAs(written, words)),\n  ];",
+    to: "    GERMAN_FUNCTION_WORDS,\n    ...[GERMAN_FUNCTION_WORDS, SPANISH_FUNCTION_WORDS, FRENCH_FUNCTION_WORDS].filter((words) => readsAs(written, words)),\n  ];",
     test: `${SCHEMA}/test/prompt-terms.test.ts`,
     because: "\"why does the worker die\" loses \"die\" and the worker tree it shares two words with (L1)",
   },
   {
     label: "the language signal reads English as German",
     file: `${SCHEMA}/src/prompt-terms.ts`,
-    from: "  countWhere(tokens, (token) => GERMAN_FUNCTION_WORDS.has(token) && !ENGLISH_STOP_WORDS.has(token)) >\n",
-    to: "  countWhere(tokens, (token) => GERMAN_FUNCTION_WORDS.has(token) && !ENGLISH_STOP_WORDS.has(token)) >=\n",
+    // RETARGETED (round 4, M4): one comparison reads every language.
+    from: "  countWhere(tokens, (token) => words.has(token) && !ENGLISH_STOP_WORDS.has(token)) >\n",
+    to: "  countWhere(tokens, (token) => words.has(token) && !ENGLISH_STOP_WORDS.has(token)) >=\n",
     test: `${SCHEMA}/test/prompt-terms.test.ts`,
     because: "a prompt with no stop word of either language is stripped of German function words it never had",
   },
@@ -20513,7 +20566,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1
- * PRINTS: packages/schema/test/prompt-terms.test.ts 25
+ * PRINTS: packages/schema/test/prompt-terms.test.ts 31
  * PRINTS: packages/schema/test/session-control.test.ts 7
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/schema/test/slash-command.test.ts 4

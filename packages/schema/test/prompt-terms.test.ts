@@ -18,6 +18,60 @@ import {
   promptTokens,
 } from "../src/prompt-terms.ts";
 
+/**
+ * SPANISH AND FRENCH (hold-out review round 4, M4): the round-4 hold-out's
+ * 22 Spanish and French content-free prompts reached the hub 17 times —
+ * "muchas gracias, eso es todo", "la deuxième option", "oui c'est bon" —
+ * since no list knew their words. Small, documented lists: function words
+ * dropped from a prompt that reads as Spanish or French, and steering,
+ * conversation and meta words beside the English and German ones.
+ */
+describe("Spanish and French prompts (round 4, M4)", () => {
+  test.each([
+    ["vale, sigue"],
+    ["perfecto, continúa con lo que estabas haciendo"],
+    ["sí, adelante"],
+    ["muchas gracias, eso es todo"],
+    ["espera un momento"],
+    ["la segunda opción"],
+    ["más corto por favor"],
+    ["explícalo en español"],
+    ["ok merci, continue"],
+    ["d'accord, vas-y"],
+    ["oui c'est bon"],
+    ["parfait, on continue"],
+    ["attends"],
+    ["la deuxième option"],
+    ["résume en trois points"],
+    ["explique plus simplement"],
+    ["merci beaucoup, c'est tout pour aujourd'hui"],
+    ["sigue con lo siguiente de la lista"],
+    ["bueno, el login ya funciona, sigue"],
+    ["super, le déploiement est passé, continue"],
+    ["ok la limite est réinitialisée, reprends"],
+    ["ya se reinició el límite, continúa"],
+  ])("%p asks nothing of the hub", (prompt) => {
+    const terms = promptTerms(prompt);
+    expect(terms.isContentFree || terms.hasContinuation).toBe(true);
+  });
+
+  test.each([
+    ["arregla el bug del login en Safari, los usuarios pierden la sesión después del pago", ["arregla", "bug", "login", "safari", "usuarios", "pierden", "sesión", "pago"]],
+    ["las notificaciones push llegan duplicadas en iOS", ["notificaciones", "push", "llegan", "duplicadas", "ios"]],
+    ["le webhook Stripe est traité deux fois, on facture deux fois les clients", ["webhook", "stripe", "traité", "deux", "fois", "facture", "clients"]],
+    ["l'export CSV des commandes s'arrête à 10 000 lignes", ["export", "csv", "commandes", "arrête", "000", "lignes"]],
+  ])("a Spanish or French task keeps its task words, its function words dropped: %p", (prompt, content) => {
+    const terms = promptTerms(prompt);
+    expect(terms.isContentFree).toBe(false);
+    expect(terms.hasContinuation).toBe(false);
+    expect(terms.content).toEqual(content);
+  });
+
+  test("an English prompt keeps a word Spanish drops", () => {
+    expect(promptTerms("the con job in the readme is a joke").content).toContain("con");
+  });
+});
+
 describe("the language signal: more German-only stop words than English-only ones", () => {
   test.each([
     ["warum wird das Upload-Limit nicht erhöht", true],

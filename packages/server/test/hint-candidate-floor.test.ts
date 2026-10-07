@@ -158,6 +158,19 @@ describe("German and English function words are never task words (finding 2)", (
     expect(candidates).toEqual([]);
   });
 
+  test("German function words never stand beside one task word: \"das ist nicht die Grenze\" matches nothing", async () => {
+    // Arrange — round 4: the filler prompts above carry the session on (C1)
+    // and stop before the floor; this one is a task, and only its function
+    // words would agree with the decision beside "Grenze"
+    const { harness, robin } = await germanUploadTree();
+
+    // Act
+    const candidates = await fetchCandidates(harness, robin, { query: "das ist nicht die Grenze" });
+
+    // Assert
+    expect(candidates).toEqual([]);
+  });
+
   test("the control: a German prompt with two task words still matches the tree", async () => {
     // Arrange
     const { harness, robin } = await germanUploadTree();
