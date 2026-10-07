@@ -42,10 +42,13 @@ import { GHOST_SECTION_HEADER } from "@crosscheck/connector-core/briefing/ghost.
 import { readTelemetryLossReport } from "@crosscheck/connector-core/spool/loss-report.ts";
 
 import { repoKey } from "../../src/index.ts";
+import { gitIn } from "./release-gate/git.ts";
 import { agentTexts, personLines } from "./release-gate/host.ts";
 import type { HookRun, HostSession } from "./release-gate/host.ts";
 import { dumpDatabase, startHub } from "./release-gate/hub.ts";
 import type { TestHub } from "./release-gate/hub.ts";
+import { N5_SHARED_FILE, runLandedCase, runSelfCase, runSweepCase } from "./release-gate/scenario-boundaries.ts";
+import type { LandedWorld, SelfWorld, SweepWorld } from "./release-gate/scenario-boundaries.ts";
 import { GENERATED_CLASSES, runGeneratedCase } from "./release-gate/scenario-generated.ts";
 import type { GeneratedWorld } from "./release-gate/scenario-generated.ts";
 import { MIKE_BRANCH, STALE_BRANCH, TOPIC_BRANCH, runLongSessionCase } from "./release-gate/scenario-long-session.ts";
@@ -515,5 +518,128 @@ describe("N2 — overlap only in lockfiles and generated code: silent", () => {
   });
 });
 
+describe("N3 — Mike's work merged to main days before Nick starts: silent", () => {
+  let landedHub: TestHub;
+  let world: LandedWorld;
+  let rows: OverlapRows;
 
+  beforeAll(async () => {
+    // Its own hub: this case moves the hub's clock, and no other case may see that.
+    landedHub = await startHub();
+    world = await runLandedCase(landedHub);
+    cleanups.push(...world.cleanup);
+    rows = await overlapRows(landedHub, [world.mike, world.nick], world.repo.repoId);
+  }, CASE_TIMEOUT_MS);
 
+  afterAll(async () => {
+    await landedHub.close();
+  });
+
+  test("setup: Mike's context is truly landed, his session ended, and his merged commit is in Nick's checkout", async () => {
+    const contexts = await contextsOf(landedHub.db, world.repo.repoId);
+    const mikes = contexts.filter((context) => context.developer === "Mike");
+    expect(mikes.length).toBeGreaterThan(0);
+    expect(mikes.every((context) => context.landedAt !== null), JSON.stringify(mikes.map((context) => context.landedAt))).toBe(true);
+    await gitIn(world.nickWorktree, ["merge-base", "--is-ancestor", world.mikeLastCommit, "HEAD"]);
+  });
+
+  test("N3: no collision output, briefing ghost section or statusline overlap reaches Nick", () => {
+    expect(collisionNoise([world.nickSession], ["Mike"], [world.nickStatusline])).toEqual(SILENT);
+  });
+
+  test("N3: no overlap row for anybody", () => {
+    expect(rows.ghost).toEqual([]);
+    expect(rows.conference).toEqual([]);
+  });
+});
+
+describe("N4 — one person, two sessions in two worktrees, the same files: silent", () => {
+  let world: SelfWorld;
+  let rows: OverlapRows;
+
+  beforeAll(async () => {
+    world = await runSelfCase(hub);
+    cleanups.push(...world.cleanup);
+    rows = await overlapRows(hub, [world.nick], world.repo.repoId);
+  }, CASE_TIMEOUT_MS);
+
+  test("setup: both of Nick's sessions hold the same six files on the hub", async () => {
+    const targets = await targetsOf(hub.db, world.repo.repoId);
+    const contextsPerFile = new Map<string, Set<string>>();
+    for (const target of targets) {
+      contextsPerFile.set(target.value, new Set([...(contextsPerFile.get(target.value) ?? []), target.workContextId]));
+    }
+    expect([...contextsPerFile.values()].filter((contexts) => contexts.size >= 2).length).toBe(6);
+  });
+
+  test("N4: Nick is never warned about himself — no collision output, no statusline overlap", () => {
+    expect(collisionNoise([world.first, world.second], ["Nick"], world.statuslines)).toEqual(SILENT);
+  });
+
+  test("N4: no overlap row", () => {
+    expect(rows.ghost).toEqual([]);
+    expect(rows.conference).toEqual([]);
+  });
+});
+
+describe("N5 — a 300-file formatting sweep sharing one file: warns, qualified, ranked below the focused overlap", () => {
+  let world: SweepWorld;
+  let nickGhost: readonly GhostRow[];
+
+  /** The hub's tripwire answer to Nick's edit of the shared file, rows in the hub's order. */
+  const sharedAnswer = (): readonly Readonly<Record<string, unknown>>[] => {
+    const entry = hub.wire.find(
+      (candidate) =>
+        candidate.developer === "Nick" &&
+        candidate.path.startsWith("/api/hints/tripwire") &&
+        candidate.path.includes(encodeURIComponent(world.repo.repoId)) &&
+        candidate.path.includes(encodeURIComponent(N5_SHARED_FILE)),
+    );
+    return entry === undefined
+      ? []
+      : (JSON.parse(entry.responseBody) as { data: { sessions: readonly Readonly<Record<string, unknown>>[] } }).data.sessions;
+  };
+
+  beforeAll(async () => {
+    world = await runSweepCase(hub);
+    cleanups.push(...world.cleanup);
+    nickGhost = await ghostRows(hub, world.nick, world.repo.repoId);
+  }, CASE_TIMEOUT_MS);
+
+  test("setup: Mike's formatter run reached the hub as a sweep (over 50 files), the shared file among them", async () => {
+    const targets = await targetsOf(hub.db, world.repo.repoId);
+    expect(world.mikeTargetCount).toBeGreaterThan(SWEEP_TARGETS);
+    expect(targets.some((target) => target.developer === "Mike" && target.value === N5_SHARED_FILE)).toBe(true);
+  });
+
+  test("setup: the focused overlap with Tina is a ghost row for Nick (positive control)", () => {
+    expect(nickGhost.some((row) => row.developerName === "Tina")).toBe(true);
+  });
+
+  test("N5.1: the hub offers the sweep as an overlap on the shared file — it is not ignored", () => {
+    const names = sharedAnswer().map((row) => row["developerName"]);
+    expect(names).toContain("Mike");
+    expect(names).toContain("Tina");
+  });
+
+  // fixed by feat/collision-visible.
+  expectedFailure("N5.2: Nick is shown the overlap with Mike in a line he reads", () => {
+    expect(mentions(personLines(world.nickSharedEdit), "Mike")).toBe(true);
+  });
+
+  // fixed by Sweep ≠ Ignore (fix/false-landed-stamp, in progress).
+  expectedFailure("N5.3: the overlap with Mike is qualified as a large change, in the row or the line", () => {
+    const mikeRow = sharedAnswer().find((row) => row["developerName"] === "Mike") ?? {};
+    const mikeLines = personLines(world.nickSharedEdit).filter((line) => line.includes("Mike"));
+    expect(isQualifiedAsLarge(mikeRow) || mikeLines.some((line) => LARGE_WORD.test(line) || /\b\d{3,} files\b/.test(line))).toBe(true);
+  });
+
+  // fixed by Sweep ≠ Ignore (fix/false-landed-stamp, in progress) + feat/collision-visible for the line.
+  expectedFailure("N5.4: the sweep ranks below Tina's focused overlap, though Mike's heartbeat is fresher", () => {
+    const order = sharedAnswer().map((row) => row["developerName"]);
+    expect(order.indexOf("Tina")).toBeLessThan(order.indexOf("Mike"));
+    const text = personLines(world.nickSharedEdit).join("\n");
+    expect(text.indexOf("Tina")).toBeGreaterThanOrEqual(0);
+    expect(text.indexOf("Tina")).toBeLessThan(text.indexOf("Mike"));
+  });
+});
