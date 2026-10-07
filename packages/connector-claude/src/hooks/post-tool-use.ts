@@ -1,7 +1,4 @@
-import {
-  UNKNOWN_DEVELOPER_ID,
-  workContextRecord,
-} from "@crosscheck/connector-core/capture/records.ts";
+import { UNKNOWN_DEVELOPER_ID } from "@crosscheck/connector-core/capture/records.ts";
 import type { Producer } from "@crosscheck/connector-core/capture/records.ts";
 import {
   extractFailureText,
@@ -13,9 +10,8 @@ import {
 import { captureFailure } from "@crosscheck/connector-core/flows/capture-targets.ts";
 import { captureTouchedFiles } from "@crosscheck/connector-core/flows/capture-touched-files.ts";
 import { heartbeatMaybe } from "@crosscheck/connector-core/flows/heartbeat.ts";
-import { registerSessionLadder } from "@crosscheck/connector-core/flows/register-session.ts";
+import { registerSessionFlow } from "@crosscheck/connector-core/flows/register-session.ts";
 import { guaranteeDeclarationFor } from "@crosscheck/connector-core/guarantees/declarations.ts";
-import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
 import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
 import {
   diagnosisPath,
@@ -23,16 +19,13 @@ import {
 } from "@crosscheck/connector-core/state/capture-bookkeeping.ts";
 import {
   allocateToolSeq,
-  claimSessionState,
   closedToolWindow,
-  deriveSessionState,
   readSessionState,
   updateSessionState,
   withSeenTargets,
-  workContextIdFor,
 } from "@crosscheck/connector-core/state/session-state.ts";
 import { toolWindowKey } from "@crosscheck/connector-core/state/tool-window-key.ts";
-import { ALLOCATION_FAILED, seqAt } from "@crosscheck/connector-core/capture/seq.ts";
+import { seqAt } from "@crosscheck/connector-core/capture/seq.ts";
 import { MAX_TARGETS_PER_INVOCATION } from "@crosscheck/connector-core/constants.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { healerFor, onRefusedHeartbeat } from "./heal.ts";
@@ -68,118 +61,55 @@ const FINGERPRINT_SEQ_OFFSET = MAX_TARGETS_PER_INVOCATION;
  * against a work context that was never recorded are rejected forever.
  */
 const recoverState = async (ctx: HookContext): Promise<SessionState | null> => {
-  const derived = deriveSessionState({
-    hostSessionKey: ctx.payload.session_id,
-    repoId: ctx.identity.repoId,
-    repoRoot: ctx.identity.root,
-    hubUrl: ctx.config.hubUrl,
-    developerId: ctx.config.developerId,
-    startedAt: ctx.now().toISOString(),
-  });
-  // THE SAME LIFE LADDER SessionStart walks (state/session-lineage.ts), in
-  // recovery mode. A conversation that SessionEnd closed and that came back
-  // without a SessionStart this hook could see — the parent-workspace shape —
-  // used to register `cc_<id>`, take the hub's 409 for "nothing to recover"
-  // and capture nothing for the rest of that life, silently.
-  const ladder = await registerSessionLadder({
+  // THE FLOW EVERY STATE-LESS REGISTER RUNS (core flows/register-session.ts),
+  // in recovery mode, as connector-cursor's recovery does (review-2 round 9,
+  // M1 + M2). It walked the life ladder itself under a fresh epoch
+  // `deriveSessionState` minted: after a week asleep, or beside a resume
+  // killed after its register, that mint went onto a life the hub held under
+  // another epoch, and the state named no agent kind. The flow decides the
+  // epoch the one way every register does — a reservation, the life's end
+  // marker, the lineage, a mint — and:
+  //   - walks the same life ladder SessionStart walks, stopping on a live
+  //     session this developer bound to ANOTHER repo (repo_mismatch,
+  //     first-wins): nothing to recover;
+  //   - CLAIMS the state, never overwrites it (recovery-race.test.ts): a
+  //     sibling recovery that published during our register round-trip
+  //     keeps its binding, we adopt it, and no second work context goes;
+  //   - publishes the state BEFORE the first append, since `reap` infers "no
+  //     writer left" from its absence, then spools the work context targets
+  //     need.
+  await registerSessionFlow({
     home: ctx.config.home,
     repoKey: ctx.repoKey,
     hub: ctx.hub,
     agentKind: ctx.config.agentKind,
     hostSessionKey: ctx.payload.session_id,
     repoId: ctx.identity.repoId,
+    repoRoot: ctx.identity.root,
     branch: ctx.identity.branch,
     baseCommit: ctx.identity.baseCommit,
+    hubUrl: ctx.config.hubUrl,
+    fallbackDeveloperId: ctx.config.developerId,
+    // The detached-aware title builder runs ONCE per session here (recovery
+    // happens once), never on the per-tool path — and the title is kept in
+    // state for the intent writers (trial finding #16).
+    title: await resolveSessionWorkContextTitle(undefined, ctx.identity),
     status: IMPLEMENTING_STATUS,
-    // A recovery CREATES the session, so it carries the declaration a
+    // A recovery may CREATE the session, so it carries the declaration a
     // SessionStart would have (01a §3.6) — the hub stores it only on create.
     guarantees: guaranteeDeclarationFor("claude-code"),
-    // A RECOVERY IS A CREATE, so it mints an epoch like SessionStart does and
-    // `session.started` takes position 0 under it. Sending nothing would file
-    // a current connector under `pre_seq_connector` — "a connector from
-    // before this field" — on the one row every session is guaranteed to
-    // have. `derived.seqEpoch` is minted by `deriveSessionState` and is never
-    // null in practice; the refusal is what an impossible null becomes,
-    // because an omitted field is a sentence about a different machine.
-    // Every rung carries the machine's loss report, zeros included
-    // (loss-accounting §4.2; review LOW), read by the ladder itself.
-    seq:
-      derived.seqEpoch === null
-        ? ALLOCATION_FAILED
-        : { epoch: derived.seqEpoch, n: 0 },
     recovery: true,
-    liveSessionId: null,
-  });
-  // A live session this developer already bound to ANOTHER repo (the hub's
-  // repo_mismatch, first-wins) — nothing to recover.
-  if (ladder.outcome === "repo_mismatch") {
-    return null;
-  }
-  // The life the walk settled on, registered or not — never the base id the
-  // hub may have ended (flows/register-session.ts RegisterLadderOutcome).
-  const crosscheckSessionId = ladder.sessionId;
-  const workContextId = workContextIdFor(crosscheckSessionId);
-  const developerId =
-    ladder.outcome === "registered" ? ladder.developerId : ctx.config.developerId;
-  const now = ctx.now();
-  // `briefingPending`: a recovery registration means SessionStart never ran
-  // for this session (or ran somewhere it could not resolve the repo — the
-  // parent-workspace shape), so nobody has briefed it. The debt is recorded
-  // here and paid by the NEXT UserPromptSubmit through the same core flow
-  // SessionStart uses (flows/briefing.ts `deliverDeferredBriefing`) — a
-  // parent-workspace session loses nothing but the timing.
-  // The detached-aware title builder runs ONCE per session here (recovery
-  // happens once), never on the per-tool path — and the title is kept in
-  // state for the intent writers (trial finding #16).
-  const title = await resolveSessionWorkContextTitle(undefined, ctx.identity);
-  const recovered: SessionState = {
-    ...derived,
-    crosscheckSessionId,
-    workContextId,
-    developerId,
+    // `briefingPending`: a recovery registration means SessionStart never ran
+    // for this session (or ran somewhere it could not resolve the repo — the
+    // parent-workspace shape), so nobody has briefed it. The debt is paid by
+    // the NEXT UserPromptSubmit through the same core flow SessionStart uses
+    // (flows/briefing.ts `deliverDeferredBriefing`).
     briefingPending: true,
-    workContextTitle: title,
-    workContextStatus: IMPLEMENTING_STATUS,
-  };
-  // BEFORE the first append, always: `reap` infers "no writer left" from the
-  // absence of a session state file, so a hook that appends without publishing
-  // state first could have its records reaped out from under it.
-  //
-  // CLAIMED, never overwritten (recovery-race.test.ts): a sibling recovery
-  // that published state during our register round-trip keeps its binding —
-  // we adopt it (the caller's foreign-repo guard judges the repo) and append
-  // no second work context. A busy lock is fail-open silence.
-  const claim = await claimSessionState(ctx.config.home, recovered);
-  if (claim === null) {
-    return null;
-  }
-  if (!claim.claimed) {
-    return claim.state;
-  }
-  // The work context must exist before its targets, or ingest rejects them.
-  await appendRecords(
-    ctx.config.home,
-    ctx.repoKey,
-    ctx.payload.session_id,
-    [
-      workContextRecord(
-        {
-          workContextId,
-          sessionId: crosscheckSessionId,
-          title,
-          status: IMPLEMENTING_STATUS,
-        },
-        {
-          developerId: developerId ?? UNKNOWN_DEVELOPER_ID,
-          agentKind: ctx.config.agentKind,
-          sessionId: crosscheckSessionId,
-        },
-        now,
-      ),
-    ],
-    now,
-  );
-  return recovered;
+    now: ctx.now(),
+  });
+  // Published, adopted from a sibling, or — repo_mismatch, a busy lock —
+  // nothing: what is on disk is the answer.
+  return readSessionState(ctx.config.home, ctx.payload.session_id);
 };
 
 /** Bash carries no status signal, so none is fabricated (spec §C). */

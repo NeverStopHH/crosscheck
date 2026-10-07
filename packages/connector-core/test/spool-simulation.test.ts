@@ -118,14 +118,6 @@ const said = (verdicts: readonly Verdict[]): readonly string[] =>
  * that fix lands.
  */
 const OPEN: ReadonlyMap<string, string> = new Map<string, string>([
-  ["sleep:3", "M1+M2+L4"],
-  ["sleep:365", "M1+M2+L4"],
-  ["sleep:935", "M1+M2+L4"],
-  ["sleep:936", "M1+M2+L4"],
-  ["sleep:1955", "M1+M2+L4"],
-  ["focus:361", "M1+M2+L4"],
-  ["focus:662", "M1+M2+L4"],
-  ["focus:1811", "M1+M2+L4"],
   ["focus:18", "L1"],
   ["focus:313", "L1"],
   ["focus:399", "L1"],
@@ -509,7 +501,6 @@ const manyEnds = (count: number): readonly SimEvent[] => Array.from({ length: co
 const noDrops = (run: Run): boolean => run.drops.length === 0;
 const counted = (run: Run): boolean => run.uncountable.count > 0;
 
-const EPOCHS = "M1+M2+L4 (epochs across a reap, a recovery and a resume)";
 const M3 = "M3 (the refused life written down before the end goes out)";
 const L1 = "L1 (two concurrent set_intents on one conversation)";
 
@@ -541,22 +532,18 @@ const ROUND_8: readonly Found[] = [
   {
     name: "probe E1: a resumed life reaped while the laptop slept a week, resumed again: one epoch, no position issued twice",
     events: [start(0), edit(0), edit(0), end(0), start(0), edit(0), edit(0), edit(0), VACATION, start(1), wake(0), start(0), edit(0), edit(0), edit(0), edit(0)],
-    open: EPOCHS,
   },
   {
     name: "probe E2: the same life recovered by a PostToolUse after the week (connector-claude recoverState)",
     events: [start(0), edit(0), edit(0), end(0), start(0), edit(0), edit(0), VACATION, start(1), wake(0), recover(0), edit(0)],
-    open: EPOCHS,
   },
   {
     name: "probe E3: a first life reaped while asleep, resumed: one epoch",
     events: [start(0), edit(0), edit(0), VACATION, start(1), wake(0), start(0), edit(0), edit(0)],
-    open: EPOCHS,
   },
   {
     name: "probe E4: a first life reaped while asleep, recovered by a PostToolUse",
     events: [start(0), edit(0), edit(0), VACATION, start(1), wake(0), recover(0), edit(0)],
-    open: EPOCHS,
   },
   {
     name: "probe C1: a refused life's straggler, 64 later session ends, then a week",
@@ -578,33 +565,26 @@ const ROUND_8: readonly Found[] = [
   {
     name: "sleep seed 3 (I3): a first life asleep a week, resumed after another conversation started",
     events: [start(0), VACATION, start(2), wake(0), start(0)],
-    open: EPOCHS,
   },
   {
     name: "sleep seed 365 (I3): a recovery after a crashed resume of an ended life",
     events: [start(0), end(0), crash(2, "after"), start(0), recover(0)],
-    open: EPOCHS,
   },
   {
     name: "sleep seed 935 (I3): a recovery after the end of a life the hub ended",
     events: [start(0), crash(7, "before"), hubEnd(0), edit(0), end(0), recover(0)],
-    open: EPOCHS,
   },
   {
     name: "sleep seed 936 (I3): a recovery after a resume killed after its third write",
     events: [start(0), end(0), crash(3, "after"), start(0), recover(0)],
-    open: EPOCHS,
   },
   {
     name: "sleep seed 1955 (I3): a recovery after a resume killed before its third write",
     events: [start(0), end(0), crash(3, "before"), start(0), recover(0)],
-    open: EPOCHS,
   },
   {
     name: "focus seed 361 (I3, L4): SessionEnd beside a re-fire behind a slow hub",
     events: [start(1), slow(600, 2, 1), edit(1), fault("records503", 2, 1), par({ kind: "flush", c: 1 }, intent(1, "done")), par(end(1), start(1))],
-    open: EPOCHS,
-    racy: true,
   },
   {
     name: "focus seed 662 (I3, L4): a start beside an end, twice, behind a slow hub",
@@ -617,14 +597,10 @@ const ROUND_8: readonly Found[] = [
       par(end(0), start(0)),
       edit(0),
     ],
-    open: EPOCHS,
-    racy: true,
   },
   {
     name: "focus seed 1811 (I3, L4): the generated scenario",
     events: scenarioOf(1811, GENERATORS.focus),
-    open: EPOCHS,
-    racy: true,
   },
   {
     name: "focus seed 18 (I4): two set_intents of one conversation at once behind a slow hub",

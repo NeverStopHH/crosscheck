@@ -20,7 +20,11 @@ export interface WorkContextStanding {
 export interface EndMarker {
   readonly sessionId: string;
   readonly at: Date;
-  /** The position SessionEnd allocated for the end; a life session-reap closes has none, and ends unsequenced. */
+  /**
+   * The end's position: the one SessionEnd allocated, or for a life
+   * session-reap closes the one past its counter (review-2 round 9, M1 + M2).
+   * A resume onto the life restores its epoch and next position from it.
+   */
   readonly seq?: SeqField;
   readonly standing: WorkContextStanding;
 }

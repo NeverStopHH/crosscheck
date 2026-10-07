@@ -573,6 +573,35 @@ rows now VACUUMs `record_receipts`, as the skeleton backfill does for `session_e
 `record-receipts-bloat.test.ts` runs 180 simulated days of 2000 receipts with a daily prune. The table ends within 25%
 of its size at the retention; without the VACUUM it ends six times that.
 
+**A life keeps its epoch across a week asleep, a recovery and an end beside its start** (review-2 round 9, M1, M2
+and L4). The counter lives in the state file, and three ways of losing that file left a register to guess the
+life's epoch:
+
+- a laptop asleep a week came back to a state session-reap had taken; the resume minted a fresh epoch onto a life the
+  hub held under its own (`epoch_split`, probes E3 and E4, sleep seeds 3, 365, 935, 936, 1955), or took the epoch of the
+  life before from the lineage and issued positions that life had already used (`epoch_conflict`, probe E1);
+- connector-claude's PostToolUse recovery walked the ladder itself under a mint of its own (E2, E4);
+- a SessionEnd beside a re-fire deleted the state while the re-fire's register was out, and the re-fire started its own
+  life on a fresh mint (L4, focus seeds 361, 662, 1811).
+
+The fixes:
+
+- session-reap's end marker now carries the life's epoch and the position past its counter, as SessionEnd's own marker
+  does.
+- A state-less register sends the epoch of the marker of the life its walk starts on, ahead of the lineage's, so a life
+  the hub never registered files `session.started` under its own epoch.
+- A register onto a life a marker speaks for restores that epoch and goes on from that position. For a state-less
+  register this happens on its state input. For a publish that finds the state gone, the marker is read under the
+  state's lock, and SessionEnd writes its marker before it deletes the state under that same lock.
+- connector-claude's `recoverState` runs `registerSessionFlow({ recovery: true })`, as connector-cursor's does, so a
+  recovery decides its epoch the one way every register does and names its agent kind.
+
+A lineage or reserved epoch is now reused only where no marker speaks for the life. That is a life the register created,
+or one the hub holds with nothing but `session.started` under that epoch (a heal's unheard register, a register killed
+after its POST). In each case nothing was ever positioned in it. Without a readable marker, a re-fire's own life starts
+on a fresh mint: its order splits honestly, and no position is handed out twice. The par[end ‖ start] split (L4) is
+fixed by the same marker, so I3 needs no exemption for it.
+
 **Three clocks that were one** (review-2 round 8, H1 and H2). The refused-lives note dropped an entry
 `MAX_SPOOL_AGE_DAYS` after it was written. A flush reads a silent host session as abandoned after the same span. Reap
 expired a spool whose data file was that old. So when a host died:

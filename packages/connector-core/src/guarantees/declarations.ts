@@ -223,12 +223,6 @@ const CLAUDE_PRE_TOOL = `${CLAUDE}/hooks/pre-tool-use.ts`;
 
 const claudeTable: ConnectorTable = {
   ...sharedKinds,
-  // A hook installed mid-session re-registers from PostToolUse
-  // (post-tool-use.ts:78) with `{ epoch: derived.seqEpoch, n: 0 }` — a second
-  // origin, still n = 0 by construction.
-  "session.started": row([
-    lane("lifecycle", [REGISTER_FLOW, HEAL_FLOW, `${CLAUDE}/hooks/post-tool-use.ts`]),
-  ]),
   // Edit-family calls are bracketed (pre-tool-use.ts:188 opens, post-tool-use.ts:284
   // closes); Bash is in POST_TOOL_USE_MATCHER and not PRE_TOOL_USE_MATCHER
   // (constants.ts:1630-1632), and the Stop git lane (stop.ts:186) observes.

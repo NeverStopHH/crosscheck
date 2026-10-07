@@ -60,8 +60,15 @@ export const isPastReapBound = (
  * (spool/owed-work-context.ts readLifeState) — without it, the copy spooled
  * at SessionStart put back the status set_intent had set since. The marker is
  * also its deferred end: reap ends the dead life on the hub once its backlog
- * is gone, unsequenced, as nothing allocated it a position. One SessionEnd
- * already wrote is never overwritten.
+ * is gone. One SessionEnd already wrote is never overwritten.
+ *
+ * ...AND THE LIFE'S EPOCH AND NEXT POSITION (review-2 round 9, M1 + M2): the
+ * counter goes with the state, and a laptop asleep a week came back to a
+ * state-less resume that put a fresh epoch — or the epoch of the life before
+ * — onto this life, splitting its order or issuing its positions twice. The
+ * end's position is the one past everything the counter handed out, as
+ * SessionEnd's own is; a state-less register onto this life restores both
+ * (flows/register-session.ts).
  */
 const writeDownReapedLife = async (
   home: string,
@@ -82,6 +89,7 @@ const writeDownReapedLife = async (
     await writeEndMarker(path, {
       sessionId: state.crosscheckSessionId,
       at: now,
+      ...(state.seqEpoch === null ? {} : { seq: { epoch: state.seqEpoch, n: state.eventSeq + 1 } }),
       standing: { workContextTitle: state.workContextTitle, workContextStatus: state.workContextStatus },
     });
   } catch {

@@ -832,6 +832,12 @@ export const withCarriedCapture = (
           : {}),
       };
 
+/** The epoch and counter a state that carries nothing starts on. */
+export interface SeqStart {
+  readonly seqEpoch: string | null;
+  readonly eventSeq: number;
+}
+
 /**
  * SessionStart's publication: create the state file, or replace one of the
  * SAME session while carrying its capture counters (withCarriedCapture).
@@ -843,24 +849,28 @@ export const withCarriedCapture = (
  * optional (spool reap infers "no writer left" from its absence), so the
  * counters lose rather than the file.
  *
- * `startEpoch` is the epoch a publish that finds nothing to carry starts on,
- * under the lock (review-2 round 8, L2): the register's caller knows which
- * epoch the life's `session.started` went out under, and a SessionEnd that
- * deleted the state while the register was out leaves nothing else to name
- * it. The busy-lock fallback keeps `state` as it is — it may overwrite a
- * state it never read, and only a fresh epoch is safe beside a counter at 0.
+ * `startOf` answers the epoch and counter a publish that finds nothing to
+ * carry starts on, read under the lock (review-2 round 8, L2): the register's
+ * caller knows which epoch the life's `session.started` went out under — and,
+ * from the life's end marker, how far its positions went (review-2 round 9,
+ * L4) — and a SessionEnd that deleted the state while the register was out
+ * leaves nothing else to name them. Under the lock because SessionEnd writes
+ * its marker before it deletes the state under this same lock: a publish that
+ * finds the state gone finds the marker there. The busy-lock fallback keeps
+ * `state` as it is — it may overwrite a state it never read, and only a fresh
+ * epoch is safe beside a counter at 0.
  */
 export const publishSessionState = async (
   home: string,
   state: SessionStateInput,
-  startEpoch: string | null = state.seqEpoch ?? null,
+  startOf: () => Promise<SeqStart> = () => Promise.resolve({ seqEpoch: state.seqEpoch ?? null, eventSeq: state.eventSeq ?? 0 }),
 ): Promise<void> => {
   const published = await withSessionStateLock(
     sessionStateLockPath(home, state.hostSessionKey),
     false,
     async () => {
       const previous = await readSessionState(home, state.hostSessionKey);
-      await writeSessionState(home, withCarriedCapture({ ...state, seqEpoch: startEpoch }, previous));
+      await writeSessionState(home, withCarriedCapture({ ...state, ...(await startOf()) }, previous));
       return true;
     },
   );

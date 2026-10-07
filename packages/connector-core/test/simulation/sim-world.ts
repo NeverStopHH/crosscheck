@@ -44,7 +44,7 @@ import {
 } from "../../src/constants.ts";
 import { hookBudget } from "../../src/config/hook-budget.ts";
 import { repoKey, sessionSlug, sessionStatePath, spoolDir } from "../../src/config/paths.ts";
-import { targetRecord, UNKNOWN_DEVELOPER_ID, withProducer, workContextRecord } from "../../src/capture/records.ts";
+import { targetRecord, withProducer } from "../../src/capture/records.ts";
 import type { Producer } from "../../src/capture/records.ts";
 import { seqAt, withSeq } from "../../src/capture/seq.ts";
 import type { HubContext } from "../../src/http/client.ts";
@@ -52,7 +52,7 @@ import { endSession, postRecords } from "../../src/http/hub.ts";
 import { endSessionFlow } from "../../src/flows/end-session.ts";
 import { sessionHealer } from "../../src/flows/heal-session.ts";
 import { heartbeatMaybe } from "../../src/flows/heartbeat.ts";
-import { fallbackWorkContextTitle, registerSessionFlow, registerSessionLadder } from "../../src/flows/register-session.ts";
+import { fallbackWorkContextTitle, registerSessionFlow } from "../../src/flows/register-session.ts";
 import { ACP_CONNECTOR, guaranteeDeclarationFor } from "../../src/guarantees/declarations.ts";
 import { writeIntent } from "../../src/mcp/tools/intent-write.ts";
 import { appendRecords } from "../../src/spool/append.ts";
@@ -63,14 +63,7 @@ import { flushSpool } from "../../src/spool/flush.ts";
 import { reapSpool } from "../../src/spool/reap.ts";
 import { rejectCauseOf } from "../../src/spool/reject-cause.ts";
 import { reapStaleSessionStates } from "../../src/state/session-reap.ts";
-import {
-  allocateSeq,
-  claimSessionState,
-  deriveSessionState,
-  readSessionState,
-  updateSessionState,
-  workContextIdFor,
-} from "../../src/state/session-state.ts";
+import { allocateSeq, readSessionState, updateSessionState } from "../../src/state/session-state.ts";
 import { makeHome } from "../helpers.ts";
 import {
   beginScenario,
@@ -425,24 +418,26 @@ const hookFlush = async (world: World, hostSessionKey: string, deadlineMs: numbe
   await timed(world, budgetMs + DRAIN_SLACK_MS, () => flushSpool(world.ctx, input, budgetMs));
 };
 
-const register = (world: World, hostSessionKey: string) =>
-  registerSessionFlow({
-    home: world.home,
-    repoKey: world.key,
-    hub: world.ctx,
-    agentKind: AGENT_KIND,
-    hostSessionKey,
-    repoId: REPO_ID,
-    repoRoot: world.repoRoot,
-    branch: BRANCH,
-    baseCommit: BASE_COMMIT,
-    hubUrl: world.ctx.hubUrl,
-    fallbackDeveloperId: world.hub.developerId,
-    title: fallbackWorkContextTitle(BRANCH, REPO_ID),
-    status: "analyzing",
-    now: new Date(),
-    guarantees: guaranteeDeclarationFor(ACP_CONNECTOR),
-  });
+/** What a SessionStart registers with; a recovery adds its mode to it. */
+const registerInput = (world: World, hostSessionKey: string, status: string = "analyzing") => ({
+  home: world.home,
+  repoKey: world.key,
+  hub: world.ctx,
+  agentKind: AGENT_KIND,
+  hostSessionKey,
+  repoId: REPO_ID,
+  repoRoot: world.repoRoot,
+  branch: BRANCH,
+  baseCommit: BASE_COMMIT,
+  hubUrl: world.ctx.hubUrl,
+  fallbackDeveloperId: world.hub.developerId,
+  title: fallbackWorkContextTitle(BRANCH, REPO_ID),
+  status,
+  now: new Date(),
+  guarantees: guaranteeDeclarationFor(ACP_CONNECTOR),
+});
+
+const register = (world: World, hostSessionKey: string) => registerSessionFlow(registerInput(world, hostSessionKey));
 
 /** SessionStart: register (a resume walks the ladder), the drain with the healer, the maintenance reaps. */
 const start = async (world: World, c: number): Promise<void> => {
@@ -729,71 +724,14 @@ const wake = async (world: World, c: number): Promise<void> => {
 
 /**
  * CONNECTOR-CLAUDE'S STATE RECOVERY (hooks/post-tool-use.ts recoverState), as
- * a live host's PostToolUse finds no state: the life ladder in recovery mode
- * under a FRESH epoch minted by deriveSessionState, the state claimed, the
- * work context spooled — then the edit it was capturing and the hook's drain.
+ * a live host's PostToolUse finds no state: the register flow in recovery
+ * mode, which claims the state and spools the work context — then the edit it
+ * was capturing and the hook's drain.
  */
 const recover = async (world: World, c: number): Promise<void> => {
   const hostSessionKey = world.keys[c] ?? "";
   if ((await readSessionState(world.home, hostSessionKey)) === null) {
-    const derived = deriveSessionState({
-      hostSessionKey,
-      repoId: REPO_ID,
-      repoRoot: world.repoRoot,
-      hubUrl: world.ctx.hubUrl,
-      developerId: world.hub.developerId,
-      startedAt: new Date().toISOString(),
-    });
-    const ladder = await registerSessionLadder({
-      home: world.home,
-      repoKey: world.key,
-      hub: world.ctx,
-      agentKind: AGENT_KIND,
-      hostSessionKey,
-      repoId: REPO_ID,
-      branch: BRANCH,
-      baseCommit: BASE_COMMIT,
-      status: "implementing",
-      guarantees: guaranteeDeclarationFor(ACP_CONNECTOR),
-      seq: derived.seqEpoch === null ? { epoch: crypto.randomUUID(), n: 0 } : { epoch: derived.seqEpoch, n: 0 },
-      recovery: true,
-      liveSessionId: null,
-    });
-    if (ladder.outcome === "repo_mismatch") {
-      return;
-    }
-    const crosscheckSessionId = ladder.sessionId;
-    const workContextId = workContextIdFor(crosscheckSessionId);
-    const developerId = ladder.outcome === "registered" ? ladder.developerId : world.hub.developerId;
-    const title = fallbackWorkContextTitle(BRANCH, REPO_ID);
-    const claim = await claimSessionState(world.home, {
-      ...derived,
-      crosscheckSessionId,
-      workContextId,
-      developerId,
-      briefingPending: true,
-      workContextTitle: title,
-      workContextStatus: "implementing",
-    });
-    if (claim === null) {
-      return;
-    }
-    if (claim.claimed) {
-      const now = new Date();
-      await appendRecords(
-        world.home,
-        world.key,
-        hostSessionKey,
-        [
-          workContextRecord(
-            { workContextId, sessionId: crosscheckSessionId, title, status: "implementing" },
-            { developerId: developerId ?? UNKNOWN_DEVELOPER_ID, agentKind: AGENT_KIND, sessionId: crosscheckSessionId },
-            now,
-          ),
-        ],
-        now,
-      );
-    }
+    await registerSessionFlow({ ...registerInput(world, hostSessionKey, "implementing"), recovery: true, briefingPending: true });
   }
   world.phase[c] = "live";
   await edit(world, c);

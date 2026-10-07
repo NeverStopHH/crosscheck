@@ -22,6 +22,7 @@ import {
   sessionStatePath,
   spoolDataPath,
   spoolDir,
+  spoolPendingEndPath,
 } from "../src/config/paths.ts";
 import { commitEvidenceRecord } from "../src/capture/commit-evidence.ts";
 import { targetRecord, withProducer, workContextRecord } from "../src/capture/records.ts";
@@ -40,6 +41,7 @@ import { flushSpool } from "../src/spool/flush.ts";
 import type { SessionRefusal } from "../src/spool/flush-heal.ts";
 import { reapSpool } from "../src/spool/reap.ts";
 import { readUnclosedSummary } from "../src/spool/unclosed.ts";
+import { reapStaleSessionStates } from "../src/state/session-reap.ts";
 import {
   allocateSeq,
   readSessionState,
@@ -1241,6 +1243,89 @@ describe("a SessionStart that re-fires inside a live conversation", () => {
  * carry, and it started the state on a fresh mint beside the carried epoch its
  * register had sent.
  */
+/**
+ * A RESUME ONTO A LIFE SESSION-REAP TOOK OVER (review-2 round 9, M1 + M2,
+ * probes E1 and E3). A laptop asleep for a week came back to no state file: a
+ * SessionStart of another conversation had reaped it. The resume was
+ * state-less, so it took a fresh mint — or the epoch of the life before, from
+ * the lineage — onto a life the hub still held under its own epoch, with
+ * positions handed out: `epoch_split`, or the same position twice
+ * (`epoch_conflict`). The reap's marker now carries the life's epoch and its
+ * next position, and a state-less register onto that life restores both.
+ */
+describe("a resume onto a life session-reap took over (review-2 round 9, M1+M2)", () => {
+  const AFTER_A_WEEK = () => new Date(Date.now() + MAX_SPOOL_AGE_DAYS * MS_PER_DAY + MS_PER_DAY);
+
+  test("keeps that life's epoch and its next position (probe E3)", async () => {
+    // Arrange: a life with two positioned edits on the hub; its host went
+    // quiet, and another conversation's SessionStart reaped its state
+    const fx = await fixture("reaped-resume");
+    const life = await register(fx);
+    await captureTarget(fx, "src/one.ts");
+    await captureTarget(fx, "src/two.ts");
+    await flushAsHook(fx);
+    const epoch = (await stateOf(fx))?.seqEpoch;
+    await reapStaleSessionStates(fx.home, AFTER_A_WEEK());
+
+    // Act: the conversation resumes, and edits
+    const resumed = await register(fx);
+    await captureTarget(fx, "src/three.ts");
+    await flushAsHook(fx);
+
+    // Assert: the same life, one epoch, no position issued twice
+    expect(resumed.crosscheckSessionId).toBe(life.crosscheckSessionId);
+    expect((await stateOf(fx))?.seqEpoch).toBe(epoch);
+    expect(await readSessionCausalOrder(db, life.crosscheckSessionId)).toMatchObject({ state: "usable", epochs: 1 });
+  });
+
+  test("keeps the position a resumed life reached, its epoch reused from the life before it (probe E1)", async () => {
+    // Arrange: life 0 ended; the resume's life took its epoch from the
+    // lineage and positioned two edits; then its state was reaped
+    const fx = await fixture("reaped-resume-lineage");
+    await register(fx);
+    await endViaFlow(fx);
+    const resumed = await register(fx);
+    await captureTarget(fx, "src/one.ts");
+    await captureTarget(fx, "src/two.ts");
+    await flushAsHook(fx);
+    await reapStaleSessionStates(fx.home, AFTER_A_WEEK());
+
+    // Act: resumed again
+    const again = await register(fx);
+    await captureTarget(fx, "src/three.ts");
+    await flushAsHook(fx);
+
+    // Assert
+    expect(again.crosscheckSessionId).toBe(resumed.crosscheckSessionId);
+    expect(await readSessionCausalOrder(db, resumed.crosscheckSessionId)).toMatchObject({ state: "usable", epochs: 1 });
+  });
+
+  test("files a life the hub never heard of under that life's own epoch", async () => {
+    // Arrange: a life whose register never landed positioned an edit on
+    // disk; its host went quiet, and its state was reaped. Everything goes
+    // through the proxy, so the spool's key is the proxy's.
+    const base = await fixture("reaped-unregistered");
+    const key = repoKey(proxyUrl, REPO_ID);
+    const fx = { ...base, key, proxied: { ...base.proxied, repoKey: key } };
+    refuseRegisters = true;
+    const life = await register(fx, fx.proxied);
+    refuseRegisters = false;
+    await captureTarget(fx, "src/one.ts");
+    const epoch = (await stateOf(fx))?.seqEpoch;
+    await reapStaleSessionStates(fx.home, AFTER_A_WEEK());
+
+    // Act: the conversation resumes; its register creates the life now
+    const resumed = await register(fx, fx.proxied);
+    await captureTarget(fx, "src/two.ts");
+    await flushAsHook(fx, fx.proxied);
+
+    // Assert: session.started under the life's own epoch, beside its records
+    expect(resumed.crosscheckSessionId).toBe(life.crosscheckSessionId);
+    expect((await stateOf(fx))?.seqEpoch).toBe(epoch);
+    expect(await readSessionCausalOrder(db, life.crosscheckSessionId)).toMatchObject({ state: "usable", epochs: 1 });
+  });
+});
+
 describe("a SessionStart beside another SessionStart or a SessionEnd (review-2 round 8, L2)", () => {
   const causalOrderOf = async (fx: Fixture) => {
     const state = await stateOf(fx);
@@ -1308,14 +1393,43 @@ describe("a SessionStart beside another SessionStart or a SessionEnd (review-2 r
     await captureTarget(fx, "src/three.ts");
     await flushAsHook(fx, fx.proxied);
 
-    // Assert: the counter is gone with the file, so the life's order is not
-    // comparable across the fire — and no record lost its position to a
-    // position the life had already handed out
+    // Assert: the counter went with the file, but the end's marker kept it
+    // (review-2 round 9, L4): one epoch, and no position handed out twice
     const conflicts = await raw<{ id: string }>(
       "select id from session_events where session_id = $1 and seq_reason = 'epoch_conflict'",
       [life.crosscheckSessionId],
     );
     expect(same.crosscheckSessionId).toBe(life.crosscheckSessionId);
+    expect(conflicts).toEqual([]);
+    expect(await readSessionCausalOrder(db, life.crosscheckSessionId)).toMatchObject({ state: "usable", epochs: 1 });
+  });
+
+  test("and without a readable end marker, starts that life on a fresh mint rather than its positions again", async () => {
+    // Arrange: as above
+    const fx = await fixture("own-life-torn-marker");
+    const life = await register(fx, fx.proxied);
+    await captureTarget(fx, "src/one.ts");
+    await captureTarget(fx, "src/two.ts");
+    await flushAsHook(fx, fx.proxied);
+    registerDelayMs = WALK_DELAY_MS;
+    refuseEnds = true;
+
+    // Act: the SessionEnd beside the re-fire leaves a marker nothing can read
+    const refire = register(fx, fx.proxied);
+    await Bun.sleep(WALK_HEAD_START_MS);
+    await endViaFlow(fx, fx.proxied);
+    await writeFile(spoolPendingEndPath(fx.home, fx.key, sessionSlug(fx.hostSessionKey)), "{torn");
+    await refire;
+    registerDelayMs = 0;
+    refuseEnds = false;
+    await captureTarget(fx, "src/three.ts");
+    await flushAsHook(fx, fx.proxied);
+
+    // Assert: a split order, honestly — never a position handed out twice
+    const conflicts = await raw<{ id: string }>(
+      "select id from session_events where session_id = $1 and seq_reason = 'epoch_conflict'",
+      [life.crosscheckSessionId],
+    );
     expect(conflicts).toEqual([]);
   });
 

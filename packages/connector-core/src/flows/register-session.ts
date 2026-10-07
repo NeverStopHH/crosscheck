@@ -13,7 +13,8 @@
  * titles from session metadata) stays in each connector; this flow takes the
  * already-resolved values.
  */
-import type { CausalGuaranteeTriple, SeqField } from "@crosscheck/schema";
+import { isSeqStamp, SeqFieldSchema } from "@crosscheck/schema";
+import type { CausalGuaranteeTriple, SeqField, SeqStamp } from "@crosscheck/schema";
 
 import { z } from "zod";
 
@@ -23,6 +24,7 @@ import {
   sessionEpochPathForSlug,
   sessionHealPathForSlug,
   sessionSlug,
+  spoolPendingEndPath,
   writePrivateFile,
 } from "../config/paths.ts";
 import { registerSession } from "../http/hub.ts";
@@ -51,7 +53,7 @@ import {
   underSessionStateLock,
   workContextIdFor,
 } from "../state/session-state.ts";
-import type { SessionState } from "../state/session-state.ts";
+import type { SeqStart, SessionState } from "../state/session-state.ts";
 
 const HTTP_CONFLICT = 409;
 
@@ -297,13 +299,48 @@ const reserveEpoch = async (input: RegisterSessionFlowInput, epoch: string): Pro
   );
 };
 
+const MarkedLifeSchema = z.looseObject({
+  crosscheckSessionId: z.string().min(1),
+  seq: SeqFieldSchema.optional(),
+});
+
+/**
+ * THE POSITION A LIFE'S END MARKER KEEPS, when it names that life
+ * (spool/end-marker.ts): its epoch, and the end's position past everything
+ * its counter handed out — written by session-reap when it took the state
+ * over, or by a SessionEnd whose end has not landed (review-2 round 9, M1 +
+ * M2). Null when no marker speaks for the life, or speaks without a position.
+ */
+const readMarkedPosition = async (input: RegisterSessionFlowInput, sessionId: string): Promise<SeqStamp | null> => {
+  const rung = lifeRungOf(crosscheckSessionIdFor(input.hostSessionKey), sessionId);
+  if (rung === null) {
+    return null;
+  }
+  const parsed = MarkedLifeSchema.safeParse(
+    await readJsonOrNull(spoolPendingEndPath(input.home, input.repoKey, sessionSlug(input.hostSessionKey), rung)),
+  );
+  return parsed.success && parsed.data.crosscheckSessionId === sessionId && isSeqStamp(parsed.data.seq)
+    ? parsed.data.seq
+    : null;
+};
+
+/** The life a state-less register's walk starts on: past the last end written down, else the base id. */
+const firstRungLife = async (input: RegisterSessionFlowInput): Promise<string> => {
+  const baseId = crosscheckSessionIdFor(input.hostSessionKey);
+  return lifeSessionId(baseId, ladderStart(baseId, null, await readEndedLifeRung(input.home, input.hostSessionKey, baseId)));
+};
+
 /**
  * The epoch a state-less register owes the hub: one it reserved and never
- * named in a state file, else the one the conversation's last ended life was
- * on (state/session-lineage.ts readEndedLifeEpoch). Null: mint one.
+ * named in a state file; else the one the marker of the life its walk starts
+ * on keeps (review-2 round 9, M1 + M2); else the one the conversation's last
+ * ended life was on (state/session-lineage.ts readEndedLifeEpoch). Null: mint
+ * one.
  */
 const readUnnamedEpoch = async (input: RegisterSessionFlowInput): Promise<string | null> =>
-  (await readReservedEpoch(input)) ?? (await readEndedLifeEpoch(input.home, input.hostSessionKey));
+  (await readReservedEpoch(input)) ??
+  (await readMarkedPosition(input, await firstRungLife(input)))?.epoch ??
+  (await readEndedLifeEpoch(input.home, input.hostSessionKey));
 
 /** The epoch a fire's register sends, the state it was read from, and the fire's own fresh one. */
 interface WireEpoch {
@@ -415,6 +452,11 @@ export const registerSessionFlow = async (
     // LOW-1, RS5-D).
     await removeFile(sessionHealPathForSlug(input.home, sessionSlug(input.hostSessionKey)));
   }
+  // A STATE-LESS REGISTER ONTO A LIFE ITS MARKER SPEAKS FOR RESTORES THAT
+  // LIFE'S EPOCH AND COUNTER (review-2 round 9, M1 + M2): session-reap took
+  // the state, or SessionEnd's end has not landed, and the hub still holds
+  // the life under that epoch with those positions handed out.
+  const restored = previous === null ? await readMarkedPosition(input, crosscheckSessionId) : null;
 
   // BEFORE the first append, always: `reap` decides that a spool file has no
   // writer left by finding no session state file for it, and that inference
@@ -460,8 +502,8 @@ export const registerSessionFlow = async (
     // handed out — the one thing the order may never do (withCarriedCapture's
     // header: the pair moves together or not at all). The fallback keeps
     // costing comparability, and never correctness.
-    seqEpoch: fresh,
-    eventSeq: 0,
+    seqEpoch: restored?.epoch ?? fresh,
+    eventSeq: restored?.n ?? 0,
     ...(input.briefingPending === true ? { briefingPending: true } : {}),
   };
   if (input.recovery === true) {
@@ -490,9 +532,18 @@ export const registerSessionFlow = async (
     // state while its register was out, and the fresh mint above split the
     // life it climbed to from the `session.started` it filed. Only for a life
     // the state did not name before: that one's positions under the carried
-    // epoch were handed out, and its counter is gone with the file.
-    const startEpoch = previous?.crosscheckSessionId === crosscheckSessionId ? fresh : seqEpoch;
-    await publishSessionState(input.home, stateInput, startEpoch);
+    // epoch were handed out, and its counter is gone with the file — unless
+    // the SessionEnd beside this fire left them on the life's end marker
+    // (review-2 round 9, L4), which this fire then goes on from. Read under
+    // the publish's lock: that end writes its marker before it deletes the
+    // state under the same lock.
+    const startOf = async (): Promise<SeqStart> => {
+      const marked = await readMarkedPosition(input, crosscheckSessionId);
+      return marked === null
+        ? { seqEpoch: previous?.crosscheckSessionId === crosscheckSessionId ? fresh : seqEpoch, eventSeq: 0 }
+        : { seqEpoch: marked.epoch, eventSeq: marked.n };
+    };
+    await publishSessionState(input.home, stateInput, startOf);
   }
   // The state names the epoch now; the reservation has done its job.
   await removeFile(sessionEpochPathForSlug(input.home, sessionSlug(input.hostSessionKey)));

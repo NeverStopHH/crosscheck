@@ -1615,11 +1615,9 @@ export const MUTATIONS: readonly Mutation[
     // own repo although a sibling already bound the session elsewhere —
     // the pre-claim defect verbatim.
     label: "the recovery claim's loser proceeds as if it had won",
-    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
-    from: "  const claim = await claimSessionState(ctx.config.home, recovered);",
-    to:
-      "  await claimSessionState(ctx.config.home, recovered);\n" +
-      "  const claim = { claimed: true, state: recovered } as const;",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "    if (claim === null || !claim.claimed) {",
+    to: "    if (claim === null) {",
     test: `${CONNECTOR}/test/recovery-race.test.ts`,
     because:
       "two racing state-less recoveries both spool work contexts and the " +
@@ -17305,9 +17303,9 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "Claude's recovery captures under the base id the hub ended",
-    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
-    from: "  const crosscheckSessionId = ladder.sessionId;\n  const workContextId = workContextIdFor(crosscheckSessionId);\n  const developerId =\n    ladder.outcome",
-    to: "  const crosscheckSessionId = derived.crosscheckSessionId;\n  const workContextId = workContextIdFor(crosscheckSessionId);\n  const developerId =\n    ladder.outcome",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "  const crosscheckSessionId = ladder.sessionId;\n  const developerId = registration?.developerId",
+    to: "  const crosscheckSessionId = baseSessionId;\n  const developerId = registration?.developerId",
     test: `${CONNECTOR}/test/resumed-session.test.ts`,
     because: "a conversation that SessionEnd closed and that continues without a SessionStart has every record rejected",
   },
@@ -18379,8 +18377,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a state-less register ignores the epoch it reserved",
     file: `${CORE}/src/flows/register-session.ts`,
-    from: "  (await readReservedEpoch(input)) ?? (await readEndedLifeEpoch(",
-    to: "  (await readEndedLifeEpoch(",
+    from: "  (await readReservedEpoch(input)) ??\n",
+    to: "",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review-2 round 7, simulation seed 113 (I3): a SessionStart killed after its register splits the session's epoch for good",
   },
@@ -18411,23 +18409,23 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a re-fire whose state SessionEnd deleted starts the next life on a fresh mint",
     file: `${CORE}/src/flows/register-session.ts`,
-    from: "    const startEpoch = previous?.crosscheckSessionId === crosscheckSessionId ? fresh : seqEpoch;",
-    to: "    const startEpoch = fresh;",
+    from: "        ? { seqEpoch: previous?.crosscheckSessionId === crosscheckSessionId ? fresh : seqEpoch, eventSeq: 0 }",
+    to: "        ? { seqEpoch: fresh, eventSeq: 0 }",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review-2 round 8, L2 (seeds 1933, 11974): session.started under the carried epoch, every later event under the mint",
   },
   {
     label: "a re-fire whose own life's state SessionEnd deleted restarts its counter under the carried epoch",
     file: `${CORE}/src/flows/register-session.ts`,
-    from: "    const startEpoch = previous?.crosscheckSessionId === crosscheckSessionId ? fresh : seqEpoch;",
-    to: "    const startEpoch = seqEpoch;",
+    from: "        ? { seqEpoch: previous?.crosscheckSessionId === crosscheckSessionId ? fresh : seqEpoch, eventSeq: 0 }",
+    to: "        ? { seqEpoch: seqEpoch, eventSeq: 0 }",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review-2 round 8, L2: positions the life already handed out under that epoch are handed out again",
   },
   {
     label: "a publish that finds nothing to carry ignores the epoch the register sent",
     file: `${CORE}/src/state/session-state.ts`,
-    from: "      await writeSessionState(home, withCarriedCapture({ ...state, seqEpoch: startEpoch }, previous));",
+    from: "      await writeSessionState(home, withCarriedCapture({ ...state, ...(await startOf()) }, previous));",
     to: "      await writeSessionState(home, withCarriedCapture(state, previous));",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review-2 round 8, L2 (seed 1933): a SessionEnd beside the re-fire deleted the state, and its publish split the next life",
@@ -18435,8 +18433,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a state-less register ignores the epoch the conversation's last life ended on",
     file: `${CORE}/src/flows/register-session.ts`,
-    from: "  (await readReservedEpoch(input)) ?? (await readEndedLifeEpoch(input.home, input.hostSessionKey));",
-    to: "  readReservedEpoch(input);",
+    from: "  (await readEndedLifeEpoch(input.home, input.hostSessionKey));",
+    to: "  null;",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review-2 round 8, L2 (seed 11974): a resume onto a life a heal registered unheard files a second epoch into it",
   },
@@ -18459,8 +18457,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the state takes a fresh mint beside the reserved epoch on the wire",
     file: `${CORE}/src/flows/register-session.ts`,
-    from: "    seqEpoch: fresh,\n    eventSeq: 0,",
-    to: "    seqEpoch: mintedEpoch,\n    eventSeq: 0,",
+    from: "    seqEpoch: restored?.epoch ?? fresh,\n    eventSeq: restored?.n ?? 0,",
+    to: "    seqEpoch: restored?.epoch ?? mintedEpoch,\n    eventSeq: restored?.n ?? 0,",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review-2 round 7 (I3): session.started under one epoch, every later event under another",
   },
@@ -19056,6 +19054,62 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/record-receipts-bloat.test.ts`,
     because: "review-2 round 9, H3: PGlite runs no autovacuum, and the table grows six times its retention's size in half a year",
   },
+  {
+    label: "session-reap's marker keeps no epoch or position (M1+M2)",
+    file: `${CORE}/src/state/session-reap.ts`,
+    from: "      ...(state.seqEpoch === null ? {} : { seq: { epoch: state.seqEpoch, n: state.eventSeq + 1 } }),\n",
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 9, M1+M2 (probes E1, E3): a resume after a week asleep splits the life's order, or issues its positions twice",
+  },
+  {
+    label: "a state-less register sends the lineage's epoch past the life's own marker (M1+M2)",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "  (await readMarkedPosition(input, await firstRungLife(input)))?.epoch ??\n",
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 9, M1+M2: a life the hub never registered files session.started under one epoch and its records under its own",
+  },
+  {
+    label: "a state-less claim starts a marked life's state at position zero (M1+M2)",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "  const restored = previous === null ? await readMarkedPosition(input, crosscheckSessionId) : null;",
+    to: "  const restored = null as SeqStamp | null;",
+    test: `${CORE}/test/spool-simulation.test.ts`,
+    because: "review-2 round 9, M1+M2 (probes E2, E4): a PostToolUse recovery after a week issues the life's positions twice",
+  },
+  {
+    label: "a publish that finds the state gone ignores the life's end marker (L4)",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "      const marked = await readMarkedPosition(input, crosscheckSessionId);\n",
+    to: "      const marked = null as SeqStamp | null;\n",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 9, L4 (focus seeds 361, 662, 1811): a re-fire beside its own SessionEnd starts the life on a fresh mint, and its order splits",
+  },
+  {
+    label: "a publish restores a marked life's epoch at position zero (L4)",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "        : { seqEpoch: marked.epoch, eventSeq: marked.n };",
+    to: "        : { seqEpoch: marked.epoch, eventSeq: 0 };",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 9, L4: the positions the life handed out before the fire are handed out again",
+  },
+  {
+    label: "connector-claude's recovery writes no agent kind (M1+M2)",
+    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
+    from: "    agentKind: ctx.config.agentKind,\n    hostSessionKey: ctx.payload.session_id,\n    repoId: ctx.identity.repoId,\n    repoRoot: ctx.identity.root,",
+    to: "    hostSessionKey: ctx.payload.session_id,\n    repoId: ctx.identity.repoId,\n    repoRoot: ctx.identity.root,",
+    test: `${CONNECTOR}/test/recovery-epoch.test.ts`,
+    because: "review-2 round 9, M1+M2: SessionEnd has no producer for the recovered life's work context",
+  },
+  {
+    label: "connector-claude's recovery owes no briefing (M1+M2)",
+    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
+    from: "    briefingPending: true,\n    now: ctx.now(),",
+    to: "    now: ctx.now(),",
+    test: `${CONNECTOR}/test/recovery-epoch.test.ts`,
+    because: "a recovered session was never briefed, and nothing would pay that debt",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19214,6 +19268,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/landed-notice-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/landed-why-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/landing-fetch-hook.test.ts 3
+ * PRINTS: packages/connector-claude/test/recovery-epoch.test.ts 2
  * PRINTS: packages/connector-claude/test/recovery-losses.test.ts 1
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
  * PRINTS: packages/connector-claude/test/resumed-session.test.ts 10
@@ -19319,7 +19374,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
  * PRINTS: packages/connector-core/test/session-heal.test.ts 33
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 4
- * PRINTS: packages/connector-core/test/session-lives.test.ts 53
+ * PRINTS: packages/connector-core/test/session-lives.test.ts 57
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
@@ -19329,7 +19384,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/spool-ignored.test.ts 2
  * PRINTS: packages/connector-core/test/spool-lock.test.ts 2
  * PRINTS: packages/connector-core/test/spool-ownership.test.ts 12
- * PRINTS: packages/connector-core/test/spool-simulation.test.ts 7
+ * PRINTS: packages/connector-core/test/spool-simulation.test.ts 8
  * PRINTS: packages/connector-core/test/staleness-axis.test.ts 1
  * PRINTS: packages/connector-core/test/target-paths.test.ts 1
  * PRINTS: packages/connector-core/test/tool-window-pairing.test.ts 6
