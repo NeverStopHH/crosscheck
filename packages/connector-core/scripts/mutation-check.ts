@@ -24390,6 +24390,47 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/tripwire-recheck.test.ts`,
     because: "a long session of edits grows the state file every hook of the session reads",
   },
+  // ── Review of feat/collision-visible, round 2, L8 + L9: doctor's subagent-return line ──
+  {
+    label: "doctor counts an async subagent-return entry as installed",
+    file: `${CLI}/src/cli/doctor-global.ts`,
+    from: "  if (entry.isAsync) {\n    return \"registered async\";\n  }\n",
+    to: "",
+    test: `${CLI}/test/doctor-subagent-return.test.ts`,
+    because: "an entry whose systemMessage nobody sees passes as the hook that tells the person in the same turn",
+  },
+  {
+    label: "doctor counts a subagent-return entry on any matcher as installed",
+    file: `${CLI}/src/cli/doctor-global.ts`,
+    from: "  return entry.matcher === SUBAGENT_RETURN_MATCHER ? null : `matched on ${entry.matcher ?? \"every tool\"}`;",
+    to: "  return null;",
+    test: `${CLI}/test/doctor-subagent-return.test.ts`,
+    because: "a hook that never fires when a subagent returns passes as installed",
+  },
+  {
+    label: "doctor says a drifted subagent-return hook is missing without saying why",
+    file: `${CLI}/src/cli/doctor-global.ts`,
+    from: "  return drifted.length === 0 ? \"\" : ` (found ${drifted.join(\", \")})`;",
+    to: "  return \"\";",
+    test: `${CLI}/test/doctor-subagent-return.test.ts`,
+    because: "the reader is told a hook is missing that their settings plainly contain, and edits the wrong thing",
+  },
+  {
+    label: "doctor fails every install from before the subagent-return hook",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "  missing.every((key) => WARN_ONLY_HOOK_KEYS.has(key)) ? \"WARN\" : \"FAIL\";",
+    to: "  \"FAIL\";",
+    test: `${CLI}/test/doctor-subagent-return.test.ts`,
+    because: "a working capture install reads as broken until somebody reruns init",
+  },
+  {
+    label: "doctor only warns when a capture hook is missing",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "  missing.every((key) => WARN_ONLY_HOOK_KEYS.has(key)) ? \"WARN\" : \"FAIL\";",
+    to: "  \"WARN\";",
+    test: `${CLI}/test/doctor-subagent-return.test.ts`,
+    because: "an install that captures no error fingerprints is reported as merely untidy",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {

@@ -244,6 +244,7 @@ import {
   ownedHookEntries,
   readGlobalWiring,
   readProjectWiring,
+  subagentReturnDriftClause,
   userMcpUnknown,
 } from "./doctor-global.ts";
 import { unreadableClause } from "./init-io.ts";
@@ -414,6 +415,19 @@ const REQUIRED_HOOK_EVENTS = REGISTERED_HOOK_EVENT_NAMES;
 const REQUIRED_HOOK_KEYS: readonly string[] = [...REQUIRED_HOOK_EVENTS, SUBAGENT_RETURN_KEY];
 
 /**
+ * The required keys whose absence is a WARN, not a FAIL (round 2, L9): every
+ * install from before the subagent-return hook lacks it, and capture works
+ * without it — what is lost is the moment a foreground subagent's collision
+ * is relayed, which then waits for the next prompt. A FAIL there read every
+ * pre-round-2 install as broken; the WARN names the command that fixes it.
+ */
+const WARN_ONLY_HOOK_KEYS: ReadonlySet<string> = new Set([SUBAGENT_RETURN_KEY]);
+
+/** FAIL when a capture hook is missing; WARN when only a warn-only key is. */
+const missingHooksLevel = (missing: readonly string[]): Check["level"] =>
+  missing.every((key) => WARN_ONLY_HOOK_KEYS.has(key)) ? "WARN" : "FAIL";
+
+/**
  * Whether the user-scope install registers every hook the project check
  * requires — the condition under which a repo with no project hooks is
  * still fully wired (finding #13: the project checks predate `init
@@ -441,9 +455,9 @@ const hooksViaScopes = (wiring: GlobalWiring, projectDetail: string): Check => {
       (key) => !wiring.hookEvents.includes(key),
     );
     return check(
-      "FAIL",
+      missingHooksLevel(missing),
       "hooks registered",
-      `user-scope hooks in ${wiring.settingsPath} are missing: ${missing.join(", ")} — rerun crosscheck init --global`,
+      `user-scope hooks in ${wiring.settingsPath} are missing: ${missing.join(", ")}${subagentReturnDriftClause(wiring.hookEvents)} — rerun crosscheck init --global`,
     );
   }
   // A user settings file nobody could read may hold the very hooks this
@@ -534,7 +548,8 @@ const checkSettings = async (
   // id is a name the reader has never seen with nothing to do about it —
   // which ends either in a hand-edited settings.json that drifts from what
   // init writes, or in the FAIL being ignored while capture stays silent.
-  const missingHooksDetail = `missing: ${missing.join(", ")} — rerun crosscheck init to register them`;
+  const drift = subagentReturnDriftClause(ownedCommands.map(hookKeyOf));
+  const missingHooksDetail = `missing: ${missing.join(", ")}${drift} — rerun crosscheck init to register them`;
   const hooksCheck =
     ownedCommands.length === 0
       ? // The statusLine-only shape (finding #13's second variant): the
@@ -543,7 +558,7 @@ const checkSettings = async (
         // were absent.
         hooksViaScopes(global, missingHooksDetail)
       : missing.length > 0
-        ? check("FAIL", "hooks registered", missingHooksDetail)
+        ? check(missingHooksLevel(missing), "hooks registered", missingHooksDetail)
         : unexpected.length > 0
           ? check(
               "WARN",

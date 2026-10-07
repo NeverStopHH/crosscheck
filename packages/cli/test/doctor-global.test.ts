@@ -301,7 +301,7 @@ describe("doctor scope-aware project checks (finding #13)", () => {
     expect(hooksLine).toContain("rerun crosscheck init");
   });
 
-  test("an install from before the subagent-return hook is told to re-run init (review H1b)", async () => {
+  test("an install from before the subagent-return hook is WARNED to re-run init, not failed (review H1b, round 2 L9)", async () => {
     // Arrange: init today, then drop the second PostToolUse group — what an
     // install made before the sync subagent hook existed looks like
     const home = await makeHome("doctor-subagent-return");
@@ -328,7 +328,8 @@ describe("doctor scope-aware project checks (finding #13)", () => {
       result.stdout
         .split("\n")
         .find((line) => /\b(?:PASS|WARN|FAIL) +hooks registered /.test(line)) ?? "";
-    expect(hooksLine).toContain("FAIL");
+    expect(hooksLine).toContain("WARN");
+    expect(hooksLine).not.toContain("FAIL");
     expect(hooksLine).toContain("missing: PostToolUse (subagent-return)");
     expect(hooksLine).toContain("rerun crosscheck init");
   });

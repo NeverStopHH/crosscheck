@@ -23,7 +23,11 @@ import {
   claudeUserSettingsPath,
   isOwnedCommand,
 } from "@crosscheck/connector-claude";
-import { MCP_SERVER_KEY, SUBAGENT_RETURN_HOOK } from "@crosscheck/connector-core/constants.ts";
+import {
+  MCP_SERVER_KEY,
+  SUBAGENT_RETURN_HOOK,
+  SUBAGENT_RETURN_MATCHER,
+} from "@crosscheck/connector-core/constants.ts";
 import { isOwnedMcpEntry } from "@crosscheck/connector-core/config/mcp-config.ts";
 import { readTextOrNull } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
@@ -66,23 +70,34 @@ const asRecord = (value: unknown): Record<string, unknown> =>
 export interface OwnedHookEntry {
   readonly event: string;
   readonly command: string;
+  /** The matcher of the group the command sits in; null when the group has none. */
+  readonly matcher: string | null;
+  /** The entry is registered `async: true`. */
+  readonly isAsync: boolean;
 }
 
 /**
  * Every owned hook command in a Claude settings object, keyed by the event
  * it fires on — the one extraction both scopes' checks read (finding #13
- * made the project check and this file disagree about what "wired" means).
+ * made the project check and this file disagree about what "wired" means) —
+ * with the matcher and the async flag it is registered under.
  */
 export const ownedHookEntries = (
   settings: Record<string, unknown>,
 ): readonly OwnedHookEntry[] =>
   Object.entries(asRecord(settings["hooks"])).flatMap(([event, groups]) =>
     (Array.isArray(groups) ? groups : []).flatMap((group) => {
+      const matcher = asRecord(group)["matcher"];
       const entries = asRecord(group)["hooks"];
       return (Array.isArray(entries) ? entries : [])
-        .map((entry) => asRecord(entry)["command"])
-        .filter(isOwnedCommand)
-        .map((command) => ({ event, command: String(command) }));
+        .map(asRecord)
+        .filter((entry) => isOwnedCommand(entry["command"]))
+        .map((entry) => ({
+          event,
+          command: String(entry["command"]),
+          matcher: typeof matcher === "string" ? matcher : null,
+          isAsync: entry["async"] === true,
+        }));
     }),
   );
 
@@ -94,11 +109,42 @@ export const ownedHookEntries = (
  */
 export const SUBAGENT_RETURN_KEY = `PostToolUse (${SUBAGENT_RETURN_HOOK})`;
 
-/** What doctor calls an owned entry: its event, or the subagent hook's own key. */
-export const hookKeyOf = (entry: OwnedHookEntry): string =>
-  entry.event === "PostToolUse" && entry.command.trimEnd().endsWith(`hook ${SUBAGENT_RETURN_HOOK}`)
-    ? SUBAGENT_RETURN_KEY
-    : entry.event;
+const isSubagentReturnCommand = (entry: OwnedHookEntry): boolean =>
+  entry.event === "PostToolUse" && entry.command.trimEnd().endsWith(`hook ${SUBAGENT_RETURN_HOOK}`);
+
+/**
+ * How a registered subagent-return entry differs from what init writes, or
+ * null when it does not (round 2, L8): the NAME alone vouched for it, but an
+ * async registration shows its `systemMessage` to nobody and hands the agent
+ * its context a turn late, and a matcher without the subagent tools never
+ * fires when a subagent returns. Either is the hook in name only.
+ */
+export const subagentReturnDrift = (entry: OwnedHookEntry): string | null => {
+  if (entry.isAsync) {
+    return "registered async";
+  }
+  return entry.matcher === SUBAGENT_RETURN_MATCHER ? null : `matched on ${entry.matcher ?? "every tool"}`;
+};
+
+/**
+ * What doctor calls an owned entry: its event, or the subagent hook's own
+ * key — and a subagent-return entry that drifted from init's registration
+ * is keyed apart, with the drift, so it neither satisfies the requirement nor
+ * hides why.
+ */
+export const hookKeyOf = (entry: OwnedHookEntry): string => {
+  if (!isSubagentReturnCommand(entry)) {
+    return entry.event;
+  }
+  const drift = subagentReturnDrift(entry);
+  return drift === null ? SUBAGENT_RETURN_KEY : `${SUBAGENT_RETURN_KEY} ${drift}`;
+};
+
+/** The drifted subagent-return keys among these, as a clause for the hooks line ("" when none). */
+export const subagentReturnDriftClause = (keys: readonly string[]): string => {
+  const drifted = keys.filter((key) => key.startsWith(SUBAGENT_RETURN_KEY) && key !== SUBAGENT_RETURN_KEY);
+  return drifted.length === 0 ? "" : ` (found ${drifted.join(", ")})`;
+};
 
 /**
  * Whether a PROJECT-scoped settings file registers crosscheck hooks — the
