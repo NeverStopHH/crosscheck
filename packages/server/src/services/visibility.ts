@@ -22,9 +22,14 @@
  * boundary (test/live-location-differential.test.ts RESIDUALS) can point at
  * the sentence that accepts a difference one action of hers makes:
  *
- *   «creation»  when a claim, work context, edge, question or pin was
- *               created, and a solved tree's solvedAt (its newest claim's
- *               creation): the shared row's own time
+ *   «creation»  when a claim, work context, edge or question was created,
+ *               and a solved tree's solvedAt (its newest claim's
+ *               creation): the shared row's own time. NOT a pin's: a pin
+ *               is created by its first verification, and her
+ *               verification's time and HEAD are withheld (below), so a
+ *               pin of hers carries no instant of hers at all. The docs
+ *               once listed it here; the code withholds it, which is the
+ *               harmless direction (review round 5, L2)
  *   «coverage»  honest coverage that SOME session went quiet or reported:
  *               the agent_event rung's state, its reason and whether its
  *               gap is withheld (`session_silent` with `withheld: true`) —
