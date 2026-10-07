@@ -32,7 +32,8 @@ const SERVE_USAGE = [
   "usage: crosscheck serve",
   "",
   "  runs the team hub on this machine (env: PORT, CROSSCHECK_DATA_DIR,",
-  "  ADMIN_TOKEN, CROSSCHECK_UI_SECRET)",
+  "  ADMIN_TOKEN, CROSSCHECK_UI_SECRET, CROSSCHECK_LISTEN,",
+  "  CROSSCHECK_TRUSTED_PROXIES, CROSSCHECK_WEBAUTHN_ORIGINS)",
   "",
 ].join("\n");
 

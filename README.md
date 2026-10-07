@@ -40,6 +40,8 @@ ADMIN_TOKEN=<pick-one> bunx crosscheck-hub serve      # or: npx crosscheck-hub s
 
 Set `CROSSCHECK_DATA_DIR` for durable storage (unset = in-memory, for trying it out). From a checkout of this repo the same hub is `bun install && ADMIN_TOKEN=<pick-one> bun run packages/server/src/index.ts`.
 
+**Where it listens.** A new hub listens on loopback only (`127.0.0.1`, and `::1` where the machine has it), so nothing off the machine reaches it until you say so. `CROSSCHECK_LISTEN` takes a comma list of IP addresses, one listener each on the same port: `CROSSCHECK_LISTEN=127.0.0.1,100.101.4.7` adds the machine's tailnet address (`tailscale ip -4`). Behind `tailscale serve --bg 7100` leave it at loopback. A hub whose data dir predates the setting keeps listening on every interface, so an upgrade cuts off no teammate, and its boot log and every member's `crosscheck doctor` say what to set. `CROSSCHECK_TRUSTED_PROXIES` lists the proxies besides loopback, as addresses or CIDRs, whose `X-Forwarded-*` headers the hub believes, for example the Docker kit's Caddy. [docs/OPERATIONS.md](docs/OPERATIONS.md#where-the-hub-listens) has the details and the upgrade from 0.10.
+
 The npm package is assembled by `bun packages/connector-claude/scripts/pack-npm.ts` and proven by installing the packed tarball into a clean directory and driving the binary end to end ([`npm-package.e2e.test.ts`](packages/connector-claude/test/e2e/npm-package.e2e.test.ts)); the release runbook is [docs/PUBLISHING.md](docs/PUBLISHING.md).
 
 **2. Issue one API key per developer** — provenance is a core feature, so keys are never shared:
@@ -229,24 +231,37 @@ passkey can approve only after 24 hours. Until then `crosscheck status`,
 nobody expected is seen before it can act, and its owner can revoke it with
 nothing more than a login.
 
-Browsers allow passkeys only over https, or on `localhost`. On the hub's own
-machine `http://localhost:7100` works, and it is accepted only from that
-machine. Teammates on a tailnet need the hub behind https, for example
-`tailscale serve --bg 7100`. List every address people open it at, then restart
-the hub:
+Browsers allow passkeys only over https, or on `localhost`. On a hub nobody
+reaches through a proxy, `http://localhost:7100` works on the hub's own machine,
+and only from there. Teammates on a tailnet need the hub behind https, for
+example `tailscale serve --bg 7100`. List the https address, then restart the
+hub:
 
 ```bash
-CROSSCHECK_WEBAUTHN_ORIGINS=http://localhost:7100,https://hub.example.ts.net
+CROSSCHECK_WEBAUTHN_ORIGINS=https://hub.example.ts.net
 ```
 
-A passkey works only at the address it was enrolled at.
+**Once an https address is listed, or the hub is reached through a proxy, it
+takes no passkey at `localhost` at all.** Behind `tailscale serve` every request
+reaches the hub from loopback, and a localhost prompt cannot say which machine
+asked, so an agent on another of your devices could otherwise collect your
+touch for its own terms. The boot log and `crosscheck doctor` say so if
+`localhost` is still listed beside an https address. A passkey works only at the
+address it was enrolled at, so enrol yours at the https address.
+
+**Releasing an artifact takes the passkey too.** A `needs_approval` artifact
+stays visible to its owner only until the owner approves it on `/ui/approvals`,
+and that approval, and revoking it, is a passkey ceremony with the same 24-hour
+cool-off. An API key opens a web session, and every agent on your machine can
+read the key, so the session alone releases nothing.
 
 **The hub's own machine is the exception.** An agent running there as the same
 OS user can read the hub's database and bypass all of this. It can also put its
 own page in front of `localhost`. If agents run on the hub's machine, run the
 hub under its own OS user or on another machine. There, list only the https
 address. Everything this still leaves open is stated in
-[spec 04a §8 and §12](docs/1.0/04a-human-waiver-authority.md).
+[spec 04a §8, §12 and §13](docs/1.0/04a-human-waiver-authority.md), including
+the person-attested writes any agent key can still make (§13).
 
 #### What this makes visible about people
 

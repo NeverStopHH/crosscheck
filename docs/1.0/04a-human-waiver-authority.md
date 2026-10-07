@@ -431,3 +431,100 @@ Tests: server `passkey-revocation-terminates`, `waiver-closure-surfaces`,
 `verdict-render`, `passkey-revocation-cli`; core `verdict-wire`. Each guard has
 an anchor at the tail of `connector-core/scripts/mutation-check.ts`, every one
 `caught`.
+
+## 13. What the hub hardening found (2026-10-08)
+
+*Appended, never inserted.* The adversarial review of the setup-and-invite
+design (findings H6, M2 and M7) checked its claims against the 0.10.0 code and
+found defects in code that already ships and runs on the pilot. Built on
+`fix/hub-listen-and-origin`.
+
+**Fixed:**
+
+1. **The hub listened on every interface** (M7). `Bun.serve({ port })` binds
+   `*:<port>`; on the pilot that was `*:7100` with the firewall off.
+   `CROSSCHECK_LISTEN` now names the addresses (`http/listen.ts`). Unset, a
+   data dir this release creates listens on loopback, and one from before the
+   setting keeps every interface with a WARN at boot and in every member's
+   doctor. The bootstrap records which, once (`hub_install`). Operator detail:
+   [OPERATIONS.md](../OPERATIONS.md#where-the-hub-listens).
+2. **`X-Forwarded-Proto` was believed from any peer** (M7). Forwarded headers
+   now count only from loopback or `CROSSCHECK_TRUSTED_PROXIES`
+   (`http/forwarded.ts`). Today they gate the login cookie's `Secure` flag and,
+   with item 3, whether a request came through a proxy.
+3. **A localhost ceremony was believed through `tailscale serve`** (H6). This
+   corrects §12 item 6: behind serve every request has a loopback peer, so
+   "localhost only from a loopback peer" no longer meant the hub's own
+   machine. When any https origin is configured, or the request came through a
+   trusted proxy, every ceremony at a localhost or loopback-IP origin is
+   refused, options and verify alike (`localhost_origin_off`). The boot and
+   doctor warn while `localhost` is listed beside an https origin.
+4. **An agent's key could release an artifact** (M2). `/ui/approvals` approve
+   and revoke were a session form post, and any key opens a session. They are
+   now ceremonies (`approve_artifact`, `revoke_artifact`) over the artifact id
+   and a digest of its content, with the cool-off of §4.4. On a hub with no
+   passkey origin the page shows what `/ui/waivers` shows there, and nothing
+   can be released.
+5. **The presence opt-out hid security events.** The feed filter dropped every
+   row naming an opted-out developer, a key rotation included, and the opt-out
+   is a PUT the key can make. `SECURITY_EVENT_KINDS` (`developer_key_rotated`,
+   `presence_reenabled`) is now exempt. Work activity stays hidden.
+6. **Switching an opt-out back off was silent.** It now appends
+   `presence_reenabled` (exempt per item 5), and the person's next
+   SessionStart briefing, `crosscheck status` and doctor say so for seven days.
+   Going more private stays frictionless.
+
+**Open, stated rather than hidden.** First, the writes any agent holding the
+API key can make that the hub records as a person's (person-ATTESTED, never
+person-PROVEN), each with what mitigates it:
+
+1. **`POST /api/pins`** and `/api/pins/:id/broke`. The body's
+   `presence: "controlling_terminal"` is a claim any key holder can send.
+   Mitigated by `crosscheck pin`'s person gate (`cli/agent-host.ts`: the agent
+   host markers, then the TTY probe; a pty plus a scrubbed environment passes
+   it), by the hub requiring and refusing the field, and by attribution: `pin
+   list` names who vouched, and `suspect` names who retracted.
+2. **`POST /api/pilot-marks`**, the pilot's one human label. The same claimed
+   presence field and the same mitigations: the person gate on `crosscheck
+   noise` and the label walk, and every row names who marked it.
+3. **`POST /api/hint-outcomes/person`** (`crosscheck followed`, `crosscheck
+   overrode`). No presence claim at all: the row is attributed to the key.
+   Mitigated by the person gate in `cli/outcome.ts` only.
+4. **`PUT /api/settings/presence`, `POST` and `DELETE /api/settings/mutes`.**
+   An agent can opt its person out of presence, which hides its own activity
+   from teammates, and can mute or unmute teammates for them. Mitigated by:
+   item 6 (opting back in is loud), item 5 (an opt-out no longer hides a key
+   rotation), the withholding itself being visible to colleagues, the
+   presence state on `crosscheck status` and doctor's privacy line, and mute
+   being a reader's preference, never a boundary. Opting OUT stays silent by
+   design.
+5. **`ADMIN_TOKEN` in `~/.crosscheck-hub/hub.env`**, readable by any agent
+   running as the hub's OS user on the hub's machine. It mints enrolment codes,
+   rotates keys, revokes passkeys and flips team settings. This is §12 open
+   item 1: run the hub under its own OS user, in a container or on its own
+   machine. Enrolments are still announced and cool off for 24 hours, and an
+   admin rotation reads "rotated by an admin" in the feed.
+
+And from this pass:
+
+6. **A proxy that adds no forwarded header** (`tailscale serve --tcp`, socat)
+   looks like the hub's own browser, so a localhost ceremony through it is
+   believed unless an https origin is listed. List the https origin.
+7. **A release is not tied to the passkey that signed it.** `artifacts`
+   records `approved_by`, not the credential, so revoking that passkey does
+   not withdraw the release, unlike D-PK-1's closure of waivers.
+8. **«security»** (`services/visibility.ts`): the instant of a key rotation or
+   a presence re-enable about an opted-out person stays in every feed.
+9. **Passkey enrolment and revocation, suspension and credential revocation
+   are no feed events today.** Passkey enrolments are announced on
+   `/api/passkeys/announcements` and `/ui/passkeys`, which apply no presence
+   filter. A future event of those kinds belongs in `SECURITY_EVENT_KINDS`.
+10. **No passkey login exists.** Every `/ui` session is opened with an API key,
+    so no session kind is recorded. Every human-only action is a ceremony of
+    its own.
+
+Tests: server `listen`, `listen-boot`, `forwarded-trust`,
+`ui-ceremony-localhost`, `ui-approvals`, `security-events-feed`,
+`presence-reenable`, `hub-status-transport`; core `briefing-presence-notice`;
+cli `doctor-hub-transport`, `presence-reenabled-cli`. Each guard has an anchor
+at the tail of `connector-core/scripts/mutation-check.ts`, every one `caught`.
