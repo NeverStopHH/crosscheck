@@ -3,8 +3,8 @@
  *
  * 1. THE CORPUS ON EVERY REGISTERED SURFACE. Each `corpus` registration
  *    renders every injection payload and is held to its framing class:
- *    framed output carries ITS quoted-data notice (QUOTED_DATA_NOTICE, or
- *    the own-drafts notice a surface declares) and never the other one,
+ *    framed output carries ITS quoted-data notices (QUOTED_DATA_NOTICE, or
+ *    the ones a surface declares) and no other,
  *    every line passes the character invariants
  *    (fixtures/untrusted-invariants.ts — the SAME
  *    assertions the briefing and MCP corpora use), and at most one « » pair
@@ -60,8 +60,8 @@ import { assertUntrustedCharacters } from "./fixtures/untrusted-invariants.ts";
 /** Every quoted-data notice the render layer owns — one constant per notice. */
 const QUOTED_DATA_NOTICES: readonly string[] = [QUOTED_DATA_NOTICE, OWN_DRAFTS_QUOTED_DATA_NOTICE];
 
-/** The notice a framed surface must carry: its declared one, else the teammate notice. */
-const noticeOf = (surface: CorpusRenderSurface): string => surface.notice ?? QUOTED_DATA_NOTICE;
+/** The notices a framed surface must carry: its declared ones, else the teammate notice. */
+const noticesOf = (surface: CorpusRenderSurface): readonly string[] => surface.notices ?? [QUOTED_DATA_NOTICE];
 
 const WORKSPACE_PACKAGES_ROOT = join(import.meta.dir, "..", "..");
 
@@ -308,7 +308,9 @@ describe("§4.4: the corpus runs on every registered surface", () => {
       // Assert
       expect(output.length, surface.name).toBeGreaterThan(0);
       if (surface.framing === "framed") {
-        expect(output, surface.name).toContain(noticeOf(surface));
+        for (const notice of noticesOf(surface)) {
+          expect(output, surface.name).toContain(notice);
+        }
       }
     },
   );
@@ -332,11 +334,13 @@ describe("§4.4: the corpus runs on every registered surface", () => {
           // correct render). Non-emptiness is pinned on a benign payload in
           // the test below, where it cannot be excused.
           if (output.length > 0) {
-            expect(output, where).toContain(noticeOf(surface));
-            // ...and never the OTHER notice: each one must be true of the
-            // text it heads, so a block of the reader's own drafts may not
-            // say it was written by teammates, nor the reverse.
-            for (const other of QUOTED_DATA_NOTICES.filter((notice) => notice !== noticeOf(surface))) {
+            for (const notice of noticesOf(surface)) {
+              expect(output, where).toContain(notice);
+            }
+            // ...and never a notice it does not declare: a surface of the
+            // reader's own drafts alone (the nudge, review_draft's echo) may
+            // not say its text was written by teammates, nor the reverse.
+            for (const other of QUOTED_DATA_NOTICES.filter((notice) => !noticesOf(surface).includes(notice))) {
               expect(output.includes(other), `${where}: wrong notice`).toBe(false);
             }
           }

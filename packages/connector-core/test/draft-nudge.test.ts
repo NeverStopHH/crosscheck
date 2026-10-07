@@ -1121,11 +1121,16 @@ describe("no draft text is ever printed without a quoted-data notice", () => {
   });
 });
 
-describe("the « » notice is true for the block it heads", () => {
+/**
+ * The header's teammate notice is on EVERY briefing, and the own-drafts block
+ * carries its own in addition — the owner's rule at a prompt-injection
+ * boundary: one notice too many rather than one too few.
+ */
+describe("the header's notice is on every briefing, and the own-drafts block keeps its own", () => {
   const draftHeaderOf = (text: string): string =>
     text.split("\n").find((line) => line.startsWith("Your own unreviewed draft claims")) ?? "";
 
-  test("a briefing of own drafts only never says its text was written by teammates", () => {
+  test("a briefing of own drafts only carries the header notice, and its block the own-drafts one", () => {
     const text = renderBriefing({
       repoId: REPO_ID,
       selfDeveloperId: "dev_self",
@@ -1135,7 +1140,7 @@ describe("the « » notice is true for the block it heads", () => {
       drafts: [draft()],
     });
 
-    expect(text).not.toContain(QUOTED_DATA_NOTICE);
+    expect(text.split("\n")[0]).toEndWith(QUOTED_DATA_NOTICE);
     expect(draftHeaderOf(text)).toEndWith(OWN_DRAFTS_QUOTED_DATA_NOTICE);
   });
 

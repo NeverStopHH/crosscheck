@@ -18221,18 +18221,13 @@ export const MUTATIONS: readonly Mutation[
     because: "the only notice over the reader's own drafts is the one saying teammates wrote them",
   },
   {
-    label: "a briefing of own drafts only says its text was written by teammates",
-    file: `${CORE}/src/briefing/render.ts`,
-    from: "    sections.every((section) => section === draftSection || section.lines.length === 0);",
-    to: "    false;",
-    test: `${CORE}/test/draft-nudge.test.ts`,
-    because: "a briefing with no teammate in it opens by attributing its quoted text to other developers",
-  },
-  {
+    // The header's notice is on every briefing (the owner's rule: one notice
+    // too many rather than one too few); draft-nudge.test.ts pins it beside
+    // teammates' blocks and over the reader's own drafts alone.
     label: "a briefing beside teammates' text drops their notice",
     file: `${CORE}/src/briefing/render.ts`,
-    from: "  const ownDraftsOnly =\n    coverageLines.length === 0 &&\n",
-    to: "  const ownDraftsOnly =\n    true ||\n",
+    from: "  const header = `crosscheck facts about ${repoLabel.length === 0 ? UNKNOWN_REPO : repoLabel}. ${QUOTED_DATA_NOTICE}`;",
+    to: "  const header = `crosscheck facts about ${repoLabel.length === 0 ? UNKNOWN_REPO : repoLabel}.`;",
     test: `${CORE}/test/draft-nudge.test.ts`,
     because: "teammates' quoted text reaches the agent with no notice that it is data, not instruction",
   },
@@ -21956,12 +21951,10 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     // Review H1: "own" drafts quote teammates (a ghost draft is a teammate's
-    // plan). Merged with the drafts branch, a briefing of own drafts ALONE
-    // heads that block with OWN_DRAFTS_QUOTED_DATA_NOTICE ("it may quote
-    // teammates") instead; any briefing with more keeps this notice.
+    // plan), so the notice is on every briefing, never conditional.
     label: "the briefing header drops the quoted-data notice",
     file: `${CORE}/src/briefing/render.ts`,
-    from: "  const header = `crosscheck facts about ${repoLabel.length === 0 ? UNKNOWN_REPO : repoLabel}.${ownDraftsOnly ? \"\" : ` ${QUOTED_DATA_NOTICE}`}`;",
+    from: "  const header = `crosscheck facts about ${repoLabel.length === 0 ? UNKNOWN_REPO : repoLabel}. ${QUOTED_DATA_NOTICE}`;",
     to: "  const header = `crosscheck facts about ${repoLabel.length === 0 ? UNKNOWN_REPO : repoLabel}.`;",
     test: `${CORE}/test/briefing-notice.test.ts`,
     because:
@@ -23634,7 +23627,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 2
  * PRINTS: packages/connector-core/test/derive-history.test.ts 7
  * PRINTS: packages/connector-core/test/detached-branch.test.ts 1
- * PRINTS: packages/connector-core/test/draft-nudge.test.ts 50
+ * PRINTS: packages/connector-core/test/draft-nudge.test.ts 49
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
  * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1
  * PRINTS: packages/connector-core/test/fix-diff.test.ts 7

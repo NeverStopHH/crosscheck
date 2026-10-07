@@ -20,7 +20,7 @@
 import type { CommitDrift } from "./git/commit-drift.ts";
 import type { LandedChanges, LandedCommit } from "./landed-changes/probe.ts";
 import type { CoverageRecord } from "./http/coverage.ts";
-import { OWN_DRAFTS_QUOTED_DATA_NOTICE, renderBriefing } from "./briefing/render.ts";
+import { OWN_DRAFTS_QUOTED_DATA_NOTICE, QUOTED_DATA_NOTICE, renderBriefing } from "./briefing/render.ts";
 import { renderDraftNudge } from "./briefing/draft-nudge.ts";
 import { renderConferenceReport } from "./conference/report.ts";
 import { formatSummarizerFailure } from "./model/runner.ts";
@@ -76,8 +76,8 @@ import { describeConnectionFailure } from "./http/connection-error.ts";
 
 /**
  * How a surface's output is classed, which decides its corpus assertions:
- *   framed    — a full document: carries its quoted-data notice
- *               (QUOTED_DATA_NOTICE unless it declares `notice`), every line under
+ *   framed    — a full document: carries its quoted-data notices
+ *               (QUOTED_DATA_NOTICE unless it declares `notices`), every line under
  *               the character invariants, at most one « » pair per line;
  *   sanitized — PROSE cleaned for a frame applied LATER (a title on its way
  *               to the hub): character invariants, and no « » at all;
@@ -121,12 +121,14 @@ export interface CorpusRenderSurface {
   readonly module: string;
   readonly framing: RenderSurfaceFraming;
   /**
-   * The quoted-data notice a `framed` surface must carry — QUOTED_DATA_NOTICE
-   * when omitted. Only the blocks that quote the reader's OWN auto-captured
-   * drafts name OWN_DRAFTS_QUOTED_DATA_NOTICE: each notice has to be true of
-   * the text it heads, and the registry test holds every surface to its own.
+   * The quoted-data notices a `framed` surface must carry — QUOTED_DATA_NOTICE
+   * alone when omitted. The blocks that quote the reader's OWN auto-captured
+   * drafts carry OWN_DRAFTS_QUOTED_DATA_NOTICE; the briefing carries both,
+   * because its header's teammate notice is on every briefing (one notice too
+   * many rather than one too few). The registry test holds every surface to
+   * exactly its own: each one listed present, no other.
    */
-  readonly notice?: string;
+  readonly notices?: readonly string[];
   /** Renders with the payload planted in the surface's most exposed slot. */
   readonly render: (untrusted: string) => string;
 }
@@ -830,10 +832,10 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     delivery: "unsolicited",
     module: "src/briefing/render.ts",
     framing: "framed",
-    notice: OWN_DRAFTS_QUOTED_DATA_NOTICE,
+    notices: [QUOTED_DATA_NOTICE, OWN_DRAFTS_QUOTED_DATA_NOTICE],
     // The OWN-DRAFTS slot of the briefing, which no surface above reaches:
-    // the reader's own auto-captured drafts, alone, so the block's own notice
-    // is the only one the output may carry.
+    // the reader's own auto-captured drafts, alone — the block's own notice,
+    // and the header's teammate notice that every briefing carries.
     render: (payload) =>
       renderBriefing({
         repoId: "github.com/acme/api",
@@ -851,7 +853,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     delivery: "pulled",
     module: "src/mcp/tools/review-draft.ts",
     framing: "framed",
-    notice: OWN_DRAFTS_QUOTED_DATA_NOTICE,
+    notices: [OWN_DRAFTS_QUOTED_DATA_NOTICE],
     // review_draft's answer echoes the caller's OWN draft body (or their
     // agent's edit of it) back as the claim just promoted.
     render: (payload) => reviewDraftSuccessText("confirm", "clm_promoted", "clm_draft1", payload),
@@ -1162,7 +1164,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     delivery: "unsolicited",
     module: "src/briefing/draft-nudge.ts",
     framing: "framed",
-    notice: OWN_DRAFTS_QUOTED_DATA_NOTICE,
+    notices: [OWN_DRAFTS_QUOTED_DATA_NOTICE],
     render: (payload) =>
       renderDraftNudge({
         backlog: { listed: draftsWith(payload), oldestFirst: null, total: DRAFT_CORPUS_BACKLOG, oldestCreatedAt: DRAFT_DUE_ISO },

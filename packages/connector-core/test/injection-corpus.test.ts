@@ -1284,7 +1284,7 @@ describe("own drafts are framed as the reader's own captured text", () => {
   });
 
   test.each(INJECTION_CORPUS.map((entry) => [entry.id, entry.payload] as const))(
-    "%s: the briefing's own-drafts block carries the own-sessions sentence, never the teammate one",
+    "%s: the briefing's own-drafts block carries the own-drafts sentence, the header the teammate one",
     (id, payload) => {
       // Act
       const output = renderBriefing({
@@ -1303,7 +1303,9 @@ describe("own drafts are framed as the reader's own captured text", () => {
       for (const line of output.split("\n")) {
         assertCharacters(line, `${id}: ${JSON.stringify(line)}`);
       }
-      expect(output.includes(FRAMING_SENTENCE), id).toBe(false);
+      // The header's teammate sentence is on every briefing (the owner's rule:
+      // one notice too many rather than one too few); the block keeps its own.
+      expect(output.split("\n")[0]?.endsWith(FRAMING_SENTENCE), id).toBe(true);
       expect(output.split("\n")[1]?.endsWith(OWN_DRAFTS_FRAMING_SENTENCE), id).toBe(true);
     },
   );
