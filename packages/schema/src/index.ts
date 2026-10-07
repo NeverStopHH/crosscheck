@@ -371,13 +371,16 @@ export {
   spanRedacted,
 } from "./untrusted-text.ts";
 export {
+  PROMPT_CLASSIFY_HEAD_CHARS,
+  PROMPT_CLASSIFY_TAIL_CHARS,
   PROMPT_MIN_TOKEN_CHARS,
+  classifyPrompt,
   isContentFreePrompt,
   isGermanPrompt,
   promptTerms,
   promptTokens,
 } from "./prompt-terms.ts";
-export type { PromptTerms } from "./prompt-terms.ts";
+export type { ClassifiedPrompt, PromptTerms } from "./prompt-terms.ts";
 export {
   CI_MAX_TEST_ROWS,
   CI_KNOWN_PROVIDERS,

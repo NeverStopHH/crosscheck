@@ -46,7 +46,8 @@ import { getHintCandidates } from "../http/hub.ts";
 import type { AnsweredQuestion, HubContext, LandedNotice } from "../http/hub.ts";
 import { rememberHintDelivery, rememberLandedNoticeDelivery } from "../hints/delivery.ts";
 import { hintBodyHash } from "../hints/echo.ts";
-import { humanPromptText, isContentFreePrompt, isHarnessTurn, promptTerms, shownSubstance } from "@crosscheck/schema";
+import { classifyPrompt, isHarnessTurn, shownSubstance } from "@crosscheck/schema";
+import type { ClassifiedPrompt } from "@crosscheck/schema";
 import {
   hintTrailerReserve,
   renderAnswerHint,
@@ -93,6 +94,12 @@ export interface SelectAndRenderHintInput {
    * immediate post gets no more (hints/delivery.ts). Absent, no notice is told.
    */
   readonly spareMs?: () => number;
+  /**
+   * The prompt as the caller already classified it (`@crosscheck/schema`
+   * classifyPrompt) — the hook classifies ONCE for its intent fire and this
+   * flow (hold-out review round 3, L4). Absent, the flow classifies it once.
+   */
+  readonly classified?: ClassifiedPrompt;
 }
 
 interface Delivery {
@@ -318,14 +325,15 @@ export const selectAndRenderHint = async (
     await bookStoodDown(input, "harnessTurnCount");
     return "";
   }
-  const humanText = humanPromptText(input.prompt);
+  // ONE CLASSIFICATION per hook (round 3, L4): the caller's, or this one.
+  const { human: humanText, terms } = input.classified ?? classifyPrompt(input.prompt);
   // A CONTENT-FREE PROMPT is not a query, and it is not SENT: every word a
   // function word or one that steers the session — "mache weiter", "please
   // continue, the limit was reset" — decided here by the hub's own rule
   // (@crosscheck/schema prompt-terms.ts), so a hub too old to know it is
   // never asked (review 1006b, L5). Whether a prompt WITH content matches a
   // teammate's work is the hub's call — only the hub holds their words.
-  const promptQuery = isContentFreePrompt(humanText) ? "" : queryWindow(humanText);
+  const promptQuery = terms.isContentFree ? "" : queryWindow(humanText);
   // NOTHING STANDS IN for a prompt that said nothing — not the session's
   // intent either (owner decision, review 1006b M6): no call at all, and the
   // turn is counted as floored whatever the session's budget (M7).
@@ -432,8 +440,8 @@ export const selectAndRenderHint = async (
     deliveredCount: state.deliveredHintRefs.length,
     selfDeveloperId: state.developerId,
     // What an old hub's candidates are recounted on (hold-out review, H4).
-    promptTerms: promptTerms(humanText).content,
-    promptTopicalTerms: promptTerms(humanText).topical,
+    promptTerms: terms.content,
+    promptTopicalTerms: terms.topical,
   });
   const delivery = await renderSelection(
     {

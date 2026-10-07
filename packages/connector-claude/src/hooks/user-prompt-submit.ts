@@ -60,7 +60,9 @@ import {
   updateSessionState,
 } from "@crosscheck/connector-core/state/session-state.ts";
 import { hasGhostAllowance, withGhostClaimed } from "@crosscheck/connector-core/derive/ghost/gate.ts";
-import { intentPromptOf, withIntentFire } from "@crosscheck/connector-core/derive/intent/gate.ts";
+import { intentPromptFrom, withIntentFire } from "@crosscheck/connector-core/derive/intent/gate.ts";
+import { classifyPrompt } from "@crosscheck/schema";
+import type { ClassifiedPrompt } from "@crosscheck/schema";
 import { spawnDeriveWorker } from "@crosscheck/connector-core/derive/spawn.ts";
 import { requestLandingFetchFor } from "./landing-fetch.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
@@ -130,9 +132,9 @@ const spawnIntentWorker = (ctx: HookContext, promptFile: string): void => {
  * Record-then-spawn, like the summarizer: a crash between the two costs one
  * unspent fire, never a double spawn.
  */
-const maybeSpawnIntentWorker = async (ctx: HookContext): Promise<void> => {
+const maybeSpawnIntentWorker = async (ctx: HookContext, classified: ClassifiedPrompt): Promise<void> => {
   try {
-    const prompt = intentPromptOf(ctx.payload.prompt ?? "");
+    const prompt = intentPromptFrom(classified);
     if (prompt === null) {
       return;
     }
@@ -198,9 +200,12 @@ const maybeSpawnGhostWorker = async (ctx: HookContext): Promise<void> => {
 };
 
 const deliverPromptContext = async (ctx: HookContext, budget: HookBudget): Promise<string> => {
+  // ONE CLASSIFICATION of the prompt for the whole hook — the intent fire and
+  // the hint read the same one (hold-out review round 3, L4).
+  const classified = classifyPrompt(ctx.payload.prompt ?? "");
   // The derived-intent fire delivers nothing and runs first, so it happens
   // on the first substantive prompt whatever else this hook goes on to emit.
-  await maybeSpawnIntentWorker(ctx);
+  await maybeSpawnIntentWorker(ctx, classified);
   // The ghost debt, likewise: nothing is emitted here, and a session that
   // owes nothing pays one state read it had already made.
   await maybeSpawnGhostWorker(ctx);
@@ -235,6 +240,7 @@ const deliverPromptContext = async (ctx: HookContext, budget: HookBudget): Promi
     // headless run — within what the budget spares (landed changes, step 4).
     tellsNotices: aPersonReads(ctx.env),
     spareMs: () => budget.spareMs(),
+    classified,
   });
   if (text.length === 0) {
     return "";

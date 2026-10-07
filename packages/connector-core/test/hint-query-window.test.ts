@@ -8,6 +8,8 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
+import { classifyPrompt } from "@crosscheck/schema";
+import type { ClassifiedPrompt } from "@crosscheck/schema";
 
 import { MAX_SEARCH_QUERY_CHARS } from "../src/constants.ts";
 import { selectAndRenderHint } from "../src/flows/hint.ts";
@@ -34,8 +36,8 @@ afterEach(async () => {
   hubs.length = 0;
 });
 
-/** The query the connector put on the wire for `prompt`. */
-const sentQuery = async (label: string, prompt: string): Promise<string> => {
+/** The query the connector put on the wire for `prompt`, classified by the caller or not. */
+const sentQuery = async (label: string, prompt: string, classified?: ClassifiedPrompt): Promise<string> => {
   const home = await makeHome(label);
   const repo = await makeRepo(label, { remote: "git@github.com:acme/api.git" });
   paths.push(home, repo);
@@ -50,9 +52,30 @@ const sentQuery = async (label: string, prompt: string): Promise<string> => {
   await selectAndRenderHint({
     home, repoKey: key, hub: { hubUrl: hub.url, apiKey: "test-key", timeoutMs: 20_000, home, repoKey: key, now: () => NOW },
     hostSessionKey: HOST_KEY, repoId: REPO_ID, repoRoot: repo, agentKind: "acp:fake-agent", prompt, now: NOW,
+    ...(classified === undefined ? {} : { classified }),
   });
   return hub.lastCandidatesQuery()?.get("query") ?? "";
 };
+
+describe("the prompt is classified once per hook (round 3, L4)", () => {
+  test("the flow reads the classification its caller already made, never its own second one", async () => {
+    // Arrange — the hook classified the prompt once; this one as content-free
+    const prompt = "why does the checkout worker drop the idempotency key";
+    const classified: ClassifiedPrompt = { ...classifyPrompt(prompt), terms: { ...classifyPrompt(prompt).terms, isContentFree: true } };
+
+    // Act
+    const sent = await sentQuery("qw-classified", prompt, classified);
+
+    // Assert — no call: the caller's verdict is the one the flow acted on
+    expect(sent).toBe("");
+  });
+
+  test("the control: unclassified, the same prompt goes on the wire", async () => {
+    expect(await sentQuery("qw-unclassified", "why does the checkout worker drop the idempotency key")).toBe(
+      "why does the checkout worker drop the idempotency key",
+    );
+  });
+});
 
 describe("the query window (M7)", () => {
   test("a prompt past the cap sends its head and its tail, the task at the end included", async () => {

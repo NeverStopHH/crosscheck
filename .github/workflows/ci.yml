@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1782
+    # PRINTS: 1786
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -265,7 +265,7 @@ jobs:
     # PRINTS: derive/conference/prompt.ts 1
     # PRINTS: derive/ghost/cost.ts 1
     # PRINTS: derive/ghost/worker.ts 5
-    # PRINTS: derive/intent/gate.ts 3
+    # PRINTS: derive/intent/gate.ts 2
     # PRINTS: derive/intent/prompt.ts 1
     # PRINTS: derive/intent/worker.ts 5
     # PRINTS: derive/spawn.ts 2
@@ -281,7 +281,7 @@ jobs:
     # PRINTS: flows/claim-surface.ts 1
     # PRINTS: flows/end-session.ts 3
     # PRINTS: flows/heartbeat.ts 1
-    # PRINTS: flows/hint.ts 27
+    # PRINTS: flows/hint.ts 28
     # PRINTS: flows/register-session.ts 4
     # PRINTS: flows/solved-hint.ts 4
     # PRINTS: git/check-ignore.ts 1
@@ -379,7 +379,7 @@ jobs:
     # PRINTS: packages/schema/src/landed-notice.ts 5
     # PRINTS: packages/schema/src/pilot-mark.ts 5
     # PRINTS: packages/schema/src/pin.ts 2
-    # PRINTS: packages/schema/src/prompt-terms.ts 24
+    # PRINTS: packages/schema/src/prompt-terms.ts 27
     # PRINTS: packages/schema/src/prompt-vocabulary.ts 8
     # PRINTS: packages/schema/src/repo-path.ts 1
     # PRINTS: packages/schema/src/secret-scan.ts 1
@@ -390,7 +390,7 @@ jobs:
     # PRINTS: packages/schema/src/substance-sentence.ts 15
     # PRINTS: packages/schema/src/substance-trust.ts 5
     # PRINTS: packages/schema/src/telemetry-loss.ts 6
-    # PRINTS: packages/schema/src/typing-slip.ts 9
+    # PRINTS: packages/schema/src/typing-slip.ts 10
     # PRINTS: packages/schema/src/untrusted-text.ts 6
     # PRINTS: packages/server/src/constants.ts 1
     # PRINTS: packages/server/src/db/bootstrap.sql 19
@@ -559,7 +559,7 @@ jobs:
     # PRINTS: fix-diff.ts 7
     # PRINTS: fixture.ts 1
     # PRINTS: flush.ts 2
-    # PRINTS: gate.ts 10
+    # PRINTS: gate.ts 9
     # PRINTS: gates.ts 1
     # PRINTS: get-diagnosis.ts 2
     # PRINTS: ghost-overlap.ts 4
@@ -570,7 +570,7 @@ jobs:
     # PRINTS: harness-turn.ts 16
     # PRINTS: heartbeat.ts 1
     # PRINTS: hint-deliveries.ts 5
-    # PRINTS: hint.ts 31
+    # PRINTS: hint.ts 32
     # PRINTS: hints.ts 47
     # PRINTS: hook-budget.ts 2
     # PRINTS: hub.ts 14
@@ -637,7 +637,7 @@ jobs:
     # PRINTS: probe.ts 39
     # PRINTS: profile.ts 2
     # PRINTS: project-copy.ts 9
-    # PRINTS: prompt-terms.ts 24
+    # PRINTS: prompt-terms.ts 27
     # PRINTS: prompt-vocabulary.ts 8
     # PRINTS: prompt.ts 2
     # PRINTS: proxy.ts 1
@@ -716,7 +716,7 @@ jobs:
     # PRINTS: touched-root.ts 5
     # PRINTS: transcript.ts 4
     # PRINTS: triggers.ts 2
-    # PRINTS: typing-slip.ts 9
+    # PRINTS: typing-slip.ts 10
     # PRINTS: ui-ceremony.ts 5
     # PRINTS: ui-passkeys.tsx 1
     # PRINTS: untrusted-text.ts 6

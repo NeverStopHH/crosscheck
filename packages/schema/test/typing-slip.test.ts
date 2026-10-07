@@ -21,6 +21,7 @@ describe("the slips a hand makes are recognised", () => {
     ["bitet", "bitte", "a swapped pair"],
     ["scho", "schon", "the last letter left out"],
     ["contimue", "continue", "a neighbouring key instead of the right one"],
+    ["weoter", "weiter", "a neighbouring key in a word of one slip"],
     ["wiederuafnhemen", "wiederaufnehmen", "two swapped pairs in a long word"],
     ["zurukgsetz", "zuruckgesetzt", "three letters left out of a thirteen-letter word"],
     ["kontingnet", "kontingent", "a swapped pair"],

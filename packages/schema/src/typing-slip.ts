@@ -65,28 +65,24 @@ const NEVER = Number.POSITIVE_INFINITY;
 /** Every slip a hand makes, or the swapped pair alone. */
 type SlipKinds = "all" | "swaps";
 
+/** A cell already computed — this row's so far, or an earlier row's. */
+type CostAt = (row: number, column: number) => number;
+
 /** The cheapest way to cell (row, column), given the cells before it. */
-const cellCost = (
-  typed: string,
-  target: string,
-  kinds: SlipKinds,
-  cost: readonly (readonly number[])[],
-  row: number,
-  column: number,
-): number => {
+const cellCost = (typed: string, target: string, kinds: SlipKinds, cost: CostAt, row: number, column: number): number => {
   const typedLetter = typed[row - 1];
   const targetLetter = target[column - 1];
-  const diagonal = cost[row - 1]?.[column - 1] ?? NEVER;
+  const diagonal = cost(row - 1, column - 1);
   const matched = typedLetter === targetLetter ? diagonal : NEVER;
   const isSwap =
     row >= 3 && column >= 3 && typedLetter === target[column - 2] && typed[row - 2] === targetLetter && typedLetter !== targetLetter;
-  const swapped = isSwap ? (cost[row - 2]?.[column - 2] ?? NEVER) + 1 : NEVER;
+  const swapped = isSwap ? cost(row - 2, column - 2) + 1 : NEVER;
   if (kinds === "swaps") {
     return Math.min(matched, swapped);
   }
   const hitNeighbour = areNeighbours(typedLetter, targetLetter) ? diagonal + 1 : NEVER;
-  const leftOut = (cost[row]?.[column - 1] ?? NEVER) + 1;
-  const strayKey = isStrayKey(typed, row - 1, target[column]) ? (cost[row - 1]?.[column] ?? NEVER) + 1 : NEVER;
+  const leftOut = cost(row, column - 1) + 1;
+  const strayKey = isStrayKey(typed, row - 1, target[column]) ? cost(row - 1, column) + 1 : NEVER;
   return Math.min(matched, swapped, hitNeighbour, leftOut, strayKey);
 };
 
@@ -107,7 +103,8 @@ const slipsBetween = (typed: string, target: string, kinds: SlipKinds): number =
             ? NEVER
             : row === 1 && column === 1
               ? 0
-              : cellCost(typed, target, kinds, [...filled, cells], row, column),
+              : // Read through an accessor, never a copy of the table per cell (round 3, L4)
+                cellCost(typed, target, kinds, (at, column) => (at === row ? cells[column] : filled[at]?.[column]) ?? NEVER, row, column),
         ],
         [],
       ),
@@ -117,6 +114,37 @@ const slipsBetween = (typed: string, target: string, kinds: SlipKinds): number =
   return cost[typed.length]?.[target.length] ?? NEVER;
 };
 
+/** How many letters of sorted `a` sorted `b` cannot match, one for one. */
+const unmatched = (a: readonly string[], b: readonly string[], i = 0, j = 0, count = 0): number => {
+  const left = a[i];
+  const right = b[j];
+  if (left === undefined) {
+    return count;
+  }
+  if (right === undefined) {
+    return count + (a.length - i);
+  }
+  return left === right
+    ? unmatched(a, b, i + 1, j + 1, count)
+    : left < right
+      ? unmatched(a, b, i + 1, j, count + 1)
+      : unmatched(a, b, i, j + 1, count);
+};
+
+/**
+ * A LOWER BOUND ON THE SLIPS, in one pass over the letters (round 3, L4):
+ * a swap leaves a word's letters as they were, and every other slip changes
+ * at most one letter on each side — so two words whose letters differ by
+ * more than the budget cannot be one slip of the other, and the edit table
+ * is never built. A hundred kilobytes of near-words spent most of their
+ * 390 ms there.
+ */
+const letterDistance = (typed: string, target: string): number => {
+  const typedLetters = [...typed].sort();
+  const targetLetters = [...target].sort();
+  return Math.max(unmatched(typedLetters, targetLetters), unmatched(targetLetters, typedLetters));
+};
+
 const isSlipOf = (typed: string, target: string, kinds: SlipKinds): boolean => {
   const budget = slipBudget(target);
   return (
@@ -124,6 +152,7 @@ const isSlipOf = (typed: string, target: string, kinds: SlipKinds): boolean => {
     typed !== target &&
     typed[0] === target[0] &&
     Math.abs(typed.length - target.length) <= budget &&
+    letterDistance(typed, target) <= budget &&
     slipsBetween(typed, target, kinds) <= budget
   );
 };

@@ -17431,7 +17431,8 @@ export const MUTATIONS: readonly Mutation[
     label: "a prompt with no searchable word goes on the wire",
     file: `${CORE}/src/flows/hint.ts`,
     // RETARGETED (round 3, M7): the query is the prompt's window now.
-    from: "  const promptQuery = isContentFreePrompt(humanText) ? \"\" : queryWindow(humanText);",
+    // RETARGETED (round 3, L4): the verdict is the hook's one classification.
+    from: "  const promptQuery = terms.isContentFree ? \"\" : queryWindow(humanText);",
     to: "  const promptQuery = queryWindow(humanText);",
     test: `${CORE}/test/hint-intent-fallback.test.ts`,
     because: "\"ok ja\" leaves the machine as a search query and costs a hub call it can never use",
@@ -17947,8 +17948,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a turn that is all harness still asks the hub",
     file: `${CORE}/src/flows/hint.ts`,
-    from: "  if (isHarnessTurn(input.prompt)) {\n    await bookStoodDown(input, \"harnessTurnCount\");\n    return \"\";\n  }\n  const humanText",
-    to: "  const humanText",
+    // RETARGETED (round 3, L4): the human text comes out of the one classification.
+    from: "  if (isHarnessTurn(input.prompt)) {\n    await bookStoodDown(input, \"harnessTurnCount\");\n    return \"\";\n  }\n",
+    to: "",
     test: `${CORE}/test/hint-harness-turn.test.ts`,
     because: "every background notification spends a call and sends the session's intent to fetch a pointer nobody prompted",
   },
@@ -17956,8 +17958,9 @@ export const MUTATIONS: readonly Mutation[
     label: "the connector sends the harness's words beside the human's",
     file: `${CORE}/src/flows/hint.ts`,
     // RETARGETED (round 3, M7): the query is the prompt's window now.
-    from: "  const promptQuery = isContentFreePrompt(humanText) ? \"\" : queryWindow(humanText);",
-    to: "  const promptQuery = isContentFreePrompt(input.prompt) ? \"\" : queryWindow(input.prompt);",
+    // RETARGETED (round 3, L4): the classification reads the raw turn.
+    from: "  const { human: humanText, terms } = input.classified ?? classifyPrompt(input.prompt);",
+    to: "  const { terms } = input.classified ?? classifyPrompt(input.prompt);\n  const humanText = input.prompt;",
     test: `${CORE}/test/hint-harness-turn.test.ts`,
     because: "a notification's task ids and status words go on the wire and top up a human prompt's count",
   },
@@ -18054,7 +18057,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a swapped pair of letters is not tolerated",
     file: `${SCHEMA}/src/typing-slip.ts`,
-    from: "  const swapped = isSwap ? (cost[row - 2]?.[column - 2] ?? NEVER) + 1 : NEVER;",
+    // RETARGETED (round 3, L4): cells are read through an accessor.
+    from: "  const swapped = isSwap ? cost(row - 2, column - 2) + 1 : NEVER;",
     to: "  const swapped = NEVER;",
     test: `${SCHEMA}/test/typing-slip.test.ts`,
     because: "\"contineu\" and \"wiederuafnhemen\" — a typist's commonest slip — stop being the words they are",
@@ -18070,17 +18074,20 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the intent fire parks the harness's words",
     // RETARGETED (round 3, H2): the gate reads the topical floor after the length floor.
-    file: `${CORE}/src/derive/intent/gate.ts`,
-    from: "  const human = humanPromptText(prompt);\n  if (!isSubstantivePrompt(human)) {",
-    to: "  const human = prompt;\n  if (!isSubstantivePrompt(human)) {",
+    // RETARGETED (round 3, L4): the gate reads the hook's one classification,
+    // whose human text is the schema's.
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "  const human = humanPromptText(prompt);\n  return { human, terms: promptTerms(human) };",
+    to: "  const human = prompt;\n  return { human, terms: promptTerms(human) };",
     test: `${CONNECTOR}/test/intent-gate.test.ts`,
     because: "a background notification as the first long turn spends the one fire and parks \"Monitor event: CI checks pass\" as the session's intent (H2)",
   },
   {
     label: "a content-free prompt spends the session's one intent fire",
     // RETARGETED (round 3, H2): the topical floor is the content-free rule here.
+    // RETARGETED (round 3, L4): on the hook's one classification.
     file: `${CORE}/src/derive/intent/gate.ts`,
-    from: "  return promptTerms(human).topical.length >= INTENT_MIN_TOPICAL_WORDS ? human : null;",
+    from: "  return classified.terms.topical.length >= INTENT_MIN_TOPICAL_WORDS ? human : null;",
     to: "  return human;",
     test: `${CONNECTOR}/test/content-free-prompt.test.ts`,
     because: "\"mache weiter, limit zuruckgesetzt, bitte …\" is long enough to be summarised as the session's task, and the real task after it gets no fire",
@@ -18088,7 +18095,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the prompt hook fires the intent worker on the raw turn",
     file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
-    from: "    const prompt = intentPromptOf(ctx.payload.prompt ?? \"\");",
+    // RETARGETED (round 3, L4): the hook classifies once and hands it on.
+    from: "    const prompt = intentPromptFrom(classified);",
     to: "    const prompt = ctx.payload.prompt ?? \"\";",
     test: `${CONNECTOR}/test/content-free-prompt.test.ts`,
     because: "every task notification spends the fire the developer's first real prompt was owed",
@@ -18498,18 +18506,20 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a slash command's name is scored as task words",
     // RETARGETED (round 3, M7): the scored text feeds the verdict and the clauses alike.
+    // RETARGETED (round 3, L4): and is the capped window of the arguments.
     file: `${SCHEMA}/src/prompt-terms.ts`,
-    from: "  const scored = commandArguments(text);",
-    to: "  const scored = text;",
+    from: "  const scored = classifiedWindow(commandArguments(text));",
+    to: "  const scored = classifiedWindow(text);",
     test: `${SERVER}/test/hint-candidate-floor.test.ts`,
     because: "\"/code-review\" reaches the review checklist on \"code\" and \"review\" (H1 d)",
   },
   {
     label: "the connector sends a bare slash command to the hub",
     // RETARGETED (round 3, M7): the scored text feeds the verdict and the clauses alike.
+    // RETARGETED (round 3, L4): the flow reads promptTerms' verdict, once.
     file: `${SCHEMA}/src/prompt-terms.ts`,
-    from: "  const scored = commandArguments(text);",
-    to: "  const scored = text;",
+    from: "  const scored = classifiedWindow(commandArguments(text));",
+    to: "  const scored = classifiedWindow(text);",
     test: `${CORE}/test/hint-intent-fallback.test.ts`,
     because: "every \"/compact\" and \"/loop 5m /babysit-prs\" spends a call a 0.10.0 hub answers on the command's own words (H1 d)",
   },
@@ -18605,7 +18615,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a letter left out is no slip",
     file: `${SCHEMA}/src/typing-slip.ts`,
-    from: "  const leftOut = (cost[row]?.[column - 1] ?? NEVER) + 1;",
+    // RETARGETED (round 3, L4): cells are read through an accessor.
+    from: "  const leftOut = cost(row, column - 1) + 1;",
     to: "  const leftOut = NEVER;",
     test: `${SCHEMA}/test/typing-slip.test.ts`,
     because: "\"contnue\", \"goin\" and \"zurukgsetz\" stop being the words they are (H1 b)",
@@ -18613,7 +18624,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a doubled letter or a stray key is no slip",
     file: `${SCHEMA}/src/typing-slip.ts`,
-    from: "  const strayKey = isStrayKey(typed, row - 1, target[column]) ? (cost[row - 1]?.[column] ?? NEVER) + 1 : NEVER;",
+    // RETARGETED (round 3, L4): cells are read through an accessor.
+    from: "  const strayKey = isStrayKey(typed, row - 1, target[column]) ? cost(row - 1, column) + 1 : NEVER;",
     to: "  const strayKey = NEVER;",
     test: `${SCHEMA}/test/typing-slip.test.ts`,
     because: "\"weiterr\" and \"macxhe\" stop being the words they are (H1 b)",
@@ -18884,7 +18896,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the flow recounts an old hub's candidates on nothing",
     file: `${CORE}/src/flows/hint.ts`,
-    from: "    promptTerms: promptTerms(humanText).content,",
+    // RETARGETED (round 3, L4): the terms come from the hook's one classification.
+    from: "    promptTerms: terms.content,",
     to: "    promptTerms: [],",
     test: `${CORE}/test/hint-old-hub-floor.test.ts`,
     because: "against a 0.10.0 hub no candidate ever clears the recount, and every real task loses its hint (H4)",
@@ -18892,7 +18905,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the flow recounts an old hub's candidates on raw words, steering included",
     file: `${CORE}/src/flows/hint.ts`,
-    from: "    promptTerms: promptTerms(humanText).content,",
+    // RETARGETED (round 3, L4): the terms come from the hook's one classification.
+    from: "    promptTerms: terms.content,",
     to: "    promptTerms: humanText.toLowerCase().split(/[^\\p{L}\\p{N}]+/u),",
     test: `${CORE}/test/hint-old-hub-floor.test.ts`,
     because: "\"please continue\" beside one task word clears an old hub's floor again (H4, H1)",
@@ -19006,8 +19020,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the flow hands the recount every term as topical",
     file: `${CORE}/src/flows/hint.ts`,
-    from: "    promptTopicalTerms: promptTerms(humanText).topical,",
-    to: "    promptTopicalTerms: promptTerms(humanText).content,",
+    // RETARGETED (round 3, L4): the terms come from the hook's one classification.
+    from: "    promptTopicalTerms: terms.topical,",
+    to: "    promptTopicalTerms: terms.content,",
     test: `${CORE}/test/hint-old-hub-floor.test.ts`,
     because: "the selector's topical rule is fed the meta words it exists to discount (C1)",
   },
@@ -19094,8 +19109,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the intent fire is spent on a prompt of machinery",
     file: `${CORE}/src/derive/intent/gate.ts`,
-    from: "  return promptTerms(human).topical.length >= INTENT_MIN_TOPICAL_WORDS ? human : null;",
-    to: "  return promptTerms(human).topical.length >= 1 ? human : null;",
+    // RETARGETED (round 3, L4): on the hook's one classification.
+    from: "  return classified.terms.topical.length >= INTENT_MIN_TOPICAL_WORDS ? human : null;",
+    to: "  return classified.terms.topical.length >= 1 ? human : null;",
     test: `${CONNECTOR}/test/intent-gate.test.ts`,
     because: "\"fix the session limit reset handling once more please\" parks a sentence the model can only answer with machinery (round 3, H2)",
   },
@@ -19381,10 +19397,51 @@ export const MUTATIONS: readonly Mutation[
     because: "another repo's observation, revised into this one, backs a cause here (round 3, L3)",
   },
   {
+    label: "a 100 KB prompt is classified whole",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "  if (text.length <= PROMPT_CLASSIFY_HEAD_CHARS + PROMPT_CLASSIFY_TAIL_CHARS) {\n    return text;\n  }",
+    to: "  if (text.length >= 0) {\n    return text;\n  }",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "a pasted log of near-words takes hundreds of milliseconds of an 800 ms hook to classify (round 3, L4)",
+  },
+  {
+    label: "a capped prompt is judged on its head alone",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "  return `${head}\\n${tail}`;",
+    to: "  return head;",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "a long prompt whose task is written last is floored as content-free (round 3, L4)",
+  },
+  // EQUIVALENT, NOT ANCHORED (round 3, L4) — deleting typing-slip.ts's
+  // `letterDistance(typed, target) <= budget &&` reddens no test, by
+  // construction: it is a LOWER BOUND on the slips, so it only ever turns
+  // away a word the slip table would have turned away too. What it buys is
+  // time, and the 50 ms classification test cannot see it while the 9 000-
+  // character cap holds the same 100 KB prompt under budget on its own (the
+  // cap's own anchor above is behavioural). Recorded so it is not
+  // re-reported as a gap.
+  {
+    label: "the letter bound turns a neighbour key away",
+    file: `${SCHEMA}/src/typing-slip.ts`,
+    from: "  return Math.max(unmatched(typedLetters, targetLetters), unmatched(targetLetters, typedLetters));",
+    to: "  return unmatched(typedLetters, targetLetters) + unmatched(targetLetters, typedLetters);",
+    test: `${SCHEMA}/test/typing-slip.test.ts`,
+    because: "a key's neighbour hit changes one letter on each side, and counting both makes \"weoter\" no slip of weiter (round 3, L4)",
+  },
+  {
+    label: "the flow classifies the prompt a second time",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "  const { human: humanText, terms } = input.classified ?? classifyPrompt(input.prompt);",
+    to: "  const { human: humanText, terms } = classifyPrompt(input.prompt);",
+    test: `${CORE}/test/hint-query-window.test.ts`,
+    because: "every hook classifies each prompt twice against its 800 ms budget (round 3, L4)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     // RETARGETED (round 3, M7): the query is the prompt's window now.
-    from: "  const promptQuery = isContentFreePrompt(humanText) ? \"\" : queryWindow(humanText);",
+    // RETARGETED (round 3, L4): the verdict is the hook's one classification.
+    from: "  const promptQuery = terms.isContentFree ? \"\" : queryWindow(humanText);",
     to: "  const promptQuery = humanText.length === 0 ? \"\" : queryWindow(humanText);",
     test: `${CORE}/test/hint-intent-fallback.test.ts`,
     because: "a 0.10.0 hub, which knows no steering word, points \"mache weiter\" at the tree that says mache (L5)",
@@ -19639,7 +19696,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-harness-turn.test.ts 5
  * PRINTS: packages/connector-core/test/hint-intent-fallback.test.ts 6
  * PRINTS: packages/connector-core/test/hint-old-hub-floor.test.ts 10
- * PRINTS: packages/connector-core/test/hint-query-window.test.ts 1
+ * PRINTS: packages/connector-core/test/hint-query-window.test.ts 2
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
  * PRINTS: packages/connector-core/test/hint-substance-flow.test.ts 10
@@ -19724,14 +19781,14 @@ interface Outcome {
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1
- * PRINTS: packages/schema/test/prompt-terms.test.ts 22
+ * PRINTS: packages/schema/test/prompt-terms.test.ts 24
  * PRINTS: packages/schema/test/session-control.test.ts 6
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/schema/test/slash-command.test.ts 4
  * PRINTS: packages/schema/test/substance-match.test.ts 1
  * PRINTS: packages/schema/test/substance-sentence.test.ts 12
  * PRINTS: packages/schema/test/telemetry-loss.test.ts 2
- * PRINTS: packages/schema/test/typing-slip.test.ts 9
+ * PRINTS: packages/schema/test/typing-slip.test.ts 10
  * PRINTS: packages/server/test/absences.test.ts 7
  * PRINTS: packages/server/test/calibration.test.ts 1
  * PRINTS: packages/server/test/causal-guarantees.test.ts 23

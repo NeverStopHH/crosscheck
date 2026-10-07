@@ -8,7 +8,15 @@
  */
 import { describe, expect, test } from "bun:test";
 
-import { isContentFreePrompt, isGermanPrompt, promptTerms, promptTokens } from "../src/prompt-terms.ts";
+import {
+  PROMPT_CLASSIFY_HEAD_CHARS,
+  PROMPT_CLASSIFY_TAIL_CHARS,
+  classifyPrompt,
+  isContentFreePrompt,
+  isGermanPrompt,
+  promptTerms,
+  promptTokens,
+} from "../src/prompt-terms.ts";
 
 describe("the language signal: more German-only stop words than English-only ones", () => {
   test.each([
@@ -189,6 +197,49 @@ describe("content terms are the words left after the stop lists", () => {
     expect(terms.ranked).toEqual(["redis", "cache", "eviction", "drops", "feed", "entries", "limit", "reset"]);
     expect(terms.ranked).not.toContain("short");
     expect(terms.content).toContain("short");
+  });
+
+  test("the reviewer's 100 KB adversarial prompt is classified, once, in under 50 ms (round 3, L4)", () => {
+    // Arrange — distinct nine-letter words keyed on r and w, where the most slip targets sit
+    const CLASSIFY_BUDGET_MS = 50;
+    const words = Array.from({ length: 10_001 }, (_, index) => `${index % 2 ? "re" : "we"}${(index.toString(36) + "qqqqqqq").slice(0, 7)}`);
+    const prompt = words.join(" ");
+
+    // Act
+    const started = performance.now();
+    const classified = classifyPrompt(prompt);
+    const elapsed = performance.now() - started;
+
+    // Assert
+    expect(prompt.length).toBeGreaterThanOrEqual(100_000);
+    expect(classified.terms.isContentFree).toBe(false);
+    expect(elapsed).toBeLessThan(CLASSIFY_BUDGET_MS);
+  });
+
+  test("a capped prompt is judged on its head and its tail — a task word at the very end still counts (L4)", () => {
+    // Arrange — a long run of steering, and the one task word last
+    const prompt = `${"weiter bitte ".repeat(2_000)}checkout`;
+
+    // Act
+    const terms = promptTerms(prompt);
+
+    // Assert
+    expect(prompt.length).toBeGreaterThan(PROMPT_CLASSIFY_HEAD_CHARS + PROMPT_CLASSIFY_TAIL_CHARS);
+    expect(terms.isContentFree).toBe(false);
+    expect(terms.content).toEqual(["checkout"]);
+  });
+
+  test("the middle of a paste past the cap is never read — the classifier's cost has a ceiling (L4)", () => {
+    // Arrange — a task word buried between a head and a tail of steering, each longer than its window
+    const steering = "weiter bitte ".repeat(1_000);
+    const prompt = `${steering}checkout ${steering}`;
+
+    // Act
+    const terms = promptTerms(prompt);
+
+    // Assert
+    expect(terms.content).toEqual([]);
+    expect(terms.isContentFree).toBe(true);
   });
 
   test("every token is judged — a task word past the sixteenth is kept", () => {

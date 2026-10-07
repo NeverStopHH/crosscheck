@@ -11,7 +11,8 @@ import {
   INTENT_MIN_TOPICAL_WORDS,
   SUMMARIZER_FAILURE_MAX_CHARS,
 } from "../../constants.ts";
-import { humanPromptText, promptTerms } from "@crosscheck/schema";
+import { classifyPrompt, promptTerms } from "@crosscheck/schema";
+import type { ClassifiedPrompt } from "@crosscheck/schema";
 
 import { cutWellFormed } from "../../briefing/cut.ts";
 import type { SessionState } from "../../state/session-state.ts";
@@ -62,13 +63,16 @@ export const isSubstantivePrompt = (prompt: string): boolean => {
  * machinery. That floor is the content-free rule too: a content-free prompt
  * is one whose every word is of a closed class, so it has no topical word.
  */
-export const intentPromptOf = (prompt: string): string | null => {
-  const human = humanPromptText(prompt);
+export const intentPromptFrom = (classified: ClassifiedPrompt): string | null => {
+  const human = classified.human;
   if (!isSubstantivePrompt(human)) {
     return null;
   }
-  return promptTerms(human).topical.length >= INTENT_MIN_TOPICAL_WORDS ? human : null;
+  return classified.terms.topical.length >= INTENT_MIN_TOPICAL_WORDS ? human : null;
 };
+
+/** The same, for a caller that has not classified the prompt yet (the worker's re-read). */
+export const intentPromptOf = (prompt: string): string | null => intentPromptFrom(classifyPrompt(prompt));
 
 /**
  * A derived intent with a topic (round 3, H2): at least one of its content

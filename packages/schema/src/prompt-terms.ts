@@ -19,6 +19,7 @@
  * carries is decided on all of it, so a task word past the sixteenth token
  * still counts.
  */
+import { humanPromptText } from "./harness-turn.ts";
 import { isContinuationTrigger, isRestartVerb, isSteeringWord, wordClassOf } from "./session-control.ts";
 import type { WordClass } from "./session-control.ts";
 import { commandArguments } from "./slash-command.ts";
@@ -77,6 +78,29 @@ export interface PromptTerms {
 /** Clause boundaries (M7): sentence ends, commas, semicolons, colons, dashes and line breaks. */
 const CLAUSE_BOUNDARY = /[.!?;:,\n\r–—]+/u;
 
+/**
+ * HOW MUCH OF A PROMPT IS CLASSIFIED (hold-out review round 3, L4): its head
+ * and its tail, cut between words. Every word costs a class lookup, and a
+ * word near a class word a typing-slip check; a hundred kilobytes of
+ * distinct near-words took 390 ms to classify, several times per hook,
+ * against an 800 ms budget. The hub only ever sees a 2000-character window
+ * of a prompt; a verdict read on the first 8000 characters and the last
+ * 1000 decides every prompt a person types, and a task written last still
+ * counts.
+ */
+export const PROMPT_CLASSIFY_HEAD_CHARS = 8_000;
+export const PROMPT_CLASSIFY_TAIL_CHARS = 1_000;
+
+/** The head and the tail a classifier reads, each cut between words. */
+const classifiedWindow = (text: string): string => {
+  if (text.length <= PROMPT_CLASSIFY_HEAD_CHARS + PROMPT_CLASSIFY_TAIL_CHARS) {
+    return text;
+  }
+  const head = text.slice(0, PROMPT_CLASSIFY_HEAD_CHARS).replace(/\S*$/u, "");
+  const tail = text.slice(text.length - PROMPT_CLASSIFY_TAIL_CHARS).replace(/^\S*/u, "");
+  return `${head}\n${tail}`;
+};
+
 /** Words that never name a task: steering, triggers and filler (round 3, H1). */
 const isSteeringClass = (wordClass: WordClass | null): boolean =>
   wordClass === "trigger" || wordClass === "steering" || wordClass === "filler";
@@ -120,8 +144,8 @@ const isSessionCommand = (
 
 export const promptTerms = (text: string): PromptTerms => {
   // A slash command's name is never a task word: only its arguments are
-  // scored (slash-command.ts).
-  const scored = commandArguments(text);
+  // scored (slash-command.ts) — and of a long prompt, its head and its tail (L4).
+  const scored = classifiedWindow(commandArguments(text));
   const written = promptTokens(scored);
   const tokens = [...new Set(written)];
   const isGerman = isGermanPrompt(written);
@@ -164,5 +188,32 @@ const rankedTerms = (
   return [...kept.filter((term) => classOf(term) === null), ...kept.filter((term) => classOf(term) !== null)];
 };
 
-/** Nothing task-bearing: what is left is a command to the session. */
-export const isContentFreePrompt = (text: string): boolean => promptTerms(text).isContentFree;
+/**
+ * Nothing task-bearing: what is left is a command to the session.
+ *
+ * THE VERDICT ALONE SHORT-CIRCUITS (round 3, L4): the first word of no class
+ * makes a task, so the classes of the words after it are never looked up —
+ * `promptTerms` needs every class for its topical and ranked terms, a caller
+ * asking only this question does not.
+ */
+export const isContentFreePrompt = (text: string): boolean => {
+  const written = promptTokens(classifiedWindow(commandArguments(text)));
+  const isGerman = isGermanPrompt(written);
+  const tokens = [...new Set(written)];
+  const content = tokens.filter(
+    (token) => !ENGLISH_FUNCTION_WORDS.has(token) && !(isGerman && GERMAN_FUNCTION_WORDS.has(token)) && !isSteeringWord(token),
+  );
+  return !content.some((term) => wordClassOf(term) === null) && isSessionCommand(tokens, content, content.map(wordClassOf));
+};
+
+/** A prompt as the hooks read it: the human text, classified ONCE per hook (round 3, L4). */
+export interface ClassifiedPrompt {
+  /** The text outside the harness's wrappers (harness-turn.ts). */
+  readonly human: string;
+  readonly terms: PromptTerms;
+}
+
+export const classifyPrompt = (prompt: string): ClassifiedPrompt => {
+  const human = humanPromptText(prompt);
+  return { human, terms: promptTerms(human) };
+};
