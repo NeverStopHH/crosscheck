@@ -1597,6 +1597,37 @@ export const STATUSLINE_MAX_LAST_SEEN = 3;
 export const STATUSLINE_MAX_NAMES = 3;
 export const STATUSLINE_NAME_CHARS = 12;
 
+/**
+ * The PERSON-facing collision notice (hints/collision-notice.ts; pilot,
+ * 2026-10-07: every collision crosscheck saw reached an agent's context and
+ * no person). Field caps for the one line Claude Code shows the person as a
+ * hook's `systemMessage` — a name, the basename of the file, a branch — so
+ * the line stays a line whatever a teammate's fields hold. The stored path
+ * cap bounds what the session state keeps per file, which is the reader's
+ * own repo-relative path and never shown whole.
+ */
+export const COLLISION_NOTICE_NAME_CHARS = 40;
+export const COLLISION_NOTICE_FILE_CHARS = 60;
+export const COLLISION_NOTICE_BRANCH_CHARS = 60;
+export const COLLISION_NOTICE_PATH_CHARS = 200;
+/**
+ * What one session remembers having told its person: groups (one per
+ * teammate work context), FIFO like the tripwire's asked files, and the files
+ * named per group. Small on purpose — a session that collides with more than
+ * thirty-two teammate contexts is told about the newest ones, and the
+ * statusline counts files rather than listing them.
+ */
+export const MAX_COLLISION_NOTICES = 32;
+export const MAX_COLLISION_FILES = 20;
+/**
+ * The statusline's overlap indicator (`⚠ overlap: Mike · 3 files`): at most
+ * this many people by name, then a count, and the whole segment bounded so
+ * it never takes the capture-health indicator's characters — it is printed
+ * BEFORE the presence line, which keeps its own STATUSLINE_MAX_CHARS.
+ */
+export const COLLISION_INDICATOR_MAX_NAMES = 2;
+export const COLLISION_INDICATOR_MAX_CHARS = 48;
+
 export const FINGERPRINT_SOURCE_CHARS = 4000;
 export const FINGERPRINT_KEEP_CHARS = 1200;
 export const FINGERPRINT_MIN_CHARS = 32;

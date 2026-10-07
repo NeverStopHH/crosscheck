@@ -5,6 +5,8 @@ import {
   DERIVE_FIRES_KEPT,
   DOCTOR_ZOMBIE_STATE_WARN_HOURS,
   MAX_BRIEFING_SOLVED_REFS,
+  MAX_COLLISION_FILES,
+  MAX_COLLISION_NOTICES,
   MAX_SHOWN_LANDED_NOTICE_IDS,
   MAX_KNOWN_WORKTREE_ROOTS,
   MAX_PROBED_FINGERPRINTS,
@@ -146,6 +148,48 @@ export const DeriveFiresSchema = z
       return parsed.success ? [parsed.data] : [];
     }),
   );
+
+/**
+ * ONE TEAMMATE FILE GROUP THIS SESSION'S PERSON WAS TOLD ABOUT (pilot,
+ * 2026-10-07; hints/collision-notice.ts renders it). The group is a teammate's
+ * WORK CONTEXT — `key` is the (developer, work context) pair — so a second
+ * file of the same group joins it silently and the person is told once.
+ *
+ * Stored as the renderer will need it and no more: the display name and the
+ * branch already BARE-sanitized and capped (they are re-sanitized at every
+ * render all the same), the branch null whenever the row withheld it, and
+ * the files the reader's own repo-relative paths, capped in count and length.
+ */
+export const CollisionNoticeSchema = z.object({
+  key: z.string().min(1),
+  developerId: z.string().min(1),
+  name: z.string(),
+  files: z.array(z.string().min(1)),
+  fileCount: z.number().int().min(0),
+  branch: z.string().nullable(),
+  lastActiveAt: z.string().nullable(),
+  /** The answer it came from said a rung of the record is incomplete (COV-9). */
+  partial: z.boolean().optional(),
+});
+
+export type CollisionNotice = z.infer<typeof CollisionNoticeSchema>;
+
+/**
+ * Read ENTRY BY ENTRY like the derive ring below, and OPTIONAL: one malformed
+ * entry costs only itself, a value that is not a list reads as none (the
+ * person may then be told once more — the fail-open direction), and a state
+ * written before the field existed, or by a test, parses unchanged.
+ */
+const CollisionNoticesSchema = z
+  .array(z.unknown())
+  .transform((entries): CollisionNotice[] =>
+    entries.flatMap((entry) => {
+      const parsed = CollisionNoticeSchema.safeParse(entry);
+      return parsed.success ? [parsed.data] : [];
+    }),
+  )
+  .optional()
+  .catch(undefined);
 
 /** The ring after one more fire: appended, the newest DERIVE_FIRES_KEPT kept. */
 export const withDeriveFire = (
@@ -657,6 +701,21 @@ const SessionStateObjectSchema = z.looseObject({
    */
   draftNudgeRetryAt: z.string().min(1).nullable().default(null),
   /**
+   * The teammate file groups this session's PERSON was told about — the
+   * human-facing collision notice (hints/collision-notice.ts), once per
+   * (teammate, work context) per session, and the statusline's overlap
+   * indicator reads the same list. Absent on every state written before it.
+   */
+  collisionNotices: CollisionNoticesSchema,
+  /**
+   * Group keys a SUBAGENT ran into (its hook payload carried `agent_id`),
+   * waiting for the MAIN thread's next UserPromptSubmit: a subagent's own
+   * context is not the conversation the person reads, and 91% of the pilot
+   * owner's edits were made by subagents. Drained under the lock, so a group
+   * is relayed at most once.
+   */
+  collisionRelayQueue: z.array(z.string().min(1)).optional().catch(undefined),
+  /**
    * When each summarizer or derived-intent fire was booked, oldest first, the
    * newest DERIVE_FIRES_KEPT — what lets doctor tell a model run still in
    * flight (or one that finished after SessionEnd, with nowhere left to book
@@ -904,6 +963,13 @@ export const withCarriedCapture = (
         // for a "first" finished turn the session had long ago, and doctor
         // counts a compacted session as a short one.
         stopTurnCount: previous.stopTurnCount,
+        // The person is told about a teammate's file group once per SESSION,
+        // and a compact or resume is the same session: dropped, the re-fire's
+        // briefing would tell them again about the same ghost row. The relay
+        // queue comes with it, or a subagent's hit waiting for the main
+        // thread is lost to a compact.
+        ...(previous.collisionNotices === undefined ? {} : { collisionNotices: previous.collisionNotices }),
+        ...(previous.collisionRelayQueue === undefined ? {} : { collisionRelayQueue: previous.collisionRelayQueue }),
       };
 
 /**
@@ -1388,6 +1454,70 @@ export const withTripwireAsked = (
         : merged.slice(merged.length - MAX_TRIPWIRE_ASKED_FILES),
   };
 };
+
+/**
+ * The groups among `groups` this session has NOT told its person about yet —
+ * the once-per-(teammate, file group) rule as a pure read. The caller asks it
+ * on the FRESHEST state inside its update, so two racing hooks cannot both
+ * see a group as new (the tripwire marker's check-and-set shape).
+ */
+export const newCollisionKeys = (
+  state: SessionState,
+  groups: readonly CollisionNotice[],
+): readonly string[] => {
+  const told = new Set((state.collisionNotices ?? []).map((notice) => notice.key));
+  return [...new Set(groups.map((group) => group.key))].filter((key) => !told.has(key));
+};
+
+/** One group folded into a told one: files unioned (capped), the larger count. */
+const mergedCollision = (told: CollisionNotice, group: CollisionNotice): CollisionNotice => {
+  const files = [...new Set([...told.files, ...group.files])].slice(0, MAX_COLLISION_FILES);
+  return {
+    ...group,
+    files,
+    fileCount: Math.max(told.fileCount, group.fileCount, files.length),
+  };
+};
+
+/**
+ * Remembers the groups as told. A group already told GROWS — a second file of
+ * the same teammate context joins it, which is what the statusline counts —
+ * and a new one is appended; FIFO-capped at MAX_COLLISION_NOTICES, oldest out.
+ */
+export const withCollisionNotices = (
+  state: SessionState,
+  groups: readonly CollisionNotice[],
+): SessionState => {
+  const merged = groups.reduce<readonly CollisionNotice[]>((notices, group) => {
+    const told = notices.find((notice) => notice.key === group.key);
+    return told === undefined
+      ? [...notices, group]
+      : notices.map((notice) => (notice.key === group.key ? mergedCollision(told, group) : notice));
+  }, state.collisionNotices ?? []);
+  return {
+    ...state,
+    collisionNotices: merged.length <= MAX_COLLISION_NOTICES ? [...merged] : merged.slice(merged.length - MAX_COLLISION_NOTICES),
+  };
+};
+
+/** A subagent's newly told groups, queued for the main thread (deduped, capped). */
+export const withQueuedCollisionRelays = (
+  state: SessionState,
+  keys: readonly string[],
+): SessionState => {
+  const merged = [...new Set([...(state.collisionRelayQueue ?? []), ...keys])];
+  return {
+    ...state,
+    collisionRelayQueue:
+      merged.length <= MAX_COLLISION_NOTICES ? merged : merged.slice(merged.length - MAX_COLLISION_NOTICES),
+  };
+};
+
+/** The queue emptied — what the main thread's prompt hook writes once it took the keys. */
+export const withDrainedCollisionRelays = (state: SessionState): SessionState => ({
+  ...state,
+  collisionRelayQueue: [],
+});
 
 /**
  * An intent reached the hub or the spool (VISION.md §3): remember the

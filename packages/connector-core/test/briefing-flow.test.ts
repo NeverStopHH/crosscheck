@@ -471,6 +471,8 @@ describe("recordBriefingDeliveries (delivery telemetry, replay-idempotent)", () 
     expect(assembled.briefing).toContain("- Ken · titled «Session store migration»");
     expect(assembled.briefing).not.toContain("wc_reasonless");
     expect(assembled.shownGhostCount).toBe(1);
+    // ...and the ROW behind it, the one a person-facing notice is built from.
+    expect(assembled.shownGhosts.map((row) => row.workContextId)).toEqual(["wc_theirs"]);
     const state = await readSessionState(home, HOST_KEY);
     expect(state?.ghostNoticeCount).toBe(1);
     // The ghost line spends NO delivery row: it is not news that must not

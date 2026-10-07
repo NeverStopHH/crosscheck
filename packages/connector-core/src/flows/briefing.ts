@@ -124,6 +124,12 @@ export interface AssembledBriefing {
    * "the hub answered".
    */
   readonly shownGhostCount: number;
+  /**
+   * The ghost ROWS behind those lines, the same "the text contains it" fact:
+   * what a host with a person-facing channel tells the person about
+   * (hints/collision-notice.ts), so a row the budget cut is told to nobody.
+   */
+  readonly shownGhosts: readonly GhostCheckEntry[];
   /** The `collectLanded` rider's result; empty when no rider was passed. */
   readonly landedCommits: readonly string[];
   /**
@@ -248,11 +254,15 @@ export const assembleBriefing = async (
   // contains it" is the fact — the section may have been dropped whole by
   // the character budget, and a counter that trusted the fetch would report
   // notices nobody saw.
-  const shownGhostCount = ghostChecks
-    .map((entry: GhostCheckEntry) => formatGhostLine(entry, now))
-    .filter((line): line is string => line !== null)
+  const shownGhosts = ghostChecks
+    .flatMap((entry: GhostCheckEntry) => {
+      const line = formatGhostLine(entry, now);
+      return line === null ? [] : [{ entry, line }];
+    })
     .slice(0, MAX_GHOST_POINTERS)
-    .filter((line) => briefing.includes(line)).length;
+    .filter((shown) => briefing.includes(shown.line))
+    .map((shown) => shown.entry);
+  const shownGhostCount = shownGhosts.length;
 
   // The same rule once more: an entry's one spelling is in the text, or it
   // was not shown — and only the commits it names are marked told.
@@ -272,6 +282,7 @@ export const assembleBriefing = async (
       recordsOutcomes && shownSolvedIds.length > 0 ? withBriefingOutcomeClause(briefing) : briefing,
     shownSolvedIds,
     shownGhostCount,
+    shownGhosts,
     shownLandedNoticeIds,
     presence,
     presenceFetched: presenceResult.ok,
