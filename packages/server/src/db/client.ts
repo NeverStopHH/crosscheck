@@ -187,3 +187,13 @@ export const createDb = async (options: CreateDbOptions = {}): Promise<Db> => {
   await runBootstrap(client);
   return drizzle(client, { schema });
 };
+
+/**
+ * Closes a database `createDb` opened — for a one-shot script over a data
+ * dir (scripts/unland-false-landed.ts); a hub runs until it is killed. The
+ * PGlite client is the one `createDb` handed drizzle, which keeps it as
+ * `$client`; closed through `keepingExitCode`, since close() writes the
+ * process's exit code.
+ */
+export const closeDb = (db: Db): Promise<void> =>
+  keepingExitCode(() => (db as Db & { readonly $client: PGlite }).$client.close());

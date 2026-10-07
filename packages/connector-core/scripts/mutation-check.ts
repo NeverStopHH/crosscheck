@@ -23542,6 +23542,55 @@ export const MUTATIONS: readonly Mutation[
     test: `${SCHEMA}/test/landed-evidence.test.ts`,
     because: "one report carries an unbounded list into the hub's ingest",
   },
+  // The operator's repair for the stamps an older hub made.
+  {
+    label: "the landed repair writes on a dry run",
+    file: `${SERVER}/scripts/unland-false-landed.ts`,
+    from: "  if (!options.apply) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "an operator's look at the hub un-lands contexts it was only asked to count",
+  },
+  {
+    label: "the landed repair prints the contexts it counts",
+    file: `${SERVER}/scripts/unland-false-landed.ts`,
+    from: "  deps.write(`landed contexts: ${String(plan.landed)}`);",
+    to: "  deps.write(`landed contexts: ${String(plan.landed)} ${plan.unland.join(\",\")}`);",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "counts-only output carries ids an operator would paste into a channel",
+  },
+  {
+    label: "the landed repair opens a hub nobody named",
+    file: `${SERVER}/scripts/unland-false-landed.ts`,
+    from: "  if (dataDir === undefined) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "an opt-in repair runs against whatever data dir a default would pick",
+  },
+  {
+    label: "the landed repair keeps a detached session's false stamp",
+    file: `${SERVER}/src/services/landed-repair.ts`,
+    from: "    return \"detached\";",
+    to: "    return null;",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "the incident's own context stays out of collision checks after the repair",
+  },
+  {
+    label: "the landed repair un-lands a session that said its base was new, on its date",
+    file: `${SERVER}/src/services/landed-repair.ts`,
+    from: "  return row.baseOnDefault === null && committedAt !== undefined && isStaleBase(committedAt, row.contextCreatedAt)",
+    to: "  return committedAt !== undefined && isStaleBase(committedAt, row.contextCreatedAt)",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "a real landing is undone on a heuristic its connector's own word contradicts",
+  },
+  {
+    label: "the landed repair's --apply un-lands nothing",
+    file: `${SERVER}/src/services/landed-repair.ts`,
+    from: "  if (ids.length === 0) {",
+    to: "  if (ids.length >= 0) {",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "the operator is told contexts were un-landed while every stamp stays",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -23923,6 +23972,7 @@ interface Outcome {
  * PRINTS: packages/server/test/key-rotation.test.ts 6
  * PRINTS: packages/server/test/landed-context.test.ts 22
  * PRINTS: packages/server/test/landed-notices.test.ts 34
+ * PRINTS: packages/server/test/landed-repair.test.ts 6
  * PRINTS: packages/server/test/landed.test.ts 7
  * PRINTS: packages/server/test/live-location-cost.test.ts 3
  * PRINTS: packages/server/test/live-location-differential.test.ts 5

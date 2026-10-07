@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 2246
+    # PRINTS: 2252
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -415,6 +415,7 @@ jobs:
     # PRINTS: packages/schema/src/secret-scan.ts 1
     # PRINTS: packages/schema/src/session.ts 2
     # PRINTS: packages/schema/src/telemetry-loss.ts 6
+    # PRINTS: packages/server/scripts/unland-false-landed.ts 3
     # PRINTS: packages/server/src/constants.ts 1
     # PRINTS: packages/server/src/db/bootstrap.sql 42
     # PRINTS: packages/server/src/db/client.ts 8
@@ -472,6 +473,7 @@ jobs:
     # PRINTS: packages/server/src/services/intent-ledger.ts 12
     # PRINTS: packages/server/src/services/landed-context.ts 22
     # PRINTS: packages/server/src/services/landed-notices.ts 28
+    # PRINTS: packages/server/src/services/landed-repair.ts 3
     # PRINTS: packages/server/src/services/landed.ts 7
     # PRINTS: packages/server/src/services/live-location.ts 32
     # PRINTS: packages/server/src/services/noise-label.ts 3
@@ -655,6 +657,7 @@ jobs:
     # PRINTS: landed-evidence.ts 1
     # PRINTS: landed-notice.ts 5
     # PRINTS: landed-notices.ts 33
+    # PRINTS: landed-repair.ts 3
     # PRINTS: landed-why.ts 2
     # PRINTS: landed.ts 15
     # PRINTS: landing-branches.ts 7
@@ -792,6 +795,7 @@ jobs:
     # PRINTS: ui-ceremony.ts 5
     # PRINTS: ui-pages.tsx 2
     # PRINTS: ui-passkeys.tsx 1
+    # PRINTS: unland-false-landed.ts 3
     # PRINTS: user-prompt-submit.ts 6
     # PRINTS: v1.ts 2
     # PRINTS: verdict-latency.test.ts 1
