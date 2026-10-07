@@ -10,7 +10,9 @@
  *      pinned: the briefing OUTRANKS the hint for that one prompt (the ACP
  *      injector's order — briefing on the first prompt it is ready for, the
  *      hint flow afterwards), and the hint pipeline is not even consulted,
- *      so one prompt carries at most one injection.
+ *      so one prompt carries at most one injection. Its ghost rows that
+ *      share files are told to the PERSON too, as SessionStart's are
+ *      (hooks/ghost-notice.ts; review L5).
  *   2. Otherwise the hint: the WHOLE pipeline — meaning floor, seen-set +
  *      cap, one bounded hub call, one bounded git call, at most ONE hint,
  *      record-then-emit — is the core `selectAndRenderHint` flow since
@@ -70,7 +72,8 @@ import {
   sessionSlug,
   writePrivateFile,
 } from "@crosscheck/connector-core/config/paths.ts";
-import { deliverDeferredBriefing } from "@crosscheck/connector-core/flows/briefing.ts";
+import { payDeferredBriefing } from "@crosscheck/connector-core/flows/briefing.ts";
+import type { GhostCheckEntry } from "@crosscheck/connector-core/http/hub.ts";
 import { deliverDraftNudge } from "@crosscheck/connector-core/flows/draft-nudge.ts";
 import { selectAndRenderHint } from "@crosscheck/connector-core/flows/hint.ts";
 import {
@@ -79,6 +82,7 @@ import {
 } from "@crosscheck/connector-core/state/session-state.ts";
 import { drainCollisionRelay } from "./collision-relay.ts";
 import type { CollisionRelay } from "./collision-relay.ts";
+import { tellPersonOfGhosts } from "./ghost-notice.ts";
 import { hasGhostAllowance, withGhostClaimed } from "@crosscheck/connector-core/derive/ghost/gate.ts";
 import { isSubstantivePrompt, withIntentFire } from "@crosscheck/connector-core/derive/intent/gate.ts";
 import { resolveSummarizerTimeoutMs } from "@crosscheck/connector-core/model/runner.ts";
@@ -120,21 +124,33 @@ const envelope = (text: string): PromptOutput => ({
   },
 });
 
+/** What the prompt's own delivery produced, and the ghost rows a paid briefing really shows. */
+interface PromptDelivery {
+  readonly output: PromptOutput | "";
+  readonly shownGhosts: readonly GhostCheckEntry[];
+}
+
+const delivered = (output: PromptOutput | ""): PromptDelivery => ({ output, shownGhosts: [] });
+
+const nonEmpty = (part: string): boolean => part.length > 0;
+
 /**
  * The relay first, then the prompt's own delivery; "" when neither spoke. A
  * drained relay is ALSO the person's line (review H1a): `systemMessage` on
  * this sync hook is shown to the person, which no subagent hook's output is
  * documented to be — a person who already saw it there sees it twice, which
- * is the accepted cost of never seeing it at all.
+ * is the accepted cost of never seeing it at all. A paid briefing's ghost
+ * lines follow it there (review L5); each part is bounded by its own renderer.
  */
-const serialize = (output: PromptOutput | "", relay: CollisionRelay): string => {
+const serialize = (output: PromptOutput | "", relay: CollisionRelay, ghosts: string): string => {
   const text = [relay.agent, output === "" ? "" : output.hookSpecificOutput.additionalContext]
-    .filter((part) => part.length > 0)
+    .filter(nonEmpty)
     .join("\n\n");
   if (text.length === 0) {
     return "";
   }
-  return JSON.stringify(relay.person.length === 0 ? envelope(text) : { systemMessage: relay.person, ...envelope(text) });
+  const person = [relay.person, ghosts].filter(nonEmpty).join("\n");
+  return JSON.stringify(person.length === 0 ? envelope(text) : { systemMessage: person, ...envelope(text) });
 };
 
 /**
@@ -245,7 +261,7 @@ const maybeSpawnGhostWorker = async (ctx: HookContext): Promise<void> => {
   }
 };
 
-const deliverPromptContext = async (ctx: HookContext, budget: HookBudget): Promise<PromptOutput | ""> => {
+const deliverPromptContext = async (ctx: HookContext, budget: HookBudget): Promise<PromptDelivery> => {
   // The derived-intent fire delivers nothing and runs first, so it happens
   // on the first substantive prompt whatever else this hook goes on to emit.
   await maybeSpawnIntentWorker(ctx);
@@ -256,7 +272,7 @@ const deliverPromptContext = async (ctx: HookContext, budget: HookBudget): Promi
   // hint pipeline's meaning floor and secret gate: a session owed a briefing
   // gets it whatever the first prompt says. Exactly-once and the
   // failed-assembly semantics live on the flow.
-  const briefing = await deliverDeferredBriefing({
+  const paid = await payDeferredBriefing({
     home: ctx.config.home,
     repoKey: ctx.repoKey,
     hub: ctx.hub,
@@ -266,8 +282,8 @@ const deliverPromptContext = async (ctx: HookContext, budget: HookBudget): Promi
     now: ctx.now(),
     tellsNotices: aPersonReads(ctx.env),
   });
-  if (briefing.length > 0) {
-    return envelope(briefing);
+  if (paid.briefing.length > 0) {
+    return { output: envelope(paid.briefing), shownGhosts: paid.shownGhosts };
   }
   const text = await selectAndRenderHint({
     home: ctx.config.home,
@@ -285,7 +301,7 @@ const deliverPromptContext = async (ctx: HookContext, budget: HookBudget): Promi
     spareMs: () => budget.spareMs(),
   });
   if (text.length > 0) {
-    return envelope(text);
+    return delivered(envelope(text));
   }
   // THIRD, and only on a prompt nothing else spoke on: the once-per-session
   // draft review nudge (flows/draft-nudge.ts says why a prompt and never Stop).
@@ -298,7 +314,7 @@ const deliverPromptContext = async (ctx: HookContext, budget: HookBudget): Promi
     personReads: aPersonReads(ctx.env),
     spareMs: budget.spareMs,
   });
-  return nudge.length === 0 ? "" : envelope(nudge);
+  return delivered(nudge.length === 0 ? "" : envelope(nudge));
 };
 
 export const handleUserPromptSubmit = async (
@@ -308,11 +324,15 @@ export const handleUserPromptSubmit = async (
   // Delivers nothing, like the two fires above: the background fetch of the
   // landing branches (hooks/landing-fetch.ts), beside the prompt's own work so
   // it adds no wall clock of its own.
-  const [output] = await Promise.all([deliverPromptContext(ctx, budget), requestLandingFetchFor(ctx)]);
+  const [delivery] = await Promise.all([deliverPromptContext(ctx, budget), requestLandingFetchFor(ctx)]);
   // A subagent's collision LAST (review L3): the queue is drained only once
   // everything else this prompt carries is in hand, so nothing slow sits
   // between emptying it and the relay leaving the hook. It still LEADS the
   // emitted text.
   const relay = await drainCollisionRelay(ctx, budget);
-  return serialize(output, relay);
+  // A paid briefing's ghost rows are claimed told after that, as SessionStart
+  // claims its own (review L5): one lock write, the last thing before output,
+  // and not gated on the spare — it is this prompt's own delivery.
+  const ghosts = await tellPersonOfGhosts(ctx, delivery.shownGhosts);
+  return serialize(delivery.output, relay, ghosts);
 };

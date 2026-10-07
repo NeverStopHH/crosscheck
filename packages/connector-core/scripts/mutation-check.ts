@@ -11647,8 +11647,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a prompt no longer asks for the fetch",
     file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
-    from: "  const [output] = await Promise.all([deliverPromptContext(ctx, budget), requestLandingFetchFor(ctx)]);",
-    to: "  const [output] = await Promise.all([deliverPromptContext(ctx, budget)]);",
+    from: "  const [delivery] = await Promise.all([deliverPromptContext(ctx, budget), requestLandingFetchFor(ctx)]);",
+    to: "  const [delivery] = await Promise.all([deliverPromptContext(ctx, budget)]);",
     test: `${CONNECTOR}/test/landing-fetch-hook.test.ts`,
     because: "a change merged mid-session reaches the stop only when an edit happens to ask",
   },
@@ -17911,8 +17911,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "UserPromptSubmit never carries the draft nudge",
     file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
-    from: "  return nudge.length === 0 ? \"\" : envelope(nudge);",
-    to: "  return \"\";",
+    from: "  return delivered(nudge.length === 0 ? \"\" : envelope(nudge));",
+    to: "  return delivered(\"\");",
     test: `${CONNECTOR}/test/draft-nudge-hook.test.ts`,
     because: "Claude Code sessions spend the slot and the agent is never asked to settle its drafts",
   },
@@ -23758,7 +23758,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a relayed subagent collision reaches the main thread's agent and never the person",
     file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
-    from: "  return JSON.stringify(relay.person.length === 0 ? envelope(text) : { systemMessage: relay.person, ...envelope(text) });",
+    from: "  return JSON.stringify(person.length === 0 ? envelope(text) : { systemMessage: person, ...envelope(text) });",
     to: "  return JSON.stringify(envelope(text));",
     test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
     because: "91% of the pilot owner's edits were subagents', and their collisions reached a context nobody reads and then a reply nobody was asked to write",
@@ -23884,6 +23884,38 @@ export const MUTATIONS: readonly Mutation[
     to: "  return Number.isNaN(ms) || now.getTime()",
     test: `${CORE}/test/collision-notice.test.ts`,
     because: "a garbled stamp keeps branch and age forever",
+  },
+  {
+    label: "a briefing paid late tells the agent of its ghost row and never the person",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    from: "  const ghosts = await tellPersonOfGhosts(ctx, delivery.shownGhosts);",
+    to: "  const ghosts = \"\";",
+    test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
+    because: "a late-registered session's multi-day overlap stays inside additionalContext, which shows no chat message",
+  },
+  {
+    label: "a late briefing's ghost lines never reach systemMessage",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    from: "  const person = [relay.person, ghosts].filter(nonEmpty).join(\"\\n\");",
+    to: "  const person = relay.person;",
+    test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
+    because: "the group is marked told and the line is thrown away",
+  },
+  {
+    label: "a paid deferred briefing hides the ghost rows it shows",
+    file: `${CORE}/src/flows/briefing.ts`,
+    from: "  return { briefing: assembled.briefing, shownGhosts: assembled.shownGhosts };",
+    to: "  return { briefing: assembled.briefing, shownGhosts: [] };",
+    test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
+    because: "the prompt hook has no row to tell the person about",
+  },
+  {
+    label: "a briefing's ghost group is told without being recorded",
+    file: `${CONNECTOR}/src/hooks/ghost-notice.ts`,
+    from: "      return withCollisionNotices(fresh, groups);",
+    to: "      return fresh;",
+    test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
+    because: "every compact, resume or late briefing tells the person about the same teammate's work again",
   },
 ];
 
@@ -24031,7 +24063,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/at7-stream.test.ts 3
  * PRINTS: packages/connector-claude/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-claude/test/capture-latency.test.ts 1
- * PRINTS: packages/connector-claude/test/collision-notice-hook.test.ts 8
+ * PRINTS: packages/connector-claude/test/collision-notice-hook.test.ts 12
  * PRINTS: packages/connector-claude/test/collision-order-hook.test.ts 4
  * PRINTS: packages/connector-claude/test/collision-teammates-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/collision-visibility-hook.test.ts 3

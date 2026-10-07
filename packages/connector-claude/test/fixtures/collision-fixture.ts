@@ -178,6 +178,36 @@ export const ghostFixture = async (
   };
 };
 
+/**
+ * `ghostFixture` for a session that registered LATE (PostToolUse's recovery):
+ * its state owes the briefing to the first prompt, which pays it through the
+ * core deferred-briefing flow instead of SessionStart.
+ */
+export const deferredGhostFixture = async (
+  label: string,
+  ghostChecks: readonly unknown[],
+): Promise<{ readonly repo: string; readonly home: string; readonly env: Env }> => {
+  const fix = await ghostFixture(label, ghostChecks);
+  await writeSessionState(fix.home, {
+    ...deriveSessionState({
+      hostSessionKey: SESSION_ID,
+      repoId: REPO_ID,
+      repoRoot: fix.repo,
+      hubUrl: fix.env["CROSSCHECK_HUB_URL"] ?? "",
+      developerId: "dev_self",
+      startedAt: new Date().toISOString(),
+    }),
+    intentFireCount: 1,
+    briefingPending: true,
+  });
+  return fix;
+};
+
+/** The person's line for Mike's ghost row of MIKE_FILES. */
+export const MIKE_GHOST_NOTICE =
+  "crosscheck: Mike is working on 3 files you also touched, e.g. PlayerMappingGrid.tsx " +
+  "(last active 2d ago) — talk before you both change them";
+
 export const sessionStartPayload = (repo: string, source: string): string =>
   JSON.stringify({ session_id: SESSION_ID, cwd: repo, hook_event_name: "SessionStart", source });
 

@@ -422,16 +422,35 @@ export interface DeliverDeferredBriefingInput {
  */
 export const deliverDeferredBriefing = async (
   input: DeliverDeferredBriefingInput,
-): Promise<string> => {
+): Promise<string> => (await payDeferredBriefing(input)).briefing;
+
+/** A paid deferred briefing: its text, and the ghost rows that text really shows. */
+export interface PaidDeferredBriefing {
+  readonly briefing: string;
+  readonly shownGhosts: readonly GhostCheckEntry[];
+}
+
+const NOTHING_PAID: PaidDeferredBriefing = { briefing: "", shownGhosts: [] };
+
+/**
+ * `deliverDeferredBriefing` for a caller that also tells the PERSON about the
+ * briefing's ghost rows (connector-claude's UserPromptSubmit; review L5): the
+ * late-registered session's briefing carries the same rows SessionStart's
+ * would, and a row only the agent is told about is the pilot's failure again.
+ * Same claim, same record-then-emit; nothing paid is "" and no rows.
+ */
+export const payDeferredBriefing = async (
+  input: DeliverDeferredBriefingInput,
+): Promise<PaidDeferredBriefing> => {
   const state = await readSessionState(input.home, input.hostSessionKey);
   if (state === null || !state.briefingPending) {
-    return "";
+    return NOTHING_PAID;
   }
   // First-wins guard (finding #9): a prompt resolved against ANOTHER repo
   // must not spend this session's debt — the briefing belongs to the repo
   // the session is bound to, and a prompt that resolves there pays it.
   if (state.repoId !== input.repoId) {
-    return "";
+    return NOTHING_PAID;
   }
   const claimed = await updateSessionState(
     input.home,
@@ -440,7 +459,7 @@ export const deliverDeferredBriefing = async (
       fresh.briefingPending ? { ...fresh, briefingPending: false } : null,
   );
   if (!claimed) {
-    return "";
+    return NOTHING_PAID;
   }
   const assembled = await assembleBriefing({
     hub: input.hub,
@@ -451,7 +470,7 @@ export const deliverDeferredBriefing = async (
     tellsNotices: input.tellsNotices,
   });
   if (assembled.briefing.length === 0) {
-    return "";
+    return NOTHING_PAID;
   }
   await recordBriefingDeliveries({
     home: input.home,
@@ -468,5 +487,5 @@ export const deliverDeferredBriefing = async (
     shownLandedNoticeIds: assembled.shownLandedNoticeIds,
     now: input.now,
   });
-  return assembled.briefing;
+  return { briefing: assembled.briefing, shownGhosts: assembled.shownGhosts };
 };

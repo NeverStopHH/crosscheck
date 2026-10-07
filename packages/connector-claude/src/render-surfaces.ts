@@ -39,6 +39,14 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     note: "returns renderSubagentCollisionRelay output verbatim as the main thread's copy (core's collision-subagent-relay surface) and renderCollisionNotices output verbatim as the person's systemMessage (core's collision-notice surface); the groups it renders are the session state's own records of rows the tripwire already projected",
     corpusCoveredBy: ["test/collision-notice-hook.test.ts"],
   },
+  {
+    kind: "composite",
+    name: "claude-briefing-ghost-notice",
+    delivery: "unsolicited",
+    module: "src/hooks/ghost-notice.ts",
+    note: "returns renderCollisionNotices output verbatim (core's collision-notice surface) as the person's systemMessage on SessionStart and on the prompt that pays a deferred briefing; the groups are ghostCollisions of the ghost rows the emitted briefing really shows, so only teammates the briefing itself names",
+    corpusCoveredBy: ["test/collision-notice-hook.test.ts"],
+  },
   // `claude-ghost-draft` is no longer registered here: the ghost worker moved
   // to connector-core (src/derive/ghost/worker.ts) so Cursor and ACP can pay
   // the same debt, and its registration moved with it (core's

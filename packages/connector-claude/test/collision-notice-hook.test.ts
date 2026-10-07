@@ -24,6 +24,7 @@ import { TEAMMATE_DEVELOPER_ID, activeTeammateSession } from "../../connector-co
 import { assertUntrustedCharacters } from "../../connector-core/test/fixtures/untrusted-invariants.ts";
 import {
   MIKE_FILES,
+  MIKE_GHOST_NOTICE,
   NICK_NOTICE,
   OVERLAP_FILE,
   SECOND_FILE,
@@ -31,6 +32,7 @@ import {
   SUBAGENT,
   cleanupCollisionFixtures,
   collisionFixture as fixture,
+  deferredGhostFixture,
   editPayload,
   ghostFixture,
   mikeGhostRow,
@@ -248,10 +250,32 @@ describe("a briefing's ghost row is told to the person too", () => {
 
     // Assert
     expect(output.hookSpecificOutput?.additionalContext).toContain("Teammates working where you are");
-    expect(output.systemMessage).toBe(
-      "crosscheck: Mike is working on 3 files you also touched, e.g. PlayerMappingGrid.tsx " +
-        "(last active 2d ago) — talk before you both change them",
-    );
+    expect(output.systemMessage).toBe(MIKE_GHOST_NOTICE);
+  });
+
+  test("a briefing paid late, on the first prompt, tells the person too (review L5)", async () => {
+    // Arrange: a session that registered late owes its briefing to the first prompt
+    const { repo, env } = await deferredGhostFixture("cn-ghost-deferred", [mikeGhostRow(MIKE_FILES, 3)]);
+
+    // Act
+    const output = parsed(await runHook("user-prompt-submit", promptPayload(repo), env));
+
+    // Assert
+    expect(output.hookSpecificOutput?.additionalContext).toContain("Teammates working where you are");
+    expect(output.systemMessage).toBe(MIKE_GHOST_NOTICE);
+  });
+
+  test("a group told with a late briefing is not told again by a later SessionStart", async () => {
+    // Arrange
+    const { repo, env } = await deferredGhostFixture("cn-ghost-deferred-once", [mikeGhostRow(MIKE_FILES, 3)]);
+    await runHook("user-prompt-submit", promptPayload(repo), env);
+
+    // Act
+    const refired = parsed(await runHook("session-start", sessionStartPayload(repo, "compact"), env));
+
+    // Assert
+    expect(refired.hookSpecificOutput?.additionalContext).toContain("Teammates working where you are");
+    expect(refired.systemMessage).toBeUndefined();
   });
 
   test("a compact or resume of the same session does not tell the person again", async () => {
