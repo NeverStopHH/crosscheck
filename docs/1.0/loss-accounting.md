@@ -610,7 +610,8 @@ timeout. The prune now runs on the hub's own timer pass and once at boot, off th
 rows took 230 ms. It yields a turn of the event loop after every statement, because PGlite answers in microtasks and a
 loop that never yields reads no request until it is done. Against a million receipts past the retention beside 300 000
 live ones, a query issued during the prune waited 12 ms at most (p99 1 ms). Before the yield it was not served until the
-prune ended, five seconds later.
+prune ended, five seconds later. The skeleton backfill a hub runs at boot walks its pages the same way, and now yields
+after every statement too (`db/yield-to-requests.ts`).
 
 **A bad envelope id refuses its own record, never the batch** (review-2 round 9, M5). Ingest read the receipts for the
 raw ids of a whole flush before it parsed a single envelope. A NUL in one id failed that read, and with it the batch: a

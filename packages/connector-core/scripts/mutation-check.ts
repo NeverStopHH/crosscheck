@@ -19149,9 +19149,9 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "the receipts prune never yields to a request (M4)",
-    file: `${SERVER}/src/services/record-receipts.ts`,
-    from: "const yieldToRequests = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));",
-    to: "const yieldToRequests = (): Promise<void> => Promise.resolve();",
+    file: `${SERVER}/src/db/yield-to-requests.ts`,
+    from: "export const yieldToRequests = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));",
+    to: "export const yieldToRequests = (): Promise<void> => Promise.resolve();",
     test: `${SERVER}/test/record-receipts.test.ts`,
     because: "review-2 round 9, M4: PGlite answers in microtasks, so no request is read until the whole backlog is gone",
   },
@@ -19467,6 +19467,22 @@ export const MUTATIONS: readonly Mutation[
     to: 'const HELD: ReadonlySet<string> = new Set(["accepted"]);',
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review-2 round 9, io seed 1993: a re-send the hub answered duplicate is withheld later, and counted lost",
+  },
+  {
+    label: "the skeleton backfill never yields to a request",
+    file: `${SERVER}/src/db/yield-to-requests.ts`,
+    from: "export const yieldToRequests = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));",
+    to: "export const yieldToRequests = (): Promise<void> => Promise.resolve();",
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because: "review-2 round 9: PGlite answers in microtasks, so a boot's backfill reads no request until every page is done",
+  },
+  {
+    label: "the skeleton backfill's paged UPDATE reads no request until its walk is done",
+    file: `${SERVER}/src/services/skeleton-identity.ts`,
+    from: "    written += Number(row.written ?? 0);\n    await yieldToRequests();\n",
+    to: "    written += Number(row.written ?? 0);\n",
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because: "review-2 round 9: the provider and claim-context walks hold every request behind them at boot",
   },
 ];
 
@@ -19840,7 +19856,7 @@ interface Outcome {
  * PRINTS: packages/server/test/session-reap-liveness.test.ts 2
  * PRINTS: packages/server/test/session-reaper.test.ts 3
  * PRINTS: packages/server/test/sessions.test.ts 1
- * PRINTS: packages/server/test/skeleton-identity.test.ts 17
+ * PRINTS: packages/server/test/skeleton-identity.test.ts 19
  * PRINTS: packages/server/test/skeleton-sweep.test.ts 35
  * PRINTS: packages/server/test/solved-counts.test.ts 1
  * PRINTS: packages/server/test/solved-cross-repo.test.ts 4
