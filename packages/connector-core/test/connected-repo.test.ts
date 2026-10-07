@@ -18,7 +18,8 @@ import {
 } from "../src/config/connected-repo.ts";
 import { renderRepoConfig } from "../src/config/repo-config.ts";
 
-const HUB_URL = "http://127.0.0.1:7100";
+/** A config value only — nothing here connects, and port 1 has no hub behind it. */
+const HUB_URL = "http://127.0.0.1:1";
 
 const paths: string[] = [];
 

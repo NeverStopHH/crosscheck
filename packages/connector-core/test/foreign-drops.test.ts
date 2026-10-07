@@ -20,7 +20,8 @@ import {
 } from "../src/state/session-state.ts";
 import { makeHome } from "./helpers.ts";
 
-const HUB_URL = "http://127.0.0.1:7100";
+/** A config value only — nothing here connects, and port 1 has no hub behind it. */
+const HUB_URL = "http://127.0.0.1:1";
 
 const paths: string[] = [];
 
