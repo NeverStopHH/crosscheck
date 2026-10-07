@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 2272
+    # PRINTS: 2273
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -246,6 +246,7 @@ jobs:
     # PRINTS: capture/tool-events.ts 2
     # PRINTS: cli/settings-merge.ts 2
     # PRINTS: doctor.ts 1
+    # PRINTS: hooks/collision-relay.ts 2
     # PRINTS: hooks/landed-why.ts 2
     # PRINTS: hooks/post-tool-use-failure.ts 5
     # PRINTS: hooks/post-tool-use.ts 10
@@ -253,7 +254,7 @@ jobs:
     # PRINTS: hooks/runner.ts 7
     # PRINTS: hooks/session-start.ts 9
     # PRINTS: hooks/stop.ts 3
-    # PRINTS: hooks/user-prompt-submit.ts 8
+    # PRINTS: hooks/user-prompt-submit.ts 7
     # PRINTS: statusline/statusline.ts 1
     # PRINTS: summarizer/probe.ts 1
     # PRINTS: summarizer/transcript.ts 3
@@ -554,6 +555,7 @@ jobs:
     # PRINTS: client.ts 12
     # PRINTS: cloud-agent-identity.ts 1
     # PRINTS: collision-notice.ts 19
+    # PRINTS: collision-relay.ts 2
     # PRINTS: commit-evidence.ts 6
     # PRINTS: conference-cost.ts 1
     # PRINTS: conference.ts 23
@@ -792,7 +794,7 @@ jobs:
     # PRINTS: ui-ceremony.ts 5
     # PRINTS: ui-pages.tsx 2
     # PRINTS: ui-passkeys.tsx 1
-    # PRINTS: user-prompt-submit.ts 8
+    # PRINTS: user-prompt-submit.ts 7
     # PRINTS: v1.ts 2
     # PRINTS: verdict-latency.test.ts 1
     # PRINTS: verdict-render.ts 3

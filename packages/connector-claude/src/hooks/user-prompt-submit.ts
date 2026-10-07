@@ -73,13 +73,12 @@ import {
 import { deliverDeferredBriefing } from "@crosscheck/connector-core/flows/briefing.ts";
 import { deliverDraftNudge } from "@crosscheck/connector-core/flows/draft-nudge.ts";
 import { selectAndRenderHint } from "@crosscheck/connector-core/flows/hint.ts";
-import { renderSubagentCollisionRelay } from "@crosscheck/connector-core/hints/collision-notice.ts";
 import {
   readSessionState,
   updateSessionState,
-  withDrainedCollisionRelays,
 } from "@crosscheck/connector-core/state/session-state.ts";
-import type { CollisionNotice } from "@crosscheck/connector-core/state/session-state.ts";
+import { drainCollisionRelay } from "./collision-relay.ts";
+import type { CollisionRelay } from "./collision-relay.ts";
 import { hasGhostAllowance, withGhostClaimed } from "@crosscheck/connector-core/derive/ghost/gate.ts";
 import { isSubstantivePrompt, withIntentFire } from "@crosscheck/connector-core/derive/intent/gate.ts";
 import { resolveSummarizerTimeoutMs } from "@crosscheck/connector-core/model/runner.ts";
@@ -121,48 +120,21 @@ const envelope = (text: string): PromptOutput => ({
   },
 });
 
-/** The relay first, then the prompt's own delivery; "" when neither spoke. */
-const serialize = (output: PromptOutput | "", relay: string): string => {
-  const text = [relay, output === "" ? "" : output.hookSpecificOutput.additionalContext]
+/**
+ * The relay first, then the prompt's own delivery; "" when neither spoke. A
+ * drained relay is ALSO the person's line (review H1a): `systemMessage` on
+ * this sync hook is shown to the person, which no subagent hook's output is
+ * documented to be — a person who already saw it there sees it twice, which
+ * is the accepted cost of never seeing it at all.
+ */
+const serialize = (output: PromptOutput | "", relay: CollisionRelay): string => {
+  const text = [relay.agent, output === "" ? "" : output.hookSpecificOutput.additionalContext]
     .filter((part) => part.length > 0)
     .join("\n\n");
-  return text.length === 0 ? "" : JSON.stringify(envelope(text));
-};
-
-/**
- * The teammate groups this session's SUBAGENTS ran into, handed to the main
- * thread once: the queue is taken and emptied in ONE locked transform, so a
- * racing sibling finds it empty, and only groups still remembered are said.
- * A prompt inside a subagent (none fires today, but the payload would say so)
- * leaves the queue for the main thread. Fail open: a busy lock relays next
- * prompt, never twice.
- */
-const relaySubagentCollisions = async (ctx: HookContext, budget: HookBudget): Promise<string> => {
-  try {
-    // Drained only while the spare budget lasts (review L3): a queue left
-    // alone waits for the next prompt, a queue drained into an abandoned
-    // hook is lost.
-    if (ctx.payload.agent_id !== undefined || budget.spareMs() <= 0) {
-      return "";
-    }
-    const state = await readSessionState(ctx.config.home, ctx.payload.session_id);
-    if (state === null || (state.collisionRelayQueue ?? []).length === 0) {
-      return "";
-    }
-    const taken: { value: readonly CollisionNotice[] } = { value: [] };
-    const drained = await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => {
-      const queue = fresh.collisionRelayQueue ?? [];
-      if (queue.length === 0) {
-        return null;
-      }
-      taken.value = (fresh.collisionNotices ?? []).filter((notice) => queue.includes(notice.key));
-      return withDrainedCollisionRelays(fresh);
-    });
-    return drained ? renderSubagentCollisionRelay(taken.value, ctx.now()) : "";
-  } catch {
-    // Fail open: the prompt hook's own job (briefing or hint) is untouched.
+  if (text.length === 0) {
     return "";
   }
+  return JSON.stringify(relay.person.length === 0 ? envelope(text) : { systemMessage: relay.person, ...envelope(text) });
 };
 
 /**
@@ -341,6 +313,6 @@ export const handleUserPromptSubmit = async (
   // everything else this prompt carries is in hand, so nothing slow sits
   // between emptying it and the relay leaving the hook. It still LEADS the
   // emitted text.
-  const relay = await relaySubagentCollisions(ctx, budget);
+  const relay = await drainCollisionRelay(ctx, budget);
   return serialize(output, relay);
 };

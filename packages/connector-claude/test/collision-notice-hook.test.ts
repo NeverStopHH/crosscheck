@@ -157,11 +157,15 @@ describe("a SUBAGENT's hit reaches the main thread", () => {
     // Assert: the subagent's own output still carries the person-facing line…
     expect(ask.systemMessage).toBe(NICK_NOTICE);
     expect(queued?.collisionRelayQueue).toHaveLength(1);
-    // …and the main thread is handed the facts and the one request, once.
+    // …and the main thread is handed the facts and the one request, once —
+    // and the PERSON sees the line too (review H1a): nothing documents where
+    // a subagent hook's systemMessage renders.
     expect(first.hookSpecificOutput?.additionalContext).toBe(
       [SUBAGENT_RELAY_HEADER, NICK_NOTICE, COLLISION_RELAY_SENTENCE].join("\n"),
     );
+    expect(first.systemMessage).toBe(NICK_NOTICE);
     expect(second).not.toContain(SUBAGENT_RELAY_HEADER);
+    expect(second).not.toContain(NICK_NOTICE);
     const drained = await readSessionState(home, SESSION_ID);
     expect(drained?.collisionRelayQueue).toEqual([]);
   });

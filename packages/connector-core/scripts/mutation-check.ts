@@ -23444,7 +23444,7 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "a subagent's collision is relayed to the main thread on every prompt",
-    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    file: `${CONNECTOR}/src/hooks/collision-relay.ts`,
     from: "      return withDrainedCollisionRelays(fresh);",
     to: "      return fresh;",
     test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
@@ -23748,11 +23748,20 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "a subagent relay drains into a prompt hook with no time left",
-    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    file: `${CONNECTOR}/src/hooks/collision-relay.ts`,
     from: "    if (ctx.payload.agent_id !== undefined || budget.spareMs() <= 0) {",
     to: "    if (ctx.payload.agent_id !== undefined) {",
     test: `${CONNECTOR}/test/collision-order-hook.test.ts`,
     because: "the queue is emptied into an output the budget race throws away, and the main thread never hears of the overlap",
+  },
+  // ── Review of feat/collision-visible, H1a: the relay reaches the PERSON ──
+  {
+    label: "a relayed subagent collision reaches the main thread's agent and never the person",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    from: "  return JSON.stringify(relay.person.length === 0 ? envelope(text) : { systemMessage: relay.person, ...envelope(text) });",
+    to: "  return JSON.stringify(envelope(text));",
+    test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
+    because: "91% of the pilot owner's edits were subagents', and their collisions reached a context nobody reads and then a reply nobody was asked to write",
   },
 ];
 
@@ -23900,7 +23909,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/at7-stream.test.ts 3
  * PRINTS: packages/connector-claude/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-claude/test/capture-latency.test.ts 1
- * PRINTS: packages/connector-claude/test/collision-notice-hook.test.ts 7
+ * PRINTS: packages/connector-claude/test/collision-notice-hook.test.ts 8
  * PRINTS: packages/connector-claude/test/collision-order-hook.test.ts 4
  * PRINTS: packages/connector-claude/test/collision-teammates-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/conclusion-corpus.test.ts 6

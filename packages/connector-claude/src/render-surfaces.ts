@@ -28,15 +28,15 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
       resolveWorkContextTitle(payload, "feat/x", "github.com/acme/api"),
   },
   // The prompt-hint path is the core `selectAndRenderHint` flow since Block 5
-  // (registered in core as hint-flow). user-prompt-submit.ts touches the
-  // render layer again for ONE thing of its own, the subagent collision relay
-  // registered below.
+  // (registered in core as hint-flow); user-prompt-submit.ts no longer touches
+  // the render layer itself — the subagent collision relay it carries is
+  // composed in hooks/collision-relay.ts, registered below.
   {
     kind: "composite",
     name: "claude-subagent-collision-relay",
     delivery: "unsolicited",
-    module: "src/hooks/user-prompt-submit.ts",
-    note: "emits renderSubagentCollisionRelay output verbatim (core's collision-subagent-relay surface) ahead of the prompt's own delivery, joined by a blank line; the groups it renders are the session state's own records of rows the tripwire already projected",
+    module: "src/hooks/collision-relay.ts",
+    note: "returns renderSubagentCollisionRelay output verbatim as the main thread's copy (core's collision-subagent-relay surface) and renderCollisionNotices output verbatim as the person's systemMessage (core's collision-notice surface); the groups it renders are the session state's own records of rows the tripwire already projected",
     corpusCoveredBy: ["test/collision-notice-hook.test.ts"],
   },
   // `claude-ghost-draft` is no longer registered here: the ghost worker moved
