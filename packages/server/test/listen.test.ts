@@ -150,11 +150,12 @@ describe("serving the plan", () => {
   test("an address that cannot be bound stops the servers already started and names it", () => {
     // Arrange: a first server holds the address the plan names twice over
     const held = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: okFetch });
+    const heldPort = held.port ?? 0;
     try {
       // Act + Assert
       expect(() =>
-        serveOnPlan({ kind: "configured", addresses: ["127.0.0.1"] }, held.port, okFetch),
-      ).toThrow(`could not listen at 127.0.0.1 on port ${String(held.port)}`);
+        serveOnPlan({ kind: "configured", addresses: ["127.0.0.1"] }, heldPort, okFetch),
+      ).toThrow(`could not listen at 127.0.0.1 on port ${String(heldPort)}`);
     } finally {
       held.stop(true);
     }
