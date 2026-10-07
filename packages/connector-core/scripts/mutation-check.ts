@@ -18483,16 +18483,16 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "set_intent leaves a status the hub surely never took in the state",
     file: `${CORE}/src/mcp/tools/intent-write.ts`,
-    from: "    if (!mayHaveLanded(posted)) {\n      await keepOldStatus();\n    }\n",
-    to: "",
+    from: "    } else {\n      await keepOldStatus();\n    }\n",
+    to: "    }\n",
     test: `${CORE}/test/set-intent.test.ts`,
     because: "review-2 round 7: a refused post's status goes to the hub later, under the one tool result that said it failed",
   },
   {
     label: "set_intent puts the old status back over a post that may have landed",
     file: `${CORE}/src/mcp/tools/intent-write.ts`,
-    from: "    if (!mayHaveLanded(posted)) {",
-    to: "    if (true) {",
+    from: "    if (mayHaveLanded(posted)) {\n      await updateSessionState(deps.home, own.hostSessionKey, (fresh) => withUncertainAck(fresh, own));\n    } else {",
+    to: "    {\n      await updateSessionState(deps.home, own.hostSessionKey, (fresh) => withUncertainAck(fresh, own));\n    }\n    {",
     test: `${CORE}/test/set-intent.test.ts`,
     because: "review-2 round 7, simulation seed 1020 (I4): the hub holds the new status, and the next sender reverts it",
   },
@@ -18931,7 +18931,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "SessionEnd sends the work context whatever the hub acknowledged",
     file: `${CORE}/src/spool/work-context-ack.ts`,
-    from: "  state.workContextAcked.status !== state.workContextStatus;",
+    from: "  (state.workContextAcked.uncertain === true || state.workContextAcked.status !== state.workContextStatus);",
     to: "  true;",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review-2 round 8, L7: every end sends one more work context, for nothing",
@@ -18939,8 +18939,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "SessionEnd sends the work context of a life the hub never took",
     file: `${CORE}/src/spool/work-context-ack.ts`,
-    from: "  state.workContextAcked?.id === state.workContextId &&\n  state.workContextAcked.status !== state.workContextStatus;",
-    to: "  state.workContextAcked?.status !== state.workContextStatus;",
+    from: "  state.workContextAcked?.id === state.workContextId &&\n  (state.workContextAcked.uncertain === true || state.workContextAcked.status !== state.workContextStatus);",
+    to: "  (state.workContextAcked?.uncertain === true || state.workContextAcked?.status !== state.workContextStatus);",
     test: `${CORE}/test/session-heal.test.ts`,
     because: "review-2 round 8, L7: a life whose register never landed has one more record refused and counted at its end",
   },
@@ -19679,6 +19679,32 @@ export const MUTATIONS: readonly Mutation[
     because: "any branch checked out in the worktree descends from anything, and unrelated work is folded into the topic",
   },
   {
+    // Found by the topics sweep (seed 416), an L7 shape: set_intent's post went
+    // unanswered, a later one failed back to the acknowledged status.
+    label: "an unanswered set_intent post leaves the acknowledgement telling",
+    file: `${CORE}/src/mcp/tools/intent-write.ts`,
+    from: "      await updateSessionState(deps.home, own.hostSessionKey, (fresh) => withUncertainAck(fresh, own));",
+    to: "      await Promise.resolve(own);",
+    test: `${CORE}/test/set-intent.test.ts`,
+    because: "SessionEnd reads the state and the hub as agreeing while the hub holds the status of a post nobody heard answered, and the session ends on it",
+  },
+  {
+    label: "an uncertain acknowledgement reads as the hub in step",
+    file: `${CORE}/src/spool/work-context-ack.ts`,
+    from: "  (state.workContextAcked.uncertain === true || state.workContextAcked.status !== state.workContextStatus);",
+    to: "  state.workContextAcked.status !== state.workContextStatus;",
+    test: `${CORE}/test/work-context-ack.test.ts`,
+    because: "the mark is written and never read, and SessionEnd stays silent over a status the hub may hold instead",
+  },
+  {
+    label: "an acceptance leaves the acknowledgement uncertain",
+    file: `${CORE}/src/spool/work-context-ack.ts`,
+    from: "        fresh.workContextAcked.status !== last.status ||\n        fresh.workContextAcked.uncertain === true);",
+    to: "        fresh.workContextAcked.status !== last.status);",
+    test: `${CORE}/test/work-context-ack.test.ts`,
+    because: "every SessionEnd after one unanswered post re-sends its work context though the hub has since confirmed it",
+  },
+  {
     // DESIGN.md "One session, many topics", item 6: the same rules on every host.
     label: "a Cursor edit in a sibling worktree files under the session's own context",
     file: `${CURSOR}/src/handlers/file-edit.ts`,
@@ -20120,7 +20146,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
- * PRINTS: packages/connector-core/test/set-intent.test.ts 13
+ * PRINTS: packages/connector-core/test/set-intent.test.ts 14
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 2
  * PRINTS: packages/connector-core/test/spool-ignored.test.ts 2
@@ -20135,7 +20161,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/topic-rules.test.ts 12
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
  * PRINTS: packages/connector-core/test/verdict-wire.test.ts 2
- * PRINTS: packages/connector-core/test/work-context-ack.test.ts 3
+ * PRINTS: packages/connector-core/test/work-context-ack.test.ts 5
  * PRINTS: packages/connector-core/test/working-days.test.ts 3
  * PRINTS: packages/connector-cursor/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-cursor/test/budget.test.ts 1

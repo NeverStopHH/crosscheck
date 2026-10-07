@@ -67,16 +67,20 @@ export const noteWorkContextAcked = async (
       return null;
     }
     const last = acked.filter((ack) => ack.id === fresh.workContextId).at(-1);
+    // An acceptance answers an uncertain post too: the hub holds THIS status now.
     const isNew =
       last !== undefined &&
-      (fresh.workContextAcked?.id !== last.id || fresh.workContextAcked.status !== last.status);
+      (fresh.workContextAcked?.id !== last.id ||
+        fresh.workContextAcked.status !== last.status ||
+        fresh.workContextAcked.uncertain === true);
     // ...and each of the life's TOPICS, on its own entry (DESIGN.md "One
     // session, many topics"): SessionEnd's last word covers them too.
     const topics = fresh.topicContexts.map((topic) => {
       const ack = acked.filter((entry) => entry.id === topic.workContextId).at(-1);
-      return ack === undefined || ack.status === topic.ackedStatus || topic.sessionId !== fresh.crosscheckSessionId
+      const isSame = ack?.status === topic.ackedStatus && topic.ackUncertain !== true;
+      return ack === undefined || isSame || topic.sessionId !== fresh.crosscheckSessionId
         ? topic
-        : { ...topic, ackedStatus: ack.status };
+        : { ...topic, ackedStatus: ack.status, ackUncertain: false };
     });
     const isTopicNew = topics.some((topic, index) => topic !== fresh.topicContexts[index]);
     return isNew || isTopicNew
@@ -96,16 +100,19 @@ export const topicsBehindState = (state: SessionState): SessionState["topicConte
     (topic) =>
       topic.sessionId === state.crosscheckSessionId &&
       topic.ackedStatus !== null &&
-      topic.ackedStatus !== topic.status,
+      (topic.ackUncertain === true || topic.ackedStatus !== topic.status),
   );
 
 /**
  * Whether the hub last accepted ANOTHER status for the state's work context
- * than the state holds. One it never accepted any status for is not behind
- * but unknown to it: its own copies are on their way or counted, and one
- * more would only be refused with them.
+ * than the state holds — or may hold another since: a set_intent post after
+ * that acceptance went unanswered (`uncertain`, topics seed 416), and a later
+ * one that failed may have put the state back on the acknowledged status while
+ * the hub took the unanswered one. One it never accepted any status for is not
+ * behind but unknown to it: its own copies are on their way or counted, and
+ * one more would only be refused with them.
  */
 export const isHubBehindState = (state: SessionState): boolean =>
   state.workContextStatus !== null &&
   state.workContextAcked?.id === state.workContextId &&
-  state.workContextAcked.status !== state.workContextStatus;
+  (state.workContextAcked.uncertain === true || state.workContextAcked.status !== state.workContextStatus);
