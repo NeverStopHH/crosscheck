@@ -551,6 +551,14 @@ Two residuals:
 - A straggler there of a life the hub has ended is withheld only if that repo's refused-lives note names the life.
   Refusals a flush or SessionEnd in that repo sees are written there, but a heal writes to the bound repo's note.
 
+**A reaped state leaves its life's last word** (review-2 round 8, M3, seed 10895). A work context spooled or owed for a
+life goes with the title and status its state holds when it is sent, or, once SessionEnd ran, with what its end
+marker kept. A host that died has no SessionEnd. When session-reap deleted its state, nothing remembered the status
+`set_intent` had set, and the copy spooled at SessionStart put the old one back. Before it deletes a stale state,
+session-reap now writes the life's end marker (`spool/end-marker.ts`, the shape SessionEnd writes) with the state's last
+title and status. The marker is also the dead life's deferred end: reap ends it on the hub once its backlog is gone,
+unsequenced, since nothing allocated it a position. A marker a SessionEnd already wrote is never overwritten.
+
 **The hub's author-side refusals have a word, and a cooldown sends nothing** (review-2 LOW-5). A record whose own
 session or work context the hub never saw is refused with `sessionId: session "…" not found` (also
 `authorSessionId:`) or `workContextId: work context "…" not found` — the body's session, not the producer's — and

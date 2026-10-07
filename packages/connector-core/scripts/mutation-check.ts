@@ -5590,8 +5590,8 @@ export const MUTATIONS: readonly Mutation[
     // The deferred half. The marker is the ONLY carrier once the state file is
     // deleted, and reap's DeferredEnder runs in a later process.
     label: "a deferred end is silently unsequenced",
-    file: `${CORE}/src/flows/end-session.ts`,
-    from: "      seq: end.seq,\n",
+    file: `${CORE}/src/spool/end-marker.ts`,
+    from: "      ...(marker.seq === undefined ? {} : { seq: marker.seq }),\n",
     to: "",
     test: `${CORE}/test/end-session-seq.test.ts`,
     because:
@@ -18385,8 +18385,8 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "SessionEnd's marker keeps no status",
-    file: `${CORE}/src/flows/end-session.ts`,
-    from: "      ...(standing.workContextStatus === null ? {} : { workContextStatus: standing.workContextStatus }),\n",
+    file: `${CORE}/src/spool/end-marker.ts`,
+    from: "      ...(marker.standing.workContextStatus === null ? {} : { workContextStatus: marker.standing.workContextStatus }),\n",
     to: "",
     test: `${CORE}/test/owed-work-context.test.ts`,
     because: "review-2 round 7 (I4): nothing past the state remembers the status set_intent set",
@@ -18538,7 +18538,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "session-reap deletes a stale state without releasing its spool",
     file: `${CORE}/src/state/session-reap.ts`,
-    from: "    await stampReleased(home, repoKey(parsed.data.hubUrl, parsed.data.repoId), file.name.slice(0, -STATE_SUFFIX.length), now);\n",
+    from: "    await stampReleased(home, key, slug, now);\n",
     to: "",
     test: `${CORE}/test/release-clock.test.ts`,
     because: "review-2 round 8 H2: the next SessionStart expires the dead host's backlog its successor had not sent yet (2605 of 3000)",
@@ -18582,6 +18582,22 @@ export const MUTATIONS: readonly Mutation[
     to: "",
     test: `${CORE}/test/spool-ownership.test.ts`,
     because: "review-2 round 8 M2: resumed from another checkout, it never flushes this repo again, and reap expires nothing while its state exists",
+  },
+  {
+    label: "session-reap deletes a state without leaving its life's last title and status (M3)",
+    file: `${CORE}/src/state/session-reap.ts`,
+    from: "    await writeDownReapedLife(home, key, slug, parsed.data, now);\n",
+    to: "",
+    test: `${CORE}/test/owed-work-context.test.ts`,
+    because: "review-2 round 8 M3, seed 10895: the dead host's spooled work context goes out with its SessionStart status and reverts set_intent",
+  },
+  {
+    label: "a reaped life's marker overwrites the one SessionEnd wrote (M3)",
+    file: `${CORE}/src/state/session-reap.ts`,
+    from: "  const path = spoolPendingEndPath(home, key, slug, rung);\n  if (await Bun.file(path).exists()) {\n    return;\n  }\n",
+    to: "  const path = spoolPendingEndPath(home, key, slug, rung);\n",
+    test: `${CORE}/test/owed-work-context.test.ts`,
+    because: "review-2 round 8 M3: the deferred end loses the position SessionEnd allocated and is filed unsequenced",
   },
   {
     label: "a spool that is not there is stamped released",
@@ -18841,7 +18857,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
  * PRINTS: packages/connector-core/test/owed-debt-rules.test.ts 21
- * PRINTS: packages/connector-core/test/owed-work-context.test.ts 12
+ * PRINTS: packages/connector-core/test/owed-work-context.test.ts 14
  * PRINTS: packages/connector-core/test/pilot-client.test.ts 4
  * PRINTS: packages/connector-core/test/pilot-platform-refusals.test.ts 2
  * PRINTS: packages/connector-core/test/pin-paths.test.ts 8

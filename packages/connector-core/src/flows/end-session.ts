@@ -25,13 +25,14 @@ import {
   sessionHealPathForSlug,
   sessionSlug,
   spoolPendingEndPath,
-  writePrivateFile,
 } from "../config/paths.ts";
 import { endSession } from "../http/hub.ts";
 import type { HubContext } from "../http/client.ts";
 import { readSessionSpool } from "../spool/files.ts";
 import { readOwedWorkContext } from "../spool/owed-work-context.ts";
 import { flushSpool } from "../spool/flush.ts";
+import { writeEndMarker } from "../spool/end-marker.ts";
+import type { WorkContextStanding } from "../spool/end-marker.ts";
 import { readTelemetryLossReport } from "../spool/loss-report.ts";
 import { recordRefusedLife } from "../spool/refused-lives.ts";
 import { seqAt } from "../capture/seq.ts";
@@ -87,31 +88,9 @@ const lifeEnd = (input: EndSessionFlowInput, sessionId: string, seq: SeqField): 
   markerPath: pendingEndPathOf(input, sessionId),
 });
 
-/** What the state says the life's work context is, kept on its marker once the state is gone. */
-interface WorkContextStanding {
-  readonly workContextTitle: string | null;
-  readonly workContextStatus: string | null;
-}
-
-/** The marker, then the lineage — both before the state goes. */
+/** The marker (spool/end-marker.ts), then the lineage — both before the state goes. */
 const writeDownEnd = async (input: EndSessionFlowInput, end: LifeEnd, standing: WorkContextStanding): Promise<void> => {
-  await writePrivateFile(
-    end.markerPath,
-    `${JSON.stringify({
-      crosscheckSessionId: end.sessionId,
-      at: input.now().toISOString(),
-      // THE MARKER IS THE ONLY CARRIER LEFT. reap's DeferredEnder runs in a
-      // later process with no state file to consult — so a deferred end
-      // without this is permanently unsequenced, and nothing would say why.
-      seq: end.seq,
-      // ...and the last title and status the life's state held: a work
-      // context still on disk for it goes with these, not the ones it was
-      // spooled with (spool/owed-work-context.ts readLifeState, review-2 round
-      // 7, found by the spool simulation).
-      ...(standing.workContextTitle === null ? {} : { workContextTitle: standing.workContextTitle }),
-      ...(standing.workContextStatus === null ? {} : { workContextStatus: standing.workContextStatus }),
-    })}\n`,
-  );
+  await writeEndMarker(end.markerPath, { sessionId: end.sessionId, at: input.now(), seq: end.seq, standing });
   // The life this end closes, written down BEFORE its state goes: the state
   // file is what named it, and a host that resumes this conversation under
   // the same id must start its next life one rung up, not on this one — an

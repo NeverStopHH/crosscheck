@@ -15,12 +15,13 @@
  * the limit, until the hub takes it.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { rm } from "node:fs/promises";
+import { readFile, rm, utimes, writeFile } from "node:fs/promises";
 
 import { createDb, createServer } from "@crosscheck/server";
 import type { Db } from "@crosscheck/server";
 
-import { repoKey, sessionSlug, spoolOwedWorkContextPath } from "../src/config/paths.ts";
+import { MAX_SPOOL_AGE_DAYS, MS_PER_DAY } from "../src/constants.ts";
+import { repoKey, sessionSlug, sessionStatePath, spoolOwedWorkContextPath, spoolPendingEndPath } from "../src/config/paths.ts";
 import { targetRecord, withProducer, workContextRecord } from "../src/capture/records.ts";
 import type { Producer } from "../src/capture/records.ts";
 import type { HubContext } from "../src/http/client.ts";
@@ -36,6 +37,7 @@ import { readSessionSpool } from "../src/spool/files.ts";
 import { flushSpool } from "../src/spool/flush.ts";
 import { oweWorkContext, settleOwedOnIntent } from "../src/spool/owed-work-context.ts";
 import { reapSpool } from "../src/spool/reap.ts";
+import { reapStaleSessionStates } from "../src/state/session-reap.ts";
 import { readSessionState, updateSessionState } from "../src/state/session-state.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
 
@@ -490,6 +492,61 @@ describe("a work context spooled at registration (review-2 round 7, found by the
 
     // Assert
     expect(await statusOf(life.workContextId)).toBe("blocked");
+  });
+
+  test("goes with the status its state last held once session-reap deleted it (review-2 round 8, M3, seed 10895)", async () => {
+    // Arrange: the same race; then the host dies, and a week later session-reap deletes its state
+    const fx = await fixture("spooled-wc-reaped");
+    const life = await register(fx);
+    const intent = withProducer(
+      workContextRecord(
+        { workContextId: life.workContextId, sessionId: life.crosscheckSessionId, title: "Mine", status: "blocked" },
+        producerOf(life.crosscheckSessionId),
+        new Date(),
+      ),
+      developerId,
+      life.crosscheckSessionId,
+    );
+    await postRecords(fx.hub, [intent]);
+    const silentSince = new Date(Date.now() - (MAX_SPOOL_AGE_DAYS * MS_PER_DAY + MS_PER_DAY));
+    await updateSessionState(fx.home, fx.hostSessionKey, (fresh) => ({
+      ...fresh,
+      workContextStatus: "blocked",
+      startedAt: silentSince.toISOString(),
+      lastHeartbeatAt: silentSince.toISOString(),
+    }));
+    await utimes(sessionStatePath(fx.home, fx.hostSessionKey), silentSince, silentSince);
+    await reapStaleSessionStates(fx.home, new Date());
+
+    // Act: another conversation drains the reaped one's spool
+    const other = await register(fx, `${fx.hostSessionKey}-other`);
+    await flushSpool(fx.hub, { sessionId: other.crosscheckSessionId, developerId }, BUDGET_MS);
+
+    // Assert
+    expect(await readSessionState(fx.home, fx.hostSessionKey)).toBeNull();
+    expect(await statusOf(life.workContextId)).toBe("blocked");
+  });
+
+  test("never overwrites the marker a SessionEnd wrote before it died, nor the position it holds (M3)", async () => {
+    // Arrange: SessionEnd wrote its marker, positioned, and died before deleting the state; a week passes
+    const fx = await fixture("reap-keeps-marker");
+    const life = await register(fx);
+    const marker = spoolPendingEndPath(fx.home, fx.key, sessionSlug(fx.hostSessionKey));
+    const seq = { epoch: "epoch-of-the-end", n: 7 };
+    await writeFile(marker, `${JSON.stringify({ crosscheckSessionId: life.crosscheckSessionId, at: new Date().toISOString(), seq })}\n`);
+    const silentSince = new Date(Date.now() - (MAX_SPOOL_AGE_DAYS * MS_PER_DAY + MS_PER_DAY));
+    await updateSessionState(fx.home, fx.hostSessionKey, (fresh) => ({
+      ...fresh,
+      startedAt: silentSince.toISOString(),
+      lastHeartbeatAt: silentSince.toISOString(),
+    }));
+    await utimes(sessionStatePath(fx.home, fx.hostSessionKey), silentSince, silentSince);
+
+    // Act
+    await reapStaleSessionStates(fx.home, new Date());
+
+    // Assert
+    expect((JSON.parse(await readFile(marker, "utf8")) as { seq?: unknown }).seq).toEqual(seq);
   });
 });
 

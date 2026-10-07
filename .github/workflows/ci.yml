@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1688
+    # PRINTS: 1690
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -278,7 +278,7 @@ jobs:
     # PRINTS: flows/capture-touched-files.ts 3
     # PRINTS: flows/claim-revalidation.ts 2
     # PRINTS: flows/claim-surface.ts 1
-    # PRINTS: flows/end-session.ts 11
+    # PRINTS: flows/end-session.ts 9
     # PRINTS: flows/heal-session.ts 19
     # PRINTS: flows/heartbeat.ts 2
     # PRINTS: flows/hint.ts 5
@@ -334,6 +334,7 @@ jobs:
     # PRINTS: spool/counts.ts 1
     # PRINTS: spool/cursor.ts 1
     # PRINTS: spool/drops.ts 11
+    # PRINTS: spool/end-marker.ts 2
     # PRINTS: spool/flush-heal.ts 14
     # PRINTS: spool/flush.ts 27
     # PRINTS: spool/ledger-read.ts 2
@@ -353,7 +354,7 @@ jobs:
     # PRINTS: state/loss-refusals.ts 1
     # PRINTS: state/seq-cost.ts 8
     # PRINTS: state/session-lineage.ts 2
-    # PRINTS: state/session-reap.ts 2
+    # PRINTS: state/session-reap.ts 4
     # PRINTS: state/session-scan.ts 2
     # PRINTS: state/session-state.ts 22
     # PRINTS: state/tool-window-key.ts 2
@@ -535,7 +536,8 @@ jobs:
     # PRINTS: doctor.ts 71
     # PRINTS: driver.ts 2
     # PRINTS: drops.ts 11
-    # PRINTS: end-session.ts 11
+    # PRINTS: end-marker.ts 2
+    # PRINTS: end-session.ts 9
     # PRINTS: engine.ts 24
     # PRINTS: entry.ts 1
     # PRINTS: enums.ts 2
@@ -678,7 +680,7 @@ jobs:
     # PRINTS: session-events.ts 9
     # PRINTS: session-lineage.ts 2
     # PRINTS: session-order.ts 9
-    # PRINTS: session-reap.ts 2
+    # PRINTS: session-reap.ts 4
     # PRINTS: session-scan.ts 2
     # PRINTS: session-start.ts 8
     # PRINTS: session-state.ts 22

@@ -118,7 +118,6 @@ const OPEN: ReadonlyMap<number, string> = new Map<number, string>([
   [10102, "L1"],
   [11955, "L1"],
   [11974, "L2"],
-  [10895, "M3"],
   [11151, "L1"],
   [11274, "L1"],
   [11285, "L2"],
@@ -318,7 +317,6 @@ interface Found extends Probe {
   readonly racy?: boolean;
 }
 
-const M3 = "M3 (a reaped state leaves its title and status)";
 const L1 = "L1 (a re-fire keeps the status set_intent wrote)";
 const L2 = "L2 (concurrent SessionStarts share one epoch)";
 
@@ -362,7 +360,6 @@ const ROUND_7: readonly Found[] = [
   {
     name: "seed 10895 (I4, M3): a reaped host's work context reverted the status set_intent set",
     events: [crash(7, "before"), start(1), intent(1, "done"), fault("registersDown", 2, 0), age(1), start(0)],
-    open: M3,
   },
   {
     name: "seed 184 (I4, L1): set_intent beside a SessionStart re-fire",

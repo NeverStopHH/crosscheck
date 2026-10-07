@@ -27,10 +27,13 @@ import {
   SESSION_STATE_REAP_MAX_PER_RUN,
   SESSION_STATE_SCAN_MAX_FILES,
 } from "../constants.ts";
-import { readJsonOrNull, repoKey, sessionSlug } from "../config/paths.ts";
+import { readJsonOrNull, repoKey, sessionSlug, spoolPendingEndPath } from "../config/paths.ts";
+import { writeEndMarker } from "../spool/end-marker.ts";
 import { stampReleased } from "../spool/release.ts";
 import { listSessionStateFiles, sessionSilentForMs } from "./session-scan.ts";
-import { SessionStateSchema } from "./session-state.ts";
+import { lifeRungOf } from "./session-lineage.ts";
+import { crosscheckSessionIdFor, SessionStateSchema } from "./session-state.ts";
+import type { SessionState } from "./session-state.ts";
 
 const STATE_SUFFIX = ".json";
 
@@ -47,6 +50,42 @@ export const isPastReapBound = (
 ): boolean => {
   const silentMs = sessionSilentForMs(state, wroteAtMs, nowMs);
   return silentMs !== null && silentMs > MAX_SPOOL_AGE_DAYS * MS_PER_DAY;
+};
+
+/**
+ * THE LIFE'S LAST WORD, ON ITS END MARKER (review-2 round 8, M3, seed 10895):
+ * a work context spooled or owed for the life goes with the title and status
+ * the state held, read from its marker once the state is gone
+ * (spool/owed-work-context.ts readLifeState) — without it, the copy spooled
+ * at SessionStart put back the status set_intent had set since. The marker is
+ * also its deferred end: reap ends the dead life on the hub once its backlog
+ * is gone, unsequenced, as nothing allocated it a position. One SessionEnd
+ * already wrote is never overwritten.
+ */
+const writeDownReapedLife = async (
+  home: string,
+  key: string,
+  slug: string,
+  state: SessionState,
+  now: Date,
+): Promise<void> => {
+  const rung = lifeRungOf(crosscheckSessionIdFor(state.hostSessionKey), state.crosscheckSessionId);
+  if (rung === null) {
+    return;
+  }
+  const path = spoolPendingEndPath(home, key, slug, rung);
+  if (await Bun.file(path).exists()) {
+    return;
+  }
+  try {
+    await writeEndMarker(path, {
+      sessionId: state.crosscheckSessionId,
+      at: now,
+      standing: { workContextTitle: state.workContextTitle, workContextStatus: state.workContextStatus },
+    });
+  } catch {
+    // Best-effort: the state goes regardless, as it always did.
+  }
 };
 
 export interface StateReapOptions {
@@ -97,10 +136,13 @@ export const reapStaleSessionStates = async (
     if (!isPastReapBound(parsed.data, file.mtimeMs, now.getTime())) {
       continue;
     }
+    const key = repoKey(parsed.data.hubUrl, parsed.data.repoId);
+    const slug = file.name.slice(0, -STATE_SUFFIX.length);
     // RELEASED NOW (review-2 round 8, H2): its spool goes to every flusher from
     // here, and reap's expiry clock starts here, not at its last write — which
     // is as old as this state, and would expire it at the next SessionStart.
-    await stampReleased(home, repoKey(parsed.data.hubUrl, parsed.data.repoId), file.name.slice(0, -STATE_SUFFIX.length), now);
+    await stampReleased(home, key, slug, now);
+    await writeDownReapedLife(home, key, slug, parsed.data, now);
     try {
       await rm(file.path, { force: true });
       reaped += 1;
