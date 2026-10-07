@@ -44,6 +44,8 @@ export interface Dials {
   recordsLate: Dial;
   /** Register POSTs answered 503. */
   registersDown: Dial;
+  /** Fixed scenarios only: record POSTs whose records reach the hub as a kind it does not know, so it ignores them. */
+  ignored: Dial;
   /** Conversations (base life ids) whose work_context records the hub is made to refuse, every time. */
   readonly wcRefusedFor: Set<string>;
 }
@@ -156,9 +158,12 @@ export const startSimHub = async (): Promise<SimHub> => {
     records503: idle(),
     recordsLate: idle(),
     registersDown: idle(),
+    ignored: idle(),
     wcRefusedFor: new Set(),
   };
   const deliveries: Delivery[] = [];
+  /** Envelopes the hub has taken, whatever the connector heard. */
+  const takenIds = new Set<string>();
   const clock = { step: 0 };
   /** Sessions the connector has been told are ended (Delivery.endKnown). */
   const toldEnded = new Set<string>();
@@ -203,6 +208,9 @@ export const startSimHub = async (): Promise<SimHub> => {
         step,
       };
       deliveries.push(delivery);
+      if (result.status === "accepted" || result.status === "duplicate") {
+        takenIds.add(delivery.id);
+      }
       return delivery;
     });
   };
@@ -243,10 +251,19 @@ export const startSimHub = async (): Promise<SimHub> => {
       return unavailable("sim 503");
     }
     const sent = (await request.json()) as { records?: WireRecord[] };
+    const isIgnored = trips(dials.ignored);
+    // A work context the hub refuses for good is one it never took: the same
+    // envelope again is a record it holds (services/record-receipts.ts).
+    const isRefusedForGood = (record: WireRecord): boolean =>
+      record.kind === "work_context" &&
+      dials.wcRefusedFor.has(conversationOfLife(text(record.body?.sessionId) ?? "")) &&
+      !takenIds.has(text(record.id) ?? "");
     const wire = (sent.records ?? []).map((record) =>
-      record.kind === "work_context" && dials.wcRefusedFor.has(conversationOfLife(text(record.body?.sessionId) ?? ""))
-        ? { ...record, body: { ...record.body, title: "" } }
-        : record,
+      isIgnored
+        ? { ...record, kind: "sim_unknown_kind" }
+        : isRefusedForGood(record)
+          ? { ...record, body: { ...record.body, title: "" } }
+          : record,
     );
     const ended = await endedOf(wire.map(bodySessionOf).filter((id): id is string => id !== null));
     const arrivedAt = clock.step;
@@ -322,6 +339,7 @@ export const calmDials = (hub: SimHub): void => {
   hub.dials.records503 = idle();
   hub.dials.recordsLate = idle();
   hub.dials.registersDown = idle();
+  hub.dials.ignored = idle();
 };
 
 /** A scenario starts with every dial at rest and nothing logged. */

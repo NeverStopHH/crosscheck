@@ -30,6 +30,10 @@ export interface SpooledLine extends BatchLine {
   readonly record: Record<string, unknown>;
 }
 
+/** The envelope ids of the records counted (spool/drops.ts recordDrop). */
+const idsOf = (records: readonly Record<string, unknown>[]): readonly string[] =>
+  records.flatMap((record) => (typeof record["id"] === "string" ? [record["id"]] : []));
+
 /**
  * WITHHELD, NOT SENT: records a refused life produced whose body names that
  * life (spool/flush-heal.ts). Counted under their own reason, `withheld` —
@@ -43,9 +47,17 @@ const recordWithheld = async (
   withheld: readonly Record<string, unknown>[],
 ): Promise<void> => {
   if (withheld.length > 0) {
-    await recordDrop(ctx.home, ctx.repoKey, spool.slug, withheld.length, "withheld", ctx.now(), kindsOf(withheld), {
-      session_ended: withheld.length,
-    });
+    await recordDrop(
+      ctx.home,
+      ctx.repoKey,
+      spool.slug,
+      withheld.length,
+      "withheld",
+      ctx.now(),
+      kindsOf(withheld),
+      { session_ended: withheld.length },
+      idsOf(withheld),
+    );
   }
 };
 
@@ -56,9 +68,17 @@ const recordSealed = async (
   sealed: readonly Record<string, unknown>[],
 ): Promise<void> => {
   if (sealed.length > 0) {
-    await recordDrop(ctx.home, ctx.repoKey, spool.slug, sealed.length, "rejected", ctx.now(), kindsOf(sealed), {
-      session_ended: sealed.length,
-    });
+    await recordDrop(
+      ctx.home,
+      ctx.repoKey,
+      spool.slug,
+      sealed.length,
+      "rejected",
+      ctx.now(),
+      kindsOf(sealed),
+      { session_ended: sealed.length },
+      idsOf(sealed),
+    );
   }
 };
 

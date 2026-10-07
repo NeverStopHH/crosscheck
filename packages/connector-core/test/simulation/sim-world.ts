@@ -110,7 +110,9 @@ export type SimEvent =
   /** A host dies silently for good, and a week passes for EVERYTHING on disk, not only its state. */
   | { readonly kind: "age"; readonly c: number }
   /** Fixed scenarios only: a parallel hook that read the state before a heal appends one target of the BASE life. */
-  | { readonly kind: "straggle"; readonly c: number };
+  | { readonly kind: "straggle"; readonly c: number }
+  /** Fixed scenarios only: the hub ignores the records of the next `count` record POSTs (a kind it does not know). */
+  | { readonly kind: "ignore"; readonly count: number };
 
 /** mulberry32: a 32-bit seed, a stream of [0, 1). Small, fast and the same everywhere. */
 export const prng = (seed: number): (() => number) => {
@@ -233,8 +235,8 @@ export interface Run {
   readonly writtenStatus: ReadonlyMap<string, string>;
   /** Every drain's wall time against the deadline it had (I5). */
   readonly timings: readonly Timing[];
-  /** Records a step may have counted twice: it died between a ledger append and the cursor write past it. */
-  readonly overCountAllowance: number;
+  /** Steps that may have counted records twice: they died between a ledger append and the cursor write past it. */
+  readonly overCountSteps: ReadonlySet<number>;
   /** Steps whose process died (a crash the scenario armed). */
   readonly crashedSteps: ReadonlySet<number>;
   readonly sixViolations: readonly string[];
@@ -266,8 +268,8 @@ interface World {
   readonly six: string[];
   readonly oldFlushSteps: Set<number>;
   readonly crashedSteps: Set<number>;
+  readonly overCountSteps: Set<number>;
   edits: number;
-  overCount: number;
 }
 
 const producerOf = (world: World, sessionId: string): Producer => ({
@@ -618,6 +620,9 @@ async function act(world: World, event: SimEvent, step: number): Promise<void> {
       return ageHome(world, ABANDONED_MS, event.c);
     case "straggle":
       return straggle(world, event.c);
+    case "ignore":
+      world.hub.dials.ignored = { skip: 0, count: event.count };
+      return;
     case "crash":
       return;
   }
@@ -690,6 +695,8 @@ export const describeEvent = (event: SimEvent): string => {
       return `crash at write ${String(event.at)} ${event.when}`;
     case "par":
       return `par[${describeEvent(event.a)} ‖ ${describeEvent(event.b)}]`;
+    case "ignore":
+      return `ignore ×${String(event.count)}`;
     default:
       return `${event.kind} c${String(event.c)}`;
   }
@@ -716,9 +723,7 @@ const runStep = async (world: World, event: SimEvent, step: number, crash: Crash
     world.crashedSteps.add(step);
   }
   if (ended.mayOverCount) {
-    world.overCount += scenarioLog()
-      .drops.filter((drop) => drop.step === step)
-      .reduce((sum, drop) => sum + drop.count, 0);
+    world.overCountSteps.add(step);
   }
   await syncPhases(world);
   await checkSix(world, before, step, describeEvent(event));
@@ -786,8 +791,8 @@ const newWorld = async (hub: SimHub, events: readonly SimEvent[], repoRoot: stri
     six: [],
     oldFlushSteps: new Set(),
     crashedSteps: new Set(),
+    overCountSteps: new Set(),
     edits: 0,
-    overCount: 0,
   };
 };
 
@@ -815,7 +820,7 @@ const runOf = async (world: World, trace: readonly string[], quiescent: boolean)
     latestStatus: world.latestStatus,
     writtenStatus: world.writtenStatus,
     timings: world.timings,
-    overCountAllowance: world.overCount,
+    overCountSteps: world.overCountSteps,
     crashedSteps: world.crashedSteps,
     sixViolations: world.six,
     quiescent,

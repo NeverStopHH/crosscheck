@@ -271,6 +271,19 @@ const kindsWithStatus = (
       return typeof kind === "string" ? addCount(kinds, kind, 1) : kinds;
     }, {});
 
+/** The envelope ids of the records the hub answered `status` (spool/drops.ts recordDrop). */
+const idsWithStatus = (
+  records: readonly Record<string, unknown>[],
+  results: readonly RecordResult[] | undefined,
+  status: string,
+): readonly string[] =>
+  (results ?? [])
+    .filter((result) => result.status === status)
+    .flatMap((result) => {
+      const id = records[result.index]?.["id"];
+      return typeof id === "string" ? [id] : [];
+    });
+
 /**
  * WHY each refused record was refused, as a word (spool/reject-cause.ts) —
  * never the hub's sentence, which is another process's prose. A hub from
@@ -456,6 +469,7 @@ const flushOneBatch = async (
       ctx.now(),
       kindsWithStatus(records, uncounted, "rejected"),
       rejectCauses(uncounted, causeIn(sendable, released)),
+      idsWithStatus(records, uncounted, "rejected"),
     );
   }
   if (ignored > 0) {
@@ -467,6 +481,8 @@ const flushOneBatch = async (
       "ignored",
       ctx.now(),
       kindsWithStatus(records, summary.results, "ignored"),
+      {},
+      idsWithStatus(records, summary.results, "ignored"),
     );
   }
   // The spool as READ is the identity: the cursor may only move for the file

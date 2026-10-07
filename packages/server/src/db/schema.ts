@@ -731,6 +731,22 @@ export const questionAnswers = pgTable(
  * `subject` is the author's own commit subject, carried by the reader's
  * connector: quoted data wherever it is rendered.
  */
+/** Every envelope the hub took (services/records.ts, review-2 round 8, M4). */
+export const recordReceipts = pgTable(
+  "record_receipts",
+  {
+    id: text("id").primaryKey(),
+    developerId: text("developer_id")
+      .notNull()
+      .references(() => developers.id),
+    /** The id the hub answered with — a claim's, an edge's — which a duplicate answers again. */
+    resultId: text("result_id"),
+    receivedAt: timestamptz("received_at").notNull(),
+  },
+  // The prune, in the reaper pass: "receipts past the retention".
+  (table) => [index("record_receipts_received_idx").on(table.receivedAt)],
+);
+
 export const landedNotices = pgTable(
   "landed_notices",
   {

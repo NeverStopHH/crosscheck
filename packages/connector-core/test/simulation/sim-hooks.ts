@@ -48,6 +48,8 @@ export interface DropCall {
   readonly reason: string;
   readonly kinds: Readonly<Record<string, number>>;
   readonly causes: Readonly<Record<string, number>>;
+  /** The envelope ids of the records counted, where the code held them (a torn line has none). */
+  readonly ids: readonly string[];
   readonly step: number;
 }
 
@@ -192,6 +194,7 @@ mock.module(sourceOf("../../src/spool/drops.ts"), () => ({
     now: Date,
     kinds: Readonly<Record<string, number>> = {},
     causes: Readonly<Record<string, number>> = {},
+    ids: readonly string[] = [],
   ) => {
     if (count <= 0) {
       return;
@@ -199,11 +202,11 @@ mock.module(sourceOf("../../src/spool/drops.ts"), () => ({
     await guarded(
       home,
       true,
-      () => realRecordDrop(home, key, slug, count, reason, now, kinds, causes),
+      () => realRecordDrop(home, key, slug, count, reason, now, kinds, causes, ids),
       () => {
         if (isScenarioPath(home)) {
           state.droppedThisStep = true;
-          state.drops.push({ slug, count, reason, kinds, causes, step: state.step });
+          state.drops.push({ slug, count, reason, kinds, causes, ids, step: state.step });
         }
       },
     );

@@ -14,6 +14,7 @@ import {
   SESSION_REAP_STALE_HOURS,
 } from "../constants.ts";
 import { pruneLandedNotices } from "./landed-notices.ts";
+import { pruneRecordReceipts } from "./record-receipts.ts";
 import { prunePilotMeasurements, recordPilotSession } from "./pilot.ts";
 import { agentSessions, sessionEvents } from "../db/schema.ts";
 import { appendEvent } from "./events.ts";
@@ -499,6 +500,9 @@ export const reapStaleSessions = async (
   // decision 10) — pruned here too, so a repo that sees no further stop
   // does not keep them, and their subjects, for good.
   await pruneLandedNotices(deps);
+  // ...and the receipts of envelopes taken past their retention
+  // (services/record-receipts.ts), for the same reason.
+  await pruneRecordReceipts(deps);
   // Candidates first, then one UPDATE by id: a bare `UPDATE … LIMIT` is not
   // portable, and the two-step keeps the write bounded by construction.
   const candidates = await deps.db

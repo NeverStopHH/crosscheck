@@ -23,6 +23,8 @@ import { ingestHintDelivery } from "./hint-deliveries.ts";
 import { ingestLandedEvidence } from "./landed.ts";
 import { ingestLandedNoticeDelivery, ingestLandedStop } from "./landed-notices.ts";
 import { embedContextDoc } from "./normalized-doc.ts";
+import { heldReceipts, writeReceipts } from "./record-receipts.ts";
+import type { Held, Receipt } from "./record-receipts.ts";
 import { answerQuestion, askQuestionFromRecord } from "./questions.ts";
 import {
   ingestClaim,
@@ -303,12 +305,24 @@ interface IngestOneResult {
   readonly touched?: string;
   /** Set once the producer gate passed — the session is provably running. */
   readonly liveProducer?: string;
+  /** Set when the hub now holds this envelope: what its receipt records. */
+  readonly receipt?: Receipt;
 }
+
+const TAKEN: ReadonlySet<RecordStatus> = new Set(["accepted", "duplicate"]);
+
+/** The envelope ids a flush carries, read before any of it is parsed. */
+const envelopeIdsOf = (inputs: readonly unknown[]): readonly string[] =>
+  inputs.flatMap((input) => {
+    const id = (input as { id?: unknown } | null)?.id;
+    return typeof id === "string" ? [id] : [];
+  });
 
 const ingestOne = async (
   deps: Deps,
   developerId: string,
   input: unknown,
+  held: ReadonlyMap<string, Held>,
 ): Promise<IngestOneResult> => {
   const parsed = parseRecord(input);
   if (!parsed.ok) {
@@ -330,6 +344,7 @@ const ingestOne = async (
       ),
     };
   }
+  const envelopeId = parsed.envelope.id;
   const liveProducer = parsed.envelope.producer.sessionId;
   const gateIssue = await checkProducerSession(
     deps,
@@ -337,7 +352,21 @@ const ingestOne = async (
     liveProducer,
   );
   if (gateIssue !== null) {
-    return { outcome: rejectedOutcome(gateIssue) };
+    // AN ENVELOPE THE HUB ALREADY HOLDS is no refusal (review-2 round 8, M4):
+    // a re-send of a batch whose answer never arrived, under a life the hub
+    // has ended since, is a record the hub has, and `rejected` would have the
+    // connector count it as lost (services/record-receipts.ts). Its body may
+    // be newer — a spooled work context goes with its life's status as it is
+    // when sent — and only that change, which the life's own later posts
+    // carry, is not applied. While its producer can still write, the envelope
+    // goes through every check as the update it is.
+    const holds = held.get(envelopeId);
+    if (holds === undefined) {
+      return { outcome: rejectedOutcome(gateIssue) };
+    }
+    const outcome: HandlerOutcome =
+      holds.resultId === null ? { status: "duplicate" } : { status: "duplicate", id: holds.resultId };
+    return { outcome, receipt: { id: envelopeId, resultId: holds.resultId } };
   }
   const ingestableKind = kind as IngestableKind;
   const outcome = await dispatchRecord(
@@ -348,13 +377,14 @@ const ingestOne = async (
     parsed.envelope.seq,
     liveProducer,
   );
+  const kept = TAKEN.has(outcome.status) ? { receipt: { id: envelopeId, resultId: outcome.id ?? null } } : {};
   if (outcome.status !== "accepted") {
-    return { outcome, liveProducer };
+    return { outcome, liveProducer, ...kept };
   }
   const touched = touchedContextId(ingestableKind, parsed.body);
   return touched === undefined
-    ? { outcome, liveProducer }
-    : { outcome, touched, liveProducer };
+    ? { outcome, liveProducer, ...kept }
+    : { outcome, touched, liveProducer, ...kept };
 };
 
 const countByStatus = (
@@ -381,11 +411,14 @@ export const ingestRecords = async (
   const results: RecordResult[] = [];
   const touchedContexts = new Set<string>();
   const liveProducers = new Set<string>();
+  const taken: Receipt[] = [];
+  const held = await heldReceipts(deps, developerId, envelopeIdsOf(inputs));
   for (let index = 0; index < inputs.length; index += 1) {
-    const { outcome, touched, liveProducer } = await ingestOne(
+    const { outcome, touched, liveProducer, receipt } = await ingestOne(
       deps,
       developerId,
       inputs[index],
+      held,
     );
     results.push({ index, ...outcome });
     if (touched !== undefined) {
@@ -394,7 +427,11 @@ export const ingestRecords = async (
     if (liveProducer !== undefined) {
       liveProducers.add(liveProducer);
     }
+    if (receipt !== undefined) {
+      taken.push(receipt);
+    }
   }
+  await writeReceipts(deps, developerId, taken);
   await touchProducerHeartbeats(deps, liveProducers);
   const embedder = deps.embedder ?? null;
   if (embedder !== null) {

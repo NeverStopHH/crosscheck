@@ -263,6 +263,13 @@ const screenKinds = (kinds: Counts): Counts =>
     {},
   );
 
+/**
+ * Counts `count` records lost for `reason`. `ids`, when the caller holds the
+ * records, are their envelope ids: never written to the line — a ledger counts,
+ * and a 3000-record expiry would be a 130 KB line — but what a per-record audit
+ * of the loss accounting reads (test/simulation/sim-hooks.ts, review-2 round 8,
+ * M4: every captured record delivered or counted, never both, never neither).
+ */
 export const recordDrop = async (
   home: string,
   key: string,
@@ -272,6 +279,7 @@ export const recordDrop = async (
   now: Date,
   kinds: Readonly<Record<string, number>> = {},
   causes: Readonly<Record<string, number>> = {},
+  ids: readonly string[] = [],
 ): Promise<void> => {
   if (count <= 0) {
     return;

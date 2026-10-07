@@ -17578,8 +17578,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a withheld straggler is booked as rejected by the hub",
     file: `${CORE}/src/spool/batch-losses.ts`,
-    from: '    await recordDrop(ctx.home, ctx.repoKey, spool.slug, withheld.length, "withheld", ctx.now(), kindsOf(withheld), {',
-    to: '    await recordDrop(ctx.home, ctx.repoKey, spool.slug, withheld.length, "rejected", ctx.now(), kindsOf(withheld), {',
+    from: '      withheld.length,\n      "withheld",',
+    to: '      withheld.length,\n      "rejected",',
     test: `${CORE}/test/session-heal.test.ts`,
     because: "review finding 5: doctor says the hub rejected records that were never sent",
   },
@@ -18600,6 +18600,70 @@ export const MUTATIONS: readonly Mutation[
     because: "review-2 round 8 M3: the deferred end loses the position SessionEnd allocated and is filed unsequenced",
   },
   {
+    label: "the hub refuses an envelope it holds when its producer has ended (M4)",
+    file: `${SERVER}/src/services/records.ts`,
+    from: "    if (holds === undefined) {\n      return { outcome: rejectedOutcome(gateIssue) };\n    }",
+    to: "    if (true) {\n      return { outcome: rejectedOutcome(gateIssue) };\n    }",
+    test: `${SERVER}/test/record-receipts.test.ts`,
+    because: "review-2 round 8 M4: a re-send of a batch whose answer timed out reads rejected, and the connector counts records the hub holds as lost",
+  },
+  {
+    label: "the hub keeps no receipt of what it took (M4)",
+    file: `${SERVER}/src/services/records.ts`,
+    from: "  await writeReceipts(deps, developerId, taken);\n",
+    to: "",
+    test: `${SERVER}/test/record-receipts.test.ts`,
+    because: "review-2 round 8 M4: nothing ever answers duplicate before the producer check, and over-counts return",
+  },
+  {
+    label: "the hub never forgets an envelope it took (M4)",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "  await pruneRecordReceipts(deps);\n",
+    to: "",
+    test: `${SERVER}/test/record-receipts.test.ts`,
+    because: "review-2 round 8 M4: a receipt per record ever ingested, for good",
+  },
+  {
+    label: "a rejected batch's drop names none of its records (M4)",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: '      idsWithStatus(records, uncounted, "rejected"),\n',
+    to: "      [],\n",
+    test: `${CORE}/test/spool-simulation.test.ts`,
+    because: "review-2 round 8 M4: the per-record audit cannot tell which records a refusal counted",
+  },
+  {
+    label: "a withheld straggler's drop names none of its records (M4)",
+    file: `${CORE}/src/spool/batch-losses.ts`,
+    from: "      idsOf(withheld),\n",
+    to: "      [],\n",
+    test: `${CORE}/test/spool-simulation.test.ts`,
+    because: "review-2 round 8 M4: the per-record audit cannot tell which records were withheld",
+  },
+  {
+    label: "a refusal no heal carries names none of its records (M4)",
+    file: `${CORE}/src/spool/batch-losses.ts`,
+    from: "      idsOf(sealed),\n",
+    to: "      [],\n",
+    test: `${CORE}/test/spool-simulation.test.ts`,
+    because: "review-2 round 8 M4: the per-record audit cannot tell which records a sealed refusal counted",
+  },
+  {
+    label: "an expiry names none of the records it counts (M4)",
+    file: `${CORE}/src/spool/reap.ts`,
+    from: '"expired", now, {}, {}, envelopeIdsOf(spool.lines));',
+    to: '"expired", now, {}, {}, []);',
+    test: `${CORE}/test/spool-simulation.test.ts`,
+    because: "review-2 round 8 M4: the per-record audit cannot tell which records expired",
+  },
+  {
+    label: "an ignored batch's drop names none of its records (M4)",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: '      idsWithStatus(records, summary.results, "ignored"),\n',
+    to: "      [],\n",
+    test: `${CORE}/test/spool-simulation.test.ts`,
+    because: "review-2 round 8 M4: the per-record audit cannot tell which records the hub ignored",
+  },
+  {
     label: "a spool that is not there is stamped released",
     file: `${CORE}/src/spool/release.ts`,
     from: "  if ((await Bun.file(path).exists()) || !(await Bun.file(spoolDataPath(home, key, slug)).exists())) {",
@@ -18887,7 +18951,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/spool-ignored.test.ts 2
  * PRINTS: packages/connector-core/test/spool-lock.test.ts 2
  * PRINTS: packages/connector-core/test/spool-ownership.test.ts 9
- * PRINTS: packages/connector-core/test/spool-simulation.test.ts 2
+ * PRINTS: packages/connector-core/test/spool-simulation.test.ts 7
  * PRINTS: packages/connector-core/test/staleness-axis.test.ts 1
  * PRINTS: packages/connector-core/test/target-paths.test.ts 1
  * PRINTS: packages/connector-core/test/tool-window-pairing.test.ts 6
@@ -18963,6 +19027,7 @@ interface Outcome {
  * PRINTS: packages/server/test/pins.test.ts 4
  * PRINTS: packages/server/test/presence.test.ts 1
  * PRINTS: packages/server/test/questions.test.ts 8
+ * PRINTS: packages/server/test/record-receipts.test.ts 3
  * PRINTS: packages/server/test/records.test.ts 2
  * PRINTS: packages/server/test/retention-registry.test.ts 2
  * PRINTS: packages/server/test/search-filters.test.ts 10

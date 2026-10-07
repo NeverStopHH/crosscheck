@@ -481,6 +481,47 @@ const ROUND_7: readonly Found[] = [
   },
 ];
 
+/**
+ * EVERY KIND OF DROP NAMES ITS RECORDS (review-2 round 8, M4): the per-record
+ * I1 needs each drop the connector can write to occur at least once — an
+ * expiry and an `ignored` answer the random sweep rarely reaches.
+ */
+const PER_RECORD: readonly Probe[] = [
+  {
+    name: "an ended conversation's spool a week old expires, and the expiry names its records",
+    events: [
+      start(0),
+      fault("records503", 6, 0),
+      edit(0),
+      end(0),
+      start(1),
+      age(1),
+      fault("records503", 6, 0),
+      start(2),
+    ],
+    shows: (run) => run.drops.some((drop) => drop.reason === "expired" && drop.ids.length === drop.count),
+  },
+  {
+    name: "a batch the hub ignores is counted, and the drop names its records",
+    events: [start(0), { kind: "ignore", count: 1 }, edit(0)],
+    shows: (run) => run.drops.some((drop) => drop.reason === "ignored" && drop.ids.length === drop.count),
+  },
+];
+
+describe("every kind of drop names its records (per-record I1)", () => {
+  for (const probe of PER_RECORD) {
+    test(
+      probe.name,
+      async () => {
+        const { run, verdicts } = await verdictsOf(probe.events);
+        expect(said(verdicts)).toEqual([]);
+        expect(probe.shows?.(run) ?? true).toBe(true);
+      },
+      PROBE_TIMEOUT_MS,
+    );
+  }
+});
+
 describe("what the round-7 review's sweep found, as fixed scenarios", () => {
   for (const found of ROUND_7) {
     const runner = found.open === undefined ? test : found.racy === true ? test.skip : test.failing;

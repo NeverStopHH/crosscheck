@@ -744,6 +744,15 @@ export const LANDED_WHY_FLUSH_SLACK_MS = 60 * 60_000;
  * refuses a stop that reaches the hub later than that.
  */
 export const LANDED_NOTICE_TTL_DAYS = 7;
+/**
+ * How long the hub remembers an envelope it took (services/records.ts, review-2
+ * round 8, M4): a connector may re-send a record it never heard the answer to
+ * until reap expires its spool — up to a week after its host went silent and a
+ * week after that release (connector spool/reap.ts) — and the same envelope,
+ * re-sent under a life the hub has ended since, is a duplicate, not a refusal.
+ * Thirty days outlives both bounds with room.
+ */
+export const RECORD_RECEIPT_RETENTION_DAYS = 30;
 /** Reader-and-file groups one listing answers: a briefing section, a prompt. */
 export const LANDED_NOTICE_GROUPS_LISTED = 3;
 /**

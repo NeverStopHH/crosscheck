@@ -559,6 +559,27 @@ session-reap now writes the life's end marker (`spool/end-marker.ts`, the shape 
 title and status. The marker is also the dead life's deferred end: reap ends it on the hub once its backlog is gone,
 unsequenced, since nothing allocated it a position. A marker a SessionEnd already wrote is never overwritten.
 
+**I1 is per record, and the hub answers what it holds** (review-2 round 8, M4). The simulation's I1 compared totals
+with allowances, so an over-count could cancel a silent loss of the same size. Now every drop carries its records'
+envelope ids, though the ledger line does not keep them (`spool/drops.ts recordDrop`). Each captured record must be
+delivered or counted exactly once: never both, never neither. A drop that counts records the code holds must name
+every one of them.
+
+The over-count was real. A connector that never heard the answer to a batch sends it again, and by then the hub may
+have ended the life it sends under. The hub checked the producer before anything else and answered `rejected` for
+records it held, so the connector counted them as lost. At production timing that was 94 of 1430 counted losses (6.6%)
+over 4000 seeds, and the review measured 8.6% on the shipped generator.
+
+The hub now keeps a receipt of every envelope it takes: its id, and the id it answered with (`record_receipts`, kept
+`RECORD_RECEIPT_RETENTION_DAYS`). Where the producer check would refuse an envelope the hub holds, it answers
+`duplicate`. The re-sent body may be newer, as a spooled work context re-sent with its life's current status is. Only
+that change is not applied, and the life's own later posts carry it. While the producer can still write, the envelope
+goes through every check as the update it is. The residuals I1 allows are each still counted:
+
+- a record taken unheard and then withheld or expired, never re-sent, so no `duplicate` could tell the connector the
+  hub has it;
+- a record counted by a step that died between the ledger append and the cursor write past it.
+
 **The hub's author-side refusals have a word, and a cooldown sends nothing** (review-2 LOW-5). A record whose own
 session or work context the hub never saw is refused with `sessionId: session "…" not found` (also
 `authorSessionId:`) or `workContextId: work context "…" not found` — the body's session, not the producer's — and

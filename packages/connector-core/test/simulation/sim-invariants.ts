@@ -38,15 +38,11 @@ const lostList = (lost: Run["captured"]): string =>
   lost.map((captured) => `${captured.kind}@step${String(captured.step)}`).join(", ");
 
 /**
- * Records the hub took while the connector never learned it — the answer was
- * lost, or the process died before the cursor write past them. The connector
- * may count each of them once later: refused on a re-send under a life the hub
- * had ended since (the hub answers the producer before the duplicate), or
- * withheld as a refused life's straggler. A record counted though the hub
- * holds it is the honest direction, and a documented residual
- * (loss-accounting §4.3).
+ * Records the hub took while the connector never learned it: the answer was
+ * lost (a 504, or a request that timed out after the hub committed), or the
+ * process died before the cursor write past them.
  */
-const takenUnheard = (run: Run): number => {
+const takenUnheardIds = (run: Run): ReadonlySet<string> => {
   const isUnheard = (delivery: Run["deliveries"][number]): boolean =>
     delivery.answerLost || run.crashedSteps.has(delivery.step);
   const heard = new Set(
@@ -56,52 +52,113 @@ const takenUnheard = (run: Run): number => {
     run.deliveries
       .filter((delivery) => TAKEN.has(delivery.status) && isUnheard(delivery) && !heard.has(delivery.id))
       .map((delivery) => delivery.id),
-  ).size;
+  );
 };
 
-/** The I1 balance as numbers: what the sweep prints, to measure the over-count (the round-7 review's Q3). */
+/** The drops that counted each record, by its envelope id. */
+const countsById = (run: Run): ReadonlyMap<string, readonly Run["drops"][number][]> => {
+  const counted = new Map<string, Run["drops"][number][]>();
+  for (const drop of run.drops) {
+    for (const id of drop.ids) {
+      counted.set(id, [...(counted.get(id) ?? []), drop]);
+    }
+  }
+  return counted;
+};
+
+/** Each captured record's fate, for I1 and the over-count the sweep prints. */
+interface Fates {
+  readonly takenAndCounted: readonly Run["captured"][number][];
+  readonly countedTwice: readonly Run["captured"][number][];
+  readonly neither: readonly Run["captured"][number][];
+  readonly lost: number;
+}
+
+/**
+ * PER RECORD (review-2 round 8, M4): each captured record is delivered — the
+ * hub took it, as often as it was sent — or counted exactly once, never both
+ * and never neither. Drops carry their records' envelope ids
+ * (spool/drops.ts recordDrop); a drop without ids (a torn line, an older
+ * connector's flush) covers that many records no id names.
+ *
+ * Residuals each counted, never silent (loss-accounting §4.3):
+ *   - a record the hub took unheard and the connector then withheld or let
+ *     expire — never re-sent, so no `duplicate` could tell it the hub holds
+ *     it — is counted though the hub holds it;
+ *   - a record counted by a step that died between the ledger append and the
+ *     cursor write past it may be counted again by the next drain.
+ */
+const fatesOf = (run: Run): Fates => {
+  const taken = new Set(run.deliveries.filter((delivery) => TAKEN.has(delivery.status)).map((delivery) => delivery.id));
+  const counted = countsById(run);
+  const unheard = takenUnheardIds(run);
+  // A released debt counts the work context a heal owed, which no spool line holds.
+  let idless = run.drops
+    .filter((drop) => !isDebtRelease(drop))
+    .reduce((sum, drop) => sum + Math.max(0, drop.count - drop.ids.length), 0);
+  const takenAndCounted: Run["captured"][number][] = [];
+  const countedTwice: Run["captured"][number][] = [];
+  const neither: Run["captured"][number][] = [];
+  let lost = 0;
+  for (const record of run.captured) {
+    const drops = counted.get(record.id) ?? [];
+    const isTaken = taken.has(record.id);
+    const isNeverResent = drops.every((drop) => drop.reason === "withheld" || drop.reason === "expired");
+    const isCrashWindow = drops.some((drop) => run.overCountSteps.has(drop.step));
+    lost += isTaken ? 0 : 1;
+    if (isTaken && drops.length > 0 && !(unheard.has(record.id) && isNeverResent) && !isCrashWindow) {
+      takenAndCounted.push(record);
+    } else if (!isTaken && drops.length > 1 && !isCrashWindow) {
+      countedTwice.push(record);
+    } else if (!isTaken && drops.length === 0) {
+      if (idless > 0) {
+        idless -= 1;
+      } else {
+        neither.push(record);
+      }
+    }
+  }
+  return { takenAndCounted, countedTwice, neither, lost };
+};
+
+/** The I1 numbers as the sweep prints them, to measure the over-count (the round-7 review's Q3). */
 export const accountingStats = (run: Run) => {
   const taken = new Set(run.deliveries.filter((delivery) => TAKEN.has(delivery.status)).map((delivery) => delivery.id));
-  const lost = run.captured.filter((captured) => !taken.has(captured.id)).length;
-  const releases = run.drops.filter(isDebtRelease).length;
+  const counted = countsById(run);
   return {
     captured: run.captured.length,
-    lost,
-    ledger: run.ledgerTotal,
-    /** Counted beyond what was lost: records the hub HOLDS that the ledger calls lost. */
-    overCounted: Math.max(0, run.ledgerTotal - (lost + releases)),
+    lost: fatesOf(run).lost,
+    /** Records the ledger calls lost that the hub HOLDS, residuals included. */
+    overCounted: run.captured.filter((record) => taken.has(record.id) && (counted.get(record.id) ?? []).length > 0).length,
   };
 };
 
-/** I1: what was captured and never taken is exactly what the ledger counts. */
+const fateVerdict = (records: readonly Run["captured"][number][], what: string): readonly Verdict[] =>
+  records.length === 0 ? [] : [{ invariant: "I1", detail: `${String(records.length)} record(s) ${what}: ${lostList(records)}` }];
+
+/**
+ * A drop that counts records the code holds names every one of them: only a
+ * torn line has no id, an older connector names none, and a released debt
+ * counts a work context no spool line holds.
+ */
+const unnamedRecords = (run: Run): readonly Verdict[] =>
+  run.drops
+    .filter((drop) => drop.reason !== "unparsable" && !isDebtRelease(drop) && !run.oldFlushSteps.has(drop.step))
+    .filter((drop) => drop.ids.length !== drop.count)
+    .map((drop) => ({
+      invariant: "I1" as const,
+      detail: `a ${drop.reason} drop at step ${String(drop.step)} counts ${String(drop.count)} record(s) and names ${String(drop.ids.length)}`,
+    }));
+
+/** I1: every captured record delivered or counted once — never both, never neither — and every refusal named. */
 const accounting = (run: Run): readonly Verdict[] => {
-  const taken = new Set(run.deliveries.filter((delivery) => TAKEN.has(delivery.status)).map((delivery) => delivery.id));
-  const lost = run.captured.filter((captured) => !taken.has(captured.id));
-  const releases = run.drops.filter(isDebtRelease).length;
-  const expected = lost.length + releases;
-  const allowance = run.overCountAllowance + takenUnheard(run);
+  const fates = fatesOf(run);
   const unnamed = run.drops.filter((drop) => drop.reason === "rejected" && Object.keys(drop.causes).length === 0);
-  const silent: readonly Verdict[] =
-    run.ledgerTotal < expected
-      ? [
-          {
-            invariant: "I1",
-            detail: `${String(expected - run.ledgerTotal)} record(s) lost and never counted (lost: ${lostList(lost)}; released debts ${String(releases)}; ledger ${String(run.ledgerTotal)})`,
-          },
-        ]
-      : [];
-  const twice: readonly Verdict[] =
-    run.ledgerTotal > expected + allowance
-      ? [
-          {
-            invariant: "I1",
-            detail: `${String(run.ledgerTotal - expected)} record(s) counted twice (ledger ${String(run.ledgerTotal)}, lost ${String(lost.length)}, released debts ${String(releases)}, allowance ${String(allowance)})`,
-          },
-        ]
-      : [];
   return [
-    ...silent,
-    ...twice,
+    ...fateVerdict(fates.neither, "lost and never counted"),
+    ...fateVerdict(fates.countedTwice, "counted twice"),
+    ...fateVerdict(fates.takenAndCounted, "counted though the hub holds them"),
+    ...unnamedRecords(run),
     ...unnamed.map((drop) => ({
       invariant: "I1" as const,
       detail: `${String(drop.count)} refusal(s) counted with no cause at step ${String(drop.step)}`,

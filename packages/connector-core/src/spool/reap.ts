@@ -134,6 +134,17 @@ const isOlderThanMaxAge = async (path: string, now: Date): Promise<boolean> => {
   }
 };
 
+/** The envelope ids of the lines an expiry counts; a torn line has none (spool/drops.ts recordDrop). */
+const envelopeIdsOf = (lines: readonly string[]): readonly string[] =>
+  lines.flatMap((line) => {
+    try {
+      const id = (JSON.parse(line) as { id?: unknown } | null)?.id;
+      return typeof id === "string" ? [id] : [];
+    } catch {
+      return [];
+    }
+  });
+
 /**
  * Past the age bound, counted from the spool's RELEASE when one was stamped
  * (spool/release.ts, review-2 round 8, H2) — a dead host's data file is a week
@@ -318,7 +329,7 @@ const reapSlug = async (
       return { delivered: 1, expired: 0, dropped: 0 };
     }
     // Counted before the bytes go, and into a file the removal does not touch.
-    await recordDrop(home, key, slug, spool.lines.length, "expired", now);
+    await recordDrop(home, key, slug, spool.lines.length, "expired", now, {}, {}, envelopeIdsOf(spool.lines));
     await removeSessionData(home, key, spool, handle, now);
     return { delivered: 0, expired: 1, dropped: spool.lines.length };
   } finally {

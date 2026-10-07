@@ -428,6 +428,22 @@ CREATE INDEX IF NOT EXISTS question_answers_claim_idx
 -- The author's notice (docs/1.0/landed-changes.md, step 4): one row per
 -- reader, file and commit, told to the author once, within seven days.
 -- Mirrored in db/schema.ts, which says why there is no session key.
+-- EVERY ENVELOPE THE HUB TOOK, for RECORD_RECEIPT_RETENTION_DAYS
+-- (services/records.ts, review-2 round 8, M4): the same envelope again, where
+-- the producer check would refuse it, is answered `duplicate` — so a connector
+-- re-sending a batch whose answer it never heard, under a life the hub ended
+-- since, does not count records the hub holds as lost. `result_id` is the id
+-- the hub answered with (a claim's, an edge's), which a duplicate answers again.
+CREATE TABLE IF NOT EXISTS record_receipts (
+  id text PRIMARY KEY,
+  developer_id text NOT NULL REFERENCES developers(id),
+  result_id text,
+  received_at timestamptz NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS record_receipts_received_idx
+  ON record_receipts (received_at);
+
 CREATE TABLE IF NOT EXISTS landed_notices (
   id text PRIMARY KEY,
   repo text NOT NULL,
