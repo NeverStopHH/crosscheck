@@ -108,6 +108,7 @@ PK `(reader_developer_id, muted_developer_id)`. Reader-side only: filters the
 | `repo` | text | normalised remote identity |
 | `branch` | text | |
 | `base_commit` | text | drift is rendered against this |
+| `base_on_default` | boolean NULL | the connector's word at register: was `base_commit` ALREADY reachable from the default branch? NULL = it did not say (a connector from before the field, or git could not answer). Read by the landed rule (§1.5) |
 | `status` | text enum `SESSION_STATUSES` | |
 | `started_at` / `last_heartbeat_at` / `ended_at` | timestamptz | |
 | `reaped_at` | timestamptz NULL | `schema.ts:146` — **set only when the HUB guessed**; a connector-requested end leaves it null |
@@ -136,6 +137,33 @@ coalesce(normalized_doc,''))`, `schema.ts:171-173`) · `embedding` vector(768) �
 
 `landed_at` (`schema.ts:184`) is monotonic and a *column, not a status
 transition*: "git ancestry never un-happens" (`schema.ts:177-183`).
+
+**Landed means the base ARRIVED on the default branch, not that it is there**
+(pilot finding, 2026-10-05; `services/landed.ts` `ancestryLandsContext`). A
+`landed_evidence` report names commits that are ancestors of the default
+branch; it stamps an open context only when its session's base reaching it can
+be new work:
+
+| the session | stamped by a reported base? |
+|---|---|
+| on a detached HEAD (`isDetachedBranch`, `@crosscheck/schema`) | never |
+| `base_on_default` true | never |
+| `base_on_default` false | yes |
+| `base_on_default` NULL (older connector) | only if the report's `commitDates` dates the base no more than `LANDED_STALE_BASE_HOURS` = 24 before the context's `created_at`; undated → no |
+
+Before this rule a teammate's report stamped every open context whose base was
+an ancestor of main — a long-lived worktree session detached at a six-week-old
+commit included — and the landed filters in ghost checks
+(`ghost-overlap.ts liveWorkConditions`) and the conference
+(`conference.ts recentWorkCondition`) then hid its 180 files from collision
+detection. Those filters are unchanged: TRULY landed work still drops out.
+Every refusal leaves a context unlanded, the direction that keeps it visible.
+The hub cannot derive "already on main at register" itself — `commit_evidence`
+(§1.9) is an aggregate per author with no hashes — so the connector says it,
+or the date stands in. Stamps an older hub made wrongly are cleared only by
+the operator's opt-in, dry-run-first `scripts/unland-false-landed.ts`
+(`services/landed-repair.ts`; docs/OPERATIONS.md), the one writer that ever
+un-lands.
 
 `EMBEDDING_DIMENSIONS = 768` — `schema.ts:41`.
 
