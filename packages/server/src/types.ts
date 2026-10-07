@@ -2,6 +2,7 @@ import type { Context } from "hono";
 
 import type { Db } from "./db/client.ts";
 import type { TrustedProxies } from "./http/forwarded.ts";
+import type { ListenKind } from "./http/listen.ts";
 import type { Embedder } from "./services/embedder.ts";
 
 /** Injected time source — pure logic never reads the system clock directly. */
@@ -60,4 +61,10 @@ export interface AppDeps {
    * headers are ignored.
    */
   readonly trustedProxies: TrustedProxies;
+  /**
+   * How the hub decided where to listen (http/listen.ts), for GET
+   * /api/hub-status: doctor warns on `legacy_all_interfaces`. Null = an app
+   * serving no socket of its own (an embedded app, a test).
+   */
+  readonly listen: ListenKind | null;
 }

@@ -15,6 +15,7 @@ import {
 } from "./http/listen.ts";
 import { NO_TRUSTED_PROXIES, TRUSTED_PROXIES_ENV, parseTrustedProxies } from "./http/forwarded.ts";
 import type { TrustedProxies } from "./http/forwarded.ts";
+import type { ListenKind } from "./http/listen.ts";
 import { bunPeerAddress } from "./http/peer.ts";
 import { readListenDefault } from "./services/hub-install.ts";
 import { generateApiKey } from "./auth/keys.ts";
@@ -22,7 +23,7 @@ import { DEFAULT_PORT, SESSION_REAP_INTERVAL_MS } from "./constants.ts";
 import { createDb } from "./db/client.ts";
 import { createEmbedderFromEnv } from "./services/embedder.ts";
 import { reapStaleSessions } from "./services/sessions.ts";
-import { parseWebAuthnOrigins } from "./services/webauthn.ts";
+import { hasLocalhostBesideHttps, localhostBesideHttpsWarning, parseWebAuthnOrigins } from "./services/webauthn.ts";
 import { backfillSkeletonIdentity } from "./services/skeleton-identity.ts";
 import { runStartupUpgrades } from "./services/startup-upgrades.ts";
 import { rebuildOptedOutLocationIndexes } from "./services/developer-settings.ts";
@@ -160,6 +161,8 @@ export interface CreateServerOptions {
    * parsed `CROSSCHECK_TRUSTED_PROXIES`.
    */
   readonly trustedProxies?: TrustedProxies;
+  /** How `startServer` decided where to listen; omitted = no socket of this app's own. */
+  readonly listen?: ListenKind;
 }
 
 /**
@@ -196,6 +199,7 @@ export const createServer = (options: CreateServerOptions): Hono<AppEnv> =>
     webauthnOrigins: options.webauthnOrigins ?? [],
     peerAddress: options.peerAddress ?? bunPeerAddress,
     trustedProxies: options.trustedProxies ?? NO_TRUSTED_PROXIES,
+    listen: options.listen ?? null,
   });
 
 const MIN_PORT = 1;
@@ -299,16 +303,21 @@ export const startServer = async (): Promise<void> => {
   // that silently dropped its vector tier would be DESIGN.md §10 "silent death".
   const embedder = createEmbedderFromEnv(process.env);
   const uiSessionSecret = process.env["CROSSCHECK_UI_SECRET"];
+  // Throws on an origin no browser would run a ceremony at — refused here
+  // rather than in front of a person at the approval page (04a §7).
+  const webauthnOrigins = parseWebAuthnOrigins(process.env["CROSSCHECK_WEBAUTHN_ORIGINS"], port);
+  if (hasLocalhostBesideHttps(webauthnOrigins)) {
+    console.warn(localhostBesideHttpsWarning(webauthnOrigins));
+  }
   const app = createServer({
     db,
     adminToken: process.env["ADMIN_TOKEN"] ?? null,
     ciToken: process.env["CROSSCHECK_CI_TOKEN"] ?? null,
     embedder,
     ...(uiSessionSecret === undefined ? {} : { uiSessionSecret }),
-    // Throws on an origin no browser would run a ceremony at — refused here
-    // rather than in front of a person at the approval page (04a §7).
-    webauthnOrigins: parseWebAuthnOrigins(process.env["CROSSCHECK_WEBAUTHN_ORIGINS"], port),
+    webauthnOrigins,
     trustedProxies,
+    listen: listenPlan.kind,
   });
   // AN OPT-OUT FROM BEFORE THE INDEX FOLLOWED THE SETTING (review round 5,
   // M1): her docs still hold her branch titles, so they are rebuilt BEFORE

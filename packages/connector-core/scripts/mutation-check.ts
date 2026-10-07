@@ -19995,8 +19995,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the hub status reports no search docs pending",
     file: `${SERVER}/src/routes/hub-status.ts`,
-    from: "    ok(c, { searchDocsPending: await countPendingDocs(deps.db) }),\n",
-    to: "    ok(c, { searchDocsPending: 0 }),\n",
+    // Repaired by the hub hardening: the answer grew a transport block.
+    from: "      searchDocsPending: await countPendingDocs(deps.db),\n",
+    to: "      searchDocsPending: 0,\n",
     test: `${SERVER}/test/doc-upgrade-window.test.ts`,
     because: "a teammate whose search comes back thin during the upgrade is never told why",
   },
@@ -24215,6 +24216,71 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/presence-reenabled-cli.test.ts`,
     because: "status says presence: visible and nothing about who made it so",
   },
+  // Doctor and the boot say how the hub is reachable (hub hardening, M7 and H6).
+  {
+    label: "the hub status hides a hub on every interface",
+    file: `${SERVER}/src/routes/hub-status.ts`,
+    from: '        listensOnEveryInterface: deps.listen === "legacy_all_interfaces",',
+    to: "        listensOnEveryInterface: false,",
+    test: `${SERVER}/test/hub-status-transport.test.ts`,
+    because: "every member's doctor passes over the upgraded pilot hub that still answers the café's Wi-Fi",
+  },
+  {
+    label: "the hub status hides a localhost origin beside an https one",
+    file: `${SERVER}/src/routes/hub-status.ts`,
+    from: "        localhostBesideHttps: hasLocalhostBesideHttps(deps.webauthnOrigins),",
+    to: "        localhostBesideHttps: false,",
+    test: `${SERVER}/test/hub-status-transport.test.ts`,
+    because: "people keep enrolling passkeys at a localhost origin the hub refuses, and nobody says why",
+  },
+  {
+    label: "the booted hub never tells hub-status how it decided to listen",
+    file: `${SERVER}/src/index.ts`,
+    from: "    listen: listenPlan.kind,\n",
+    to: "",
+    test: `${SERVER}/test/listen-boot.test.ts`,
+    because: "the flag is tested only where nothing listens, and the real hub always answers false",
+  },
+  {
+    label: "a localhost origin beside an https one boots without a warning",
+    file: `${SERVER}/src/index.ts`,
+    from: "  if (hasLocalhostBesideHttps(webauthnOrigins)) {\n    console.warn(",
+    to: "  if (false) {\n    console.warn(",
+    test: `${SERVER}/test/listen-boot.test.ts`,
+    because: "the operator of the README's old origin list learns of the refusal only from a person who could not approve",
+  },
+  {
+    label: "doctor passes a hub on every interface",
+    file: `${CLI}/src/cli/doctor-hub-transport.ts`,
+    from: "    ...(transport.listensOnEveryInterface\n",
+    to: "    ...(false\n",
+    test: `${CLI}/test/doctor-hub-transport.test.ts`,
+    because: "the hub tells doctor it listens everywhere and doctor prints nothing with the fix",
+  },
+  {
+    label: "doctor passes a localhost origin beside an https one",
+    file: `${CLI}/src/cli/doctor-hub-transport.ts`,
+    from: "    ...(transport.localhostBesideHttps\n",
+    to: "    ...(false\n",
+    test: `${CLI}/test/doctor-hub-transport.test.ts`,
+    because: "nobody is told to drop the localhost origin that keeps refusing their passkey",
+  },
+  {
+    label: "doctor never prints the hub transport lines",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    ...hubTransportChecks(hubStatus),\n",
+    to: "",
+    test: `${CLI}/test/doctor-hub-transport.test.ts`,
+    because: "both transport WARNs are built and dropped before the report",
+  },
+  {
+    label: "a malformed transport block costs doctor its search line",
+    file: `${CORE}/src/http/hub.ts`,
+    from: "  transport: HubTransportSchema.optional().catch(undefined),",
+    to: "  transport: HubTransportSchema.optional(),",
+    test: `${CLI}/test/doctor-hub-transport.test.ts`,
+    because: "one wrong flag from a hub makes the whole status unreadable, and the search rebuild line vanishes with it",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -24282,6 +24348,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-global.test.ts 3
  * PRINTS: packages/cli/test/doctor-home-repo.test.ts 3
  * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1
+ * PRINTS: packages/cli/test/doctor-hub-transport.test.ts 4
  * PRINTS: packages/cli/test/doctor-last-sync.test.ts 1
  * PRINTS: packages/cli/test/doctor-latency.test.ts 2
  * PRINTS: packages/cli/test/doctor-losses.test.ts 6
@@ -24595,6 +24662,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-outcomes.test.ts 63
  * PRINTS: packages/server/test/hints-records-outcomes.test.ts 3
  * PRINTS: packages/server/test/hints.test.ts 3
+ * PRINTS: packages/server/test/hub-status-transport.test.ts 2
  * PRINTS: packages/server/test/in-memory-db.test.ts 2
  * PRINTS: packages/server/test/intent-ladder.test.ts 7
  * PRINTS: packages/server/test/intent-ledger-authority.test.ts 2
@@ -24604,7 +24672,7 @@ interface Outcome {
  * PRINTS: packages/server/test/landed-notices.test.ts 34
  * PRINTS: packages/server/test/landed-repair.test.ts 20
  * PRINTS: packages/server/test/landed.test.ts 15
- * PRINTS: packages/server/test/listen-boot.test.ts 3
+ * PRINTS: packages/server/test/listen-boot.test.ts 5
  * PRINTS: packages/server/test/listen.test.ts 8
  * PRINTS: packages/server/test/live-location-cost.test.ts 3
  * PRINTS: packages/server/test/live-location-differential.test.ts 5

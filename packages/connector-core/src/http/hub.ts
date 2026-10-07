@@ -2304,8 +2304,21 @@ export const getIntentPositions = (
  * rebuild. An older hub has no such route — the result is then not ok, and
  * a caller says nothing rather than a zero it was never told.
  */
+/**
+ * How the hub is reachable, as two flags doctor turns into WARNs (server
+ * routes/hub-status.ts). An older hub sends no block, and a malformed one
+ * reads as absent: it must never cost the search line beside it.
+ */
+const HubTransportSchema = z.looseObject({
+  listensOnEveryInterface: z.boolean(),
+  localhostBesideHttps: z.boolean(),
+});
+
+export type HubTransport = z.infer<typeof HubTransportSchema>;
+
 const HubStatusSchema = z.looseObject({
   searchDocsPending: z.number().int().min(0),
+  transport: HubTransportSchema.optional().catch(undefined),
 });
 
 export type HubStatus = z.infer<typeof HubStatusSchema>;

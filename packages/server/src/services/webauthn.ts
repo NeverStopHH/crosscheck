@@ -171,6 +171,21 @@ export const isLocalOrigin = (origin: string): boolean => {
 export const hasHttpsOrigin = (origins: readonly string[]): boolean =>
   origins.some((origin) => origin.startsWith("https:"));
 
+/**
+ * A localhost origin configured beside an https one: dead weight, because
+ * routes/ui-ceremony.ts refuses localhost ceremonies on such a hub. The boot
+ * and doctor say to drop it (review H6).
+ */
+export const hasLocalhostBesideHttps = (origins: readonly string[]): boolean =>
+  hasHttpsOrigin(origins) && origins.some(isLocalOrigin);
+
+/** The boot's WARN for it, with the exact list to set instead. */
+export const localhostBesideHttpsWarning = (origins: readonly string[]): string =>
+  "[crosscheck] WARN CROSSCHECK_WEBAUTHN_ORIGINS lists a localhost origin beside an https one. This hub " +
+  "refuses passkeys at localhost, because behind a proxy a localhost prompt cannot say which machine asked. " +
+  `Drop it: CROSSCHECK_WEBAUTHN_ORIGINS=${origins.filter((origin) => !isLocalOrigin(origin)).join(",")}, ` +
+  "and enrol each person's passkey at the https address.";
+
 /** `127.0.0.1`, `[::1]`, `100.64.0.7` — `URL` has already normalised the spelling. */
 const isIpLiteral = (hostname: string): boolean =>
   hostname.startsWith("[") || /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname);

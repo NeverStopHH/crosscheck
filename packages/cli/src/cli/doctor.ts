@@ -134,9 +134,11 @@ import type {
   CiVerdict,
   ClaimValiditySummary,
   GhostCheckEntry,
+  HubStatus,
   PinRegistry,
 } from "@crosscheck/connector-core/http/hub.ts";
 import { DEFAULT_AGENT_KIND } from "@crosscheck/connector-core/constants.ts";
+import { hubTransportChecks } from "./doctor-hub-transport.ts";
 import {
   contradictionDoctorLine,
   declarationDoctorLine,
@@ -1726,8 +1728,7 @@ const checkIntentLedger = async (ctx: HubContext): Promise<Check> => {
  * that is true: none at zero, and none from an older hub without the
  * endpoint, rather than a zero it was never told.
  */
-const checkSearchRebuild = async (ctx: HubContext): Promise<Check | null> => {
-  const result = await getHubStatus(ctx);
+const checkSearchRebuild = (result: HubResult<HubStatus>): Check | null => {
   if (!result.ok || result.data.searchDocsPending === 0) {
     return null;
   }
@@ -3761,7 +3762,7 @@ export const runDoctor = async (
     intentLedgerCheck,
     pilotReport,
     passkeyAnnouncements,
-    searchRebuildCheck,
+    hubStatus,
   ] = await Promise.all([
     // ONE GET for both: the absence findings and the coverage record ride
     // the same response (03 §3.5), so reading them twice would be a second
@@ -3800,8 +3801,11 @@ export const runDoctor = async (
     // 04a §4.3: an enrolment still cooling off is a WARN until a person has
     // looked at it — counts here, names on `crosscheck status`.
     getPasskeyAnnouncements(hubCtx),
-    checkSearchRebuild(hubCtx),
+    // FETCHED, NOT CHECKED: two lines read it, the search rebuild and the
+    // hub's transport WARNs (doctor-hub-transport.ts), so one GET.
+    getHubStatus(hubCtx),
   ]);
+  const searchRebuildCheck = checkSearchRebuild(hubStatus);
   // SEQUENTIAL, and it has to be: this asks `suspect` about a pin whose id is
   // only known once the registry above has answered, so it cannot join the
   // concurrent block. One extra round trip on a command that already makes a
@@ -3836,6 +3840,7 @@ export const runDoctor = async (
     intentLedgerCheck,
     passkeyDoctorCheck(announcementAnswerOf(passkeyAnnouncements), config.hubUrl),
     ...(searchRebuildCheck === null ? [] : [searchRebuildCheck]),
+    ...hubTransportChecks(hubStatus),
   ];
 
   const skewCheck = ((): Check => {

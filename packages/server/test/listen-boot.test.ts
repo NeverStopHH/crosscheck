@@ -60,8 +60,11 @@ interface BootResult {
   readonly exit: number | "killed";
 }
 
-/** Boot until the banner (then stop it) or until it exits on its own. */
-const boot = async (env: Record<string, string | undefined>): Promise<BootResult> => {
+/** Boot until the banner, run `whileUp`, then stop it; or until it exits on its own. */
+const boot = async (
+  env: Record<string, string | undefined>,
+  whileUp: () => Promise<void> = async () => {},
+): Promise<BootResult> => {
   const child = Bun.spawn({
     cmd: [process.execPath, SERVER_ENTRY],
     stdin: "ignore",
@@ -97,6 +100,9 @@ const boot = async (env: Record<string, string | undefined>): Promise<BootResult
     // Stdout closed without a banner: the process is ending on its own.
     exit = await child.exited;
   } else {
+    if (typeof outcome === "object") {
+      await whileUp();
+    }
     child.kill("SIGTERM");
     const ended = await Promise.race([
       child.exited,
@@ -110,6 +116,22 @@ const boot = async (env: Record<string, string | undefined>): Promise<BootResult
   const stdout = typeof outcome === "object" && "text" in outcome ? outcome.text : await stdoutText.catch(() => "");
   const stderr = await new Response(child.stderr).text();
   return { stdout, stderr, exit };
+};
+
+/** This test's own admin token, for the one developer the transport probe needs. */
+const BOOT_ADMIN_TOKEN = "listen-boot-admin-token";
+
+/** GET /api/hub-status's transport block from the booted hub, as a fresh developer reads it. */
+const hubStatusTransport = async (port: number): Promise<unknown> => {
+  const base = `http://127.0.0.1:${String(port)}`;
+  const created = await fetch(`${base}/api/developers`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${BOOT_ADMIN_TOKEN}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ name: "Probe", email: "probe@example.com" }),
+  });
+  const apiKey = ((await created.json()) as { data: { apiKey: string } }).data.apiKey;
+  const status = await fetch(`${base}/api/hub-status`, { headers: { Authorization: `Bearer ${apiKey}` } });
+  return ((await status.json()) as { data: { transport: unknown } }).data.transport;
 };
 
 describe("where a booted hub listens", () => {
@@ -140,14 +162,18 @@ describe("where a booted hub listens", () => {
       await seeded.execute(sql`DROP TABLE hub_install`);
       await closeDb(seeded);
       const port = randomPort();
+      let transport: unknown = null;
 
-      // Act
-      const result = await boot(hubEnv(port, dataDir));
+      // Act — and while it is up, ask it what doctor asks
+      const result = await boot(hubEnv(port, dataDir, { ADMIN_TOKEN: BOOT_ADMIN_TOKEN }), async () => {
+        transport = await hubStatusTransport(port);
+      });
 
       // Assert
       expect(result.stdout).toContain(`${BANNER} :${String(port)} (every interface)`);
       expect(result.stderr).toContain(`WARN listening on EVERY network interface (:${String(port)})`);
       expect(result.stderr).toContain("CROSSCHECK_LISTEN=127.0.0.1,<this machine's tailnet IP>");
+      expect(transport).toMatchObject({ listensOnEveryInterface: true });
     },
     BOOT_TIMEOUT_MS + SHUTDOWN_TIMEOUT_MS * 3,
   );
@@ -168,6 +194,28 @@ describe("where a booted hub listens", () => {
       // Assert
       expect(result.stdout).toContain(`${BANNER} :${String(port)} (127.0.0.1)`);
       expect(result.stderr).not.toContain("WARN listening on EVERY");
+    },
+    BOOT_TIMEOUT_MS + SHUTDOWN_TIMEOUT_MS * 3,
+  );
+
+  test(
+    "a localhost passkey origin beside an https one boots with a warning naming the list to set",
+    async () => {
+      // Arrange
+      const dataDir = await freshDir();
+      const port = randomPort();
+
+      // Act
+      const result = await boot(
+        hubEnv(port, dataDir, {
+          CROSSCHECK_WEBAUTHN_ORIGINS: `http://localhost:${String(port)},https://hub.example.ts.net`,
+        }),
+      );
+
+      // Assert
+      expect(result.stdout).toContain(BANNER);
+      expect(result.stderr).toContain("WARN CROSSCHECK_WEBAUTHN_ORIGINS lists a localhost origin beside an https one");
+      expect(result.stderr).toContain("Drop it: CROSSCHECK_WEBAUTHN_ORIGINS=https://hub.example.ts.net,");
     },
     BOOT_TIMEOUT_MS + SHUTDOWN_TIMEOUT_MS * 3,
   );
