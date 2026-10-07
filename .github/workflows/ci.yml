@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1687
+    # PRINTS: 1688
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -340,7 +340,7 @@ jobs:
     # PRINTS: spool/lock.ts 2
     # PRINTS: spool/loss-report.ts 17
     # PRINTS: spool/owed-work-context.ts 14
-    # PRINTS: spool/ownership.ts 8
+    # PRINTS: spool/ownership.ts 9
     # PRINTS: spool/reap.ts 12
     # PRINTS: spool/refused-lives.ts 5
     # PRINTS: spool/reject-cause.ts 3
@@ -605,7 +605,7 @@ jobs:
     # PRINTS: normalized-doc.ts 2
     # PRINTS: output.ts 1
     # PRINTS: owed-work-context.ts 14
-    # PRINTS: ownership.ts 8
+    # PRINTS: ownership.ts 9
     # PRINTS: parse.ts 2
     # PRINTS: passkey-status.ts 4
     # PRINTS: passkeys.ts 8

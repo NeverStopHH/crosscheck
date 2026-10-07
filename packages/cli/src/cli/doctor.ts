@@ -1442,7 +1442,7 @@ const debtChecks = async (home: string, key: string): Promise<readonly Check[]> 
  * are any. Nothing while there are none.
  */
 const waitingChecks = async (home: string, key: string, now: Date): Promise<readonly Check[]> => {
-  const records = await countRecordsAwaitingOwners(home, await readAllSessionSpools(home, key), now);
+  const records = await countRecordsAwaitingOwners(home, key, await readAllSessionSpools(home, key), now);
   if (records === 0) {
     return [];
   }

@@ -18090,8 +18090,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "doctor counts no live session's waiting records",
     file: `${CORE}/src/spool/ownership.ts`,
-    from: '    if ((await ownerOf(home, spool.slug, "", now)) === "live-elsewhere") {',
-    to: '    if ((await ownerOf(home, spool.slug, "", now)) === "own") {',
+    from: '    if ((await ownerOf(home, key, spool.slug, "", now)) === "live-elsewhere") {',
+    to: '    if ((await ownerOf(home, key, spool.slug, "", now)) === "own") {',
     test: `${CLI}/test/doctor.test.ts`,
     because: "review-2 round 7: records that wait for their own conversation show nowhere",
   },
@@ -18576,6 +18576,14 @@ export const MUTATIONS: readonly Mutation[
     because: "review-2 round 8 M1: a record of the life appended after reap ended it is filed into the ended session",
   },
   {
+    label: "a conversation re-bound to another repo still owns its spool here (M2)",
+    file: `${CORE}/src/spool/ownership.ts`,
+    from: "  if (isBoundElsewhere(state, key)) {\n    return \"ended\";\n  }\n",
+    to: "",
+    test: `${CORE}/test/spool-ownership.test.ts`,
+    because: "review-2 round 8 M2: resumed from another checkout, it never flushes this repo again, and reap expires nothing while its state exists",
+  },
+  {
     label: "a spool that is not there is stamped released",
     file: `${CORE}/src/spool/release.ts`,
     from: "  if ((await Bun.file(path).exists()) || !(await Bun.file(spoolDataPath(home, key, slug)).exists())) {",
@@ -18862,7 +18870,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 2
  * PRINTS: packages/connector-core/test/spool-ignored.test.ts 2
  * PRINTS: packages/connector-core/test/spool-lock.test.ts 2
- * PRINTS: packages/connector-core/test/spool-ownership.test.ts 8
+ * PRINTS: packages/connector-core/test/spool-ownership.test.ts 9
  * PRINTS: packages/connector-core/test/spool-simulation.test.ts 2
  * PRINTS: packages/connector-core/test/staleness-axis.test.ts 1
  * PRINTS: packages/connector-core/test/target-paths.test.ts 1

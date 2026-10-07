@@ -23,7 +23,7 @@
  */
 import { stat } from "node:fs/promises";
 
-import { readJsonOrNull, sessionStatePathForSlug } from "../config/paths.ts";
+import { readJsonOrNull, repoKey, sessionStatePathForSlug } from "../config/paths.ts";
 import { isPastReapBound } from "../state/session-reap.ts";
 import type { SessionSpool } from "./files.ts";
 import { stampReleased } from "./release.ts";
@@ -35,7 +35,18 @@ interface StateStamps {
   readonly crosscheckSessionId?: unknown;
   readonly startedAt?: unknown;
   readonly lastHeartbeatAt?: unknown;
+  readonly hubUrl?: unknown;
+  readonly repoId?: unknown;
 }
+
+/**
+ * Whether the state binds its conversation to ANOTHER repo than this spool's
+ * (review-2 round 8, M2): resumed from another checkout, it flushes that repo
+ * from now on and never this one, and its records here would wait for it for
+ * good — reap expires nothing while a state exists.
+ */
+const isBoundElsewhere = (state: StateStamps | null, key: string): boolean =>
+  typeof state?.hubUrl === "string" && typeof state.repoId === "string" && repoKey(state.hubUrl, state.repoId) !== key;
 
 const writtenAtMs = async (path: string): Promise<number | null> => {
   try {
@@ -46,12 +57,14 @@ const writtenAtMs = async (path: string): Promise<number | null> => {
 };
 
 /**
- * The spool's owner. A state file that will not parse still speaks for a
- * live writer until the file itself has been silent past the bound: refusing
- * to read it never hands its records to someone else.
+ * The owner of the spool `slug` in the repo `key`. A state file that will not
+ * parse still speaks for a live writer until the file itself has been silent
+ * past the bound: refusing to read it never hands its records to someone
+ * else. A state bound to another repo is over for this one.
  */
 export const ownerOf = async (
   home: string,
+  key: string,
   slug: string,
   flusherSessionId: string,
   now: Date,
@@ -64,6 +77,9 @@ export const ownerOf = async (
   const state = (await readJsonOrNull(path)) as StateStamps | null;
   if (state?.crosscheckSessionId === flusherSessionId) {
     return "own";
+  }
+  if (isBoundElsewhere(state, key)) {
+    return "ended";
   }
   const stamps = {
     startedAt: typeof state?.startedAt === "string" ? state.startedAt : "",
@@ -84,7 +100,7 @@ export const mayFlusherSend = async (
   flusherSessionId: string,
   now: Date,
 ): Promise<boolean> => {
-  const owner = await ownerOf(home, spool.slug, flusherSessionId, now);
+  const owner = await ownerOf(home, key, spool.slug, flusherSessionId, now);
   if (owner === "abandoned") {
     await stampReleased(home, key, spool.slug, now);
   }
@@ -98,12 +114,13 @@ export const mayFlusherSend = async (
  */
 export const countRecordsAwaitingOwners = async (
   home: string,
+  key: string,
   spools: readonly SessionSpool[],
   now: Date,
 ): Promise<number> => {
   let records = 0;
   for (const spool of spools) {
-    if ((await ownerOf(home, spool.slug, "", now)) === "live-elsewhere") {
+    if ((await ownerOf(home, key, spool.slug, "", now)) === "live-elsewhere") {
       records += spool.lines.length;
     }
   }

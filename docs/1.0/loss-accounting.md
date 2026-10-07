@@ -537,6 +537,20 @@ end was sent by a successor and filed into the ended session. That record comes 
 beside the old process's SessionEnd, or from a hook still in flight (seed 782, probe C1). SessionEnd's own end, and the
 deferred end reap sends from its marker, now record the life once the hub took the end.
 
+**A conversation re-bound to another repo is over for this one** (review-2 round 8, M2). Ownership never compared the
+state's repo binding with the spool's. A conversation resumed from another checkout re-binds its state to that repo,
+flushes that repo from then on, and never this one. Every flusher of this repo read its spool here as
+`live-elsewhere`, and reap expires nothing while a state exists, so its records here waited for good (the review's
+rebind probe: 2 lines left after a month). A state bound to another repo now reads as ended for this repo's spool, and
+the next flusher here sends it.
+
+Two residuals:
+
+- A multi-repo workspace whose hooks capture into a second repo's spool for a conversation bound to the first has that
+  spool sent by the second repo's flushers too. Its records are a live, registered life's, and the hub takes them.
+- A straggler there of a life the hub has ended is withheld only if that repo's refused-lives note names the life.
+  Refusals a flush or SessionEnd in that repo sees are written there, but a heal writes to the bound repo's note.
+
 **The hub's author-side refusals have a word, and a cooldown sends nothing** (review-2 LOW-5). A record whose own
 session or work context the hub never saw is refused with `sessionId: session "…" not found` (also
 `authorSessionId:`) or `workContextId: work context "…" not found` — the body's session, not the producer's — and

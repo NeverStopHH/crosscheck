@@ -286,6 +286,42 @@ describe("another live conversation's records", () => {
   });
 });
 
+describe("a conversation re-bound to another repo (review-2 round 8, M2, probe r7-rebind)", () => {
+  test("has its records in this repo sent by this repo's next flusher: it never flushes this repo again", async () => {
+    // Arrange: X captured in this repo, then is resumed from another checkout, which re-binds its state
+    const fx = await fixture("rebound");
+    const x = await register(fx);
+    await appendRecords(fx.home, fx.key, fx.hostSessionKey, edits(x, "before-rebind", 1), new Date());
+    const otherRepo = "github.com/acme/web";
+    const otherKey = repoKey(proxyUrl, otherRepo);
+    await registerSessionFlow({
+      home: fx.home,
+      repoKey: otherKey,
+      hub: { ...fx.hub, repoKey: otherKey },
+      agentKind: "acp:test",
+      hostSessionKey: fx.hostSessionKey,
+      repoId: otherRepo,
+      repoRoot: fx.repo,
+      branch: BRANCH,
+      baseCommit: BASE_COMMIT,
+      hubUrl: proxyUrl,
+      fallbackDeveloperId: developerId,
+      title: fallbackWorkContextTitle(BRANCH, otherRepo),
+      status: "analyzing",
+      now: new Date(),
+      guarantees: guaranteeDeclarationFor(ACP_CONNECTOR),
+    });
+
+    // Act: another conversation's flush of this repo
+    await successorFlush(fx);
+
+    // Assert: X's records here went, nothing spent
+    expect(await pending(fx)).toBe(0);
+    expect(await landed(x.workContextId)).toBe(1);
+    expect((await readDropDetail(fx.home, fx.key)).byReason).toEqual({});
+  });
+});
+
 describe("a conversation that is over", () => {
   test("has its records sent by the next flusher once its state is gone (ended)", async () => {
     // Arrange: two edits on disk, the state gone — SessionEnd ran, or reap took a corpse
