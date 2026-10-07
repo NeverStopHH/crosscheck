@@ -633,6 +633,34 @@ round 8's code. Each now has a test and an anchor:
   nor compared as the state's own (`work-context-ack.test.ts`);
 - a re-fire whose publish meets a busy lock writes a fresh epoch beside its counter at zero, never the life's own.
 
+**Two set_intents of one conversation at once: a documented residual** (review-2 round 8, L1, accepted in round 9). A
+set_intent whose status matches the state's when it starts writes no state, and its post may land last on the hub. The
+acknowledgement follows the order the answers arrive in, not the order the hub applied the posts. So SessionEnd finds
+the state's status acknowledged and sends nothing, and the hub keeps the older status (I4, focus seeds 18, 313, 1786,
+1791). Seed 399 is the same shape with set_intent beside the conversation's own SessionEnd: the checker reads the status
+written after that end deleted the state.
+
+A compare-and-swap on set_intent's put-back of the old status does not help, because neither post fails. With it the
+seeds failed 5, 0, 8 and 8 of 8 replays; without it 8, 0, 4 and 8. The sweep counts this class as residual `L1` and
+prints it: an I4 on a conversation where a set_intent ran beside another set_intent or beside its SessionEnd in one
+`par`. Any other I4 still fails the build.
+
+**A loss the disk let nothing count** (review-2 round 9, L2) is the residual `I1u` above. The hub knows its own
+`rejected` answers and could count them beside the connector's ledger; that cross-check is not built.
+
+**Receipts, per record and per developer** (review-2 round 9, L3):
+
+- Receipts were written after the whole flush, so a batch that failed midway left the records before the failure landed
+  and unreceipted, and their re-send was refused. Each receipt is now written as its record lands, which costs a 99-record
+  flush about 13 ms (172 to 186 ms at the median).
+- The key is `(developer_id, id)`. Keyed by the id alone, the first developer to send an id held it, and another
+  developer's envelope under it went unreceipted. An existing hub is re-keyed once at boot.
+- A failing receipts prune is logged and leaves the reap that pass runs.
+- An `ignored` answer keeps a receipt, and its re-send after the producer ended is answered `ignored` again, rather than
+  refused.
+- The retention comment is corrected. A receipt is read only for a re-send whose producer has ended. A machine off for
+  days re-sends under a live producer and reads none.
+
 **Three clocks that were one** (review-2 round 8, H1 and H2). The refused-lives note dropped an entry
 `MAX_SPOOL_AGE_DAYS` after it was written. A flush reads a silent host session as abandoned after the same span. Reap
 expired a spool whose data file was that old. So when a host died:

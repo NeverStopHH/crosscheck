@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1772
+    # PRINTS: 1777
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -394,9 +394,9 @@ jobs:
     # PRINTS: packages/schema/src/session.ts 2
     # PRINTS: packages/schema/src/telemetry-loss.ts 8
     # PRINTS: packages/server/src/constants.ts 2
-    # PRINTS: packages/server/src/db/bootstrap.sql 17
+    # PRINTS: packages/server/src/db/bootstrap.sql 18
     # PRINTS: packages/server/src/db/client.ts 8
-    # PRINTS: packages/server/src/db/schema.ts 1
+    # PRINTS: packages/server/src/db/schema.ts 2
     # PRINTS: packages/server/src/http/schemas.ts 1
     # PRINTS: packages/server/src/index.ts 1
     # PRINTS: packages/server/src/routes/absences.ts 2
@@ -449,7 +449,7 @@ jobs:
     # PRINTS: packages/server/src/services/questions.ts 8
     # PRINTS: packages/server/src/services/record-handlers.ts 22
     # PRINTS: packages/server/src/services/record-receipts.ts 8
-    # PRINTS: packages/server/src/services/records.ts 7
+    # PRINTS: packages/server/src/services/records.ts 9
     # PRINTS: packages/server/src/services/refusal.ts 3
     # PRINTS: packages/server/src/services/retention-registry.ts 9
     # PRINTS: packages/server/src/services/retention.ts 24
@@ -457,7 +457,7 @@ jobs:
     # PRINTS: packages/server/src/services/search.ts 11
     # PRINTS: packages/server/src/services/session-events.ts 9
     # PRINTS: packages/server/src/services/session-order.ts 9
-    # PRINTS: packages/server/src/services/sessions.ts 16
+    # PRINTS: packages/server/src/services/sessions.ts 17
     # PRINTS: packages/server/src/services/skeleton-identity.ts 8
     # PRINTS: packages/server/src/services/solved-counts.ts 1
     # PRINTS: packages/server/src/services/solved-matches.ts 9
@@ -485,7 +485,7 @@ jobs:
     # PRINTS: attempt.ts 5
     # PRINTS: batch-losses.ts 7
     # PRINTS: before-submit-prompt.ts 1
-    # PRINTS: bootstrap.sql 17
+    # PRINTS: bootstrap.sql 18
     # PRINTS: briefing.ts 5
     # PRINTS: calibration.ts 1
     # PRINTS: capabilities.ts 6
@@ -653,7 +653,7 @@ jobs:
     # PRINTS: reap.ts 15
     # PRINTS: record-handlers.ts 22
     # PRINTS: record-receipts.ts 8
-    # PRINTS: records.ts 8
+    # PRINTS: records.ts 10
     # PRINTS: recover.ts 4
     # PRINTS: refusal.ts 3
     # PRINTS: refused-lives.ts 7
@@ -675,7 +675,7 @@ jobs:
     # PRINTS: run.ts 9
     # PRINTS: runner.ts 17
     # PRINTS: sanitize.ts 10
-    # PRINTS: schema.ts 1
+    # PRINTS: schema.ts 2
     # PRINTS: schemas.ts 1
     # PRINTS: search-related-work.ts 1
     # PRINTS: search-tokens.ts 4
@@ -691,7 +691,7 @@ jobs:
     # PRINTS: session-start.ts 8
     # PRINTS: session-state.ts 26
     # PRINTS: session.ts 4
-    # PRINTS: sessions.ts 18
+    # PRINTS: sessions.ts 19
     # PRINTS: set-intent.ts 4
     # PRINTS: settings-merge.ts 2
     # PRINTS: shared.ts 2

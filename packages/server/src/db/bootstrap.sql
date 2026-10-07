@@ -433,16 +433,40 @@ CREATE INDEX IF NOT EXISTS question_answers_claim_idx
 -- the producer check would refuse it, is answered `duplicate` — so a connector
 -- re-sending a batch whose answer it never heard, under a life the hub ended
 -- since, does not count records the hub holds as lost. `result_id` is the id
--- the hub answered with (a claim's, an edge's), which a duplicate answers again.
+-- the hub answered with (a claim's, an edge's), which a duplicate answers again;
+-- `ignored` says the hub kept the record and not the change inside it, which a
+-- re-send is answered with again (review-2 round 9, L3). One receipt per
+-- developer and id: keyed by the id alone, the first developer to send an id
+-- held it, and another's envelope under it went unreceipted.
 CREATE TABLE IF NOT EXISTS record_receipts (
-  id text PRIMARY KEY,
+  id text NOT NULL,
   developer_id text NOT NULL REFERENCES developers(id),
   result_id text,
-  received_at timestamptz NOT NULL
+  ignored boolean NOT NULL DEFAULT false,
+  received_at timestamptz NOT NULL,
+  PRIMARY KEY (developer_id, id)
 );
 
 CREATE INDEX IF NOT EXISTS record_receipts_received_idx
   ON record_receipts (received_at);
+
+-- A hub whose receipts predate review-2 round 9 (L3): the column, and the key
+-- over the pair rather than the id alone — swapped once, left alone after.
+ALTER TABLE record_receipts ADD COLUMN IF NOT EXISTS ignored boolean NOT NULL DEFAULT false;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'record_receipts_pkey'
+      AND conrelid = 'record_receipts'::regclass
+      AND pg_get_constraintdef(oid) = 'PRIMARY KEY (developer_id, id)'
+  ) THEN
+    ALTER TABLE record_receipts DROP CONSTRAINT IF EXISTS record_receipts_pkey;
+    ALTER TABLE record_receipts ADD CONSTRAINT record_receipts_pkey PRIMARY KEY (developer_id, id);
+  END IF;
+END
+$$;
 
 CREATE TABLE IF NOT EXISTS landed_notices (
   id text PRIMARY KEY,

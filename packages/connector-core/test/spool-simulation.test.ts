@@ -117,13 +117,26 @@ const said = (verdicts: readonly Verdict[]): readonly string[] =>
  * sweep skips them, and their fixed scenarios below are marked `failing` until
  * that fix lands.
  */
-const OPEN: ReadonlyMap<string, string> = new Map<string, string>([
-  ["focus:18", "L1"],
-  ["focus:313", "L1"],
-  ["focus:399", "L1"],
-  ["focus:1786", "L1"],
-  ["focus:1791", "L1"],
-]);
+const OPEN: ReadonlyMap<string, string> = new Map<string, string>();
+
+/** The conversation a verdict's work context or life belongs to: `…sim<run>-c<N>…`. */
+const conversationOf = (verdict: Verdict): number | null => {
+  const match = /-c(\d+)/.exec(verdict.detail);
+  return match === null ? null : Number(match[1]);
+};
+
+const isStatusWriterOf = (event: SimEvent, c: number): boolean =>
+  (event.kind === "intent" || event.kind === "end") && event.c === c;
+
+/** Two of a conversation's status writers at once, one of them a set_intent. */
+const hasConcurrentIntent = (events: readonly SimEvent[], c: number): boolean =>
+  events.some(
+    (event) =>
+      event.kind === "par" &&
+      isStatusWriterOf(event.a, c) &&
+      isStatusWriterOf(event.b, c) &&
+      (event.a.kind === "intent" || event.b.kind === "intent"),
+  );
 
 /**
  * DOCUMENTED RESIDUAL CLASSES: the sweep counts and prints them, and does not
@@ -131,11 +144,21 @@ const OPEN: ReadonlyMap<string, string> = new Map<string, string>([
  *   I1u — a drop the disk refused to write down, the ledger line and its
  *         fallback marker both (ENOSPC or EACCES on every write): nothing on
  *         that disk can count it.
+ *   L1  — a status set_intent left behind (I4) on a conversation where a
+ *         set_intent ran beside another set_intent or its SessionEnd: the
+ *         acknowledgement follows the order answers arrive in, not the order
+ *         the hub applied them (review-2 round 8, L1, accepted in round 9).
  */
-const RESIDUAL: ReadonlySet<Verdict["invariant"]> = new Set(["I1u"]);
+const residualOf = (events: readonly SimEvent[], verdict: Verdict): string | null => {
+  if (verdict.invariant === "I1u") {
+    return "I1u";
+  }
+  const c = conversationOf(verdict);
+  return verdict.invariant === "I4" && c !== null && hasConcurrentIntent(events, c) ? "L1" : null;
+};
 
-const unexplained = (verdicts: readonly Verdict[]): readonly Verdict[] =>
-  verdicts.filter((verdict) => !RESIDUAL.has(verdict.invariant));
+const unexplained = (verdicts: readonly Verdict[], events: readonly SimEvent[]): readonly Verdict[] =>
+  verdicts.filter((verdict) => residualOf(events, verdict) === null);
 
 describe("the spool, simulated", () => {
   test(
@@ -159,13 +182,14 @@ describe("the spool, simulated", () => {
         totals.overCounted += numbers.overCounted;
         totals.overCountSeeds += numbers.overCounted > 0 ? 1 : 0;
         totals.uncountable += run.uncountable.count;
-        const label = (of: readonly Verdict[]) =>
-          `${String(seed)}:${[...new Set(of.map((verdict) => verdict.invariant))].join("+")}`;
-        if (verdicts.length > unexplained(verdicts).length) {
-          residual.push(label(verdicts.filter((verdict) => RESIDUAL.has(verdict.invariant))));
+        const label = (classes: readonly string[]) => `${String(seed)}:${[...new Set(classes)].join("+")}`;
+        const residualClasses = verdicts.flatMap((verdict) => residualOf(events, verdict) ?? []);
+        if (residualClasses.length > 0) {
+          residual.push(label(residualClasses));
         }
-        if (unexplained(verdicts).length > 0) {
-          failing.push(label(unexplained(verdicts)));
+        const failed = unexplained(verdicts, events);
+        if (failed.length > 0) {
+          failing.push(label(failed.map((verdict) => verdict.invariant)));
           if (reports.length < MAX_REPORTED) {
             reports.push(await reportOf(seed, events));
           }
@@ -178,7 +202,7 @@ describe("the spool, simulated", () => {
         `[spool-simulation] over-count: ${String(totals.overCountSeeds)} seeds, ${String(totals.overCounted)} records counted lost that the hub holds; captured ${String(totals.captured)}, lost ${String(totals.lost)}`,
       );
       console.log(
-        `[spool-simulation] residual ${String(residual.length)} (${String(totals.uncountable)} records the disk let nothing count): ${residual.join(" ")}`,
+        `[spool-simulation] residual ${String(residual.length)} (I1u: ${String(totals.uncountable)} records the disk let nothing count; L1: set_intent beside set_intent or SessionEnd): ${residual.join(" ")}`,
       );
       console.log(`[spool-simulation] failing ${String(failing.length)}: ${failing.join(" ")}`);
       expect(reports.join("\n\n")).toBe("");
@@ -501,7 +525,6 @@ const manyEnds = (count: number): readonly SimEvent[] => Array.from({ length: co
 const noDrops = (run: Run): boolean => run.drops.length === 0;
 const counted = (run: Run): boolean => run.uncountable.count > 0;
 
-const L1 = "L1 (two concurrent set_intents on one conversation)";
 
 /**
  * WHAT THE ROUND-8 REVIEW FOUND (review-2 round 8): its probes, and every seed
@@ -603,26 +626,18 @@ const ROUND_8: readonly Found[] = [
   {
     name: "focus seed 18 (I4): two set_intents of one conversation at once behind a slow hub",
     events: [start(0), par(intent(0, "blocked"), start(0)), slow(1700, 1, 1), par(intent(0, "done"), intent(0, "blocked"))],
-    open: L1,
-    racy: true,
   },
   {
     name: "focus seed 313 (I4): the generated scenario",
     events: scenarioOf(313, GENERATORS.focus),
-    open: L1,
-    racy: true,
   },
   {
     name: "focus seed 399 (I4): SessionEnd beside set_intent behind a slow hub",
     events: [start(0), par(intent(0, "done"), { kind: "flush", c: 0 }), slow(1400, 2, 0), par(end(0), intent(0, "implementing"))],
-    open: L1,
-    racy: true,
   },
   {
     name: "focus seed 1786 (I4): two set_intents of one conversation at once, answers lost",
     events: [start(0), par(edit(0), intent(0, "done")), fault("recordsLate", 2, 2), edit(0), par(intent(0, "implementing"), intent(0, "done"))],
-    open: L1,
-    racy: true,
   },
   {
     name: "focus seed 1791 (I4): set_intent beside a re-fire and an end behind a slow hub",
@@ -633,8 +648,6 @@ const ROUND_8: readonly Found[] = [
       par(intent(0, "implementing"), start(0)),
       par(end(0), intent(0, "implementing")),
     ],
-    open: L1,
-    racy: true,
   },
   ...[
     { seed: 112, events: [start(1), ioFail(3, 6), hubEnd(1), edit(1)] },
@@ -718,7 +731,7 @@ describe("what the round-8 review found, as fixed scenarios", () => {
       found.open === undefined ? found.name : `${found.name} — open until ${found.open}`,
       async () => {
         const { run, verdicts } = await verdictsOf(found.events);
-        expect(said(unexplained(verdicts))).toEqual([]);
+        expect(said(unexplained(verdicts, found.events))).toEqual([]);
         expect(found.shows?.(run) ?? true).toBe(true);
       },
       PROBE_TIMEOUT_MS,

@@ -18777,7 +18777,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the hub keeps no receipt of what it took (M4)",
     file: `${SERVER}/src/services/records.ts`,
-    from: "  await writeReceipts(deps, developerId, taken);\n",
+    from: "      await writeReceipt(deps, developerId, receipt);\n",
     to: "",
     test: `${SERVER}/test/record-receipts.test.ts`,
     because: "review-2 round 8 M4: nothing ever answers duplicate before the producer check, and over-counts return",
@@ -18785,7 +18785,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the hub never forgets an envelope it took (M4)",
     file: `${SERVER}/src/services/sessions.ts`,
-    from: "    await pruneRecordReceipts(deps);\n",
+    from: '    await pruneRecordReceipts(deps).catch((error: unknown) => {\n      console.error("[crosscheck] record receipts prune failed; the next pass retries", error);\n    });\n',
     to: "",
     test: `${SERVER}/test/record-receipts.test.ts`,
     because: "review-2 round 8 M4: a receipt per record ever ingested, for good",
@@ -19129,8 +19129,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a SessionStart's register prunes every developer's receipts (M4)",
     file: `${SERVER}/src/services/sessions.ts`,
-    from: "  if (options.developerId === undefined) {\n    await pruneRecordReceipts(deps);\n  }\n",
-    to: "  await pruneRecordReceipts(deps);\n",
+    from: "  if (options.developerId === undefined) {\n    await pruneRecordReceipts(deps).catch(",
+    to: "  if (true) {\n    await pruneRecordReceipts(deps).catch(",
     test: `${SERVER}/test/record-receipts.test.ts`,
     because: "review-2 round 9, M4: the first SessionStart after a restart pays the hub's whole backlog, past the connector's 400 ms timeout",
   },
@@ -19215,18 +19215,18 @@ export const MUTATIONS: readonly Mutation[
     because: "review-2 round 9, M6: another developer's envelope id is answered duplicate, with the first developer's result id",
   },
   {
-    label: "a receipt write takes over another developer's receipt (M6)",
+    label: "a receipt write conflicts on the envelope id alone (M6, L3)",
     file: `${SERVER}/src/services/record-receipts.ts`,
-    from: "        setWhere: sql`${recordReceipts.developerId} = excluded.developer_id`,\n",
-    to: "",
+    from: "        target: [recordReceipts.developerId, recordReceipts.id],\n",
+    to: "        target: recordReceipts.id,\n",
     test: `${SERVER}/test/record-receipts.test.ts`,
-    because: "review-2 round 9, M6: one developer's envelope under another's id answers the other's re-send with its own result",
+    because: "review-2 round 9, M6 and L3: one developer's envelope under another's id goes unreceipted, and its re-send is counted lost",
   },
   {
-    label: "the hub keeps a receipt of what it refused or ignored (M6)",
+    label: "the hub keeps a receipt of what it refused (M6)",
     file: `${SERVER}/src/services/records.ts`,
-    from: 'const TAKEN: ReadonlySet<RecordStatus> = new Set(["accepted", "duplicate"]);',
-    to: 'const TAKEN: ReadonlySet<RecordStatus> = new Set(["accepted", "duplicate", "rejected", "ignored"]);',
+    from: 'const KEPT: ReadonlySet<RecordStatus> = new Set(["accepted", "duplicate", "ignored"]);',
+    to: 'const KEPT: ReadonlySet<RecordStatus> = new Set(["accepted", "duplicate", "ignored", "rejected"]);',
     test: `${SERVER}/test/record-receipts.test.ts`,
     because: "review-2 round 9, M6: a refused record re-sent after its producer ended is answered duplicate, and silently lost",
   },
@@ -19269,6 +19269,46 @@ export const MUTATIONS: readonly Mutation[
     to: "    seqEpoch: restored?.epoch ?? seqEpoch,\n",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review-2 round 9, M6: the positions the life already handed out are handed out again",
+  },
+  {
+    label: "a receipts prune that fails takes the reap down (L3)",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: '    await pruneRecordReceipts(deps).catch((error: unknown) => {\n      console.error("[crosscheck] record receipts prune failed; the next pass retries", error);\n    });\n',
+    to: "    await pruneRecordReceipts(deps);\n",
+    test: `${SERVER}/test/session-reaper.test.ts`,
+    because: "review-2 round 9, L3: a receipts table the prune cannot touch leaves every stale session open",
+  },
+  {
+    label: "the hub keeps no receipt of what it ignored (L3)",
+    file: `${SERVER}/src/services/records.ts`,
+    from: 'const KEPT: ReadonlySet<RecordStatus> = new Set(["accepted", "duplicate", "ignored"]);',
+    to: 'const KEPT: ReadonlySet<RecordStatus> = new Set(["accepted", "duplicate"]);',
+    test: `${SERVER}/test/record-receipts.test.ts`,
+    because: "review-2 round 9, L3: a record the hub kept without its change is refused when re-sent, and counted lost",
+  },
+  {
+    label: "a held envelope the hub ignored is answered duplicate (L3)",
+    file: `${SERVER}/src/services/records.ts`,
+    from: '  return holds.isIgnored ? { status: "ignored", ...id, issues: [HELD_IGNORED_ISSUE] } : { status: "duplicate", ...id };',
+    to: '  return { status: "duplicate", ...id };',
+    test: `${SERVER}/test/record-receipts.test.ts`,
+    because: "review-2 round 9, L3: the re-send of a change the hub kept back reads as taken",
+  },
+  {
+    label: "drizzle keys a receipt by its envelope id alone (L3)",
+    file: `${SERVER}/src/db/schema.ts`,
+    from: '    primaryKey({ name: "record_receipts_pkey", columns: [table.developerId, table.id] }),',
+    to: '    primaryKey({ name: "record_receipts_pkey", columns: [table.id] }),',
+    test: `${SERVER}/test/ddl-sync-record-receipts.test.ts`,
+    because: "review-2 round 9, L3: the two DDL sources disagree on the receipts' key",
+  },
+  {
+    label: "an older hub's receipts stay keyed by the envelope id alone (L3)",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "    ALTER TABLE record_receipts ADD CONSTRAINT record_receipts_pkey PRIMARY KEY (developer_id, id);",
+    to: "    ALTER TABLE record_receipts ADD CONSTRAINT record_receipts_pkey PRIMARY KEY (id);",
+    test: `${SERVER}/test/ddl-sync-record-receipts.test.ts`,
+    because: "review-2 round 9, L3: an upgraded hub lets the first developer to send an id hold it",
   },
 ];
 
@@ -19587,6 +19627,7 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage-order.test.ts 11
  * PRINTS: packages/server/test/coverage-successor-session.test.ts 3
  * PRINTS: packages/server/test/coverage.test.ts 13
+ * PRINTS: packages/server/test/ddl-sync-record-receipts.test.ts 2
  * PRINTS: packages/server/test/ddl-sync-waiver-authority.test.ts 5
  * PRINTS: packages/server/test/ddl-sync-work-context-updater.test.ts 1
  * PRINTS: packages/server/test/ddl-sync.test.ts 11
@@ -19623,7 +19664,7 @@ interface Outcome {
  * PRINTS: packages/server/test/questions.test.ts 8
  * PRINTS: packages/server/test/record-receipts-bloat.test.ts 1
  * PRINTS: packages/server/test/record-receipts-boot.test.ts 1
- * PRINTS: packages/server/test/record-receipts.test.ts 15
+ * PRINTS: packages/server/test/record-receipts.test.ts 17
  * PRINTS: packages/server/test/records.test.ts 2
  * PRINTS: packages/server/test/retention-registry.test.ts 2
  * PRINTS: packages/server/test/search-filters.test.ts 10
@@ -19636,7 +19677,7 @@ interface Outcome {
  * PRINTS: packages/server/test/session-order-window.test.ts 3
  * PRINTS: packages/server/test/session-order.test.ts 7
  * PRINTS: packages/server/test/session-reap-liveness.test.ts 2
- * PRINTS: packages/server/test/session-reaper.test.ts 2
+ * PRINTS: packages/server/test/session-reaper.test.ts 3
  * PRINTS: packages/server/test/sessions.test.ts 1
  * PRINTS: packages/server/test/skeleton-identity.test.ts 17
  * PRINTS: packages/server/test/skeleton-sweep.test.ts 35

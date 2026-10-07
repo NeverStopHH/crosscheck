@@ -746,11 +746,14 @@ export const LANDED_WHY_FLUSH_SLACK_MS = 60 * 60_000;
 export const LANDED_NOTICE_TTL_DAYS = 7;
 /**
  * How long the hub remembers an envelope it took (services/records.ts, review-2
- * round 8, M4): a connector may re-send a record it never heard the answer to
- * until reap expires its spool — up to a week after its host went silent and a
- * week after that release (connector spool/reap.ts) — and the same envelope,
- * re-sent under a life the hub has ended since, is a duplicate, not a refusal.
- * Thirty days outlives both bounds with room.
+ * round 8, M4). A receipt is read only for an envelope whose producer has
+ * ended: a batch whose answer never arrived, re-sent by the life's next flush
+ * after the hub ended that life, which is a duplicate, not a refusal. A
+ * machine off for D days re-sends its spool up to D + 7 days later (connector
+ * spool/reap.ts), past any fixed retention for a long enough D, but under a
+ * live producer — the woken life, which its records revive on the hub, or a
+ * successor — so the producer check passes and no receipt is read (review-2
+ * round 9, L3). Thirty days is room for the re-sends that do read one.
  */
 export const RECORD_RECEIPT_RETENTION_DAYS = 30;
 /**

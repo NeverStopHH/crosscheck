@@ -24,15 +24,15 @@ interface Deps {
   readonly now: Clock;
 }
 
-/** One envelope taken: its id, and the id the hub answered with (a claim's, an edge's). */
-export interface Receipt {
-  readonly id: string;
-  readonly resultId: string | null;
-}
-
-/** What the hub holds of an envelope: the id its answer carried. */
+/** What the hub holds of an envelope: the id its answer carried, and whether it kept the change inside it back. */
 export interface Held {
   readonly resultId: string | null;
+  readonly isIgnored: boolean;
+}
+
+/** One envelope the hub holds: its id, and what it answered (a claim's id, an edge's; `ignored`). */
+export interface Receipt extends Held {
+  readonly id: string;
 }
 
 /**
@@ -51,10 +51,10 @@ export const heldReceipts = async (
   }
   try {
     const rows = await deps.db
-      .select({ id: recordReceipts.id, resultId: recordReceipts.resultId })
+      .select({ id: recordReceipts.id, resultId: recordReceipts.resultId, isIgnored: recordReceipts.isIgnored })
       .from(recordReceipts)
       .where(and(eq(recordReceipts.developerId, developerId), inArray(recordReceipts.id, [...ids])));
-    return new Map(rows.map((row) => [row.id, { resultId: row.resultId }]));
+    return new Map(rows.map((row) => [row.id, { resultId: row.resultId, isIgnored: row.isIgnored }]));
   } catch (error) {
     console.error("[crosscheck] reading record receipts failed; this flush is answered without them", error);
     return new Map();
@@ -62,25 +62,21 @@ export const heldReceipts = async (
 };
 
 /**
- * Writes the receipts of what a flush took — and only ever over this
- * developer's own receipt. One row per id: the same envelope twice in one
- * flush would otherwise touch its row twice in one statement. Best-effort:
- * a receipt that does not land costs a later re-send its `duplicate`.
+ * Writes the receipt of one envelope the hub now holds, as its record lands
+ * (review-2 round 9, L3): written after the whole flush, a batch that failed
+ * midway left the records before the failure landed and unreceipted, and
+ * their re-send was refused. Keyed by developer and id, so it is only ever
+ * this developer's own. Best-effort: a receipt that does not land costs a
+ * later re-send its answer.
  */
-export const writeReceipts = async (deps: Deps, developerId: string, taken: readonly Receipt[]): Promise<void> => {
-  const byId = new Map(taken.map((receipt) => [receipt.id, receipt]));
-  if (byId.size === 0) {
-    return;
-  }
-  const receivedAt = deps.now();
+export const writeReceipt = async (deps: Deps, developerId: string, receipt: Receipt): Promise<void> => {
   try {
     await deps.db
       .insert(recordReceipts)
-      .values([...byId.values()].map((receipt) => ({ ...receipt, developerId, receivedAt })))
+      .values({ ...receipt, developerId, receivedAt: deps.now() })
       .onConflictDoUpdate({
-        target: recordReceipts.id,
-        set: { resultId: sql`excluded.result_id`, receivedAt: sql`excluded.received_at` },
-        setWhere: sql`${recordReceipts.developerId} = excluded.developer_id`,
+        target: [recordReceipts.developerId, recordReceipts.id],
+        set: { resultId: sql`excluded.result_id`, isIgnored: sql`excluded.ignored`, receivedAt: sql`excluded.received_at` },
       });
   } catch (error) {
     console.error("[crosscheck] writing record receipts failed; their records landed without them", error);

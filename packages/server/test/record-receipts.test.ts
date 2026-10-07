@@ -10,6 +10,7 @@
  * envelope goes through every check, as the update its newer body may be.
  */
 import { describe, expect, test } from "bun:test";
+import { MAX_INTENT_CHAIN_VERSIONS } from "@crosscheck/schema";
 import { sql } from "drizzle-orm";
 
 import { RECORD_RECEIPT_PRUNE_CHUNK, RECORD_RECEIPT_RETENTION_DAYS } from "../src/constants.ts";
@@ -23,6 +24,7 @@ import {
   postRecords,
   recordEnvelope,
   registerTestSession,
+  TEST_START_ISO,
   validClaimBody,
   validWorkContextBody,
   VALID_SESSION_BODY,
@@ -31,6 +33,15 @@ import {
 import type { TestDeveloper, TestHarness } from "./helpers.ts";
 
 const SECONDS_PER_DAY = 86_400;
+const EPOCH = "3f2b1c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
+
+/** A declared intent sentence, as set_intent sends one. */
+const declared = (summary: string): Record<string, unknown> => ({
+  summary,
+  provenance: "declared",
+  confidence: 1,
+  capturedAt: TEST_START_ISO,
+});
 
 const target = (value: string) => ({ workContextId: WORK_CONTEXT_ID, kind: "file", value });
 
@@ -205,6 +216,78 @@ describe("a receipt", () => {
 
     // Assert: the receipt answers the re-send
     expect(again).toBe("duplicate");
+  });
+
+  test("is each developer's own under a shared envelope id: both re-sends are answered held (review-2 round 9, L3)", async () => {
+    // Arrange: Nick's claim and Robin's claim, each taken under one envelope id; then both lives end
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(harness, developer, { records: [recordEnvelope("work_context", validWorkContextBody())] });
+    const nicks = recordEnvelope("claim", validClaimBody({ id: "clm_nick" }), { id: SHARED_ID });
+    await statusOf(harness, developer, nicks);
+    const robin = await addRobin(harness);
+    const robins = recordEnvelope(
+      "claim",
+      validClaimBody({ id: "clm_robin", workContextId: "wc_robin", authorSessionId: ROBIN_SESSION, body: "the cache key omits the tenant" }),
+      { id: SHARED_ID, sessionId: ROBIN_SESSION },
+    );
+    await postRecords(harness, robin, {
+      records: [recordEnvelope("work_context", validWorkContextBody({ id: "wc_robin", sessionId: ROBIN_SESSION }), { sessionId: ROBIN_SESSION }), robins],
+    });
+    await endProducer(harness, developer);
+    await harness.app.request(`/api/sessions/${ROBIN_SESSION}/end`, jsonRequest("POST", robin.apiKey, {}));
+
+    // Act: each connector re-sends its claim
+    const nicksAgain = (await postRecords(harness, developer, { records: [nicks] })).data?.results[0];
+    const robinsAgain = (await postRecords(harness, robin, { records: [robins] })).data?.results[0];
+
+    // Assert
+    expect(nicksAgain).toMatchObject({ status: "duplicate", id: "clm_nick" });
+    expect(robinsAgain).toMatchObject({ status: "duplicate", id: "clm_robin" });
+  });
+
+  test("of a record that landed is kept though its batch then failed (review-2 round 9, L3)", async () => {
+    // Arrange: the claims table refuses one body below every check the hub
+    // writes, so the batch fails after the records before it landed
+    const { harness, developer } = await createHarnessWithSession();
+    await harness.db.execute(sql`ALTER TABLE claims ADD CONSTRAINT claims_refuses_one CHECK (body <> 'refused below every check')`);
+    const landed = recordEnvelope("claim", validClaimBody({ id: "clm_landed" }));
+    const failed = await postRecords(harness, developer, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody()),
+        landed,
+        recordEnvelope("claim", validClaimBody({ id: "clm_refused", body: "refused below every check" })),
+      ],
+    });
+    await endProducer(harness, developer);
+
+    // Act: the connector re-sends what the failed batch carried
+    const again = await statusOf(harness, developer, landed);
+
+    // Assert: the record that landed is answered held, not counted lost
+    expect(failed.status).toBe(500);
+    expect(again).toBe("duplicate");
+  });
+
+  test("of a record the hub kept without the change inside it answers its re-send ignored again (review-2 round 9, L3)", async () => {
+    // Arrange: a work context whose intent chain is full; one sentence more is ignored, its answer lost; then the life ends
+    const { harness, developer } = await createHarnessWithSession();
+    const intentRecord = (n: number) => ({
+      ...recordEnvelope("work_context", validWorkContextBody({ intent: declared(`Sentence ${String(n)}.`) })),
+      seq: { epoch: EPOCH, n },
+    });
+    for (let n = 1; n <= MAX_INTENT_CHAIN_VERSIONS; n += 1) {
+      await statusOf(harness, developer, intentRecord(n));
+    }
+    const capped = intentRecord(MAX_INTENT_CHAIN_VERSIONS + 1);
+    const first = await statusOf(harness, developer, capped);
+    await endProducer(harness, developer);
+
+    // Act
+    const again = await statusOf(harness, developer, capped);
+
+    // Assert: the same answer as the first time, neither refused nor held as taken
+    expect(first).toBe("ignored");
+    expect(again).toBe("ignored");
   });
 });
 

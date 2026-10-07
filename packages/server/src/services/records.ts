@@ -24,7 +24,7 @@ import { ingestHintDelivery } from "./hint-deliveries.ts";
 import { ingestLandedEvidence } from "./landed.ts";
 import { ingestLandedNoticeDelivery, ingestLandedStop } from "./landed-notices.ts";
 import { embedContextDoc } from "./normalized-doc.ts";
-import { heldReceipts, writeReceipts } from "./record-receipts.ts";
+import { heldReceipts, writeReceipt } from "./record-receipts.ts";
 import type { Held, Receipt } from "./record-receipts.ts";
 import { answerQuestion, askQuestionFromRecord } from "./questions.ts";
 import {
@@ -310,7 +310,21 @@ interface IngestOneResult {
   readonly receipt?: Receipt;
 }
 
-const TAKEN: ReadonlySet<RecordStatus> = new Set(["accepted", "duplicate"]);
+/**
+ * The answers a receipt is kept of: every one that says the hub holds the
+ * record, `ignored` among them (review-2 round 9, L3) — the hub kept the
+ * record and not the change inside it. Never a refusal: its re-send is
+ * refused again.
+ */
+const KEPT: ReadonlySet<RecordStatus> = new Set(["accepted", "duplicate", "ignored"]);
+
+const HELD_IGNORED_ISSUE = "held: the hub kept this record when it first came, and not the change inside it";
+
+/** A held envelope's answer, as the first one went: `ignored` again, or `duplicate`. */
+const heldOutcome = (holds: Held): HandlerOutcome => {
+  const id = holds.resultId === null ? {} : { id: holds.resultId };
+  return holds.isIgnored ? { status: "ignored", ...id, issues: [HELD_IGNORED_ISSUE] } : { status: "duplicate", ...id };
+};
 
 /**
  * The envelope ids a flush carries that a receipt may name: only those of
@@ -366,9 +380,7 @@ const ingestOne = async (
     if (holds === undefined) {
       return { outcome: rejectedOutcome(gateIssue) };
     }
-    const outcome: HandlerOutcome =
-      holds.resultId === null ? { status: "duplicate" } : { status: "duplicate", id: holds.resultId };
-    return { outcome, receipt: { id: envelopeId, resultId: holds.resultId } };
+    return { outcome: heldOutcome(holds), receipt: { id: envelopeId, ...holds } };
   }
   const ingestableKind = kind as IngestableKind;
   const outcome = await dispatchRecord(
@@ -379,7 +391,9 @@ const ingestOne = async (
     parsed.envelope.seq,
     liveProducer,
   );
-  const kept = TAKEN.has(outcome.status) ? { receipt: { id: envelopeId, resultId: outcome.id ?? null } } : {};
+  const kept = KEPT.has(outcome.status)
+    ? { receipt: { id: envelopeId, resultId: outcome.id ?? null, isIgnored: outcome.status === "ignored" } }
+    : {};
   if (outcome.status !== "accepted") {
     return { outcome, liveProducer, ...kept };
   }
@@ -413,7 +427,6 @@ export const ingestRecords = async (
   const results: RecordResult[] = [];
   const touchedContexts = new Set<string>();
   const liveProducers = new Set<string>();
-  const taken: Receipt[] = [];
   const parsed = inputs.map(parseRecord);
   const held = await heldReceipts(deps, developerId, receiptIdsOf(parsed));
   for (const [index, record] of parsed.entries()) {
@@ -431,10 +444,9 @@ export const ingestRecords = async (
       liveProducers.add(liveProducer);
     }
     if (receipt !== undefined) {
-      taken.push(receipt);
+      await writeReceipt(deps, developerId, receipt);
     }
   }
-  await writeReceipts(deps, developerId, taken);
   await touchProducerHeartbeats(deps, liveProducers);
   const embedder = deps.embedder ?? null;
   if (embedder !== null) {

@@ -511,9 +511,13 @@ export const reapStaleSessions = async (
   // ...and the receipts of envelopes taken past their retention
   // (services/record-receipts.ts), for the same reason — on the timer pass
   // only, as the skeleton sweep above (review-2 round 9, M4): the prune is
-  // hub-wide, and a SessionStart paid a restarted hub's whole backlog.
+  // hub-wide, and a SessionStart paid a restarted hub's whole backlog. Its
+  // failure is its own (review-2 round 9, L3), as the sweep's is: a prune
+  // that throws costs the next pass a retry, never this pass its reap.
   if (options.developerId === undefined) {
-    await pruneRecordReceipts(deps);
+    await pruneRecordReceipts(deps).catch((error: unknown) => {
+      console.error("[crosscheck] record receipts prune failed; the next pass retries", error);
+    });
   }
   // Candidates first, then one UPDATE by id: a bare `UPDATE … LIMIT` is not
   // portable, and the two-step keeps the write bounded by construction.
