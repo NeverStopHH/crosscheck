@@ -566,6 +566,13 @@ The note is read on every drain. The review's bench, against this code: 64 young
 the keep bound, each owning a 2000-line spool, in 11 ms (p50) and 15 ms (p95); a full note's write in 0.4 ms. The
 past-bound read grows with the cap, so the cap stays 64.
 
+**The receipts table stays its retention's size** (review-2 round 9, H3). PGlite runs no autovacuum, so every receipt
+the daily prune deleted left a dead row for good. At 10 000 receipts a day the review measured the table at 74 MB on day
+30 and 443 MB on day 180, and the prune on the SessionStart register route went from 1 ms to 94 ms. A prune that deleted
+rows now VACUUMs `record_receipts`, as the skeleton backfill does for `session_events`, and the space is reused.
+`record-receipts-bloat.test.ts` runs 180 simulated days of 2000 receipts with a daily prune. The table ends within 25%
+of its size at the retention; without the VACUUM it ends six times that.
+
 **Three clocks that were one** (review-2 round 8, H1 and H2). The refused-lives note dropped an entry
 `MAX_SPOOL_AGE_DAYS` after it was written. A flush reads a silent host session as abandoned after the same span. Reap
 expired a spool whose data file was that old. So when a host died:

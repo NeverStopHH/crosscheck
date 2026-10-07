@@ -19048,6 +19048,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review-2 round 9, H2: the deferred end's entry outlives its empty spool by a fortnight",
   },
+  {
+    label: "a receipts prune leaves its dead rows behind (H3)",
+    file: `${SERVER}/src/services/record-receipts.ts`,
+    from: "    await deps.db.execute(sql`VACUUM record_receipts`);\n",
+    to: "",
+    test: `${SERVER}/test/record-receipts-bloat.test.ts`,
+    because: "review-2 round 9, H3: PGlite runs no autovacuum, and the table grows six times its retention's size in half a year",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19397,6 +19405,7 @@ interface Outcome {
  * PRINTS: packages/server/test/pins.test.ts 4
  * PRINTS: packages/server/test/presence.test.ts 1
  * PRINTS: packages/server/test/questions.test.ts 8
+ * PRINTS: packages/server/test/record-receipts-bloat.test.ts 1
  * PRINTS: packages/server/test/record-receipts.test.ts 3
  * PRINTS: packages/server/test/records.test.ts 2
  * PRINTS: packages/server/test/retention-registry.test.ts 2

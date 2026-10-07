@@ -72,8 +72,21 @@ export const writeReceipts = async (deps: Deps, developerId: string, taken: read
     });
 };
 
-/** Receipts past the retention, on the hub's reaper pass. */
+/**
+ * Receipts past the retention, on the hub's reaper pass. A prune that deleted
+ * rows VACUUMs the table (review-2 round 9, H3): PGlite runs no autovacuum,
+ * and every deleted receipt left a dead row for good — the table grew six
+ * times its retention's size in half a year, and the prune with it. Only when
+ * something went, so a pass with nothing to prune costs nothing more
+ * (services/skeleton-identity.ts does the same).
+ */
 export const pruneRecordReceipts = async (deps: Deps): Promise<void> => {
   const cutoff = new Date(deps.now().getTime() - RECORD_RECEIPT_RETENTION_DAYS * MS_PER_DAY);
-  await deps.db.delete(recordReceipts).where(lte(recordReceipts.receivedAt, cutoff));
+  const pruned = await deps.db
+    .delete(recordReceipts)
+    .where(lte(recordReceipts.receivedAt, cutoff))
+    .returning({ id: recordReceipts.id });
+  if (pruned.length > 0) {
+    await deps.db.execute(sql`VACUUM record_receipts`);
+  }
 };
