@@ -20103,6 +20103,38 @@ export const MUTATIONS: readonly Mutation[
     because: "the fire a NONE gave back is never spent on the session's next task (round 4, H2)",
   },
   {
+    label: "a pasted image's marker stays in the prompt",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "  const stripped = withoutElements(window).replace(MARKERS, \" \");",
+    to: "  const stripped = withoutElements(window);",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "\"[Image #1] [Image #2]\" is a prompt with words, and the session's fire is spent on it (round 4, M2)",
+  },
+  {
+    label: "a marker's number is one digit",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "    .map((shape) => shape.name.replace(/[.*+?^${}()|[\\]\\\\]/g, \"\\\\$&\").replace(\"N\", \"\\\\d+\"))",
+    to: "    .map((shape) => shape.name.replace(/[.*+?^${}()|[\\]\\\\]/g, \"\\\\$&\").replace(\"N\", \"\\\\d\"))",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "the twelfth pasted image stays in the prompt as \"Image\" and \"12\" (round 4, M2)",
+  },
+  {
+    label: "Stop-hook feedback is a prompt",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "  head(\"Stop hook feedback:\", \"Stop hook feedback:\\n- Tests were not run.\"),\n",
+    to: "",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "\"Stop hook feedback: Tests were not run\" points at the flaky-test tree (round 4, M2)",
+  },
+  {
+    label: "a slash command's echo is a prompt",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "  element(\"command-name\", \"<command-name>/review</command-name>\"),\n",
+    to: "",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "\"<command-name>/review</command-name>\" is a prompt about review (round 4, M2)",
+  },
+  {
     label: "the connector asks a hub about a content-free prompt",
     file: `${CORE}/src/flows/hint.ts`,
     // RETARGETED (round 3, M7): the query is the prompt's window now.
@@ -20448,7 +20480,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/english-stem.test.ts 4
  * PRINTS: packages/schema/test/evidence-resolution.test.ts 8
  * PRINTS: packages/schema/test/file-ref.test.ts 5
- * PRINTS: packages/schema/test/harness-turn.test.ts 16
+ * PRINTS: packages/schema/test/harness-turn.test.ts 20
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1
