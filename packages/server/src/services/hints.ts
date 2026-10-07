@@ -547,6 +547,9 @@ const matchCandidates = async (
       // the UserPromptSubmit injection path, a muted developer's contexts
       // must neither surface nor crowd (services/visibility.ts).
       excludeMutedForDeveloperId: callerDeveloperId,
+      // A pushed surface: no tree is found by an unreviewed draft's words
+      // (services/search.ts; review round 4, M3).
+      excludeDerivedClaims: true,
       limit: SEARCH_POOL_LIMIT,
       viewerDeveloperId: callerDeveloperId,
       hidden,

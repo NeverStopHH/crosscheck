@@ -23399,6 +23399,18 @@ export const MUTATIONS: readonly Mutation[
       "a prompt naming her branch's words counts them on her context's statement, " +
       "confirming the branch the index rebuild took out of search",
   },
+  {
+    // Review round 4, M3: the drafts branch's search option, wired into the
+    // hint branch's search call when both met in the batch.
+    label: "a prompt hint is pushed on an unreviewed draft's words",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "      excludeDerivedClaims: true,\n",
+    to: "      excludeDerivedClaims: false,\n",
+    test: `${SERVER}/test/draft-visibility.test.ts`,
+    because:
+      "a teammate's tree found only by a machine guess nobody vouched for is pushed " +
+      "into a colleague's prompt, its draft counted toward the content floor",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -23758,7 +23770,7 @@ interface Outcome {
  * PRINTS: packages/server/test/doc-upgrade-window.test.ts 6
  * PRINTS: packages/server/test/doc-upgrade.test.ts 6
  * PRINTS: packages/server/test/draft-link-cleanup.test.ts 18
- * PRINTS: packages/server/test/draft-visibility.test.ts 8
+ * PRINTS: packages/server/test/draft-visibility.test.ts 9
  * PRINTS: packages/server/test/drafts.test.ts 4
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/fence-waivers.test.ts 1

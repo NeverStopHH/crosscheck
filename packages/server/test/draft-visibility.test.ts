@@ -262,3 +262,51 @@ describe("the vector tier never decides whether a match was a draft's", () => {
     expect(data.results.find((row) => row.id === WORK_CONTEXT_ID)?.derivedOnly).toBe(false);
   });
 });
+
+/**
+ * THE PUSHED SURFACE PASSES `excludeDerivedClaims` (review round 4, M3; wired
+ * when the hint and drafts branches met in the batch). A teammate who searches
+ * asked, and finds the draft marked; a prompt hint nobody asked for is never
+ * pushed on an unreviewed draft's words — not by the search's claim pass, and
+ * so not by the content floor counting that draft either.
+ */
+describe("a teammate's prompt hint never rides a draft's words", () => {
+  const PROMPT = `${DRAFT_WORD} quuxinator`;
+
+  const hintIds = async (harness: TestHarness, developer: TestDeveloper): Promise<readonly string[]> => {
+    const params = new URLSearchParams({ query: PROMPT, repo: VALID_SESSION_BODY.repo });
+    const response = await harness.app.request(`/api/hints/candidates?${params.toString()}`, jsonRequest("GET", developer.apiKey));
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { data: { candidates: readonly { workContext: { id: string } }[] } };
+    return body.data.candidates.map((candidate) => candidate.workContext.id);
+  };
+
+  test("a tree whose only match is an unreviewed draft is not pushed", async () => {
+    // Arrange
+    const { harness, robin } = await seed(false);
+
+    // Act
+    const pushed = await hintIds(harness, robin);
+
+    // Assert
+    expect(pushed).toEqual([]);
+  });
+
+  test("the control: the same words in a vouched claim push it", async () => {
+    // Arrange
+    const { harness, developer: nick } = await createHarnessWithSession();
+    await postRecords(harness, nick, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody({ title: "Unrelated title words" })),
+        recordEnvelope("claim", validClaimBody({ id: "clm_vouched", body: `The ${DRAFT_WORD} cache poisons the quuxinator` })),
+      ],
+    });
+    const robin = await addTestDeveloperWithSession(harness, "Robin", "robin@example.com", { id: "ses_02", branch: "x" });
+
+    // Act
+    const pushed = await hintIds(harness, robin);
+
+    // Assert
+    expect(pushed).toEqual([WORK_CONTEXT_ID]);
+  });
+});
