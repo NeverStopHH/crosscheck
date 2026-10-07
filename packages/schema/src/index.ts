@@ -387,6 +387,7 @@ export {
   promptTokens,
 } from "./prompt-terms.ts";
 export type { ClassifiedPrompt, PromptTerms } from "./prompt-terms.ts";
+export { SHELL_COMMAND_BINARIES, isBareShellCommand } from "./shell-command.ts";
 export { englishStem } from "./english-stem.ts";
 export { hasContinuationSignal } from "./continuation.ts";
 export {

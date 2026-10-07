@@ -25,6 +25,7 @@ import { humanPromptText } from "./harness-turn.ts";
 import { WEAK_WORDS } from "./prompt-vocabulary.ts";
 import { foldWord, isContinuationTrigger, isRestartVerb, isSteeringWord, wordClassOf } from "./session-control.ts";
 import type { WordClass } from "./session-control.ts";
+import { isBareShellCommand } from "./shell-command.ts";
 import { commandArguments } from "./slash-command.ts";
 import {
   ENGLISH_FUNCTION_WORDS,
@@ -263,7 +264,8 @@ export const promptTerms = (text: string): PromptTerms => {
     topical: words.terms.filter((term, index) => !isSteeringClass(classes[index] ?? null) && !isWeakWord(term)),
     ranked: rankedTerms(scored, termsOf, classOf),
     isGerman,
-    isContentFree: isSessionCommand(words.tokens, words.content, words.content.map(classOf)),
+    // A bare shell command is the session's tool too (round 5, M3; shell-command.ts).
+    isContentFree: isBareShellCommand(scored) || isSessionCommand(words.tokens, words.content, words.content.map(classOf)),
     hasContinuation: hasContinuationSignal(scored),
   };
 };
@@ -296,8 +298,12 @@ const rankedTerms = (
  * asking only this question does not.
  */
 export const isContentFreePrompt = (text: string): boolean => {
+  const scored = classifiedWindow(commandArguments(text));
+  if (isBareShellCommand(scored)) {
+    return true;
+  }
   // The parts decide (L1): a word's whole form adds no verdict.
-  const written = promptTokens(classifiedWindow(commandArguments(text))).filter((token) => !isWholeForm(token));
+  const written = promptTokens(scored).filter((token) => !isWholeForm(token));
   const isFunctionWord = functionWordsOf(written);
   const tokens = [...new Set(written)];
   const content = tokens.filter((token) => !isFunctionWord(token) && !isSteeringWord(token));
