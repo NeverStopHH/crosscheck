@@ -113,6 +113,17 @@ describe("a hidden owner's row is withheld by value, not by name", () => {
     expect(target).toEqual({ createdAt: null });
   });
 
+  test("a target's value is what she worked on, never a shape; its createdAt is when she touched it (review round 5, L3)", () => {
+    const target: Projected = projectRow(
+      HIDDEN,
+      { developerId: ROBIN, kind: "target" },
+      { kind: "symbol", value: "2026-07-24", createdAt: INSTANT },
+      { createdAt: "null" },
+    );
+
+    expect(target).toEqual({ kind: "symbol", value: "2026-07-24", createdAt: null });
+  });
+
   test("the allowlist names PATHS: a createdAt nested in her claim is not the claim's (review round 5, L1)", () => {
     // Arrange: the reviewer's m1b — her session's start, nested in her claim
     // under the name the claim's own creation goes by.

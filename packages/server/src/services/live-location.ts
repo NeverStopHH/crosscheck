@@ -138,6 +138,8 @@ export const isTitleWithheldFromIndex = async (
  *                    reading is loaded (services/claim-validity.ts
  *                    loadRevalidations), so a teammate's own reading of her
  *                    claim reaches him whole
+ *   value            a target's: what her session worked on, shown as it is
+ *                    and never shape-tested (review round 5, L3)
  *
  * A row of no listed kind shows NONE of its instants.
  *
@@ -154,6 +156,11 @@ const SHOWN_FOR_HIDDEN = {
   work_context: ["createdAt", "solvedAt"],
   edge: ["createdAt"],
   question: ["createdAt", "expiresAt"],
+  // What her session worked on (review round 5, L3): a file, a symbol, an
+  // error fingerprint — never a shape, however it looks; a release cut named
+  // by its date is a date only by spelling. Its `createdAt` is when her
+  // session touched it, and stays withheld.
+  target: ["value"],
 } as const satisfies Readonly<Record<string, readonly string[]>>;
 
 export type SharedRowKind = keyof typeof SHOWN_FOR_HIDDEN;

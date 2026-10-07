@@ -18494,7 +18494,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a hint's matched target says when her session touched the file",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "      projectRow(hidden, { developerId: row.developerId }, target, { createdAt: \"null\" }),",
+    from: "      projectRow(hidden, { developerId: row.developerId, kind: \"target\" }, target, { createdAt: \"null\" }),",
     to: "      target,",
     test: `${SERVER}/test/live-location-surfaces.test.ts`,
     because:
@@ -19117,6 +19117,23 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/live-location-surfaces.test.ts`,
     because: "a teammate's own reading of her root cause loses its ref and instant on the solved-tree pointer",
   },
+  // ── Review round 5, L3: a target value is never a shape ───────────────
+  {
+    label: "a matched target is projected with no row kind",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "      projectRow(hidden, { developerId: row.developerId, kind: \"target\" }, target, { createdAt: \"null\" }),",
+    to: "      projectRow(hidden, { developerId: row.developerId }, target, { createdAt: \"null\" }),",
+    test: `${SERVER}/test/live-location-prose.test.ts`,
+    because: "a target named by a date drops out of the very hint it matched, for her colleagues only",
+  },
+  {
+    label: "a target's value is shape-tested",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  target: [\"value\"],",
+    to: "  target: [],",
+    test: `${SERVER}/test/live-location-projection.test.ts`,
+    because: "what she worked on is withheld whenever its spelling happens to be a date",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19455,8 +19472,8 @@ interface Outcome {
  * PRINTS: packages/server/test/live-location-cost.test.ts 3
  * PRINTS: packages/server/test/live-location-differential.test.ts 5
  * PRINTS: packages/server/test/live-location-privacy.test.ts 27
- * PRINTS: packages/server/test/live-location-projection.test.ts 8
- * PRINTS: packages/server/test/live-location-prose.test.ts 2
+ * PRINTS: packages/server/test/live-location-projection.test.ts 9
+ * PRINTS: packages/server/test/live-location-prose.test.ts 3
  * PRINTS: packages/server/test/live-location-surfaces.test.ts 41
  * PRINTS: packages/server/test/live-location-told.test.ts 1
  * PRINTS: packages/server/test/location-index-rebuild.test.ts 7

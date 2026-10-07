@@ -16,9 +16,12 @@ import { WITHHELD_TITLE } from "@crosscheck/schema";
 // not depend on the connector), the same one live-location-privacy uses.
 import { solvedAtFromTree } from "../../connector-core/src/mcp/render.ts";
 import { listSolvedInfo } from "../src/services/solved.ts";
-import { jsonRequest } from "./helpers.ts";
-import { BISECT_SHA, CI_RUN, HER_WORDS, TEAM_REPO, buildTeamWorld } from "./team-world.ts";
+import { jsonRequest, postRecords, recordEnvelope } from "./helpers.ts";
+import { BISECT_SHA, CI_RUN, HER_WORDS, ROBIN_S, TEAM_REPO, buildTeamWorld } from "./team-world.ts";
 import type { TeamWorld } from "./team-world.ts";
+
+/** A target value that is, whole, a calendar date: the release cut she works against. */
+const RELEASE_CUT = "2026-07-24";
 
 interface Claim {
   readonly id: string;
@@ -80,6 +83,25 @@ describe("her prose reaches a colleague as she wrote it, opted out or not", () =
     expect(hub.has("wc_robin_a")).toBe(true);
     expect(refsOf("wc_robin_a", "clm_r_root")).toEqual([BISECT_SHA]);
     expect(refsOf("wc_robin_b", "clm_r_b_root")).toEqual(["clm_r_bisect", CI_RUN]);
+  });
+
+  test.each([[false], [true]] as const)("Robin opted out: %p — a target she worked on matches a colleague's prompt as it is, whatever it looks like (L3)", async (robinOptsOut) => {
+    // Arrange: the release cut she is working against is named by its date.
+    const world = await buildTeamWorld(robinOptsOut);
+    const posted = await postRecords(world.harness, world.robin, {
+      records: [recordEnvelope("target", { workContextId: "wc_robin_a", kind: "symbol", value: RELEASE_CUT }, { sessionId: ROBIN_S })],
+    });
+    expect(posted.data?.rejected).toBe(0);
+
+    // Act
+    const hints = await dataOf<{ candidates: readonly { workContext: { id: string }; matchedTargets: readonly { kind: string; value: string }[] }[] }>(
+      world,
+      `/api/hints/candidates?repo=${encodeURIComponent(TEAM_REPO)}&query=${encodeURIComponent(`${RELEASE_CUT} token refresh`)}`,
+    );
+
+    // Assert
+    const hers = hints.candidates.find((candidate) => candidate.workContext.id === "wc_robin_a");
+    expect(hers?.matchedTargets).toContainEqual(expect.objectContaining({ kind: "symbol", value: RELEASE_CUT }));
   });
 
   test("her location is still withheld beside her words", async () => {

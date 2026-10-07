@@ -455,7 +455,7 @@ export const listHintCandidates = async (
       projectRow(hidden, { developerId: claim.authorDeveloperId, kind: "claim" }, claim),
     ),
     matchedTargets: (matchedTargets.get(row.id) ?? []).map((target) =>
-      projectRow(hidden, { developerId: row.developerId }, target, { createdAt: "null" }),
+      projectRow(hidden, { developerId: row.developerId, kind: "target" }, target, { createdAt: "null" }),
     ),
   }));
 };
