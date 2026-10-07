@@ -24,7 +24,7 @@
  * against a date: its word is the better evidence. Without evidence a stamp
  * stays — the repair corrects what it can show, and guesses nothing.
  */
-import { and, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { isDefaultBranch, isDetachedBranch } from "@crosscheck/schema";
 
 import { agentSessions, workContexts } from "../db/schema.ts";
@@ -58,8 +58,21 @@ export interface RepairPlan {
   readonly byReason: Readonly<Record<FalseLandingReason, number>>;
 }
 
-/** Every landed context with what the rule reads about its session. */
-export const listLandedContexts = async (db: DbExecutor): Promise<readonly LandedContextRow[]> =>
+/**
+ * WHICH STAMPS A RUN JUDGES. `open`: only contexts whose session has not
+ * ended — the ones a false stamp is hiding from collision checks today, and
+ * the run the pilot owner chose for the real hub. `all`: every landed
+ * context, ended sessions included; that also rewrites the past windows of
+ * the pilot report's "both landed" figure.
+ */
+export const REPAIR_SCOPES = ["open", "all"] as const;
+export type RepairScope = (typeof REPAIR_SCOPES)[number];
+
+/** Every landed context in the scope, with what the rule reads about its session. */
+export const listLandedContexts = async (
+  db: DbExecutor,
+  scope: RepairScope,
+): Promise<readonly LandedContextRow[]> =>
   (
     await db
       .select({
@@ -72,7 +85,12 @@ export const listLandedContexts = async (db: DbExecutor): Promise<readonly Lande
       })
       .from(workContexts)
       .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
-      .where(isNotNull(workContexts.landedAt))
+      .where(
+        and(
+          isNotNull(workContexts.landedAt),
+          scope === "open" ? isNull(agentSessions.endedAt) : undefined,
+        ),
+      )
   ).map(({ baseChangedAt, startedAt, ...row }) => ({ ...row, baseAdoptedAt: baseChangedAt ?? startedAt }));
 
 /** Why this stamp should not have been made, or null when nothing shows it. */

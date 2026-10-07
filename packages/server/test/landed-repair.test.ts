@@ -18,7 +18,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq, isNotNull } from "drizzle-orm";
 
-import { workContexts } from "../src/db/schema.ts";
+import { agentSessions, workContexts } from "../src/db/schema.ts";
 import {
   readCommitDates,
   runUnlandFalseLanded,
@@ -68,16 +68,18 @@ const SESSIONS: readonly {
   readonly base: string;
   readonly baseOnDefault?: boolean;
   readonly landed: boolean;
+  /** The session ended — out of `--scope open`. */
+  readonly ended?: boolean;
 }[] = [
   // Falsely landed, each by one kind of evidence:
   { id: "ses_detached", context: "wc_detached", branch: "detached@51eae4d8f", base: DETACHED_BASE, landed: true },
-  { id: "ses_flagged", context: "wc_flagged", branch: "feat/cut-from-main", base: FLAGGED_BASE, baseOnDefault: true, landed: true },
+  { id: "ses_flagged", context: "wc_flagged", branch: "feat/cut-from-main", base: FLAGGED_BASE, baseOnDefault: true, landed: true, ended: true },
   { id: "ses_on_main", context: "wc_on_main", branch: "main", base: MAIN_BASE, landed: true },
-  { id: "ses_old", context: "wc_old", branch: "feat/old-checkout", base: OLD_BASE, landed: true },
-  { id: "ses_named", context: "wc_named", branch: "feat/named-stale", base: NAMED_BASE, landed: true },
+  { id: "ses_old", context: "wc_old", branch: "feat/old-checkout", base: OLD_BASE, landed: true, ended: true },
+  { id: "ses_named", context: "wc_named", branch: "feat/named-stale", base: NAMED_BASE, landed: true, ended: true },
   // Truly landed, by everything there is to know:
   { id: "ses_fresh", context: "wc_fresh", branch: "feat/fresh-tip", base: FRESH_BASE, landed: true },
-  { id: "ses_new_work", context: "wc_new_work", branch: "feat/said-new", base: NEW_WORK_BASE, baseOnDefault: false, landed: true },
+  { id: "ses_new_work", context: "wc_new_work", branch: "feat/said-new", base: NEW_WORK_BASE, baseOnDefault: false, landed: true, ended: true },
   // Not landed at all:
   { id: "ses_open", context: "wc_open", branch: "detached@123412341", base: OPEN_BASE, landed: false },
 ];
@@ -108,6 +110,12 @@ const seedHub = async (): Promise<Seeded> => {
         .update(workContexts)
         .set({ landedAt: new Date(TEST_START_ISO) })
         .where(eq(workContexts.id, session.context));
+    }
+    if (session.ended === true) {
+      await harness.db
+        .update(agentSessions)
+        .set({ endedAt: new Date(TEST_START_ISO) })
+        .where(eq(agentSessions.id, session.id));
     }
   }
   const secrets = SESSIONS.flatMap((s) => [s.id, s.context, s.branch, s.base, s.base.slice(0, 9), `Title of ${s.context}`]);
@@ -180,13 +188,51 @@ describe("the dry run", () => {
   });
 });
 
+describe("--scope", () => {
+  test("open judges only the contexts whose session is still open — the owner's run", async () => {
+    // Arrange: three landed contexts sit on open sessions — the detached one
+    // and the one on main, both falsely, and the fresh tip truly; the other
+    // four landed contexts' sessions ended.
+    const { harness } = await seedHub();
+
+    // Act
+    const dry = await run(harness, [...DATA_DIR, ...EVIDENCE, "--scope", "open"]);
+    const applied = await run(harness, [...DATA_DIR, ...EVIDENCE, "--scope", "open", "--apply"]);
+
+    // Assert: the ended sessions' stamps, false ones included, stay.
+    expect(dry.output).toContain("scope: contexts on open sessions");
+    expect(dry.output).toContain("landed contexts: 3");
+    expect(dry.output).toContain("base already on the default branch: 2");
+    expect(applied.output).toContain("un-landed 2 contexts");
+    expect(await landedIds(harness.db)).toEqual(["wc_flagged", "wc_fresh", "wc_named", "wc_new_work", "wc_old"]);
+  });
+
+  test("--apply needs an explicit scope, and every run reminds to save the pilot report first", async () => {
+    // Arrange
+    const { harness } = await seedHub();
+
+    // Act
+    const unscoped = await run(harness, [...DATA_DIR, ...EVIDENCE, "--apply"]);
+    const badScope = await run(harness, [...DATA_DIR, "--scope", "some"]);
+    const dry = await run(harness, [...DATA_DIR, ...EVIDENCE]);
+
+    // Assert
+    expect([unscoped.code, badScope.code]).toEqual([2, 2]);
+    expect(unscoped.opened + badScope.opened).toBe(0);
+    expect(unscoped.output).toContain("--apply needs --scope open or --scope all");
+    expect(dry.output).toContain("scope: every landed context");
+    expect(dry.output).toContain("crosscheck pilot --json");
+    expect(await landedIds(harness.db)).toHaveLength(7);
+  });
+});
+
 describe("--apply", () => {
   test("un-lands exactly the falsely landed, and a second run finds nothing", async () => {
     // Arrange
     const { harness, secrets } = await seedHub();
 
     // Act
-    const applied = await run(harness, [...DATA_DIR, ...EVIDENCE, "--apply"]);
+    const applied = await run(harness, [...DATA_DIR, ...EVIDENCE, "--scope", "all", "--apply"]);
     const again = await run(harness, [...DATA_DIR, ...EVIDENCE]);
 
     // Assert
@@ -204,7 +250,7 @@ describe("opt-in, explicitly", () => {
     const { harness } = await seedHub();
 
     // Act
-    const noDir = await run(harness, ["--apply"]);
+    const noDir = await run(harness, ["--scope", "all"]);
     const badSha = await run(harness, [...DATA_DIR, "--stale-base", "--all"]);
     const unknown = await run(harness, [...DATA_DIR, "--force"]);
 

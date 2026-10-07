@@ -51,12 +51,18 @@ Before 2026-10-07 a teammate's landed report stamped every open work context who
 ```sh
 # 1. Stop the hub, copy its data dir, and run against the COPY first.
 cp -R /path/to/data /path/to/data-copy
-# 2. Dry run: prints counts only — never an id, title, branch or sha.
+# 2. Save the pilot report as it stands (see below).
+crosscheck pilot --json > pilot-before.json
+# 3. Dry run, both scopes: prints counts only — never an id, title, branch or sha.
 bun packages/server/scripts/unland-false-landed.ts --data-dir /path/to/data-copy \
-  --default-branch origin/main --git-dir /path/to/a/clone/of/the/repo \
+  --scope open --default-branch origin/main --git-dir /path/to/a/clone/of/the/repo \
   --stale-base <known stale commit>
-# 3. Only when the counts are what you expect, the same with --apply.
+bun packages/server/scripts/unland-false-landed.ts --data-dir /path/to/data-copy \
+  --scope all --default-branch origin/main --git-dir /path/to/a/clone/of/the/repo
+# 4. Only when the counts are what you expect, the same with --apply.
 ```
+
+**Scope.** `--scope open` judges only contexts whose session is still open: those are the stamps hiding live work from ghost checks and the conference today. `--scope all` judges every landed context, ended sessions included. **A full apply breaks the pilot's "both landed" series**: the pilot report's collision proof counts a flagged collision as "both landed" by `landed_at`, and un-landing ended work changes that figure for windows already reported. Save `crosscheck pilot --json` first either way. On the pilot hub the decision is `--scope open` only, after a dry run on a copy. A dry run without `--scope` judges `all`; `--apply` refuses to run without a named scope.
 
 A stamp is cleared when the evidence shows the base was already on the default branch at register: the connector said so, the session is on a detached HEAD, the session is ON the branch given to `--default-branch`, you named its base with `--stale-base` (repeatable), or the clone given to `--git-dir` dates the base (committer date) more than 24 hours before the session took it, for a session whose connector said nothing. Without `--default-branch` or `--git-dir` that rule is not judged, and the output says so. A context whose connector said its base was *not* on the default branch keeps its stamp. Opening the dir runs this version's bootstrap, as a hub start would.
 

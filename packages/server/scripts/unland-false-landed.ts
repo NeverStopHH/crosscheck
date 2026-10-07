@@ -3,7 +3,15 @@
  * first (pilot finding, 2026-10-05; services/landed-repair.ts says which).
  *
  *   bun packages/server/scripts/unland-false-landed.ts --data-dir <dir> \
- *     [--default-branch <ref>] [--git-dir <clone>] [--stale-base <sha>]... [--apply]
+ *     [--scope open|all] [--default-branch <ref>] [--git-dir <clone>] \
+ *     [--stale-base <sha>]... [--apply]
+ *
+ * `--scope open` judges only contexts whose session is still open — the
+ * stamps hiding live work from collision checks today, and the run the pilot
+ * owner chose for the real hub. `--scope all` judges every landed context,
+ * which also rewrites the past windows of the pilot report's "both landed"
+ * figure. A dry run defaults to `all`; `--apply` refuses to guess and needs
+ * the scope named. Every run says to save the pilot report first.
  *
  * STOP THE HUB FIRST, AND RUN IT ON A COPY FIRST. A PGlite data dir is one
  * process's (docs/OPERATIONS.md), and opening it runs this version's
@@ -25,14 +33,24 @@ import { COMMIT_SHA_PATTERN } from "@crosscheck/schema";
 import { closeDb, createDb } from "../src/db/client.ts";
 import type { Db } from "../src/db/client.ts";
 import {
+  REPAIR_SCOPES,
   listLandedContexts,
   planLandedRepair,
   unlandContexts,
 } from "../src/services/landed-repair.ts";
-import type { RepairPlan } from "../src/services/landed-repair.ts";
+import type { RepairPlan, RepairScope } from "../src/services/landed-repair.ts";
 
 const USAGE =
-  "usage: unland-false-landed.ts --data-dir <dir> [--default-branch <ref>] [--git-dir <clone>] [--stale-base <sha>]... [--apply]";
+  "usage: unland-false-landed.ts --data-dir <dir> [--scope open|all] [--default-branch <ref>] [--git-dir <clone>] [--stale-base <sha>]... [--apply]";
+/** What a dry run judges when no scope is named. */
+const DRY_RUN_SCOPE: RepairScope = "all";
+const SCOPE_LINES: Readonly<Record<RepairScope, string>> = {
+  open: "scope: contexts on open sessions",
+  all: "scope: every landed context",
+};
+const PILOT_SNAPSHOT_REMINDER =
+  "before --apply: save the pilot report (crosscheck pilot --json > pilot-before.json) — " +
+  "un-landing changes its \"both landed\" figure, and --scope all rewrites past windows";
 const EXIT_OK = 0;
 const EXIT_USAGE = 2;
 /** One `git log` per this many bases — an argv bound, not a cost bound. */
@@ -54,6 +72,7 @@ export interface UnlandDeps {
 
 interface Options {
   readonly dataDir: string;
+  readonly scope: RepairScope;
   readonly defaultBranch: string | null;
   readonly gitDir: string | null;
   readonly staleBases: readonly string[];
@@ -62,7 +81,10 @@ interface Options {
 
 type Parsed = { readonly ok: true; readonly options: Options } | { readonly ok: false; readonly error: string };
 
-const VALUE_FLAGS = new Set(["--data-dir", "--default-branch", "--git-dir", "--stale-base"]);
+const VALUE_FLAGS = new Set(["--data-dir", "--scope", "--default-branch", "--git-dir", "--stale-base"]);
+
+const isRepairScope = (value: string): value is RepairScope =>
+  (REPAIR_SCOPES as readonly string[]).includes(value);
 
 /** argv as flag/value pairs; a flag that takes a value consumes the next word. */
 const tokenize = (argv: readonly string[]): readonly (readonly [string, string | null])[] => {
@@ -99,14 +121,23 @@ const parseArgs = (argv: readonly string[]): Parsed => {
   if (notASha !== undefined) {
     return { ok: false, error: "--stale-base takes a commit sha" };
   }
+  const scope = valuesOf("--scope").at(-1);
+  if (scope !== undefined && !isRepairScope(scope)) {
+    return { ok: false, error: "--scope is open or all" };
+  }
+  const apply = pairs.some(([flag]) => flag === "--apply");
+  if (apply && scope === undefined) {
+    return { ok: false, error: "--apply needs --scope open or --scope all: name what it may change" };
+  }
   return {
     ok: true,
     options: {
       dataDir,
+      scope: scope ?? DRY_RUN_SCOPE,
       defaultBranch: valuesOf("--default-branch").at(-1) ?? null,
       gitDir: valuesOf("--git-dir").at(-1) ?? null,
       staleBases: staleBases.map((sha) => sha.toLowerCase()),
-      apply: pairs.some(([flag]) => flag === "--apply"),
+      apply,
     },
   };
 };
@@ -123,7 +154,8 @@ const reasonLine = (plan: RepairPlan, options: Options, judgedAge: boolean): str
   ].join(" · ");
 
 const runOnHub = async (db: Db, options: Options, deps: UnlandDeps): Promise<void> => {
-  const rows = await listLandedContexts(db);
+  deps.write(SCOPE_LINES[options.scope]);
+  const rows = await listLandedContexts(db, options.scope);
   const baseCommittedAt =
     options.gitDir === null
       ? null
@@ -138,6 +170,7 @@ const runOnHub = async (db: Db, options: Options, deps: UnlandDeps): Promise<voi
     `stamped by base ancestry with the base already on the default branch: ${String(plan.unland.length)} ` +
       `(${reasonLine(plan, options, baseCommittedAt !== null)})`,
   );
+  deps.write(PILOT_SNAPSHOT_REMINDER);
   if (!options.apply) {
     deps.write("dry run: nothing changed — run again with --apply to un-land them");
     return;

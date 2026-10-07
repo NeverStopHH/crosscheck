@@ -23782,6 +23782,31 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/conference.test.ts`,
     because: "her context leading the page says her session is live, which her opt-out withholds",
   },
+  // The repair's scope, and the pilot report it rewrites.
+  {
+    label: "the landed repair's --scope open still judges ended sessions",
+    file: `${SERVER}/src/services/landed-repair.ts`,
+    from: "          scope === \"open\" ? isNull(agentSessions.endedAt) : undefined,",
+    to: "          undefined,",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "the owner's open-only run un-lands ended work too, and rewrites the pilot's past windows",
+  },
+  {
+    label: "the landed repair applies without a named scope",
+    file: `${SERVER}/scripts/unland-false-landed.ts`,
+    from: "  if (apply && scope === undefined) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "an --apply that forgot --scope open un-lands every scope's stamps",
+  },
+  {
+    label: "the landed repair never says to save the pilot report",
+    file: `${SERVER}/scripts/unland-false-landed.ts`,
+    from: "  deps.write(PILOT_SNAPSHOT_REMINDER);\n",
+    to: "",
+    test: `${SERVER}/test/landed-repair.test.ts`,
+    because: "the pilot's \"both landed\" series changes under the operator with no snapshot to compare",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -24164,7 +24189,7 @@ interface Outcome {
  * PRINTS: packages/server/test/key-rotation.test.ts 6
  * PRINTS: packages/server/test/landed-context.test.ts 22
  * PRINTS: packages/server/test/landed-notices.test.ts 34
- * PRINTS: packages/server/test/landed-repair.test.ts 7
+ * PRINTS: packages/server/test/landed-repair.test.ts 10
  * PRINTS: packages/server/test/landed.test.ts 15
  * PRINTS: packages/server/test/live-location-cost.test.ts 3
  * PRINTS: packages/server/test/live-location-differential.test.ts 5
