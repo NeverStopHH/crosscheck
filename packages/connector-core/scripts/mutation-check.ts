@@ -18700,9 +18700,10 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "a revised claim is never followed to its revision",
+    // RETARGETED (round 3, M4): the walk goes level by level.
     file: `${SCHEMA}/src/evidence-resolution.ts`,
-    from: "  const successors = successorsOf(claimId);",
-    to: "  const successors: readonly string[] = [];",
+    from: "    const next = [...new Set(frontier.flatMap(successorsOf))];",
+    to: "    const next: readonly string[] = [];",
     test: `${CORE}/test/mcp-solved-render.test.ts`,
     because: "a ref to an observation its author revised backs nothing, though the revision stands (H5)",
   },
@@ -18749,8 +18750,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the connector's solved mirror counts stored refs",
     file: `${CORE}/src/mcp/render.ts`,
-    // RETARGETED (round 3, M2): the mirror reads the tree's contradictions too.
-    from: "      resolvedRefsInTree(claim, diagnosis.claims, supersedes, contradicted) > 0 &&",
+    // RETARGETED (round 3, M2 + M4): the mirror reads the tree's evidence, built once.
+    from: "      resolvedRefsInTree(claim, tree) > 0 &&",
     to: "      claim.evidenceRefs.length > 0 &&",
     test: `${CORE}/test/mcp-solved-render.test.ts`,
     because: "get_diagnosis labels a tree solved that the hub does not (M2)",
@@ -19315,7 +19316,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the solved mirror never reads a contradicts edge on evidence",
     file: `${CORE}/src/mcp/render.ts`,
-    from: "isEvidenceFor(claim, ref, { ...head, isContradicted: contradicted.has(ref) || contradicted.has(head.id) })",
+    // RETARGETED (round 3, M4): the contradictions ride the tree's evidence, built once.
+    from: "isEvidenceFor(claim, ref, { ...head, isContradicted: tree.contradicted.has(ref) || tree.contradicted.has(head.id) })",
     to: "isEvidenceFor(claim, ref, { ...head, isContradicted: false })",
     test: `${CORE}/test/mcp-solved-render.test.ts`,
     because: "get_diagnosis labels a tree solved on an observation a teammate refuted (M2)",
@@ -19335,6 +19337,30 @@ export const MUTATIONS: readonly Mutation[
     to: "  const solving = (await listSolvingClaims(db, contextIds)).slice(0, 50);\n  return solving.reduce<ReadonlyMap<string, SolvedRootCause>>(",
     test: `${SERVER}/test/solved-evidence.test.ts`,
     because: "a tree of sixty backed causes pushes the next tree's recorded cause out of the briefing (M3)",
+  },
+  {
+    label: "the solved mirror rebuilds the tree's evidence for every claim",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: "  const tree = treeEvidenceOf(diagnosis.claims, supersedes, contradicted);\n  const qualifying = diagnosis.claims.filter(\n    (claim) =>\n      claim.status === SOLVED_CLAIM_STATUS &&\n      claim.provenance === SOLVED_CLAIM_PROVENANCE &&\n      resolvedRefsInTree(claim, tree) > 0 &&",
+    to: "  const qualifying = diagnosis.claims.filter(\n    (claim) =>\n      claim.status === SOLVED_CLAIM_STATUS &&\n      claim.provenance === SOLVED_CLAIM_PROVENANCE &&\n      resolvedRefsInTree(claim, treeEvidenceOf(diagnosis.claims, supersedes, contradicted)) > 0 &&",
+    test: `${CORE}/test/mcp-solved-render.test.ts`,
+    because: "a tree with a thousand causes citing one revised observation resolves the same revisions a thousand times (round 3, M4)",
+  },
+  {
+    label: "the revision walk stops one level short of its bound",
+    file: `${SCHEMA}/src/evidence-resolution.ts`,
+    from: "    if (frontier.length === 0 || depth > REVISION_MAX_DEPTH) {",
+    to: "    if (frontier.length === 0 || depth >= REVISION_MAX_DEPTH) {",
+    test: `${SCHEMA}/test/evidence-resolution.test.ts`,
+    because: "an observation revised sixteen times backs nothing, though the hub's own walk reaches it (M4)",
+  },
+  {
+    label: "the revision walk runs one level past its bound",
+    file: `${SCHEMA}/src/evidence-resolution.ts`,
+    from: "    if (frontier.length === 0 || depth > REVISION_MAX_DEPTH) {",
+    to: "    if (frontier.length === 0 || depth > REVISION_MAX_DEPTH + 1) {",
+    test: `${SCHEMA}/test/evidence-resolution.test.ts`,
+    because: "the connector's mirror reaches a head the hub's walk never does, and the two disagree on solved (M4)",
   },
   {
     label: "the connector asks a hub about a content-free prompt",
@@ -19628,7 +19654,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/mcp-render.test.ts 13
  * PRINTS: packages/connector-core/test/mcp-seq-e2e.test.ts 2
  * PRINTS: packages/connector-core/test/mcp-seq.test.ts 8
- * PRINTS: packages/connector-core/test/mcp-solved-render.test.ts 3
+ * PRINTS: packages/connector-core/test/mcp-solved-render.test.ts 4
  * PRINTS: packages/connector-core/test/mcp-tools.test.ts 4
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
@@ -19674,7 +19700,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/causal-guarantees.test.ts 7
  * PRINTS: packages/schema/test/claim.test.ts 1
- * PRINTS: packages/schema/test/evidence-resolution.test.ts 6
+ * PRINTS: packages/schema/test/evidence-resolution.test.ts 8
  * PRINTS: packages/schema/test/file-ref.test.ts 5
  * PRINTS: packages/schema/test/harness-turn.test.ts 16
  * PRINTS: packages/schema/test/intent-scope.test.ts 1

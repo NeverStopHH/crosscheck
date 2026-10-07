@@ -6,7 +6,7 @@
  */
 import { describe, expect, test } from "bun:test";
 
-import { isEvidenceFor, revisionHeads } from "../src/evidence-resolution.ts";
+import { REVISION_MAX_DEPTH, isEvidenceFor, revisionHeads } from "../src/evidence-resolution.ts";
 import type { CitedHead, CitingClaim } from "../src/evidence-resolution.ts";
 
 const CITED_AT = "2026-09-01T08:00:00.000Z";
@@ -78,6 +78,34 @@ describe("a ref resolves to the head of its revision chain", () => {
 
   test("a twice-revised claim resolves to the newest revision", () => {
     expect(revisionHeads("clm_v1", successorsOf)).toEqual(["clm_v3"]);
+  });
+
+  test("a diamond ladder of revisions resolves inside a named bound, every path counted once (round 3, M4)", () => {
+    // Arrange — 3 revisions per level, each superseding all 3 below, 16 levels:
+    // 3^16 paths, but 49 claims
+    const WIDTH = 3;
+    const LADDER_BUDGET_MS = 50;
+    const successorsOf = (id: string): readonly string[] => {
+      const level = Number(id.split("_")[1]);
+      return level >= REVISION_MAX_DEPTH ? [] : Array.from({ length: WIDTH }, (_, index) => `n${String(index)}_${String(level + 1)}`);
+    };
+
+    // Act
+    const started = performance.now();
+    const heads = revisionHeads("n0_0", successorsOf);
+    const elapsed = performance.now() - started;
+
+    // Assert — the top level is the head, reached at exactly the depth bound
+    expect([...heads].sort()).toEqual([`n0_${String(REVISION_MAX_DEPTH)}`, `n1_${String(REVISION_MAX_DEPTH)}`, `n2_${String(REVISION_MAX_DEPTH)}`]);
+    expect(elapsed).toBeLessThan(LADDER_BUDGET_MS);
+  }, 10_000);
+
+  test("a head one step past the depth bound is never reached", () => {
+    const chain = (id: string): readonly string[] => {
+      const step = Number(id.split("_")[1]);
+      return step > REVISION_MAX_DEPTH ? [] : [`c_${String(step + 1)}`];
+    };
+    expect(revisionHeads("c_0", chain)).toEqual([]);
   });
 
   test("a cycle of revisions ends inside the depth bound, with no head", () => {

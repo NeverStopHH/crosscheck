@@ -75,23 +75,24 @@ export const isEvidenceFor = (citing: CitingClaim, citedId: string, head: CitedH
   contentWordCount(head.body) >= EVIDENCE_MIN_CONTENT_WORDS;
 
 /**
- * The heads a claim's revisions end in: follow every claim that supersedes
- * it until one nothing supersedes. A cycle has no head, and the walk stops
- * at REVISION_MAX_DEPTH either way.
+ * The heads a claim's revisions end in: every claim nothing supersedes that
+ * the revisions reach within REVISION_MAX_DEPTH steps. A cycle has no head.
+ *
+ * ONE LEVEL AT A TIME, EACH CLAIM ONCE PER LEVEL (hold-out review round 3,
+ * M4): a walk of every PATH visited a diamond ladder — three revisions per
+ * level, each superseding all three below — 3^16 times over 49 claims. Level
+ * by level, the claims one step on are taken as a set, so the cost is at most
+ * the claims and edges within the bound once per level, whatever their shape;
+ * a cycle simply keeps its level non-empty until the bound.
  */
-export const revisionHeads = (
-  claimId: string,
-  successorsOf: (id: string) => readonly string[],
-  depth = 0,
-  seen: ReadonlySet<string> = new Set(),
-): readonly string[] => {
-  if (seen.has(claimId) || depth > REVISION_MAX_DEPTH) {
-    return [];
-  }
-  const successors = successorsOf(claimId);
-  if (successors.length === 0) {
-    return [claimId];
-  }
-  const visited = new Set([...seen, claimId]);
-  return [...new Set(successors.flatMap((next) => revisionHeads(next, successorsOf, depth + 1, visited)))];
+export const revisionHeads = (claimId: string, successorsOf: (id: string) => readonly string[]): readonly string[] => {
+  const walk = (frontier: readonly string[], depth: number, heads: readonly string[]): readonly string[] => {
+    if (frontier.length === 0 || depth > REVISION_MAX_DEPTH) {
+      return heads;
+    }
+    const ends = frontier.filter((id) => successorsOf(id).length === 0);
+    const next = [...new Set(frontier.flatMap(successorsOf))];
+    return walk(next, depth + 1, [...heads, ...ends]);
+  };
+  return [...new Set(walk([claimId], 0, []))];
 };

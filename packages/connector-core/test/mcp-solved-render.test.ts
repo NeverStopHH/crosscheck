@@ -182,6 +182,39 @@ describe("solvedAtFromTree", () => {
     expect(solvedAtFromTree(diagnosis([rootCauseClaim(), refutation], [contradiction]))).toBeNull();
   });
 
+  test("a diamond ladder of revisions, cited by a thousand causes, resolves inside a named bound (round 3, M4)", () => {
+    // Arrange — 3 revisions per level, each superseding all 3 below, 16 levels;
+    // a thousand root causes all cite the bottom of it. Resolved once per
+    // ref the tree takes ~4 ms; rebuilding the maps per claim took ~94 ms.
+    const WIDTH = 3;
+    const DEPTH = 16;
+    const CAUSES = 1000;
+    const MIRROR_BUDGET_MS = 30;
+    const node = (index: number, level: number) =>
+      rootCauseClaim({ id: `n${String(index)}_${String(level)}`, kind: "observation", status: "proposed", evidenceRefs: [], body: "The importer retries with the old key id after every rotation" });
+    const ladder = [node(0, 0), ...Array.from({ length: DEPTH }, (_, level) => Array.from({ length: WIDTH }, (_, index) => node(index, level + 1))).flat()];
+    const edges = Array.from({ length: DEPTH }, (_, level) =>
+      Array.from({ length: WIDTH }, (_, index) =>
+        Array.from({ length: level === 0 ? 1 : WIDTH }, (_, below): DiagnosisEdge => ({
+          ...supersedesEdge(),
+          id: `e_${String(index)}_${String(level + 1)}_${String(below)}`,
+          fromClaimId: `n${String(index)}_${String(level + 1)}`,
+          toClaimId: `n${String(below)}_${String(level)}`,
+        })),
+      ).flat(),
+    ).flat();
+    const causes = Array.from({ length: CAUSES }, (_, index) => rootCauseClaim({ id: `clm_rc_${String(index)}`, evidenceRefs: ["n0_0"] }));
+
+    // Act
+    const started = performance.now();
+    const solvedAtMs = solvedAtFromTree(diagnosis(causes, edges, null, ladder));
+    const elapsed = performance.now() - started;
+
+    // Assert
+    expect(solvedAtMs).toBe(Date.parse(SOLVED_ISO));
+    expect(elapsed).toBeLessThan(MIRROR_BUDGET_MS);
+  });
+
   test("a superseded root cause does not", () => {
     // Act
     const solvedAtMs = solvedAtFromTree(

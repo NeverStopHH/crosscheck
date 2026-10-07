@@ -1075,26 +1075,44 @@ const SOLVED_CLAIM_PROVENANCE = "declared";
  * evidence elsewhere reads unsolved on this side, the direction that never
  * vouches too much.
  */
-const resolvedRefsInTree = (
-  claim: Diagnosis["claims"][number],
-  claims: Diagnosis["claims"],
-  supersedes: Diagnosis["edges"],
-  contradicted: ReadonlySet<string>,
-): number => {
-  const byId = new Map(claims.map((member) => [member.id, member]));
-  const successorsOf = (id: string): readonly string[] =>
-    supersedes.filter((edge) => edge.toClaimId === id).map((edge) => edge.fromClaimId);
-  return claim.evidenceRefs.filter((ref) =>
-    revisionHeads(ref, successorsOf).some((headId) => {
-      const head = byId.get(headId);
+/** What resolving one tree's refs needs, built ONCE per tree (round 3, M4). */
+interface TreeEvidence {
+  readonly byId: ReadonlyMap<string, Diagnosis["claims"][number]>;
+  /** The revision heads of every ref the tree cites, each resolved once. */
+  readonly headsOf: ReadonlyMap<string, readonly string[]>;
+  readonly contradicted: ReadonlySet<string>;
+}
+
+/**
+ * The tree's evidence, read once (hold-out review round 3, M4): one id map,
+ * one successor map grouped from the supersedes edges, and each cited ref's
+ * heads resolved ONCE however many claims cite it — the mirror used to rebuild
+ * both maps for every claim and walk the same revisions for every citation.
+ */
+const treeEvidenceOf = (claims: Diagnosis["claims"], supersedes: Diagnosis["edges"], contradicted: ReadonlySet<string>): TreeEvidence => {
+  const successors: ReadonlyMap<string, readonly string[]> = new Map(
+    [...Map.groupBy(supersedes, (edge) => edge.toClaimId)].map(([target, edges]) => [target, edges.map((edge) => edge.fromClaimId)]),
+  );
+  const successorsOf = (id: string): readonly string[] => successors.get(id) ?? [];
+  const refs = [...new Set(claims.flatMap((claim) => claim.evidenceRefs))];
+  return {
+    byId: new Map(claims.map((member) => [member.id, member])),
+    headsOf: new Map(refs.map((ref) => [ref, revisionHeads(ref, successorsOf)])),
+    contradicted,
+  };
+};
+
+const resolvedRefsInTree = (claim: Diagnosis["claims"][number], tree: TreeEvidence): number =>
+  claim.evidenceRefs.filter((ref) =>
+    (tree.headsOf.get(ref) ?? []).some((headId) => {
+      const head = tree.byId.get(headId);
       // A contradicts edge on what was cited or on its head un-backs it (round 3, M2).
       return (
         head !== undefined &&
-        isEvidenceFor(claim, ref, { ...head, isContradicted: contradicted.has(ref) || contradicted.has(head.id) })
+        isEvidenceFor(claim, ref, { ...head, isContradicted: tree.contradicted.has(ref) || tree.contradicted.has(head.id) })
       );
     }),
   ).length;
-};
 
 export const solvedAtFromTree = (
   diagnosis: Pick<Diagnosis, "claims" | "edges" | "truncated">,
@@ -1107,11 +1125,12 @@ export const solvedAtFromTree = (
   const contradicted = new Set(
     diagnosis.edges.filter((edge) => edge.kind === CONTRADICTS_EDGE_KIND).map((edge) => edge.toClaimId),
   );
+  const tree = treeEvidenceOf(diagnosis.claims, supersedes, contradicted);
   const qualifying = diagnosis.claims.filter(
     (claim) =>
       claim.status === SOLVED_CLAIM_STATUS &&
       claim.provenance === SOLVED_CLAIM_PROVENANCE &&
-      resolvedRefsInTree(claim, diagnosis.claims, supersedes, contradicted) > 0 &&
+      resolvedRefsInTree(claim, tree) > 0 &&
       !supersededIds.has(claim.id),
   );
   const qualifyingIds = new Set(qualifying.map((claim) => claim.id));

@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1777
+    # PRINTS: 1780
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -315,7 +315,7 @@ jobs:
     # PRINTS: landed-changes/working-days.ts 3
     # PRINTS: mcp/render-intent-chain.ts 1
     # PRINTS: mcp/render-referee.ts 3
-    # PRINTS: mcp/render.ts 26
+    # PRINTS: mcp/render.ts 27
     # PRINTS: mcp/session.ts 1
     # PRINTS: mcp/tools/answer-question.ts 1
     # PRINTS: mcp/tools/ask-teammate.ts 1
@@ -371,7 +371,7 @@ jobs:
     # PRINTS: packages/schema/src/enums.ts 2
     # PRINTS: packages/schema/src/envelope.ts 1
     # PRINTS: packages/schema/src/evidence-axes.ts 1
-    # PRINTS: packages/schema/src/evidence-resolution.ts 10
+    # PRINTS: packages/schema/src/evidence-resolution.ts 12
     # PRINTS: packages/schema/src/file-ref.ts 5
     # PRINTS: packages/schema/src/harness-turn.ts 16
     # PRINTS: packages/schema/src/hint.ts 3
@@ -544,7 +544,7 @@ jobs:
     # PRINTS: envelope.ts 1
     # PRINTS: events.ts 1
     # PRINTS: evidence-axes.ts 3
-    # PRINTS: evidence-resolution.ts 15
+    # PRINTS: evidence-resolution.ts 17
     # PRINTS: exec.ts 1
     # PRINTS: exempt-surfaces.ts 2
     # PRINTS: fd-io.ts 1
@@ -657,7 +657,7 @@ jobs:
     # PRINTS: render-referee.ts 3
     # PRINTS: render-surface-registry.test.ts 1
     # PRINTS: render-surfaces.ts 1
-    # PRINTS: render.ts 96
+    # PRINTS: render.ts 97
     # PRINTS: repo-path.ts 1
     # PRINTS: report.ts 9
     # PRINTS: retention-registry.ts 9
