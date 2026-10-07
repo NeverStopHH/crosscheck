@@ -18611,8 +18611,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "opting out leaves the docs built before it in the index",
     file: `${SERVER}/src/services/developer-settings.ts`,
-    from: "    .where(eq(developers.id, developerId));\n  await reindexLocationTitles(db, developerId);",
-    to: "    .where(eq(developers.id, developerId));",
+    from: "  await reindexLocationTitles(deps.db, developerId);\n",
+    to: "",
     test: `${SERVER}/test/live-location-surfaces.test.ts`,
     because:
       "every context she wrote before the toggle stays searchable by its " +
@@ -18996,6 +18996,47 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/coverage-cli.test.ts`,
     because: "doctor reads «session_silent» as a fact about a session the hub withheld",
   },
+  // ── Review round 5, M1: an opt-out from before this release ──────────
+  {
+    label: "the boot pass leaves an opt-out from before this release in the index",
+    file: `${SERVER}/src/services/developer-settings.ts`,
+    from: "    .where(and(eq(developers.presenceOptOut, true), isNull(developers.locationIndexBuiltAt)));",
+    to: "    .where(sql`false`);",
+    test: `${SERVER}/test/location-index-rebuild.test.ts`,
+    because: "she never toggles again, so a colleague's guess at her branch finds her work for good",
+  },
+  {
+    label: "the boot pass marks an index it never rebuilt",
+    file: `${SERVER}/src/services/developer-settings.ts`,
+    from: "    await rebuildLocationIndex(deps, row.id, true);",
+    to: "    await deps.db.update(developers).set({ locationIndexBuiltAt: deps.now() }).where(eq(developers.id, row.id));",
+    test: `${SERVER}/test/location-index-rebuild.test.ts`,
+    because: "the mark says built and her branch title still matches a guess",
+  },
+  {
+    label: "the boot pass rebuilds every opted-out index on every boot",
+    file: `${SERVER}/src/services/developer-settings.ts`,
+    from: "    .where(and(eq(developers.presenceOptOut, true), isNull(developers.locationIndexBuiltAt)));",
+    to: "    .where(eq(developers.presenceOptOut, true));",
+    test: `${SERVER}/test/location-index-rebuild.test.ts`,
+    because: "every start of the hub pays a rebuild, and drops the vectors, of every opted-out developer's work",
+  },
+  {
+    label: "the toggle never marks the index it rebuilt",
+    file: `${SERVER}/src/services/developer-settings.ts`,
+    from: "  if (isOptedOut) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/location-index-rebuild.test.ts`,
+    because: "the next boot rebuilds what the toggle just built, once per opt-out no longer",
+  },
+  {
+    label: "opting back in keeps the mark of the opt-out before",
+    file: `${SERVER}/src/services/developer-settings.ts`,
+    from: "    .set({ presenceOptOut: optOut, locationIndexBuiltAt: null })",
+    to: "    .set({ presenceOptOut: optOut })",
+    test: `${SERVER}/test/location-index-rebuild.test.ts`,
+    because: "the mark says built for an opt-out she no longer has",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -19338,6 +19379,7 @@ interface Outcome {
  * PRINTS: packages/server/test/live-location-prose.test.ts 2
  * PRINTS: packages/server/test/live-location-surfaces.test.ts 39
  * PRINTS: packages/server/test/live-location-told.test.ts 1
+ * PRINTS: packages/server/test/location-index-rebuild.test.ts 5
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/passkey-announcements.test.ts 1
  * PRINTS: packages/server/test/passkey-revocation-terminates.test.ts 5

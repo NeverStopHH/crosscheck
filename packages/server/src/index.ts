@@ -9,6 +9,7 @@ import { createEmbedderFromEnv } from "./services/embedder.ts";
 import { reapStaleSessions } from "./services/sessions.ts";
 import { parseWebAuthnOrigins } from "./services/webauthn.ts";
 import { backfillSkeletonIdentity } from "./services/skeleton-identity.ts";
+import { rebuildOptedOutLocationIndexes } from "./services/developer-settings.ts";
 import type { Db } from "./db/client.ts";
 import type { Embedder } from "./services/embedder.ts";
 import type { AppEnv, Clock } from "./types.ts";
@@ -256,6 +257,14 @@ export const startServer = async (): Promise<void> => {
     // rather than in front of a person at the approval page (04a §7).
     webauthnOrigins: parseWebAuthnOrigins(process.env["CROSSCHECK_WEBAUTHN_ORIGINS"], port),
   });
+  // AN OPT-OUT FROM BEFORE THE INDEX FOLLOWED THE SETTING (review round 5,
+  // M1): her docs still hold her branch titles, so they are rebuilt BEFORE
+  // serving — a colleague's first search must not find her by a guessed
+  // branch. Once per opt-out (developers.location_index_built_at).
+  const indexesRebuilt = await rebuildOptedOutLocationIndexes({ db, now: () => new Date() });
+  if (indexesRebuilt > 0) {
+    console.log(`[crosscheck] search index: rebuilt for ${String(indexesRebuilt)} opted-out developer(s)`);
+  }
   Bun.serve({ port, fetch: app.fetch });
   // THE SKELETON'S IDENTITY FOR ROWS THAT PREDATE ITS COLUMNS (01a §4.1).
   // After serving, not before: until it has run, a missing identity reads as

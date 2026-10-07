@@ -104,6 +104,15 @@ export const developers = pgTable("developers", {
    * already read on every authenticated request.
    */
   presenceOptOut: boolean("presence_opt_out").notNull().default(false),
+  /**
+   * When the search index was last rebuilt for the opt-out this developer
+   * has now (review round 5, M1): set when her location-titled docs were
+   * rebuilt without their location titles, cleared when she opts back in.
+   * Null while opted out means nothing rebuilt them yet — an opt-out from
+   * before the index followed the setting — and the boot pass does
+   * (services/developer-settings.ts rebuildOptedOutLocationIndexes).
+   */
+  locationIndexBuiltAt: timestamptz("location_index_built_at"),
   createdAt: timestamptz("created_at").notNull().defaultNow(),
 }, (table) => [
   // The unknown-developer refusal reads a bounded, name-ordered page of this

@@ -349,6 +349,11 @@ INSERT INTO developer_emails (email, developer_id, is_primary, created_at)
 -- column existed. Published knowledge is deliberately NOT touched by it.
 ALTER TABLE developers ADD COLUMN IF NOT EXISTS presence_opt_out boolean NOT NULL DEFAULT false;
 
+-- When the search index was rebuilt for the opt-out a developer has now
+-- (review round 5, M1); null while opted out = not yet, and the boot pass
+-- rebuilds it (services/developer-settings.ts).
+ALTER TABLE developers ADD COLUMN IF NOT EXISTS location_index_built_at timestamptz;
+
 -- Reader-side mutes: one row per (reader, muted) pair, filtering the READER's
 -- unasked surfaces only. Hub-side so a mute follows the reader across
 -- machines; bounded per reader by MAX_MUTES_PER_READER at write time
