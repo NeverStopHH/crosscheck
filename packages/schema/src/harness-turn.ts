@@ -26,7 +26,9 @@
  * leading whitespace is read, attribute scans stop at
  * MAX_WRAPPER_ATTRIBUTE_CHARS, and every search moves forward. The text is a
  * search query and a one-sentence intent from here on; nothing past the
- * window could reach either.
+ * window could reach either — but the human text after a wrapper the window
+ * ends inside (round 4, M3): that wrapper's close is looked for once, within
+ * the prompt's first mebibyte, and the rest read with a window of its own.
  *
  * ACCEPTED (L4): a human prompt that names an unclosed wrapper loses the text
  * after it. That costs one hint on that prompt, never a hint nobody earned.
@@ -172,21 +174,29 @@ const leadingClose = (text: string, lower: string, opening: Opening, close: stri
   return beforeNext >= opening.end ? beforeNext : lower.lastIndexOf(close);
 };
 
+/** A wrapper end that never comes: the wrapper wraps the rest. */
+const UNCLOSED = -1;
+
 /**
  * Where a wrapper opened at `opening` ends: its LAST close when it starts the
  * text (M1, `leadingClose`), its FIRST close otherwise — pinned on purpose: a
  * wrapper after the human text cannot tell its own quoted close from a human
- * sentence that names the tag, and the human's words win — the end of the
- * text when it never closes.
+ * sentence that names the tag, and the human's words win — or UNCLOSED.
  */
 const wrapperEnd = (text: string, lower: string, opening: Opening, isLeading: boolean): number => {
   const close = `</${opening.tag}>`;
   const at = isLeading ? leadingClose(text, lower, opening, close) : lower.indexOf(close, opening.end);
-  return at < opening.end ? lower.length : at + close.length;
+  return at < opening.end ? UNCLOSED : at + close.length;
 };
 
-/** The text with every registered element removed, each replaced by one space. */
-const withoutElements = (text: string): string => {
+/** A wrapper a text ends inside: where it opened, and whether it led the turn (round 4, M3). */
+interface Unclosed {
+  readonly opening: Opening;
+  readonly isLeading: boolean;
+}
+
+/** The text with every registered element removed, each replaced by one space, and the wrapper it ends inside. */
+const withoutElements = (text: string): { readonly kept: string; readonly unclosed: Unclosed | null } => {
   const lower = asciiLower(text);
   const kept: string[] = [];
   let position = 0;
@@ -196,21 +206,57 @@ const withoutElements = (text: string): string => {
     kept.push(before);
     isLeading = isLeading && before.trim().length === 0;
     position = wrapperEnd(text, lower, opening, isLeading);
+    if (position === UNCLOSED) {
+      return { kept: kept.join(" "), unclosed: { opening, isLeading } };
+    }
   }
   kept.push(text.slice(position));
-  return kept.join(" ");
+  return { kept: kept.join(" "), unclosed: null };
 };
+
+/**
+ * THE REST OF A PROMPT AFTER A WRAPPER THE WINDOW ENDED INSIDE (round 4, M3):
+ * found in the whole prompt by the same rule a window applies — a leading
+ * wrapper's last close before its next opening, another's first close — or
+ * null when it never closes. The hold-out's A17 put a 37 KB IDE selection in
+ * front of "why does this stripe webhook handler create duplicate charges",
+ * and the window's end swallowed the question. Linear: one lower-casing, one
+ * forward search, one backward search. Where the rest begins, or UNCLOSED.
+ */
+const closeAfter = (text: string, unclosed: Unclosed): number =>
+  wrapperEnd(text, asciiLower(text), unclosed.opening, unclosed.isLeading);
+
+/** How far into a prompt a wrapper's close is looked for, past the window (M3): a mebibyte. */
+const HARNESS_CLOSE_SEARCH_MAX_CHARS = 1_048_576;
 
 /**
  * The turn without what the harness wrote, whitespace collapsed — it is a
  * search query from here on — or the prompt exactly as typed when it carries
  * none of the registered shapes and fits the window.
  */
-export const humanPromptText = (prompt: string): string => {
-  const window = prompt.trimStart().slice(0, HARNESS_SCAN_MAX_CHARS);
-  const stripped = withoutElements(window).replace(MARKERS, " ");
+export const humanPromptText = (prompt: string): string => humanTextOf(prompt, true);
+
+/**
+ * The human text, and — ONCE per prompt, so the scan stays linear — the text
+ * after a wrapper the window ended inside (M3), its close looked for within
+ * the first HARNESS_CLOSE_SEARCH_MAX_CHARS of the prompt.
+ */
+const humanTextOf = (prompt: string, mayLookPast: boolean): string => {
+  const trimmed = prompt.trimStart();
+  const window = trimmed.slice(0, HARNESS_SCAN_MAX_CHARS);
+  const { kept, unclosed } = withoutElements(window);
+  const stripped = kept.replace(MARKERS, " ");
   const headAt = stripped.search(HEAD);
   const human = headAt === -1 ? stripped : stripped.slice(0, headAt);
+  // THE WINDOW ENDED INSIDE A WRAPPER (M3): its close, and the human text
+  // after it, may lie past the window — the rest is read the same way.
+  const restAt =
+    mayLookPast && headAt === -1 && unclosed !== null && window.length < trimmed.length
+      ? closeAfter(trimmed.slice(0, HARNESS_CLOSE_SEARCH_MAX_CHARS), unclosed)
+      : UNCLOSED;
+  if (restAt !== UNCLOSED) {
+    return `${human} ${humanTextOf(trimmed.slice(restAt), false)}`.replace(/\s+/g, " ").trim();
+  }
   if (human === window && window.length === prompt.length) {
     return prompt;
   }

@@ -17880,7 +17880,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a wrapper cut at the wire bound leaks its words",
     file: `${SCHEMA}/src/harness-turn.ts`,
-    from: "  return at < opening.end ? lower.length : at + close.length;",
+    // RETARGETED (round 4, M3): an unclosed wrapper is UNCLOSED, its close looked for past the window.
+    from: "  return at < opening.end ? UNCLOSED : at + close.length;",
     to: "  return at < opening.end ? opening.end : at + close.length;",
     test: `${SCHEMA}/test/harness-turn.test.ts`,
     because: "a notification sliced to the query bound has no closing tag, and all of it is scored",
@@ -17888,8 +17889,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "stripping a wrapper fuses the words beside it",
     file: `${SCHEMA}/src/harness-turn.ts`,
-    from: "  return kept.join(\" \");",
-    to: "  return kept.join(\"\");",
+    // RETARGETED (round 4, M3): the strip also says which wrapper the text ends inside.
+    from: "  return { kept: kept.join(\" \"), unclosed: null };",
+    to: "  return { kept: kept.join(\"\"), unclosed: null };",
     test: `${SCHEMA}/test/harness-turn.test.ts`,
     because: "\"cache\" and \"key\" either side of a notification become \"cachekey\", a word nobody wrote",
   },
@@ -17936,8 +17938,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the whole turn is scanned, however long",
     file: `${SCHEMA}/src/harness-turn.ts`,
-    from: "  const window = prompt.trimStart().slice(0, HARNESS_SCAN_MAX_CHARS);",
-    to: "  const window = prompt.trimStart();",
+    // RETARGETED (round 4, M3): the trimmed prompt is kept for the look past the window.
+    from: "  const window = trimmed.slice(0, HARNESS_SCAN_MAX_CHARS);",
+    to: "  const window = trimmed;",
     test: `${SCHEMA}/test/harness-turn.test.ts`,
     because: "a pasted log of any size is read whole on every prompt",
   },
@@ -18276,8 +18279,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the harness scan starts inside the leading whitespace",
     file: `${SCHEMA}/src/harness-turn.ts`,
-    from: "  const window = prompt.trimStart().slice(0, HARNESS_SCAN_MAX_CHARS);",
-    to: "  const window = prompt.slice(0, HARNESS_SCAN_MAX_CHARS);",
+    // RETARGETED (round 4, M3): the trimmed prompt is kept for the look past the window.
+    from: "  const trimmed = prompt.trimStart();\n  const window = trimmed.slice(0, HARNESS_SCAN_MAX_CHARS);",
+    to: "  const trimmed = prompt;\n  const window = trimmed.slice(0, HARNESS_SCAN_MAX_CHARS);",
     test: `${SCHEMA}/test/harness-turn.test.ts`,
     because: "a megabyte of pasted blanks fills the window and the human text after it is never read (M5)",
   },
@@ -20105,8 +20109,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a pasted image's marker stays in the prompt",
     file: `${SCHEMA}/src/harness-turn.ts`,
-    from: "  const stripped = withoutElements(window).replace(MARKERS, \" \");",
-    to: "  const stripped = withoutElements(window);",
+    // RETARGETED (round 4, M3): the strip also says which wrapper the text ends inside.
+    from: "  const stripped = kept.replace(MARKERS, \" \");",
+    to: "  const stripped = kept;",
     test: `${SCHEMA}/test/harness-turn.test.ts`,
     because: "\"[Image #1] [Image #2]\" is a prompt with words, and the session's fire is spent on it (round 4, M2)",
   },
@@ -20133,6 +20138,30 @@ export const MUTATIONS: readonly Mutation[
     to: "",
     test: `${SCHEMA}/test/harness-turn.test.ts`,
     because: "\"<command-name>/review</command-name>\" is a prompt about review (round 4, M2)",
+  },
+  {
+    label: "a wrapper the window ends inside wraps the rest, though it closes later",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "    mayLookPast && headAt === -1 && unclosed !== null && window.length < trimmed.length",
+    to: "    false",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "a 37 KB IDE selection swallows \"why does this stripe webhook handler create duplicate charges\" (A17, round 4, M3)",
+  },
+  {
+    label: "the look past the window is taken at every window",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "    return `${human} ${humanTextOf(trimmed.slice(restAt), false)}`.replace(/\\s+/g, \" \").trim();",
+    to: "    return `${human} ${humanTextOf(trimmed.slice(restAt), true)}`.replace(/\\s+/g, \" \").trim();",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "a prompt of many long wrappers re-scans its whole remainder at every window, and the hook's budget goes (round 4, M3)",
+  },
+  {
+    label: "a wrapper's close is looked for in the whole prompt, however long",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "      ? closeAfter(trimmed.slice(0, HARNESS_CLOSE_SEARCH_MAX_CHARS), unclosed)",
+    to: "      ? closeAfter(trimmed, unclosed)",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "a hundred megabytes of paste is lower-cased and searched on every prompt hook (round 4, M3)",
   },
   {
     label: "the connector asks a hub about a content-free prompt",
@@ -20480,7 +20509,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/english-stem.test.ts 4
  * PRINTS: packages/schema/test/evidence-resolution.test.ts 8
  * PRINTS: packages/schema/test/file-ref.test.ts 5
- * PRINTS: packages/schema/test/harness-turn.test.ts 20
+ * PRINTS: packages/schema/test/harness-turn.test.ts 23
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1

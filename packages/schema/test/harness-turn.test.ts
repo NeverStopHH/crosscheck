@@ -260,6 +260,48 @@ describe("the scan is linear and bounded (M2)", () => {
     expect(performance.now() - started).toBeLessThan(SCAN_BUDGET_MS);
   });
 
+  test("round 4, M3: a leading wrapper longer than the window is closed in the whole prompt, and the human's task after it kept", () => {
+    // Arrange — the hold-out's A17: a 37 KB IDE selection, then the question
+    const selection = `<ide_selection>The user selected the lines 1 to 900 from /repo/services/payments/src/webhooks/stripe.ts:\n${"  const order = await createOrder(event.data.object); // TODO\n".repeat(600)}</ide_selection>`;
+    const question = "why does this stripe webhook handler create duplicate charges when the event is retried?";
+    expect(selection.length).toBeGreaterThan(HARNESS_SCAN_MAX_CHARS);
+
+    // Act + Assert
+    expect(humanPromptText(`${selection}\n${question}`)).toBe(question);
+  });
+
+  test("M3: a wrapper after the human text that runs past the window ends at its first close, and both sides are kept", () => {
+    const wrapper = `<agent-message from="a1">${"report line ".repeat(4_000)}</agent-message>`;
+    expect(humanPromptText(`fix the export ${wrapper} and the import`)).toBe("fix the export and the import");
+  });
+
+  test("M3: a wrapper that never closes, in the window or after it, still wraps the rest", () => {
+    const turn = `<ide_selection>${"x ".repeat(HARNESS_SCAN_MAX_CHARS)} why does the export fail`;
+    expect(humanPromptText(turn)).toBe("");
+  });
+
+  test("M3: the look past the window is taken once a prompt, so the scan stays linear", () => {
+    // Arrange — two selections each longer than the window, human words after each
+    const long = (body: string): string => `<ide_selection>${body.repeat(HARNESS_SCAN_MAX_CHARS / body.length + 10)}</ide_selection>`;
+    const turn = `${long("a ")} first question ${long("b ")} second question`;
+
+    // Act + Assert — the second wrapper wraps the rest
+    expect(humanPromptText(turn)).toBe("first question");
+  });
+
+  test("M3: a close past the first mebibyte is not looked for — the wrapper wraps the rest", () => {
+    const turn = `<ide_selection>${"z".repeat(1_100_000)}</ide_selection>\n${HUMAN}`;
+    expect(humanPromptText(turn)).toBe("");
+  });
+
+  test("M3: a megabyte of leading wrapper closed at its very end finishes inside the budget", () => {
+    const turn = `<ide_selection>${"y".repeat(MEGABYTE)}</ide_selection>\n${HUMAN}`;
+    const started = performance.now();
+    const human = humanPromptText(turn);
+    expect(performance.now() - started).toBeLessThan(SCAN_BUDGET_MS);
+    expect(human).toBe(HUMAN);
+  });
+
   test("only a bounded window after the leading whitespace is read", () => {
     const turn = `${" ".repeat(MEGABYTE)}${HUMAN}${"x".repeat(HARNESS_SCAN_MAX_CHARS)} tail`;
     const human = humanPromptText(turn);
