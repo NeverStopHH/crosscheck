@@ -20,7 +20,8 @@ import type { SimHub } from "./sim-hub.ts";
 import type { Run } from "./sim-world.ts";
 
 export interface Verdict {
-  readonly invariant: "I1" | "I2" | "I3" | "I4" | "I5" | "I6";
+  /** `I1u`: records nothing on disk counts, because the disk refused the ledger line AND the marker (review-2 round 8). */
+  readonly invariant: "I1" | "I1u" | "I2" | "I3" | "I4" | "I5" | "I6";
   readonly detail: string;
 }
 
@@ -100,7 +101,12 @@ const fatesOf = (run: Run): Fates => {
   const countedTwice: Run["captured"][number][] = [];
   const neither: Run["captured"][number][] = [];
   let lost = 0;
+  const uncountableIds = new Set(run.uncountable.ids);
   for (const record of run.captured) {
+    if (uncountableIds.has(record.id) && !taken.has(record.id)) {
+      lost += 1;
+      continue;
+    }
     const drops = counted.get(record.id) ?? [];
     const isTaken = taken.has(record.id);
     const isNeverResent = drops.every((drop) => drop.reason === "withheld" || drop.reason === "expired");
@@ -143,6 +149,8 @@ const fateVerdict = (records: readonly Run["captured"][number][], what: string):
  */
 const unnamedRecords = (run: Run): readonly Verdict[] =>
   run.drops
+    // An append refusal (`write-failed`, `short-write`) counts records no spool line ever held.
+    .filter((drop) => drop.reason !== "write-failed" && drop.reason !== "short-write")
     .filter((drop) => drop.reason !== "unparsable" && !isDebtRelease(drop) && !run.oldFlushSteps.has(drop.step))
     .filter((drop) => drop.ids.length !== drop.count)
     .map((drop) => ({
@@ -155,6 +163,14 @@ const accounting = (run: Run): readonly Verdict[] => {
   const fates = fatesOf(run);
   const unnamed = run.drops.filter((drop) => drop.reason === "rejected" && Object.keys(drop.causes).length === 0);
   return [
+    ...(run.uncountable.count > 0
+      ? [
+          {
+            invariant: "I1u" as const,
+            detail: `${String(run.uncountable.count)} record(s) counted nowhere: the disk refused the ledger line and the unrecorded marker`,
+          },
+        ]
+      : []),
     ...fateVerdict(fates.neither, "lost and never counted"),
     ...fateVerdict(fates.countedTwice, "counted twice"),
     ...fateVerdict(fates.takenAndCounted, "counted though the hub holds them"),

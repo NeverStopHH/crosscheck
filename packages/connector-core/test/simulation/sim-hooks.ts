@@ -32,6 +32,18 @@ export interface Crash {
   readonly when: "before" | "after";
 }
 
+/** Hooked writes at..at+count-1 of the step FAIL (ENOSPC/EACCES), and the process lives on (review-2 round 8). */
+export interface IoFail {
+  readonly at: number;
+  readonly count: number;
+}
+
+export const SIM_IO_CODE = "ENOSPC";
+export const isSimIoError = (error: unknown): boolean =>
+  error instanceof Error && (error as { code?: unknown }).code === SIM_IO_CODE && error.message.startsWith("sim io");
+const simIoError = (path: string): Error =>
+  Object.assign(new Error(`sim io: no space left on device, write '${path}'`), { code: SIM_IO_CODE });
+
 /** A record a step appended to a spool: what the invariants call captured. */
 export interface Captured {
   readonly id: string;
@@ -70,6 +82,8 @@ interface HookState {
   home: string | null;
   step: number;
   crash: Crash | null;
+  ioFail: IoFail | null;
+  ioFailed: number;
   writes: number;
   dead: boolean;
   /** The process died right after a ledger append: the one over-count the design accepts. */
@@ -85,6 +99,8 @@ const state: HookState = {
   home: null,
   step: 0,
   crash: null,
+  ioFail: null,
+  ioFailed: 0,
   writes: 0,
   dead: false,
   diedAfterDrop: false,
@@ -105,6 +121,7 @@ const guarded = async <T>(
   isDrop: boolean,
   act: () => Promise<T>,
   landed: (result: T) => void = () => undefined,
+  failed?: () => Promise<T>,
 ): Promise<T> => {
   if (!isScenarioPath(path)) {
     return act();
@@ -113,6 +130,17 @@ const guarded = async <T>(
     throw new SimulatedCrash();
   }
   state.writes += 1;
+  const io = state.ioFail;
+  if (io !== null && state.writes >= io.at && state.writes < io.at + io.count) {
+    state.ioFailed += 1;
+    if (process.env["SIM_TRACE_WRITES"] === "1") {
+      console.log(`[sim-write] step ${String(state.step)} #${String(state.writes)} IO-FAIL ${path.slice(state.home?.length ?? 0)}`);
+    }
+    if (failed !== undefined) {
+      return failed();
+    }
+    throw simIoError(path);
+  }
   if (process.env["SIM_TRACE_WRITES"] === "1") {
     console.log(`[sim-write] step ${String(state.step)} #${String(state.writes)} ${path.slice(state.home?.length ?? 0)}`);
   }
@@ -161,12 +189,17 @@ const capturedOf = (hostSessionKey: string, record: unknown): Captured => {
   };
 };
 
+const hookedWritePrivateFile = (path: string, content: string): Promise<void> =>
+  guarded(path, false, () => realWritePrivateFile(path, content), () => logDebt(path, content));
+
 mock.module(sourceOf("../../src/config/paths.ts"), () => ({
   ...paths,
-  writePrivateFile: (path: string, content: string) =>
-    guarded(path, false, () => realWritePrivateFile(path, content), () => logDebt(path, content)),
+  writePrivateFile: hookedWritePrivateFile,
   removeFile: (path: string) => guarded(path, false, () => realRemoveFile(path)),
 }));
+
+/** Drops whose ledger line AND fallback marker both failed: nothing on disk counts them (review-2 round 8). */
+export const uncountable: { count: number; ids: string[] } = { count: 0, ids: [] };
 
 mock.module(sourceOf("../../src/spool/append.ts"), () => ({
   ...append,
@@ -179,6 +212,12 @@ mock.module(sourceOf("../../src/spool/append.ts"), () => ({
         if (isScenarioPath(home) && result.persisted) {
           state.captured.push(...records.map((record) => capturedOf(hostSessionKey, record)));
         }
+      },
+      // The data-file append failed (EACCES/ENOSPC on the spool): the real
+      // append path counts the batch `write-failed` and answers not persisted.
+      async () => {
+        await realRecordDrop(home, key, paths.sessionSlug(hostSessionKey), records.length, "write-failed", now);
+        return { persisted: false, dropped: records.length };
       },
     ),
 }));
@@ -209,6 +248,22 @@ mock.module(sourceOf("../../src/spool/drops.ts"), () => ({
           state.drops.push({ slug, count, reason, kinds, causes, ids, step: state.step });
         }
       },
+      // The ledger append failed: the real recordDrop falls back to the
+      // whole-file `unrecorded.dropmarker` (a lower bound), and swallows that
+      // write's own failure.
+      async () => {
+        try {
+          await hookedWritePrivateFile(
+            paths.spoolUnrecordedDropsPath(home, key),
+            `${JSON.stringify({ at: now.toISOString(), count, reason })}\n`,
+          );
+          state.droppedThisStep = true;
+          state.drops.push({ slug, count, reason, kinds, causes, ids, step: state.step });
+        } catch {
+          uncountable.count += count;
+          uncountable.ids.push(...ids);
+        }
+      },
     );
   },
 }));
@@ -219,13 +274,17 @@ export const beginScenario = (home: string): void => {
   state.captured = [];
   state.drops = [];
   state.debts = [];
+  uncountable.count = 0;
+  uncountable.ids = [];
   beginStep(0, null);
 };
 
-/** One step begins; `crash`, when given, kills it at that hooked write. */
-export const beginStep = (step: number, crash: Crash | null): void => {
+/** One step begins; `crash`, when given, kills it at that hooked write; `ioFail` fails writes and lets it live. */
+export const beginStep = (step: number, crash: Crash | null, ioFail: IoFail | null = null): void => {
   state.step = step;
   state.crash = crash;
+  state.ioFail = ioFail;
+  state.ioFailed = 0;
   state.writes = 0;
   state.dead = false;
   state.diedAfterDrop = false;
@@ -236,10 +295,23 @@ export const beginStep = (step: number, crash: Crash | null): void => {
  * The step is over: whatever died is a new process from here on. `mayOverCount`
  * is the one window the design accepts counting twice in (spool/flush.ts): the
  * process died after a ledger append and before the cursor write past it.
+ * `ioFailed` counts the writes the step's IO fault failed.
  */
-export const endStep = (): { readonly died: boolean; readonly mayOverCount: boolean } => {
-  const outcome = { died: state.dead, mayOverCount: state.dead && (state.diedAfterDrop || state.droppedThisStep) };
+export const endStep = (): {
+  readonly died: boolean;
+  readonly mayOverCount: boolean;
+  readonly ioFailed: number;
+  readonly droppedThisStep: boolean;
+} => {
+  const outcome = {
+    died: state.dead,
+    mayOverCount: state.dead && (state.diedAfterDrop || state.droppedThisStep),
+    ioFailed: state.ioFailed,
+    droppedThisStep: state.droppedThisStep,
+  };
   state.crash = null;
+  state.ioFail = null;
+  state.ioFailed = 0;
   state.dead = false;
   state.diedAfterDrop = false;
   state.droppedThisStep = false;

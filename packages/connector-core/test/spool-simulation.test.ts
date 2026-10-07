@@ -22,6 +22,13 @@
  * Each seed that review found failing is a fixed scenario too; one still open
  * is marked `failing` with the fix it waits for, and the sweep skips it.
  *
+ * Round 9 adopted the round-8 review's: a disk that refuses writes (`io`), a
+ * night the hub reaps through, a week away, a conversation woken, connector-
+ * claude's state recovery and a heartbeat with its heal (`sleep`), and two
+ * processes of one conversation around set_intent, SessionStart and SessionEnd
+ * (`focus`). SIM_ADD picks the generator (`shipped`, `io`, `sleep`, `focus`,
+ * `all`); its probes and failing seeds are fixed scenarios below.
+ *
  * SIM_SEEDS and SIM_SEED_BASE widen or move the sweep: `SIM_SEEDS=2000 bun test
  * test/spool-simulation.test.ts`. Every run prints the over-count: records the
  * ledger calls lost that the hub holds.
@@ -34,12 +41,17 @@ import { accountingStats, checkInvariants } from "./simulation/sim-invariants.ts
 import type { Verdict } from "./simulation/sim-invariants.ts";
 import { startSimHub } from "./simulation/sim-hub.ts";
 import type { SimHub } from "./simulation/sim-hub.ts";
-import { describeEvent, execute, scenarioOf } from "./simulation/sim-world.ts";
-import type { Run, SimEvent } from "./simulation/sim-world.ts";
+import { describeEvent, execute, GENERATORS, scenarioOf } from "./simulation/sim-world.ts";
+import type { GeneratorName, Run, SimEvent } from "./simulation/sim-world.ts";
 import { makeRepo } from "./helpers.ts";
 
 const SEEDS = Number(process.env["SIM_SEEDS"] ?? "300");
 const SEED_BASE = Number(process.env["SIM_SEED_BASE"] ?? "1");
+const GENERATOR_NAME = process.env["SIM_ADD"] ?? "shipped";
+if (!(GENERATOR_NAME in GENERATORS)) {
+  throw new Error(`SIM_ADD names no generator: ${GENERATOR_NAME} (${Object.keys(GENERATORS).join(", ")})`);
+}
+const GENERATOR = GENERATORS[GENERATOR_NAME as GeneratorName];
 /** A sweep stops at this many failing seeds: each is shrunk, and that costs runs. */
 const MAX_REPORTED = 3;
 /** Re-runs a shrink may spend on one failing scenario. */
@@ -101,24 +113,52 @@ const said = (verdicts: readonly Verdict[]): readonly string[] =>
   verdicts.map((verdict) => `${verdict.invariant}: ${verdict.detail}`);
 
 /**
- * Seeds still failing, and the fix each waits for: the sweep skips them, and
- * their fixed scenarios below are marked `failing` until that fix lands.
+ * Seeds still failing, as `generator:seed`, and the fix each waits for: the
+ * sweep skips them, and their fixed scenarios below are marked `failing` until
+ * that fix lands.
  */
-const OPEN: ReadonlyMap<number, string> = new Map<number, string>([]);
+const OPEN: ReadonlyMap<string, string> = new Map<string, string>([
+  ["sleep:3", "M1+M2+L4"],
+  ["sleep:365", "M1+M2+L4"],
+  ["sleep:935", "M1+M2+L4"],
+  ["sleep:936", "M1+M2+L4"],
+  ["sleep:1955", "M1+M2+L4"],
+  ["focus:361", "M1+M2+L4"],
+  ["focus:662", "M1+M2+L4"],
+  ["focus:1811", "M1+M2+L4"],
+  ["focus:18", "L1"],
+  ["focus:313", "L1"],
+  ["focus:399", "L1"],
+  ["focus:1786", "L1"],
+  ["focus:1791", "L1"],
+]);
+
+/**
+ * DOCUMENTED RESIDUAL CLASSES: the sweep counts and prints them, and does not
+ * fail on them (docs/1.0/loss-accounting.md).
+ *   I1u — a drop the disk refused to write down, the ledger line and its
+ *         fallback marker both (ENOSPC or EACCES on every write): nothing on
+ *         that disk can count it.
+ */
+const RESIDUAL: ReadonlySet<Verdict["invariant"]> = new Set(["I1u"]);
+
+const unexplained = (verdicts: readonly Verdict[]): readonly Verdict[] =>
+  verdicts.filter((verdict) => !RESIDUAL.has(verdict.invariant));
 
 describe("the spool, simulated", () => {
   test(
-    `${String(SEEDS)} seeded scenarios keep I1–I6`,
+    `${String(SEEDS)} seeded scenarios (${GENERATOR_NAME}) keep I1–I6`,
     async () => {
       const started = Date.now();
       const failing: string[] = [];
+      const residual: string[] = [];
       const reports: string[] = [];
-      const totals = { seeds: 0, overCountSeeds: 0, overCounted: 0, lost: 0, captured: 0 };
+      const totals = { seeds: 0, overCountSeeds: 0, overCounted: 0, lost: 0, captured: 0, uncountable: 0 };
       for (let seed = SEED_BASE; seed < SEED_BASE + SEEDS; seed += 1) {
-        if (OPEN.has(seed)) {
+        if (OPEN.has(`${GENERATOR_NAME}:${String(seed)}`)) {
           continue;
         }
-        const events = scenarioOf(seed);
+        const events = scenarioOf(seed, GENERATOR);
         const { run, verdicts } = await verdictsOf(events);
         const numbers = accountingStats(run);
         totals.seeds += 1;
@@ -126,16 +166,27 @@ describe("the spool, simulated", () => {
         totals.lost += numbers.lost;
         totals.overCounted += numbers.overCounted;
         totals.overCountSeeds += numbers.overCounted > 0 ? 1 : 0;
-        if (verdicts.length > 0) {
-          failing.push(`${String(seed)}:${[...new Set(verdicts.map((verdict) => verdict.invariant))].join("+")}`);
+        totals.uncountable += run.uncountable.count;
+        const label = (of: readonly Verdict[]) =>
+          `${String(seed)}:${[...new Set(of.map((verdict) => verdict.invariant))].join("+")}`;
+        if (verdicts.length > unexplained(verdicts).length) {
+          residual.push(label(verdicts.filter((verdict) => RESIDUAL.has(verdict.invariant))));
+        }
+        if (unexplained(verdicts).length > 0) {
+          failing.push(label(unexplained(verdicts)));
           if (reports.length < MAX_REPORTED) {
             reports.push(await reportOf(seed, events));
           }
         }
       }
-      console.log(`[spool-simulation] ${String(totals.seeds)} seeds from ${String(SEED_BASE)} in ${String(Date.now() - started)} ms`);
+      console.log(
+        `[spool-simulation] ${String(totals.seeds)} seeds (${GENERATOR_NAME}) from ${String(SEED_BASE)} in ${String(Date.now() - started)} ms`,
+      );
       console.log(
         `[spool-simulation] over-count: ${String(totals.overCountSeeds)} seeds, ${String(totals.overCounted)} records counted lost that the hub holds; captured ${String(totals.captured)}, lost ${String(totals.lost)}`,
+      );
+      console.log(
+        `[spool-simulation] residual ${String(residual.length)} (${String(totals.uncountable)} records the disk let nothing count): ${residual.join(" ")}`,
       );
       console.log(`[spool-simulation] failing ${String(failing.length)}: ${failing.join(" ")}`);
       expect(reports.join("\n\n")).toBe("");
@@ -148,7 +199,7 @@ const start = (c: number): SimEvent => ({ kind: "start", c });
 const edit = (c: number): SimEvent => ({ kind: "edit", c });
 const end = (c: number): SimEvent => ({ kind: "end", c });
 const hubEnd = (c: number): SimEvent => ({ kind: "hubEnd", c });
-const fault = (kind: "records503" | "recordsLate" | "registersDown", count: number, after: number): SimEvent => ({
+const fault = (kind: "records503" | "recordsLate" | "registersDown" | "endsLate", count: number, after: number): SimEvent => ({
   kind: "fault",
   fault: kind,
   count,
@@ -446,6 +497,195 @@ const ROUND_7: readonly Found[] = [
   },
 ];
 
+const NIGHT: SimEvent = { kind: "night" };
+const VACATION: SimEvent = { kind: "vacation" };
+const wake = (c: number): SimEvent => ({ kind: "wake", c });
+const recover = (c: number): SimEvent => ({ kind: "recover", c });
+const beat = (c: number): SimEvent => ({ kind: "beat", c });
+const straggle = (c: number): SimEvent => ({ kind: "straggle", c });
+const ioFail = (at: number, count: number): SimEvent => ({ kind: "ioFail", at, count });
+/** Conversation 1 starting and ending `count` times: each SessionEnd writes its life into the refused-lives note (M1). */
+const manyEnds = (count: number): readonly SimEvent[] => Array.from({ length: count }, () => [start(1), end(1)]).flat();
+const noDrops = (run: Run): boolean => run.drops.length === 0;
+const counted = (run: Run): boolean => run.uncountable.count > 0;
+
+const H1 = "H1 (a heartbeat revives a reaped session)";
+const H2 = "H2 (refused-lives never evicts an entry that owns leftovers)";
+const EPOCHS = "M1+M2+L4 (epochs across a reap, a recovery and a resume)";
+const M3 = "M3 (the refused life written down before the end goes out)";
+const L1 = "L1 (two concurrent set_intents on one conversation)";
+
+/**
+ * WHAT THE ROUND-8 REVIEW FOUND (review-2 round 8): its probes, and every seed
+ * its `io`, `sleep` and `focus` sweeps found failing, shrunk. The `io` seeds
+ * are the documented residual I1u — a drop the disk refused to write down
+ * anywhere — and each asserts that this, and only this, is what happened.
+ */
+const ROUND_8: readonly Found[] = [
+  {
+    name: "probe N1: a night — the hub reaps the sleeping session — then the conversation goes on",
+    events: [start(0), edit(0), intent(0, "blocked"), NIGHT, edit(0), intent(0, "done"), edit(0), end(0)],
+  },
+  {
+    name: "probe N2: a night, then a SessionStart re-fire and set_intent",
+    events: [start(0), edit(0), NIGHT, start(0), intent(0, "reviewing"), edit(0)],
+  },
+  {
+    name: "probe H1: the first hook after a night beats before anything revives the reaped life, and a parallel hook's record of it goes",
+    events: [start(0), edit(0), NIGHT, beat(0), straggle(0), edit(0)],
+    shows: noDrops,
+    open: H1,
+  },
+  {
+    name: "probe H0 (control for H1): the same without the beat — the record revives the reaped life",
+    events: [start(0), edit(0), NIGHT, straggle(0), edit(0)],
+    shows: noDrops,
+  },
+  {
+    name: "probe E1: a resumed life reaped while the laptop slept a week, resumed again: one epoch, no position issued twice",
+    events: [start(0), edit(0), edit(0), end(0), start(0), edit(0), edit(0), edit(0), VACATION, start(1), wake(0), start(0), edit(0), edit(0), edit(0), edit(0)],
+    open: EPOCHS,
+  },
+  {
+    name: "probe E2: the same life recovered by a PostToolUse after the week (connector-claude recoverState)",
+    events: [start(0), edit(0), edit(0), end(0), start(0), edit(0), edit(0), VACATION, start(1), wake(0), recover(0), edit(0)],
+    open: EPOCHS,
+  },
+  {
+    name: "probe E3: a first life reaped while asleep, resumed: one epoch",
+    events: [start(0), edit(0), edit(0), VACATION, start(1), wake(0), start(0), edit(0), edit(0)],
+    open: EPOCHS,
+  },
+  {
+    name: "probe E4: a first life reaped while asleep, recovered by a PostToolUse",
+    events: [start(0), edit(0), edit(0), VACATION, start(1), wake(0), recover(0), edit(0)],
+    open: EPOCHS,
+  },
+  {
+    name: "probe C1: a refused life's straggler, 64 later session ends, then a week",
+    events: [start(0), edit(0), hubEnd(0), edit(0), straggle(0), ...manyEnds(64), age(0), start(2)],
+    open: H2,
+  },
+  {
+    name: "probe C0 (control for C1): the same with 8 later session ends",
+    events: [start(0), edit(0), hubEnd(0), edit(0), straggle(0), ...manyEnds(8), age(0), start(2)],
+  },
+  {
+    name: "probe L1: SessionEnd's end committed but its answer lost, then a hook still in flight appends, and a successor flushes",
+    events: [start(0), edit(0), fault("endsLate", 1, 0), end(0), straggle(0), start(1), edit(1)],
+    open: M3,
+  },
+  {
+    name: "probe L0 (control for L1): the same end heard",
+    events: [start(0), edit(0), end(0), straggle(0), start(1), edit(1)],
+  },
+  {
+    name: "sleep seed 3 (I3): a first life asleep a week, resumed after another conversation started",
+    events: [start(0), VACATION, start(2), wake(0), start(0)],
+    open: EPOCHS,
+  },
+  {
+    name: "sleep seed 365 (I3): a recovery after a crashed resume of an ended life",
+    events: [start(0), end(0), crash(2, "after"), start(0), recover(0)],
+    open: EPOCHS,
+  },
+  {
+    name: "sleep seed 935 (I3): a recovery after the end of a life the hub ended",
+    events: [start(0), crash(7, "before"), hubEnd(0), edit(0), end(0), recover(0)],
+    open: EPOCHS,
+  },
+  {
+    name: "sleep seed 936 (I3): a recovery after a resume killed after its third write",
+    events: [start(0), end(0), crash(3, "after"), start(0), recover(0)],
+    open: EPOCHS,
+  },
+  {
+    name: "sleep seed 1955 (I3): a recovery after a resume killed before its third write",
+    events: [start(0), end(0), crash(3, "before"), start(0), recover(0)],
+    open: EPOCHS,
+  },
+  {
+    name: "focus seed 361 (I3, L4): SessionEnd beside a re-fire behind a slow hub",
+    events: [start(1), slow(600, 2, 1), edit(1), fault("records503", 2, 1), par({ kind: "flush", c: 1 }, intent(1, "done")), par(end(1), start(1))],
+    open: EPOCHS,
+    racy: true,
+  },
+  {
+    name: "focus seed 662 (I3, L4): a start beside an end, twice, behind a slow hub",
+    events: [
+      par(start(0), end(0)),
+      slow(1700, 1, 2),
+      par(start(0), { kind: "flush", c: 0 }),
+      fault("recordsLate", 2, 1),
+      edit(0),
+      par(end(0), start(0)),
+      edit(0),
+    ],
+    open: EPOCHS,
+    racy: true,
+  },
+  {
+    name: "focus seed 1811 (I3, L4): the generated scenario",
+    events: scenarioOf(1811, GENERATORS.focus),
+    open: EPOCHS,
+    racy: true,
+  },
+  {
+    name: "focus seed 18 (I4): two set_intents of one conversation at once behind a slow hub",
+    events: [start(0), par(intent(0, "blocked"), start(0)), slow(1700, 1, 1), par(intent(0, "done"), intent(0, "blocked"))],
+    open: L1,
+    racy: true,
+  },
+  {
+    name: "focus seed 313 (I4): the generated scenario",
+    events: scenarioOf(313, GENERATORS.focus),
+    open: L1,
+    racy: true,
+  },
+  {
+    name: "focus seed 399 (I4): SessionEnd beside set_intent behind a slow hub",
+    events: [start(0), par(intent(0, "done"), { kind: "flush", c: 0 }), slow(1400, 2, 0), par(end(0), intent(0, "implementing"))],
+    open: L1,
+    racy: true,
+  },
+  {
+    name: "focus seed 1786 (I4): two set_intents of one conversation at once, answers lost",
+    events: [start(0), par(edit(0), intent(0, "done")), fault("recordsLate", 2, 2), edit(0), par(intent(0, "implementing"), intent(0, "done"))],
+    open: L1,
+    racy: true,
+  },
+  {
+    name: "focus seed 1791 (I4): set_intent beside a re-fire and an end behind a slow hub",
+    events: [
+      start(0),
+      par(start(0), intent(0, "blocked")),
+      slow(600, 2, 2),
+      par(intent(0, "implementing"), start(0)),
+      par(end(0), intent(0, "implementing")),
+    ],
+    open: L1,
+    racy: true,
+  },
+  ...[
+    { seed: 112, events: [start(1), ioFail(3, 6), hubEnd(1), edit(1)] },
+    { seed: 252, events: [ioFail(8, 17), { kind: "refuseWc", c: 1 } as SimEvent, par(start(1), edit(1))] },
+    {
+      seed: 894,
+      events: [start(0), start(2), fault("records503", 2, 1), edit(2), hubEnd(2), edit(0), edit(2), ioFail(1, 5), { kind: "oldFlush", c: 2 } as SimEvent],
+    },
+    { seed: 924, events: [{ kind: "refuseWc", c: 0 } as SimEvent, start(0), ioFail(3, 8), edit(0)] },
+    { seed: 940, events: [start(1), hubEnd(1), ioFail(5, 29), par(edit(1), end(0))] },
+    { seed: 950, events: [start(0), slow(1400, 2, 2), hubEnd(0), start(2), edit(0), edit(2), ioFail(3, 29), edit(0)] },
+    { seed: 1022, events: [start(0), hubEnd(0), ioFail(4, 11), edit(0)] },
+    { seed: 1359, events: [start(2), ioFail(5, 14), hubEnd(2), edit(2)] },
+    { seed: 1957, events: [crash(5, "before"), start(0), ioFail(4, 7), edit(0)] },
+  ].map(({ seed, events }) => ({
+    name: `io seed ${String(seed)} (residual I1u): a drop the disk refused to write down, and nothing else`,
+    events,
+    shows: counted,
+  })),
+];
+
 /**
  * EVERY KIND OF DROP NAMES ITS RECORDS (review-2 round 8, M4): the per-record
  * I1 needs each drop the connector can write to occur at least once — an
@@ -495,6 +735,21 @@ describe("what the round-7 review's sweep found, as fixed scenarios", () => {
       async () => {
         const { verdicts } = await verdictsOf(found.events);
         expect(said(verdicts)).toEqual([]);
+      },
+      PROBE_TIMEOUT_MS,
+    );
+  }
+});
+
+describe("what the round-8 review found, as fixed scenarios", () => {
+  for (const found of ROUND_8) {
+    const runner = found.open === undefined ? test : found.racy === true ? test.skip : test.failing;
+    runner(
+      found.open === undefined ? found.name : `${found.name} — open until ${found.open}`,
+      async () => {
+        const { run, verdicts } = await verdictsOf(found.events);
+        expect(said(unexplained(verdicts))).toEqual([]);
+        expect(found.shows?.(run) ?? true).toBe(true);
       },
       PROBE_TIMEOUT_MS,
     );

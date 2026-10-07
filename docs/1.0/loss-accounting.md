@@ -515,6 +515,25 @@ like a send while it was live. At production timing the sweep found the mirror i
 parallel SessionStart restarted after the other process found it ended). A send counts as into a live conversation
 now only when that conversation was live on both sides of the step.
 
+**The simulation, extended again** (review-2 round 9). The round-8 review added five things, and they are part of the
+simulation now, each a generator `SIM_ADD` picks:
+
+- `io`: a disk that refuses a run of a step's writes (ENOSPC, EACCES), with the process living on, or exiting on the
+  error;
+- `sleep`: a night the hub reaps through (8 h), a week away for every file AND the hub, a conversation woken after it,
+  connector-claude's state recovery on a PostToolUse, and a heartbeat with its heal;
+- `focus`: two processes of one conversation around set_intent, SessionStart and SessionEnd, behind a slow hub, with
+  an end the hub committed whose answer was lost.
+
+An end the connector SENT counts as one it may know about, heard or not: I2 holds it to that. The review's probes (a
+night with a heartbeat, a week asleep then a resume or a recovery, 64 SessionEnds, an end committed unheard) and every
+seed its sweeps failed are fixed scenarios. Each one still open names the fix it waits for, and the sweep skips its
+seed.
+
+One class is a documented residual, I1u, and the sweep counts it without failing. It is a drop the disk refused to
+write down anywhere: the ledger line and its fallback marker both failed, so nothing on that disk can count it. Each
+`io` seed that found it is a fixed scenario asserting that this, and nothing else, happened.
+
 **Three clocks that were one** (review-2 round 8, H1 and H2). The refused-lives note dropped an entry
 `MAX_SPOOL_AGE_DAYS` after it was written. A flush reads a silent host session as abandoned after the same span. Reap
 expired a spool whose data file was that old. So when a host died:

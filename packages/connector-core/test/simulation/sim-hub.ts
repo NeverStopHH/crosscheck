@@ -46,6 +46,8 @@ export interface Dials {
   registersDown: Dial;
   /** Fixed scenarios only: record POSTs whose records reach the hub as a kind it does not know, so it ignores them. */
   ignored: Dial;
+  /** Session-end POSTs forwarded and committed, their answer lost: the connector times out (review-2 round 8). */
+  endsLate: Dial;
   /** Conversations (base life ids) whose work_context records the hub is made to refuse, every time. */
   readonly wcRefusedFor: Set<string>;
 }
@@ -159,9 +161,12 @@ export const startSimHub = async (): Promise<SimHub> => {
     recordsLate: idle(),
     registersDown: idle(),
     ignored: idle(),
+    endsLate: idle(),
     wcRefusedFor: new Set(),
   };
   const deliveries: Delivery[] = [];
+  /** Sessions the connector SENT an end for, heard or not: it can know they may have ended (review-2 round 8). */
+  const sentEnded = new Set<string>();
   /** Envelopes the hub has taken, whatever the connector heard. */
   const takenIds = new Set<string>();
   const clock = { step: 0 };
@@ -191,7 +196,7 @@ export const startSimHub = async (): Promise<SimHub> => {
     answerLost: boolean,
     step: number,
   ): readonly Delivery[] => {
-    const known = new Set(toldEnded);
+    const known = new Set([...toldEnded, ...sentEnded]);
     return results.map((result) => {
       const record = wire[result.index] ?? {};
       const bodySession = bodySessionOf(record);
@@ -296,6 +301,14 @@ export const startSimHub = async (): Promise<SimHub> => {
         return unavailable("sim 503");
       }
       const body = request.method === "GET" ? undefined : await request.arrayBuffer();
+      const endOf = request.method === "POST" ? /^\/api\/sessions\/([^/]+)\/end$/.exec(pathname) : null;
+      if (endOf?.[1] !== undefined) {
+        sentEnded.add(decodeURIComponent(endOf[1]));
+      }
+      if (endOf !== null && trips(dials.endsLate)) {
+        await forward(request, pathname, search, body);
+        return unavailable("sim late end", HTTP_GATEWAY_TIMEOUT);
+      }
       const answer = await forward(request, pathname, search, body);
       if (request.method === "POST" && pathname === "/api/sessions" && trips(dials.slow)) {
         await sleep(dials.slow.ms);
@@ -340,6 +353,7 @@ export const calmDials = (hub: SimHub): void => {
   hub.dials.recordsLate = idle();
   hub.dials.registersDown = idle();
   hub.dials.ignored = idle();
+  hub.dials.endsLate = idle();
 };
 
 /** A scenario starts with every dial at rest and nothing logged. */

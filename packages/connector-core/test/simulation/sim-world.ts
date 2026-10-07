@@ -27,6 +27,7 @@ import { join } from "node:path";
 
 import { PROTOCOL_VERSION, SessionStatusSchema } from "@crosscheck/schema";
 import type { SeqField } from "@crosscheck/schema";
+import { reapStaleSessions } from "../../../server/src/services/sessions.ts";
 
 import {
   HTTP_TIMEOUT_MS,
@@ -43,14 +44,15 @@ import {
 } from "../../src/constants.ts";
 import { hookBudget } from "../../src/config/hook-budget.ts";
 import { repoKey, sessionSlug, sessionStatePath, spoolDir } from "../../src/config/paths.ts";
-import { targetRecord, withProducer } from "../../src/capture/records.ts";
+import { targetRecord, UNKNOWN_DEVELOPER_ID, withProducer, workContextRecord } from "../../src/capture/records.ts";
 import type { Producer } from "../../src/capture/records.ts";
 import { seqAt, withSeq } from "../../src/capture/seq.ts";
 import type { HubContext } from "../../src/http/client.ts";
 import { endSession, postRecords } from "../../src/http/hub.ts";
 import { endSessionFlow } from "../../src/flows/end-session.ts";
 import { sessionHealer } from "../../src/flows/heal-session.ts";
-import { fallbackWorkContextTitle, registerSessionFlow } from "../../src/flows/register-session.ts";
+import { heartbeatMaybe } from "../../src/flows/heartbeat.ts";
+import { fallbackWorkContextTitle, registerSessionFlow, registerSessionLadder } from "../../src/flows/register-session.ts";
 import { ACP_CONNECTOR, guaranteeDeclarationFor } from "../../src/guarantees/declarations.ts";
 import { writeIntent } from "../../src/mcp/tools/intent-write.ts";
 import { appendRecords } from "../../src/spool/append.ts";
@@ -61,10 +63,26 @@ import { flushSpool } from "../../src/spool/flush.ts";
 import { reapSpool } from "../../src/spool/reap.ts";
 import { rejectCauseOf } from "../../src/spool/reject-cause.ts";
 import { reapStaleSessionStates } from "../../src/state/session-reap.ts";
-import { allocateSeq, readSessionState, updateSessionState } from "../../src/state/session-state.ts";
+import {
+  allocateSeq,
+  claimSessionState,
+  deriveSessionState,
+  readSessionState,
+  updateSessionState,
+  workContextIdFor,
+} from "../../src/state/session-state.ts";
 import { makeHome } from "../helpers.ts";
-import { beginScenario, beginStep, endScenario, endStep, scenarioLog, SimulatedCrash } from "./sim-hooks.ts";
-import type { Captured, Crash, DebtWrite, DropCall } from "./sim-hooks.ts";
+import {
+  beginScenario,
+  beginStep,
+  endScenario,
+  endStep,
+  isSimIoError,
+  scenarioLog,
+  SimulatedCrash,
+  uncountable,
+} from "./sim-hooks.ts";
+import type { Captured, Crash, DebtWrite, DropCall, IoFail } from "./sim-hooks.ts";
 import { calmDials, resetHub } from "./sim-hub.ts";
 import type { Delivery, SimHub } from "./sim-hub.ts";
 
@@ -99,7 +117,7 @@ export type SimEvent =
   | { readonly kind: "refuseWc"; readonly c: number }
   | {
       readonly kind: "fault";
-      readonly fault: "records503" | "recordsLate" | "registersDown" | "slow";
+      readonly fault: "records503" | "recordsLate" | "registersDown" | "slow" | "endsLate";
       readonly count: number;
       /** Calls of that kind that go through before the first one fails. */
       readonly after: number;
@@ -114,7 +132,19 @@ export type SimEvent =
   /** Fixed scenarios only: a parallel hook that read the state before a heal appends one target of the BASE life. */
   | { readonly kind: "straggle"; readonly c: number }
   /** Fixed scenarios only: the hub ignores the records of the next `count` record POSTs (a kind it does not know). */
-  | { readonly kind: "ignore"; readonly count: number };
+  | { readonly kind: "ignore"; readonly count: number }
+  /** The next actor step's hooked writes at..at+count-1 fail (ENOSPC/EACCES); the process lives on (review-2 round 8). */
+  | { readonly kind: "ioFail"; readonly at: number; readonly count: number }
+  /** A night passes for everyone (a laptop asleep 8 h): files age 8 h, the hub reaps every silent session. */
+  | { readonly kind: "night" }
+  /** A vacation (asleep 8 days, or a clock stepped 8 days ahead): files age 8 days, the hub reaps; nobody is live until woken. */
+  | { readonly kind: "vacation" }
+  /** An abandoned or sleeping conversation is back: a resume a week later, a laptop woken. */
+  | { readonly kind: "wake"; readonly c: number }
+  /** A live host's PostToolUse finds no state (reaped while it slept, or a reload's SessionEnd) and recovers, as connector-claude does. */
+  | { readonly kind: "recover"; readonly c: number }
+  /** A PostToolUse heartbeat, its refusal healed (connector-claude hooks/heal.ts onRefusedHeartbeat). */
+  | { readonly kind: "beat"; readonly c: number };
 
 /** mulberry32: a 32-bit seed, a stream of [0, 1). Small, fast and the same everywhere. */
 export const prng = (seed: number): (() => number) => {
@@ -149,10 +179,81 @@ const WEIGHTS: readonly (readonly [SimEvent["kind"], number])[] = [
 const PAR_KINDS: readonly SimEvent["kind"][] = ["edit", "edit", "edit", "flush", "intent", "end", "start"];
 const SLOW_MS: readonly number[] = [600, 1400, 1700];
 
-const pick = (random: () => number): SimEvent["kind"] => {
-  const total = WEIGHTS.reduce((sum, [, weight]) => sum + weight, 0);
+const FAULTS = ["records503", "recordsLate", "registersDown", "slow"] as const;
+
+/** The events a connector process plays: the only ones an armed crash can kill. */
+const ACTOR_EVENTS: ReadonlySet<SimEvent["kind"]> = new Set(["start", "edit", "flush", "intent", "end", "oldFlush"]);
+
+/**
+ * A family of scenarios: the event weights, the faults and `par` pairs to draw
+ * from, how long a scenario runs, and how often a `par`'s second side is the
+ * SAME conversation. One drawing routine serves every family, so a seed of
+ * each replays draw for draw.
+ */
+interface Generator {
+  /** Mixed into the seed, so two families' seed N are different scenarios. */
+  readonly seedMix: number;
+  /** The most events past the first six. */
+  readonly extraLength: number;
+  readonly weights: readonly (readonly [SimEvent["kind"], number])[];
+  readonly faults: readonly Extract<SimEvent, { kind: "fault" }>["fault"][];
+  readonly parKinds: readonly SimEvent["kind"][];
+  /** Chance a `par`'s second side is its first side's conversation; 0 draws nothing for it. */
+  readonly sameConversation: number;
+}
+
+/** The round-7 review's generator, draw for draw, so its seeds replay here. */
+const SHIPPED: Generator = {
+  seedMix: 0,
+  extraLength: 16,
+  weights: WEIGHTS,
+  faults: FAULTS,
+  parKinds: PAR_KINDS,
+  sameConversation: 0,
+};
+
+/** What the round-8 review added to the shipped weights (review-2 round 8). */
+const IO_WEIGHTS: readonly (readonly [SimEvent["kind"], number])[] = [["ioFail", 10]];
+const SLEEP_WEIGHTS: readonly (readonly [SimEvent["kind"], number])[] = [
+  ["night", 4],
+  ["vacation", 2],
+  ["wake", 6],
+  ["recover", 4],
+];
+/** Two processes of one conversation around set_intent, SessionStart and SessionEnd, behind a slow hub. */
+const FOCUS_WEIGHTS: readonly (readonly [SimEvent["kind"], number])[] = [
+  ["par", 45],
+  ["fault", 10],
+];
+const FOCUS_PAR_KINDS: readonly SimEvent["kind"][] = ["intent", "intent", "start", "start", "end", "edit", "flush"];
+
+/**
+ * The round-8 review's generators, draw for draw: `io`, `sleep`, `focus`, and
+ * `all` (io + sleep). Focus also draws an end committed whose answer is lost.
+ */
+const extended = (added: readonly (readonly [SimEvent["kind"], number])[], focus: boolean = false): Generator => ({
+  seedMix: 0x5eed8,
+  extraLength: 20,
+  weights: [...WEIGHTS, ...added],
+  faults: focus ? [...FAULTS, "endsLate"] : FAULTS,
+  parKinds: focus ? FOCUS_PAR_KINDS : PAR_KINDS,
+  sameConversation: focus ? 0.8 : 0,
+});
+
+export const GENERATORS = {
+  shipped: SHIPPED,
+  io: extended(IO_WEIGHTS),
+  sleep: extended(SLEEP_WEIGHTS),
+  focus: extended(FOCUS_WEIGHTS, true),
+  all: extended([...IO_WEIGHTS, ...SLEEP_WEIGHTS]),
+} as const;
+
+export type GeneratorName = keyof typeof GENERATORS;
+
+const pick = (random: () => number, weights: Generator["weights"]): SimEvent["kind"] => {
+  const total = weights.reduce((sum, [, weight]) => sum + weight, 0);
   let roll = random() * total;
-  for (const [kind, weight] of WEIGHTS) {
+  for (const [kind, weight] of weights) {
     roll -= weight;
     if (roll < 0) {
       return kind;
@@ -161,19 +262,11 @@ const pick = (random: () => number): SimEvent["kind"] => {
   return "edit";
 };
 
-const FAULTS = ["records503", "recordsLate", "registersDown", "slow"] as const;
-
-/** The events a connector process plays: the only ones an armed crash can kill. */
-const ACTOR_EVENTS: ReadonlySet<SimEvent["kind"]> = new Set(["start", "edit", "flush", "intent", "end", "oldFlush"]);
-
-/**
- * The scenario a seed stands for: 1–3 conversations, 6–21 events. The
- * round-7 review's generator, draw for draw, so its seeds replay here.
- */
-export const scenarioOf = (seed: number): readonly SimEvent[] => {
-  const random = prng(seed);
+/** The scenario a seed stands for in a family: 1–3 conversations, six events and up to `extraLength` more. */
+export const scenarioOf = (seed: number, generator: Generator = SHIPPED): readonly SimEvent[] => {
+  const random = prng(seed ^ generator.seedMix);
   const conversations = 1 + Math.floor(random() * 3);
-  const length = 6 + Math.floor(random() * 16);
+  const length = 6 + Math.floor(random() * generator.extraLength);
   const started = new Set<number>();
   const actorOf = (kind: SimEvent["kind"], c: number): SimEvent =>
     kind === "intent"
@@ -181,13 +274,13 @@ export const scenarioOf = (seed: number): readonly SimEvent[] => {
       : ({ kind, c } as SimEvent);
   return Array.from({ length }, (): SimEvent => {
     const c = Math.floor(random() * conversations);
-    const kind = started.has(c) ? pick(random) : "start";
+    const kind = started.has(c) ? pick(random, generator.weights) : "start";
     started.add(c);
     switch (kind) {
       case "intent":
         return { kind, c, status: STATUSES[Math.floor(random() * STATUSES.length)] ?? "implementing" };
       case "fault": {
-        const fault = FAULTS[Math.floor(random() * FAULTS.length)] ?? "records503";
+        const fault = generator.faults[Math.floor(random() * generator.faults.length)] ?? "records503";
         return {
           kind,
           fault,
@@ -198,10 +291,16 @@ export const scenarioOf = (seed: number): readonly SimEvent[] => {
       }
       case "crash":
         return { kind, at: 1 + Math.floor(random() * 8), when: random() < 0.5 ? "before" : "after" };
+      case "ioFail":
+        return { kind, at: 1 + Math.floor(random() * 8), count: random() < 0.7 ? 1 : 1 + Math.floor(random() * 30) };
+      case "night":
+      case "vacation":
+        return { kind };
       case "par": {
-        const other = Math.floor(random() * conversations);
-        const first = PAR_KINDS[Math.floor(random() * PAR_KINDS.length)] ?? "edit";
-        const second = PAR_KINDS[Math.floor(random() * PAR_KINDS.length)] ?? "edit";
+        const other =
+          generator.sameConversation > 0 && random() < generator.sameConversation ? c : Math.floor(random() * conversations);
+        const first = generator.parKinds[Math.floor(random() * generator.parKinds.length)] ?? "edit";
+        const second = generator.parKinds[Math.floor(random() * generator.parKinds.length)] ?? "edit";
         return { kind, a: actorOf(first, c), b: actorOf(started.has(other) ? second : "start", other) };
       }
       default:
@@ -245,6 +344,10 @@ export interface Run {
   readonly quiescent: boolean;
   readonly ledgerTotal: number;
   readonly lives: ReadonlySet<string>;
+  /** Records whose ledger line and fallback marker both failed: nothing on disk counts them. */
+  readonly uncountable: { readonly count: number; readonly ids: readonly string[] };
+  /** Steps an injected IO failure aborted: a hook that exited on the error. */
+  readonly ioAbortedSteps: ReadonlySet<number>;
 }
 
 export interface Timing {
@@ -271,6 +374,7 @@ interface World {
   readonly oldFlushSteps: Set<number>;
   readonly crashedSteps: Set<number>;
   readonly overCountSteps: Set<number>;
+  readonly ioAbortedSteps: Set<number>;
   edits: number;
 }
 
@@ -572,11 +676,156 @@ const straggle = async (world: World, c: number): Promise<void> => {
   await appendRecords(world.home, world.key, hostSessionKey, [withSeq(record, seq)], new Date());
 };
 
+const HOUR_MS = MINUTES_PER_HOUR * MINUTE_MS;
+const NIGHT_MS = 8 * HOUR_MS;
+const VACATION_MS = 8 * MS_PER_DAY;
+
+/** Every instant and mtime on disk moves back by `byMs`, and NOBODY is refreshed: everyone slept. */
+const ageAll = async (world: World, byMs: number): Promise<void> => {
+  for (const path of await filesUnder(world.home)) {
+    await ageFile(path, byMs);
+  }
+};
+
+/**
+ * THE HUB'S CLOCK PASSES TOO (review-2 round 8): every live session of this
+ * scenario last beat `byMs` earlier, and the hub's reaper runs — past
+ * SESSION_REAP_STALE_HOURS they are reaped (`reaped_at`), as after any night.
+ */
+const hubAge = async (world: World, byMs: number): Promise<void> => {
+  const prefix = `cc_${(world.keys[0] ?? "").replace(/-c0$/u, "")}-%`;
+  await world.hub.raw(
+    "update agent_sessions set last_heartbeat_at = last_heartbeat_at - ($1::bigint * interval '1 millisecond'), started_at = started_at - ($1::bigint * interval '1 millisecond') where id like $2 and ended_at is null",
+    [byMs, prefix],
+  );
+  await reapStaleSessions({ db: world.hub.db, now: () => new Date() }, { developerId: world.hub.developerId });
+};
+
+/** A night (8 h) or a vacation (8 days) for everyone; after a vacation nobody is live until woken. */
+const sleepAll = async (world: World, byMs: number): Promise<void> => {
+  await ageAll(world, byMs);
+  await hubAge(world, byMs);
+  if (byMs >= VACATION_MS) {
+    for (const [c, phase] of world.phase.entries()) {
+      if (phase === "live") {
+        world.phase[c] = "abandoned";
+      }
+    }
+  }
+};
+
+/** A conversation is back: live if its state survived, else ended (it resumes, or a hook recovers). */
+const wake = async (world: World, c: number): Promise<void> => {
+  const hostSessionKey = world.keys[c] ?? "";
+  const isThere = (await readSessionState(world.home, hostSessionKey)) !== null;
+  if (isThere) {
+    // The woken host's first hook beats (a PostToolUse heartbeat): it speaks again.
+    const now = new Date();
+    await updateSessionState(world.home, hostSessionKey, (fresh) => ({ ...fresh, lastHeartbeatAt: now.toISOString() }));
+    await utimes(sessionStatePath(world.home, hostSessionKey), now, now).catch(() => undefined);
+  }
+  world.phase[c] = isThere ? "live" : "ended";
+};
+
+/**
+ * CONNECTOR-CLAUDE'S STATE RECOVERY (hooks/post-tool-use.ts recoverState), as
+ * a live host's PostToolUse finds no state: the life ladder in recovery mode
+ * under a FRESH epoch minted by deriveSessionState, the state claimed, the
+ * work context spooled — then the edit it was capturing and the hook's drain.
+ */
+const recover = async (world: World, c: number): Promise<void> => {
+  const hostSessionKey = world.keys[c] ?? "";
+  if ((await readSessionState(world.home, hostSessionKey)) === null) {
+    const derived = deriveSessionState({
+      hostSessionKey,
+      repoId: REPO_ID,
+      repoRoot: world.repoRoot,
+      hubUrl: world.ctx.hubUrl,
+      developerId: world.hub.developerId,
+      startedAt: new Date().toISOString(),
+    });
+    const ladder = await registerSessionLadder({
+      home: world.home,
+      repoKey: world.key,
+      hub: world.ctx,
+      agentKind: AGENT_KIND,
+      hostSessionKey,
+      repoId: REPO_ID,
+      branch: BRANCH,
+      baseCommit: BASE_COMMIT,
+      status: "implementing",
+      guarantees: guaranteeDeclarationFor(ACP_CONNECTOR),
+      seq: derived.seqEpoch === null ? { epoch: crypto.randomUUID(), n: 0 } : { epoch: derived.seqEpoch, n: 0 },
+      recovery: true,
+      liveSessionId: null,
+    });
+    if (ladder.outcome === "repo_mismatch") {
+      return;
+    }
+    const crosscheckSessionId = ladder.sessionId;
+    const workContextId = workContextIdFor(crosscheckSessionId);
+    const developerId = ladder.outcome === "registered" ? ladder.developerId : world.hub.developerId;
+    const title = fallbackWorkContextTitle(BRANCH, REPO_ID);
+    const claim = await claimSessionState(world.home, {
+      ...derived,
+      crosscheckSessionId,
+      workContextId,
+      developerId,
+      briefingPending: true,
+      workContextTitle: title,
+      workContextStatus: "implementing",
+    });
+    if (claim === null) {
+      return;
+    }
+    if (claim.claimed) {
+      const now = new Date();
+      await appendRecords(
+        world.home,
+        world.key,
+        hostSessionKey,
+        [
+          workContextRecord(
+            { workContextId, sessionId: crosscheckSessionId, title, status: "implementing" },
+            { developerId: developerId ?? UNKNOWN_DEVELOPER_ID, agentKind: AGENT_KIND, sessionId: crosscheckSessionId },
+            now,
+          ),
+        ],
+        now,
+      );
+    }
+  }
+  world.phase[c] = "live";
+  await edit(world, c);
+};
+
+/** A PostToolUse heartbeat, unthrottled, whose 409/404 the hook's healer walks (connector-claude hooks/heal.ts). */
+const beat = async (world: World, c: number): Promise<void> => {
+  const hostSessionKey = world.keys[c] ?? "";
+  const state = await readSessionState(world.home, hostSessionKey);
+  if (state === null) {
+    return;
+  }
+  const deadlineMs = hookDeadline(POST_TOOL_USE_BUDGET_RATIO);
+  await heartbeatMaybe({
+    hub: world.ctx,
+    crosscheckSessionId: state.crosscheckSessionId,
+    lastHeartbeatAt: null,
+    now: new Date(),
+    onRefused: (cause) =>
+      healerFor(world, hostSessionKey)({ sessionId: state.crosscheckSessionId, cause }, Date.now() + spareBy(deadlineMs)),
+  });
+};
+
 /** Two connector processes at once, each judged against the phases BEFORE either runs, as two processes find them. */
 const both = async (world: World, sides: readonly SimEvent[], step: number): Promise<void> => {
   const running = sides.filter((side) => applies(world, side));
   const settled = await Promise.allSettled(running.map((side) => act(world, side, step)));
   for (const outcome of settled) {
+    if (outcome.status === "rejected" && isSimIoError(outcome.reason)) {
+      world.ioAbortedSteps.add(step);
+      continue;
+    }
     if (outcome.status === "rejected" && !(outcome.reason instanceof SimulatedCrash)) {
       throw outcome.reason;
     }
@@ -627,7 +876,18 @@ async function act(world: World, event: SimEvent, step: number): Promise<void> {
       world.hub.dials.ignored = { skip: 0, count: event.count };
       return;
     case "crash":
+    case "ioFail":
       return;
+    case "night":
+      return sleepAll(world, NIGHT_MS);
+    case "vacation":
+      return sleepAll(world, VACATION_MS);
+    case "wake":
+      return wake(world, event.c);
+    case "recover":
+      return recover(world, event.c);
+    case "beat":
+      return beat(world, event.c);
   }
 }
 
@@ -637,6 +897,16 @@ function applies(world: World, event: SimEvent): boolean {
     return true;
   }
   const phase = world.phase[event.c] ?? "new";
+  if (event.kind === "wake") {
+    return phase === "abandoned";
+  }
+  if (event.kind === "recover") {
+    return phase === "ended";
+  }
+  // A straggler is a hook still in flight: it appends whatever phase its conversation is in.
+  if (event.kind === "straggle") {
+    return true;
+  }
   if (phase === "abandoned") {
     return false;
   }
@@ -700,23 +970,37 @@ export const describeEvent = (event: SimEvent): string => {
       return `par[${describeEvent(event.a)} ‖ ${describeEvent(event.b)}]`;
     case "ignore":
       return `ignore ×${String(event.count)}`;
+    case "ioFail":
+      return `ioFail at write ${String(event.at)} ×${String(event.count)}`;
+    case "night":
+    case "vacation":
+      return event.kind;
     default:
       return `${event.kind} c${String(event.c)}`;
   }
 };
 
-/** One step, with the crash armed before it; its outcome goes on the trace. */
-const runStep = async (world: World, event: SimEvent, step: number, crash: Crash | null, trace: string[]) => {
+/** One step, with the crash and the IO failure armed before it; its outcome goes on the trace. */
+const runStep = async (
+  world: World,
+  event: SimEvent,
+  step: number,
+  crash: Crash | null,
+  trace: string[],
+  ioFail: IoFail | null = null,
+) => {
   world.hub.clock.step = step;
   const sides = event.kind === "par" ? [event.a, event.b] : [event];
   const actors = new Set(sides.flatMap((side) => ("c" in side ? [side.c] : [])));
   const before = event.kind === "oldFlush" ? new Map<number, CursorMark>() : await marksOfOthers(world, actors);
-  beginStep(step, crash);
+  beginStep(step, crash, ioFail);
   let outcome = "ok";
   try {
     await act(world, event, step);
   } catch (error) {
-    if (!(error instanceof SimulatedCrash)) {
+    if (isSimIoError(error)) {
+      world.ioAbortedSteps.add(step);
+    } else if (!(error instanceof SimulatedCrash)) {
       throw error;
     }
   }
@@ -728,9 +1012,22 @@ const runStep = async (world: World, event: SimEvent, step: number, crash: Crash
   if (ended.mayOverCount) {
     world.overCountSteps.add(step);
   }
+  // A hook that exited on an injected IO error is a process that stopped
+  // mid-step: what it heard may not have been written down (crash rules).
+  if (world.ioAbortedSteps.has(step)) {
+    outcome = `io-aborted(${String(ended.ioFailed)} failed)`;
+    world.crashedSteps.add(step);
+    if (ended.droppedThisStep) {
+      world.overCountSteps.add(step);
+    }
+  } else if (ended.ioFailed > 0) {
+    outcome = `io-survived(${String(ended.ioFailed)} failed)`;
+  }
   await syncPhases(world);
   await checkSix(world, before, step, describeEvent(event));
-  const armed = crash === null ? "" : ` [dies ${crash.when} write ${String(crash.at)}]`;
+  const armed =
+    (crash === null ? "" : ` [dies ${crash.when} write ${String(crash.at)}]`) +
+    (ioFail === null ? "" : ` [io fails writes ${String(ioFail.at)}..${String(ioFail.at + ioFail.count - 1)}]`);
   trace.push(`${String(step)}: ${describeEvent(event)}${armed} → ${outcome}`);
 };
 
@@ -795,6 +1092,7 @@ const newWorld = async (hub: SimHub, events: readonly SimEvent[], repoRoot: stri
     oldFlushSteps: new Set(),
     crashedSteps: new Set(),
     overCountSteps: new Set(),
+    ioAbortedSteps: new Set(),
     edits: 0,
   };
 };
@@ -829,6 +1127,8 @@ const runOf = async (world: World, trace: readonly string[], quiescent: boolean)
     quiescent,
     ledgerTotal: ledger.summary.records,
     lives: new Set([...log.captured.map((captured) => captured.writer), ...world.hub.deliveries.map((delivery) => delivery.producer)]),
+    uncountable: { count: uncountable.count, ids: [...uncountable.ids] },
+    ioAbortedSteps: world.ioAbortedSteps,
   };
 };
 
@@ -839,6 +1139,7 @@ export const execute = async (hub: SimHub, events: readonly SimEvent[], repoRoot
   beginScenario(world.home);
   const trace: string[] = [];
   let crash: Crash | null = null;
+  let ioFail: IoFail | null = null;
   try {
     for (const [index, event] of events.entries()) {
       const step = index + 1;
@@ -846,12 +1147,19 @@ export const execute = async (hub: SimHub, events: readonly SimEvent[], repoRoot
       if (event.kind === "crash") {
         crash = { at: event.at, when: event.when };
         trace.push(`${String(step)}: ${describeEvent(event)} (armed)`);
+      } else if (event.kind === "ioFail") {
+        ioFail = { at: event.at, count: event.count };
+        trace.push(`${String(step)}: ${describeEvent(event)} (armed)`);
       } else if (applies(world, event)) {
         // A crash kills a connector process; the world around it — the hub, a
-        // sibling, a host going quiet — is no process of ours, and leaves it armed.
-        const isActor = ACTOR_EVENTS.has(event.kind);
-        await runStep(world, event, step, isActor ? crash : null, trace);
+        // sibling, a host going quiet — is no process of ours, and leaves it
+        // armed. An IO failure strikes a connector process too, two at once
+        // included.
+        const isActor = ACTOR_EVENTS.has(event.kind) || event.kind === "recover";
+        const isIoActor = isActor || event.kind === "par";
+        await runStep(world, event, step, isActor ? crash : null, trace, isIoActor ? ioFail : null);
         crash = isActor ? null : crash;
+        ioFail = isIoActor ? null : ioFail;
       } else {
         trace.push(`${String(step)}: ${describeEvent(event)} (skipped)`);
       }
