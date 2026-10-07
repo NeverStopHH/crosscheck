@@ -51,6 +51,7 @@ import {
   exactTargetTokenConditions,
   exactTokens,
   searchWorkContexts,
+  targetMatchesToken,
 } from "./search.ts";
 import type { FtsTierRanker, RankedRow } from "./search.ts";
 import { pushableClaimCondition } from "./pushable-claims.ts";
@@ -63,6 +64,7 @@ import {
   compareTreeStrength,
   floorTermsOf,
   humanPromptText,
+  isConventionalFileName,
   isStrongSubstanceMatch,
   promptTerms,
   qualifiesAsSubstance,
@@ -628,6 +630,27 @@ const clearsFloor = (tier: SearchTier, sharedTerms: number): boolean =>
   tier === "exact" || sharedTerms >= HINT_MIN_SHARED_TERMS;
 
 /**
+ * Topical words a tree must share when the prompt named only a CONVENTIONAL
+ * FILE NAME it touched (hold-out review round 5, M4): "Dockerfile",
+ * "package.json" and ".nvmrc" are in every repo, and "bump node to 22 in
+ * .nvmrc and the Dockerfile" was pointed at the Docker tree on the name
+ * alone, sharing no word with it.
+ */
+export const HINT_CONVENTIONAL_NAME_MIN_TOPICAL = 1;
+
+/**
+ * The prompt named this tree's targets only by conventional file names
+ * (`@crosscheck/schema` isConventionalFileName): no target is matched by any
+ * other word of it — "docker/postgres/Dockerfile" written whole is a fact,
+ * "Dockerfile" alone is a name. A tree the exact tier did not match has no
+ * matched target, and this rule leaves it to the floor.
+ */
+const isNameOnlyMatch = (targets: readonly MatchedTargetView[], words: readonly string[]): boolean => {
+  const specific = words.filter((word) => !isConventionalFileName(word));
+  return targets.length > 0 && !targets.some((target) => specific.some((word) => targetMatchesToken(target.value, word)));
+};
+
+/**
  * The best match of any one VISIBLE claim per context — under the claim
  * window's own two conditions, retraction and the reader's mutes, so a hidden
  * author's words can never qualify a tree — by the one rule
@@ -867,7 +890,13 @@ const matchCandidates = async (
     .filter((row) => HINT_ELIGIBLE_TIERS.includes(row.tier))
     // Defense in depth only — exclusion already happened inside the search.
     .filter((row) => row.developerId !== callerDeveloperId);
-  const floors = await contentFloorOf(deps.db, callerDeveloperId, query.floor, pool.map((row) => row.id));
+  // The targets the prompt named, read once for the whole pool: the floor
+  // needs them (M4) and the pointer shows them (#19).
+  const exactWords = exactTokens(query.text);
+  const [floors, matchedTargets] = await Promise.all([
+    contentFloorOf(deps.db, callerDeveloperId, query.floor, pool.map((row) => row.id)),
+    listMatchedTargets(deps.db, pool.map((row) => row.id), exactWords),
+  ]);
   // THE FLOOR, PER CANDIDATE: every tree a hint may name must itself share
   // HINT_MIN_SHARED_TERMS words on ONE of its statements — its own, or one
   // visible claim — one of them TOPICAL (C1), or hold a target the query
@@ -877,17 +906,18 @@ const matchCandidates = async (
   // left the one strongest out.
   const qualified = pool
     .map((row) => ({ row, ...(floors.get(row.id) ?? NO_FLOOR) }))
+    // A MATCH ON A CONVENTIONAL FILE NAME ALONE is no fact about the work (round 5, M4).
+    .filter(({ row, topicalTerms }) => !isNameOnlyMatch(matchedTargets.get(row.id) ?? [], exactWords) || topicalTerms >= HINT_CONVENTIONAL_NAME_MIN_TOPICAL)
     .filter(({ row, sharedTerms }) => clearsFloor(row.tier, sharedTerms))
     .toSorted((left, right) => compareTreeStrength(strengthOfCandidate(left), strengthOfCandidate(right)))
     .slice(0, HINT_MAX_CONTEXTS);
   const ids = qualified.map(({ row }) => row.id);
-  const [claimsByContext, baseCommits, matchedTargets] = await Promise.all([
+  const [claimsByContext, baseCommits] = await Promise.all([
     listContextClaims(
       { db: deps.db, now: deps.now(), readerDeveloperId: callerDeveloperId, repo: query.repo, tokens: query.floor.topical },
       ids,
     ),
     listBaseCommits(deps.db, ids),
-    listMatchedTargets(deps.db, ids, exactTokens(query.text)),
   ]);
   // THE ONE STRONGEST CANDIDATE, or none on a tie (round 4, C2): only its
   // findings may ship a body, by the rule the selector applies too.

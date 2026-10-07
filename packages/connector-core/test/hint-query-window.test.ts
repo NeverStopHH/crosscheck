@@ -139,6 +139,19 @@ describe("the query of a long prompt: its ranked terms, all of it (round 4, H1)"
     expect(sent.slice(0, 2)).toEqual(["src/auth/refresh.ts", "lib/jwks.ts"]);
   });
 
+  test("a trace's path travels as the file it names, its position and wrapping off (round 5, M1)", async () => {
+    // Arrange — a pasted stack trace and a link, inside a prompt past the cap
+    const trace = "at PermissionsGuard.canActivate (packages/api/src/auth/permissions.ts:27:13) and see lib/jwks.ts#L12.";
+    const prompt = `${OPENING}${NOISE.repeat(15)}${trace} ${NOISE.repeat(15)}${TASK}`;
+
+    // Act
+    const sent = (await sentQuery("qw-trace", prompt)).split(" ");
+
+    // Assert — the hub's exact tier gets the paths it can match a target on
+    expect(sent).toEqual(expect.arrayContaining(["packages/api/src/auth/permissions.ts", "lib/jwks.ts"]));
+    expect(sent.filter((term) => term.includes(":27") || term.includes("#L12"))).toEqual([]);
+  });
+
   test("a prompt within the cap goes whole", async () => {
     const prompt = `${OPENING}${TASK}`;
     expect(await sentQuery("qw-short", prompt)).toBe(prompt);

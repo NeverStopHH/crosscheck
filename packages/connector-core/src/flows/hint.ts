@@ -46,7 +46,7 @@ import { getHintCandidates } from "../http/hub.ts";
 import type { AnsweredQuestion, HintCandidatesResult, HubContext, LandedNotice } from "../http/hub.ts";
 import { rememberHintDelivery, rememberLandedNoticeDelivery } from "../hints/delivery.ts";
 import { hintBodyHash } from "../hints/echo.ts";
-import { classifyPrompt, isHarnessTurn, promptTerms, shownSubstance } from "@crosscheck/schema";
+import { classifyPrompt, exactTargetToken, isHarnessTurn, promptTerms, shownSubstance } from "@crosscheck/schema";
 import type { ClassifiedPrompt, PromptTerms } from "@crosscheck/schema";
 import {
   hintTrailerReserve,
@@ -299,12 +299,14 @@ const PATH_TOKEN = /^[\p{L}\p{N}_-]+(?:[./][\p{L}\p{N}_-]+)+$/u;
  * The path-shaped words of a long prompt, whole and first (round 4, H1): the
  * hub's exact tier matches a target on a whole whitespace token, and its
  * terms split "src/auth/refresh.ts" into words, so the path travels as
- * written in front of the terms.
+ * written in front of the terms — a trace's "(…/permissions.ts:27:13)" as the
+ * path it names, by the hub's own rule (round 5, M1; `@crosscheck/schema`
+ * exactTargetToken).
  */
 const pathTokensOf = (text: string): readonly string[] =>
   text
     .split(/\s+/u)
-    .map((word) => word.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ""))
+    .map((word) => exactTargetToken(word).replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ""))
     .filter((word) => PATH_TOKEN.test(word) && /\p{L}/u.test(word));
 
 /**

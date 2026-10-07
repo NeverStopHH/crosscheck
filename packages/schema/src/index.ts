@@ -388,6 +388,7 @@ export {
 } from "./prompt-terms.ts";
 export type { ClassifiedPrompt, PromptTerms } from "./prompt-terms.ts";
 export { SHELL_COMMAND_BINARIES, isBareShellCommand } from "./shell-command.ts";
+export { CONVENTIONAL_FILE_NAMES, exactTargetToken, isConventionalFileName } from "./exact-token.ts";
 export { englishStem } from "./english-stem.ts";
 export { hasContinuationSignal } from "./continuation.ts";
 export {

@@ -32,6 +32,7 @@ import {
   sql,
 } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
+import { exactTargetToken } from "@crosscheck/schema";
 
 import {
   agentSessions,
@@ -329,12 +330,18 @@ export const ftsTokens = (query: string): readonly string[] =>
  * hints service can gather the SAME targets the exact tier matched on
  * (services/hints.ts, the #19 targets-only pointer), without a second copy of
  * the tokenizer drifting from this one.
+ *
+ * EACH WORD AS IT NAMES A FILE (hold-out review round 5, M1): a stack trace's
+ * "(packages/api/src/auth/permissions.ts:27:13)" and a link's
+ * "file:///…#L12" lose their wrapping, their position and their scheme by the
+ * one rule the connector applies too (`@crosscheck/schema` exactTargetToken).
  */
 export const exactTokens = (query: string): readonly string[] =>
   boundTokens(
     query
       .toLowerCase()
       .split(/\s+/u)
+      .map(exactTargetToken)
       .filter((token) => token.length >= SEARCH_MIN_TOKEN_CHARS),
   );
 
@@ -354,6 +361,16 @@ export const exactTargetTokenConditions = (tokens: readonly string[]) =>
     eq(sql`lower(${workContextTargets.value})`, token),
     sql`lower(${workContextTargets.value}) LIKE ${`%/${escapeLike(token)}`} ESCAPE '\\'`,
   ]);
+
+/**
+ * The same predicate over a target already read: the value verbatim, or a
+ * path whose basename — or trailing path — the token is. For a caller that
+ * must know WHICH word matched (services/hints.ts, round 5 M4).
+ */
+export const targetMatchesToken = (value: string, token: string): boolean => {
+  const lower = value.toLowerCase();
+  return lower === token || lower.endsWith(`/${token}`);
+};
 
 export interface TierRow {
   readonly id: string;
