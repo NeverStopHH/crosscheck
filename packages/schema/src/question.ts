@@ -70,8 +70,13 @@ export type QuestionStatus = z.infer<typeof QuestionStatusSchema>;
  */
 export const SAFE_ID_PATTERN = /^[A-Za-z0-9_.:-]+(?:~r[0-9]+)?(?:~t[0-9a-f]+\.[0-9]+)?$/;
 
-/** Long enough for `qn_` plus a uuid, short enough to render on one line. */
-export const MAX_RECORD_ID_LENGTH = 64;
+/**
+ * Long enough for `qn_` plus a uuid and for the longest work-context id a
+ * question is about — a topic's, in a healed life, on a Cursor or ACP host key
+ * (connector-core MAX_ID_CHARS says why that is past 64) — and short enough to
+ * render on one line.
+ */
+export const MAX_RECORD_ID_LENGTH = 96;
 
 const nonEmptyId = z
   .string()

@@ -2094,8 +2094,14 @@ export const MAX_SEARCH_QUERY_CHARS = 2_000;
  *
  * VERIFY: bun -e 'const {crosscheckSessionIdFor,workContextIdFor}=await import("./packages/connector-core/src/state/session-state.ts");const s=crosscheckSessionIdFor(crypto.randomUUID());console.log(s.length,workContextIdFor(s).length)'
  * PRINTS: 39 42
+ *
+ * 96, NOT 64, SINCE TOPICS (DESIGN.md "One session, many topics"): a topic's
+ * work context adds `~t<12 hex>.<n>` to its life's, and a healed life on a
+ * Cursor host key (`cur-<uuid>`) is `wc_cc_cur-<uuid>~r3`, so its topic's id
+ * is 65 characters, and an ACP key's longer. At 64 `safeId` cut that id into
+ * one that does not exist (test/pointer-round-trip.test.ts).
  */
-export const MAX_ID_CHARS = 64;
+export const MAX_ID_CHARS = 96;
 
 /**
  * Width of a string THE HUB chose, as a tool prints it back.

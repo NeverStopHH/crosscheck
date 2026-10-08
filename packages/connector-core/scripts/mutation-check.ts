@@ -19774,6 +19774,31 @@ export const MUTATIONS: readonly Mutation[
     because: "a set_intent status meant for one branch's topic never reaches the hub when its post went unanswered, at SessionEnd or after the host died",
   },
   {
+    // The id grammar's topic half (schema/src/question.ts SAFE_ID_PATTERN).
+    label: "the renderer's id grammar has no topic suffix",
+    file: `${CORE}/src/briefing/sanitize.ts`,
+    from: "const ID_SUFFIX_SOURCE = \"(?:~r[0-9]+)?(?:~t[0-9a-f]+\\\\.[0-9]+)?\";",
+    to: "const ID_SUFFIX_SOURCE = \"(?:~r[0-9]+)?\";",
+    test: `${CORE}/test/pointer-round-trip.test.ts`,
+    because: "every pointer to a topic's context prints wc_cc_<key>t<hex>.1 — a context the hub has never heard of",
+  },
+  {
+    label: "a topic's id is cut at the old id width",
+    file: `${CORE}/src/constants.ts`,
+    from: "export const MAX_ID_CHARS = 96;",
+    to: "export const MAX_ID_CHARS = 64;",
+    test: `${CORE}/test/pointer-round-trip.test.ts`,
+    because: "a Cursor or ACP session's topic id is past 64 characters, and every pointer to it is cut into an id that does not exist",
+  },
+  {
+    label: "the hub refuses a question about a topic on a long host key",
+    file: `${SCHEMA}/src/question.ts`,
+    from: "export const MAX_RECORD_ID_LENGTH = 96;",
+    to: "export const MAX_RECORD_ID_LENGTH = 64;",
+    test: `${CORE}/test/pointer-round-trip.test.ts`,
+    because: "ask_teammate about a Cursor or ACP session's topic is refused, and the asker cannot reach the work it is about",
+  },
+  {
     // DESIGN.md "One session, many topics", item 6: the same rules on every host.
     label: "a Cursor edit in a sibling worktree files under the session's own context",
     file: `${CURSOR}/src/handlers/file-edit.ts`,
@@ -20267,7 +20292,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/pilot-platform-refusals.test.ts 2
  * PRINTS: packages/connector-core/test/pin-paths.test.ts 8
  * PRINTS: packages/connector-core/test/pin-sweep.test.ts 2
- * PRINTS: packages/connector-core/test/pointer-round-trip.test.ts 3
+ * PRINTS: packages/connector-core/test/pointer-round-trip.test.ts 6
  * PRINTS: packages/connector-core/test/precision-corpus.test.ts 1
  * PRINTS: packages/connector-core/test/question-delivery.test.ts 1
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3

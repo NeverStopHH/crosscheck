@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1859
+    # PRINTS: 1862
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -254,7 +254,7 @@ jobs:
     # PRINTS: briefing/landed-notices.ts 5
     # PRINTS: briefing/questions.ts 2
     # PRINTS: briefing/render.ts 19
-    # PRINTS: briefing/sanitize.ts 12
+    # PRINTS: briefing/sanitize.ts 13
     # PRINTS: capture/commit-evidence.ts 1
     # PRINTS: capture/records.ts 1
     # PRINTS: capture/target-paths.ts 1
@@ -265,7 +265,7 @@ jobs:
     # PRINTS: config/connected-repo.ts 3
     # PRINTS: config/hook-budget.ts 2
     # PRINTS: config/paths.ts 3
-    # PRINTS: constants.ts 11
+    # PRINTS: constants.ts 12
     # PRINTS: coverage/exempt-surfaces.ts 2
     # PRINTS: coverage/render.ts 20
     # PRINTS: derive/capabilities.ts 1
@@ -402,7 +402,7 @@ jobs:
     # PRINTS: packages/schema/src/landed-notice.ts 5
     # PRINTS: packages/schema/src/pilot-mark.ts 5
     # PRINTS: packages/schema/src/pin.ts 2
-    # PRINTS: packages/schema/src/question.ts 1
+    # PRINTS: packages/schema/src/question.ts 2
     # PRINTS: packages/schema/src/repo-path.ts 1
     # PRINTS: packages/schema/src/secret-scan.ts 1
     # PRINTS: packages/schema/src/session.ts 2
@@ -530,7 +530,7 @@ jobs:
     # PRINTS: conference.ts 17
     # PRINTS: config.ts 4
     # PRINTS: connected-repo.ts 3
-    # PRINTS: constants.ts 13
+    # PRINTS: constants.ts 14
     # PRINTS: context-group.ts 1
     # PRINTS: contradictions.ts 1
     # PRINTS: cost.ts 2
@@ -668,7 +668,7 @@ jobs:
     # PRINTS: publish-claim.ts 2
     # PRINTS: publish.yml 2
     # PRINTS: pump.ts 1
-    # PRINTS: question.ts 1
+    # PRINTS: question.ts 2
     # PRINTS: questions.ts 10
     # PRINTS: reap.ts 15
     # PRINTS: record-handlers.ts 26
@@ -695,7 +695,7 @@ jobs:
     # PRINTS: review-draft.ts 1
     # PRINTS: run.ts 9
     # PRINTS: runner.ts 17
-    # PRINTS: sanitize.ts 12
+    # PRINTS: sanitize.ts 13
     # PRINTS: schema.ts 2
     # PRINTS: schemas.ts 1
     # PRINTS: search-related-work.ts 1
