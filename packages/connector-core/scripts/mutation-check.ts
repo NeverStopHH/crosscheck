@@ -19772,6 +19772,24 @@ export const MUTATIONS: readonly Mutation[
     because: "a rebase or a bisect step detaches HEAD on top of the work, and every touch there leaves its topic",
   },
   {
+    // Review mutation #1 of feat/topic-contexts.
+    label: "a sibling's git-lane window opens at the session's start, not its first touch",
+    file: `${CORE}/src/flows/git-lane.ts`,
+    from: "  if (isSessionRoot || firstTouch === null) {\n    return started;\n  }",
+    to: "  if (true) {\n    return started;\n  }",
+    test: `${CONNECTOR}/test/topic-nick-shape.test.ts`,
+    because: "a commit or a new file somebody left in a sibling before this session ever touched it is filed as this session's work",
+  },
+  {
+    // Review mutation #4 of feat/topic-contexts.
+    label: "an unanswered root counts as swept",
+    file: `${CORE}/src/flows/git-lane.ts`,
+    from: "  const answered = reads.filter((read) => read.gone || (read.commits !== null && read.touches !== null));",
+    to: "  const answered = reads;",
+    test: `${CORE}/test/git-lane-sweep.test.ts`,
+    because: "a root whose git timed out books no skip and no loss, and its bash mark is spent: the shell's work there is never looked at again",
+  },
+  {
     // Review M5 of feat/topic-contexts (probe P4).
     label: "the git lane files a carried dirty file under the root's new topic as well",
     file: `${CORE}/src/flows/git-lane.ts`,
@@ -20530,7 +20548,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/summarizer-worker-env.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/topic-git-lane.test.ts 9
- * PRINTS: packages/connector-claude/test/topic-nick-shape.test.ts 18
+ * PRINTS: packages/connector-claude/test/topic-nick-shape.test.ts 19
  * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 4
  * PRINTS: packages/connector-core/test/absence-render.test.ts 7
@@ -20568,6 +20586,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/ghost-declare.test.ts 1
  * PRINTS: packages/connector-core/test/ghost-render.test.ts 2
  * PRINTS: packages/connector-core/test/git-lane-cost.test.ts 1
+ * PRINTS: packages/connector-core/test/git-lane-sweep.test.ts 1
  * PRINTS: packages/connector-core/test/git-timeout.test.ts 4
  * PRINTS: packages/connector-core/test/git-touches.test.ts 1
  * PRINTS: packages/connector-core/test/guarantee-declarations.test.ts 28

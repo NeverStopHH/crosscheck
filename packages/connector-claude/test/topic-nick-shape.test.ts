@@ -131,6 +131,9 @@ const fullTopic = (state: SessionState, index: number): TopicContext => ({
   ackedStatus: null,
 });
 
+const MS_PER_HOUR = 3_600_000;
+const hoursAgo = (hours: number): string => new Date(Date.now() - hours * MS_PER_HOUR).toISOString();
+
 /** Files a dump adds beyond what it must, so the bound is passed by a margin. */
 const DUMP_FILES = 300;
 
@@ -504,6 +507,30 @@ describe("M8: a large untracked dump hides no real new file, and is counted once
     expect(files).toContain("src/zz-real-new.ts:git_diff");
     expect(files.some((file) => file.startsWith("node_modules/"))).toBe(false);
     expect((await readDropDetail(world.home, repoKey(DEAD_HUB_URL, REPO_ID))).byReason["capture-capped"]).toBe(1);
+  });
+});
+
+describe("review mutation #1: a sibling's window opens at its first touch, not at the session's start", () => {
+  test("work done in a sibling an hour before the session first touched it is never this session's", async () => {
+    // Arrange: a session started two hours ago; an hour ago, before it ever
+    // touched the sibling, somebody committed there and left a new file
+    const world = await nickShape("mut1-window", 1);
+    const [sibling = ""] = world.siblings;
+    await sessionStart(world);
+    await updateSessionState(world.home, SESSION_ID, (fresh) => ({ ...fresh, startedAt: hoursAgo(2) }));
+    const anHourAgo = hoursAgo(1);
+    await writeRepoFile(sibling, "src/committed-before.ts", "export const c = 1;\n");
+    await git(sibling, ["add", "src/committed-before.ts"]);
+    await Bun.$`git -C ${sibling} commit -q -m before`.env({ ...process.env, GIT_AUTHOR_DATE: anHourAgo, GIT_COMMITTER_DATE: anHourAgo });
+    const leftBefore = await writeRepoFile(sibling, "src/left-before.ts", "export const l = 1;\n");
+    await utimes(leftBefore, new Date(anHourAgo), new Date(anHourAgo));
+
+    // Act: the session's first touch of the sibling, then the turn ends
+    await edit(world, await writeRepoFile(sibling, "src/now.ts", "export const n = 1;\n"));
+    await stop(world);
+
+    // Assert
+    expect(filesByTopic(await spooled(world))["feat/topic-0"]).toEqual(["src/now.ts:tool_edit"]);
   });
 });
 
