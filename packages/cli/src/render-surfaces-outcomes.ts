@@ -70,6 +70,16 @@ export const HINT_OUTCOME_SURFACES: readonly RenderSurface[] = [
         // Human provenance (0.11 §5): a hub that only drafts the word.
         outcomeRecordedLine(payload, { id: payload, deliveryId: payload, outcome: payload, repeated: false, replaced: null, draft: true }),
         outcomeRecordedLine(payload, { id: payload, deliveryId: payload, outcome: payload, repeated: true, replaced: null, draft: true }),
+        outcomeRecordedLine(payload, {
+          id: payload,
+          deliveryId: payload,
+          outcome: payload,
+          repeated: true,
+          replaced: null,
+          draft: true,
+          waiting: false,
+          discardedByPerson: true,
+        }),
         AGENT_DRAFT_LINE,
         agentHostDraftLine("CLAUDECODE"),
         DELIVERY_STILL_ON_THIS_MACHINE_LINE,

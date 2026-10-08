@@ -10,10 +10,17 @@
  * APPEND-ONLY, BY SUBJECT. A subject is what one decision is about — one
  * pointer's outcome, one pin, one teammate's mute. A newer draft on it is its
  * next VERSION and supersedes the older as the pending item; nothing is ever
- * updated. A draft that says exactly what its subject's newest version says —
- * pending, confirmed or discarded — is a repeat and writes nothing: an agent
- * re-reading a hint never refills the person's page, and a word the person
- * discarded is not offered again by being said again.
+ * updated.
+ *
+ * A REPEAT WRITES NOTHING — and is a repeat only while the subject's newest
+ * version still WAITS, saying the same thing in the same class: an agent
+ * re-reading a hint never refills the person's page. Once a version was
+ * DECIDED, saying it again is a new draft (review H2, H3): the person says
+ * noise again (07 §13.11 H-B), repeats their word after their own label, says
+ * a word they discarded when the agent said it, asks again for a mute or for
+ * presence they once confirmed or discarded. The one exception: the agent's
+ * door re-offering an outcome the person discarded when the agent said it is
+ * not put back on the page, and the answer says why.
  *
  * PENDING = its subject's newest version, resolved by no confirmed batch
  * (decision `confirm` or `discard`; `keep` leaves it pending).
@@ -46,7 +53,15 @@ export interface WriteDraftInput {
 }
 
 export type WriteDraftResult =
-  | { readonly id: string; readonly version: number; readonly repeated: boolean }
+  | {
+      readonly id: string;
+      readonly version: number;
+      readonly repeated: boolean;
+      /** Whether this draft waits on the person's page now — never a "drafted" answer without one. */
+      readonly waiting: boolean;
+      /** A repeat of the agent's own word the person discarded: not offered again. */
+      readonly discardedByPerson: boolean;
+    }
   | { readonly refusal: "too_many_drafts" };
 
 export interface DraftRow {
@@ -182,18 +197,46 @@ const readPendingRows = async (
   return rows.rows.map(rowOf);
 };
 
-/** The newest version of one subject, and whether a confirmed batch resolved it. */
-const readNewest = async (
-  db: DbExecutor,
-  developerId: string,
-  subjectKey: string,
-): Promise<{ readonly draft: DraftRow; readonly resolved: boolean } | undefined> => {
-  const rows = await db.execute<RawDraft>(sql`
-    SELECT d.*, ${RESOLVED} AS resolved FROM human_drafts d
+type DecidedAs = "confirm" | "discard";
+
+interface Newest {
+  readonly draft: DraftRow;
+  /** What a confirmed batch decided about it; null while it waits. */
+  readonly decision: DecidedAs | null;
+}
+
+/** The newest version of one subject, and what a confirmed batch decided about it, if anything. */
+const readNewest = async (db: DbExecutor, developerId: string, subjectKey: string): Promise<Newest | undefined> => {
+  const rows = await db.execute<RawDraft & { readonly decision: DecidedAs | null }>(sql`
+    SELECT d.*, false AS resolved,
+      (SELECT i.decision FROM human_confirmation_items i
+       WHERE i.draft_id = d.id AND i.decision IN ('confirm', 'discard') LIMIT 1) AS decision
+    FROM human_drafts d
     WHERE d.developer_id = ${developerId} AND d.subject_key = ${subjectKey}
     ORDER BY d.version DESC LIMIT 1 FOR UPDATE`);
   const raw = rows.rows[0];
-  return raw === undefined ? undefined : { draft: rowOf(raw), resolved: raw.resolved };
+  return raw === undefined ? undefined : { draft: rowOf(raw), decision: raw.decision ?? null };
+};
+
+/**
+ * WHETHER A DRAFT REPEATS ITS SUBJECT'S NEWEST VERSION (see the header). The
+ * same saying in the same class while that version waits; or the agent's door
+ * saying again an outcome of its own the person discarded. Never a word
+ * against a decided version otherwise — that would eat the person's word.
+ */
+const repeatOf = (newest: Newest | undefined, input: WriteDraftInput): "waiting" | "discarded" | null => {
+  if (newest === undefined || sayingOf(newest.draft.kind, newest.draft.payload) !== sayingOf(input.kind, input.payload)) {
+    return null;
+  }
+  if (newest.decision === null) {
+    return newest.draft.provenance === input.provenance ? "waiting" : null;
+  }
+  const isAgentReoffer =
+    newest.decision === "discard" &&
+    input.kind === "outcome" &&
+    input.provenance === "agent_asserted" &&
+    newest.draft.provenance === "agent_asserted";
+  return isAgentReoffer ? "discarded" : null;
 };
 
 /**
@@ -206,18 +249,25 @@ const isPageFull = async (deps: { readonly db: DbExecutor; readonly now: Clock }
   (await readPendingDrafts(deps, developerId)).length >= MAX_PENDING_DRAFT_SUBJECTS;
 
 /**
- * ONE DRAFT. A repeat of the subject's newest version writes nothing; a new
- * subject past MAX_PENDING_DRAFT_SUBJECTS is refused; a newer version of a
- * subject that is still pending is always taken (it replaces nothing a person
- * decided — they decided nothing about it yet).
+ * ONE DRAFT. A repeat (repeatOf) writes nothing; a new subject past
+ * MAX_PENDING_DRAFT_SUBJECTS is refused; a newer version of a subject that is
+ * still pending is always taken (it replaces nothing a person decided — they
+ * decided nothing about it yet).
  */
 export const writeDraft = (deps: Deps, input: WriteDraftInput): Promise<WriteDraftResult> =>
   deps.db.transaction(async (tx) => {
     const newest = await readNewest(tx, input.developerId, input.subjectKey);
-    if (newest !== undefined && sayingOf(newest.draft.kind, newest.draft.payload) === sayingOf(input.kind, input.payload)) {
-      return { id: newest.draft.id, version: newest.draft.version, repeated: true };
+    const repeat = repeatOf(newest, input);
+    if (newest !== undefined && repeat !== null) {
+      return {
+        id: newest.draft.id,
+        version: newest.draft.version,
+        repeated: true,
+        waiting: repeat === "waiting",
+        discardedByPerson: repeat === "discarded",
+      };
     }
-    const opensSubject = newest === undefined || newest.resolved;
+    const opensSubject = newest === undefined || newest.decision !== null;
     if (opensSubject && (await isPageFull({ db: tx, now: deps.now }, input.developerId))) {
       return { refusal: "too_many_drafts" as const };
     }
@@ -234,7 +284,7 @@ export const writeDraft = (deps: Deps, input: WriteDraftInput): Promise<WriteDra
       provenance: input.provenance,
       createdAt: deps.now(),
     });
-    return { id, version, repeated: false };
+    return { id, version, repeated: false, waiting: true, discardedByPerson: false };
   });
 
 /** How many drafts await this person, by kind — the count `crosscheck confirm` and doctor print. */

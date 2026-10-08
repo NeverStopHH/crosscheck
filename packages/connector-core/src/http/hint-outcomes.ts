@@ -54,6 +54,10 @@ const RecordedOutcomeSchema = z.looseObject({
    * hub, where every word counted at once.
    */
   draft: z.boolean().optional(),
+  /** Whether the draft waits on the person's confirm page now (review H2). Absent: read as waiting. */
+  waiting: z.boolean().optional().catch(undefined),
+  /** The agent said again a word the person discarded: not put back on their page. */
+  discardedByPerson: z.boolean().optional().catch(undefined),
 });
 
 export type RecordedOutcome = z.infer<typeof RecordedOutcomeSchema>;

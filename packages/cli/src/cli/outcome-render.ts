@@ -110,10 +110,14 @@ const WHO_SEES_IT =
  * nothing and counts for nothing until the person confirms it with their
  * passkey, so the line says that and never "recorded".
  */
-const outcomeDraftedLine = (shown: string, recorded: RecordedOutcome): string =>
-  recorded.repeated
+const outcomeDraftedLine = (shown: string, recorded: RecordedOutcome): string => {
+  if (recorded.discardedByPerson === true) {
+    return `not drafted again: ${shown} — you discarded ${outcomeWord(recorded.outcome)} when your agent said it before; type it in your own shell if it is yours\n`;
+  }
+  return recorded.repeated
     ? `already drafted: ${shown} — ${outcomeWord(recorded.outcome)} was drafted before; ${ALREADY_DRAFTED}\n`
     : `drafted: ${shown} — ${outcomeWord(recorded.outcome)}. ${NOT_YOURS_YET}. Once it is: ${WHO_SEES_IT}\n`;
+};
 
 export const outcomeRecordedLine = (ref: string, recorded: RecordedOutcome): string => {
   const shown = safeId(ref);

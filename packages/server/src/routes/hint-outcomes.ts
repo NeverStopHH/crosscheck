@@ -147,7 +147,9 @@ export const hintOutcomeRoutes = (deps: AppDeps): Hono<AppEnv> => {
     }
     // The fields an older connector's parser requires (`id`, `deliveryId`,
     // `outcome`, `repeated`, `replaced`), then what a newer one prints. No
-    // `stands`: nothing stands as the person's on a draft.
+    // `stands`: nothing stands as the person's on a draft. `waiting` says
+    // whether it is on the person's page now; `discardedByPerson`, that the
+    // agent said again a word the person had discarded (review H2, H3).
     return ok(
       c,
       {
@@ -158,6 +160,8 @@ export const hintOutcomeRoutes = (deps: AppDeps): Hono<AppEnv> => {
         reasonRevised: false,
         replaced: null,
         draft: true,
+        waiting: result.waiting,
+        discardedByPerson: result.discardedByPerson,
         provenance: result.provenance,
       },
       result.repeated ? HTTP_OK : HTTP_CREATED,

@@ -58,6 +58,8 @@ import type { AppDeps, AppEnv } from "../types.ts";
 
 /** Accepted, not in effect: a draft waits for the person's passkey. */
 const HTTP_ACCEPTED = 202;
+/** Nothing new waits: the same draft is already on the page. */
+const HTTP_OK = 200;
 
 const RepoQuerySchema = z.object({ repo: z.string().min(1) });
 
@@ -169,7 +171,11 @@ export const pinsRoutes = (deps: AppDeps): Hono<AppEnv> => {
           )
         : fail(c, 422, outcome.refusal, DRAFT_REFUSAL_SENTENCE[outcome.refusal]);
     }
-    return ok(c, { id: parsed.data.id, draft: true, provenance: outcome.provenance }, HTTP_ACCEPTED);
+    return ok(
+      c,
+      { id: parsed.data.id, draft: true, waiting: outcome.waiting, provenance: outcome.provenance },
+      outcome.waiting ? HTTP_ACCEPTED : HTTP_OK,
+    );
   });
 
   router.get("/", async (c) => {
@@ -239,7 +245,11 @@ export const pinsRoutes = (deps: AppDeps): Hono<AppEnv> => {
         ? fail(c, 404, "not_found", "no pin with that id in this repo")
         : fail(c, 422, outcome.refusal, DRAFT_REFUSAL_SENTENCE[outcome.refusal]);
     }
-    return ok(c, { id: id.data, draft: true, provenance: outcome.provenance }, HTTP_ACCEPTED);
+    return ok(
+      c,
+      { id: id.data, draft: true, waiting: outcome.waiting, provenance: outcome.provenance },
+      outcome.waiting ? HTTP_ACCEPTED : HTTP_OK,
+    );
   });
 
   return router;

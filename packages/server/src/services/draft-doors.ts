@@ -30,15 +30,30 @@ interface Deps {
 
 export type DraftRefusal = "too_many_drafts";
 
-/** What every door answers once it drafted: the draft, whether it was a repeat, and the class it was given. */
+/**
+ * What every door answers once it drafted: the draft, whether it was a repeat,
+ * whether it waits on the person's page now, and the class it was given. A door
+ * says "drafted" only with `waiting` true (review H2).
+ */
 export interface Drafted {
   readonly draftId: string;
   readonly repeated: boolean;
+  readonly waiting: boolean;
+  /** The agent re-offered its own word the person discarded: nothing new waits. */
+  readonly discardedByPerson: boolean;
   readonly provenance: DraftProvenance;
 }
 
 const drafted = (result: WriteDraftResult, provenance: DraftProvenance): Drafted | { readonly refusal: DraftRefusal } =>
-  "refusal" in result ? result : { draftId: result.id, repeated: result.repeated, provenance };
+  "refusal" in result
+    ? result
+    : {
+        draftId: result.id,
+        repeated: result.repeated,
+        waiting: result.waiting,
+        discardedByPerson: result.discardedByPerson,
+        provenance,
+      };
 
 export interface LabelDraftInput {
   readonly repo: string;

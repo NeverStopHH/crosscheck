@@ -22,7 +22,7 @@ import { EXIT_OK } from "@crosscheck/connector-core/constants.ts";
 import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 
 import { runCli } from "../src/index.ts";
-import { AGENT_DRAFT_LINE, AGENT_WORD_LINE } from "../src/cli/outcome-render.ts";
+import { AGENT_DRAFT_LINE, AGENT_WORD_LINE, outcomeRecordedLine } from "../src/cli/outcome-render.ts";
 import { git, makeHome, makeRepo, writeRepoFile } from "../../connector-core/test/helpers.ts";
 
 const ADMIN_TOKEN = "drafted-gestures-admin";
@@ -213,6 +213,25 @@ describe("a key gesture against a hub since human provenance", () => {
     expect(on.stdout).toStartWith("presence: hidden from teammates");
     expect(on.stdout).toContain("presence on is drafted — nothing changed yet");
     expect(shown.stdout).toStartWith("presence: hidden from teammates");
+  });
+
+  test("a word the person discarded, said again through the agent's door, is said as not drafted again", () => {
+    // Act — the hub's answer to that one repeat against a decision (review H2, H3)
+    const line = outcomeRecordedLine("wc_ken_filters", {
+      id: "dr_1",
+      deliveryId: "hd_1",
+      outcome: "followed",
+      repeated: true,
+      replaced: null,
+      draft: true,
+      waiting: false,
+      discardedByPerson: true,
+    });
+
+    // Assert — never "drafted", never "waits"
+    expect(line).toBe(
+      "not drafted again: wc_ken_filters — you discarded followed when your agent said it before; type it in your own shell if it is yours\n",
+    );
   });
 
   test("crosscheck confirm counts every draft that waits", async () => {

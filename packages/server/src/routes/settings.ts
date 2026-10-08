@@ -22,6 +22,8 @@ import {
 
 /** Accepted, not in effect: a draft waits for the person's passkey. */
 const HTTP_ACCEPTED = 202;
+/** Nothing new waits: the same request is already on the page. */
+const HTTP_OK = 200;
 // One bound for one concept: a reference too long to mute must not be short
 // enough to filter a search by (services/developer-lookup.ts).
 import {
@@ -135,9 +137,14 @@ export const settingsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     if ("refusal" in outcome) {
       return fail(c, 422, outcome.refusal, DRAFT_REFUSAL_SENTENCE[outcome.refusal]);
     }
+    // 202 only with the request waiting on the person's page (review H2).
     return "unchanged" in outcome
       ? ok(c, { presenceOptOut: false })
-      : ok(c, { presenceOptOut: true, draft: true, provenance: outcome.provenance }, HTTP_ACCEPTED);
+      : ok(
+          c,
+          { presenceOptOut: true, draft: true, waiting: outcome.waiting, provenance: outcome.provenance },
+          outcome.waiting ? HTTP_ACCEPTED : HTTP_OK,
+        );
   });
 
   router.post("/mutes", async (c) => {
@@ -162,8 +169,8 @@ export const settingsRoutes = (deps: AppDeps): Hono<AppEnv> => {
       case "drafted":
         return ok(
           c,
-          { muted: result.developer, alreadyMuted: false, draft: true, provenance: result.provenance },
-          HTTP_ACCEPTED,
+          { muted: result.developer, alreadyMuted: false, draft: true, waiting: result.waiting, provenance: result.provenance },
+          result.waiting ? HTTP_ACCEPTED : HTTP_OK,
         );
     }
   });
@@ -188,8 +195,8 @@ export const settingsRoutes = (deps: AppDeps): Hono<AppEnv> => {
       case "drafted":
         return ok(
           c,
-          { unmuted: result.developer, wasMuted: true, draft: true, provenance: result.provenance },
-          HTTP_ACCEPTED,
+          { unmuted: result.developer, wasMuted: true, draft: true, waiting: result.waiting, provenance: result.provenance },
+          result.waiting ? HTTP_ACCEPTED : HTTP_OK,
         );
     }
   });
