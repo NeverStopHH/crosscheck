@@ -24731,6 +24731,48 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/runtime-isolation.test.ts`,
     because: "the landing-fetch worker starts in the repo's bun config, and nothing that executes notices (review round 2, R1)",
   },
+  // ROUND 2, N4: the worker spawns and doctor's same-runtime check, run as
+  // processes. Each re-introduces an unflagged start at one real site.
+  {
+    label: "the landing-fetch worker runs a bait repo's preload",
+    file: `${CONNECTOR}/src/hooks/landing-fetch.ts`,
+    from: '          cmd: [...selfSpawnCmd(LANDING_FETCH_WORKER_ENTRY_PATH), "--root", root],',
+    to: '          cmd: [String(process.execPath), LANDING_FETCH_WORKER_ENTRY_PATH, "--root", root],',
+    test: `${CLI}/test/e2e/worker-spawn-isolation.e2e.test.ts`,
+    because: "a prompt in a bait repo starts the background fetch with that repo's preload beside the key",
+  },
+  {
+    label: "the Claude summarizer worker runs a bait repo's preload",
+    file: `${CONNECTOR}/src/hooks/stop.ts`,
+    from: "      ...selfSpawnCmd(WORKER_ENTRY_PATH),",
+    to: "      process.execPath, WORKER_ENTRY_PATH,",
+    test: `${CLI}/test/e2e/worker-spawn-isolation.e2e.test.ts`,
+    because: "every captured turn in a bait repo runs its preload in the worker that posts the draft",
+  },
+  {
+    label: "the ACP summarizer worker runs a bait repo's preload",
+    file: `${ACP}/src/derive/triggers.ts`,
+    from: "        ...selfSpawnCmd(SUMMARIZER_WORKER_ENTRY_PATH),",
+    to: "        String(process.execPath), SUMMARIZER_WORKER_ENTRY_PATH,",
+    test: `${CLI}/test/e2e/worker-spawn-isolation.e2e.test.ts`,
+    because: "an ACP turn's slice goes down a pipe to a worker that loaded the session project's preload first",
+  },
+  {
+    label: "the Cursor ghost worker runs a bait repo's preload",
+    file: `${CURSOR}/src/derive/triggers.ts`,
+    from: "      ...selfSpawnCmd(GHOST_WORKER_ENTRY_PATH),",
+    to: "      process.execPath, GHOST_WORKER_ENTRY_PATH,",
+    test: `${CLI}/test/e2e/worker-spawn-isolation.e2e.test.ts`,
+    because: "a Cursor stop in a bait repo pays the ghost debt in a worker that ran the repo's code",
+  },
+  {
+    label: "doctor runs another binary that carries the flags and its own entry",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "  return hasFlags && command !== null && command === ownRuntime && entryReal !== null && entryReal === ownEntry;",
+    to: "  return hasFlags && command !== null && entryReal !== null && entryReal === ownEntry;",
+    test: `${CLI}/test/doctor-mcp-probe-trust.test.ts`,
+    because: "a repo's .mcp.json naming ./tools/bun with the right flags and entry runs the repo's binary when a person types doctor (review round 2, R7)",
+  },
   {
     label: "the npm shim starts bun in the repo's bun config",
     file: "packaging/bin/crosscheck.cjs",
