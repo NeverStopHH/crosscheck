@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 2408
+    # PRINTS: 2412
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -386,8 +386,8 @@ jobs:
     # PRINTS: state/temp-sweep.ts 15
     # PRINTS: state/tool-window-key.ts 2
     # PRINTS: packages/connector-core/test/intent-budget.test.ts 1
-    # PRINTS: packages/connector-core/test/network-guard-rules.ts 6
-    # PRINTS: packages/connector-core/test/network-guard.ts 4
+    # PRINTS: packages/connector-core/test/network-guard-rules.ts 7
+    # PRINTS: packages/connector-core/test/network-guard.ts 7
     # PRINTS: packages/connector-core/test/render-surface-registry.test.ts 1
     # PRINTS: packages/connector-core/test/spool-concurrency.test.ts 1
     # PRINTS: packages/connector-cursor/src/capabilities.ts 3
@@ -678,8 +678,8 @@ jobs:
     # PRINTS: loss-report.ts 14
     # PRINTS: manifest-doc.ts 2
     # PRINTS: mark-hint-outcome.ts 12
-    # PRINTS: network-guard-rules.ts 6
-    # PRINTS: network-guard.ts 4
+    # PRINTS: network-guard-rules.ts 7
+    # PRINTS: network-guard.ts 7
     # PRINTS: noise-label.ts 3
     # PRINTS: noise.ts 11
     # PRINTS: normalized-doc.ts 6

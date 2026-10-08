@@ -25219,7 +25219,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/mcp-tools.test.ts 4
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
- * PRINTS: packages/connector-core/test/network-guard.test.ts 11
+ * PRINTS: packages/connector-core/test/network-guard.test.ts 15
  * PRINTS: packages/connector-core/test/outcome-clause.test.ts 2
  * PRINTS: packages/connector-core/test/pilot-client.test.ts 7
  * PRINTS: packages/connector-core/test/pilot-platform-refusals.test.ts 2
