@@ -6,10 +6,13 @@
  * spawns, a config read and a fired-marker write — a median of 135 ms against
  * a 64 ms bare start (probe subagent-cost). The runner now answers those
  * fires from the payload and one state read: no git, no write. Measured
- * through the real runner and handler in a child whose `git` logs every call.
+ * through the real runner and handler in a child that leaves one file per
+ * `git` it attempts to spawn (fixtures/count-git-spawns.ts; round 3, F-L8b:
+ * the logging `git` on PATH this used to count with missed the spawns a
+ * budget race abandoned, so mutations X2 and X5 survived one run in two).
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 
@@ -28,6 +31,9 @@ import {
 afterEach(cleanupCollisionFixtures);
 
 const CHILD = join(import.meta.dir, "fixtures", "run-real-hook-in-child.ts");
+
+/** Preloaded into the child: one file per `git` it attempts to spawn. */
+const GIT_SPAWN_COUNTER = join(import.meta.dir, "fixtures", "count-git-spawns.ts");
 
 /** Every call the test hub has answered, of any kind. */
 const hubCallsOf = (calls: object): number =>
@@ -49,18 +55,11 @@ const agentFired = (repo: string, toolResponse: Record<string, unknown>, extra: 
     ...extra,
   });
 
-/** A `git` that logs every invocation, then runs the real one. */
-const loggingGit = async (): Promise<{ readonly dir: string; readonly log: string }> => {
-  const dir = await mkdtemp(join(tmpdir(), "cx-git-log-"));
+/** A fresh directory the child's spawn counter writes one file per `git` attempt into. */
+const spawnLogDir = async (): Promise<string> => {
+  const dir = await mkdtemp(join(tmpdir(), "cx-git-spawns-"));
   trackForCleanup(dir);
-  const realGit = Bun.which("git");
-  if (realGit === null) {
-    throw new Error("git is not on PATH");
-  }
-  const log = join(dir, "calls.log");
-  await writeFile(log, "");
-  await writeFile(join(dir, "git"), `#!/bin/sh\necho "$@" >> "${log}"\nexec "${realGit}" "$@"\n`, { mode: 0o755 });
-  return { dir, log };
+  return dir;
 };
 
 /** Every file under `root` with its mtime and size: what a write would change. */
@@ -71,12 +70,12 @@ const snapshot = async (root: string): Promise<Readonly<Record<string, string>>>
   return Object.fromEntries(stats.map(([path, info]) => [path, `${String(info.mtimeMs)}:${String(info.size)}`]));
 };
 
-/** The hook through the real runner in a child whose `git` logs; its stdout and the git calls it made. */
+/** The hook through the real runner in a child that counts its git spawns; its stdout and the git calls it attempted. */
 const runInChild = async (stdin: string, env: Env): Promise<{ readonly output: string; readonly gitCalls: number }> => {
-  const git = await loggingGit();
+  const logDir = await spawnLogDir();
   const child = Bun.spawn({
-    cmd: [process.execPath, CHILD, "subagent-return", stdin, JSON.stringify(env)],
-    env: { ...process.env, PATH: `${git.dir}:${process.env["PATH"] ?? ""}` },
+    cmd: [process.execPath, "--preload", GIT_SPAWN_COUNTER, CHILD, "subagent-return", stdin, JSON.stringify(env)],
+    env: { ...process.env, CX_GIT_SPAWN_LOG_DIR: logDir },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -84,7 +83,7 @@ const runInChild = async (stdin: string, env: Env): Promise<{ readonly output: s
   if ((await child.exited) !== 0) {
     throw new Error(`the hook child failed: ${await new Response(child.stderr).text()}`);
   }
-  const calls = (await readFile(git.log, "utf8")).split("\n").filter((line) => line.length > 0);
+  const calls = (await readdir(logDir)).filter((name) => name.endsWith(".call"));
   return { output, gitCalls: calls.length };
 };
 

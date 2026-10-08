@@ -24652,6 +24652,15 @@ export const MUTATIONS: readonly Mutation[
     test: `${CONNECTOR}/test/collision-relay-unconfirmed.test.ts`,
     because: "a cache stamped ahead of a clock stepped back decides who is named for as long as the lag lasts",
   },
+  // ── Review of feat/collision-visible, round 3, F-L8b: reviewer mutation X2, now counted at the spawn ──
+  {
+    label: "an empty relay queue takes the subagent-return hook's full path",
+    file: `${CONNECTOR}/src/hooks/subagent-return.ts`,
+    from: "  return state === null || !hasPendingRelay(state);",
+    to: "  return state === null;",
+    test: `${CONNECTOR}/test/subagent-return-cost.test.ts`,
+    because: "every completed Agent/Task call with nothing queued pays the runner's four git spawns and a marker write again",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
