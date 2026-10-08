@@ -474,6 +474,11 @@ Residuals the invariants allow for, each counted, never silent:
   before the duplicate;
 - the ledger may over-count after a crash between a ledger append and the cursor write past it, the honest direction
   §4.3 already accepts;
+- the ledger may over-count after a reap killed between removing a spool's cursor and removing its data file
+  (`spool/reap.ts` removeSessionData). The cursor goes first on purpose: a crash there leaves lines with no cursor,
+  which re-send rather than skip, and skipping is the unrecoverable direction. The lines it re-exposes are delivered
+  ones too. A live or ended conversation re-sends them and hears `duplicate`, but a conversation whose life the hub
+  ended withholds them, and they are counted lost though the hub holds them (sleep seed 3851, residual `I1r`);
 - a record delivered into a session whose end only a sibling saw is filed past that end, because no flusher here was
   told;
 - an older connector's flush neither honours ownership nor reads the refused-lives note. It spends a live
@@ -533,6 +538,11 @@ seed.
 One class is a documented residual, I1u, and the sweep counts it without failing. It is a drop the disk refused to
 write down anywhere: the ledger line and its fallback marker both failed, so nothing on that disk can count it. Each
 `io` seed that found it is a fixed scenario asserting that this, and nothing else, happened.
+
+A second one, I1r, is the reap's removal window above. The checker allows it only for lines that were in the spool
+data file at the moment a step died between that file's cursor removal and its own removal (`sim-hooks.ts`
+logRemoval). Those lines must then have been withheld or expired, never re-sent. Every other record counted though the
+hub holds it is still I1. Sleep seed 3851 is its fixed scenario.
 
 **The simulation as a standing method** (review-2 round 9). Each review round found its bugs in a few thousand seeds
 across the generators, a few per thousand, so the sweep runs at three widths:

@@ -197,16 +197,19 @@ const hasConcurrentIntent = (events: readonly SimEvent[], c: number): boolean =>
  *         set_intent ran beside another set_intent or its SessionEnd: the
  *         acknowledgement follows the order answers arrive in, not the order
  *         the hub applied them (review-2 round 8, L1, accepted in round 9).
+ *   I1r — a record counted though the hub holds it, because a reap died
+ *         between removing its spool's cursor and its data file: the lines
+ *         come back, are withheld or expire, and are counted (sleep seed 3851).
  */
 const residualOf = (events: readonly SimEvent[], verdict: Verdict): ResidualClass | null => {
-  if (verdict.invariant === "I1u") {
-    return "I1u";
+  if (verdict.invariant === "I1u" || verdict.invariant === "I1r") {
+    return verdict.invariant;
   }
   const c = conversationOf(verdict);
   return verdict.invariant === "I4" && c !== null && hasConcurrentIntent(events, c) ? "L1" : null;
 };
 
-const ALL_RESIDUALS: readonly ResidualClass[] = ["I1u", "L1"];
+const ALL_RESIDUALS: readonly ResidualClass[] = ["I1u", "L1", "I1r"];
 
 /** The verdicts no residual class explains — among `allowed`, every class the sweep counts by default. */
 const unexplained = (
@@ -270,7 +273,7 @@ describe("the spool, simulated", () => {
         `[spool-simulation] over-count: ${String(totals.overCountSeeds)} seeds, ${String(totals.overCounted)} records counted lost that the hub holds; captured ${String(totals.captured)}, lost ${String(totals.lost)}`,
       );
       console.log(
-        `[spool-simulation] residual ${String(residual.length)} (I1u: ${String(totals.uncountable)} records the disk let nothing count; L1: set_intent beside set_intent or SessionEnd): ${residual.join(" ")}`,
+        `[spool-simulation] residual ${String(residual.length)} (I1u: ${String(totals.uncountable)} records the disk let nothing count; L1: set_intent beside set_intent or SessionEnd; I1r: a reap killed between its cursor and data-file removals): ${residual.join(" ")}`,
       );
       console.log(`[spool-simulation] failing ${String(failing.length)}: ${failing.join(" ")}`);
       await writeSweepReport({

@@ -44,7 +44,7 @@ import {
 } from "./sim-events.ts";
 
 /** The residual classes the sweep counts instead of failing on (test/spool-simulation.test.ts residualOf). */
-export type ResidualClass = "I1u" | "L1";
+export type ResidualClass = "I1u" | "L1" | "I1r";
 
 export interface CorpusSeed {
   readonly seed: number;

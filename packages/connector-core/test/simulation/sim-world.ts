@@ -335,6 +335,8 @@ export interface Run {
   readonly overCountSteps: ReadonlySet<number>;
   /** Steps whose process died (a crash the scenario armed). */
   readonly crashedSteps: ReadonlySet<number>;
+  /** Lines a reap killed between its cursor and data-file removals re-exposed (sim-hooks.ts logRemoval). */
+  readonly reexposed: ReadonlySet<string>;
   readonly sixViolations: readonly string[];
   readonly quiescent: boolean;
   readonly ledgerTotal: number;
@@ -1080,6 +1082,7 @@ const runOf = async (world: World, trace: readonly string[], quiescent: boolean)
     timings: world.timings,
     overCountSteps: world.overCountSteps,
     crashedSteps: world.crashedSteps,
+    reexposed: new Set(log.reexposed),
     sixViolations: world.six,
     quiescent,
     ledgerTotal: ledger.summary.records,

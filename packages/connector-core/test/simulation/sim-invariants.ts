@@ -20,8 +20,12 @@ import type { SimHub } from "./sim-hub.ts";
 import type { Run } from "./sim-world.ts";
 
 export interface Verdict {
-  /** `I1u`: records nothing on disk counts, because the disk refused the ledger line AND the marker (review-2 round 8). */
-  readonly invariant: "I1" | "I1u" | "I2" | "I3" | "I4" | "I5" | "I6";
+  /**
+   * `I1u`: records nothing on disk counts, because the disk refused the ledger line AND the marker (review-2 round 8).
+   * `I1r`: records counted though the hub holds them, re-exposed by a reap that died between its cursor and
+   * data-file removals (sleep seed 3851).
+   */
+  readonly invariant: "I1" | "I1u" | "I1r" | "I2" | "I3" | "I4" | "I5" | "I6";
   readonly detail: string;
 }
 
@@ -70,6 +74,8 @@ const countsById = (run: Run): ReadonlyMap<string, readonly Run["drops"][number]
 /** Each captured record's fate, for I1 and the over-count the sweep prints. */
 interface Fates {
   readonly takenAndCounted: readonly Run["captured"][number][];
+  /** Taken and counted because a reap's death re-exposed them: the residual I1r, never silent. */
+  readonly reexposedAndCounted: readonly Run["captured"][number][];
   readonly countedTwice: readonly Run["captured"][number][];
   readonly neither: readonly Run["captured"][number][];
   readonly lost: number;
@@ -87,7 +93,12 @@ interface Fates {
  *     expire — never re-sent, so no `duplicate` could tell it the hub holds
  *     it — is counted though the hub holds it;
  *   - a record counted by a step that died between the ledger append and the
- *     cursor write past it may be counted again by the next drain.
+ *     cursor write past it may be counted again by the next drain;
+ *   - a record a reap re-exposed, by dying between the removal of its spool's
+ *     cursor and the removal of its data file (spool/reap.ts removeSessionData,
+ *     which re-sends rather than skips), and that is then withheld or expires
+ *     rather than re-sent, is counted though the hub holds it. Its own verdict,
+ *     I1r, so the sweep counts it as the residual it is (sleep seed 3851).
  */
 const fatesOf = (run: Run): Fates => {
   const taken = new Set(run.deliveries.filter((delivery) => TAKEN.has(delivery.status)).map((delivery) => delivery.id));
@@ -98,6 +109,7 @@ const fatesOf = (run: Run): Fates => {
     .filter((drop) => !isDebtRelease(drop))
     .reduce((sum, drop) => sum + Math.max(0, drop.count - drop.ids.length), 0);
   const takenAndCounted: Run["captured"][number][] = [];
+  const reexposedAndCounted: Run["captured"][number][] = [];
   const countedTwice: Run["captured"][number][] = [];
   const neither: Run["captured"][number][] = [];
   let lost = 0;
@@ -113,7 +125,7 @@ const fatesOf = (run: Run): Fates => {
     const isCrashWindow = drops.some((drop) => run.overCountSteps.has(drop.step));
     lost += isTaken ? 0 : 1;
     if (isTaken && drops.length > 0 && !(unheard.has(record.id) && isNeverResent) && !isCrashWindow) {
-      takenAndCounted.push(record);
+      (run.reexposed.has(record.id) && isNeverResent ? reexposedAndCounted : takenAndCounted).push(record);
     } else if (!isTaken && drops.length > 1 && !isCrashWindow) {
       countedTwice.push(record);
     } else if (!isTaken && drops.length === 0) {
@@ -124,7 +136,7 @@ const fatesOf = (run: Run): Fates => {
       }
     }
   }
-  return { takenAndCounted, countedTwice, neither, lost };
+  return { takenAndCounted, reexposedAndCounted, countedTwice, neither, lost };
 };
 
 /** The I1 numbers as the sweep prints them, to measure the over-count (the round-7 review's Q3). */
@@ -174,6 +186,14 @@ const accounting = (run: Run): readonly Verdict[] => {
     ...fateVerdict(fates.neither, "lost and never counted"),
     ...fateVerdict(fates.countedTwice, "counted twice"),
     ...fateVerdict(fates.takenAndCounted, "counted though the hub holds them"),
+    ...(fates.reexposedAndCounted.length === 0
+      ? []
+      : [
+          {
+            invariant: "I1r" as const,
+            detail: `${String(fates.reexposedAndCounted.length)} record(s) a reap re-exposed by dying between its cursor and data-file removals, counted though the hub holds them: ${lostList(fates.reexposedAndCounted)}`,
+          },
+        ]),
     ...unnamedRecords(run),
     ...unnamed.map((drop) => ({
       invariant: "I1" as const,

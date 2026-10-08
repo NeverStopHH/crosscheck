@@ -13,6 +13,7 @@
  * Any other home passes straight through, so the rest of the suite is untouched.
  */
 import { mock } from "bun:test";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import * as paths from "../../src/config/paths.ts";
@@ -93,6 +94,14 @@ interface HookState {
   captured: Captured[];
   drops: DropCall[];
   debts: DebtWrite[];
+  /**
+   * Spool data files whose cursor this step removed and whose own removal has
+   * not landed yet (spool/reap.ts removeSessionData), with the envelope ids
+   * of their lines: the window a death re-exposes them in.
+   */
+  cursorless: Map<string, readonly string[]>;
+  /** Lines a step re-exposed by dying inside that window (sleep seed 3851). */
+  reexposed: Set<string>;
 }
 
 const state: HookState = {
@@ -108,6 +117,8 @@ const state: HookState = {
   captured: [],
   drops: [],
   debts: [],
+  cursorless: new Map(),
+  reexposed: new Set(),
 };
 
 const isScenarioPath = (path: string): boolean => state.home !== null && path.startsWith(state.home);
@@ -192,10 +203,49 @@ const capturedOf = (hostSessionKey: string, record: unknown): Captured => {
 const hookedWritePrivateFile = (path: string, content: string): Promise<void> =>
   guarded(path, false, () => realWritePrivateFile(path, content), () => logDebt(path, content));
 
+const CURSOR_SUFFIX = ".cursor";
+const DATA_SUFFIX = ".jsonl";
+
+/** The envelope ids of a spool data file's lines, as they are on disk now. */
+const lineIdsOf = (dataPath: string): readonly string[] => {
+  try {
+    return readFileSync(dataPath, "utf8")
+      .split("\n")
+      .flatMap((line) => {
+        try {
+          const id = (JSON.parse(line) as { id?: unknown }).id;
+          return typeof id === "string" ? [id] : [];
+        } catch {
+          return [];
+        }
+      });
+  } catch {
+    return [];
+  }
+};
+
+/**
+ * REAP'S REMOVAL WINDOW (spool/reap.ts removeSessionData): the cursor goes
+ * first, then the data file — a crash between them leaves lines with no cursor,
+ * which re-send rather than skip. A step that dies there re-exposes every line
+ * of that file, delivered ones included.
+ */
+const logRemoval = (path: string): void => {
+  if (!isScenarioPath(path)) {
+    return;
+  }
+  if (path.endsWith(CURSOR_SUFFIX)) {
+    const dataPath = `${path.slice(0, -CURSOR_SUFFIX.length)}${DATA_SUFFIX}`;
+    state.cursorless.set(dataPath, lineIdsOf(dataPath));
+  } else if (path.endsWith(DATA_SUFFIX)) {
+    state.cursorless.delete(path);
+  }
+};
+
 mock.module(sourceOf("../../src/config/paths.ts"), () => ({
   ...paths,
   writePrivateFile: hookedWritePrivateFile,
-  removeFile: (path: string) => guarded(path, false, () => realRemoveFile(path)),
+  removeFile: (path: string) => guarded(path, false, () => realRemoveFile(path), () => logRemoval(path)),
 }));
 
 /** Drops whose ledger line AND fallback marker both failed: nothing on disk counts them (review-2 round 8). */
@@ -274,6 +324,7 @@ export const beginScenario = (home: string): void => {
   state.captured = [];
   state.drops = [];
   state.debts = [];
+  state.reexposed = new Set();
   uncountable.count = 0;
   uncountable.ids = [];
   beginStep(0, null);
@@ -289,6 +340,7 @@ export const beginStep = (step: number, crash: Crash | null, ioFail: IoFail | nu
   state.dead = false;
   state.diedAfterDrop = false;
   state.droppedThisStep = false;
+  state.cursorless = new Map();
 };
 
 /**
@@ -309,6 +361,14 @@ export const endStep = (): {
     ioFailed: state.ioFailed,
     droppedThisStep: state.droppedThisStep,
   };
+  if (state.dead) {
+    for (const ids of state.cursorless.values()) {
+      for (const id of ids) {
+        state.reexposed.add(id);
+      }
+    }
+  }
+  state.cursorless = new Map();
   state.crash = null;
   state.ioFail = null;
   state.ioFailed = 0;
@@ -328,4 +388,5 @@ export const scenarioLog = (): {
   readonly captured: readonly Captured[];
   readonly drops: readonly DropCall[];
   readonly debts: readonly DebtWrite[];
-} => ({ captured: state.captured, drops: state.drops, debts: state.debts });
+  readonly reexposed: ReadonlySet<string>;
+} => ({ captured: state.captured, drops: state.drops, debts: state.debts, reexposed: state.reexposed });
