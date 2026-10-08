@@ -327,6 +327,8 @@ export interface Run {
   readonly latestStatus: ReadonlyMap<string, string>;
   /** The status set_intent last left in the state, per work context — what every other sender reads. */
   readonly writtenStatus: ReadonlyMap<string, string>;
+  /** Every post set_intent sent, in order: whether the hub took one is in `deliveries`, heard or not. */
+  readonly intentPosts: readonly IntentPost[];
   /** Every drain's wall time against the deadline it had (I5). */
   readonly timings: readonly Timing[];
   /** Steps that may have counted records twice: they died between a ledger append and the cursor write past it. */
@@ -349,6 +351,13 @@ export interface Timing {
   readonly limitMs: number;
 }
 
+/** One post set_intent sent: its envelope, and the status it carried for its work context. */
+export interface IntentPost {
+  readonly id: string;
+  readonly workContextId: string;
+  readonly status: string;
+}
+
 let runs = 0;
 
 interface World {
@@ -362,6 +371,7 @@ interface World {
   readonly history: Phase[][];
   readonly latestStatus: Map<string, string>;
   readonly writtenStatus: Map<string, string>;
+  readonly intentPosts: IntentPost[];
   readonly timings: Timing[];
   readonly six: string[];
   readonly oldFlushSteps: Set<number>;
@@ -475,15 +485,22 @@ const edit = async (world: World, c: number): Promise<void> => {
 /** The work_context envelope set_intent posts, as the tool builds one (mcp/tools/shared.ts envelopeFor). */
 const intentEnvelope =
   (world: World) =>
-  (producer: { readonly sessionId: string; readonly developerId: string | null }, body: unknown, seq: SeqField) => ({
-    cx: PROTOCOL_VERSION,
-    id: `env_${crypto.randomUUID()}`,
-    ts: new Date().toISOString(),
-    producer: { developerId: producer.developerId ?? world.hub.developerId, agentKind: AGENT_KIND, sessionId: producer.sessionId },
-    kind: "work_context",
-    body,
-    seq,
-  });
+  (producer: { readonly sessionId: string; readonly developerId: string | null }, body: unknown, seq: SeqField) => {
+    const id = `env_${crypto.randomUUID()}`;
+    const said = body as { readonly id?: unknown; readonly status?: unknown };
+    if (typeof said.id === "string" && typeof said.status === "string") {
+      world.intentPosts.push({ id, workContextId: said.id, status: said.status });
+    }
+    return {
+      cx: PROTOCOL_VERSION,
+      id,
+      ts: new Date().toISOString(),
+      producer: { developerId: producer.developerId ?? world.hub.developerId, agentKind: AGENT_KIND, sessionId: producer.sessionId },
+      kind: "work_context",
+      body,
+      seq,
+    };
+  };
 
 /**
  * set_intent, through the tool's OWN write (mcp/tools/intent-write.ts, review-2
@@ -1025,6 +1042,7 @@ const newWorld = async (hub: SimHub, events: readonly SimEvent[], repoRoot: stri
     history: keys.map(() => []),
     latestStatus: new Map(),
     writtenStatus: new Map(),
+    intentPosts: [],
     timings: [],
     six: [],
     oldFlushSteps: new Set(),
@@ -1058,6 +1076,7 @@ const runOf = async (world: World, trace: readonly string[], quiescent: boolean)
     oldFlushSteps: world.oldFlushSteps,
     latestStatus: world.latestStatus,
     writtenStatus: world.writtenStatus,
+    intentPosts: world.intentPosts,
     timings: world.timings,
     overCountSteps: world.overCountSteps,
     crashedSteps: world.crashedSteps,

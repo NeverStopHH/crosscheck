@@ -245,11 +245,29 @@ const order = async (hub: SimHub, run: Run): Promise<readonly Verdict[]> => {
 };
 
 /**
+ * The newest status set_intent posted that the hub TOOK, heard or not, per
+ * work context (sleep seed 4643): a post the hub took while its answer was
+ * lost is a status the hub took from set_intent all the same. `latestStatus`
+ * holds only the ones whose answer came back.
+ */
+const newestTakenIntent = (run: Run): ReadonlyMap<string, string> => {
+  const taken = new Set(run.deliveries.filter((delivery) => TAKEN.has(delivery.status)).map((delivery) => delivery.id));
+  const newest = new Map<string, string>();
+  for (const post of run.intentPosts) {
+    if (taken.has(post.id)) {
+      newest.set(post.workContextId, post.status);
+    }
+  }
+  return newest;
+};
+
+/**
  * I4: the hub's status is the newest one set_intent wrote — the newest the hub
- * took from it, or the newest it left in the state (which every other sender
- * reads), when a post it wrote there never landed.
+ * took from it, heard or not, or the newest it left in the state (which every
+ * other sender reads), when a post it wrote there never landed.
  */
 const freshness = async (hub: SimHub, run: Run): Promise<readonly Verdict[]> => {
+  const tookUnheard = newestTakenIntent(run);
   const verdicts: Verdict[] = [];
   // An older connector's flush sends a spooled copy as it was spooled: its
   // revert is the documented residual (L5), not this connector's.
@@ -265,7 +283,7 @@ const freshness = async (hub: SimHub, run: Run): Promise<readonly Verdict[]> => 
     const rows = await hub.raw<{ status: string }>("select status from work_contexts where id = $1", [workContextId]);
     const onHub = rows[0]?.status;
     const written = run.writtenStatus.get(workContextId) ?? status;
-    if (onHub !== undefined && onHub !== status && onHub !== written) {
+    if (onHub !== undefined && onHub !== status && onHub !== written && onHub !== tookUnheard.get(workContextId)) {
       verdicts.push({ invariant: "I4", detail: `${workContextId}: the hub says ${onHub}, the newest written is ${status}` });
     }
   }
