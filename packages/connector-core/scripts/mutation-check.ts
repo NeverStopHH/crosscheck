@@ -1981,7 +1981,7 @@ export const MUTATIONS: readonly Mutation[
     file: `${CORE}/src/config/config.ts`,
     from:
       "  if (hasEnvHub === false && (await readRepoConfig(options.repoRoot)) === null) {\n" +
-      "    return null;\n" +
+      "    return UNREPORTABLE;\n" +
       "  }\n",
     to: "",
     test: `${CONNECTOR}/test/global-wiring-silence.test.ts`,
@@ -1992,30 +1992,27 @@ export const MUTATIONS: readonly Mutation[
       "§2.1 calls the disaster this section exists to prevent",
   },
   {
-    // The finding-#11 key-origin pin (adversarial follow-up): under
-    // machine-wide wiring a repo's committed .crosscheck.json is
-    // attacker-forgeable, so the stored bearer key may travel ONLY to the
-    // origin the developer logged into. This deletes the origin check,
-    // re-opening the credential-exfiltration hole: a planted .crosscheck.json
-    // naming an attacker hub pairs the stored key with that foreign origin.
+    // The finding-#11 key-origin pin (adversarial follow-up), since the
+    // Phase 1 security review the reporting half of the key-origin binding
+    // (config/key-binding.ts): a repo whose committed .crosscheck.json names
+    // another hub than the key's resolves to "connected to another hub".
+    // This deletes that gate. The HTTP client still refuses every request
+    // unsent (its own anchor below), so what re-opens is the rest: the
+    // session runs against a hub nobody vouched for, its captures are
+    // spooled under that hub's key — flushed the day the developer is coaxed
+    // into logging in there — and nothing says or counts the refusal.
     label: "a planted repo config redirects the stored key to a foreign hub",
     file: `${CORE}/src/config/config.ts`,
     from:
-      "  const usesStoredKey = options.env[\"CROSSCHECK_API_KEY\"] === undefined;\n" +
-      "  if (hasEnvHub === false && usesStoredKey) {\n" +
-      "    const storedOrigin =\n" +
-      "      config.stored === null ? null : hubOrigin(config.stored.hubUrl);\n" +
-      "    if (storedOrigin === null || storedOrigin !== hubOrigin(config.hubUrl)) {\n" +
-      "      return null;\n" +
-      "    }\n" +
+      "  if (config.foreignHub !== null) {\n" +
+      "    return { kind: \"foreign_hub\", home: config.home, foreignHub: config.foreignHub };\n" +
       "  }\n",
     to: "",
     test: `${CONNECTOR}/test/global-wiring-silence.test.ts`,
     because:
-      "the stored key leaves for an attacker-named origin: a developer who " +
-      "clones and opens a repo carrying a planted .crosscheck.json sends " +
-      "their real hub bearer token (and session telemetry) to the attacker's " +
-      "hub, and the register write-back poisons their stored identity",
+      "a bait repo's session runs as if connected: its work is spooled for " +
+      "the attacker's hub, the session is never told, and doctor counts " +
+      "nothing — one login to that hub away from sending all of it",
   },
   {
     // The surgical strip behind `init --global --remove`: a group mixing a
@@ -24509,6 +24506,170 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/generated-targets.test.ts`,
     because: "a connector with no rule asks about every lockfile, and a row stored before the column answers it",
   },
+  // A KEY IS BOUND TO THE ORIGIN IT WAS ISSUED FOR (Phase 1 security review;
+  // core config/key-binding.ts). A repo's .crosscheck.json is shared content,
+  // so naming another hub than the key's must send the key nowhere, from any
+  // path — and must never be silent about it.
+  {
+    label: "the HTTP client attaches the key to any origin it is handed",
+    file: `${CORE}/src/http/client.ts`,
+    from: "  if (refusal !== null) {\n    return refusal;\n  }\n",
+    to: "",
+    test: `${CORE}/test/key-origin-client.test.ts`,
+    because:
+      "every caller that pairs the key with a repo-named hub — status, doctor, pin, a future surface — sends the developer's bearer key to that hub",
+  },
+  {
+    label: "a key bound to no hub is sent to whatever hub is named",
+    file: `${CORE}/src/http/client.ts`,
+    from: '  const bound = typeof ctx.keyOrigin === "string" ? ctx.keyOrigin : null;',
+    to: '  const bound = typeof ctx.keyOrigin === "string" ? ctx.keyOrigin : ctx.hubUrl;',
+    test: `${CORE}/test/key-origin-client.test.ts`,
+    because:
+      "an ambient CROSSCHECK_API_KEY with no hub of its own travels to the hub a cloned repo's .crosscheck.json chose",
+  },
+  {
+    label: "any two hub origins compare as the same",
+    file: `${CORE}/src/config/origin.ts`,
+    from: "  return left !== null && left === hubOrigin(b);",
+    to: "  return left !== null && hubOrigin(b) !== null;",
+    test: `${CORE}/test/key-origin-client.test.ts`,
+    because: "the client's check passes every parseable url, and the key leaves for the attacker's origin as if it were its own",
+  },
+  {
+    label: "a hub url's path is compared as part of its origin",
+    file: `${CORE}/src/config/origin.ts`,
+    from: "    return new URL(normalized).origin;",
+    to: "    return normalized;",
+    test: `${CORE}/test/key-binding.test.ts`,
+    because:
+      "a login and a repo that name one hub with and without a path read as two hubs, and the pilot's capture stops behind a WARN nobody needed",
+  },
+  {
+    label: "CROSSCHECK_HUB_URL carries the stored key to another hub",
+    file: `${CORE}/src/config/key-binding.ts`,
+    from: '  return { apiKey: stored.apiKey, keyOrigin: storedKeyOrigin(stored), keySource: "login" };',
+    to: '  return { apiKey: stored.apiKey, keyOrigin: hubOrigin(env["CROSSCHECK_HUB_URL"] ?? stored.hubUrl), keySource: "login" };',
+    test: `${CORE}/test/key-binding.test.ts`,
+    because:
+      "an environment override the developer never set for that hub — a launcher, a leaked shell profile — sends their stored key wherever it points",
+  },
+  {
+    label: "an environment key with no hub of its own goes wherever the repo says",
+    file: `${CORE}/src/config/key-binding.ts`,
+    from: "  if (target !== null && target === binding.keyOrigin) {",
+    to: "  if (target !== null && (binding.keyOrigin === null || target === binding.keyOrigin)) {",
+    test: `${CORE}/test/key-binding.test.ts`,
+    because:
+      "a CI job or shell that exports only CROSSCHECK_API_KEY reports to — and is told it may send its key to — a forked repo's hub",
+  },
+  {
+    label: "the stored key follows a hand-edited hubUrl",
+    file: `${CORE}/src/config/key-binding.ts`,
+    from: "  return recorded ?? hubOrigin(stored.hubUrl);",
+    to: "  return hubOrigin(stored.hubUrl);",
+    test: `${CORE}/test/key-binding.test.ts`,
+    because:
+      "an agent that rewrites config.json's hubUrl moves the key with it; the recorded binding is what makes the login, not the file, the authority",
+  },
+  {
+    label: "a legacy login is never bound on disk",
+    file: `${CORE}/src/config/config.ts`,
+    from: "  await persistLegacyBinding(home, stored, keyOrigin);\n",
+    to: "",
+    test: `${CORE}/test/key-binding.test.ts`,
+    because:
+      "every pre-binding login stays bound only to whatever its hubUrl says next, so a later edit of that one field moves the key",
+  },
+  {
+    label: "a repo connected to another hub is refused uncounted",
+    file: `${CORE}/src/state/foreign-hub.ts`,
+    from: '    await appendFile(path, `${JSON.stringify(line)}\\n`, "utf8");',
+    to: "",
+    test: `${CONNECTOR}/test/global-wiring-silence.test.ts`,
+    because:
+      "a login and a repo that spell one hub two ways stop capturing, and doctor has no number to say since when or how much",
+  },
+  {
+    label: "a session in a repo connected to another hub starts in silence",
+    file: `${CONNECTOR}/src/hooks/runner.ts`,
+    from: '  return output === undefined ? "" : output(foreignHubAgentLine(prepared.foreignHub));',
+    to: '  return "";',
+    test: `${CONNECTOR}/test/global-wiring-silence.test.ts`,
+    because: "the session reads as a quiet repo while nothing from it is captured — the silent capture break the pilot must never get",
+  },
+  {
+    label: "the statusline says nothing in a repo connected to another hub",
+    file: `${CONNECTOR}/src/statusline/statusline.ts`,
+    from: "      return failureLine(KEY_NOT_SENT, null);",
+    to: '      return "";',
+    test: `${CLI}/test/key-origin-attacker.test.ts`,
+    because: "the one surface a person sees all session shows nothing, so a refused repo looks like an unwired one",
+  },
+  {
+    label: "a Cursor event in a repo connected to another hub is not counted",
+    file: `${CURSOR}/src/runner.ts`,
+    from: '  if (resolved.kind === "foreign_hub") {\n    // Nothing captured, nothing sent',
+    to: "  if (false) {\n    // Nothing captured, nothing sent",
+    test: `${CLI}/test/key-origin-attacker.test.ts`,
+    because: "Cursor's refused events vanish from doctor's count, so a Cursor-only developer's broken capture is silent",
+  },
+  {
+    label: "the ACP proxy files a repo connected to another hub as unconfigured",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: '    if (resolved.kind === "foreign_hub") {\n      await recordForeignHubRefusal(',
+    to: "    if (false) {\n      await recordForeignHubRefusal(",
+    test: `${ACP}/test/key-origin-acp.test.ts`,
+    because: "the proxy log says no config and nothing is counted, so the mismatch reads as a missing login",
+  },
+  {
+    label: "the MCP tools call a repo connected to another hub unconnected",
+    file: `${CORE}/src/mcp/context.ts`,
+    from: '  if (resolved.kind === "foreign_hub") {\n    await recordForeignHubRefusal(resolved.home, {',
+    to: "  if (false) {\n    await recordForeignHubRefusal(resolved.home, {",
+    test: `${CLI}/test/key-origin-attacker.test.ts`,
+    because: "the agent is told to run crosscheck init in a repo that is connected — to another hub — and nothing is counted",
+  },
+  {
+    label: "an MCP tool told of a refusal repeats the foreign url and offers a login to it",
+    file: `${CORE}/src/mcp/tools/shared.ts`,
+    from: '  if (failure.kind === "refused") {\n    return (\n      "crosscheck did not send this request',
+    to: '  if (false) {\n    return (\n      "crosscheck did not send this request',
+    test: `${CORE}/test/key-origin-client.test.ts`,
+    because: "repo-chosen text lands in the agent's context as 'the hub at … refused', one sentence from a login to the attacker",
+  },
+  {
+    label: "status asks a hub the key does not belong to",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "  if (config.foreignHub !== null) {",
+    to: "  if (false) {",
+    test: `${CLI}/test/key-origin-attacker.test.ts`,
+    because: "status prints a page of unreachable-hub lines and no WARN naming the two origins, so the person never learns the key was refused",
+  },
+  {
+    label: "doctor asks a hub the key does not belong to",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "  if (config === null || identity === null || foreignHub !== null) {",
+    to: "  if (config === null || identity === null) {",
+    test: `${CLI}/test/key-origin-attacker.test.ts`,
+    because: "doctor probes the repo-named hub with the key and reads its refusal as an unreachable hub, burying the one line that names the fix",
+  },
+  {
+    label: "a conference in a repo connected to another hub says it reports to no hub",
+    file: `${CLI}/src/cli/conference.ts`,
+    from: '  if (resolved.kind === "foreign_hub") {\n    const ledger = await readForeignHubRefusals(',
+    to: "  if (false) {\n    const ledger = await readForeignHubRefusals(",
+    test: `${CLI}/test/key-origin-attacker.test.ts`,
+    because: "the scheduled conference tells the person to run crosscheck init in a repo that already names a hub — the wrong remedy",
+  },
+  {
+    label: "a login keeps the previous hub's key binding",
+    file: `${CLI}/src/cli/login.ts`,
+    from: "      { ...(existing ?? {}), version: 1, hubUrl, apiKey, keyOrigin },",
+    to: "      { ...(existing ?? {}), version: 1, hubUrl, apiKey },",
+    test: `${CLI}/test/key-origin-attacker.test.ts`,
+    because: "after logging in to a new hub every request is refused, the new key still bound to the hub it replaced",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -24597,6 +24758,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/init-remove-verdict.test.ts 7
  * PRINTS: packages/cli/test/init-remove.test.ts 17
  * PRINTS: packages/cli/test/intent-cost.test.ts 1
+ * PRINTS: packages/cli/test/key-origin-attacker.test.ts 7
  * PRINTS: packages/cli/test/key-rotate.test.ts 6
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 9
  * PRINTS: packages/cli/test/landed-doctor.test.ts 3
@@ -24636,6 +24798,7 @@ interface Outcome {
  * PRINTS: packages/connector-acp/test/derive.test.ts 8
  * PRINTS: packages/connector-acp/test/draft-nudge-inject.test.ts 6
  * PRINTS: packages/connector-acp/test/injector.test.ts 6
+ * PRINTS: packages/connector-acp/test/key-origin-acp.test.ts 1
  * PRINTS: packages/connector-acp/test/key-rotation-acp.test.ts 2
  * PRINTS: packages/connector-acp/test/pool-starvation.test.ts 1
  * PRINTS: packages/connector-acp/test/proxy-e2e.test.ts 1
@@ -24669,7 +24832,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/fingerprint.test.ts 1
  * PRINTS: packages/connector-claude/test/foreign-model.test.ts 1
  * PRINTS: packages/connector-claude/test/ghost-worker.test.ts 5
- * PRINTS: packages/connector-claude/test/global-wiring-silence.test.ts 2
+ * PRINTS: packages/connector-claude/test/global-wiring-silence.test.ts 4
  * PRINTS: packages/connector-claude/test/hint-hook.test.ts 4
  * PRINTS: packages/connector-claude/test/hook-budget.test.ts 3
  * PRINTS: packages/connector-claude/test/hook-contract.test.ts 1
@@ -24761,6 +24924,8 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/injection-corpus.test.ts 8
  * PRINTS: packages/connector-core/test/intent-budget.test.ts 1
  * PRINTS: packages/connector-core/test/intent-chain-render.test.ts 1
+ * PRINTS: packages/connector-core/test/key-binding.test.ts 5
+ * PRINTS: packages/connector-core/test/key-origin-client.test.ts 4
  * PRINTS: packages/connector-core/test/kit.test.ts 1
  * PRINTS: packages/connector-core/test/landed-capture.test.ts 5
  * PRINTS: packages/connector-core/test/landed-changes-completeness.test.ts 26

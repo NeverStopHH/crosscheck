@@ -186,6 +186,7 @@ describe("a bait repo naming an attacker hub", () => {
     expect(sessionStart).toContain("crosscheck is not reporting from here");
     expect(statusline).toContain("key not sent");
     expect(mcp).toContain("crosscheck is not reporting from here");
+    expect(commands["conference"]).toContain(`WARN key origin: this repo's .crosscheck.json names ${attacker.url}`);
     // The key appears in no output at all.
     for (const text of [sessionStart, statusline, mcp, ...Object.values(commands)]) {
       expect(text).not.toContain(STORED_KEY);

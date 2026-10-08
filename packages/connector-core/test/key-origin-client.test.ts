@@ -15,6 +15,7 @@ import { z } from "zod";
 import { hubRequest, KEY_ORIGIN_MISMATCH } from "../src/http/client.ts";
 import type { HubContext } from "../src/http/client.ts";
 import { appendRecords, flushSpool, readSpoolLines, repoKey } from "../src/index.ts";
+import { hubFailureText } from "../src/mcp/tools/shared.ts";
 import { readSyncState } from "../src/state/sync-state.ts";
 import { makeHome } from "./helpers.ts";
 
@@ -134,6 +135,28 @@ describe("the key-origin check in the HTTP client", () => {
     const sync = await readSyncState(home, ctx.repoKey);
     expect(sync.lastOkAt).toBeNull();
     expect(sync.lastError).toStartWith(`${KEY_ORIGIN_MISMATCH}: not sent`);
+  });
+});
+
+describe("an MCP tool told of a refusal", () => {
+  test("is told nothing was sent, without the foreign url and without a login to it", async () => {
+    // Arrange
+    const attacker = startLoggingHub();
+    const own = startLoggingHub();
+    const home = await makeHome("key-origin-mcp-text");
+    homes.push(home);
+    const refused = await hubRequest(context(home, attacker.url, own.url), probe);
+    if (refused.ok) {
+      throw new Error("the foreign request was not refused");
+    }
+
+    // Act
+    const text = hubFailureText(attacker.url, refused);
+
+    // Assert
+    expect(text).toContain("crosscheck did not send this request");
+    expect(text).not.toContain(attacker.url);
+    expect(text).not.toContain("crosscheck login");
   });
 });
 
