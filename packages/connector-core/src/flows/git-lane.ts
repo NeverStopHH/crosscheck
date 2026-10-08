@@ -44,9 +44,11 @@ import type { Producer } from "../capture/records.ts";
 import { seqAfter, seqSlice } from "../capture/seq.ts";
 import type { RootHead, TouchedRootsResolution } from "../capture/touched-root.ts";
 import { readHeadFile } from "../git/repo-identity.ts";
+import { changedWorktreesOf, commonDirOfRoot } from "../git/shell-roots.ts";
 import type { HeadFile } from "../git/repo-identity.ts";
 import { appendRecords } from "../spool/append.ts";
 import { recordCaptureLoss } from "../state/loss-ledger.ts";
+import { withSweptRoot } from "../state/session-state.ts";
 import type { SeqRange, SessionState } from "../state/session-state.ts";
 import { readGitCommits, readGitTouches, spoolGitTouches } from "./capture-git-touches.ts";
 import type { CaptureGitTouchesInput } from "./capture-git-touches.ts";
@@ -74,7 +76,43 @@ export interface GitLaneChoice {
    * Stop's to make.
    */
   readonly subagent?: boolean;
+  /** The repo's worktrees a shell may have worked in, changed since their last sweep (`discoverShellRoots`). */
+  readonly discovered?: readonly string[];
 }
+
+/**
+ * WHERE A SHELL MAY HAVE WORKED, when its words could not tell (review H2):
+ * after a Bash call, every worktree of the session's repo whose index or HEAD
+ * log changed since the session began and since its own last sweep. Fs only
+ * (git/shell-roots.ts); nothing when no shell ran since the last full sweep.
+ */
+export const discoverShellRoots = async (state: SessionState): Promise<readonly string[]> => {
+  if (state.shellSweepSince === null || state.shellSweepSince === undefined) {
+    return [];
+  }
+  const commonDir = await commonDirOfRoot(await realpathBestEffort(state.repoRoot));
+  if (commonDir === null) {
+    return [];
+  }
+  const changed = await changedWorktreesOf(commonDir, new Date(state.startedAt));
+  return changed
+    .filter((entry) => {
+      const sweptAt = state.knownWorktreeRoots.find((known) => known.root === entry.root)?.gitSweptAt ?? null;
+      return sweptAt === null || entry.changedAtMs > Date.parse(sweptAt);
+    })
+    .map((entry) => entry.root);
+};
+
+/** How many of the roots a shell asked for — marked or discovered — the cap left for a later Stop (review H2). */
+export const deferredRootsOf = async (
+  state: SessionState,
+  choice: GitLaneChoice,
+  roots: readonly GitLaneRoot[],
+): Promise<number> => {
+  const { pressing } = await orderedCandidates(state, choice);
+  const swept = new Set(roots.map((lane) => lane.root));
+  return pressing.filter((root) => !swept.has(root)).length;
+};
 
 type KnownRoot = SessionState["knownWorktreeRoots"][number];
 
@@ -96,18 +134,11 @@ const byTurn = (left: KnownRoot, right: KnownRoot): number =>
   (left.gitSweptAt ?? "").localeCompare(right.gitSweptAt ?? "") ||
   newestFirst(left.lastTouchedAt, right.lastTouchedAt);
 
-/**
- * WHICH ROOTS, IN WHICH ORDER: bash-touched first (a shell wrote what no edit
- * event named there), then the cwd's, then the session's own, then every
- * other root of this repo the session touched, the one swept longest ago
- * first — each once, at most MAX_GIT_LANE_ROOTS, so a session past the cap
- * sweeps its other roots in turn rather than never. A foreign root is never
- * swept.
- */
-export const selectGitLaneRoots = async (
+/** The roots that must be swept, in order — before the cap cuts the list. */
+const orderedCandidates = async (
   state: SessionState,
   choice: GitLaneChoice,
-): Promise<readonly GitLaneRoot[]> => {
+): Promise<{ readonly ordered: readonly string[]; readonly pressing: readonly string[]; readonly sessionRoot: string }> => {
   const sessionRoot = await realpathBestEffort(state.repoRoot);
   const cwd = choice.cwdRoot === null ? [] : [await realpathBestEffort(choice.cwdRoot)];
   const own = state.knownWorktreeRoots.filter((entry) => entry.repoId === state.repoId);
@@ -115,11 +146,32 @@ export const selectGitLaneRoots = async (
     .filter((entry) => entry.bashTouchedAt !== null)
     .sort((left, right) => newestFirst(left.bashTouchedAt, right.bashTouchedAt))
     .map((entry) => entry.root);
+  const discovered = choice.discovered ?? [];
   const recent = [...own].sort(byTurn).map((entry) => entry.root);
   const ordered =
-    choice.subagent === true ? [...cwd, ...bashed] : [...bashed, ...cwd, sessionRoot, ...recent];
+    choice.subagent === true
+      ? [...cwd, ...bashed, ...discovered]
+      : [...bashed, ...cwd, ...discovered, sessionRoot, ...recent];
+  return { ordered: [...new Set(ordered)], pressing: [...new Set([...bashed, ...discovered])], sessionRoot };
+};
+
+/**
+ * WHICH ROOTS, IN WHICH ORDER: bash-touched first (a shell wrote what no edit
+ * event named there), then the cwd's, then the worktrees a shell may have
+ * worked in where its words could not tell (`discovered`, review H2), then
+ * the session's own, then every other root of this repo the session touched,
+ * the one swept longest ago first — each once, at most MAX_GIT_LANE_ROOTS, so
+ * a session past the cap sweeps its other roots in turn rather than never. A
+ * foreign root is never swept.
+ */
+export const selectGitLaneRoots = async (
+  state: SessionState,
+  choice: GitLaneChoice,
+): Promise<readonly GitLaneRoot[]> => {
+  const { ordered, sessionRoot } = await orderedCandidates(state, choice);
+  const own = state.knownWorktreeRoots.filter((entry) => entry.repoId === state.repoId);
   const started = new Date(state.startedAt);
-  return [...new Set(ordered)].slice(0, MAX_GIT_LANE_ROOTS).map((root) => {
+  return ordered.slice(0, MAX_GIT_LANE_ROOTS).map((root) => {
     const entry = own.find((known) => known.root === root);
     const isSessionRoot = root === sessionRoot;
     return { root, since: windowOf(isSessionRoot, entry, started), firstHead: entry?.firstHead ?? null, isSessionRoot };
@@ -329,11 +381,4 @@ export const sweepGitRoots = async (input: SweepGitRootsInput): Promise<GitLaneS
  * fields are the cache's and stay.
  */
 export const withSweptRoots = (state: SessionState, swept: readonly string[], at: string): SessionState =>
-  swept.length === 0
-    ? state
-    : {
-        ...state,
-        knownWorktreeRoots: state.knownWorktreeRoots.map((entry) =>
-          swept.includes(entry.root) ? { ...entry, bashTouchedAt: null, gitSweptAt: at } : entry,
-        ),
-      };
+  swept.reduce((written, root) => withSweptRoot(written, root, at), state);

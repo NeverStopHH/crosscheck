@@ -19765,6 +19765,39 @@ export const MUTATIONS: readonly Mutation[
     because: "a `pull --rebase` moves HEAD onto the upstream it diverged from, and the rules fold the next branch into a topic it holds none of",
   },
   {
+    // Review H2 of feat/topic-contexts: a subagent's shell works in a sibling, its cwd the start checkout.
+    label: "a Bash call marks only its cwd's root",
+    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
+    from: "  return [...new Set([cwdRoot, ...named])];",
+    to: "  return [cwdRoot];",
+    test: `${CONNECTOR}/test/topic-nick-shape.test.ts`,
+    because: "`cd ~/worktrees/x && … && git commit` from the start checkout marks the start checkout, and the sibling it worked in waits for discovery or is never swept",
+  },
+  {
+    label: "a shell's pending sweep never looks beyond the roots it named",
+    file: `${CORE}/src/flows/git-lane.ts`,
+    from: "  if (state.shellSweepSince === null || state.shellSweepSince === undefined) {\n    return [];\n  }",
+    to: "  if (true) {\n    return [];\n  }",
+    test: `${CONNECTOR}/test/topic-nick-shape.test.ts`,
+    because: "a script whose words name no worktree commits in a sibling, and nothing sweeps it or counts it",
+  },
+  {
+    label: "the roots the cap left for a later Stop are not counted",
+    file: `${CONNECTOR}/src/hooks/git-lane.ts`,
+    from: "      gitLaneRootsDeferred: (swept.gitLaneRootsDeferred ?? 0) + deferred,",
+    to: "      gitLaneRootsDeferred: swept.gitLaneRootsDeferred ?? 0,",
+    test: `${CONNECTOR}/test/topic-nick-shape.test.ts`,
+    because: "a turn that swept eight of ten changed worktrees reads as a full sweep",
+  },
+  {
+    label: "a shell's pending sweep is answered while roots are left",
+    file: `${CONNECTOR}/src/hooks/git-lane.ts`,
+    from: "    const isShellAnswered = choice.subagent !== true && deferred === 0 && !sweep.unavailable;",
+    to: "    const isShellAnswered = true;",
+    test: `${CONNECTOR}/test/topic-nick-shape.test.ts`,
+    because: "the worktrees the root cap left are never discovered again, and their shell work is lost uncounted",
+  },
+  {
     // Review H3 of feat/topic-contexts, and its surviving mutation #6.
     label: "a deleted branch reads as a rename",
     file: `${CORE}/src/flows/topic-rules.ts`,
@@ -19893,8 +19926,8 @@ export const MUTATIONS: readonly Mutation[
     // DESIGN.md "One session, many topics", item 3.
     label: "Stop's git lane sweeps only the checkout its cwd sits in",
     file: `${CORE}/src/flows/git-lane.ts`,
-    from: "    choice.subagent === true ? [...cwd, ...bashed] : [...bashed, ...cwd, sessionRoot, ...recent];",
-    to: "    choice.subagent === true ? [...cwd, ...bashed] : [...cwd];",
+    from: "      : [...bashed, ...cwd, ...discovered, sessionRoot, ...recent];",
+    to: "      : [...cwd];",
     test: `${CONNECTOR}/test/topic-git-lane.test.ts`,
     because:
       "every sibling worktree's shell work — cp, mv, a generator, a commit — is lost, " +
@@ -19927,8 +19960,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "SubagentStop sweeps no root",
     file: `${CORE}/src/flows/git-lane.ts`,
-    from: "    choice.subagent === true ? [...cwd, ...bashed] :",
-    to: "    choice.subagent === true ? [] :",
+    from: "      ? [...cwd, ...bashed, ...discovered]\n",
+    to: "      ? []\n",
     test: `${CONNECTOR}/test/topic-git-lane.test.ts`,
     because: "a subagent's shell work waits for the parent's next Stop, which may come after a revert",
   },
@@ -19942,9 +19975,9 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "a root past the lane's cap is never swept",
-    file: `${CORE}/src/flows/git-lane.ts`,
-    from: "          swept.includes(entry.root) ? { ...entry, bashTouchedAt: null, gitSweptAt: at } : entry,",
-    to: "          swept.includes(entry.root) ? { ...entry, bashTouchedAt: null } : entry,",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  return withRootEntry(state, { ...base, bashTouchedAt: null, gitSweptAt: at });",
+    to: "  return withRootEntry(state, { ...base, bashTouchedAt: null });",
     test: `${CONNECTOR}/test/topic-git-lane.test.ts`,
     because: "a session working more worktrees than one Stop sweeps never looks at the one it touched least recently",
   },
@@ -19968,8 +20001,8 @@ export const MUTATIONS: readonly Mutation[
     // DESIGN.md "One session, many topics", item 4.
     label: "a Bash call leaves its root unmarked",
     file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
-    from: "  const bashRoot = isBashTool(ctx.payload.tool_name) ? await realpathBestEffort(ctx.identity.root) : null;",
-    to: "  const bashRoot: string | null = null;",
+    from: "  const shellRoots = isBashTool(ctx.payload.tool_name) ? await shellRootsOf(ctx) : null;",
+    to: "  const shellRoots: readonly string[] | null = null;",
     test: `${CONNECTOR}/test/topic-git-lane.test.ts`,
     because:
       "a worktree only a shell ever touched is never known to the session, and the git " +
@@ -20248,7 +20281,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/summarizer-worker-env.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/topic-git-lane.test.ts 9
- * PRINTS: packages/connector-claude/test/topic-nick-shape.test.ts 1
+ * PRINTS: packages/connector-claude/test/topic-nick-shape.test.ts 5
  * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 4
  * PRINTS: packages/connector-core/test/absence-render.test.ts 7

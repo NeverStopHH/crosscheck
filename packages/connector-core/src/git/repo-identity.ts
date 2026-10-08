@@ -304,7 +304,7 @@ const readTrimmed = async (path: string): Promise<string | null> => {
 };
 
 /** `.git` itself for a checkout; the `gitdir:` line of a linked worktree's `.git` file. */
-const gitDirOf = async (root: string): Promise<string | null> => {
+export const gitDirOf = async (root: string): Promise<string | null> => {
   const entry = join(root, ".git");
   const stats = await stat(entry).catch(() => null);
   if (stats === null) {

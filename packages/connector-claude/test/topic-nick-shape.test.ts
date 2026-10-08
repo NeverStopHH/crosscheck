@@ -17,11 +17,12 @@
  *
  * A dead hub (port 1) keeps every record in the spool, where it is read back.
  */
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { readSpoolLines, repoKey, runHook } from "../src/index.ts";
 import type { Env } from "../src/index.ts";
 import { git, makeHome, makeRepo, writeRepoFile } from "../../connector-core/test/helpers.ts";
@@ -35,6 +36,9 @@ const WIDE_TIMEOUT_MS = "8000";
 const BEFORE_THE_SESSION = new Date(Date.now() - 7_200_000).toISOString();
 
 const paths: string[] = [];
+
+/** Real worktrees and real hooks, several of each per test: past bun's 5 s default on a loaded machine. */
+setDefaultTimeout(60_000);
 
 afterEach(async () => {
   await Promise.all(paths.map((path) => rm(path, { recursive: true, force: true })));
@@ -94,6 +98,17 @@ const edit = (world: World, file: string): Promise<string> =>
 
 const stop = (world: World): Promise<string> =>
   runHook("stop", hookPayload(world.main, { hook_event_name: "Stop", stop_hook_active: false }), env(world.home));
+
+/** A Bash call by a subagent: the cwd is the start checkout, whatever the command does. */
+const bash = (world: World, command: string): Promise<string> =>
+  runHook(
+    "post-tool-use",
+    hookPayload(world.main, { hook_event_name: "PostToolUse", tool_name: "Bash", tool_input: { command }, tool_response: {} }),
+    env(world.home),
+  );
+
+const subagentStop = (world: World): Promise<string> =>
+  runHook("subagent-stop", hookPayload(world.main, { hook_event_name: "SubagentStop", stop_hook_active: false }), env(world.home));
 
 const commitAll = async (root: string, message: string): Promise<void> => {
   await git(root, ["add", "-A"]);
@@ -229,5 +244,67 @@ describe("H1: a commit is filed under the topic whose worktree made it", () => {
       records.filter((record) => record.kind === "target" && record.body.value === "src/t-a.ts").map((record) => record.body.workContextId),
     );
     expect(holders.size).toBe(1);
+  });
+});
+
+describe("H2: a subagent's shell work in a sibling it never edited is captured", () => {
+  test("`cd <sibling> && … && git commit` from the start checkout: the commit and the new file land under the sibling's topic", async () => {
+    // Arrange: the work a subagent's shell does, its cwd the start checkout
+    const world = await nickShape("h2-cd", 1);
+    const [sibling = ""] = world.siblings;
+    await sessionStart(world);
+    await writeRepoFile(sibling, "src/only-bash.ts", "export const b = 1;\n");
+    await commitAll(sibling, "bash only");
+    await writeRepoFile(sibling, "src/only-bash-untracked.ts", "export const u = 1;\n");
+
+    // Act
+    await bash(world, `cd ${sibling} && cp src/a.ts src/b.ts && git commit -am x`);
+    const marked = (await readSessionState(world.home, SESSION_ID))?.knownWorktreeRoots.filter((entry) => entry.bashTouchedAt !== null);
+    await subagentStop(world);
+    await stop(world);
+
+    // Assert: the command's own `cd` marked the sibling, and its work is under the sibling's topic
+    expect(marked?.some((entry) => entry.root === sibling || entry.root.endsWith(sibling))).toBe(true);
+    const topics = filesByTopic(await spooled(world));
+    expect(topics["feat/topic-0"]).toEqual(["src/only-bash-untracked.ts:git_diff", "src/only-bash.ts:git_commit"]);
+  });
+
+  test("a command whose words name no worktree: the next Stop finds the sibling the shell changed", async () => {
+    // Arrange: a script the words cannot see into, run from the start checkout, that commits in a sibling
+    const world = await nickShape("h2-script", 1);
+    const [sibling = ""] = world.siblings;
+    await sessionStart(world);
+    await writeRepoFile(sibling, "src/scripted.ts", "export const s = 1;\n");
+    await commitAll(sibling, "scripted");
+
+    // Act
+    await bash(world, "./scripts/release.sh --all");
+    await stop(world);
+
+    // Assert
+    expect(filesByTopic(await spooled(world))["feat/topic-0"]).toEqual(["src/scripted.ts:git_commit"]);
+  });
+
+  test("more changed siblings than one Stop's root budget: the rest are counted, and the next Stop sweeps them", async () => {
+    // Arrange: ten siblings changed by a shell whose words name none of them
+    const world = await nickShape("h2-cap", 10);
+    await sessionStart(world);
+    for (const [index, sibling] of world.siblings.entries()) {
+      await writeRepoFile(sibling, `src/s${String(index)}.ts`, `export const s${String(index)} = 1;\n`);
+      await commitAll(sibling, `s${String(index)}`);
+    }
+
+    // Act
+    await bash(world, "make all");
+    await stop(world);
+    const afterFirst = await readSessionState(world.home, SESSION_ID);
+    await stop(world);
+
+    // Assert: some were deferred and counted, and after the second Stop every sibling's commit is in
+    expect(afterFirst?.gitLaneRootsDeferred ?? 0).toBeGreaterThan(0);
+    const topics = filesByTopic(await spooled(world));
+    for (const index of world.siblings.keys()) {
+      expect({ index, files: topics[`feat/topic-${String(index)}`] }).toEqual({ index, files: [`src/s${String(index)}.ts:git_commit`] });
+    }
   });
 });

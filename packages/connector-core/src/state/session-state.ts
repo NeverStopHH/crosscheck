@@ -678,6 +678,16 @@ const SessionStateObjectSchema = z.looseObject({
   sessionTouchedAt: z.string().min(1).nullable().default(null),
   /** Touches filed under the session's own context because the topic cap was reached (counted, never silent). */
   topicOverflowCount: z.number().int().min(0).default(0),
+  /**
+   * When a Bash call ran since the last full Stop sweep (review H2): the next
+   * Stop and SubagentStop also sweep the repo's worktrees that changed since
+   * their last sweep (git/shell-roots.ts `changedWorktreesOf`), because a
+   * shell's words cannot always tell where it worked. Optional, so a state
+   * from before it reads as no shell.
+   */
+  shellSweepSince: z.string().min(1).nullable().optional(),
+  /** Candidate roots the git lane's root cap left for a later Stop — counted, never silently skipped (review H2). */
+  gitLaneRootsDeferred: z.number().int().min(0).optional(),
 });
 
 /**
@@ -930,6 +940,9 @@ export const withCarriedCapture = (
             }
           : {}),
         topicOverflowCount: previous.topicOverflowCount,
+        // ...and a shell's pending sweep and the lane's deferred count (review H2).
+        shellSweepSince: previous.shellSweepSince ?? null,
+        gitLaneRootsDeferred: previous.gitLaneRootsDeferred ?? 0,
       };
 
 /** The epoch and counter a state that carries nothing starts on. */
@@ -1532,6 +1545,37 @@ export const withBashTouch = (state: SessionState, root: string, repoId: string,
     lastTouchedAt: at,
   });
 };
+
+/**
+ * ONE BASH CALL, written down (review H2): every root it is known to have
+ * worked in — the cwd's and the ones its words named — marked for the next
+ * sweep, and the shell's instant kept so that sweep also looks at every
+ * worktree of the repo that changed, for what the words could not tell.
+ */
+/**
+ * A root the git lane swept, written down (review H2): its bash mark spent and
+ * its turn stamped, and — for a worktree only a shell worked in, which the
+ * sweep found by discovery — an entry of its own, so the next discovery finds
+ * it already swept and its first sweep opens its window from here.
+ */
+export const withSweptRoot = (state: SessionState, root: string, at: string): SessionState => {
+  const previous = state.knownWorktreeRoots.find((entry) => entry.root === root);
+  const base: KnownRootEntry = previous ?? {
+    root,
+    repoId: state.repoId,
+    attempts: 1,
+    stamp: null,
+    ...EMPTY_ROOT_TOPIC,
+    firstTouchedAt: at,
+    lastTouchedAt: at,
+  };
+  return withRootEntry(state, { ...base, bashTouchedAt: null, gitSweptAt: at });
+};
+
+export const withShellRun = (state: SessionState, roots: readonly string[], repoId: string, at: string): SessionState => ({
+  ...roots.reduce((marked, root) => withBashTouch(marked, root, repoId, at), state),
+  shellSweepSince: state.shellSweepSince ?? at,
+});
 
 /** Remembers a probe key that answered "nothing", same FIFO cap as the markers. */
 export const withLandedClean = (

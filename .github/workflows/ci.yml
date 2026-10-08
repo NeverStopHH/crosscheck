@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1866
+    # PRINTS: 1870
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -236,10 +236,10 @@ jobs:
     # PRINTS: capture/tool-events.ts 2
     # PRINTS: cli/settings-merge.ts 3
     # PRINTS: doctor.ts 1
-    # PRINTS: hooks/git-lane.ts 1
+    # PRINTS: hooks/git-lane.ts 3
     # PRINTS: hooks/landed-why.ts 2
     # PRINTS: hooks/post-tool-use-failure.ts 5
-    # PRINTS: hooks/post-tool-use.ts 13
+    # PRINTS: hooks/post-tool-use.ts 14
     # PRINTS: hooks/pre-tool-use.ts 18
     # PRINTS: hooks/runner.ts 7
     # PRINTS: hooks/session-start.ts 4
@@ -371,7 +371,7 @@ jobs:
     # PRINTS: state/session-lineage.ts 3
     # PRINTS: state/session-reap.ts 9
     # PRINTS: state/session-scan.ts 2
-    # PRINTS: state/session-state.ts 26
+    # PRINTS: state/session-state.ts 27
     # PRINTS: state/tool-window-key.ts 2
     # PRINTS: packages/connector-core/test/intent-budget.test.ts 1
     # PRINTS: packages/connector-core/test/render-surface-registry.test.ts 1
@@ -586,7 +586,7 @@ jobs:
     # PRINTS: ghost-overlap.ts 4
     # PRINTS: ghost.ts 2
     # PRINTS: git-lane-cost.ts 2
-    # PRINTS: git-lane.ts 8
+    # PRINTS: git-lane.ts 10
     # PRINTS: git-queries.ts 15
     # PRINTS: git.ts 4
     # PRINTS: head-history.ts 4
@@ -655,7 +655,7 @@ jobs:
     # PRINTS: pin.ts 11
     # PRINTS: pins.ts 12
     # PRINTS: post-tool-use-failure.ts 5
-    # PRINTS: post-tool-use.ts 13
+    # PRINTS: post-tool-use.ts 14
     # PRINTS: post.ts 1
     # PRINTS: pre-tool-use.ts 18
     # PRINTS: precision.ts 2
@@ -710,7 +710,7 @@ jobs:
     # PRINTS: session-reap.ts 9
     # PRINTS: session-scan.ts 2
     # PRINTS: session-start.ts 8
-    # PRINTS: session-state.ts 26
+    # PRINTS: session-state.ts 27
     # PRINTS: session-window.ts 1
     # PRINTS: session.ts 4
     # PRINTS: sessions.ts 19

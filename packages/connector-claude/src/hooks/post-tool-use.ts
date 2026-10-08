@@ -1,6 +1,9 @@
 import { UNKNOWN_DEVELOPER_ID } from "@crosscheck/connector-core/capture/records.ts";
 import type { Producer } from "@crosscheck/connector-core/capture/records.ts";
+import { homedir } from "node:os";
+
 import {
+  extractBashCommand,
   extractFailureText,
   extractFilePaths,
   isBashTool,
@@ -23,9 +26,10 @@ import {
   closedToolWindow,
   readSessionState,
   updateSessionState,
-  withBashTouch,
   withSeenTargets,
+  withShellRun,
 } from "@crosscheck/connector-core/state/session-state.ts";
+import { commonDirOfRoot, rootsNamedByCommand } from "@crosscheck/connector-core/git/shell-roots.ts";
 import { realpathBestEffort } from "@crosscheck/connector-core/config/paths.ts";
 import { toolWindowKey } from "@crosscheck/connector-core/state/tool-window-key.ts";
 import { seqAt } from "@crosscheck/connector-core/capture/seq.ts";
@@ -116,6 +120,22 @@ const recoverState = async (ctx: HookContext): Promise<SessionState | null> => {
 };
 
 /** Bash carries no status signal, so none is fabricated (spec §C). */
+/**
+ * The roots one Bash call worked in, as far as can be told without running
+ * anything (review H2): the cwd's, and every worktree of this repo its
+ * command's words name (core git/shell-roots.ts). Fs only, bounded.
+ */
+const shellRootsOf = async (ctx: HookContext): Promise<readonly string[]> => {
+  const cwdRoot = await realpathBestEffort(ctx.identity.root);
+  const command = extractBashCommand(ctx.payload.tool_input);
+  const commonDir = command === null ? null : await commonDirOfRoot(cwdRoot);
+  const named =
+    command === null || commonDir === null
+      ? []
+      : await rootsNamedByCommand(command, ctx.payload.cwd ?? cwdRoot, homedir(), commonDir);
+  return [...new Set([cwdRoot, ...named])];
+};
+
 const heartbeatStatusFor = (toolName: string | undefined): string | undefined =>
   isEditTool(toolName) ? IMPLEMENTING_STATUS : undefined;
 
@@ -324,14 +344,17 @@ export const handlePostToolUse = async (
   // here: nothing was positioned at all, and the record says
   // `allocation_failed` for itself.
   const lostBracket = editFired && seq !== null && seq.after === undefined;
-  // A SHELL RAN HERE (DESIGN.md "One session, many topics"): no command is
-  // parsed — the cwd's root is marked, and the next Stop or SubagentStop
-  // sweeps it first, the git lane capturing whatever the shell changed,
-  // created or committed there (core flows/git-lane.ts). Only a root of this
-  // session's repo: the foreign-repo exit above already returned.
-  const bashRoot = isBashTool(ctx.payload.tool_name) ? await realpathBestEffort(ctx.identity.root) : null;
+  // A SHELL RAN HERE (DESIGN.md "One session, many topics"): the cwd's root
+  // is marked, and so is every worktree of this repo the command's words name
+  // — a `cd`, a `git -C`, an absolute path — because in the owner's shape a
+  // subagent's cwd is the START checkout and its shell works in a sibling
+  // (review H2). The next Stop or SubagentStop sweeps them first, and also
+  // the repo's worktrees that changed meanwhile, for what the words could not
+  // tell (core flows/git-lane.ts). Only roots of this session's repo: the
+  // foreign-repo exit above already returned.
+  const shellRoots = isBashTool(ctx.payload.tool_name) ? await shellRootsOf(ctx) : null;
   const withShell = (fresh: SessionState): SessionState =>
-    bashRoot === null ? fresh : withBashTouch(fresh, bashRoot, ctx.identity.repoId, now.toISOString());
+    shellRoots === null ? fresh : withShellRun(fresh, shellRoots, ctx.identity.repoId, now.toISOString());
   await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => ({
     // Files this call captured into a life the flush then healed away from
     // were withheld with it: they stay unseen, so the next life captures them

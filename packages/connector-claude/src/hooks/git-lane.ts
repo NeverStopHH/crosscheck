@@ -18,7 +18,13 @@
  */
 import { UNKNOWN_DEVELOPER_ID } from "@crosscheck/connector-core/capture/records.ts";
 import { GIT_TOUCHES_TIMEOUT_MS, MAX_TARGETS_PER_INVOCATION } from "@crosscheck/connector-core/constants.ts";
-import { selectGitLaneRoots, sweepGitRoots, withSweptRoots } from "@crosscheck/connector-core/flows/git-lane.ts";
+import {
+  deferredRootsOf,
+  discoverShellRoots,
+  selectGitLaneRoots,
+  sweepGitRoots,
+  withSweptRoots,
+} from "@crosscheck/connector-core/flows/git-lane.ts";
 import type { GitLaneChoice, GitLaneSweep } from "@crosscheck/connector-core/flows/git-lane.ts";
 import { withTopicCapture } from "@crosscheck/connector-core/flows/topic-contexts.ts";
 import { recordCaptureLoss } from "@crosscheck/connector-core/state/loss-ledger.ts";
@@ -48,7 +54,13 @@ export const runGitLane = async (
   lossDetail: string,
 ): Promise<void> => {
   const isAffordable = budget.spareMs() >= GIT_TOUCHES_TIMEOUT_MS;
-  const roots = isAffordable ? await selectGitLaneRoots(state, choice) : [];
+  // WHERE A SHELL MAY HAVE WORKED (review H2): after a Bash call, the repo's
+  // worktrees that changed since their last sweep join the candidates, fs
+  // only; the ones the root cap leaves are counted, and stay pending.
+  const discovered = isAffordable ? await discoverShellRoots(state) : [];
+  const withDiscovered: GitLaneChoice = { ...choice, discovered };
+  const roots = isAffordable ? await selectGitLaneRoots(state, withDiscovered) : [];
+  const deferred = isAffordable ? await deferredRootsOf(state, withDiscovered, roots) : 0;
   if (isAffordable && roots.length === 0) {
     // Nothing to sweep is not a turn the lane ran or skipped: SubagentStop
     // in a subagent that touched no root of its own.
@@ -103,6 +115,13 @@ export const runGitLane = async (
       captured: isSameLife ? sweep.captured : [],
       skipped: sweep.unavailable,
     });
-    return withSweptRoots(withTopicCapture(booked, sweep.topics), sweep.swept, ctx.now().toISOString());
+    const swept = withSweptRoots(withTopicCapture(booked, sweep.topics), sweep.swept, ctx.now().toISOString());
+    // A full Stop that left nothing a shell asked for has answered the shell.
+    const isShellAnswered = choice.subagent !== true && deferred === 0 && !sweep.unavailable;
+    return {
+      ...swept,
+      gitLaneRootsDeferred: (swept.gitLaneRootsDeferred ?? 0) + deferred,
+      shellSweepSince: isShellAnswered ? null : (swept.shellSweepSince ?? null),
+    };
   });
 };

@@ -105,6 +105,15 @@ export const extractFilePaths = (toolInput: unknown): readonly string[] => {
   );
 };
 
+/** The Bash tool's command, a string or nothing — read only for the roots it names (core git/shell-roots.ts). */
+export const extractBashCommand = (toolInput: unknown): string | null => {
+  if (typeof toolInput !== "object" || toolInput === null) {
+    return null;
+  }
+  const command = (toolInput as Record<string, unknown>)["command"];
+  return typeof command === "string" && command.length > 0 ? command : null;
+};
+
 /**
  * Conservative failure detection: an explicit failure marker must be present.
  * "No such field" means "not a failure", never "assume failure".
