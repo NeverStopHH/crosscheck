@@ -313,6 +313,23 @@ ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS base_commit text;
 -- base and its own word only (services/landed.ts); null is "not said".
 ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS base_on_default boolean;
 
+-- THE BRANCHES OF TOPICS A HUB TOOK BEFORE IT REMEMBERED THEM (topic review
+-- H4): a topic's branch is where its owner is, and on a `local:` repo its
+-- title IS that bare branch — the projection withholds an opted-out owner's
+-- unmarked title when it names any branch developer_branches holds for her
+-- (services/live-location.ts). Ingest writes it as the topic lands
+-- (services/record-handlers.ts rememberTopicBranch); this catches up every
+-- topic stored before that, at boot, before the hub serves a read.
+-- Idempotent, like the backfill above.
+INSERT INTO developer_branches (developer_id, branch, first_seen)
+SELECT s.developer_id, wc.branch, min(wc.created_at)
+  FROM work_contexts wc
+  JOIN agent_sessions s ON s.id = wc.session_id
+ WHERE wc.branch IS NOT NULL
+   AND s.developer_id IN (SELECT id FROM developers)
+ GROUP BY s.developer_id, wc.branch
+ON CONFLICT DO NOTHING;
+
 -- Similarity-detected contradiction candidates (DESIGN.md §3 ingest gate).
 -- A TABLE for these, and only these: they exist only while an embedder is
 -- configured, and recomputing pairwise cosine at read time would be O(n²) over

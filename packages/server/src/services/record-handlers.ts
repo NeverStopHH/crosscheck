@@ -30,6 +30,7 @@ import {
 import { appendEvent } from "./events.ts";
 import { appendIntentVersion } from "./intent-ledger.ts";
 import { refreshNormalizedDoc } from "./normalized-doc.ts";
+import { recordDeveloperBranch } from "./developer-branches.ts";
 import { hubGeneratedSignal } from "./generated-targets.ts";
 import { touchFileRef } from "./skeleton-identity.ts";
 import {
@@ -336,6 +337,26 @@ const topicFieldsOf = (
   };
 };
 
+/**
+ * A TOPIC'S BRANCH IS WHERE ITS OWNER IS, as much as her session's own is
+ * (topic review H4). The live-location projection withholds an opted-out
+ * owner's UNMARKED title when it equals any branch of hers it knows
+ * (services/live-location.ts, developer_branches) — and on a `local:` repo a
+ * topic's title is its bare branch, which no session of hers registered on.
+ * So the branch joins hers as the topic's record lands, before the context's
+ * search doc is refreshed: the index reads the same list (isTitleWithheldFromIndex).
+ */
+const rememberTopicBranch = async (
+  db: DbExecutor,
+  developerId: string,
+  branch: string | null | undefined,
+  at: Date,
+): Promise<void> => {
+  if (branch !== null && branch !== undefined) {
+    await recordDeveloperBranch(db, developerId, branch, at);
+  }
+};
+
 /** A record's word about its own base: none without the base it is about. */
 const baseWordOf = (body: WorkContext): boolean | null =>
   body.baseCommit === undefined ? null : (body.baseOnDefault ?? null);
@@ -463,6 +484,7 @@ const updateExistingWorkContext = async (
       ...(producerSessionId === undefined ? {} : { updatedBySessionId: producerSessionId }),
     })
     .where(eq(workContexts.id, body.id));
+  await rememberTopicBranch(deps.db, developerId, changes.branch, deps.now());
   await refreshNormalizedDoc(deps.db, body.id);
   // Outbox discipline: ids and metadata only — WHICH fields changed, never
   // their text (the feed phrases "intent" from the list, no summary crosses).
@@ -566,6 +588,7 @@ export const ingestWorkContext = async (
         .set({ intent: appended.headWire })
         .where(eq(workContexts.id, body.id));
     }
+    await rememberTopicBranch(tx, developerId, body.branch, deps.now());
     await refreshNormalizedDoc(tx, body.id);
     await appendEvent(txDeps, EVENT_KINDS.WORK_CONTEXT_CREATED, {
       workContextId: body.id,

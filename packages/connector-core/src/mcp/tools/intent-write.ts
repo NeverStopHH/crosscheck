@@ -12,6 +12,7 @@
 import type { SeqField, WorkContextTitleSource } from "@crosscheck/schema";
 
 import { AMBIGUOUS_SESSION, seqAt } from "../../capture/seq.ts";
+import { TOPIC_TITLE_SOURCE } from "../../flows/topic-contexts.ts";
 import type { HubContext } from "../../http/client.ts";
 import { postRecords } from "../../http/hub.ts";
 import type { RecordResult } from "../../http/hub.ts";
@@ -133,7 +134,7 @@ const writeStatus = (deps: IntentWriteDeps, own: TitledWorkContext, status: stri
 /** The title marker a set_intent post carries: a topic's is always `fallback`, the session's its own. */
 const titleSourceOf = (own: TitledWorkContext): { readonly titleSource?: WorkContextTitleSource } => {
   if (own.topicKey !== undefined) {
-    return { titleSource: "fallback" };
+    return { titleSource: TOPIC_TITLE_SOURCE };
   }
   return own.workContextTitleSource === null ? {} : { titleSource: own.workContextTitleSource };
 };

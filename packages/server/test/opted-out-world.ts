@@ -45,6 +45,16 @@ export const SECRET_BRANCH = "feat/robin-relocates-to-zurich";
 export const SECRET_LOCAL_BRANCH = "feat/robin-hideout-geneva";
 export const SECRET_SHA = "f00dfacecafe0123456789abcdef0123456789ab";
 export const SECRET_SHA2 = "beefbeefbeef0123456789abcdef0123456789ab";
+/**
+ * Her TOPICS (DESIGN.md "One session, many topics"): sibling worktrees her
+ * one session edits, each a work context on its own branch at its own base —
+ * where she is, as much as the session's own branch is. None is seeded: the
+ * differential's topic actions open them, so every other test reads a world
+ * without them.
+ */
+export const SECRET_TOPIC_BRANCH = "feat/robin-topic-lugano";
+export const SECRET_LOCAL_TOPIC_BRANCH = "feat/robin-topic-locarno";
+export const SECRET_TOPIC_SHA = "c0c0abadc0de0123456789abcdef0123456789ab";
 export const FILE = "src/auth/refresh.ts";
 export const FINGERPRINT = "TypeError: key id expired at refresh";
 
@@ -60,6 +70,9 @@ export const ROBIN_SOLVED = "wc_robin_solved";
 export const ROBIN_LOCAL_CONTEXT = "wc_robin_local";
 export const ROBIN_DETACHED_CONTEXT = "wc_robin_detached";
 export const ROBIN_HOST_CONTEXT = "wc_robin_host";
+/** Her topics' contexts: one beside her live session's on the shared repo, one on the local repo. */
+export const ROBIN_TOPIC = `${ROBIN_CONTEXT}~t0a1b2c3d4e5f.1`;
+export const ROBIN_LOCAL_TOPIC = `${ROBIN_LOCAL_CONTEXT}~tf5e4d3c2b1a0.2`;
 /**
  * Created long before every window a surface applies (conference, suspect,
  * a since=) and touched again at UPDATED_AT: inside a window only by her
@@ -175,8 +188,11 @@ const shaForms = (sha: string): readonly string[] => [
 export const SECRETS: readonly (readonly [label: string, value: string])[] = [
   ["branch", SECRET_BRANCH],
   ["local branch", SECRET_LOCAL_BRANCH],
+  ["topic branch", SECRET_TOPIC_BRANCH],
+  ["local topic branch", SECRET_LOCAL_TOPIC_BRANCH],
   ...shaForms(SECRET_SHA).map((value) => [`sha ${String(value.length)}`, value] as const),
   ...shaForms(SECRET_SHA2).map((value) => [`local sha ${String(value.length)}`, value] as const),
+  ...shaForms(SECRET_TOPIC_SHA).map((value) => [`topic sha ${String(value.length)}`, value] as const),
   ...instantForms(STARTED_AT).map((value) => ["session start", value] as const),
   ...instantForms(HEARTBEAT_AT).map((value) => ["heartbeat", value] as const),
   ...instantForms(UPDATED_AT).map((value) => ["context update", value] as const),

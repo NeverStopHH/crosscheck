@@ -47,7 +47,7 @@
  * session's own context and is counted (`topic_overflow`), never dropped. A
  * topic is never excluded for its SIZE: nothing here counts its files.
  */
-import type { Envelope } from "@crosscheck/schema";
+import type { Envelope, WorkContextTitleSource } from "@crosscheck/schema";
 
 import { INTENT_TOPIC_AMBIGUITY_MS, TOPIC_KEY_HEX_CHARS } from "../constants.ts";
 import { workContextRecord } from "../capture/records.ts";
@@ -56,6 +56,14 @@ import type { SessionState, TopicContext } from "../state/session-state.ts";
 
 /** What separates a topic's id from its session's work-context id, and marks a topic's seen-set entries. */
 export const TOPIC_ID_SEPARATOR = "~t";
+
+/**
+ * How every topic's title is written, on every record of it (topic review
+ * H4): by the connector, as `<branch> @ <repo>` — never the host, whatever
+ * the session's own title is. SessionEnd's last word, the flush-time rewrite
+ * and set_intent send this same marker for a topic.
+ */
+export const TOPIC_TITLE_SOURCE: WorkContextTitleSource = "fallback";
 
 /** The status a topic opens with when the life's state names none. */
 const DEFAULT_TOPIC_STATUS = "implementing";
@@ -194,6 +202,12 @@ const topicRecord = (topic: TopicContext, producer: Producer, now: Date): Envelo
       workContextId: topic.workContextId,
       sessionId: topic.sessionId,
       title: topic.title,
+      // ALWAYS the connector's own (topic review H4): a topic's title is its
+      // `<branch> @ <repo>` — on a `local:` repo the bare branch — so the hub
+      // withholds it from colleagues of a developer who opted out of presence.
+      // Never the session's marker: a host-titled session's `host` would keep
+      // the topic's branch from being withheld.
+      titleSource: TOPIC_TITLE_SOURCE,
       status: topic.status,
       branch: topic.branch,
       baseCommit: topic.baseCommit,

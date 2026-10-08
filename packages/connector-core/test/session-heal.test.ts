@@ -192,6 +192,10 @@ const targetsOf = async (workContextId: string): Promise<readonly string[]> => {
   return rows.map((row) => row.value);
 };
 
+const titleSourceOf = async (workContextId: string): Promise<string | null | undefined> =>
+  (await raw<{ title_source: string | null }>("select title_source from work_contexts where id = $1", [workContextId]))[0]
+    ?.title_source;
+
 const sessionRow = async (id: string): Promise<{ ended: boolean } | undefined> => {
   const rows = await raw<{ ended: boolean }>(
     "select ended_at is not null as ended from agent_sessions where id = $1",
@@ -292,6 +296,9 @@ describe("a flush whose own session the hub ended", () => {
     // ...the edit after the end is NOT filed into the ended life
     expect(await targetsOf(life.workContextId)).toEqual([]);
     expect(await targetsOf(`wc_${life.crosscheckSessionId}~r1`)).toEqual(["src/next-life.ts"]);
+    // ...its work context went with its title's marker — a NEW row on the hub,
+    // which an unmarked title would leave to the shape rule (topic review H4)
+    expect(await titleSourceOf(`wc_${life.crosscheckSessionId}~r1`)).toBe("fallback");
     // ...and its loss is counted under the cause it had
     const drops = await readDropDetail(fx.home, fx.key);
     expect(drops.byReason["rejected"]).toBe(1);

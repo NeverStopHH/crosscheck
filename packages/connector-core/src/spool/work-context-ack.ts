@@ -19,6 +19,7 @@
 import type { Envelope } from "@crosscheck/schema";
 
 import { UNKNOWN_DEVELOPER_ID, workContextRecord } from "../capture/records.ts";
+import { TOPIC_TITLE_SOURCE } from "../flows/topic-contexts.ts";
 import type { RecordResult } from "../http/hub.ts";
 import { updateSessionState } from "../state/session-state.ts";
 import type { SessionState } from "../state/session-state.ts";
@@ -146,6 +147,11 @@ export const lastWorkContextRecords = (state: SessionState, now: Date): readonly
               workContextId: state.workContextId,
               sessionId: state.crosscheckSessionId,
               title: state.workContextTitle,
+              // The marker its title registered with (topic review H4): the
+              // hub keeps a stored one only while the title is unchanged.
+              ...(state.workContextTitleSource === undefined || state.workContextTitleSource === null
+                ? {}
+                : { titleSource: state.workContextTitleSource }),
               status: state.workContextStatus,
             },
             producer,
@@ -160,6 +166,7 @@ export const lastWorkContextRecords = (state: SessionState, now: Date): readonly
         workContextId: topic.workContextId,
         sessionId: topic.sessionId,
         title: topic.title,
+        titleSource: TOPIC_TITLE_SOURCE,
         status: topic.status,
         branch: topic.branch,
         baseCommit: topic.baseCommit,

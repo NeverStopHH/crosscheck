@@ -38,9 +38,15 @@ import {
   ROBIN_CONTEXT,
   ROBIN_HOST_CONTEXT,
   ROBIN_LIVE,
+  ROBIN_LOCAL,
+  ROBIN_LOCAL_TOPIC,
   ROBIN_OLD_CONTEXT,
+  ROBIN_TOPIC,
   SECRET_BRANCH,
+  SECRET_LOCAL_TOPIC_BRANCH,
   SECRET_SHA,
+  SECRET_TOPIC_BRANCH,
+  SECRET_TOPIC_SHA,
   instantsNear,
   leaksIn,
   seedOptedOutWorld,
@@ -167,6 +173,41 @@ const ACTIONS: readonly Action[] = [
     name: "set an intent",
     content: true,
     run: (w) => records(w, [live("work_context", validWorkContextBody({ id: ROBIN_HOST_CONTEXT, sessionId: ROBIN_LIVE, title: HOST_TITLE, titleSource: "host", status: "implementing", createdAt: HOST_CREATED_AT, intent: { summary: "Make the refresh survive a key rotation", provenance: "declared", confidence: 1, capturedAt: nowIso(w) } }))], "intent"),
+  },
+  {
+    // DESIGN.md "One session, many topics": her one session edits a sibling
+    // worktree on another branch, and its context names that branch and its
+    // base — her location as much as the session's own branch. Shared work
+    // like any context; her branch and base never.
+    name: "open a topic in a sibling worktree",
+    content: true,
+    run: (w) =>
+      records(w, [
+        live("work_context", validWorkContextBody({ id: ROBIN_TOPIC, sessionId: ROBIN_LIVE, title: `${SECRET_TOPIC_BRANCH} @ api`, titleSource: "fallback", status: "implementing", branch: SECRET_TOPIC_BRANCH, baseCommit: SECRET_TOPIC_SHA, baseOnDefault: true, description: "rotation window refresh topic", createdAt: CREATED_AT })),
+        live("target", { workContextId: ROBIN_TOPIC, kind: "file", value: FILE }),
+      ], "topic"),
+  },
+  {
+    // The topic review's H4: on a `local:` repo a topic's title is its BARE
+    // branch, and a build that sent no marker leaves the hub its shape to go
+    // by — a branch her sessions never registered on.
+    name: "open an unmarked topic on the local repo",
+    content: true,
+    run: (w) =>
+      records(w, [
+        recordEnvelope("work_context", validWorkContextBody({ id: ROBIN_LOCAL_TOPIC, sessionId: ROBIN_LOCAL, title: SECRET_LOCAL_TOPIC_BRANCH, status: "implementing", branch: SECRET_LOCAL_TOPIC_BRANCH, baseCommit: SECRET_TOPIC_SHA, description: "rotation window refresh scratch topic", createdAt: CREATED_AT }), { sessionId: ROBIN_LOCAL }),
+        recordEnvelope("target", { workContextId: ROBIN_LOCAL_TOPIC, kind: "file", value: FILE }, { sessionId: ROBIN_LOCAL }),
+      ], "local topic"),
+  },
+  {
+    // set_intent on a topic, reaching the hub before the spool's copy: it
+    // creates the topic whole — branch, base, the connector's own marker.
+    name: "set an intent on a topic",
+    content: true,
+    run: (w) =>
+      records(w, [
+        live("work_context", validWorkContextBody({ id: ROBIN_TOPIC, sessionId: ROBIN_LIVE, title: `${SECRET_TOPIC_BRANCH} @ api`, titleSource: "fallback", status: "testing", branch: SECRET_TOPIC_BRANCH, baseCommit: SECRET_TOPIC_SHA, createdAt: CREATED_AT, intent: { summary: "Keep the rotated key id through the cache", provenance: "declared", confidence: 1, capturedAt: nowIso(w) } })),
+      ], "topic intent"),
   },
   {
     name: "change a context's status",

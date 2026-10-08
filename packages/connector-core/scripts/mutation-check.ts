@@ -19088,8 +19088,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a spooled work context goes with the title it was spooled with (R7-M9)",
     file: `${CORE}/src/spool/owed-work-context.ts`,
-    from: '          title: textOr(said.title, body["title"]),',
-    to: '          title: textOr(body["title"], said.title),',
+    from: '  const title = textOr(said.title, body["title"]);',
+    to: '  const title = textOr(body["title"], said.title);',
     test: `${CORE}/test/owed-work-context.test.ts`,
     because: "review-2 round 8, L10: a re-fire on a new branch renames the hub's work context away from the title its state holds",
   },
@@ -26766,8 +26766,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a spooled topic context goes with the session's title",
     file: `${CORE}/src/spool/owed-work-context.ts`,
-    from: "    ? { title: state.workContextTitle, status: state.workContextStatus }\n    : topicSaid(state, body[\"id\"]);",
-    to: "    ? { title: state.workContextTitle, status: state.workContextStatus }\n    : { title: state.workContextTitle, status: state.workContextStatus };",
+    from: "    : topicSaid(state, body[\"id\"]);",
+    to: "    : { title: state.workContextTitle, titleSource: state.workContextTitleSource, status: state.workContextStatus };",
     test: `${CORE}/test/topic-contexts.test.ts`,
     because: "every topic is renamed at flush to the start checkout's title, and the topics are one name again",
   },
@@ -27635,6 +27635,104 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/topic-contexts.test.ts`,
     because: "the registry forgets the word at its first write, and every later sender of the topic — set_intent, SessionEnd — says nothing",
   },
+  {
+    // Topic review H4: a topic's title is the connector's own, so every record
+    // of it says `fallback` — never the session's marker, never nothing.
+    label: "a topic's opening record leaves its title unmarked",
+    file: `${CORE}/src/flows/topic-contexts.ts`,
+    from: "      titleSource: TOPIC_TITLE_SOURCE,\n      status: topic.status,",
+    to: "      status: topic.status,",
+    test: `${CORE}/test/topic-record-marker.test.ts`,
+    because: "on a local repo the topic's title is its bare branch, and unmarked the hub judges it against branches her sessions never registered on",
+  },
+  {
+    label: "SessionEnd's last word sends a topic unmarked",
+    file: `${CORE}/src/spool/work-context-ack.ts`,
+    from: "        titleSource: TOPIC_TITLE_SOURCE,\n",
+    to: "",
+    test: `${CORE}/test/topic-record-marker.test.ts`,
+    because: "a topic whose opening copy was lost reaches the hub through SessionEnd alone, its branch title unmarked",
+  },
+  {
+    label: "SessionEnd's last word drops the session's title marker",
+    file: `${CORE}/src/spool/work-context-ack.ts`,
+    from: "                : { titleSource: state.workContextTitleSource }),\n",
+    to: "                : {}),\n",
+    test: `${CORE}/test/topic-record-marker.test.ts`,
+    because: "the session's context goes out without the marker its title registered with, and a renamed title is judged by its shape",
+  },
+  {
+    label: "the flush-time rewrite sends a topic with the spooled copy's marker",
+    file: `${CORE}/src/spool/owed-work-context.ts`,
+    from: "titleSource: TOPIC_TITLE_SOURCE, status: topic[\"status\"] }",
+    to: "titleSource: undefined, status: topic[\"status\"] }",
+    test: `${CORE}/test/topic-record-marker.test.ts`,
+    because: "a topic copy an earlier build spooled unmarked goes out unmarked again, at every flush that rewrites it",
+  },
+  {
+    label: "the flush-time rewrite keeps a stale marker on the session's new title",
+    file: `${CORE}/src/spool/owed-work-context.ts`,
+    from: "    ? { title: state.workContextTitle, titleSource: state.workContextTitleSource, status: state.workContextStatus }",
+    to: "    ? { title: state.workContextTitle, titleSource: undefined, status: state.workContextStatus }",
+    test: `${CORE}/test/topic-record-marker.test.ts`,
+    because: "a copy spooled under the host's title goes out with the connector's branch title and the host's marker, and the branch is shown",
+  },
+  {
+    label: "the flush-time rewrite vouches for a title the spooled marker never described",
+    file: `${CORE}/src/spool/owed-work-context.ts`,
+    from: "  const kept = typeof marker === \"string\" ? marker : title === body[\"title\"] ? spooled : undefined;",
+    to: "  const kept = typeof marker === \"string\" ? marker : spooled;",
+    test: `${CORE}/test/topic-record-marker.test.ts`,
+    because: "a state from before the marker moves the title, and the spooled `host` goes with a branch title it never described",
+  },
+  {
+    label: "a heal's owed work context goes out unmarked",
+    file: `${CORE}/src/spool/owed-work-context.ts`,
+    from: "      ...(marker.success ? { titleSource: marker.data } : {}),\n",
+    to: "",
+    test: `${CORE}/test/topic-record-marker.test.ts`,
+    because: "the next life's context is a new row on the hub, and its title is judged by its shape alone",
+  },
+  {
+    label: "set_intent gives a topic the session's title marker",
+    file: `${CORE}/src/mcp/tools/intent-write.ts`,
+    from: "  if (own.topicKey !== undefined) {\n    return { titleSource: TOPIC_TITLE_SOURCE };\n  }\n",
+    to: "",
+    test: `${CORE}/test/topic-record-marker.test.ts`,
+    because: "a host-titled session's set_intent on a topic posts the topic's branch title marked host, and the hub never withholds it",
+  },
+  {
+    label: "a topic's branch is never remembered as its owner's when the topic lands",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "    await rememberTopicBranch(tx, developerId, body.branch, deps.now());\n",
+    to: "",
+    test: `${SERVER}/test/live-location-topics.test.ts`,
+    because: "an opted-out developer's unmarked bare-branch topic shows its branch on the conference, hint candidates and search",
+  },
+  {
+    label: "a topic's branch is never remembered when a later copy fills it",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "  await rememberTopicBranch(deps.db, developerId, changes.branch, deps.now());\n",
+    to: "",
+    test: `${SERVER}/test/live-location-topics.test.ts`,
+    because: "a topic first created without its fields — set_intent beat the spool — shows its branch once the topic's own copy fills it",
+  },
+  {
+    label: "a topic's search doc is written before its branch is remembered",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "    await rememberTopicBranch(tx, developerId, body.branch, deps.now());\n    await refreshNormalizedDoc(tx, body.id);",
+    to: "    await refreshNormalizedDoc(tx, body.id);\n    await rememberTopicBranch(tx, developerId, body.branch, deps.now());",
+    test: `${SERVER}/test/live-location-topics.test.ts`,
+    because: "the one search index every viewer reads takes her branch title, and a colleague's search for a guessed branch finds her work",
+  },
+  {
+    label: "the boot never catches up the branches of topics stored before",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "   AND s.developer_id IN (SELECT id FROM developers)\n GROUP BY s.developer_id, wc.branch",
+    to: "   AND false\n GROUP BY s.developer_id, wc.branch",
+    test: `${SERVER}/test/live-location-topics.test.ts`,
+    because: "a hub that took topics before this release keeps showing an opted-out developer's topic branches",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -27969,6 +28067,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/topic-base-word.test.ts 7
  * PRINTS: packages/connector-core/test/topic-contexts.test.ts 21
  * PRINTS: packages/connector-core/test/topic-heads.test.ts 3
+ * PRINTS: packages/connector-core/test/topic-record-marker.test.ts 8
  * PRINTS: packages/connector-core/test/topic-rules.test.ts 15
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
  * PRINTS: packages/connector-core/test/verdict-wire.test.ts 2
@@ -28066,6 +28165,7 @@ interface Outcome {
  * PRINTS: packages/server/test/live-location-prose.test.ts 3
  * PRINTS: packages/server/test/live-location-surfaces.test.ts 41
  * PRINTS: packages/server/test/live-location-told.test.ts 1
+ * PRINTS: packages/server/test/live-location-topics.test.ts 4
  * PRINTS: packages/server/test/location-index-rebuild.test.ts 7
  * PRINTS: packages/server/test/normalized-doc.test.ts 2
  * PRINTS: packages/server/test/passkey-announcements.test.ts 1

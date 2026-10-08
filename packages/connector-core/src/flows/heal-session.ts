@@ -242,6 +242,14 @@ const nextWorkContext = (
       workContextId: workContextIdFor(sessionId),
       sessionId,
       title: state.workContextTitle ?? fallbackWorkContextTitle(input.branch, input.repoId),
+      // ...with its marker (topic review H4): the next life's context is a NEW
+      // row on the hub, so an unmarked title would be judged by its shape alone
+      // — the state's own marker for the state's title, `fallback` for ours.
+      ...(state.workContextTitle === null
+        ? { titleSource: "fallback" as const }
+        : state.workContextTitleSource === undefined || state.workContextTitleSource === null
+          ? {}
+          : { titleSource: state.workContextTitleSource }),
       status: state.workContextStatus ?? HEAL_STATUS,
     },
     {

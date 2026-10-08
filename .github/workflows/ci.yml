@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 2744
+    # PRINTS: 2756
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -315,7 +315,7 @@ jobs:
     # PRINTS: flows/register-session.ts 33
     # PRINTS: flows/solved-hint.ts 4
     # PRINTS: flows/topic-base-word.ts 1
-    # PRINTS: flows/topic-contexts.ts 12
+    # PRINTS: flows/topic-contexts.ts 13
     # PRINTS: flows/topic-rules.ts 15
     # PRINTS: flows/work-context-title.ts 1
     # PRINTS: git/check-ignore.ts 1
@@ -359,7 +359,7 @@ jobs:
     # PRINTS: mcp/tools/answer-question.ts 1
     # PRINTS: mcp/tools/ask-teammate.ts 1
     # PRINTS: mcp/tools/get-diagnosis.ts 2
-    # PRINTS: mcp/tools/intent-write.ts 13
+    # PRINTS: mcp/tools/intent-write.ts 14
     # PRINTS: mcp/tools/mark-hint-outcome.ts 12
     # PRINTS: mcp/tools/publish-claim.ts 2
     # PRINTS: mcp/tools/review-draft.ts 2
@@ -382,13 +382,13 @@ jobs:
     # PRINTS: spool/ledger-read.ts 2
     # PRINTS: spool/lock.ts 2
     # PRINTS: spool/loss-report.ts 18
-    # PRINTS: spool/owed-work-context.ts 17
+    # PRINTS: spool/owed-work-context.ts 21
     # PRINTS: spool/ownership.ts 16
     # PRINTS: spool/reap.ts 15
     # PRINTS: spool/refused-lives.ts 7
     # PRINTS: spool/reject-cause.ts 3
     # PRINTS: spool/release.ts 1
-    # PRINTS: spool/work-context-ack.ts 10
+    # PRINTS: spool/work-context-ack.ts 12
     # PRINTS: state/briefing-omissions.ts 3
     # PRINTS: state/capture-bookkeeping.ts 7
     # PRINTS: state/capture-health.ts 2
@@ -448,7 +448,7 @@ jobs:
     # PRINTS: packages/schema/src/telemetry-loss.ts 8
     # PRINTS: packages/server/scripts/unland-false-landed.ts 12
     # PRINTS: packages/server/src/constants.ts 4
-    # PRINTS: packages/server/src/db/bootstrap.sql 43
+    # PRINTS: packages/server/src/db/bootstrap.sql 44
     # PRINTS: packages/server/src/db/client.ts 8
     # PRINTS: packages/server/src/db/schema.ts 2
     # PRINTS: packages/server/src/db/yield-to-requests.ts 2
@@ -523,7 +523,7 @@ jobs:
     # PRINTS: packages/server/src/services/pointer-standing.ts 14
     # PRINTS: packages/server/src/services/presence.ts 1
     # PRINTS: packages/server/src/services/questions.ts 9
-    # PRINTS: packages/server/src/services/record-handlers.ts 35
+    # PRINTS: packages/server/src/services/record-handlers.ts 38
     # PRINTS: packages/server/src/services/record-receipts.ts 7
     # PRINTS: packages/server/src/services/records.ts 9
     # PRINTS: packages/server/src/services/referee.ts 4
@@ -570,7 +570,7 @@ jobs:
     # PRINTS: attempt.ts 5
     # PRINTS: batch-losses.ts 7
     # PRINTS: before-submit-prompt.ts 1
-    # PRINTS: bootstrap.sql 43
+    # PRINTS: bootstrap.sql 44
     # PRINTS: briefing-omissions.ts 3
     # PRINTS: briefing.ts 11
     # PRINTS: calibration.ts 1
@@ -701,7 +701,7 @@ jobs:
     # PRINTS: intent-budget.test.ts 1
     # PRINTS: intent-ledger-authority.test.ts 1
     # PRINTS: intent-ledger.ts 12
-    # PRINTS: intent-write.ts 13
+    # PRINTS: intent-write.ts 14
     # PRINTS: intent.ts 1
     # PRINTS: junit.ts 2
     # PRINTS: key.ts 6
@@ -731,7 +731,7 @@ jobs:
     # PRINTS: outcome-render.ts 7
     # PRINTS: outcome.ts 15
     # PRINTS: output.ts 1
-    # PRINTS: owed-work-context.ts 17
+    # PRINTS: owed-work-context.ts 21
     # PRINTS: ownership.ts 16
     # PRINTS: parse.ts 2
     # PRINTS: passkey-status.ts 4
@@ -776,7 +776,7 @@ jobs:
     # PRINTS: question.ts 2
     # PRINTS: questions.ts 11
     # PRINTS: reap.ts 15
-    # PRINTS: record-handlers.ts 35
+    # PRINTS: record-handlers.ts 38
     # PRINTS: record-receipts.ts 7
     # PRINTS: records.ts 12
     # PRINTS: recover.ts 4
@@ -854,7 +854,7 @@ jobs:
     # PRINTS: tool-window-key.ts 2
     # PRINTS: topic-base-commit.ts 1
     # PRINTS: topic-base-word.ts 1
-    # PRINTS: topic-contexts.ts 12
+    # PRINTS: topic-contexts.ts 13
     # PRINTS: topic-group.ts 11
     # PRINTS: topic-rules.ts 15
     # PRINTS: touched-root.ts 6
@@ -877,7 +877,7 @@ jobs:
     # PRINTS: wiring-lookalikes.ts 2
     # PRINTS: wiring-removal.ts 7
     # PRINTS: wiring-scope.ts 3
-    # PRINTS: work-context-ack.ts 10
+    # PRINTS: work-context-ack.ts 12
     # PRINTS: work-context-title.ts 1
     # PRINTS: work-context.tsx 2
     # PRINTS: work-contexts.ts 9
