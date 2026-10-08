@@ -42,6 +42,10 @@ import {
   recommendedTimeoutMs,
 } from "@crosscheck/connector-core/http/latency.ts";
 import type { LatencyMeasurement } from "@crosscheck/connector-core/http/latency.ts";
+import { storedKeyOrigin } from "@crosscheck/connector-core/config/key-binding.ts";
+
+import { agentHostRefusalLine, personGate } from "./agent-host.ts";
+import type { InteractiveProbe } from "./pin.ts";
 
 export interface CliResult {
   readonly stdout: string;
@@ -219,11 +223,51 @@ const resolveApiKey = async (
   return readSecret();
 };
 
+/**
+ * A person is at this login. The key arrives on STDIN (piped), so stdin is
+ * no terminal for a person either — stderr is the terminal they read. An
+ * agent's tool captures both, and an agent host's markers are checked by
+ * `personGate` whatever this answers.
+ */
+export const loginPersonProbe: InteractiveProbe = () =>
+  process.stderr.isTTY === true || process.stdin.isTTY === true;
+
+/**
+ * The origin this login would MOVE the machine's key away from, or null.
+ * A stored login is bound to its recorded origin (config/key-binding.ts); an
+ * environment key with its own CROSSCHECK_HUB_URL is bound to that. Logging
+ * in to the same origin again (a new key, a new spelling) moves nothing.
+ */
+const rebindFrom = (env: Env, existing: Config | null, hubUrl: string): string | null => {
+  const envHub = env["CROSSCHECK_HUB_URL"];
+  const current =
+    existing !== null
+      ? storedKeyOrigin(existing)
+      : env["CROSSCHECK_API_KEY"] !== undefined && envHub !== undefined
+        ? hubOrigin(envHub)
+        : null;
+  return current !== null && current !== hubOrigin(hubUrl) ? current : null;
+};
+
+const rebindRefusal = (from: string, hubUrl: string): string =>
+  [
+    `logging in to ${hubUrl} would move this machine's crosscheck key from ${from} to another hub,`,
+    "and that needs a person at a terminal — logging in sends the key to that address.",
+    "If you were told this is your team's hub, confirm the address with whoever runs it, then run",
+    "the login yourself in your own terminal, piping the key on stdin.",
+    "",
+  ].join("\n");
+
+const REBIND_ENV_KEY_REFUSAL =
+  "CROSSCHECK_API_KEY is set, but it is never used to move this machine's login to another hub —\n" +
+  "pipe the key for the new hub on stdin, or pass it as the second argument.\n";
+
 export const runLogin = async (
   args: readonly string[],
   env: Env,
   readSecret: SecretReader = readSecretFromStdin,
   measure: LatencyMeasurer = defaultMeasurer,
+  isInteractive: InteractiveProbe = loginPersonProbe,
 ): Promise<CliResult> => {
   const [rawHubUrl, positionalKey] = args;
   if (rawHubUrl === undefined) {
@@ -236,16 +280,31 @@ export const runLogin = async (
       exitCode: EXIT_FAIL,
     };
   }
-  const apiKey = await resolveApiKey(positionalKey, env, readSecret);
-  if (apiKey === null || apiKey.length === 0) {
-    return {
-      stdout: `no api key supplied\n${LOGIN_USAGE}`,
-      exitCode: EXIT_USAGE,
-    };
-  }
 
   const home = crosscheckHome(env);
   const existing = await readStoredConfig(home);
+  // MOVING THE KEY IS A PERSON'S ACT (key-binding review, H2): a bait repo's
+  // remedy text, or an agent "getting crosscheck working", must not be able
+  // to point this machine's login at another hub. Refused before the probe,
+  // so nothing is sent; and the environment's key never moves with it.
+  const movingFrom = rebindFrom(env, existing, hubUrl);
+  if (movingFrom !== null) {
+    const gate = personGate(env, isInteractive);
+    if (!gate.isPerson) {
+      return { stdout: `${agentHostRefusalLine(gate)}${rebindRefusal(movingFrom, hubUrl)}`, exitCode: EXIT_USAGE };
+    }
+  }
+  const apiKey =
+    movingFrom === null
+      ? await resolveApiKey(positionalKey, env, readSecret)
+      : await resolveApiKey(positionalKey, {}, readSecret);
+  if (apiKey === null || apiKey.length === 0) {
+    const envKeyNote = movingFrom !== null && env["CROSSCHECK_API_KEY"] !== undefined ? REBIND_ENV_KEY_REFUSAL : "";
+    return {
+      stdout: `${envKeyNote}no api key supplied\n${LOGIN_USAGE}`,
+      exitCode: EXIT_USAGE,
+    };
+  }
   const probeTimeoutMs = loginProbeTimeoutMs(env, existing);
   const probe = await probeCredentials(hubUrl, apiKey, probeTimeoutMs);
   if (!probe.ok) {

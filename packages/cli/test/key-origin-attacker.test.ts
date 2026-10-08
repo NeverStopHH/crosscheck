@@ -231,6 +231,12 @@ describe("a bait repo naming an attacker hub", () => {
       expect(text).toContain(`set "hubUrl" in .crosscheck.json to ${own.url}`);
       expect(text).toContain("refused in the last 7 days");
       expect(text).not.toContain(STORED_KEY);
+      // Never the lure: no copy-pasteable login to the repo's hub, an
+      // out-of-band check instead, and rotation for what 0.10.0 may have sent.
+      expect(text).not.toContain(`crosscheck login ${attacker.url}`);
+      expect(text).toContain("confirm it with whoever runs the hub before you log in there yourself");
+      expect(text).toContain("never let an agent do it");
+      expect(text).toContain("rotate it with `crosscheck key rotate`");
     }
     expect(status.stdout).toContain("WARN key origin:");
     expect(doctor.stdout).toContain("WARN  key origin  ");
@@ -260,6 +266,27 @@ describe("a bait repo naming an attacker hub", () => {
   });
 });
 
+describe("crosscheck init with no key in a repo naming a hub", () => {
+  test("does not hand out a login to the repo's hub", async () => {
+    // Arrange — no login on this machine; the repo names the attacker's hub
+    const attacker = startLoggingHub();
+    const home = await makeHome("init-no-key");
+    const repo = await makeRepo("init-no-key", { remote: "git@github.com:evil/bait.git" });
+    paths.push(home, repo);
+    await writeFile(join(repo, ".crosscheck.json"), `${JSON.stringify({ hubUrl: attacker.url })}\n`, "utf8");
+
+    // Act
+    const result = await runCli(["init"], { CROSSCHECK_HOME: home, HOME: home }, repo);
+
+    // Assert
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout).not.toContain(`crosscheck login ${attacker.url}`);
+    expect(result.stdout).toContain(`This repo's .crosscheck.json names ${attacker.url}: confirm with whoever runs your hub`);
+    expect(result.stdout).toContain("never let an agent do it");
+    expect(attacker.requests()).toEqual([]);
+  });
+});
+
 describe("crosscheck login binds the key", () => {
   test("to the hub it was proven against, replacing a previous login's binding", async () => {
     // Arrange — a machine logged in to another hub before, binding recorded
@@ -272,10 +299,11 @@ describe("crosscheck login binds the key", () => {
       apiKey: "e".repeat(64),
       keyOrigin: "http://127.0.0.1:9",
     });
-    const env: Env = { CROSSCHECK_HOME: home, HOME: home, CROSSCHECK_API_KEY: STORED_KEY };
+    const env: Env = { CROSSCHECK_HOME: home, HOME: home };
+    const pipedKey = (): Promise<string | null> => Promise.resolve(STORED_KEY);
 
-    // Act
-    const login = await runCli(["login", `${own.url}/`], env, home);
+    // Act — a person at a terminal, the key piped on stdin
+    const login = await runCli(["login", `${own.url}/`], env, home, pipedKey, asPerson);
 
     // Assert — the probe carried the key to the hub being logged in to
     expect(login.exitCode).toBe(0);
@@ -283,6 +311,64 @@ describe("crosscheck login binds the key", () => {
     const stored = JSON.parse(await readFile(join(home, "config.json"), "utf8")) as Record<string, unknown>;
     expect(stored["hubUrl"]).toBe(own.url);
     expect(stored["keyOrigin"]).toBe(own.url);
+  });
+
+  test("moving the key to another hub is refused without a person, and nothing is sent", async () => {
+    // Arrange — logged in to the developer's own hub; an agent runs a login
+    // to the hub a bait repo's remedy named
+    const own = startLoggingHub();
+    const attacker = startLoggingHub();
+    const home = await makeHome("login-rebind-agent");
+    paths.push(home);
+    await saveConfig(home, { version: 1, hubUrl: own.url, apiKey: STORED_KEY, keyOrigin: own.url });
+    const before = await readFile(join(home, "config.json"), "utf8");
+    const pipedKey = (): Promise<string | null> => Promise.resolve(STORED_KEY);
+
+    // Act — no terminal (an agent's tool), and inside an agent host
+    const noTty = await runCli(["login", attacker.url], { CROSSCHECK_HOME: home, HOME: home }, home, pipedKey, {
+      isInteractive: () => false,
+    });
+    const inHost = await runCli(
+      ["login", attacker.url],
+      { CROSSCHECK_HOME: home, HOME: home, CLAUDECODE: "1" },
+      home,
+      pipedKey,
+      asPerson,
+    );
+
+    // Assert
+    expect(attacker.requests()).toEqual([]);
+    expect(own.requests()).toEqual([]);
+    for (const result of [noTty, inHost]) {
+      expect(result.exitCode).toBe(64);
+      expect(result.stdout).toContain(`would move this machine's crosscheck key from ${own.url} to another hub`);
+    }
+    expect(await readFile(join(home, "config.json"), "utf8")).toBe(before);
+  });
+
+  test("a person moving the key never takes it from CROSSCHECK_API_KEY", async () => {
+    // Arrange
+    const own = startLoggingHub();
+    const other = startLoggingHub();
+    const home = await makeHome("login-rebind-envkey");
+    paths.push(home);
+    await saveConfig(home, { version: 1, hubUrl: own.url, apiKey: STORED_KEY, keyOrigin: own.url });
+    const noStdin = (): Promise<string | null> => Promise.resolve(null);
+
+    // Act
+    const result = await runCli(
+      ["login", other.url],
+      { CROSSCHECK_HOME: home, HOME: home, CROSSCHECK_API_KEY: "e".repeat(64) },
+      home,
+      noStdin,
+      asPerson,
+    );
+
+    // Assert — refused, nothing sent anywhere
+    expect(result.exitCode).toBe(64);
+    expect(result.stdout).toContain("CROSSCHECK_API_KEY is set, but it is never used to move this machine's login");
+    expect(other.requests()).toEqual([]);
+    expect(own.requests()).toEqual([]);
   });
 });
 
