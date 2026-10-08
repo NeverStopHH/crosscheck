@@ -38,6 +38,9 @@ const MY_SESSION = "ses_mine";
 const THEIR_SESSION = "ses_theirs";
 const MY_CONTEXT = "wc_mine";
 const THEIR_CONTEXT = "wc_theirs";
+/** A third developer, for the case where one teammate's copy is ordinary and another's generated. */
+const LEE_SESSION = "ses_lee";
+const LEE_CONTEXT = "wc_lee";
 
 /** Two ordinary files: enough to qualify a row on their own (GHOST_MIN_SHARED_TARGETS). */
 const PLAN = ["src/auth/token.ts", "src/auth/session.ts"];
@@ -244,6 +247,23 @@ describe("ghost checks: a generated file is never overlap evidence", () => {
 
     // Act + Assert
     expect(await ghostRows(fx.harness, fx.me)).toEqual([]);
+  });
+
+  test("a THIRD teammate's ordinary copy keeps the files in play, and their generated copy is still no evidence", async () => {
+    // Arrange: my rows and Lee's are unlabelled, Ken's carry the attribute
+    // label. Lee's copy keeps the files cool in the hot count, so only the
+    // pair read's own filter keeps Ken's generated copy from pairing.
+    const fx = await setup();
+    const plan = files(["packages/proto/src/messages.ts", "packages/proto/src/service.ts"]);
+    await bothCarry(fx, plan, plan.map((target) => ({ ...target, generated: "attribute" })));
+    const lee = await addTestDeveloperWithSession(fx.harness, "Lee", "lee@example.com", { id: LEE_SESSION });
+    await seed(fx.harness, lee, contextRecords(LEE_CONTEXT, LEE_SESSION, plan));
+
+    // Act
+    const rows = await ghostRows(fx.harness, fx.me);
+
+    // Assert
+    expect(rows.map((row) => row.workContextId)).toEqual([LEE_CONTEXT]);
   });
 
   test("MY side's label is enough too: my generated file is never probed", async () => {
