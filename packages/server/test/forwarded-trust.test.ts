@@ -52,6 +52,14 @@ describe("CROSSCHECK_TRUSTED_PROXIES", () => {
     expect(parseTrustedProxies(" ").includes("172.18.0.5")).toBe(false);
   });
 
+  test("a CIDR that trusts every peer, or every IPv4 peer, stops the hub at startup (review L3)", () => {
+    for (const entry of ["0.0.0.0/0", "::/0", "::ffff:0:0/96", "::ffff:0.0.0.0/96", "::ffff:0:0/80"]) {
+      expect(() => parseTrustedProxies(entry)).toThrow(/trusts every peer \(or every IPv4 peer\)/);
+    }
+    // A mapped block narrower than every IPv4 is a network like any other.
+    expect(parseTrustedProxies("::ffff:172.18.0.0/112").includes("172.18.0.5")).toBe(true);
+  });
+
   test("a hostname, a bad prefix or a malformed CIDR stops the hub at startup", () => {
     expect(() => parseTrustedProxies("caddy")).toThrow(/CROSSCHECK_TRUSTED_PROXIES: "caddy" is not an IP address or CIDR/);
     expect(() => parseTrustedProxies("10.0.0.0/33")).toThrow(/has a prefix outside 0-32/);

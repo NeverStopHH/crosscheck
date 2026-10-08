@@ -24423,6 +24423,23 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/listen-boot.test.ts`,
     because: "the upgraded pilot hub shares 100.x:7100 with whatever already listened there",
   },
+  // Review of the hub hardening, L3: a proxy list that trusts everyone.
+  {
+    label: "a trusted-proxy CIDR may trust every peer",
+    file: `${SERVER}/src/http/forwarded.ts`,
+    from: "    if (isTrustEveryone(network, prefix, family)) {",
+    to: "    if (false) {",
+    test: `${SERVER}/test/forwarded-trust.test.ts`,
+    because: "CROSSCHECK_TRUSTED_PROXIES=0.0.0.0/0 quietly restores 0.10's belief in any peer's forwarded headers",
+  },
+  {
+    label: "an IPv4-mapped CIDR may trust every IPv4 peer",
+    file: `${SERVER}/src/http/forwarded.ts`,
+    from: "  return IPV4_MAPPED_PATTERN.test(canonical) && prefix <= IPV4_MAPPED_PREFIX;",
+    to: "  return false;",
+    test: `${SERVER}/test/forwarded-trust.test.ts`,
+    because: "an entry that reads as IPv6 trusts every IPv4 peer, because BlockList matches the mapped block against them",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -24795,7 +24812,7 @@ interface Outcome {
  * PRINTS: packages/server/test/drafts.test.ts 4
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/fence-waivers.test.ts 1
- * PRINTS: packages/server/test/forwarded-trust.test.ts 5
+ * PRINTS: packages/server/test/forwarded-trust.test.ts 7
  * PRINTS: packages/server/test/ghost-overlap.test.ts 7
  * PRINTS: packages/server/test/hint-content-floor.test.ts 6
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5

@@ -58,6 +58,28 @@ const bareAddress = (text: string): string => {
   return zone === -1 ? unbracketed : unbracketed.slice(0, zone);
 };
 
+/** `::ffff:a.b.c.d` as the URL parser serialises it: the IPv4-mapped block. */
+const IPV4_MAPPED_PATTERN = /^::ffff:[0-9a-f]{1,4}:[0-9a-f]{1,4}$/;
+/** The width of the mapped prefix: a mapped CIDR this wide or wider covers every IPv4 peer. */
+const IPV4_MAPPED_PREFIX = 96;
+
+/**
+ * A CIDR that trusts everybody (review of the hub hardening, L3): `0.0.0.0/0`,
+ * `::/0`, or a mapped block such as `::ffff:0:0/96`, which BlockList also
+ * matches against every IPv4 peer. Such an entry turns "the peer is our
+ * proxy" back into "any peer", the 0.10 behaviour this setting replaced.
+ */
+const isTrustEveryone = (network: string, prefix: number, family: IpFamily): boolean => {
+  if (prefix === 0) {
+    return true;
+  }
+  if (family !== "ipv6") {
+    return false;
+  }
+  const canonical = new URL(`http://[${network}]`).hostname.slice(1, -1);
+  return IPV4_MAPPED_PATTERN.test(canonical) && prefix <= IPV4_MAPPED_PREFIX;
+};
+
 const refuse = (entry: string, why: string): never => {
   throw new Error(
     `${TRUSTED_PROXIES_ENV}: "${entry}" ${why}. List the proxy's address or network, for example ` +
@@ -95,6 +117,9 @@ export const parseTrustedProxies = (raw: string | undefined): TrustedProxies => 
     const maxPrefix = family === "ipv4" ? IPV4_MAX_PREFIX : IPV6_MAX_PREFIX;
     if (!Number.isInteger(prefix) || prefix > maxPrefix) {
       return refuse(entry, `has a prefix outside 0-${String(maxPrefix)}`);
+    }
+    if (isTrustEveryone(network, prefix, family)) {
+      return refuse(entry, "trusts every peer (or every IPv4 peer), which is what this setting exists to prevent");
     }
     list.addSubnet(network, prefix, family);
   }
