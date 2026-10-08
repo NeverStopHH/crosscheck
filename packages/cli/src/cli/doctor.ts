@@ -1750,7 +1750,9 @@ const checkPrivacy = async (ctx: HubContext): Promise<Check> => {
   // person switches presence off again. The words are doctor's own; the hub
   // sent an instant, re-serialised here.
   const reenabled =
-    result.data.presenceReenabledAt === null ? null : presenceReenabledLine(result.data.presenceReenabledAt);
+    result.data.presenceReenabledAt === null
+      ? null
+      : presenceReenabledLine(result.data.presenceReenabledAt, result.data.presenceOptOut);
   if (reenabled !== null) {
     return check("WARN", "privacy settings", reenabled);
   }

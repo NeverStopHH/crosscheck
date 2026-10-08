@@ -61,18 +61,20 @@ describe("an opt-out switched back off through the API key", () => {
     expect(seen[0]?.payload).toEqual({ developerId: robin.developerId });
   });
 
-  test("stays in every colleague's feed after she opts out again, and the notice ends for her", async () => {
-    // Arrange
+  test("on, watched, off again: the feed keeps it and she is still told, with presence off now", async () => {
+    // Arrange — the review's M1: an agent exposes her briefly, then restores the opt-out
     const { harness, nick, robin } = await robinAndNick();
     await setPresenceOptOutViaApi(harness, robin.apiKey, true);
     await setPresenceOptOutViaApi(harness, robin.apiKey, false);
+    const switchedAt = harness.clock.now().toISOString();
+    harness.clock.advanceSeconds(600);
 
-    // Act — she answers the notice
+    // Act — the second PUT is the agent's too, so it answers nothing
     await setPresenceOptOutViaApi(harness, robin.apiKey, true);
 
     // Assert
     expect(await reenables(harness, nick)).toHaveLength(1);
-    expect((await settingsOf(harness, robin)).presenceReenabledAt).toBeNull();
+    expect(await settingsOf(harness, robin)).toMatchObject({ presenceOptOut: true, presenceReenabledAt: switchedAt });
   });
 
   test("is told for PRESENCE_REENABLE_NOTICE_DAYS, then no longer", async () => {

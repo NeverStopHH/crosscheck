@@ -20,9 +20,10 @@
  * is made loud instead: a `presence_reenabled` security event (constants.ts
  * SECURITY_EVENT_KINDS, kept in the team feed through later opt-outs), and
  * `presenceReenabledAt` on the person's own settings read, which their
- * SessionStart briefing, `crosscheck status` and doctor print. There is no
- * presence signal to protect at that moment: from then on the person is
- * visible anyway.
+ * SessionStart briefing, `crosscheck status` and doctor print, for
+ * the full window even after a later opt-out (presenceReenableNotice says
+ * why). There is no presence signal to protect at that moment: from then on
+ * the person is visible anyway.
  */
 import { and, asc, desc, eq, gte, isNull, notInArray, or, sql } from "drizzle-orm";
 
@@ -59,10 +60,10 @@ export interface DeveloperSettingsView {
    */
   readonly emails: readonly DeveloperEmailView[];
   /**
-   * When the caller's presence opt-out was last switched back off, while
-   * presence is still on and within PRESENCE_REENABLE_NOTICE_DAYS; null
-   * otherwise. Self view only: the person is told, so a silent undo by an
-   * agent holding their key is not silent.
+   * When the caller's presence opt-out was last switched back off, within
+   * PRESENCE_REENABLE_NOTICE_DAYS, whether presence is on now or off again;
+   * null otherwise. Self view only: the person is told, so a silent undo by
+   * an agent holding their key is not silent, nor a brief one.
    */
   readonly presenceReenabledAt: string | null;
 }
@@ -94,6 +95,18 @@ const latestPresenceReenable = async (db: Db, developerId: string, since: Date):
   return rows[0]?.createdAt.toISOString() ?? null;
 };
 
+/**
+ * The re-enable the person is still to be told about: the newest one within
+ * PRESENCE_REENABLE_NOTICE_DAYS, WHATEVER the setting is now (review of the
+ * hub hardening, M1). An agent holding the key can switch presence on, let the
+ * team watch, and switch it off again. Taking that second PUT as the person's
+ * answer would make the notice vanish exactly when the exposure was meant to
+ * go unseen. Every surface that tells it also says whether presence is still
+ * on, from `presenceOptOut` beside it.
+ */
+export const presenceReenableNotice = (db: Db, developerId: string, now: Date): Promise<string | null> =>
+  latestPresenceReenable(db, developerId, new Date(now.getTime() - PRESENCE_REENABLE_NOTICE_DAYS * MS_PER_DAY));
+
 export const getDeveloperSettings = async (
   db: Db,
   developerId: string,
@@ -105,7 +118,6 @@ export const getDeveloperSettings = async (
     .where(eq(developers.id, developerId))
     .limit(1);
   const presenceOptOut = own[0]?.presenceOptOut ?? false;
-  const noticeSince = new Date(now.getTime() - PRESENCE_REENABLE_NOTICE_DAYS * MS_PER_DAY);
   const mutes = await db
     .select({ id: developers.id, name: developers.name })
     .from(developerMutes)
@@ -117,8 +129,8 @@ export const getDeveloperSettings = async (
     presenceOptOut,
     mutes,
     emails: await listDeveloperEmails(db, developerId),
-    // Switching presence off again answers the notice: nothing to tell.
-    presenceReenabledAt: presenceOptOut ? null : await latestPresenceReenable(db, developerId, noticeSince),
+    // Told for its full window, opted out again or not (presenceReenableNotice).
+    presenceReenabledAt: await presenceReenableNotice(db, developerId, now),
   };
 };
 

@@ -212,8 +212,10 @@ export const assembleBriefing = async (
   const questions = questionsResult.ok ? questionsResult.data.inbox : [];
   const ghostChecks = ghostChecksResult.ok ? ghostChecksResult.data : [];
   const landedNotices = landedNoticesResult.ok ? landedNoticesResult.data : [];
-  const reenabledAt = privacyResult.ok ? privacyResult.data.presenceReenabledAt : null;
-  const presenceNotice = reenabledAt === null ? null : presenceReenabledBriefingLine(reenabledAt);
+  const presenceNotice =
+    privacyResult.ok && privacyResult.data.presenceReenabledAt !== null
+      ? presenceReenabledBriefingLine(privacyResult.data.presenceReenabledAt, privacyResult.data.presenceOptOut)
+      : null;
 
   // Only the teammates that will actually be shown cost a git process; the
   // optional rider shares the fan-out window, so both together still cost one

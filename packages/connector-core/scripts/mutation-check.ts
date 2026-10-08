@@ -24171,7 +24171,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a presence re-enable is never told to the person",
     file: `${SERVER}/src/services/developer-settings.ts`,
-    from: "    presenceReenabledAt: presenceOptOut ? null : await latestPresenceReenable(db, developerId, noticeSince),",
+    // Repaired by the review's M1: the notice no longer ends at an opt-out.
+    from: "    presenceReenabledAt: await presenceReenableNotice(db, developerId, now),",
     to: "    presenceReenabledAt: null,",
     test: `${SERVER}/test/presence-reenable.test.ts`,
     because: "the event sits in the feed while the one person it concerns hears nothing on briefing, status or doctor",
@@ -24281,6 +24282,31 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/doctor-hub-transport.test.ts`,
     because: "one wrong flag from a hub makes the whole status unreadable, and the search rebuild line vanishes with it",
   },
+  // Review of the hub hardening, M1: on, watched, off again.
+  {
+    label: "a later opt-out ends the presence re-enable notice",
+    file: `${SERVER}/src/services/developer-settings.ts`,
+    from: "    presenceReenabledAt: await presenceReenableNotice(db, developerId, now),",
+    to: "    presenceReenabledAt: presenceOptOut ? null : await presenceReenableNotice(db, developerId, now),",
+    test: `${SERVER}/test/presence-reenable.test.ts`,
+    because: "an agent switches presence on, lets the team watch, switches it off, and the person is never told",
+  },
+  {
+    label: "status and doctor say presence is still on after it was switched off again",
+    file: `${CORE}/src/briefing/presence-notice.ts`,
+    from: "  return isOptedOutNow\n    ? `presence was turned back on at ${instant} via an API key, and is off again now; ` +",
+    to: "  return false\n    ? `presence was turned back on at ${instant} via an API key, and is off again now; ` +",
+    test: `${CLI}/test/presence-reenabled-cli.test.ts`,
+    because: "the person reads advice to switch presence off that is already off, and nothing about the exposure in between",
+  },
+  {
+    label: "the briefing says presence is still on after it was switched off again",
+    file: `${CORE}/src/briefing/presence-notice.ts`,
+    from: "  return isOptedOutNow\n    ? `Your presence opt-out was switched off at ${instant} through an API key, which any agent holding the key can do, and is on again now",
+    to: "  return false\n    ? `Your presence opt-out was switched off at ${instant} through an API key, which any agent holding the key can do, and is on again now",
+    test: `${CORE}/test/briefing-presence-notice.test.ts`,
+    because: "the session is told to restore an opt-out that is already restored, and not that teammates watched in between",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -24383,7 +24409,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pin-waive-hostile-hub.test.ts 1
  * PRINTS: packages/cli/test/pins-cli.test.ts 6
- * PRINTS: packages/cli/test/presence-reenabled-cli.test.ts 2
+ * PRINTS: packages/cli/test/presence-reenabled-cli.test.ts 3
  * PRINTS: packages/cli/test/publish-workflow.test.ts 2
  * PRINTS: packages/cli/test/release-preflight.test.ts 5
  * PRINTS: packages/cli/test/revalidate-cli.test.ts 1
@@ -24480,7 +24506,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 25
  * PRINTS: packages/connector-core/test/briefing-flow.test.ts 3
  * PRINTS: packages/connector-core/test/briefing-notice.test.ts 1
- * PRINTS: packages/connector-core/test/briefing-presence-notice.test.ts 2
+ * PRINTS: packages/connector-core/test/briefing-presence-notice.test.ts 3
  * PRINTS: packages/connector-core/test/briefing-presence-topics.test.ts 6
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 5
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 3
@@ -24699,7 +24725,7 @@ interface Outcome {
  * PRINTS: packages/server/test/pilot-substance-channel.test.ts 2
  * PRINTS: packages/server/test/pins.test.ts 4
  * PRINTS: packages/server/test/presence-optout.test.ts 2
- * PRINTS: packages/server/test/presence-reenable.test.ts 3
+ * PRINTS: packages/server/test/presence-reenable.test.ts 4
  * PRINTS: packages/server/test/presence.test.ts 1
  * PRINTS: packages/server/test/questions.test.ts 8
  * PRINTS: packages/server/test/records.test.ts 2

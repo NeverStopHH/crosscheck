@@ -22,7 +22,8 @@ import { makeHome, makeRepo } from "./helpers.ts";
 const REPO_ID = "github.com/acme/api";
 const NOW = new Date("2026-08-19T12:00:00.000Z");
 const REENABLED_AT = "2026-08-19T09:30:00.000Z";
-const NOTICE = presenceReenabledBriefingLine(REENABLED_AT) ?? "";
+const NOTICE = presenceReenabledBriefingLine(REENABLED_AT, false) ?? "";
+const NOTICE_OFF_AGAIN = presenceReenabledBriefingLine(REENABLED_AT, true) ?? "";
 
 /** A hub that answers only /api/settings: every other section fails open. */
 let settingsAnswer: unknown = {};
@@ -66,6 +67,15 @@ describe("the presence notice on the SessionStart briefing", () => {
 
     expect(NOTICE).toContain(REENABLED_AT);
     expect(briefing.split("\n")[1]).toBe(NOTICE);
+  });
+
+  test("switched on and off again before this session: still told, and told that it is on again now", async () => {
+    // The review's M1: a brief exposure must not vanish from the notice.
+    const briefing = await briefingWith({ presenceOptOut: true, mutes: [], emails: [], presenceReenabledAt: REENABLED_AT });
+
+    expect(NOTICE_OFF_AGAIN).not.toBe(NOTICE);
+    expect(NOTICE_OFF_AGAIN).toContain("is on again now");
+    expect(briefing.split("\n")[1]).toBe(NOTICE_OFF_AGAIN);
   });
 
   test("nothing re-enabled, or an older hub with no such field: the briefing stays silent", async () => {

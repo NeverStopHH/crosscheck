@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 2335
+    # PRINTS: 2338
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -263,6 +263,7 @@ jobs:
     # PRINTS: briefing/ghost.ts 2
     # PRINTS: briefing/intent.ts 1
     # PRINTS: briefing/landed-notices.ts 5
+    # PRINTS: briefing/presence-notice.ts 2
     # PRINTS: briefing/questions.ts 2
     # PRINTS: briefing/render.ts 43
     # PRINTS: briefing/sanitize.ts 10
@@ -464,7 +465,7 @@ jobs:
     # PRINTS: packages/server/src/services/coverage-order.ts 5
     # PRINTS: packages/server/src/services/coverage.ts 44
     # PRINTS: packages/server/src/services/developer-lookup.ts 2
-    # PRINTS: packages/server/src/services/developer-settings.ts 10
+    # PRINTS: packages/server/src/services/developer-settings.ts 11
     # PRINTS: packages/server/src/services/developers.ts 13
     # PRINTS: packages/server/src/services/diagnosis.ts 16
     # PRINTS: packages/server/src/services/doc-upgrade.ts 10
@@ -586,7 +587,7 @@ jobs:
     # PRINTS: detached-branch.ts 4
     # PRINTS: detect.ts 13
     # PRINTS: developer-lookup.ts 2
-    # PRINTS: developer-settings.ts 10
+    # PRINTS: developer-settings.ts 11
     # PRINTS: developers.ts 13
     # PRINTS: diagnosis.ts 16
     # PRINTS: doc-upgrade.ts 10
@@ -722,6 +723,7 @@ jobs:
     # PRINTS: post.ts 1
     # PRINTS: pre-tool-use.ts 19
     # PRINTS: precision.ts 2
+    # PRINTS: presence-notice.ts 2
     # PRINTS: presence.ts 1
     # PRINTS: probe.ts 39
     # PRINTS: profile.ts 2

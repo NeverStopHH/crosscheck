@@ -482,7 +482,7 @@ export const runStatus = async (
   // is told here, where the person looks, since an agent could have done it.
   const reenabledLine =
     privacy.ok && privacy.data.presenceReenabledAt !== null
-      ? presenceReenabledLine(privacy.data.presenceReenabledAt)
+      ? presenceReenabledLine(privacy.data.presenceReenabledAt, privacy.data.presenceOptOut)
       : null;
   const privacyLines = privacy.ok
     ? [

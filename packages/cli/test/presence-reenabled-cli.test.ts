@@ -16,7 +16,10 @@ import { runStatus } from "../src/cli/status.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
 const REENABLED_AT = "2026-08-19T09:30:00.000Z";
-const LINE = `presence was turned back on at ${REENABLED_AT} via an API key; run \`crosscheck presence off\` if that wasn't you`;
+const LINE = `presence was turned back on at ${REENABLED_AT} via an API key, and is still on; run \`crosscheck presence off\` if that wasn't you`;
+const LINE_OFF_AGAIN =
+  `presence was turned back on at ${REENABLED_AT} via an API key, and is off again now; ` +
+  "if neither was you, something holding your API key did it (`crosscheck key rotate` replaces the key)";
 
 const paths: string[] = [];
 const servers: ReturnType<typeof Bun.serve>[] = [];
@@ -31,14 +34,14 @@ afterEach(async () => {
 });
 
 /** A hub whose /api/settings carries `reenabledAt`, and an empty page for every other read. */
-const fixture = async (reenabledAt: unknown) => {
+const fixture = async (reenabledAt: unknown, presenceOptOut = false) => {
   const server = Bun.serve({
     port: 0,
     fetch: (request) =>
       new URL(request.url).pathname === "/api/settings"
         ? Response.json({
             ok: true,
-            data: { presenceOptOut: false, mutes: [], emails: [], presenceReenabledAt: reenabledAt },
+            data: { presenceOptOut, mutes: [], emails: [], presenceReenabledAt: reenabledAt },
           })
         : Response.json({ ok: true, data: { sessions: [], absences: [] } }),
   });
@@ -72,6 +75,17 @@ describe("a presence opt-out switched back off through an API key", () => {
     const result = await runDoctor(env, repo, async () => null);
 
     expect(result.stdout).toContain(`WARN  privacy settings  ${LINE}`);
+  });
+
+  test("switched on and off again: status and doctor still say so, and that it is off again now", async () => {
+    // The review's M1: an agent's brief exposure must not vanish from the notice.
+    const { repo, env } = await fixture(REENABLED_AT, true);
+
+    const status = await runStatus(env, repo);
+    const doctor = await runDoctor(env, repo, async () => null);
+
+    expect(status.stdout).toContain(LINE_OFF_AGAIN);
+    expect(doctor.stdout).toContain(`WARN  privacy settings  ${LINE_OFF_AGAIN}`);
   });
 
   test("nothing re-enabled: status says nothing and doctor's privacy line passes", async () => {
