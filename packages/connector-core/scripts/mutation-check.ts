@@ -18943,6 +18943,14 @@ export const MUTATIONS: readonly Mutation[
     because: "review-2 round 8, L5: every read clamps to its own now, and the cooldown never runs out",
   },
   {
+    label: "a heal retires a life without writing it down as refused (sleep 52221)",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: '      await recordRefusedLife(input.home, input.repoKey, sessionId, now, "end");\n',
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "the work context the SessionStart spooled for the retired life is sent by a successor into the life the retirement ended (I2)",
+  },
+  {
     label: "SessionEnd never sends the work context the hub is behind on",
     file: `${CORE}/src/flows/end-session.ts`,
     from: "  await spoolLastWorkContext(input);\n",
@@ -19904,7 +19912,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
  * PRINTS: packages/connector-core/test/session-heal.test.ts 32
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 4
- * PRINTS: packages/connector-core/test/session-lives.test.ts 66
+ * PRINTS: packages/connector-core/test/session-lives.test.ts 67
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2

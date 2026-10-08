@@ -290,6 +290,11 @@ const retireOrphan = async (
     }
     const roomMs = deadlineMs - Date.now();
     if (roomMs > 0) {
+      // Written down as refused before the end goes out, as every end this
+      // connector sends is (review-2 round 9, M3; sleep seed 52221): the
+      // SessionStart that moved the state to this life spooled its work
+      // context, and a successor sent it into the life this end closed.
+      await recordRefusedLife(input.home, input.repoKey, sessionId, now, "end");
       await endSession({ ...input.hub, timeoutMs: Math.min(input.hub.timeoutMs, roomMs) }, sessionId, ALLOCATION_FAILED);
     }
     return true;

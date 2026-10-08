@@ -86,6 +86,8 @@ const LOCK_FREES_FOR_RETIREMENT_MS = 600;
  * boot is not what this file measures (claim-revalidation-pull.test.ts).
  */
 const HUB_BOOT_TIMEOUT_MS = 60_000;
+/** A request timeout and a walk deadline no load runs out: the test itself holds the walk where it must be. */
+const PATIENT_MS = 60_000;
 
 let db: Db;
 let server: ReturnType<typeof Bun.serve>;
@@ -641,6 +643,48 @@ describe("a heal racing a SessionEnd (review finding 6)", () => {
     }
     expect(await targetsOf(resumed.workContextId)).toEqual(["src/after-resume.ts"]);
   });
+
+  test("writes the life it retires down as refused before the end, so a successor withholds its work context (sleep seed 52221)", async () => {
+    // Arrange: a life the hub ended; a heal's walk held at the proxy, with no
+    // timing, on the register of the next life
+    const fx = await fixture("heal-retires");
+    const life = await register(fx);
+    await flushAsHook(fx);
+    await endSession(fx.hub, life.crosscheckSessionId);
+    const patient = { ...fx.proxied, timeoutMs: PATIENT_MS };
+    const hold = holdNextRegister();
+    const walking = healerFor(fx, patient)({ sessionId: life.crosscheckSessionId, cause: "session_ended" }, Date.now() + PATIENT_MS);
+    await hold.isReached;
+
+    // Act: SessionEnd deletes the state while the register is out; the walk
+    // registers the next life, finds nobody to hand it to, and retires it;
+    // then that life's work context, as the SessionStart that moved the state
+    // to it spooled it, and a successor's drain
+    await endViaFlow(fx);
+    hold.release();
+    await walking;
+    const late = `${life.crosscheckSessionId}~r1`;
+    await appendRecords(
+      fx.home,
+      fx.key,
+      fx.hostSessionKey,
+      [
+        workContextRecord(
+          { workContextId: `wc_${late}`, sessionId: late, title: fallbackWorkContextTitle(BRANCH, REPO_ID), status: "analyzing" },
+          producerOf(late),
+          new Date(),
+        ),
+      ],
+      new Date(),
+    );
+    const successor = await register(fx, fx.hub, "acp-lives--heal-retires-successor");
+    await flushSpool(fx.hub, { sessionId: successor.crosscheckSessionId, developerId }, BUDGET_MS);
+
+    // Assert: retired, written down, and the work context withheld rather than filed into it
+    expect(await isEnded(late)).toBe(true);
+    expect(await readRefusedLives(fx.home, fx.key, new Date())).toContain(late);
+    expect((await readDropDetail(fx.home, fx.key)).byReason["withheld"]).toBe(1);
+  }, 2 * PATIENT_MS);
 });
 
 describe("a heal asked from a hook in another repo (review finding 7)", () => {

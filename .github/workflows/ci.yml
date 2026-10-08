@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1815
+    # PRINTS: 1816
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -285,7 +285,7 @@ jobs:
     # PRINTS: flows/claim-revalidation.ts 2
     # PRINTS: flows/claim-surface.ts 1
     # PRINTS: flows/end-session.ts 14
-    # PRINTS: flows/heal-session.ts 21
+    # PRINTS: flows/heal-session.ts 22
     # PRINTS: flows/heartbeat.ts 3
     # PRINTS: flows/hint.ts 5
     # PRINTS: flows/register-session.ts 31
@@ -579,7 +579,7 @@ jobs:
     # PRINTS: git-lane-cost.ts 2
     # PRINTS: git-queries.ts 15
     # PRINTS: git.ts 4
-    # PRINTS: heal-session.ts 21
+    # PRINTS: heal-session.ts 22
     # PRINTS: heartbeat.ts 3
     # PRINTS: hint-deliveries.ts 3
     # PRINTS: hint.ts 6
