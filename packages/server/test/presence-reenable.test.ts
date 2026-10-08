@@ -21,7 +21,7 @@ import {
   jsonRequest,
 } from "./helpers.ts";
 import type { TestDeveloper, TestHarness } from "./helpers.ts";
-import { setPresenceOptOutViaApi } from "./ui-helpers.ts";
+import { loginUi, setPresenceOptOutViaApi, uiGet } from "./ui-helpers.ts";
 
 const SECONDS_PER_DAY = 86_400;
 
@@ -92,6 +92,50 @@ describe("an opt-out switched back off through the API key", () => {
     // Assert
     expect(inside.presenceReenabledAt).not.toBeNull();
     expect(after.presenceReenabledAt).toBeNull();
+  });
+});
+
+describe("the person's own /ui/feed says so too (review L7)", () => {
+  const BANNER = "Your presence opt-out was switched off at";
+  const feedOf = async (harness: TestHarness, developer: TestDeveloper): Promise<string> =>
+    (await uiGet(harness, "/ui/feed", await loginUi(harness, developer.apiKey))).text();
+
+  test("while it is on, her feed shows the banner and the teammate's does not", async () => {
+    // Arrange
+    const { harness, nick, robin } = await robinAndNick();
+    await setPresenceOptOutViaApi(harness, robin.apiKey, true);
+    await setPresenceOptOutViaApi(harness, robin.apiKey, false);
+
+    // Act
+    const hers = await feedOf(harness, robin);
+    const his = await feedOf(harness, nick);
+
+    // Assert
+    expect(hers).toContain(BANNER);
+    expect(hers).toContain("Teammates can see your live presence now.");
+    expect(his).not.toContain(BANNER);
+  });
+
+  test("on, watched, off again: the banner stays, and says it is on again now", async () => {
+    // Arrange
+    const { harness, robin } = await robinAndNick();
+    await setPresenceOptOutViaApi(harness, robin.apiKey, true);
+    await setPresenceOptOutViaApi(harness, robin.apiKey, false);
+    await setPresenceOptOutViaApi(harness, robin.apiKey, true);
+
+    // Act
+    const hers = await feedOf(harness, robin);
+
+    // Assert
+    expect(hers).toContain(BANNER);
+    expect(hers).toContain("It is on again now, but teammates could see your live presence in between.");
+  });
+
+  test("nothing re-enabled: no banner", async () => {
+    const { harness, robin } = await robinAndNick();
+    await setPresenceOptOutViaApi(harness, robin.apiKey, true);
+
+    expect(await feedOf(harness, robin)).not.toContain(BANNER);
   });
 });
 

@@ -33,7 +33,8 @@ import { UI_FEED_LIMIT, UI_MAX_ARTIFACTS, UI_PASSKEY_CSP } from "../ui/constants
 import { forbidden, isPostedCsrfValid, notFoundPage, viewerChrome } from "../ui/route-helpers.tsx";
 import { ApprovalsPage } from "../ui/pages/approvals.tsx";
 import { FeedPage } from "../ui/pages/feed.tsx";
-import type { FeedEntry } from "../ui/pages/feed.tsx";
+import type { FeedEntry, PresenceReenableBanner } from "../ui/pages/feed.tsx";
+import { getDeveloperSettings, presenceReenableNotice } from "../services/developer-settings.ts";
 import { MembersPage } from "../ui/pages/members.tsx";
 import { RefereePage } from "../ui/pages/referee.tsx";
 import { WorkContextPage } from "../ui/pages/work-context.tsx";
@@ -124,6 +125,19 @@ const toFeedEntry = (
     by: payloadString(event.payload, "by"),
     ageMs: Math.max(0, nowMs - Date.parse(event.createdAt)),
   };
+};
+
+/** The viewer's own presence re-enable, for the feed's banner: self only, never a teammate's. */
+const presenceReenableBannerFor = async (
+  deps: AppDeps,
+  developerId: string,
+): Promise<PresenceReenableBanner | null> => {
+  const at = await presenceReenableNotice(deps.db, developerId, deps.now());
+  if (at === null) {
+    return null;
+  }
+  const settings = await getDeveloperSettings(deps.db, developerId, deps.now());
+  return { at, isOptedOutNow: settings.presenceOptOut };
 };
 
 // ── Work-context assembly ───────────────────────────────────────────────────
@@ -218,7 +232,13 @@ export const uiPagesRoutes = (deps: AppDeps): Hono<AppEnv> => {
     const names = await actorNamesFor(deps, eventPage);
     const nowMs = deps.now().getTime();
     const entries = eventPage.map((event) => toFeedEntry(event, names, nowMs));
-    return c.html(<FeedPage viewer={viewerChrome(c, deps)} entries={entries} />);
+    return c.html(
+      <FeedPage
+        viewer={viewerChrome(c, deps)}
+        entries={entries}
+        presenceReenable={await presenceReenableBannerFor(deps, c.get("developer").id)}
+      />,
+    );
   });
 
   router.get("/members", async (c) => {

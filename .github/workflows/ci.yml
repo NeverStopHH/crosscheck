@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 2362
+    # PRINTS: 2364
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -448,7 +448,7 @@ jobs:
     # PRINTS: packages/server/src/routes/team-settings.ts 1
     # PRINTS: packages/server/src/routes/ui-ceremony-artifacts.ts 2
     # PRINTS: packages/server/src/routes/ui-ceremony.ts 8
-    # PRINTS: packages/server/src/routes/ui-pages.tsx 6
+    # PRINTS: packages/server/src/routes/ui-pages.tsx 7
     # PRINTS: packages/server/src/routes/ui-passkeys.tsx 1
     # PRINTS: packages/server/src/routes/ui.tsx 1
     # PRINTS: packages/server/src/routes/work-contexts.ts 9
@@ -528,7 +528,7 @@ jobs:
     # PRINTS: packages/server/src/services/waiver-terminations.ts 4
     # PRINTS: packages/server/src/services/waivers.ts 5
     # PRINTS: packages/server/src/services/webauthn.ts 12
-    # PRINTS: packages/server/src/ui/pages/feed.tsx 1
+    # PRINTS: packages/server/src/ui/pages/feed.tsx 2
     # PRINTS: packages/server/src/ui/pages/passkeys.tsx 1
     # PRINTS: packages/server/src/ui/pages/waivers.tsx 2
     # PRINTS: packages/server/src/ui/pages/work-context.tsx 2
@@ -622,7 +622,7 @@ jobs:
     # PRINTS: exempt-surfaces.ts 2
     # PRINTS: fallback-title.ts 5
     # PRINTS: fd-io.ts 1
-    # PRINTS: feed.tsx 1
+    # PRINTS: feed.tsx 2
     # PRINTS: fence-waivers.ts 1
     # PRINTS: fetch-state.ts 10
     # PRINTS: fetch-switch.ts 4
@@ -814,7 +814,7 @@ jobs:
     # PRINTS: triggers.ts 6
     # PRINTS: ui-ceremony-artifacts.ts 2
     # PRINTS: ui-ceremony.ts 8
-    # PRINTS: ui-pages.tsx 6
+    # PRINTS: ui-pages.tsx 7
     # PRINTS: ui-passkeys.tsx 1
     # PRINTS: ui.tsx 1
     # PRINTS: unland-false-landed.ts 12

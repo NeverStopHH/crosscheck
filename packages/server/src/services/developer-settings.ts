@@ -20,7 +20,8 @@
  * is made loud instead: a `presence_reenabled` security event (constants.ts
  * SECURITY_EVENT_KINDS, kept in the team feed through later opt-outs), and
  * `presenceReenabledAt` on the person's own settings read, which their
- * SessionStart briefing, `crosscheck status` and doctor print, for
+ * SessionStart briefing, `crosscheck status`, doctor and the person's own
+ * /ui/feed (the one surface an agent does not sit on) print, for
  * the full window even after a later opt-out (presenceReenableNotice says
  * why). There is no presence signal to protect at that moment: from then on
  * the person is visible anyway.

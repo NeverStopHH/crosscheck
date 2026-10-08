@@ -24507,6 +24507,23 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/forwarded-trust.test.ts`,
     because: "tailscale serve on a dual-stack socket loses the session cookie's Secure flag",
   },
+  // Review of the hub hardening, L7: a notice outside the surfaces an agent sits on.
+  {
+    label: "the person's own feed never shows their presence re-enable",
+    file: `${SERVER}/src/routes/ui-pages.tsx`,
+    from: '        presenceReenable={await presenceReenableBannerFor(deps, c.get("developer").id)}',
+    to: "        presenceReenable={null}",
+    test: `${SERVER}/test/presence-reenable.test.ts`,
+    because: "the only notices left are the briefing, status and doctor, every one of them a surface the agent drives",
+  },
+  {
+    label: "the feed banner says presence is on after it was switched off again",
+    file: `${SERVER}/src/ui/pages/feed.tsx`,
+    from: '      {banner.isOptedOutNow\n        ? "It is on again now',
+    to: '      {false\n        ? "It is on again now',
+    test: `${SERVER}/test/presence-reenable.test.ts`,
+    because: "the person reads that teammates see them now, about an opt-out an agent already restored",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -24925,7 +24942,7 @@ interface Outcome {
  * PRINTS: packages/server/test/pilot-substance-channel.test.ts 2
  * PRINTS: packages/server/test/pins.test.ts 4
  * PRINTS: packages/server/test/presence-optout.test.ts 2
- * PRINTS: packages/server/test/presence-reenable.test.ts 4
+ * PRINTS: packages/server/test/presence-reenable.test.ts 6
  * PRINTS: packages/server/test/presence.test.ts 1
  * PRINTS: packages/server/test/questions.test.ts 8
  * PRINTS: packages/server/test/records.test.ts 2
