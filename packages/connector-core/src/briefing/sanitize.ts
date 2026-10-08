@@ -466,8 +466,14 @@ export const bareUntrusted = (
  * PRINTS: true
  */
 const ID_ALPHABET_SOURCE = "A-Za-z0-9_.:-";
+/**
+ * The id GRAMMAR's suffixes (schema/src/question.ts says why): at most one
+ * life suffix `~r<n>`, then at most one topic suffix `~t<hex>.<n>`. The only
+ * places a `~` may stand; the alphabet itself still has none.
+ */
+const ID_SUFFIX_SOURCE = "(?:~r[0-9]+)?(?:~t[0-9a-f]+\\.[0-9]+)?";
 const ID_ALPHABET = new RegExp(`[^${ID_ALPHABET_SOURCE}]`, "g");
-export const SAFE_ID_PATTERN = new RegExp(`^[${ID_ALPHABET_SOURCE}]+$`);
+export const SAFE_ID_PATTERN = new RegExp(`^[${ID_ALPHABET_SOURCE}]+${ID_SUFFIX_SOURCE}$`);
 
 /**
  * An id, reduced to characters that cannot open a frame, emit markup or start
@@ -479,9 +485,15 @@ export const SAFE_ID_PATTERN = new RegExp(`^[${ID_ALPHABET_SOURCE}]+$`);
  * unaddressable. An allowlist has no such branch, and it removes rather than
  * spaces, so the id an agent reads back is the id it can pass to the next
  * tool.
+ *
+ * AN ID THAT IS THE GRAMMAR WHOLE IS PRINTED AS IT IS — a healed life's
+ * `wc_cc_<key>~r1` included, which the alphabet alone stripped into an id that
+ * does not exist. Anything else loses every character outside the alphabet,
+ * `~` included, so a `~` the grammar does not name, and `~~` above all, never
+ * reaches the page.
  */
 export const safeId = (raw: string): string =>
-  raw.replace(ID_ALPHABET, "").slice(0, MAX_ID_CHARS);
+  raw.length <= MAX_ID_CHARS && SAFE_ID_PATTERN.test(raw) ? raw : raw.replace(ID_ALPHABET, "").slice(0, MAX_ID_CHARS);
 
 /**
  * What to tell the AUTHOR when their own words will not reach a teammate

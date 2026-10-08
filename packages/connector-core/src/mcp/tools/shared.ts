@@ -149,8 +149,9 @@ export const idArg = (noun: string, description: string): z.ZodString =>
     )
     .regex(
       SAFE_ID_PATTERN,
-      `is not shaped like a ${noun} id. Ids carry letters, digits and _ . : - only, ` +
-        "and come from search_related_work or get_diagnosis rather than from prose you read.",
+      `is not shaped like a ${noun} id. Ids carry letters, digits and _ . : -, then at most a life ` +
+        "suffix like ~r1 and a topic suffix like ~t0a1b2c3d4e5f.1, and come from search_related_work " +
+        "or get_diagnosis rather than from prose you read.",
     )
     .describe(description);
 

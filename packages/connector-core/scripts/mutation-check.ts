@@ -18993,6 +18993,31 @@ export const MUTATIONS: readonly Mutation[
     because: "a host that died after an unanswered set_intent post leaves the hub for good on a status its state moved past",
   },
   {
+    // The release-gate e2e finding: every pointer to a healed life's context named an id that does not exist.
+    label: "safeId strips the ~ of a healed life's id",
+    file: `${CORE}/src/briefing/sanitize.ts`,
+    from: "  raw.length <= MAX_ID_CHARS && SAFE_ID_PATTERN.test(raw) ? raw : raw.replace(ID_ALPHABET, \"\").slice(0, MAX_ID_CHARS);",
+    to: "  raw.replace(ID_ALPHABET, \"\").slice(0, MAX_ID_CHARS);",
+    test: `${CORE}/test/pointer-round-trip.test.ts`,
+    because: "get_diagnosis wc_cc_<key>r1 — every briefing, hint and search pointer to a resumed or healed life names a context the hub has never heard of",
+  },
+  {
+    label: "the renderer's id grammar lets a ~ stand anywhere",
+    file: `${CORE}/src/briefing/sanitize.ts`,
+    from: "const ID_SUFFIX_SOURCE = \"(?:~r[0-9]+)?(?:~t[0-9a-f]+\\\\.[0-9]+)?\";",
+    to: "const ID_SUFFIX_SOURCE = \"(?:~+[A-Za-z0-9_.:-]*)*\";",
+    test: `${CORE}/test/pointer-round-trip.test.ts`,
+    because: "an id carrying ~~ is printed as it came, and a teammate-written id strikes through the line an agent reads",
+  },
+  {
+    label: "the hub's id pattern refuses a healed life's id",
+    file: `${SCHEMA}/src/question.ts`,
+    from: "export const SAFE_ID_PATTERN = /^[A-Za-z0-9_.:-]+(?:~r[0-9]+)?(?:~t[0-9a-f]+\\.[0-9]+)?$/;",
+    to: "export const SAFE_ID_PATTERN = /^[A-Za-z0-9_.:-]+$/;",
+    test: `${CORE}/test/pointer-round-trip.test.ts`,
+    because: "a question about a resumed or healed life's work context is refused by the hub, and the tool arguments refuse the right id when an agent types it",
+  },
+  {
     label: "a flush writes down nothing the hub accepted",
     file: `${CORE}/src/spool/flush.ts`,
     from: "noteWorkContextAcked(ctx.home, spool.slug, input.sessionId, [",
@@ -19828,6 +19853,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/pilot-platform-refusals.test.ts 2
  * PRINTS: packages/connector-core/test/pin-paths.test.ts 8
  * PRINTS: packages/connector-core/test/pin-sweep.test.ts 2
+ * PRINTS: packages/connector-core/test/pointer-round-trip.test.ts 3
  * PRINTS: packages/connector-core/test/precision-corpus.test.ts 1
  * PRINTS: packages/connector-core/test/question-delivery.test.ts 1
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3
