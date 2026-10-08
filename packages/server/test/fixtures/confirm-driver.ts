@@ -5,6 +5,8 @@
  * software authenticator (fixtures/soft-authenticator.ts) over that batch.
  * Shared by the batch suite, the invariant walk and the end-to-end test.
  */
+import { sql } from "drizzle-orm";
+
 import { CONFIRM_PAGE_SCOPE } from "../../src/services/confirm-page.ts";
 import { pendingFingerprint, readPendingDrafts } from "../../src/services/human-drafts.ts";
 import type { DraftRow } from "../../src/services/human-drafts.ts";
@@ -22,13 +24,33 @@ export interface Confirmer {
   readonly nextCount: () => number;
 }
 
-/** A person with a passkey enrolled just now — still cooling off, which a confirmation does not wait for (Q19). */
-export const prepareConfirmer = async (harness: TestHarness, developer: TestDeveloper): Promise<Confirmer> => {
+export interface ConfirmerOptions {
+  /**
+   * The passkey is past its cool-off already — enrolled long enough ago that
+   * what it confirms COUNTS (human provenance §5, H1). Omitted: enrolled just
+   * now, still cooling off, which a confirmation does not wait for (Q19) but a
+   * figure does.
+   */
+  readonly pastCoolOff?: boolean;
+}
+
+/** A person with a passkey enrolled through the real ceremony. */
+export const prepareConfirmer = async (
+  harness: TestHarness,
+  developer: TestDeveloper,
+  options: ConfirmerOptions = {},
+): Promise<Confirmer> => {
   const viewer = await viewerOf(harness, developer);
   const credential = createSoftCredential();
   const enrolled = await enrolViaUi(harness, viewer, credential);
   if (enrolled.status !== 200) {
     throw new Error(`enrolment failed with ${String(enrolled.status)}: ${await enrolled.text()}`);
+  }
+  if (options.pastCoolOff === true) {
+    // The one shortcut: the cool-off's instant moved back to the enrolment, as a day's wait would.
+    await harness.db.execute(
+      sql`UPDATE passkeys SET usable_from = created_at WHERE developer_id = ${developer.developerId} AND revoked_at IS NULL`,
+    );
   }
   let count = 0;
   return {

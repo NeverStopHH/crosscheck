@@ -135,7 +135,7 @@ describe("human drafts", () => {
     expect(pending.map((draft) => draft.id)).toEqual([c]);
   });
 
-  test("a draft repeating a discarded one is a repeat; a different one after it is pending again", async () => {
+  test("a draft saying again what was DECIDED is a new draft — a repeat only while the same one still waits (review H2, H3)", async () => {
     // Arrange
     const harness = await createTestHarness();
     const nick = await createTestDeveloper(harness, "Nick", "nick-drafts-5@example.com");
@@ -144,14 +144,39 @@ describe("human drafts", () => {
     await resolve(harness, nick.developerId, first, "discard");
 
     // Act
-    const repeat = await writeDraft(deps, muteDraft(nick.developerId, "dev_ken", "Ken"));
-    const changed = await writeDraft(deps, muteDraft(nick.developerId, "dev_ken", "Ken K."));
+    const askedAgain = await writeDraft(deps, muteDraft(nick.developerId, "dev_ken", "Ken"));
+    const whileWaiting = await writeDraft(deps, muteDraft(nick.developerId, "dev_ken", "Ken"));
     const pending = await pendingOf(harness, nick.developerId);
 
+    // Assert — the discarded mute is asked for again; saying it once more while it waits writes nothing
+    expect(askedAgain).toMatchObject({ version: 2, repeated: false, waiting: true });
+    expect(whileWaiting).toMatchObject({ version: 2, repeated: true, waiting: true, discardedByPerson: false });
+    expect(pending.map((draft) => draft.version)).toEqual([2]);
+  });
+
+  test("the agent's door saying again an outcome the person discarded is the one repeat against a decision", async () => {
+    // Arrange
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick-drafts-5b@example.com");
+    const deps = depsOf(harness);
+    const outcome = (provenance: WriteDraftInput["provenance"]): WriteDraftInput => ({
+      developerId: nick.developerId,
+      repo: "github.com/acme/api",
+      kind: "outcome",
+      subjectKey: "outcome:cc_s:wc_ken",
+      payload: { deliveryId: "hd_1", sessionId: "cc_s", refId: "wc_ken", word: "followed", reason: null },
+      provenance,
+    });
+    const first = idOf(await writeDraft(deps, outcome("agent_asserted")));
+    await resolve(harness, nick.developerId, first, "discard");
+
+    // Act
+    const agentAgain = await writeDraft(deps, outcome("agent_asserted"));
+    const personSaysIt = await writeDraft(deps, outcome("interactive_terminal_asserted"));
+
     // Assert
-    expect(repeat).toMatchObject({ repeated: true });
-    expect(changed).toMatchObject({ version: 2, repeated: false });
-    expect(pending.map((draft) => draft.payload["name"])).toEqual(["Ken K."]);
+    expect(agentAgain).toMatchObject({ repeated: true, waiting: false, discardedByPerson: true });
+    expect(personSaysIt).toMatchObject({ version: 2, repeated: false, waiting: true });
   });
 
   test("a new subject past the bound is refused; a new version of a pending subject never is", async () => {
