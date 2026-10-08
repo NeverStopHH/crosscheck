@@ -74,7 +74,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     name: "claude-statusline",
     delivery: "unsolicited",
     module: "src/statusline/statusline.ts",
-    note: "teammate names via groupTeammates (sanitize inside toGroup); a terminal line, capped and joined from sanitized fields, led by renderOverlapIndicator output verbatim (core's collision-overlap-indicator surface) in a bound of its own",
+    note: "teammates grouped by groupTeammates and every field it prints — names, statuses, last-seen names — through core collision-notice's personName / personText, the person strip and phrase decision the collision surfaces share (round 3, F-L4); a terminal line, capped and joined from those fields, led by renderOverlapIndicator output verbatim (core's collision-overlap-indicator surface) in a bound of its own",
   },
   // doctor/status moved to packages/cli in Block 8; their composite
   // registrations (cli-doctor, cli-status) moved with them into that

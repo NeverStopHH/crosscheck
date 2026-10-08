@@ -103,6 +103,87 @@ describe("a person's line drops the round-two lookalikes and markdown", () => {
   });
 });
 
+/** The eight round-three lookalikes, built from numbers like the renderer's own list. */
+const UNLISTED_LOOKALIKES = String.fromCodePoint(0x2982, 0x1361, 0x1365, 0x0903, 0xa6f4, 0x0f0b, 0x2218, 0x10101);
+
+/** An HTML entity reference a markdown panel would decode. */
+const ENTITY = /&#?\w+;/u;
+
+/**
+ * A punctuation or symbol code point outside what a person's field may keep
+ * (round 3, F-L3) — bar the one the renderer adds itself: the ellipsis a
+ * capped field ends with.
+ */
+const UNKEPT = /(?![-_.,:/@()'…])[\p{P}\p{S}]/u;
+
+describe("a person's line keeps punctuation by CLASS, not by list (round 3, F-L3)", () => {
+  test.each(["colon-lookalikes-unlisted", "dot-lookalikes-unlisted", "html-entity-separators"])(
+    "%s leaves no round-three lookalike, ampersand or entity reference on any person surface",
+    (id) => {
+      // Arrange
+      const payload = INJECTION_CORPUS.find((entry) => entry.id === id)?.payload ?? "";
+
+      // Act
+      const surfaces = personSurfaces(payload);
+
+      // Assert
+      expect(payload.length).toBeGreaterThan(0);
+      for (const text of surfaces) {
+        expect([...text].filter((point) => UNLISTED_LOOKALIKES.includes(point)), `${id}: ${text}`).toEqual([]);
+        expect(text.includes("&"), `${id}: ${text}`).toBe(false);
+        expect(ENTITY.test(text), `${id}: ${text}`).toBe(false);
+      }
+    },
+  );
+
+  test("no corpus payload leaves a punctuation or symbol outside the allowlist in a stored name or branch", () => {
+    for (const entry of INJECTION_CORPUS) {
+      // Act
+      const asName = tripwireCollision(row({ developerName: entry.payload }), "src/a.ts");
+      const asBranch = tripwireCollision(row({ branch: entry.payload }), "src/a.ts");
+
+      // Assert
+      expect(UNKEPT.test(asName.name), `${entry.id}: ${asName.name}`).toBe(false);
+      expect(UNKEPT.test(asBranch.branch ?? ""), `${entry.id}: ${String(asBranch.branch)}`).toBe(false);
+    }
+  });
+
+  test("a spacing mark after a Latin letter becomes a space; a Devanagari word keeps its visarga", () => {
+    // Arrange
+    const visarga = String.fromCodePoint(0x0903);
+    const hindi = String.fromCodePoint(0x0926, 0x0941, 0x0903, 0x0916);
+
+    // Act
+    const forged = tripwireCollision(row({ developerName: `Mike${visarga} 9 files` }), "src/a.ts");
+    const real = tripwireCollision(row({ developerName: hindi }), "src/a.ts");
+
+    // Assert
+    expect(forged.name).toBe("Mike 9 files");
+    expect(real.name).toBe(hindi);
+  });
+
+  test("an ampersand is dropped, not spaced: an entity cannot be rebuilt from what is left", () => {
+    // Act
+    const group = tripwireCollision(row({ developerName: "R&D Team" }), "src/a.ts");
+
+    // Assert
+    expect(group.name).toBe("RD Team");
+  });
+
+  test("the allowlist itself survives: comma, dot, at, slash and apostrophe", () => {
+    // Act
+    const line = renderCollisionNotice(
+      tripwireCollision(row({ developerName: "Ken O'Brien, Jr.", branch: "user@v2/fix" }), "src/a.ts"),
+      NOW,
+    );
+
+    // Assert
+    expect(line).toBe(
+      "crosscheck: Ken O'Brien, Jr. is working on a.ts on branch user@v2/fix (last active 1m ago) — talk before you both change it",
+    );
+  });
+});
+
 describe("the ordinary characters of real names, branches and files survive", () => {
   test("a hyphen in a name and a branch, an underscore inside a file name", () => {
     // Act

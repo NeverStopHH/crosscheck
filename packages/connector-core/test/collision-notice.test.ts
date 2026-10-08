@@ -423,8 +423,10 @@ describe("teammate-derived fields cannot forge the notice's structure", () => {
   );
 
   test("fullwidth brackets NFKC folds into markdown are stripped after the fold too", () => {
-    // Arrange: fullwidth bang, brackets and parentheses, built from numbers
-    const fullwidth = String.fromCodePoint(0xff01, 0xff3b, 0x78, 0xff3d, 0xff08, 0x65, 0xff09);
+    // Arrange: fullwidth bang, brackets and parentheses, built from numbers —
+    // and a PARENTHESIZED DIGIT ONE, a NUMBER to Unicode, which the first
+    // pass's punctuation class cannot see and NFKC unfolds into `(1)` (round 3)
+    const fullwidth = String.fromCodePoint(0xff01, 0xff3b, 0x78, 0xff3d, 0xff08, 0x65, 0xff09, 0x2474);
 
     // Act
     const group = tripwireCollision(tripwireRow({ developerName: `Mike ${fullwidth}` }), FILE);

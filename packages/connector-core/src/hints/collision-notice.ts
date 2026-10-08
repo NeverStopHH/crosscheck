@@ -114,48 +114,59 @@ const capped = (text: string, maxChars: number): string =>
  * read by a human on a terminal or an IDE panel that may render markdown, so
  * it also DROPS every default-ignorable code point and any lone surrogate,
  * the blank fillers that pad a name into a second "sentence" (U+3164, U+115F,
- * U+FFA0, U+2800), the markdown beacon characters `[ ] ( ) !` and the
- * emphasis markers `*` and `~`. Built from code-point NUMBERS, so no
- * invisible or lookalike character sits in this file's source.
+ * U+FFA0, U+2800), the parentheses this line writes its own facts in —
+ * `(merged)`, `(last active 2d ago)` — and the AMPERSAND that opens an HTML
+ * entity reference (round 3, F-L3): a markdown panel decodes `&#58;`,
+ * `&colon;` or `&mdash;` into the very separators this line owns. The
+ * markdown beacons `[ ] !` and the emphasis markers `*` `~` are punctuation
+ * and symbols, so SEPARATOR_LOOKALIKES below turns them into spaces with the
+ * rest. Built from code-point NUMBERS, so no invisible or lookalike character
+ * sits in this file's source.
  */
 const BLANK_FILLERS = String.fromCodePoint(0x3164, 0x115f, 0xffa0, 0x2800);
 const INVISIBLE_CLASS = `\\p{Default_Ignorable_Code_Point}\\p{Cs}${BLANK_FILLERS}`;
-const PERSON_DROP = new RegExp(`[${INVISIBLE_CLASS}\\[\\]()!*~]`, "gu");
+const PERSON_DROP = new RegExp(`[${INVISIBLE_CLASS}()&]`, "gu");
 
 /**
- * The lookalikes of the separators this line and the statusline segment own
- * — `:`, `—`, `·` — that NFKC leaves alone, so a name like `Mike <BULLET
- * OPERATOR> 9 files` or `crosscheck<TRIANGULAR COLON> all clear` cannot mint
- * a second fact. Every dash
- * punctuation but the ASCII hyphen a real name or branch carries (`\p{Pd}`
- * minus U+002D), the colons (MODIFIER LETTER TRIANGULAR, HALF TRIANGULAR and
- * RAISED COLON, ARMENIAN FULL STOP, HEBREW SOF PASUQ, the Syriac colons,
- * RUNIC MULTIPLE PUNCTUATION, MONGOLIAN COLON, TWO DOT and TRICOLON
- * punctuation, RATIO, LISU TONE MYA JEU, MODIFIER LETTER COLON, the vertical
- * presentation colon), the middle dots and dot operators (GREEK ANO TELEIA,
- * RUNIC SINGLE PUNCTUATION, BULLET, HYPHENATION POINT, BULLET and DOT
- * OPERATOR, WORD SEPARATOR and RAISED DOT, KATAKANA and halfwidth katakana
- * MIDDLE DOT, SINOLOGICAL DOT, CANADIAN FINAL MIDDLE DOT, Z NOTATION SPOT),
- * and the horizontal rules a dash can be drawn with (box drawing
- * horizontals, HORIZONTAL LINE EXTENSION, MINUS SIGN, HEAVY MINUS SIGN).
- * Replaced by a SPACE, never deleted: the katakana middle dot is how a
- * Japanese name separates given from family name, and the two halves stay
- * two words where deleting it would fuse them into one.
+ * The punctuation and symbols a person's field may keep (round 3, F-L3) —
+ * what real names, branches and file names are written with: hyphen,
+ * underscore, dot, comma, colon, slash, at, parentheses and the apostrophe.
+ * The colon and the parentheses are allowed only HERE: the bare strip and
+ * PERSON_DROP have already taken them out of every field.
  */
-const COLON_LOOKALIKES = String.fromCodePoint(
-  0x02d0, 0x02d1, 0x02f8, 0x0589, 0x05c3, 0x0703, 0x0704, 0x0705, 0x0706, 0x0707, 0x0708, 0x0709, 0x16ec,
-  0x1804, 0x205a, 0x205d, 0x2236, 0xa4fd, 0xa789, 0xfe13,
-);
-const DOT_LOOKALIKES = String.fromCodePoint(
-  0x0387, 0x16eb, 0x2022, 0x2027, 0x2219, 0x22c5, 0x2e31, 0x2e33, 0x30fb, 0xff65, 0xa78f, 0x1427, 0x2981,
-);
-const RULE_LOOKALIKES = String.fromCodePoint(
-  0x2500, 0x2501, 0x2504, 0x2505, 0x2508, 0x2509, 0x254c, 0x254d, 0x2550, 0x23af, 0x2212, 0x2796,
-);
+const PERSON_KEPT_PUNCTUATION = "-_.,:/@()'";
+
+/**
+ * The separators this line and the statusline segment own — `:`, `—`, `·` —
+ * have lookalikes NFKC leaves alone, and two rounds of review found more of
+ * them than any list held (round 3: Z NOTATION TYPE COLON, the Ethiopic
+ * wordspace and colon, BAMUM COLON, TIBETAN TSHEG, RING OPERATOR, AEGEAN WORD
+ * SEPARATOR DOT). So the rule is a CLASS, not a list: EVERY punctuation or
+ * symbol code point outside PERSON_KEPT_PUNCTUATION becomes a space. A list
+ * remains only for lookalikes the class cannot see because Unicode files them
+ * as LETTERS: MODIFIER LETTER TRIANGULAR and HALF TRIANGULAR COLON, LISU
+ * LETTER TONE MYA JEU, LATIN LETTER SINOLOGICAL DOT and CANADIAN SYLLABICS
+ * FINAL MIDDLE DOT. Replaced by a SPACE, never deleted: the katakana middle
+ * dot is how a Japanese name separates given from family name, and the two
+ * halves stay two words where deleting it would fuse them into one.
+ */
+const LETTER_LOOKALIKES = String.fromCodePoint(0x02d0, 0x02d1, 0xa4fd, 0xa78f, 0x1427);
 const SEPARATOR_LOOKALIKES = new RegExp(
-  `[${COLON_LOOKALIKES}${DOT_LOOKALIKES}${RULE_LOOKALIKES}]|(?!-)\\p{Pd}`,
+  `[${LETTER_LOOKALIKES}]|(?![${PERSON_KEPT_PUNCTUATION}])[\\p{P}\\p{S}]`,
   "gu",
 );
+
+/**
+ * A SPACING MARK with no letter of its own script before it (round 3, F-L3):
+ * DEVANAGARI SIGN VISARGA after a Latin `k` reads as `crosscheck: all clear`,
+ * and Unicode files it as a mark, not punctuation. After a letter of a script
+ * that writes with spacing marks it is part of the word and stays — a Hindi
+ * name keeps its visarga; after a Latin, Greek or Cyrillic letter, a digit,
+ * a space or punctuation, where no such script writes one, it becomes a
+ * space.
+ */
+const STRAY_SPACING_MARK =
+  /(^|[\p{Script=Latin}\p{Script=Greek}\p{Script=Cyrillic}\p{Script=Common}\p{Script=Inherited}])\p{Mc}+/gu;
 
 /**
  * An underscore that could open or close emphasis: one NOT between two
@@ -175,6 +186,7 @@ const BARE_WWW = /(^|[\s_])(www)\./giu;
 const personPass = (text: string): string =>
   text
     .replace(PERSON_DROP, "")
+    .replace(STRAY_SPACING_MARK, "$1 ")
     .replace(SEPARATOR_LOOKALIKES, " ")
     .replace(LOOSE_UNDERSCORE, "")
     .replace(BARE_WWW, "$1$2");
@@ -250,6 +262,18 @@ const displayName = (raw: string | undefined): string => {
   const name = raw === undefined ? "" : personField(raw, COLLISION_NOTICE_NAME_CHARS);
   return name.length === 0 ? UNKNOWN_TEAMMATE : name;
 };
+
+/**
+ * The person strip ALONE (round 3, F-L4), for a field ANOTHER person-facing
+ * segment prints: the statusline's presence list, whose names sat unstripped
+ * beside the stripped `⚠ overlap:` segment on the same line. No phrase
+ * decision and no cap — an empty field drops a presence row, so the caller
+ * makes both where it prints.
+ */
+export const personText = (raw: string): string => personCleaned(unsolicitedHead(raw));
+
+/** A teammate's name as every person-facing segment prints it: stripped, phrase-checked, capped, never empty. */
+export const personName = (raw: string): string => displayName(raw);
 
 /**
  * Whether a branch may be named at all: never the projection's opt-out marker

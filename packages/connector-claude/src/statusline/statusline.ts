@@ -12,7 +12,8 @@ import type { LastSeenEntry } from "@crosscheck/connector-core/state/presence-ca
 import { recordStatuslineRendered } from "@crosscheck/connector-core/state/fired-markers.ts";
 import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
-import { renderOverlapIndicator } from "@crosscheck/connector-core/hints/collision-notice.ts";
+import { personName, personText, renderOverlapIndicator } from "@crosscheck/connector-core/hints/collision-notice.ts";
+import { tripsPhraseFilter } from "@crosscheck/connector-core/briefing/sanitize.ts";
 import { refreshPresence } from "../hooks/presence-refresh.ts";
 import { prepareHook } from "../hooks/runner.ts";
 import type { HookContext } from "../hooks/runner.ts";
@@ -24,10 +25,30 @@ const capName = (name: string): string =>
     ? name
     : `${name.slice(0, STATUSLINE_NAME_CHARS - ELLIPSIS.length)}${ELLIPSIS}`;
 
+/**
+ * What `groupTeammates` cleans each presence field with HERE: nothing. Every
+ * field this line prints goes through the PERSON strip where it is printed
+ * (renderNames, lastSeenSuffix), and a field a sanitizer emptied would drop
+ * its teammate from the `cx N` count — a name of symbols alone is still a
+ * teammate on the repo.
+ */
+const asReceived = (raw: string): string => raw;
+
+/** `(implementing)`, or nothing for a status the strip empties or the phrase filter fears. */
+const statusSuffix = (raw: string): string => {
+  const status = personText(raw);
+  return status.length === 0 || tripsPhraseFilter(status) ? "" : `(${status})`;
+};
+
+/**
+ * `Nick(implementing), Ken(analyzing)` — through the same PERSON strip and
+ * phrase decision as the `⚠ overlap:` segment the line leads with (round 3,
+ * F-L4): both are read by the person, and only that segment used to get them.
+ */
 const renderNames = (groups: readonly TeammateGroup[]): string => {
   const shown = groups
     .slice(0, STATUSLINE_MAX_NAMES)
-    .map((group) => `${capName(group.name)}(${group.status})`)
+    .map((group) => `${capName(personName(group.name))}${statusSuffix(group.status)}`)
     .join(", ");
   const hidden = groups.length - Math.min(groups.length, STATUSLINE_MAX_NAMES);
   return hidden > 0 ? `${shown} +${hidden}` : shown;
@@ -63,7 +84,7 @@ const lastSeenSuffix = (
 ): string => {
   const rendered = lastSeen.flatMap((entry) => {
     const age = ageSince(entry.at, now);
-    return age === null ? [] : [`${capName(entry.name)} last seen ${age} ago`];
+    return age === null ? [] : [`${capName(personName(entry.name))} last seen ${age} ago`];
   });
   return rendered.length === 0 ? "" : ` · ${rendered.join(", ")}`;
 };
@@ -75,7 +96,7 @@ const presenceLine = (
   now: Date,
   lastSeen: readonly LastSeenEntry[] = [],
 ): string => {
-  const teammates = groupTeammates(entries, now);
+  const teammates = groupTeammates(entries, now, asReceived);
   if (teammates.length === 0) {
     return capLine(
       `cx 0 · no teammates on this repo${lastSeenSuffix(lastSeen, now)} · capture ${syncAge}`,
