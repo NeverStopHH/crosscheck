@@ -16,15 +16,18 @@ import { sessionCookieFrom } from "./ui-helpers.ts";
 const LAN_PEER = "192.168.1.20";
 const CADDY_PEER = "172.18.0.5";
 
-/** POST /ui/login with a valid key and an `X-Forwarded-Proto: https`, as `options` sees the peer. */
-const loginCookieVia = async (options: TestHarnessOptions): Promise<string | null> => {
+/** POST /ui/login with a valid key and `forwarded` headers (an `X-Forwarded-Proto: https` unless given), as `options` sees the peer. */
+const loginCookieVia = async (
+  options: TestHarnessOptions,
+  forwarded: Readonly<Record<string, string>> = { "X-Forwarded-Proto": "https" },
+): Promise<string | null> => {
   const harness = await createTestHarness(options);
   const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");
   const response = await harness.app.request("/ui/login", {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
-      "X-Forwarded-Proto": "https",
+      ...forwarded,
     },
     body: new URLSearchParams({ apiKey: nick.apiKey }).toString(),
   });
@@ -83,5 +86,26 @@ describe("the login cookie's Secure flag believes X-Forwarded-Proto only from a 
 
   test("from a listed proxy, the Docker kit's Caddy, the header counts", async () => {
     expect(await loginCookieVia({ peerAddress: CADDY_PEER, trustedProxies: "172.18.0.0/16" })).toContain("; Secure");
+  });
+});
+
+describe("an RFC 7239-only proxy's Forwarded: proto= counts the same way (review L6)", () => {
+  test("bare or quoted proto=https from loopback marks the cookie Secure", async () => {
+    expect(await loginCookieVia({ peerAddress: "127.0.0.1" }, { Forwarded: "for=100.101.4.7;proto=https" })).toContain(
+      "; Secure",
+    );
+    expect(
+      await loginCookieVia({ peerAddress: "127.0.0.1" }, { Forwarded: 'for="[fd7a::7]";proto="HTTPS";host=hub' }),
+    ).toContain("; Secure");
+  });
+
+  test("only the first element speaks for the browser, and proto=http stays plain", async () => {
+    expect(
+      await loginCookieVia({ peerAddress: "127.0.0.1" }, { Forwarded: "for=100.101.4.7;proto=http, for=10.0.0.1;proto=https" }),
+    ).not.toContain("; Secure");
+  });
+
+  test("from a LAN peer nobody listed, Forwarded is ignored like X-Forwarded-Proto", async () => {
+    expect(await loginCookieVia({ peerAddress: LAN_PEER }, { Forwarded: "proto=https" })).not.toContain("; Secure");
   });
 });

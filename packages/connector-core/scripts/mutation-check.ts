@@ -24465,6 +24465,31 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/listen-boot.test.ts`,
     because: "the operator of a restored hub reads a healthy banner while every teammate is refused",
   },
+  // Review of the hub hardening, L6: RFC 7239's proto.
+  {
+    label: "Forwarded: proto=https never marks a request https",
+    file: `${SERVER}/src/http/forwarded.ts`,
+    from: "    ? rfc7239Proto(c.req.header(RFC7239_FORWARDED_HEADER))",
+    to: "    ? null",
+    test: `${SERVER}/test/forwarded-trust.test.ts`,
+    because: "behind an RFC 7239-only proxy the session cookie loses Secure over https",
+  },
+  {
+    label: "a quoted Forwarded proto is read with its quotes",
+    file: `${SERVER}/src/http/forwarded.ts`,
+    from: '      return pair.slice(separator + 1).trim().replace(/^"(.*)"$/, "$1").toLowerCase();',
+    to: "      return pair.slice(separator + 1).trim().toLowerCase();",
+    test: `${SERVER}/test/forwarded-trust.test.ts`,
+    because: 'proto="https", the spelling RFC 7239 allows, reads as plain http',
+  },
+  {
+    label: "the last Forwarded element speaks for the browser",
+    file: `${SERVER}/src/http/forwarded.ts`,
+    from: '  const firstElement = value?.split(",")[0];',
+    to: '  const firstElement = value?.split(",").at(-1);',
+    test: `${SERVER}/test/forwarded-trust.test.ts`,
+    because: "a hop between proxies decides how the browser reached the first one",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -24837,7 +24862,7 @@ interface Outcome {
  * PRINTS: packages/server/test/drafts.test.ts 4
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/fence-waivers.test.ts 1
- * PRINTS: packages/server/test/forwarded-trust.test.ts 7
+ * PRINTS: packages/server/test/forwarded-trust.test.ts 10
  * PRINTS: packages/server/test/ghost-overlap.test.ts 7
  * PRINTS: packages/server/test/hint-content-floor.test.ts 6
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5

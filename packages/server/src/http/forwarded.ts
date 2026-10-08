@@ -148,15 +148,39 @@ export const isForwardingPeerTrusted = (c: Context<AppEnv>, deps: AppDeps): bool
 };
 
 /**
+ * `proto=` of the FIRST element of an RFC 7239 `Forwarded` header, bare or
+ * quoted, lowercased; null without one. The first element is the hop next to
+ * the browser, as with X-Forwarded-Proto's first value.
+ */
+const rfc7239Proto = (value: string | undefined): string | null => {
+  const firstElement = value?.split(",")[0];
+  if (firstElement === undefined) {
+    return null;
+  }
+  for (const pair of firstElement.split(";")) {
+    const separator = pair.indexOf("=");
+    if (separator !== -1 && pair.slice(0, separator).trim().toLowerCase() === "proto") {
+      return pair.slice(separator + 1).trim().replace(/^"(.*)"$/, "$1").toLowerCase();
+    }
+  }
+  return null;
+};
+
+/**
  * The client-facing protocol a trusted proxy reports, lowercased, or null:
  * chained proxies append, so the first value is the browser's.
+ * `X-Forwarded-Proto` first; an RFC 7239-only proxy's `Forwarded: proto=`
+ * otherwise (review of the hub hardening, L6), so its https keeps the
+ * session cookie `Secure`.
  */
 export const trustedForwardedProto = (c: Context<AppEnv>, deps: AppDeps): string | null => {
   if (!isForwardingPeerTrusted(c, deps)) {
     return null;
   }
   const value = c.req.header(FORWARDED_PROTO_HEADER);
-  return value === undefined ? null : (value.split(",")[0]?.trim().toLowerCase() ?? null);
+  return value === undefined
+    ? rfc7239Proto(c.req.header(RFC7239_FORWARDED_HEADER))
+    : (value.split(",")[0]?.trim().toLowerCase() ?? null);
 };
 
 /**
