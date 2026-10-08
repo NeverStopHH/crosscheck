@@ -28,6 +28,11 @@ export const seedHumanStamp = async (db: DbExecutor, developerId: string): Promi
     itemCount: 0,
     formedAt: AT,
     confirmedAt: AT,
+    // No real assertion: this row stands in for one where the ceremony is not under test.
+    authenticatorData: "seeded",
+    clientDataJson: "seeded",
+    signature: "seeded",
+    userHandle: null,
   });
   return humanStamp(id);
 };

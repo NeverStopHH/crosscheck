@@ -12,8 +12,11 @@
  * NO COOL-OFF (Q19): confirming one's own drafts is not a privileged action,
  * so every enrolled, unrevoked passkey of the person may sign it.
  */
+import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
+
 import { BATCH_SENTENCE } from "../services/confirmation-batch.ts";
-import type { BatchRefusal, BatchStore } from "../services/confirmation-batch.ts";
+import type { BatchRefusal, BatchStore, StoredAssertion } from "../services/confirmation-batch.ts";
+import type { DraftAuthority } from "../services/draft-kinds.ts";
 import { finishPresenceChange } from "../services/developer-settings.ts";
 import type { CeremonyOwner, CeremonyPurpose, CeremonyTerms, StoredCredential } from "../services/webauthn.ts";
 import type { AppDeps } from "../types.ts";
@@ -44,6 +47,25 @@ export const confirmTermsOf = (
   return { purpose: fields.action, subject: batch.id, terms: { batchDigest: batch.digest } };
 };
 
+/**
+ * WHICH PASSKEYS MAY SIGN THIS BATCH: any of the person's, cooling or not,
+ * when every kind in it is `normal`; only one past its cool-off when any is
+ * `privileged` (services/draft-kinds.ts). A batch nobody can read: none.
+ */
+export const confirmAuthorityOf = (
+  batches: BatchStore,
+  owner: CeremonyOwner,
+  fields: ConfirmFields,
+): DraftAuthority => batches.read(owner, fields.subjectId)?.authority ?? "privileged";
+
+/** The assertion as the browser sent it — what a confirmation keeps so a client can check it alone. */
+const assertionOf = (response: AuthenticationResponseJSON): StoredAssertion => ({
+  authenticatorData: response.response.authenticatorData,
+  clientDataJSON: response.response.clientDataJSON,
+  signature: response.response.signature,
+  userHandle: response.response.userHandle ?? null,
+});
+
 /** What a verified confirmation does, and the sentence the page shows after it. */
 export const performConfirm = async (
   deps: AppDeps,
@@ -51,14 +73,19 @@ export const performConfirm = async (
   owner: CeremonyOwner,
   fields: ConfirmFields,
   credential: StoredCredential,
-  signedTerms: CeremonyTerms,
+  signed: { readonly terms: CeremonyTerms; readonly response: AuthenticationResponseJSON },
 ): Promise<{ readonly message: string; readonly confirmed: number } | { readonly ceremonyRefusal: BatchRefusal }> => {
   const batch = batches.read(owner, fields.subjectId);
   // The signature covered this digest; a batch that is gone or differs confirms nothing.
-  if (batch === null || batch.digest !== signedTerms["batchDigest"]) {
+  if (batch === null || batch.digest !== signed.terms["batchDigest"]) {
     return { ceremonyRefusal: "unknown_batch" };
   }
-  const outcome = await batches.confirm(deps, batch, { id: credential.id, rpId: credential.rpId });
+  const outcome = await batches.confirm(
+    deps,
+    batch,
+    { id: credential.id, rpId: credential.rpId },
+    assertionOf(signed.response),
+  );
   if ("refusal" in outcome) {
     return { ceremonyRefusal: outcome.refusal };
   }

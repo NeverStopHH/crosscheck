@@ -145,10 +145,39 @@ describe("a confirmation batch", () => {
   });
 
   test("a writer's refusal at confirm time rolls the WHOLE batch back and names nothing as confirmed", async () => {
-    // Arrange: two drafts; the repo leaves the pilot between the batch and the tap
+    // Arrange: an outcome and a pin; the team narrows who may pin between the batch and the tap
     const world = await createOutcomeWorld();
     await agentSays(world, KEN_CONTEXT, "followed");
-    await agentSays(world, MIKE_CONTEXT, "followed");
+    await world.harness.app.request("/api/pins", jsonRequest("POST", world.nick.apiKey, {
+      id: "pin_batch_refused", repo: REPO, surface: "Export keeps the header", files: ["src/never-touched.ts"],
+      check: "export, open the csv", presence: "controlling_terminal", verifiedAtCommit: "abc1234",
+    }));
+    const confirmer = await prepareConfirmer(world.harness, world.nick);
+    const pending = await pendingOf(world.harness, world.nick);
+    const batch = await dataOf<FormedBatch>(
+      await formBatch(world.harness, confirmer.viewer, {
+        fingerprint: pending.fingerprint,
+        items: pending.drafts.map((draft) => ({ draftId: draft.id, version: draft.version, decision: "confirm" })),
+      }),
+    );
+    await world.harness.app.request("/api/team-settings", jsonRequest("PUT", TEST_ADMIN_TOKEN, { repo: REPO, pinPolicy: "touched_files" }));
+
+    // Act
+    const verified = await signBatch(world.harness, confirmer, batch.batchId);
+
+    // Assert
+    expect(pending.drafts.map((draft) => draft.kind).sort()).toEqual(["outcome", "pin"]);
+    expect(verified.status).toBe(422);
+    expect(await errorCodeOf(verified)).toBe("item_refused");
+    expect(await outcomesOf(world)).toEqual([]);
+    expect(await world.harness.db.select().from(humanConfirmations)).toEqual([]);
+    expect((await pendingOf(world.harness, world.nick)).drafts).toHaveLength(2);
+  });
+
+  test("a draft that dies between the snapshot and the tap refuses the whole batch", async () => {
+    // Arrange: the repo leaves the pilot, so no outcome there can count any more
+    const world = await createOutcomeWorld();
+    await agentSays(world, KEN_CONTEXT, "followed");
     const confirmer = await prepareConfirmer(world.harness, world.nick);
     const pending = await pendingOf(world.harness, world.nick);
     const batch = await dataOf<FormedBatch>(
@@ -162,11 +191,11 @@ describe("a confirmation batch", () => {
     // Act
     const verified = await signBatch(world.harness, confirmer, batch.batchId);
 
-    // Assert
+    // Assert — and the dead draft has left the list on its own
     expect(verified.status).toBe(422);
+    expect(await errorCodeOf(verified)).toBe("pending_changed");
     expect(await outcomesOf(world)).toEqual([]);
-    expect(await world.harness.db.select().from(humanConfirmations)).toEqual([]);
-    expect((await pendingOf(world.harness, world.nick)).drafts).toHaveLength(2);
+    expect((await pendingOf(world.harness, world.nick)).drafts).toEqual([]);
   });
 
   test("labels confirm into pilot_marks, and a pin's ok into a surface-ok mark", async () => {
@@ -190,7 +219,7 @@ describe("a confirmation batch", () => {
 });
 
 describe("the batch is frozen: what was reviewed is what is signed", () => {
-  test("TOCTOU: a draft added between the snapshot and the assertion refuses the whole batch", async () => {
+  test("TOCTOU: a draft added between the snapshot and the assertion is in no batch — never confirmed by this one", async () => {
     // Arrange
     const world = await createOutcomeWorld();
     await agentSays(world, KEN_CONTEXT, "followed");
@@ -203,16 +232,43 @@ describe("the batch is frozen: what was reviewed is what is signed", () => {
       }),
     );
 
-    // Act: the agent slips in a second word while the person reads the prompt
+    // Act: the agent slips in a word about ANOTHER hint while the person reads the prompt
     const verified = await signBatch(world.harness, confirmer, batch.batchId, async () => {
       await agentSays(world, MIKE_CONTEXT, "followed");
     });
+    const stillPending = (await pendingOf(world.harness, world.nick)).drafts;
+
+    // Assert — the batch held only what the person saw; the newcomer waits for its own review
+    expect(verified.status).toBe(200);
+    expect((await outcomesOf(world)).map((row) => row.outcome)).toEqual(["followed"]);
+    expect(stillPending.map((draft) => draft.payload["refId"])).toEqual([MIKE_CONTEXT]);
+  });
+
+  test("TOCTOU: an item decided by another batch between the snapshot and the assertion refuses the whole batch", async () => {
+    // Arrange: two browser sessions of the person, each with a batch over the same draft
+    const world = await createOutcomeWorld();
+    await agentSays(world, KEN_CONTEXT, "followed");
+    const first = await prepareConfirmer(world.harness, world.nick);
+    world.harness.clock.advanceSeconds(1);
+    const second = await prepareConfirmer(world.harness, world.nick);
+    const pending = await pendingOf(world.harness, world.nick);
+    const items = pending.drafts.map((draft) => ({ draftId: draft.id, version: draft.version }));
+    const discardBatch = await dataOf<FormedBatch>(
+      await formBatch(world.harness, first.viewer, { fingerprint: pending.fingerprint, items: items.map((item) => ({ ...item, decision: "discard" as const })) }),
+    );
+    const confirmBatch = await dataOf<FormedBatch>(
+      await formBatch(world.harness, second.viewer, { fingerprint: pending.fingerprint, items: items.map((item) => ({ ...item, decision: "confirm" as const })) }),
+    );
+
+    // Act
+    const discarded = await signBatch(world.harness, first, discardBatch.batchId);
+    const confirmed = await signBatch(world.harness, second, confirmBatch.batchId);
 
     // Assert
-    expect(verified.status).toBe(422);
-    expect(await errorCodeOf(verified)).toBe("pending_changed");
+    expect(discarded.status).toBe(200);
+    expect(confirmed.status).toBe(422);
+    expect(await errorCodeOf(confirmed)).toBe("pending_changed");
     expect(await outcomesOf(world)).toEqual([]);
-    expect((await pendingOf(world.harness, world.nick)).drafts).toHaveLength(2);
   });
 
   test("TOCTOU: a draft edited (a newer version) between the snapshot and the assertion refuses the whole batch", async () => {

@@ -2,21 +2,25 @@
  * THE FROZEN CONFIRMATION BATCH (human provenance §6) — the only path by which
  * anything becomes `human_passkey_confirmed`.
  *
- * ONE TAP NEVER MEANS "CONFIRM WHATEVER IS PENDING". The person reviews the
- * pending drafts, edits or discards some, and the hub freezes exactly that into
- * a batch: an id, the fingerprint of the pending set the page showed, and a
- * digest over every item's (draft id, version, draft digest, decision, final
- * content). The WebAuthn challenge is bound to the batch id and that digest.
- * Verify re-reads the pending set UNDER LOCK and refuses the WHOLE batch if any
- * draft changed, was added or was removed since the snapshot — a draft that
- * arrived between review and tap is in no batch and can never be confirmed by
- * this one.
+ * ONE TAP NEVER MEANS "CONFIRM WHATEVER IS PENDING". A page shows the pending
+ * drafts of its own kinds (its SCOPE). The person decides each, editing some,
+ * and the hub freezes exactly that into a batch: an id, the fingerprint of the
+ * scoped pending set the page showed — a page older than that set cannot form
+ * one — and a digest over every item's (draft id, version, draft digest,
+ * decision, final content). The WebAuthn challenge is bound to the batch id
+ * and that digest.
+ *
+ * TOCTOU, WITHIN THE BATCH. Verify re-reads the person's drafts UNDER LOCK and
+ * refuses the WHOLE batch if any of its items changed — a newer version, a
+ * decision elsewhere, a draft that died — since the snapshot. A draft that
+ * arrived after the page loaded is in no batch and can never be confirmed by
+ * this one; one of an unrelated subject or kind does not invalidate it.
  *
  * HELD IN HUB MEMORY, like the ceremonies it rides (services/webauthn.ts): a
  * formed batch belongs to the developer AND the browser session that formed
  * it, lives as long as its prompt (CONFIRM_BATCH_TTL_MS), and a restart drops
- * it. Only a CONFIRMED batch is written, in `human_confirmations` and its
- * items, in the transaction that applies it.
+ * it. Only a CONFIRMED batch is written — with the assertion that confirmed it
+ * — in `human_confirmations` and its items, in the transaction that applies it.
  */
 import { randomUUID } from "node:crypto";
 
@@ -31,15 +35,16 @@ import {
   reasonLength,
   unstorableTextPath,
 } from "@crosscheck/schema";
-import type { DraftDecision } from "@crosscheck/schema";
+import type { DraftDecision, DraftKind } from "@crosscheck/schema";
 
 import { CONFIRM_BATCH_TTL_MS, MAX_PENDING_DRAFT_SUBJECTS } from "../constants.ts";
 import { humanConfirmationItems, humanConfirmations } from "../db/schema.ts";
-import { applyDraft } from "./draft-apply.ts";
+import { DRAFT_KIND_REGISTRY, batchAuthority } from "./draft-kinds.ts";
+import type { DraftAuthority } from "./draft-kinds.ts";
 import { canonicalJson, draftDigest, pendingFingerprint, readPendingDrafts, sha256Hex } from "./human-drafts.ts";
 import type { DraftPayload, DraftRow } from "./human-drafts.ts";
 import { humanStamp } from "./human-provenance.ts";
-import type { Db } from "../db/client.ts";
+import type { Db, DbTransaction } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 import type { CeremonyOwner } from "./webauthn.ts";
 
@@ -80,11 +85,23 @@ export interface BatchItem {
 export interface FrozenBatch {
   readonly id: string;
   readonly owner: CeremonyOwner;
+  /** The kinds the page that formed it shows. */
+  readonly scope: readonly DraftKind[];
   readonly fingerprint: string;
   readonly digest: string;
   readonly items: readonly BatchItem[];
+  /** What confirming it needs: any passkey of the person, or one past its cool-off. */
+  readonly authority: DraftAuthority;
   readonly formedAt: Date;
   readonly expiresAtMs: number;
+}
+
+/** The assertion that confirmed a batch, base64url as the browser sent it. */
+export interface StoredAssertion {
+  readonly authenticatorData: string;
+  readonly clientDataJSON: string;
+  readonly signature: string;
+  readonly userHandle: string | null;
 }
 
 /** Every refusal a person can meet forming or confirming a batch — one word each, one sentence below. */
@@ -189,13 +206,22 @@ export const batchDigest = (fingerprint: string, items: readonly BatchItem[]): s
     ]),
   );
 
-/** A batch decides every pending draft exactly once, at the version the page showed — or it is no batch. */
+/** A batch decides every draft its page showed exactly once, at the version shown — or it is no batch. */
 const decidesExactly = (pending: readonly DraftRow[], body: BatchBody): boolean => {
   if (body.items.length !== pending.length) {
     return false;
   }
   const byId = new Map(body.items.map((item) => [item.draftId, item]));
   return byId.size === pending.length && pending.every((draft) => byId.get(draft.id)?.version === draft.version);
+};
+
+/** Every item still pending as frozen: same draft, same version, same content, still live. */
+const isUnchanged = (pending: readonly DraftRow[], items: readonly BatchItem[]): boolean => {
+  const byId = new Map(pending.map((draft) => [draft.id, draft]));
+  return items.every((item) => {
+    const now = byId.get(item.draft.id);
+    return now !== undefined && now.version === item.draft.version && draftDigest(now) === item.draftDigest;
+  });
 };
 
 const isOwnedBy = (batch: FrozenBatch, owner: CeremonyOwner): boolean =>
@@ -231,21 +257,56 @@ export type ConfirmRefused = {
   readonly cause: string | null;
 };
 
-/** Every confirmed item, applied with the batch's stamp — the first refusal throws the transaction back. */
-const applyConfirmed = async (
-  deps: { readonly db: Parameters<Parameters<Db["transaction"]>[0]>[0]; readonly now: Clock },
-  batch: FrozenBatch,
-): Promise<boolean> => {
+/** Every confirmed item, applied by its kind's registered writer with the batch's stamp. */
+const applyConfirmed = async (deps: { readonly db: DbTransaction; readonly now: Clock }, batch: FrozenBatch): Promise<boolean> => {
   const stamp = humanStamp(batch.id);
   let presenceOn = false;
   for (const item of batch.items.filter((each) => each.decision === "confirm")) {
-    const applied = await applyDraft(deps, item.draft, item.content, stamp);
+    const applied = await DRAFT_KIND_REGISTRY[item.draft.kind].apply(deps, item.draft, item.content, stamp);
     if ("refusal" in applied) {
       throw new BatchRefused("item_refused", item.draft.id, applied.refusal);
     }
     presenceOn ||= applied.presenceOn;
   }
   return presenceOn;
+};
+
+/** The confirmation's own rows: who, which device, what was signed, and the assertion that signed it. */
+const recordConfirmation = async (
+  tx: DbTransaction,
+  batch: FrozenBatch,
+  credential: { readonly id: string; readonly rpId: string },
+  assertion: StoredAssertion,
+  confirmedAt: Date,
+): Promise<void> => {
+  await tx.insert(humanConfirmations).values({
+    id: batch.id,
+    developerId: batch.owner.developerId,
+    credentialId: credential.id,
+    rpId: credential.rpId,
+    digest: batch.digest,
+    pendingFingerprint: batch.fingerprint,
+    itemCount: batch.items.length,
+    formedAt: batch.formedAt,
+    confirmedAt,
+    authenticatorData: assertion.authenticatorData,
+    clientDataJson: assertion.clientDataJSON,
+    signature: assertion.signature,
+    userHandle: assertion.userHandle,
+  });
+  if (batch.items.length > 0) {
+    await tx.insert(humanConfirmationItems).values(
+      batch.items.map((item, position) => ({
+        confirmationId: batch.id,
+        position,
+        draftId: item.draft.id,
+        draftVersion: item.draft.version,
+        draftDigest: item.draftDigest,
+        decision: item.decision,
+        content: item.content,
+      })),
+    );
+  }
 };
 
 export const createBatchStore = (nowMs: () => number) => {
@@ -270,15 +331,16 @@ export const createBatchStore = (nowMs: () => number) => {
 
   /**
    * FREEZE what the person decided (step 3 of §6). Refused whole when the page
-   * is older than the pending set, when it does not decide every pending draft
-   * exactly once, or when an edit could never be stored.
+   * is older than its scoped pending set, when it does not decide every draft
+   * it showed exactly once, or when an edit could never be stored.
    */
   const form = async (
     deps: ConfirmDeps,
     owner: CeremonyOwner,
     body: BatchBody,
+    scope: readonly DraftKind[],
   ): Promise<FrozenBatch | { readonly refusal: BatchRefusal }> => {
-    const pending = await readPendingDrafts(deps.db, owner.developerId);
+    const pending = await readPendingDrafts(deps, owner.developerId, { scope });
     if (pendingFingerprint(pending) !== body.fingerprint || !decidesExactly(pending, body)) {
       return { refusal: "pending_changed" };
     }
@@ -304,9 +366,11 @@ export const createBatchStore = (nowMs: () => number) => {
     const batch: FrozenBatch = Object.freeze({
       id: `hb_${randomUUID()}`,
       owner,
+      scope: Object.freeze([...scope]),
       fingerprint: body.fingerprint,
       digest: batchDigest(body.fingerprint, items),
       items: Object.freeze(items),
+      authority: batchAuthority(items.map((item) => DRAFT_KIND_REGISTRY[item.draft.kind])),
       formedAt,
       expiresAtMs: formedAt.getTime() + CONFIRM_BATCH_TTL_MS,
     });
@@ -323,47 +387,27 @@ export const createBatchStore = (nowMs: () => number) => {
 
   /**
    * CONFIRM, after the signature over the batch verified (step 5 of §6). One
-   * transaction: the person's drafts locked, the pending set compared with the
-   * snapshot, the confirmation written, every confirmed item applied with its
-   * stamp. Spent whatever happens: a refused batch is never retried.
+   * transaction: the person's drafts locked, every item compared with its
+   * snapshot, the confirmation and its assertion written, every confirmed item
+   * applied with its stamp. Spent whatever happens: a refused batch is never
+   * retried.
    */
   const confirm = async (
     deps: ConfirmDeps,
     batch: FrozenBatch,
     credential: { readonly id: string; readonly rpId: string },
+    assertion: StoredAssertion,
   ): Promise<ConfirmedBatch | ConfirmRefused> => {
     batches.delete(batch.id);
     try {
       const presenceOn = await deps.db.transaction(async (tx) => {
-        const pending = await readPendingDrafts(tx, batch.owner.developerId, { lock: true });
-        if (pendingFingerprint(pending) !== batch.fingerprint) {
+        const scoped = { db: tx, now: deps.now };
+        const pending = await readPendingDrafts(scoped, batch.owner.developerId, { lock: true, scope: batch.scope });
+        if (!isUnchanged(pending, batch.items)) {
           throw new BatchRefused("pending_changed", null, null);
         }
-        await tx.insert(humanConfirmations).values({
-          id: batch.id,
-          developerId: batch.owner.developerId,
-          credentialId: credential.id,
-          rpId: credential.rpId,
-          digest: batch.digest,
-          pendingFingerprint: batch.fingerprint,
-          itemCount: batch.items.length,
-          formedAt: batch.formedAt,
-          confirmedAt: deps.now(),
-        });
-        if (batch.items.length > 0) {
-          await tx.insert(humanConfirmationItems).values(
-            batch.items.map((item, position) => ({
-              confirmationId: batch.id,
-              position,
-              draftId: item.draft.id,
-              draftVersion: item.draft.version,
-              draftDigest: item.draftDigest,
-              decision: item.decision,
-              content: item.content,
-            })),
-          );
-        }
-        return applyConfirmed({ db: tx, now: deps.now }, batch);
+        await recordConfirmation(tx, batch, credential, assertion, deps.now());
+        return applyConfirmed(scoped, batch);
       });
       const count = (decision: DraftDecision): number =>
         batch.items.filter((item) => item.decision === decision).length;

@@ -1794,7 +1794,13 @@ CREATE TABLE IF NOT EXISTS human_confirmations (
   pending_fingerprint text NOT NULL,
   item_count integer NOT NULL,
   formed_at timestamptz NOT NULL,
-  confirmed_at timestamptz NOT NULL
+  confirmed_at timestamptz NOT NULL,
+  -- The WebAuthn assertion itself, base64url as sent, so a client can verify a
+  -- confirmation without trusting the hub (routes/confirm-status.ts serves it).
+  authenticator_data text NOT NULL,
+  client_data_json text NOT NULL,
+  signature text NOT NULL,
+  user_handle text
 );
 CREATE INDEX IF NOT EXISTS human_confirmations_developer_idx
   ON human_confirmations (developer_id, confirmed_at);

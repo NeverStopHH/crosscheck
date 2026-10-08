@@ -41,7 +41,7 @@ import {
 } from "../services/passkeys.ts";
 import type { UsableCredential } from "../services/passkeys.ts";
 import type { BatchStore } from "../services/confirmation-batch.ts";
-import { BATCH_SENTENCE, confirmTermsOf, performConfirm } from "./ui-ceremony-confirm.ts";
+import { BATCH_SENTENCE, confirmAuthorityOf, confirmTermsOf, performConfirm } from "./ui-ceremony-confirm.ts";
 import { amendWaiver, approveRequest, readPendingRequest } from "../services/waiver-requests.ts";
 import type { WaiverRequestRefusal } from "../services/waiver-requests.ts";
 import { readLiveWaiver, revokeWaiver } from "../services/waivers.ts";
@@ -297,12 +297,17 @@ export const isCeremonyCsrfValid = (c: Context<AppEnv>, deps: AppDeps): boolean 
  */
 const signingCredentials = (
   deps: AppDeps,
-  developerId: string,
+  context: CeremonyContext,
   fields: AssertionFields,
-): Promise<readonly UsableCredential[]> =>
-  fields.action === "confirm_batch"
+): Promise<readonly UsableCredential[]> => {
+  const developerId = context.owner.developerId;
+  // A batch with a privileged kind in it (services/draft-kinds.ts) waits for the cool-off like any authority.
+  const isNormalConfirmation =
+    fields.action === "confirm_batch" && confirmAuthorityOf(context.batches, context.owner, fields) === "normal";
+  return isNormalConfirmation
     ? confirmingCredentials({ db: deps.db, developerId })
     : usableCredentials({ db: deps.db, developerId, now: deps.now() });
+};
 
 export const ceremonyOptions = async (
   c: Context<AppEnv>,
@@ -340,7 +345,7 @@ export const ceremonyOptions = async (
   if (isRefused(signed)) {
     return refuseTerms(c, signed);
   }
-  const usable = await signingCredentials(deps, developer.id, fields);
+  const usable = await signingCredentials(deps, { owner, batches }, fields);
   const minted = await webauthn.authenticationOptions({
     ...owner,
     ...signed,
@@ -436,13 +441,13 @@ const perform = async (
   context: CeremonyContext,
   fields: AssertionFields,
   credential: StoredCredential,
-  signed: Signed,
+  signed: Signed & { readonly response: AuthenticationResponseJSON },
 ): Promise<Response> => {
   const developerId = c.get("developer").id;
   const credentialId = credential.id;
   switch (fields.action) {
     case "confirm_batch": {
-      const outcome = await performConfirm(deps, context.batches, context.owner, fields, credential, signed.terms);
+      const outcome = await performConfirm(deps, context.batches, context.owner, fields, credential, signed);
       return "ceremonyRefusal" in outcome ? refuse(c, outcome.ceremonyRefusal) : ok(c, outcome);
     }
     case "authorise_enrolment": {
@@ -543,7 +548,7 @@ export const ceremonyVerify = async (
     spend();
     return refuseTerms(c, signed);
   }
-  const usable = await signingCredentials(deps, developerId, fields);
+  const usable = await signingCredentials(deps, context, fields);
   const match = usable.find((entry) => entry.credential.id === extras.data.response.id);
   if (match === undefined) {
     spend();
@@ -560,5 +565,8 @@ export const ceremonyVerify = async (
     return refuse(c, verified.refusal);
   }
   await recordSignCount({ db: deps.db, credentialId: match.credential.id, counter: verified.newCounter });
-  return perform(c, deps, context, fields, match.credential, signed);
+  return perform(c, deps, context, fields, match.credential, {
+    ...signed,
+    response: extras.data.response as unknown as AuthenticationResponseJSON,
+  });
 };

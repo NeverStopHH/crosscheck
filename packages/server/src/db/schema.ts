@@ -2353,6 +2353,18 @@ export const humanConfirmations = pgTable(
     itemCount: integer("item_count").notNull(),
     formedAt: timestamptz("formed_at").notNull(),
     confirmedAt: timestamptz("confirmed_at").notNull(),
+    /**
+     * THE ASSERTION ITSELF, base64url as the browser sent it, so a client can
+     * verify a confirmation without trusting the hub: the signature over
+     * `authenticatorData ‖ SHA-256(clientDataJSON)` under the credential's
+     * public key, and the challenge inside `clientDataJSON` ending in
+     * SHA-256(purpose, batch id, { batchDigest }) — routes/confirm-status.ts
+     * serves it with everything needed to recompute that digest.
+     */
+    authenticatorData: text("authenticator_data").notNull(),
+    clientDataJson: text("client_data_json").notNull(),
+    signature: text("signature").notNull(),
+    userHandle: text("user_handle"),
   },
   (table) => [index("human_confirmations_developer_idx").on(table.developerId, table.confirmedAt)],
 );
