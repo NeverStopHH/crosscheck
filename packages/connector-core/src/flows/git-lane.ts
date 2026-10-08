@@ -280,12 +280,28 @@ interface RootSpooled {
 }
 
 /**
+ * WHAT ANOTHER TOPIC OF THIS ROOT ALREADY HOLDS (review M5): every path in the
+ * seen-set of one of this life's other topics of the same worktree. A dirty
+ * file carried across `git switch -c` is the old topic's work, already sent
+ * under it; filing it under the new topic too made one move two different
+ * models depending on which hook fired first. Filed under its holder it would
+ * be a re-sighting the seen-set drops, so it is left out here instead.
+ */
+const heldElsewhere = (life: TopicLife, root: string, filing: Filing): ReadonlySet<string> =>
+  new Set(
+    life.topics
+      .filter((topic) => topic.sessionId === life.sessionId && topic.root === root && topic.key !== filing.key)
+      .flatMap((topic) => seenPathsOf(life.seenTargets, topic.key)),
+  );
+
+/**
  * ONE ROOT'S FINDINGS INTO THE SPOOL: its topic's context first when the
  * topic is new (a failed append files the root under the session's own
  * context instead), then its working-tree changes, then its commits — one
- * slice of the block, one cap, shared. Changes first, because a file both
- * committed and changed again is still being changed: `git_diff` is the
- * fresher sighting, and the commit half adds what a clean tree hides.
+ * slice of the block, one cap, shared; a path another topic of the root holds
+ * is left to it (review M5). Changes first, because a file both committed and
+ * changed again is still being changed: `git_diff` is the fresher sighting,
+ * and the commit half adds what a clean tree hides.
  */
 const spoolRoot = async (
   input: SweepGitRootsInput,
@@ -306,11 +322,12 @@ const spoolRoot = async (
   const isOpened =
     records.length === 0 || (await appendRecords(input.home, input.repoKey, input.hostSessionKey, records, input.now)).persisted;
   const filing = isOpened ? (plan.filingByPath.get(first) ?? session) : session;
+  const held = heldElsewhere(life, read.lane.root, filing);
   const block = seqSlice(input.seq, index, MAX_TARGETS_PER_INVOCATION);
   const base = {
     ...laneInput(input, read.lane),
     workContextId: filing.workContextId,
-    seenTargets: seenPathsOf(input.state.seenTargets, filing.key),
+    seenTargets: [...seenPathsOf(input.state.seenTargets, filing.key), ...held],
   };
   const changed =
     touches.length === 0 ? [] : await spoolGitTouches({ ...base, seq: block }, touches, "git_diff");

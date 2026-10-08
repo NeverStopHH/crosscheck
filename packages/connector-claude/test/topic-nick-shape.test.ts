@@ -350,6 +350,65 @@ describe("M4: a renamed branch's topic is retitled on the hub", () => {
   });
 });
 
+describe("M5: a dirty file carried across a branch switch stays with the topic that holds it", () => {
+  test("edit on feat/topic-0, switch to a new branch, edit elsewhere: the Stop files the carried file under neither twice", async () => {
+    // Arrange: the review's probe P4, in the owner's shape
+    const world = await nickShape("m5-carried", 1);
+    const [sibling = ""] = world.siblings;
+    await sessionStart(world);
+    await edit(world, await writeRepoFile(sibling, "src/carried.ts", "export const c = 1;\n"));
+    await git(sibling, ["switch", "-c", "feat/next"]);
+    await edit(world, await writeRepoFile(sibling, "src/fresh.ts", "export const f = 1;\n"));
+
+    // Act
+    await stop(world);
+
+    // Assert: still two topics (the edit came first), but each file in exactly one of them
+    const topics = filesByTopic(await spooled(world));
+    expect(topics["feat/topic-0"]).toEqual(["src/carried.ts:tool_edit"]);
+    expect(topics["feat/next"]).toEqual(["src/fresh.ts:tool_edit"]);
+  });
+
+  test("a carried file changed again after the switch still files under the topic that holds it", async () => {
+    // Arrange: the carried file is committed on the new branch by a shell
+    const world = await nickShape("m5-carried-commit", 1);
+    const [sibling = ""] = world.siblings;
+    await sessionStart(world);
+    await edit(world, await writeRepoFile(sibling, "src/carried.ts", "export const c = 1;\n"));
+    await git(sibling, ["switch", "-c", "feat/next"]);
+    await edit(world, await writeRepoFile(sibling, "src/fresh.ts", "export const f = 1;\n"));
+    await stop(world);
+    await writeRepoFile(sibling, "src/brand-new.ts", "export const n = 1;\n");
+    await commitAll(sibling, "carried, fresh and a brand-new file");
+
+    // Act
+    await stop(world);
+
+    // Assert: the commit's files split by holder; the file nobody held goes to the root's topic now
+    const topics = filesByTopic(await spooled(world));
+    expect(topics["feat/topic-0"]).toEqual(["src/carried.ts:tool_edit"]);
+    expect(topics["feat/next"]).toEqual(["src/brand-new.ts:git_commit", "src/fresh.ts:tool_edit"]);
+  });
+
+  test("the same path in another worktree is never held for this one: each worktree's copy files under its own topic", async () => {
+    // Arrange: wt0's topic edited src/same.ts; wt1 changes its own src/same.ts through a shell
+    const world = await nickShape("m5-two-roots", 2);
+    const [a = "", b = ""] = world.siblings;
+    await sessionStart(world);
+    await edit(world, await writeRepoFile(a, "src/same.ts", "export const a = 1;\n"));
+    await edit(world, await writeRepoFile(b, "src/b-own.ts", "export const b = 1;\n"));
+    await writeRepoFile(b, "src/same.ts", "export const b2 = 1;\n");
+
+    // Act
+    await stop(world);
+
+    // Assert
+    const topics = filesByTopic(await spooled(world));
+    expect(topics["feat/topic-0"]).toEqual(["src/same.ts:tool_edit"]);
+    expect(topics["feat/topic-1"]).toEqual(["src/b-own.ts:tool_edit", "src/same.ts:git_diff"]);
+  });
+});
+
 describe("M3: a reftable repository files its work under the session, and the lane still sweeps it", () => {
   test("no `.invalid` topic; the sibling's commit and new file are still read", async () => {
     // Arrange: the owner's shape in a reftable repo — every HEAD file says `ref: refs/heads/.invalid`

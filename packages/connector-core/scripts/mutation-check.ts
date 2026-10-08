@@ -19745,6 +19745,23 @@ export const MUTATIONS: readonly Mutation[
     because: "a rebase or a bisect step detaches HEAD on top of the work, and every touch there leaves its topic",
   },
   {
+    // Review M5 of feat/topic-contexts (probe P4).
+    label: "the git lane files a carried dirty file under the root's new topic as well",
+    file: `${CORE}/src/flows/git-lane.ts`,
+    from: "    seenTargets: [...seenPathsOf(input.state.seenTargets, filing.key), ...held],",
+    to: "    seenTargets: seenPathsOf(input.state.seenTargets, filing.key),",
+    test: `${CONNECTOR}/test/topic-nick-shape.test.ts`,
+    because: "review M5: a file edited on one branch and carried across `git switch -c` is filed under both topics, and which model one move yields depends on which hook fired first",
+  },
+  {
+    label: "a topic of another worktree holds a path of this one",
+    file: `${CORE}/src/flows/git-lane.ts`,
+    from: "      .filter((topic) => topic.sessionId === life.sessionId && topic.root === root && topic.key !== filing.key)",
+    to: "      .filter((topic) => topic.sessionId === life.sessionId && topic.key !== filing.key)",
+    test: `${CONNECTOR}/test/topic-nick-shape.test.ts`,
+    because: "the same relative path changed in a second worktree is never sent for it: the first worktree's topic is taken to hold it, and one branch's work disappears",
+  },
+  {
     // Review M4 of feat/topic-contexts.
     label: "a renamed branch's topic keeps the old branch's title",
     file: `${CORE}/src/flows/topic-rules.ts`,
@@ -20435,7 +20452,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/summarizer-worker-env.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/topic-git-lane.test.ts 9
- * PRINTS: packages/connector-claude/test/topic-nick-shape.test.ts 10
+ * PRINTS: packages/connector-claude/test/topic-nick-shape.test.ts 12
  * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 4
  * PRINTS: packages/connector-core/test/absence-render.test.ts 7
