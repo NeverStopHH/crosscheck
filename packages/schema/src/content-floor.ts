@@ -94,7 +94,8 @@ const URL_WORD = /^[a-z][a-z0-9+.-]*:\/\/([^/]+)(\/.*)?$/u;
  * ("api.example.com", "node.js", "v1.2", "4.5") and an address — ts_debug's
  * file, host, version, float and email tokens. Its parts are no words of the
  * text: "europe" never matches "Europe/Berlin" on the hub, so it never does
- * here, and the hub's known terms and this count agree.
+ * here, and the hub's known terms and this count agree — but a DOTTED NAME's
+ * parts are, on both sides (round 5, L2; DOTTED_NAME_DOT below).
  */
 const WHOLE_WORD = /^\/?[\p{L}\p{N}_-]+(?:[./@][\p{L}\p{N}_-]+)+$|^\/[\p{L}\p{N}_-]+$/u;
 
@@ -131,19 +132,46 @@ const wordLexemes = (word: string): readonly string[] => {
     .map(termLexeme);
 };
 
+/** One text's lexemes, word by word, as the database's parser and stemmer make them. */
+const lexemesOf = (text: string): readonly string[] =>
+  text
+    .split(/\s+/u)
+    .map(trimmedWord)
+    .filter((word) => word.length > 0)
+    .flatMap(wordLexemes);
+
+/**
+ * A DOT INSIDE A DOTTED NAME (hold-out review round 5, L2): "products.name",
+ * "node.js", "v1.2" — a dot between two name characters in a word with no
+ * slash and no "@", so a path ("src/auth/refresh.ts"), a URL and an address
+ * keep theirs. The PROMPT'S side always read such a word's parts as well as
+ * the word ("products.name" says products and name); the TEXT'S side read
+ * only the whole, so "SELECT * FROM products WHERE name ILIKE …" never met
+ * the finding "ILIKE on products.name does a sequential scan".
+ *
+ * Spelled twice, once per regex dialect: the hub's database reads the same
+ * dots with DOTTED_NAME_DOT_SQL, whose [[:alnum:]] knows "café" as this
+ * side's \p{L} does, so both sides split the same words (server test
+ * hint-dotted-names.test.ts holds them together).
+ */
+const DOTTED_NAME_DOT = /(?<=(?:^|\s)[^\s/@]*[\p{L}\p{N}_-])\.(?=[\p{L}\p{N}_-][^\s/@]*(?:\s|$))/gu;
+
+/** The same dots in PostgreSQL's regex dialect, for the hub's index and queries (L2). */
+export const DOTTED_NAME_DOT_SQL = "(?<=(?:^|[[:space:]])[^[:space:]/@]*[[:alnum:]_-])[.](?=[[:alnum:]_-][^[:space:]/@]*(?:[[:space:]]|$))";
+
+/** A text with its dotted names split at their dots: "products.name" reads "products name" (L2). */
+export const dottedNamePartsText = (text: string): string => text.replace(DOTTED_NAME_DOT, " ");
+
 /**
  * The lexemes a text says: its words, lower-cased, less the database's English
  * stop words — a path, a host or an address whole, as the database keeps it
- * (L1), quotes and sentence marks off a word's ends.
+ * (L1), quotes and sentence marks off a word's ends — and a dotted name's
+ * parts beside the name whole (round 5, L2), as the prompt's side reads it.
  */
-export const textLexemes = (text: string): ReadonlySet<string> =>
-  new Set(
-    text
-      .split(/\s+/u)
-      .map(trimmedWord)
-      .filter((word) => word.length > 0)
-      .flatMap(wordLexemes),
-  );
+export const textLexemes = (text: string): ReadonlySet<string> => {
+  const parts = dottedNamePartsText(text);
+  return new Set(parts === text ? lexemesOf(text) : [...lexemesOf(text), ...lexemesOf(parts)]);
+};
 
 /** Of the ranked terms, those some text says — in order, at most HINT_MAX_EXAMINED_TERMS of them looked at. */
 export const knownTermsIn = (ranked: readonly string[], texts: readonly string[]): readonly string[] => {

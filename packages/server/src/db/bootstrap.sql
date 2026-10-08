@@ -177,6 +177,18 @@ ALTER TABLE claims ADD COLUMN IF NOT EXISTS tsv tsvector
 CREATE INDEX IF NOT EXISTS claims_tsv_idx
   ON claims USING gin (tsv);
 
+-- What the hint floor reads (hold-out review round 5, L2; services/hints.ts
+-- claimWords and documentWords): the words AND a dotted name's parts —
+-- "products.name" says products and name — as @crosscheck/schema
+-- textLexemes reads a text and every prompt reads it. The pattern is
+-- DOTTED_NAME_DOT_SQL verbatim (test/hint-dotted-names.test.ts pins the
+-- two equal); the queries spell the same expressions, so the planner can use
+-- these indexes.
+CREATE INDEX IF NOT EXISTS claims_words_idx
+  ON claims USING gin ((tsv || to_tsvector('english', regexp_replace(body, '(?<=(?:^|[[:space:]])[^[:space:]/@]*[[:alnum:]_-])[.](?=[[:alnum:]_-][^[:space:]/@]*(?:[[:space:]]|$))', ' ', 'g'))));
+CREATE INDEX IF NOT EXISTS work_contexts_words_idx
+  ON work_contexts USING gin ((tsv || to_tsvector('english', regexp_replace(coalesce(normalized_doc, ''), '(?<=(?:^|[[:space:]])[^[:space:]/@]*[[:alnum:]_-])[.](?=[[:alnum:]_-][^[:space:]/@]*(?:[[:space:]]|$))', ' ', 'g'))));
+
 -- Optional vector tier: null until an embedder is configured AND has embedded
 -- the row. embedding_model records WHICH embedder minted the vector, because
 -- vectors from different models are not comparable — a model change makes old

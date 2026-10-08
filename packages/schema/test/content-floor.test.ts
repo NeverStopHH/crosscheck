@@ -42,14 +42,26 @@ describe("words match on their english lexemes, as the hub's database matches th
     ["The cron runs in Europe/Berlin time", ["cron", "europe/berlin", "run", "time"]],
     ["see src/auth/refresh.ts and lib/jwks.ts", ["lib/jwks.ts", "see", "src/auth/refresh.ts"]],
     ["/health returns 404", ["/health", "404", "return"]],
-    ["api.example.com is down", ["api.example.com"]],
     ["mail foo@bar.com today", ["foo@bar.com", "mail", "today"]],
     ["fetch https://x.com/a/b now", ["/a/b", "fetch", "x.com", "x.com/a/b"]],
-    ["e.g. the node.js build, (src/a.ts), \"Europe/Berlin\".", ["build", "e.g", "europe/berlin", "node.js", "src/a.ts"]],
+    ["the (src/a.ts) build in \"Europe/Berlin\".", ["build", "europe/berlin", "src/a.ts"]],
   ])("round 4, L1: a path, a host, an address is ONE word to the database, and to the floor: %p", (text, lexemes) => {
     // As PostgreSQL's parser reads them (ts_debug: file, host, email, url):
     // "europe" never matches "Europe/Berlin" on the hub, so it never does here
     expect([...textLexemes(text)].sort()).toEqual(lexemes);
+  });
+
+  test.each([
+    ["api.example.com is down", ["api", "api.example.com", "com", "exampl"]],
+    ["ILIKE on products.name does a scan", ["ilik", "name", "product", "products.name", "scan"]],
+    ["e.g. the node.js build", ["build", "e", "e.g", "g", "js", "node", "node.js"]],
+  ])("round 5, L2: a dotted name is a word whole AND in its parts, as a prompt reads it: %p", (text, lexemes) => {
+    expect([...textLexemes(text)].sort()).toEqual(lexemes);
+  });
+
+  test("a dotted name's parts meet the prompt that names them apart (round 5, L2)", () => {
+    // K151's shape: the trace names the table and the column, the finding the dotted column
+    expect(statementMatch(floorOf("SELECT * FROM products WHERE name ILIKE $1"), "ILIKE '%term%' on products.name does a sequential scan").floor).toBe(3);
   });
 
   test("a prompt that names the path agrees with the statement that says it (L1)", () => {

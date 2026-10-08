@@ -392,6 +392,7 @@ export { CONVENTIONAL_FILE_NAMES, exactTargetToken, isConventionalFileName } fro
 export { englishStem } from "./english-stem.ts";
 export { hasContinuationSignal } from "./continuation.ts";
 export { promptTaskOf } from "./prompt-task.ts";
+export { DOTTED_NAME_DOT_SQL, dottedNamePartsText } from "./content-floor.ts";
 export type { PromptTask } from "./prompt-task.ts";
 export {
   HINT_LONG_PROMPT_KNOWN_TERMS,

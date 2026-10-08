@@ -31,6 +31,7 @@
  * FTS) is the one the design names normative for the sync budget.
  */
 import { and, desc, eq, gt, inArray, isNull, lte, ne, notExists, or, sql } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 
 import {
@@ -58,6 +59,7 @@ import { pushableClaimCondition } from "./pushable-claims.ts";
 import { DECLARED_PROVENANCE } from "./similarity-gate.ts";
 import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
 import {
+  DOTTED_NAME_DOT_SQL,
   HINT_LONG_PROMPT_KNOWN_TERMS,
   HINT_MAX_EXAMINED_TERMS,
   HINT_MIN_SHARED_TERMS,
@@ -173,8 +175,24 @@ const SUPERSEDES_EDGE_KIND = "supersedes";
  */
 const contextStatementText = sql<string>`concat_ws(' ', ${workContexts.title}, ${workContexts.description}, ${workContexts.intent}->>'summary')`;
 
-/** The same statement as a document, for the search's own ranking. */
-const contextStatement = sql`to_tsvector('english', ${contextStatementText})`;
+/**
+ * A TEXT'S DOTTED NAMES IN THEIR PARTS, as the database reads them (hold-out
+ * review round 5, L2): "products.name" says products and name here too, as
+ * the shared rule (`@crosscheck/schema` textLexemes) and every prompt read it.
+ * The pattern is inlined as a constant, so the planner matches the indexes
+ * bootstrap.sql builds on the same expression.
+ */
+const dottedNameParts = (text: SQL): SQL =>
+  sql`to_tsvector('english', regexp_replace(${text}, ${sql.raw(`'${DOTTED_NAME_DOT_SQL}'`)}, ' ', 'g'))`;
+
+/** What one claim says to the floor: its words, and its dotted names' parts (L2; claims_words_idx). */
+const claimWords = sql`(${claims.tsv} || ${dottedNameParts(sql`${claims.body}`)})`;
+
+/** What a context's document says, to the known-word prefilter (L2; work_contexts_words_idx). */
+const documentWords = sql`(${workContexts.tsv} || ${dottedNameParts(sql`coalesce(${workContexts.normalizedDoc}, '')`)})`;
+
+/** The same statement as a document, for the search's own ranking — its dotted names' parts too (L2). */
+const contextStatement = sql`(to_tsvector('english', ${contextStatementText}) || ${dottedNameParts(contextStatementText)})`;
 
 /** Most sessions one tripwire response names — one is enough to ask. */
 export const TRIPWIRE_MAX_SESSIONS = 5;
@@ -676,14 +694,14 @@ const listClaimTermMaxima = async (
     .select({
       workContextId: claims.workContextId,
       body: claims.body,
-      position: sql<number>`row_number() over (partition by ${claims.workContextId} order by ts_rank(${claims.tsv}, ${anyToken}) desc, ${claims.id})`.as("position"),
+      position: sql<number>`row_number() over (partition by ${claims.workContextId} order by ts_rank(${claimWords}, ${anyToken}) desc, ${claims.id})`.as("position"),
     })
     .from(claims)
     .innerJoin(agentSessions, eq(claims.authorSessionId, agentSessions.id))
     .where(
       and(
         inArray(claims.workContextId, workContextIds),
-        sql`${claims.tsv} @@ ${anyToken}`,
+        sql`${claimWords} @@ ${anyToken}`,
         notSuperseded(db),
         notMutedCondition(readerDeveloperId, agentSessions.developerId),
         // A draft's words never qualify its tree (review 1006b, L6).
@@ -743,7 +761,7 @@ const rankOnPushableText =
           id: claims.workContextId,
           createdAt: workContexts.createdAt,
           updatedAt: workContexts.updatedAt,
-          rank: sql<number>`max(ts_rank(${claims.tsv}, ${tsquery}))`,
+          rank: sql<number>`max(ts_rank(${claimWords}, ${tsquery}))`,
         })
         .from(claims)
         .innerJoin(workContexts, eq(claims.workContextId, workContexts.id))
@@ -752,14 +770,14 @@ const rankOnPushableText =
         .where(
           and(
             scope,
-            sql`${claims.tsv} @@ ${tsquery}`,
+            sql`${claimWords} @@ ${tsquery}`,
             pushableClaimCondition(),
             notSuperseded(db),
             notMutedCondition(readerDeveloperId, claimAuthors.developerId),
           ),
         )
         .groupBy(claims.workContextId, workContexts.createdAt, workContexts.updatedAt)
-        .orderBy(sql`max(ts_rank(${claims.tsv}, ${tsquery})) DESC`)
+        .orderBy(sql`max(ts_rank(${claimWords}, ${tsquery})) DESC`)
         .limit(TIER_CANDIDATES),
     ]);
     const best = [...statements, ...pushable].reduce<ReadonlyMap<string, RankedRow>>(
@@ -1063,7 +1081,7 @@ const listKnownTerms = async (
     .select({ one: sql`1` })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
-    .where(and(eq(agentSessions.repo, repo), sql`${workContexts.tsv} @@ ${lexeme}`, sql`${contextStatement} @@ ${lexeme}`, ...visibleOwner));
+    .where(and(eq(agentSessions.repo, repo), sql`${documentWords} @@ ${lexeme}`, sql`${contextStatement} @@ ${lexeme}`, ...visibleOwner));
   const claimSays = db
     .select({ one: sql`1` })
     .from(claims)
@@ -1073,7 +1091,7 @@ const listKnownTerms = async (
     .where(
       and(
         eq(agentSessions.repo, repo),
-        sql`${claims.tsv} @@ ${lexeme}`,
+        sql`${claimWords} @@ ${lexeme}`,
         pushableClaimCondition(),
         notSuperseded(db),
         ...visibleOwner,
