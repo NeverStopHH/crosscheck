@@ -40,7 +40,7 @@ import type { HookBudget, HookContext } from "./runner.ts";
  */
 const GIT_LANE_SEQ_BLOCK = MAX_TARGETS_PER_INVOCATION;
 
-const SKIPPED: GitLaneSweep = { captured: [], topics: null, unavailable: true, swept: [] };
+const SKIPPED: GitLaneSweep = { captured: [], topics: null, unavailable: true, swept: [], untrackedCut: [] };
 
 /** The hook's cwd root, when it is this session's repo — a foreign cwd is never swept. */
 export const ownCwdRoot = (ctx: HookContext, state: SessionState): string | null =>
@@ -115,7 +115,12 @@ export const runGitLane = async (
       captured: isSameLife ? sweep.captured : [],
       skipped: sweep.unavailable,
     });
-    const swept = withSweptRoots(withTopicCapture(booked, sweep.topics), sweep.swept, ctx.now().toISOString());
+    const swept = withSweptRoots(
+      withTopicCapture(booked, sweep.topics),
+      sweep.swept,
+      ctx.now().toISOString(),
+      isSameLife ? sweep.untrackedCut : [],
+    );
     // A full Stop that left nothing a shell asked for has answered the shell.
     const isShellAnswered = choice.subagent !== true && deferred === 0 && !sweep.unavailable;
     return {

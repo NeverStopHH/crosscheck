@@ -53,6 +53,7 @@ import { isReftableGitDir } from "../git/repo-identity.ts";
 import { sessionSlug } from "../config/paths.ts";
 import { recordDrop } from "../spool/drops.ts";
 import { captureFileTargets } from "./capture-targets.ts";
+import { resolveDenylist } from "../capture/denylist.ts";
 import type { DenylistConfig } from "../capture/denylist.ts";
 import type { Producer } from "../capture/records.ts";
 import type { SeqRange } from "../state/session-state.ts";
@@ -89,6 +90,11 @@ export interface CaptureGitTouchesInput {
    * (flows/git-lane.ts); a `cp` into a worktree leaves nothing else.
    */
   readonly includeUntracked?: boolean;
+  /**
+   * This root's untracked listing was already cut once in this life, and the
+   * cut booked (review M8): a dump that stays is not one more loss per Stop.
+   */
+  readonly isUntrackedCutBooked?: boolean;
   /** Targets this call may still write; absent = the per-call cap. */
   readonly maxTargets?: number;
 }
@@ -131,56 +137,110 @@ const linesOf = (stdout: string): readonly string[] =>
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
 
+/** A denylist pattern that names a whole directory wherever it sits: `**\/<name>/**`. */
+const DIRECTORY_GLOB = /^\*\*\/([^*?[\]{}!]+)\/\*\*$/;
+
+/**
+ * THE DENYLIST'S DIRECTORIES AS GIT PATHSPECS (review M8): an untracked
+ * `node_modules/` nothing ignores is tens of thousands of lines the denylist
+ * would refuse one by one after the bound had already cut the real new files
+ * behind it. Git leaves them out instead, and never lists them at all.
+ */
+const untrackedExcludes = (denylist: DenylistConfig | null): readonly string[] =>
+  resolveDenylist(denylist ?? undefined).flatMap((pattern) => {
+    const name = DIRECTORY_GLOB.exec(pattern)?.[1];
+    return name === undefined ? [] : [`:(exclude,glob)**/${name}/**`];
+  });
+
+/**
+ * Untracked paths in a directory the repository already tracks come first
+ * (review M8): a dump nothing ignores — a cache, a download — is a new
+ * top-level directory of its own, and must not push the real new file in
+ * `src/` past the bound. A file at the root counts as tracked ground. Stable
+ * otherwise, in git's own order.
+ */
+const trackedGroundFirst = (paths: readonly string[], trackedDirs: ReadonlySet<string>): readonly string[] => {
+  const isTrackedGround = (path: string): boolean => !path.includes("/") || trackedDirs.has(path.slice(0, path.indexOf("/")));
+  return [...paths.filter(isTrackedGround), ...paths.filter((path) => !isTrackedGround(path))];
+};
+
+/** A working tree's changed paths: tracked ones, and the new ones git does not track yet in the order the bound reads them. */
+interface ChangedPaths {
+  readonly tracked: readonly string[];
+  readonly untracked: readonly string[];
+}
+
 /**
  * The paths a working tree holds changed — `git diff --name-only HEAD`, and,
  * when asked, the NEW files git does not track yet (`ls-files --others
- * --exclude-standard`, ignored files left out). Null when git did not answer
- * either question: one answered half is not "nothing changed".
+ * --exclude-standard`, ignored files and the denylist's directories left
+ * out), tracked ground first. Null when git did not answer either question:
+ * one answered half is not "nothing changed". The top-level listing that
+ * orders them is no answer git owes: without it, git's own order stands.
  */
-const changedPaths = async (input: CaptureGitTouchesInput): Promise<readonly string[] | null> => {
+const changedPaths = async (input: CaptureGitTouchesInput): Promise<ChangedPaths | null> => {
   const timeoutMs = input.gitTimeoutMs ?? GIT_TOUCHES_TIMEOUT_MS;
-  const [diff, untracked] = await Promise.all([
+  const isUntrackedAsked = input.includeUntracked === true;
+  const [diff, untracked, tops] = await Promise.all([
     // HEAD, so staged and unstaged changes both count: an agent that ran
     // `git add` mid-turn has not made its work invisible.
     runGitOutcome(["diff", "--name-only", "HEAD"], input.repoRoot, timeoutMs),
     // A `cp` or a generator writes files git has never seen, and `git diff`
     // names none of them (DESIGN.md "One session, many topics").
-    input.includeUntracked === true
-      ? runGitOutcome(["ls-files", "--others", "--exclude-standard"], input.repoRoot, timeoutMs)
+    isUntrackedAsked
+      ? runGitOutcome(["ls-files", "--others", "--exclude-standard", "--", ".", ...untrackedExcludes(input.denylist)], input.repoRoot, timeoutMs)
       : null,
+    isUntrackedAsked ? runGitOutcome(["ls-tree", "--name-only", "-d", "HEAD"], input.repoRoot, timeoutMs) : null,
   ]);
   if (!diff.ok || (untracked !== null && !untracked.ok)) {
     return null;
   }
-  return [...new Set([...linesOf(diff.stdout), ...(untracked === null ? [] : linesOf(untracked.stdout))])];
+  const tracked = [...new Set(linesOf(diff.stdout))];
+  const known = new Set(tracked);
+  const fresh = untracked === null ? [] : linesOf(untracked.stdout).filter((path) => !known.has(path));
+  const trackedDirs = new Set(tops?.ok === true ? linesOf(tops.stdout) : []);
+  return { tracked, untracked: tops?.ok === true ? trackedGroundFirst(fresh, trackedDirs) : fresh };
 };
 
 /** Paths past the bound are never examined: whether this session touched THEM is unknown, so they are counted. */
 const recordUnexamined = (input: CaptureGitTouchesInput, unexamined: number): Promise<void> =>
   recordDrop(input.home, input.repoKey, sessionSlug(input.hostSessionKey), unexamined, "capture-capped", input.now);
 
+/** The fresh half of the git lane's answer, read and not yet spooled. */
+export interface GitTouchesRead {
+  readonly fresh: readonly string[];
+  /** The untracked listing was cut at the bound this time (review M8): the caller remembers it for the root's life. */
+  readonly isUntrackedCut: boolean;
+}
+
 /** The fresh half of the git lane's answer, read and not yet spooled — null when git did not answer. */
-export const readGitTouches = async (input: CaptureGitTouchesInput): Promise<readonly string[] | null> => {
+export const readGitTouches = async (input: CaptureGitTouchesInput): Promise<GitTouchesRead | null> => {
   const changed = await changedPaths(input);
   if (changed === null) {
     return null;
   }
   // Bounded BEFORE the stat calls: thousands of dirty files must not cost
   // thousands of filesystem round trips inside the Stop hook's budget
-  // (constants.ts says where the bound's number comes from).
-  const candidates = changed.slice(0, MAX_GIT_TOUCH_CANDIDATES);
+  // (constants.ts says where the bound's number comes from). Tracked changes
+  // take the bound first; the untracked ones what is left of it.
+  const tracked = changed.tracked.slice(0, MAX_GIT_TOUCH_CANDIDATES);
+  const untracked = changed.untracked.slice(0, MAX_GIT_TOUCH_CANDIDATES - tracked.length);
   // REVIEW M5, NARROWED BY §10 ITEM 8: only the paths past the bound are
   // never examined, so only whether this session touched THEM is unknown —
   // counted as `capture-capped`, the per-call cap's word. A path within the
-  // bound is examined below, and a stale one is no loss.
-  await recordUnexamined(input, changed.length - candidates.length);
+  // bound is examined below, and a stale one is no loss. An UNTRACKED cut is
+  // one loss per root per life (review M8): the same dump on every Stop is
+  // the same unknown, not tens of thousands more.
+  const isUntrackedCut = untracked.length < changed.untracked.length;
+  const untrackedBooked = isUntrackedCut && input.isUntrackedCutBooked !== true ? 1 : 0;
+  await recordUnexamined(input, changed.tracked.length - tracked.length + untrackedBooked);
   const fresh: string[] = [];
-  for (const path of candidates) {
+  for (const path of [...tracked, ...untracked]) {
     if (await changedSince(input.repoRoot, path, input.since)) {
       fresh.push(path);
     }
   }
-  return fresh;
+  return { fresh, isUntrackedCut };
 };
 
 /**
@@ -191,11 +251,11 @@ export const readGitTouches = async (input: CaptureGitTouchesInput): Promise<rea
 export const captureGitTouches = async (
   input: CaptureGitTouchesInput,
 ): Promise<GitTouchesOutcome> => {
-  const fresh = await readGitTouches(input);
-  if (fresh === null) {
+  const read = await readGitTouches(input);
+  if (read === null) {
     return UNAVAILABLE;
   }
-  return fresh.length === 0 ? NOTHING_FRESH : { paths: await spoolGitTouches(input, fresh, "git_diff"), unavailable: false };
+  return read.fresh.length === 0 ? NOTHING_FRESH : { paths: await spoolGitTouches(input, read.fresh, "git_diff"), unavailable: false };
 };
 
 /**

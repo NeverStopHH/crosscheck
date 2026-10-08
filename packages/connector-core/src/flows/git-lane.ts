@@ -205,6 +205,8 @@ export interface GitLaneSweep {
   readonly unavailable: boolean;
   /** Roots git answered for: their bash marks are spent (`withSweptRoots`). */
   readonly swept: readonly string[];
+  /** Roots whose untracked listing the bound cut (review M8): booked once, remembered for the life. */
+  readonly untrackedCut: readonly string[];
 }
 
 /** What one root's reads found, before anything is spooled. */
@@ -215,6 +217,7 @@ interface RootRead {
   readonly gone: boolean;
   readonly commits: readonly string[] | null;
   readonly touches: readonly string[] | null;
+  readonly isUntrackedCut: boolean;
 }
 
 const laneInput = (input: SweepGitRootsInput, lane: GitLaneRoot): CaptureGitTouchesInput => ({
@@ -234,18 +237,20 @@ const laneInput = (input: SweepGitRootsInput, lane: GitLaneRoot): CaptureGitTouc
 const readRoot = async (input: SweepGitRootsInput, lane: GitLaneRoot): Promise<RootRead> => {
   const head = await readHeadFile(lane.root);
   if (head === null && !(await hasGitEntry(lane.root))) {
-    return { lane, head, gone: true, commits: [], touches: [] };
+    return { lane, head, gone: true, commits: [], touches: [], isUntrackedCut: false };
   }
   const base = laneInput(input, lane);
   // A HEAD the files cannot tell — a reftable's placeholder (review M3) — is
   // still a worktree git answers for: its work files under the session, and
   // its commits come from its own HEAD log all the same.
   const gitDir = head?.gitDir ?? (await gitDirOf(lane.root));
+  const known = input.state.knownWorktreeRoots.find((entry) => entry.root === lane.root);
+  const isUntrackedCutBooked = known?.untrackedCutLife === input.state.crosscheckSessionId;
   const [commits, touches] = await Promise.all([
     readGitCommits({ ...base, gitDir }),
-    readGitTouches({ ...base, includeUntracked: true }),
+    readGitTouches({ ...base, includeUntracked: true, isUntrackedCutBooked }),
   ]);
-  return { lane, head, gone: false, commits, touches };
+  return { lane, head, gone: false, commits, touches: touches?.fresh ?? null, isUntrackedCut: touches?.isUntrackedCut ?? false };
 };
 
 /**
@@ -397,13 +402,19 @@ export const sweepGitRoots = async (input: SweepGitRootsInput): Promise<GitLaneS
     topics: merged,
     unavailable: answered.length < reads.length,
     swept: answered.map((read) => read.lane.root),
+    untrackedCut: reads.filter((read) => read.isUntrackedCut).map((read) => read.lane.root),
   };
 };
 
 /**
  * A root git answered for has spent its bash mark — the next Stop need not
- * sweep it FIRST — and takes its turn at the back (`gitSweptAt`). Its other
- * fields are the cache's and stay.
+ * sweep it FIRST — and takes its turn at the back (`gitSweptAt`); one whose
+ * untracked listing the bound cut keeps that its cut is booked for this life
+ * (review M8). Its other fields are the cache's and stay.
  */
-export const withSweptRoots = (state: SessionState, swept: readonly string[], at: string): SessionState =>
-  swept.reduce((written, root) => withSweptRoot(written, root, at), state);
+export const withSweptRoots = (
+  state: SessionState,
+  swept: readonly string[],
+  at: string,
+  untrackedCut: readonly string[] = [],
+): SessionState => swept.reduce((written, root) => withSweptRoot(written, root, at, untrackedCut.includes(root)), state);

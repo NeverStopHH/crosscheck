@@ -239,6 +239,10 @@ const SessionStateObjectSchema = z.looseObject({
         // When the Stop-time git lane last swept the root (flows/git-lane.ts):
         // past MAX_GIT_LANE_ROOTS, the root swept longest ago goes next.
         gitSweptAt: z.string().min(1).nullable().default(null),
+        // The life whose git lane already booked this root's untracked
+        // listing as cut at the bound (review M8): booked once per root per
+        // life, never once per Stop. Absent on entries written before it.
+        untrackedCutLife: z.string().min(1).nullable().optional(),
       }),
     )
     .default([]),
@@ -1558,7 +1562,7 @@ export const withBashTouch = (state: SessionState, root: string, repoId: string,
  * sweep found by discovery — an entry of its own, so the next discovery finds
  * it already swept and its first sweep opens its window from here.
  */
-export const withSweptRoot = (state: SessionState, root: string, at: string): SessionState => {
+export const withSweptRoot = (state: SessionState, root: string, at: string, isUntrackedCut = false): SessionState => {
   const previous = state.knownWorktreeRoots.find((entry) => entry.root === root);
   const base: KnownRootEntry = previous ?? {
     root,
@@ -1569,7 +1573,8 @@ export const withSweptRoot = (state: SessionState, root: string, at: string): Se
     firstTouchedAt: at,
     lastTouchedAt: at,
   };
-  return withRootEntry(state, { ...base, bashTouchedAt: null, gitSweptAt: at });
+  const cut = isUntrackedCut ? { untrackedCutLife: state.crosscheckSessionId } : {};
+  return withRootEntry(state, { ...base, bashTouchedAt: null, gitSweptAt: at, ...cut });
 };
 
 export const withShellRun = (state: SessionState, roots: readonly string[], repoId: string, at: string): SessionState => ({

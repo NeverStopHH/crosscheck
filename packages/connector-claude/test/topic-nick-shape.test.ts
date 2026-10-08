@@ -18,11 +18,12 @@
  * A dead hub (port 1) keeps every record in the spool, where it is read back.
  */
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { MAX_TOPICS_PER_SESSION } from "@crosscheck/connector-core/constants.ts";
+import { MAX_GIT_TOUCH_CANDIDATES, MAX_TOPICS_PER_SESSION } from "@crosscheck/connector-core/constants.ts";
+import { readDropDetail } from "@crosscheck/connector-core/spool/drops.ts";
 import { readCaptureLosses } from "@crosscheck/connector-core/state/loss-ledger.ts";
 import { readSessionState, updateSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import type { SessionState, TopicContext } from "@crosscheck/connector-core/state/session-state.ts";
@@ -129,6 +130,23 @@ const fullTopic = (state: SessionState, index: number): TopicContext => ({
   lastTouchedAt: new Date(Date.now() - 600_000).toISOString(),
   ackedStatus: null,
 });
+
+/** Files a dump adds beyond what it must, so the bound is passed by a margin. */
+const DUMP_FILES = 300;
+
+/** `count` empty files `<prefix><n>.js` in `dir`, dated `at` when given (a dump older than the session). */
+const writeMany = async (dir: string, count: number, prefix: string, at?: string): Promise<void> => {
+  await mkdir(dir, { recursive: true });
+  await Promise.all(
+    Array.from({ length: count }, async (_, index) => {
+      const path = join(dir, `${prefix}${String(index)}.js`);
+      await writeFile(path, "", "utf8");
+      if (at !== undefined) {
+        await utimes(path, new Date(at), new Date(at));
+      }
+    }),
+  );
+};
 
 const commitAll = async (root: string, message: string): Promise<void> => {
   await git(root, ["add", "-A"]);
@@ -456,6 +474,36 @@ describe("M7: a topic overflow counts each file once, never each sweep of it", (
     expect(losses.byKind["topic_overflow"]).toBe(3);
     expect((await readSessionState(world.home, SESSION_ID))?.topicOverflowCount).toBe(3);
     expect(filesByTopic(await spooled(world))["(session)"]).toEqual(["src/o1.ts:git_diff", "src/o2.ts:git_diff", "src/o3.ts:git_diff"]);
+  });
+});
+
+describe("M8: a large untracked dump hides no real new file, and is counted once", () => {
+  test("a node_modules nothing ignores and a cache past the bound: the real file is captured, one drop booked over two Stops", async () => {
+    // Arrange: a sibling whose `src/` the repo tracks, an unignored
+    // node_modules (denylisted), an unignored cache past the candidate bound
+    // (not denylisted, written before the session), and one real new file
+    // in `src/` that sorts after both
+    const world = await nickShape("m8-dump", 1);
+    const [sibling = ""] = world.siblings;
+    await writeRepoFile(sibling, "src/index.ts", "export {};\n");
+    await commitAll(sibling, "tracked src");
+    await writeMany(join(sibling, "node_modules", "pkg"), DUMP_FILES, "index");
+    await writeMany(join(sibling, ".cache", "blobs"), MAX_GIT_TOUCH_CANDIDATES + DUMP_FILES, "blob", BEFORE_THE_SESSION);
+    await sessionStart(world);
+    await edit(world, await writeRepoFile(sibling, "src/edited.ts", "export const e = 1;\n"));
+    await writeRepoFile(sibling, "src/zz-real-new.ts", "export const z = 1;\n");
+
+    // Act
+    await bash(world, `cd ${sibling} && ./generate.sh`);
+    await stop(world);
+    await bash(world, `cd ${sibling} && ./generate.sh`);
+    await stop(world);
+
+    // Assert: the real file is the topic's; the dump is one booked cut, not one per path per Stop
+    const files = filesByTopic(await spooled(world))["feat/topic-0"] ?? [];
+    expect(files).toContain("src/zz-real-new.ts:git_diff");
+    expect(files.some((file) => file.startsWith("node_modules/"))).toBe(false);
+    expect((await readDropDetail(world.home, repoKey(DEAD_HUB_URL, REPO_ID))).byReason["capture-capped"]).toBe(1);
   });
 });
 

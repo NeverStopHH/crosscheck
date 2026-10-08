@@ -14019,10 +14019,11 @@ export const MUTATIONS: readonly Mutation[
   },
   // Review M5: the three losses that were still uncounted.
   {
+    // Re-pointed by review M8, which counts an untracked cut once per root per life.
     label: "dirty paths past the git lane's candidate bound are cut without a count",
     file: `${CORE}/src/flows/capture-git-touches.ts`,
-    from: "  await recordUnexamined(input, changed.length - candidates.length);",
-    to: "  await recordUnexamined(input, 0);",
+    from: "  await recordUnexamined(input, changed.tracked.length - tracked.length + untrackedBooked);",
+    to: "  await recordUnexamined(input, untrackedBooked);",
     test: `${CORE}/test/capture-losses.test.ts`,
     because: "a turn that touched a dirty path past the bound loses it to a slice the freshness check never reaches, and nothing counts it",
   },
@@ -20147,10 +20148,11 @@ export const MUTATIONS: readonly Mutation[
     because: "an amend in a reftable worktree no longer names the commit it replaced, and the replaced version is filed as work",
   },
   {
+    // Re-pointed by review M8, which hands the read whether the root's cut is booked.
     label: "a new file git does not track stays invisible to the git lane",
     file: `${CORE}/src/flows/git-lane.ts`,
-    from: "    readGitTouches({ ...base, includeUntracked: true }),",
-    to: "    readGitTouches(base),",
+    from: "    readGitTouches({ ...base, includeUntracked: true, isUntrackedCutBooked }),",
+    to: "    readGitTouches({ ...base, isUntrackedCutBooked }),",
     test: `${CONNECTOR}/test/topic-git-lane.test.ts`,
     because: "a `cp` or a generator's output is never captured until somebody adds it",
   },
@@ -20171,12 +20173,62 @@ export const MUTATIONS: readonly Mutation[
     because: "the shell's work lands in the start checkout's context, the sweep the topics exist to break up",
   },
   {
+    // Re-pointed by review M8, which keeps the root's booked cut beside it.
     label: "a root past the lane's cap is never swept",
     file: `${CORE}/src/state/session-state.ts`,
-    from: "  return withRootEntry(state, { ...base, bashTouchedAt: null, gitSweptAt: at });",
-    to: "  return withRootEntry(state, { ...base, bashTouchedAt: null });",
+    from: "  return withRootEntry(state, { ...base, bashTouchedAt: null, gitSweptAt: at, ...cut });",
+    to: "  return withRootEntry(state, { ...base, bashTouchedAt: null, ...cut });",
     test: `${CONNECTOR}/test/topic-git-lane.test.ts`,
     because: "a session working more worktrees than one Stop sweeps never looks at the one it touched least recently",
+  },
+  {
+    // Review M8 of feat/topic-contexts (probe P11).
+    label: "the untracked listing names the denylist's directories",
+    file: `${CORE}/src/flows/capture-git-touches.ts`,
+    from: "      ? runGitOutcome([\"ls-files\", \"--others\", \"--exclude-standard\", \"--\", \".\", ...untrackedExcludes(input.denylist)], input.repoRoot, timeoutMs)",
+    to: "      ? runGitOutcome([\"ls-files\", \"--others\", \"--exclude-standard\"], input.repoRoot, timeoutMs)",
+    test: `${CORE}/test/git-touches.test.ts`,
+    because: "review M8: an unignored node_modules is tens of thousands of lines the bound reads before the real new file behind it",
+  },
+  {
+    label: "the untracked listing reads a new directory before tracked ground",
+    file: `${CORE}/src/flows/capture-git-touches.ts`,
+    from: "  return { tracked, untracked: tops?.ok === true ? trackedGroundFirst(fresh, trackedDirs) : fresh };",
+    to: "  return { tracked, untracked: fresh };",
+    test: `${CONNECTOR}/test/topic-nick-shape.test.ts`,
+    because: "review M8: a cache nothing ignores, sorted before `src/`, fills the bound and the real new file in `src/` is never examined",
+  },
+  {
+    label: "an untracked cut is booked again on every Stop",
+    file: `${CORE}/src/flows/capture-git-touches.ts`,
+    from: "  const untrackedBooked = isUntrackedCut && input.isUntrackedCutBooked !== true ? 1 : 0;",
+    to: "  const untrackedBooked = isUntrackedCut ? 1 : 0;",
+    test: `${CONNECTOR}/test/topic-nick-shape.test.ts`,
+    because: "review M8: the same dump is one more loss on every turn, and the drop ledger measures turns",
+  },
+  {
+    label: "an untracked cut is booked as every path past the bound",
+    file: `${CORE}/src/flows/capture-git-touches.ts`,
+    from: "  const untrackedBooked = isUntrackedCut && input.isUntrackedCutBooked !== true ? 1 : 0;",
+    to: "  const untrackedBooked = isUntrackedCut && input.isUntrackedCutBooked !== true ? changed.untracked.length - untracked.length : 0;",
+    test: `${CONNECTOR}/test/topic-nick-shape.test.ts`,
+    because: "review M8: a dump nothing ignores books tens of thousands of drops for files that were never this session's",
+  },
+  {
+    label: "the lane forgets that a root's untracked cut is booked",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  const cut = isUntrackedCut ? { untrackedCutLife: state.crosscheckSessionId } : {};",
+    to: "  const cut = {};",
+    test: `${CONNECTOR}/test/topic-nick-shape.test.ts`,
+    because: "the once-per-life booking is never remembered, so every Stop books the same cut again",
+  },
+  {
+    label: "the lane reads every root's untracked cut as unbooked",
+    file: `${CORE}/src/flows/git-lane.ts`,
+    from: "  const isUntrackedCutBooked = known?.untrackedCutLife === input.state.crosscheckSessionId;",
+    to: "  const isUntrackedCutBooked = false;",
+    test: `${CONNECTOR}/test/topic-nick-shape.test.ts`,
+    because: "the cut is remembered and never consulted: every Stop books it again",
   },
   {
     label: "init installs no SubagentStop hook",
@@ -20478,7 +20530,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/summarizer-worker-env.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/topic-git-lane.test.ts 9
- * PRINTS: packages/connector-claude/test/topic-nick-shape.test.ts 13
+ * PRINTS: packages/connector-claude/test/topic-nick-shape.test.ts 18
  * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 4
  * PRINTS: packages/connector-core/test/absence-render.test.ts 7
@@ -20517,6 +20569,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/ghost-render.test.ts 2
  * PRINTS: packages/connector-core/test/git-lane-cost.test.ts 1
  * PRINTS: packages/connector-core/test/git-timeout.test.ts 4
+ * PRINTS: packages/connector-core/test/git-touches.test.ts 1
  * PRINTS: packages/connector-core/test/guarantee-declarations.test.ts 28
  * PRINTS: packages/connector-core/test/guarantee-doctor.test.ts 3
  * PRINTS: packages/connector-core/test/head-history.test.ts 3

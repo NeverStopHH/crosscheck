@@ -1399,6 +1399,14 @@ flow through as strings. **01** owns the seq vocabulary; nothing here touches `s
    `capture-capped` (§3 row 8), the lane's seq block is the same 20, a refused spool append is §3 row 1, and an
    oversized upload batch is retried (§3 row 22). Test: core `capture-losses` §10 item 8; anchor "the git lane
    examines only sixty dirty paths and books the stale rest as lost".
+   **The untracked half (review M8 of feat/topic-contexts).** Tracked changes take the bound first, and
+   their cut is booked as above. The NEW files git does not track take what is left of it, listed without
+   the denylist's directories (`**/<dir>/**` patterns, the config's own included, passed to git as
+   `:(exclude,glob)` pathspecs — an unignored `node_modules/` is never listed), files in a directory the
+   repository tracks first, so a dump nothing ignores cannot push the real new file in `src/` past the
+   bound. A cut of that listing is ONE `capture-capped` per root per life (`untrackedCutLife` on the
+   root's entry), not one per path per Stop: the measured 38,000 per Stop were the same dump each turn.
+   Test: claude `topic-nick-shape` M8, core `git-touches` "the untracked listing".
 9. **A skipped or unanswered git lane is booked on every turn it happens** (review M5), though the next turn's
    lane (window: the session's start) usually recovers the same touches. *Taken because the last turn's skip and
    a touch reverted before the next run are lost for good.* *Refinement:* book only an unrecovered skip — the
