@@ -5,7 +5,9 @@
  * the subagent tools drains the queue the moment a foreground subagent
  * returns: the person sees the line, and the main thread's agent gets the
  * facts and the one request next to the tool result, before it writes its
- * reply. No hub call — one state read and one locked drain.
+ * reply. With a fresh presence answer cached, no hub call — one state read
+ * and one locked drain (the one bounded refresh without one is pinned in
+ * test/collision-relay-unconfirmed.test.ts).
  */
 import { afterEach, describe, expect, test } from "bun:test";
 
@@ -190,8 +192,9 @@ describe("a foreground subagent's return", () => {
     // Act
     const output = parsed(await runHook("subagent-return", agentReturned(fix.repo), fix.env));
 
-    // Assert
+    // Assert: a count names nobody, so presence is not asked
     expect(output.systemMessage).toBe("crosscheck: +2 more teammate overlaps not shown");
+    expect(fix.hub.calls.presence).toBe(0);
   });
 
   test("a subagent's hit on a record full of queued groups keeps its own facts for the drain (round 2, L6)", async () => {

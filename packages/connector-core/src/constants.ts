@@ -1919,8 +1919,10 @@ export const PRE_TOOL_USE_MATCHER = "Edit|Write|MultiEdit|NotebookEdit";
 export const SUBAGENT_RETURN_HOOK = "subagent-return";
 export const SUBAGENT_RETURN_MATCHER = "Agent|Task";
 /**
- * Tiny on purpose: no hub call, one state read and at most one locked drain.
- * Two request timeouts, the least that leaves any spare at all: one is the
+ * Tiny on purpose: one state read and at most one locked drain, and a hub
+ * call only for the one bounded presence refresh a drained group with no
+ * fresh answer gets (RELAY_PRESENCE_REFRESH_MS, below; an empty queue makes
+ * none). Two request timeouts, the least that leaves any spare at all: one is the
  * reserve that carries the output out (HOOK_RESERVE_RATIO), the other the
  * room the drain is made in — the hook holds a turn the person waits on.
  */
@@ -1933,6 +1935,16 @@ export const SUBAGENT_RETURN_BUDGET_RATIO = 2;
  * carries the drained relay out of the hook.
  */
 export const MIN_SPARE_BOUND_TIMEOUT_MS = 1;
+/**
+ * The cap on the ONE presence refresh a relay makes when its queue holds a
+ * group and no fresh presence answer is cached (connector-claude
+ * hooks/collision-relay.ts; round 2, H1 as refined): a subagent that runs
+ * past the 10 s cache, in a session with no statusline to refresh it, would
+ * otherwise relay every collision unnamed. Inside the sync budget, under its
+ * spare, and never more than one request timeout; a refresh that fails or
+ * runs out names the teammate as the tripwire's own answer did at the edit.
+ */
+export const RELAY_PRESENCE_REFRESH_MS = 300;
 
 /**
  * The PreToolUse tripwire mode (trial finding #25 + Q2). DESIGN §4 makes `ask`

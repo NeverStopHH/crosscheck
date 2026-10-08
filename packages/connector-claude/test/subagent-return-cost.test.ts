@@ -29,6 +29,10 @@ afterEach(cleanupCollisionFixtures);
 
 const CHILD = join(import.meta.dir, "fixtures", "run-real-hook-in-child.ts");
 
+/** Every call the test hub has answered, of any kind. */
+const hubCallsOf = (calls: object): number =>
+  Object.values(calls).reduce<number>((total, count) => total + Number(count), 0);
+
 /** A request timeout no cold child start can spend before the drain. */
 const ROOMY_TIMEOUT_MS = "3000";
 
@@ -85,10 +89,11 @@ const runInChild = async (stdin: string, env: Env): Promise<{ readonly output: s
 };
 
 describe("a subagent-return fire with nothing to relay spawns no git and writes nothing (round 2, M2)", () => {
-  test("an empty queue on a completed return", async () => {
+  test("an empty queue on a completed return: no git, no write, no hub call", async () => {
     // Arrange
     const fix = await collisionFixture("sc-empty");
     const before = await snapshot(fix.home);
+    const hubBefore = hubCallsOf(fix.hub.calls);
 
     // Act
     const { output, gitCalls } = await runInChild(agentFired(fix.repo, { status: "completed" }), fix.env);
@@ -97,6 +102,7 @@ describe("a subagent-return fire with nothing to relay spawns no git and writes 
     expect(output).toBe("");
     expect(gitCalls).toBe(0);
     expect(await snapshot(fix.home)).toEqual(before);
+    expect(hubCallsOf(fix.hub.calls)).toBe(hubBefore);
   });
 
   test("a background LAUNCH, even with a relay queued, leaves the queue for the prompt it reports back on", async () => {

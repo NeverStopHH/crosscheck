@@ -15,9 +15,12 @@
  * writes its reply. A background subagent's return arrives as a prompt
  * instead, and UserPromptSubmit drains it there.
  *
- * TINY: no hub call, one state read, at most one locked drain, under
- * SUBAGENT_RETURN_BUDGET_RATIO. A nested subagent's own return (its payload
- * carries `agent_id`) leaves the queue for the main thread.
+ * TINY: one state read, at most one locked drain, under
+ * SUBAGENT_RETURN_BUDGET_RATIO — and a hub call only when a drained group has
+ * no fresh presence answer to be held to: then ONE presence refresh, capped
+ * at RELAY_PRESENCE_REFRESH_MS (hooks/collision-relay.ts). A nested
+ * subagent's own return (its payload carries `agent_id`) leaves the queue for
+ * the main thread.
  *
  * AND TINY BEFORE THE RUNNER TOO (round 2, M2): the runner's preparation —
  * repo identity (four git spawns), the config read, the fired marker — ran

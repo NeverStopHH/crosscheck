@@ -3,7 +3,7 @@
  * of the owner's edits were made by subagents). hooks/pre-tool-use.ts queues
  * the teammate groups a subagent ran into; this drains the queue for the
  * MAIN thread, once, from whichever of its sync hooks gets there first —
- * named only when live presence confirms the teammate, unnamed otherwise —
+ * unnamed only when a presence answer omits the teammate —
  * UserPromptSubmit (which also fires when a background subagent reports
  * back) or the PostToolUse hook on the subagent tools, which fires the moment
  * a foreground subagent RETURNS (hooks/subagent-return.ts).
@@ -20,7 +20,10 @@ import {
   renderSubagentCollisionRelay,
 } from "@crosscheck/connector-core/hints/collision-notice.ts";
 import type { RenderableCollision } from "@crosscheck/connector-core/hints/collision-notice.ts";
+import { RELAY_PRESENCE_REFRESH_MS } from "@crosscheck/connector-core/constants.ts";
+import type { PresenceEntry } from "@crosscheck/connector-core/http/hub.ts";
 import { isCacheFresh, readPresenceCache } from "@crosscheck/connector-core/state/presence-cache.ts";
+import { refreshPresence } from "./presence-refresh.ts";
 import {
   readSessionState,
   updateSessionState,
@@ -31,7 +34,7 @@ import type { HookBudget, HookContext } from "./runner.ts";
 
 /** What one drain hands the main thread. */
 export interface RelayDrain {
-  /** The queued groups as the main thread is told them — named only where live presence confirms. */
+  /** The queued groups as the main thread is told them — unnamed only where presence omits the teammate. */
   readonly groups: readonly RenderableCollision[];
   /** Queued groups the record could only count (round 2, L6). */
   readonly hidden: number;
@@ -52,22 +55,46 @@ export const personCopy = (drain: RelayDrain, now: Date, alsoTold: readonly Rend
   renderCollisionNotices([...drain.groups, ...alsoTold], now, drain.hidden);
 
 /**
- * A queued group held to presence AS IT IS NOW (review M2, round 2 H1): the
- * hub's presence answer drops a teammate who opted out, one the reader muted,
- * and one whose session ended — and cannot say which — so only a FRESH answer
- * that lists the teammate names them. Anything else — an answer without them,
- * a stale cache, no cache — is relayed UNNAMED (core `relayedCollisions`): a
- * queued hit is never turned into nothing, and the same queue says the same
- * thing whatever the cache's age. One local file read, no hub call.
+ * THE PRESENCE ANSWER a drained group is held to (review M2, round 2 H1 as
+ * refined): a FRESH cache is that answer, and one local read. Otherwise the
+ * relay asks ONCE — the statusline's own call and cache
+ * (hooks/presence-refresh.ts), bounded by RELAY_PRESENCE_REFRESH_MS, the
+ * request timeout and what the budget spares — because a subagent that ran
+ * longer than the 10 s cache, in a session with no statusline render between
+ * (every IDE session), would otherwise have no answer at all. Null when none
+ * could be had: the refresh failed or ran out of time, or no time was left.
+ * A stale cache never decides anything by itself.
+ */
+const presenceAnswer = async (ctx: HookContext, budget: HookBudget): Promise<readonly PresenceEntry[] | null> => {
+  const now = ctx.now();
+  const cache = await readPresenceCache(ctx.config.home, ctx.repoKey);
+  if (cache !== null && isCacheFresh(cache, now)) {
+    return cache.entries;
+  }
+  const timeoutMs = Math.min(RELAY_PRESENCE_REFRESH_MS, ctx.hub.timeoutMs, budget.spareMs());
+  if (timeoutMs <= 0) {
+    return null;
+  }
+  const result = await refreshPresence(ctx, timeoutMs, cache);
+  return result.ok ? result.data : null;
+};
+
+/**
+ * The drained groups held to presence AS IT IS NOW (core
+ * `relayedCollisions`): named where the answer lists the teammate, unnamed
+ * only where it omits them, and named as the tripwire's own answer named
+ * them when there is no answer. No groups, no presence call: a drain that
+ * only owns up to dropped groups asks the hub nothing.
  */
 const asPresentNow = async (
   ctx: HookContext,
   groups: readonly CollisionNotice[],
+  budget: HookBudget,
 ): Promise<readonly RenderableCollision[]> => {
-  const now = ctx.now();
-  const cache = await readPresenceCache(ctx.config.home, ctx.repoKey);
-  const live = cache !== null && isCacheFresh(cache, now) ? cache.entries : [];
-  return relayedCollisions(groups, live, now);
+  if (groups.length === 0) {
+    return [];
+  }
+  return relayedCollisions(groups, await presenceAnswer(ctx, budget), ctx.now());
 };
 
 /** What a drain took: the queued groups still remembered, and how many it could only count. */
@@ -118,7 +145,7 @@ export const drainCollisionRelay = async (ctx: HookContext, budget: HookBudget):
       taken.value = takenFrom(fresh);
       return withDrainedCollisionRelays(fresh);
     });
-    return drained ? { groups: await asPresentNow(ctx, taken.value.groups), hidden: taken.value.hidden } : NO_DRAIN;
+    return drained ? { groups: await asPresentNow(ctx, taken.value.groups, budget), hidden: taken.value.hidden } : NO_DRAIN;
   } catch {
     // Fail open: the hosting hook's own job is untouched.
     return NO_DRAIN;

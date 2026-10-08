@@ -48,7 +48,7 @@ const presence = (developerId: string, overrides: Partial<PresenceFact> = {}): P
 const nick = (overrides: Partial<TripwireSession> = {}): ReturnType<typeof tripwireCollision> =>
   tripwireCollision(row(overrides), FILE);
 
-describe("a relayed group is named only when live presence confirms the teammate (round 2, H1)", () => {
+describe("a relayed group is unnamed only when a presence answer omits the teammate (round 2, H1 as refined)", () => {
   test("a teammate the fresh answer lists is named, with branch and age", () => {
     // Act
     const [relayed] = relayedCollisions([nick()], [presence("dev_nick")], NOW);
@@ -73,12 +73,37 @@ describe("a relayed group is named only when live presence confirms the teammate
     );
   });
 
-  test("no fresh answer at all tells every group unnamed, never none", () => {
+  test("an answer that lists nobody tells every group unnamed, never none", () => {
     // Act
     const relayed = relayedCollisions([nick(), nick({ developerId: "dev_ken", workContextId: "wc_ken" })], [], NOW);
 
     // Assert
     expect(relayed.map((group) => group.anonymous)).toEqual([true, true]);
+  });
+
+  test("NO answer at all (null) names each group as its tripwire row did — there is no contrary evidence", () => {
+    // Act
+    const [relayed] = relayedCollisions([nick()], null, NOW);
+
+    // Assert
+    expect(relayed?.anonymous).toBeUndefined();
+    expect(renderCollisionNotice(relayed ?? nick(), NOW)).toBe(
+      "crosscheck: Nick is working on refresh.ts on branch feat/refresh-fix (last active just now) — talk before you both change it",
+    );
+  });
+
+  test("with no answer, a hit older than the presence TTL keeps its name and loses branch and age", () => {
+    // Act
+    const [relayed] = relayedCollisions(
+      [nick({ lastHeartbeatAt: new Date(NOW.getTime() - PRESENCE_TTL_MS - 1).toISOString() })],
+      null,
+      NOW,
+    );
+
+    // Assert
+    expect(relayed?.name).toBe("Nick");
+    expect(relayed?.branch).toBeNull();
+    expect(relayed?.lastActiveAt).toBeNull();
   });
 
   test("a self row never confirms a teammate", () => {

@@ -6,18 +6,14 @@ import {
 import { formatAge, groupTeammates } from "@crosscheck/connector-core/briefing/render.ts";
 import type { TeammateGroup } from "@crosscheck/connector-core/briefing/render.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
-import { getPresence } from "@crosscheck/connector-core/http/hub.ts";
 import type { PresenceEntry } from "@crosscheck/connector-core/http/hub.ts";
-import {
-  isCacheFresh,
-  readPresenceCache,
-  writePresenceCache,
-} from "@crosscheck/connector-core/state/presence-cache.ts";
+import { isCacheFresh, readPresenceCache } from "@crosscheck/connector-core/state/presence-cache.ts";
 import type { LastSeenEntry } from "@crosscheck/connector-core/state/presence-cache.ts";
 import { recordStatuslineRendered } from "@crosscheck/connector-core/state/fired-markers.ts";
 import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
 import { renderOverlapIndicator } from "@crosscheck/connector-core/hints/collision-notice.ts";
+import { refreshPresence } from "../hooks/presence-refresh.ts";
 import { prepareHook } from "../hooks/runner.ts";
 import type { HookContext } from "../hooks/runner.ts";
 
@@ -156,18 +152,10 @@ const renderForContext = async (ctx: HookContext): Promise<RenderedPresence> => 
     };
   }
 
-  const result = await getPresence(ctx.hub, ctx.identity.repoId);
+  // The one presence call and the cache it refreshes, shared with the
+  // collision relay (hooks/presence-refresh.ts), at the full request timeout.
+  const result = await refreshPresence(ctx, ctx.hub.timeoutMs, cache);
   if (result.ok) {
-    // The last-seen list is SessionStart's to derive (it holds the work
-    // contexts); this write carries whatever the cache already had, so a
-    // refresh here never erases it.
-    await writePresenceCache(
-      ctx.config.home,
-      ctx.repoKey,
-      result.data,
-      now,
-      cache?.lastSeen ?? [],
-    );
     return {
       line: presenceLine(result.data, captureAge ?? "never", now, cache?.lastSeen ?? []),
       present: result.data,

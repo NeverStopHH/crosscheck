@@ -447,23 +447,28 @@ const locatedBy = (group: CollisionNotice, entry: PresenceFact): CollisionNotice
 });
 
 /**
- * A subagent's queued groups as the MAIN thread is told them (round 2, H1).
- * A queued hit is never turned into nothing: presence drops a teammate who
- * opted out, one the reader muted AND one whose session simply ended, and
- * cannot say which — so a teammate a FRESH presence answer lists is named,
- * and every other group (an answer without them, or no fresh answer at all)
- * is told unnamed: the file stays, the name, branch and age go. Deterministic
- * — the same queue says the same thing whatever the cache's age — and
- * private for the opted-out and the muted. `presence` is [] when no fresh
- * answer is in hand. A named group's branch and age are the confirming
- * row's, still held to the presence TTL.
+ * A subagent's queued groups as the MAIN thread is told them (round 2, H1, as
+ * refined). A queued hit is never turned into nothing, and it is told
+ * UNNAMED only on contrary evidence: `presence` is the answer in hand — a
+ * fresh cache, or the one bounded refresh the relay makes — and an answer
+ * that omits the teammate (opted out, muted, or a session that simply ended:
+ * presence cannot say which) tells the file without the name, branch or age.
+ * A teammate the answer lists is named, with the branch and age of that
+ * answer's row. `presence` is null when no answer could be had — a refresh
+ * that failed or ran out of time — and then each group is named as the
+ * tripwire's own answer named it at the edit: a row the hub had already put
+ * through this developer's opt-out projection, still held to the 90 s rule.
+ * The outcome depends on the answer alone, never on how old a cache was.
  */
 export const relayedCollisions = (
   groups: readonly CollisionNotice[],
-  presence: readonly PresenceFact[],
+  presence: readonly PresenceFact[] | null,
   now: Date,
 ): readonly RenderableCollision[] =>
   groups.map((group) => {
+    if (presence === null) {
+      return withoutStaleLocation(group, now);
+    }
     const entry = confirmingEntry(group, presence);
     return entry === undefined ? anonymousCollision(group) : withoutStaleLocation(locatedBy(group, entry), now);
   });

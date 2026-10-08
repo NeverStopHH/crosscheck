@@ -11,6 +11,8 @@ export interface HintHubCalls {
   /** GET /api/solved-matches — the failure-time fingerprint probe. */
   solvedMatches: number;
   records: number;
+  /** GET /api/presence — the statusline's poll and the relay's one refresh. */
+  presence: number;
   other: number;
 }
 
@@ -23,6 +25,8 @@ export interface HintHubLatency {
   records?: number;
   /** GET /api/solved-matches — the failure-time probe's own latency dial. */
   solvedMatches?: number;
+  /** GET /api/presence — holds a presence answer past a caller's bound. */
+  presence?: number;
 }
 
 export interface HintHub {
@@ -37,6 +41,11 @@ export interface HintHub {
   /** The author's notices (landed changes, step 4), on the same response. */
   readonly setNotices: (notices: readonly unknown[]) => void;
   readonly setTripwireSessions: (sessions: readonly unknown[]) => void;
+  /**
+   * The rows GET /api/presence answers with; null (the default) answers with a
+   * body the client cannot read, which is what this hub always did.
+   */
+  readonly setPresence: (sessions: readonly unknown[] | null) => void;
   /** Rows GET /api/solved-matches answers with. */
   readonly setSolvedMatches: (matches: readonly unknown[]) => void;
   /** The `?fingerprint=` of the last solved-match probe, or null. */
@@ -232,8 +241,10 @@ export const startHintHub = (
     tripwire: 0,
     solvedMatches: 0,
     records: 0,
+    presence: 0,
     other: 0,
   };
+  let presence: readonly unknown[] | null = null;
   let candidates: readonly unknown[] = [rejectedApproachCandidate()];
   /** Absent unless a test sets it — what every hub before 07 §13 sends. */
   let recordsOutcomes: boolean | undefined;
@@ -291,7 +302,15 @@ export const startHintHub = (
           },
         });
       }
-      calls.other += 1;
+      if (pathname === "/api/presence") {
+        calls.presence += 1;
+        await sleep(latency.presence ?? 0);
+        if (presence !== null) {
+          return Response.json({ ok: true, data: { sessions: presence } });
+        }
+      } else {
+        calls.other += 1;
+      }
       return Response.json({
         ok: true,
         data: { session: { id: "cc_x", developerId: SELF_DEVELOPER_ID } },
@@ -317,6 +336,9 @@ export const startHintHub = (
     },
     setTripwireSessions: (next) => {
       tripwireSessions = next;
+    },
+    setPresence: (next) => {
+      presence = next;
     },
     setSolvedMatches: (next) => {
       solvedMatches = next;

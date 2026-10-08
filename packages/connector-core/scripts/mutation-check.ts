@@ -24053,18 +24053,18 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a relayed hit whose teammate presence cannot confirm is dropped",
     file: `${CORE}/src/hints/collision-notice.ts`,
-    from: "  groups.map((group) => {\n    const entry = confirmingEntry(group, presence);",
-    to: "  groups.filter((group) => confirmingEntry(group, presence) !== undefined).map((group) => {\n    const entry = confirmingEntry(group, presence);",
+    from: "  groups.map((group) => {\n    if (presence === null) {",
+    to: "  groups.filter((group) => presence === null || confirmingEntry(group, presence) !== undefined).map((group) => {\n    if (presence === null) {",
     test: `${CONNECTOR}/test/collision-relay-unconfirmed.test.ts`,
     because: "the queue is drained and the group marked told, and a subagent's collision with a teammate who just ended their session reaches nobody",
   },
   {
     label: "the relay treats a stale presence cache as a fresh answer",
     file: `${CONNECTOR}/src/hooks/collision-relay.ts`,
-    from: "  const live = cache !== null && isCacheFresh(cache, now) ? cache.entries : [];",
-    to: "  const live = cache !== null ? cache.entries : [];",
+    from: "  if (cache !== null && isCacheFresh(cache, now)) {",
+    to: "  if (cache !== null) {",
     test: `${CONNECTOR}/test/collision-relay-unconfirmed.test.ts`,
-    because: "a teammate an hour-old answer listed is named after they opted out, and the same hit reads differently by the cache's age",
+    because: "an hour-old answer decides instead of the refresh, so the same hit reads differently by the cache's age alone",
   },
   {
     label: "an unconfirmed relay line reads as live work in progress",
@@ -24298,6 +24298,47 @@ export const MUTATIONS: readonly Mutation[
     to: "configured",
     test: `${CONNECTOR}/test/collision-relay-slow-hub.test.ts`,
     because: "the bound exists in name only and a slow hint hub holds the hook past what the budget left",
+  },
+  // ── Coordinator's refinement of round 2 H1: unnamed only on contrary evidence ──
+  {
+    label: "a relay with no fresh presence answer never asks presence",
+    file: `${CONNECTOR}/src/hooks/collision-relay.ts`,
+    from: "  const result = await refreshPresence(ctx, timeoutMs, cache);\n  return result.ok ? result.data : null;",
+    to: "  return null;",
+    test: `${CONNECTOR}/test/collision-relay-unconfirmed.test.ts`,
+    because: "a teammate who ended their session is named, and one who moved branch is placed on the old one, every time a subagent outlives the 10 s cache",
+  },
+  {
+    label: "a failed presence refresh anonymises the relay",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "    if (presence === null) {\n      return withoutStaleLocation(group, now);\n    }",
+    to: "    if (presence === null) {\n      return anonymousCollision(group);\n    }",
+    test: `${CONNECTOR}/test/collision-relay-unconfirmed.test.ts`,
+    because: "with no contrary evidence the person reads 'A teammate recently worked on 8 files' in every IDE session",
+  },
+  {
+    label: "the relay's presence refresh waits out the request timeout",
+    file: `${CONNECTOR}/src/hooks/collision-relay.ts`,
+    from: "Math.min(RELAY_PRESENCE_REFRESH_MS, ctx.hub.timeoutMs, budget.spareMs())",
+    to: "Math.min(ctx.hub.timeoutMs, budget.spareMs())",
+    test: `${CONNECTOR}/test/collision-relay-unconfirmed.test.ts`,
+    because: "a slow presence answer holds the main thread's turn for a full request timeout on every subagent return",
+  },
+  {
+    label: "a drain that only owns up to dropped groups asks presence anyway",
+    file: `${CONNECTOR}/src/hooks/collision-relay.ts`,
+    from: "  if (groups.length === 0) {\n    return [];\n  }\n  return relayedCollisions",
+    to: "  return relayedCollisions",
+    test: `${CONNECTOR}/test/subagent-return-hook.test.ts`,
+    because: "a count that names nobody costs a hub call on the main thread",
+  },
+  {
+    label: "a presence refresh leaves the cache stale",
+    file: `${CONNECTOR}/src/hooks/presence-refresh.ts`,
+    from: "    await writePresenceCache(ctx.config.home, ctx.repoKey, result.data, ctx.now(), previous?.lastSeen ?? []);\n",
+    to: "",
+    test: `${CONNECTOR}/test/collision-relay-unconfirmed.test.ts`,
+    because: "the statusline and every later relay ask the hub again for an answer the hook already had",
   },
   // ── Review of feat/collision-visible, round 2, M2: the subagent-return hook is near-zero on an empty queue ──
   {
@@ -24583,7 +24624,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/collision-prompt-render.test.ts 1
  * PRINTS: packages/connector-claude/test/collision-relay-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/collision-relay-slow-hub.test.ts 3
- * PRINTS: packages/connector-claude/test/collision-relay-unconfirmed.test.ts 3
+ * PRINTS: packages/connector-claude/test/collision-relay-unconfirmed.test.ts 7
  * PRINTS: packages/connector-claude/test/collision-statusline-unnamed.test.ts 3
  * PRINTS: packages/connector-claude/test/collision-teammates-hook.test.ts 4
  * PRINTS: packages/connector-claude/test/collision-tripwire-ttl.test.ts 3
@@ -24630,7 +24671,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/stop-hook.test.ts 2
  * PRINTS: packages/connector-claude/test/stop-latency.test.ts 1
  * PRINTS: packages/connector-claude/test/subagent-return-cost.test.ts 4
- * PRINTS: packages/connector-claude/test/subagent-return-hook.test.ts 7
+ * PRINTS: packages/connector-claude/test/subagent-return-hook.test.ts 8
  * PRINTS: packages/connector-claude/test/summarizer-argv.test.ts 3
  * PRINTS: packages/connector-claude/test/summarizer-child-guard.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-worker-env.test.ts 1
