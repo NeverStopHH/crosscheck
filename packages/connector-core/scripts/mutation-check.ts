@@ -23798,8 +23798,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a size the connector cannot read fails the whole ghost row",
     file: `${CORE}/src/http/hub.ts`,
-    from: "  largeChangeFiles: z.number().int().min(0).nullable().optional().catch(undefined),",
-    to: "  largeChangeFiles: z.number().int().min(0).nullable().optional(),",
+    from: "  largeChangeFiles: z.number().int().min(0).nullable().optional().catch(undefined),\n});\n\nexport type GhostCheckEntry",
+    to: "  largeChangeFiles: z.number().int().min(0).nullable().optional(),\n});\n\nexport type GhostCheckEntry",
     test: `${CORE}/test/ghost-render.test.ts`,
     because: "a newer hub's size field hides the collision it qualifies",
   },
@@ -23810,6 +23810,187 @@ export const MUTATIONS: readonly Mutation[
     to: "${clauses.join(\", \")}`,",
     test: `${CORE}/test/conference-report.test.ts`,
     because: "the hub says one side is a rename and the report reads it as two people's plan",
+  },
+  // A briefing that did not arrive whole says so (2026-10-08): the budget,
+  // a thrown handler, and hub reads that did not answer all used to end in
+  // "", so an empty session read exactly like a quiet repo.
+  {
+    label: "a SessionStart the budget cut answers nothing again",
+    file: `${CONNECTOR}/src/hooks/runner.ts`,
+    from: "    return outcome.timedOut\n      ? ((await skippedBriefing(name, \"budget\", resolved.value, stdin, env)) ?? outcome.output)\n      : outcome.output;",
+    to: "    return outcome.output;",
+    test: `${CONNECTOR}/test/briefing-omission-hook.test.ts`,
+    because: "a slow hub or git costs the person the briefing and the session looks like a quiet repo",
+  },
+  {
+    label: "a SessionStart whose handler threw answers nothing again",
+    file: `${CONNECTOR}/src/hooks/runner.ts`,
+    from: "    return (await skippedBriefing(name, \"error\", resolved.value, stdin, env).catch(() => null)) ?? \"\";",
+    to: "    return \"\";",
+    test: `${CONNECTOR}/test/briefing-omission-hook.test.ts`,
+    because: "a connector bug silently costs every session its briefing, and nothing counts it",
+  },
+  {
+    label: "a cut SessionStart speaks in a checkout no connected repo owns",
+    file: `${CONNECTOR}/src/hooks/runner.ts`,
+    from: "  const owner = resolvedOwner ?? (await unresolvedOwner(stdin, env));\n  if (owner === null) {\n    return null;\n  }\n  await recordBriefingOmission(owner.home",
+    to: "  const owner = resolvedOwner ?? { home: crosscheckHome(env), key: null };\n  await recordBriefingOmission(owner.home",
+    test: `${CONNECTOR}/test/briefing-omission-hook.test.ts`,
+    because: "under a user-level install every directory's session starts with a line about a briefing nobody owed it",
+  },
+  {
+    label: "a skipped briefing is told but never counted",
+    file: `${CONNECTOR}/src/hooks/runner.ts`,
+    from: "  await recordBriefingOmission(owner.home, { key: owner.key, reason, now: new Date() });\n  return output(briefingSkippedLine(reason));",
+    to: "  return output(briefingSkippedLine(reason));",
+    test: `${CONNECTOR}/test/briefing-omission-hook.test.ts`,
+    because: "doctor reports no lost briefings on a machine that lost them all week",
+  },
+  {
+    label: "hub reads that did not answer leave the briefing silent again",
+    file: `${CORE}/src/flows/briefing.ts`,
+    from: "const isUnanswered = (result: HubResult<unknown>): boolean => !result.ok && result.kind === \"network\";",
+    to: "const isUnanswered = (_result: HubResult<unknown>): boolean => false;",
+    test: `${CORE}/test/briefing-flow.test.ts`,
+    because: "every per-request timeout expiring under contention empties the briefing and nothing says so",
+  },
+  {
+    label: "an older hub's missing route is called an omission",
+    file: `${CORE}/src/flows/briefing.ts`,
+    from: "const isUnanswered = (result: HubResult<unknown>): boolean => !result.ok && result.kind === \"network\";",
+    to: "const isUnanswered = (result: HubResult<unknown>): boolean => !result.ok;",
+    test: `${CORE}/test/briefing-flow.test.ts`,
+    because: "every session against a hub one release behind starts with a false warning",
+  },
+  {
+    label: "an incomplete briefing does not say it is incomplete",
+    file: `${CORE}/src/flows/briefing.ts`,
+    from: "      : `${briefing}\\n${unansweredReadsLine(unanswered, reads, false)}`;",
+    to: "      : briefing;",
+    test: `${CORE}/test/briefing-flow.test.ts`,
+    because: "a briefing missing sections reads as the whole picture",
+  },
+  {
+    label: "unanswered hub reads are never counted",
+    file: `${CORE}/src/flows/briefing.ts`,
+    from: "  if (unansweredReads > 0) {\n    await recordBriefingOmission(hub.home, {",
+    to: "  if (false) {\n    await recordBriefingOmission(hub.home, {",
+    test: `${CORE}/test/briefing-flow.test.ts`,
+    because: "doctor reports no lost briefings on a machine whose hub never answered",
+  },
+  {
+    label: "a Cursor sessionStart the budget cut answers the no-op again",
+    file: `${CURSOR}/src/runner.ts`,
+    from: "    const skipped = outcome.timedOut ? await skippedCursorBriefing(event, \"budget\", resolved.value, stdin, env) : null;",
+    to: "    const skipped = null;",
+    test: `${CURSOR}/test/briefing-omission.test.ts`,
+    because: "a slow hub costs a Cursor session its briefing and nothing tells the person",
+  },
+  {
+    label: "a Cursor sessionStart whose handler threw answers the no-op again",
+    file: `${CURSOR}/src/runner.ts`,
+    from: "      (await skippedCursorBriefing(event, \"error\", resolved.value, stdin, env).catch(() => null)) ??\n",
+    to: "",
+    test: `${CURSOR}/test/briefing-omission.test.ts`,
+    because: "a connector bug silently costs every Cursor session its briefing",
+  },
+  {
+    label: "a background agent is told its suppressed briefing was lost",
+    file: `${CURSOR}/src/runner.ts`,
+    from: "  if (event !== \"sessionStart\" || parseCursorPayload(stdin)?.is_background_agent === true) {",
+    to: "  if (event !== \"sessionStart\") {",
+    test: `${CURSOR}/test/briefing-omission.test.ts`,
+    because: "a background agent's context carries a false line about a briefing it was never meant to get",
+  },
+  {
+    label: "doctor passes a machine that lost briefings",
+    file: `${CLI}/src/cli/doctor-briefings.ts`,
+    from: "  counts.total === 0\n    ? { level: \"PASS\", name: NAME",
+    to: "  true\n    ? { level: \"PASS\", name: NAME",
+    test: `${CLI}/test/doctor-briefings.test.ts`,
+    because: "a week of missing briefings reads as PASS",
+  },
+  {
+    label: "doctor never prints the briefings line",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    briefingOmissionsCheck(await readBriefingOmissions(config.home, key, now)),\n",
+    to: "",
+    test: `${CLI}/test/doctor-briefings.test.ts`,
+    because: "the count exists and no surface shows it",
+  },
+  {
+    label: "a briefing lost last month still warns",
+    file: `${CORE}/src/state/briefing-omissions.ts`,
+    from: "  const since = now.getTime() - BRIEFING_OMISSION_WINDOW_DAYS * MS_PER_DAY;",
+    to: "  const since = 0;",
+    test: `${CORE}/test/briefing-omissions.test.ts`,
+    because: "a slow week a month ago is today's WARN for ever",
+  },
+  {
+    label: "another repo's lost briefing is charged to this one",
+    file: `${CORE}/src/state/briefing-omissions.ts`,
+    from: "(entry.key === null || entry.key === key)",
+    to: "true",
+    test: `${CORE}/test/briefing-omissions.test.ts`,
+    because: "doctor in a healthy repo warns about a sibling repo's hub",
+  },
+  {
+    label: "the briefing-omission ledger grows for ever",
+    file: `${CORE}/src/state/briefing-omissions.ts`,
+    from: "    if (size >= MAX_BRIEFING_OMISSION_LEDGER_BYTES) {\n      return;\n    }\n",
+    to: "",
+    test: `${CORE}/test/briefing-omissions.test.ts`,
+    because: "a hub that never answers grows a file in the home on every session start",
+  },
+  // The tripwire takes the large-change rule too (release gate, 2026-10-08):
+  // the ask names the hub's first row, so the order is the decision.
+  {
+    label: "the tripwire ranks by heartbeat only",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  Number(left.largeChangeFiles !== null) - Number(right.largeChangeFiles !== null) ||\n  Date.parse(right.lastHeartbeatAt)",
+    to: "  Date.parse(right.lastHeartbeatAt)",
+    test: `${SERVER}/test/tripwire-large-change.test.ts`,
+    because: "a fresher 300-file sweep through the file is the one teammate the ask names, ahead of the plan in it",
+  },
+  {
+    label: "the tripwire forgets which session is freshest",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  Date.parse(right.lastHeartbeatAt) - Date.parse(left.lastHeartbeatAt) ||\n",
+    to: "",
+    test: `${SERVER}/test/tripwire-large-change.test.ts`,
+    because: "the ask names a teammate who stopped a minute ago over the one editing the file now",
+  },
+  {
+    label: "the tripwire ranks only the five freshest candidates",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    .limit(TRIPWIRE_MAX_CANDIDATES);",
+    to: "    .limit(TRIPWIRE_MAX_SESSIONS);",
+    test: `${SERVER}/test/tripwire-large-change.test.ts`,
+    because: "five fresher renames through the file push the focused plan out of the answer before it is ranked",
+  },
+  {
+    label: "the tripwire row forgets how large the change is",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "      largeChangeFiles: large.get(row.workContextId) ?? null,",
+    to: "      largeChangeFiles: null,",
+    test: `${SERVER}/test/tripwire-large-change.test.ts`,
+    because: "the ask shows a rename's touch of the file as if it were a focused plan's",
+  },
+  {
+    label: "the tripwire counts a long-lived session's old touches as a large change",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    new Date(deps.now().getTime() - GHOST_ACTIVE_WINDOW_DAYS * MS_PER_DAY),",
+    to: "    new Date(0),",
+    test: `${SERVER}/test/tripwire-large-change.test.ts`,
+    because: "the pilot owner's long-lived worktree is ranked and worded as a rename on every ask",
+  },
+  {
+    label: "the tripwire ask drops the large-change qualifier",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "    `${size === null ? \"\" : `, ${largeChangeClause(size)}`}.`;",
+    to: "    `.`;",
+    test: `${CORE}/test/hint-render.test.ts`,
+    because: "the hub says the teammate in the file is a rename and the ask never tells the agent",
   },
   // A base already on the default branch, however it got there.
   {
@@ -24138,6 +24319,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/coverage-cli.test.ts 6
  * PRINTS: packages/cli/test/cursor-doctor.test.ts 4
  * PRINTS: packages/cli/test/cursor-init.test.ts 1
+ * PRINTS: packages/cli/test/doctor-briefings.test.ts 2
  * PRINTS: packages/cli/test/doctor-capture.test.ts 7
  * PRINTS: packages/cli/test/doctor-ci.test.ts 3
  * PRINTS: packages/cli/test/doctor-claim-binding.test.ts 4
@@ -24223,6 +24405,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/at7-run.test.ts 5
  * PRINTS: packages/connector-claude/test/at7-stats.test.ts 1
  * PRINTS: packages/connector-claude/test/at7-stream.test.ts 3
+ * PRINTS: packages/connector-claude/test/briefing-omission-hook.test.ts 4
  * PRINTS: packages/connector-claude/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-claude/test/capture-latency.test.ts 1
  * PRINTS: packages/connector-claude/test/conclusion-corpus.test.ts 6
@@ -24273,8 +24456,9 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/absence-render.test.ts 7
  * PRINTS: packages/connector-core/test/body-redaction.test.ts 5
  * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 25
- * PRINTS: packages/connector-core/test/briefing-flow.test.ts 3
+ * PRINTS: packages/connector-core/test/briefing-flow.test.ts 7
  * PRINTS: packages/connector-core/test/briefing-notice.test.ts 1
+ * PRINTS: packages/connector-core/test/briefing-omissions.test.ts 3
  * PRINTS: packages/connector-core/test/briefing-presence-topics.test.ts 6
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 5
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 3
@@ -24316,7 +24500,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 4
  * PRINTS: packages/connector-core/test/hint-intent-fallback.test.ts 4
- * PRINTS: packages/connector-core/test/hint-render.test.ts 4
+ * PRINTS: packages/connector-core/test/hint-render.test.ts 5
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
  * PRINTS: packages/connector-core/test/hint-substance-flow.test.ts 2
  * PRINTS: packages/connector-core/test/hint-substance-render.test.ts 1
@@ -24385,6 +24569,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
  * PRINTS: packages/connector-core/test/verdict-wire.test.ts 2
  * PRINTS: packages/connector-core/test/working-days.test.ts 3
+ * PRINTS: packages/connector-cursor/test/briefing-omission.test.ts 3
  * PRINTS: packages/connector-cursor/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-cursor/test/budget.test.ts 2
  * PRINTS: packages/connector-cursor/test/derive-doctor.test.ts 3
@@ -24519,6 +24704,7 @@ interface Outcome {
  * PRINTS: packages/server/test/suspect.test.ts 9
  * PRINTS: packages/server/test/target-last-seen.test.ts 1
  * PRINTS: packages/server/test/team-settings.test.ts 9
+ * PRINTS: packages/server/test/tripwire-large-change.test.ts 5
  * PRINTS: packages/server/test/ui-feed.test.ts 3
  * PRINTS: packages/server/test/ui-passkeys.test.ts 9
  * PRINTS: packages/server/test/ui-work-context.test.ts 2

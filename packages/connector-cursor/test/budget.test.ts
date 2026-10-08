@@ -50,10 +50,14 @@ import { runCursorHook } from "../src/index.ts";
 import { prepareCursorHook } from "../src/runner.ts";
 import { handleCursorPostToolUse } from "../src/handlers/post-tool-use.ts";
 import { deliveredAdditionalContext } from "../src/inject/output.ts";
+import { unansweredReadsLine } from "@crosscheck/connector-core/briefing/omission.ts";
 import {
   POST_TOOL_USE_FAILING_COMMAND,
   SESSION_START_INPUT,
 } from "./fixtures/cursor-contract/payloads.ts";
+
+/** A Cursor sessionStart's briefing reads: the shared block, notices included (connector-core flows/briefing.ts). */
+const BRIEFING_READS = 9;
 import {
   TEAMMATE_NAME,
   startSlowHub,
@@ -132,8 +136,9 @@ describe("fail-open within budget", () => {
     );
     const elapsedMs = performance.now() - startedAt;
 
-    // Assert
-    expect(out).toBe("{}");
+    // Assert: still bounded, and no longer silent — the session is told it
+    // has no briefing and why (2026-10-08), never an empty answer.
+    expect(deliveredAdditionalContext(out)).toBe(unansweredReadsLine(BRIEFING_READS, BRIEFING_READS, true));
     expect(elapsedMs).toBeLessThan(
       HTTP_TIMEOUT_MS * SESSION_START_BUDGET_RATIO + MARGIN_MS,
     );
@@ -141,12 +146,14 @@ describe("fail-open within budget", () => {
     await rm(home, { recursive: true, force: true });
   });
 
-  test("a hub slower than every budget: the race answers {} within budget + margin — the briefing degrades, never the hook", async () => {
+  test("a hub slower than every budget: the hook answers within budget + margin and says the briefing is missing — it degrades, never the hook", async () => {
     // Arrange: every endpoint slower than the whole hook budget. Since
-    // Block 7 this sessionStart also attempts the briefing (six parallel
+    // Block 7 this sessionStart also attempts the briefing (the parallel
     // GETs) — all of them die on the per-request timeout, the briefing
-    // collapses to silence, and the hook still answers inside its budget:
-    // the briefing prefetch/fallback discipline, measured.
+    // collapses to the one line that says so (2026-10-08; whether the reads'
+    // timeouts or the budget's race ends it first, the session is told), and
+    // the hook still answers inside its budget: the briefing
+    // prefetch/fallback discipline, measured.
     const hub = startSlowHub({ ingest: 5000, end: 5000, other: 5000 });
     const repo = await makeRepo("budget-slow", { remote: REMOTE });
     const home = await makeHome("budget-slow");
@@ -169,8 +176,8 @@ describe("fail-open within budget", () => {
 
       // Assert: inside the budget — the per-request timeouts carry it (the
       // race, pinned in hook-budget.test.ts, is the backstop if they could
-      // not) — never hung on the hub.
-      expect(out).toBe("{}");
+      // not) — never hung on the hub, and never silent about it.
+      expect(deliveredAdditionalContext(out)).toStartWith("crosscheck: no briefing this session — ");
       expect(elapsedMs).toBeLessThan(
         timeoutMs * SESSION_START_BUDGET_RATIO + MARGIN_MS,
       );

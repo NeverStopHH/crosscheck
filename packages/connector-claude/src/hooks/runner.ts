@@ -31,8 +31,11 @@ import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
 import { recordHookFired } from "@crosscheck/connector-core/state/fired-markers.ts";
 import { recordHookTimeout } from "@crosscheck/connector-core/state/loss-ledger.ts";
 import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import { briefingSkippedLine } from "@crosscheck/connector-core/briefing/omission.ts";
+import { recordBriefingOmission } from "@crosscheck/connector-core/state/briefing-omissions.ts";
 import { extractFilePaths, parseHookPayload } from "../capture/tool-events.ts";
 import type { HookPayload } from "../capture/tool-events.ts";
+import { sessionStartContext } from "./session-start-output.ts";
 
 export type HookName =
   | "session-start"
@@ -292,10 +295,53 @@ const unresolvedOwner = async (stdin: string, env: Env): Promise<LossOwner | nul
 };
 
 /**
+ * THE HOOKS WHOSE ANSWER IS THE BRIEFING, and how each wraps one line of
+ * context. Only these speak when they lose their answer: a PostToolUse that
+ * printed something would land in the reader's context unasked.
+ */
+const BRIEFING_OUTPUTS: Partial<Readonly<Record<HookName, (text: string) => string>>> = {
+  "session-start": sessionStartContext,
+};
+
+/**
+ * A BRIEFING HOOK THAT LOST ITS BRIEFING SAYS SO (2026-10-08) — the budget
+ * won the race, or the handler threw — and books the omission for doctor
+ * (state/briefing-omissions.ts). Before, both answered "", so the person
+ * read an empty session as a quiet repo and nothing told them otherwise.
+ *
+ * Owned exactly like a capture loss (`unresolvedOwner`, review M4): a repo
+ * the hook resolved, a session state naming one, or a connected repo above
+ * the cwd. Anywhere else the hook would have been silent anyway — under a
+ * user-level install it fires in every directory, and a line there would be
+ * noise — so null, and the caller keeps its old answer.
+ */
+const skippedBriefing = async (
+  name: HookName,
+  reason: "budget" | "error",
+  resolvedOwner: LossOwner | null,
+  stdin: string,
+  env: Env,
+): Promise<string | null> => {
+  const output = BRIEFING_OUTPUTS[name];
+  if (output === undefined) {
+    return null;
+  }
+  const owner = resolvedOwner ?? (await unresolvedOwner(stdin, env));
+  if (owner === null) {
+    return null;
+  }
+  await recordBriefingOmission(owner.home, { key: owner.key, reason, now: new Date() });
+  return output(briefingSkippedLine(reason));
+};
+
+/**
  * The one place hooks are allowed to fail: everything is caught, nothing is
  * written to stderr, and the caller always exits 0 (spec §E). The budget covers
  * preparation too — resolving repo identity spawns several git processes, and a
- * slow git would otherwise blow the documented budget many times over.
+ * slow git would otherwise blow the documented budget many times over. Failing
+ * is allowed, failing SILENTLY is not, for the one hook whose answer is the
+ * briefing: a SessionStart the budget cut or a throw ended answers the line
+ * that says so (`skippedBriefing`, 2026-10-08), never an empty session.
  *
  * FIRST, before the budget, before any file or git is touched: a hook
  * running inside the Tier-1 summarizer's own nested `claude -p` (the
@@ -317,6 +363,12 @@ export const runHookWith = async (
   if (isSummarizerChild(env)) {
     return "";
   }
+  // A holder rather than a plain `let`, so the assignment inside the
+  // callback is visible to the narrowing below — and outside the `try`, so
+  // a hook that threw can still say which repo lost its briefing.
+  const resolved: { value: { home: string; key: string } | null } = {
+    value: null,
+  };
   try {
     const { budgetMs, timeoutMs } = await resolveHookBudget(
       BUDGET_RATIOS[name],
@@ -325,11 +377,6 @@ export const runHookWith = async (
     // The handler's deadline is taken a fraction BEFORE the race timer starts,
     // so what the handler believes it has left is never more than the truth.
     const deadlineMs = Date.now() + budgetMs;
-    // A holder rather than a plain `let`, so the assignment inside the
-    // callback is visible to the narrowing below.
-    const resolved: { value: { home: string; key: string } | null } = {
-      value: null,
-    };
     const outcome = await raceHookBudget(
       prepareAndRun(
         handler,
@@ -370,8 +417,12 @@ export const runHookWith = async (
         new Date(),
       );
     }
-    return outcome.output;
+    return outcome.timedOut
+      ? ((await skippedBriefing(name, "budget", resolved.value, stdin, env)) ?? outcome.output)
+      : outcome.output;
   } catch {
-    return "";
+    // Still the one place a hook may fail — but a briefing hook that failed
+    // says so in the session instead of leaving it looking quiet.
+    return (await skippedBriefing(name, "error", resolved.value, stdin, env).catch(() => null)) ?? "";
   }
 };

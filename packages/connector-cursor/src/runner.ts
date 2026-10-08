@@ -64,8 +64,12 @@ import {
   safeHostSessionId,
 } from "@crosscheck/connector-core/state/host-session-key.ts";
 
+import { briefingSkippedLine } from "@crosscheck/connector-core/briefing/omission.ts";
+import { recordBriefingOmission } from "@crosscheck/connector-core/state/briefing-omissions.ts";
+
 import { CURSOR_NO_OP_OUTPUT } from "./constants.ts";
 import { recordContractDrift } from "./drift.ts";
+import { cursorInjectionOutput } from "./inject/output.ts";
 import {
   missingMappedFields,
   parseCursorPayload,
@@ -381,6 +385,8 @@ export const runCursorHookWith = async (
   if (isSummarizerChild(env)) {
     return CURSOR_NO_OP_OUTPUT;
   }
+  // Outside the `try`, so a hook that threw can still say whose briefing it lost.
+  const resolved: ResolvedLossKey = { value: null };
   try {
     const { budgetMs, timeoutMs } = await resolveHookBudget(
       BUDGET_RATIOS[event],
@@ -389,7 +395,6 @@ export const runCursorHookWith = async (
     // Deadline taken a fraction BEFORE the race timer starts, so what the
     // handler believes it has left is never more than the truth.
     const deadlineMs = Date.now() + budgetMs;
-    const resolved: ResolvedLossKey = { value: null };
     const outcome = await raceHookBudget(
       prepareAndRun(event, handler, stdin, env, hookBudget(deadlineMs, timeoutMs), resolved),
       budgetMs,
@@ -404,8 +409,37 @@ export const runCursorHookWith = async (
         await recordHookTimeout(owner.home, event, owner.key, new Date());
       }
     }
-    return outcome.output.length === 0 ? CURSOR_NO_OP_OUTPUT : outcome.output;
+    const skipped = outcome.timedOut ? await skippedCursorBriefing(event, "budget", resolved.value, stdin, env) : null;
+    return skipped ?? (outcome.output.length === 0 ? CURSOR_NO_OP_OUTPUT : outcome.output);
   } catch {
-    return CURSOR_NO_OP_OUTPUT;
+    return (
+      (await skippedCursorBriefing(event, "error", resolved.value, stdin, env).catch(() => null)) ??
+      CURSOR_NO_OP_OUTPUT
+    );
   }
+};
+
+/**
+ * A sessionStart that lost its briefing says so — the Claude runner's rule
+ * (connector-claude hooks/runner.ts skippedBriefing, 2026-10-08) on this
+ * host's output. Owned like a capture loss (`unresolvedCursorOwner`), and
+ * never for a background agent: its briefing is suppressed by design
+ * (handlers/session-start.ts), so a line saying it was lost would be false.
+ */
+const skippedCursorBriefing = async (
+  event: CursorHookEvent,
+  reason: "budget" | "error",
+  resolvedOwner: { readonly home: string; readonly key: string | null } | null,
+  stdin: string,
+  env: Env,
+): Promise<string | null> => {
+  if (event !== "sessionStart" || parseCursorPayload(stdin)?.is_background_agent === true) {
+    return null;
+  }
+  const owner = resolvedOwner ?? (await unresolvedCursorOwner(env, stdin));
+  if (owner === null) {
+    return null;
+  }
+  await recordBriefingOmission(owner.home, { key: owner.key, reason, now: new Date() });
+  return cursorInjectionOutput(briefingSkippedLine(reason));
 };

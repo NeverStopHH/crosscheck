@@ -30,8 +30,11 @@
  * with this note rather than half-built. The lexical fast path (exact targets +
  * FTS) is the one the design names normative for the sync budget.
  */
-import { and, desc, eq, gt, inArray, isNull, ne, notExists, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, ne, notExists, or, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
+
+import { GHOST_ACTIVE_WINDOW_DAYS, GHOST_HOT_TARGET_MAX_CONTEXTS } from "../constants.ts";
+import { listLargeChanges } from "./ghost-overlap.ts";
 
 import {
   agentSessions,
@@ -673,7 +676,39 @@ export interface TargetSessionView {
   readonly workContextTitle: string;
   /** The overlapping session's stated intent; the ask reason shows it. */
   readonly workContextIntent: Record<string, unknown> | null;
+  /**
+   * The files THEIR change touched in the window when it is a LARGE CHANGE
+   * (over GHOST_MAX_CONTEXT_TARGETS), else null — the qualifier the ask
+   * prints, and why the row ranks after the focused ones. Never a reason a
+   * row is missing (services/ghost-overlap.ts states the rule).
+   */
+  readonly largeChangeFiles: number | null;
 }
+
+/**
+ * Candidate sessions read before the ranking: the hot-value line. A file more
+ * live contexts than this carry is a lockfile (GHOST_HOT_TARGET_MAX_CONTEXTS),
+ * so ranking by size past it buys nothing — and below it, the ranking sees
+ * every candidate, so the bound of five never cuts a focused session that a
+ * fresher large change outranked by heartbeat alone.
+ */
+const TRIPWIRE_MAX_CANDIDATES = GHOST_HOT_TARGET_MAX_CONTEXTS;
+
+const MS_PER_DAY = 86_400_000;
+
+/**
+ * The ask names the FIRST row (connector hooks/pre-tool-use.ts), so the order
+ * is the decision. Focused before a LARGE CHANGE — a session renaming three
+ * hundred files through this one is weaker evidence of a plan in the reader's
+ * way than one whose plan is in it (services/ghost-overlap.ts byStrength) —
+ * then the freshest heartbeat, then a stable id. The ghost check's first key,
+ * a shared error fingerprint, has nothing to rank here: a tripwire row
+ * matches ONE value, the file about to be edited, so no row shares a failure.
+ */
+const byTripwireStrength = (left: TargetSessionView, right: TargetSessionView): number =>
+  Number(left.largeChangeFiles !== null) - Number(right.largeChangeFiles !== null) ||
+  Date.parse(right.lastHeartbeatAt) - Date.parse(left.lastHeartbeatAt) ||
+  left.sessionId.localeCompare(right.sessionId);
 
 /**
  * Active teammate sessions whose work context targeted `value` on this repo —
@@ -682,6 +717,13 @@ export interface TargetSessionView {
  * caller's own sessions are excluded here rather than client-side so a
  * developer's parallel worktrees can never trip their own wire (DESIGN.md §4
  * self-session exclusion).
+ *
+ * A LARGE CHANGE IS RANKED AND QUALIFIED, NEVER DROPPED (release gate,
+ * 2026-10-08): the ghost check's rule, on the surface that asks before an
+ * edit. Its size is counted once per candidate in one grouped query
+ * (listLargeChanges), in the ghost check's window, and an owner hidden from
+ * the caller never reaches it — the presence condition keeps her sessions
+ * off this answer entirely, so none of her times is read for it.
  */
 export const listTargetSessions = async (
   deps: Deps,
@@ -721,16 +763,29 @@ export const listTargetSessions = async (
         notMutedCondition(callerDeveloperId, agentSessions.developerId),
       ),
     )
-    .limit(TRIPWIRE_MAX_SESSIONS);
-  return rows.map((row) => ({
-    sessionId: row.session.id,
-    developerId: row.session.developerId,
-    developerName: row.developerName,
-    branch: row.session.branch,
-    status: row.session.status,
-    lastHeartbeatAt: row.session.lastHeartbeatAt.toISOString(),
-    workContextId: row.workContextId,
-    workContextTitle: row.workContextTitle,
-    workContextIntent: row.workContextIntent ?? null,
-  }));
+    // Freshest first, then a stable id, so the bounded read keeps the
+    // freshest candidates; the ranking below decides the order shown.
+    .orderBy(desc(agentSessions.lastHeartbeatAt), asc(agentSessions.id))
+    .limit(TRIPWIRE_MAX_CANDIDATES);
+  const large = await listLargeChanges(
+    deps.db,
+    callerDeveloperId,
+    rows.map((row) => row.workContextId),
+    new Date(deps.now().getTime() - GHOST_ACTIVE_WINDOW_DAYS * MS_PER_DAY),
+  );
+  return rows
+    .map((row) => ({
+      sessionId: row.session.id,
+      developerId: row.session.developerId,
+      developerName: row.developerName,
+      branch: row.session.branch,
+      status: row.session.status,
+      lastHeartbeatAt: row.session.lastHeartbeatAt.toISOString(),
+      workContextId: row.workContextId,
+      workContextTitle: row.workContextTitle,
+      workContextIntent: row.workContextIntent ?? null,
+      largeChangeFiles: large.get(row.workContextId) ?? null,
+    }))
+    .sort(byTripwireStrength)
+    .slice(0, TRIPWIRE_MAX_SESSIONS);
 };

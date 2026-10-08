@@ -2376,6 +2376,13 @@ export const TripwireSessionSchema = z.looseObject({
   workContextTitle: z.string().min(1),
   /** The overlapping session's intent; the ask reason shows it. */
   workContextIntent: tolerantIntent,
+  /**
+   * The files their change touched when it is a LARGE CHANGE, else null —
+   * the ask's qualifier; the hub ranks such a row after the focused ones and
+   * never drops it (server services/hints.ts listTargetSessions). Tolerant
+   * like the ghost row's (GhostCheckEntrySchema.largeChangeFiles).
+   */
+  largeChangeFiles: z.number().int().min(0).nullable().optional().catch(undefined),
 });
 
 export type TripwireSession = z.infer<typeof TripwireSessionSchema>;

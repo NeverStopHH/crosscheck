@@ -57,6 +57,8 @@ import {
   getWorkContexts,
 } from "../http/hub.ts";
 import { withBriefingOutcomeClause } from "../hints/outcome-clause.ts";
+import { unansweredReadsLine } from "../briefing/omission.ts";
+import { recordBriefingOmission } from "../state/briefing-omissions.ts";
 import type { HubResult } from "../http/client.ts";
 import type {
   GhostCheckEntry,
@@ -99,7 +101,10 @@ export interface AssembleBriefingInput {
 }
 
 export interface AssembledBriefing {
-  /** The rendered briefing — empty means nothing worth injecting (silence). */
+  /**
+   * The rendered briefing — empty means nothing worth injecting (silence),
+   * and only that: a briefing reads did not complete says so instead.
+   */
   readonly briefing: string;
   /**
    * Work-context ids of the solved pointers the emitted text really shows —
@@ -134,9 +139,38 @@ export interface AssembledBriefing {
    * marked — a notice the character budget cut still waits.
    */
   readonly shownLandedNoticeIds: readonly string[];
+  /**
+   * Reads of the parallel block that did not ANSWER — timed out or
+   * unreachable (`kind: "network"`). When any did, the briefing says so in
+   * its last line (briefing/omission.ts) and the omission is booked for
+   * doctor; an empty briefing is then that line, never silence.
+   */
+  readonly unansweredReads: number;
 }
 
 const NO_NOTICES: HubResult<readonly LandedNotice[]> = { ok: true, data: [], dateHeader: null };
+
+/**
+ * A read that never answered, as opposed to one that answered unusably. Only
+ * the first is an omission: an older hub's missing route (404) or a payload
+ * this connector cannot use is fail-open BY DESIGN and stays silent, and
+ * counting it would print a warning on every session against every hub one
+ * release behind.
+ */
+const isUnanswered = (result: HubResult<unknown>): boolean => !result.ok && result.kind === "network";
+
+/**
+ * The briefing as delivered when reads did not answer: what arrived, then one
+ * line saying how much did not — or that line alone, when nothing arrived.
+ * Appended past the section budget on purpose: the line is ~100 characters,
+ * and an incomplete briefing that does not say so is the defect it closes.
+ */
+const withUnansweredReads = (briefing: string, unanswered: number, reads: number): string =>
+  unanswered === 0
+    ? briefing
+    : briefing.length === 0
+      ? unansweredReadsLine(unanswered, reads, true)
+      : `${briefing}\n${unansweredReadsLine(unanswered, reads, false)}`;
 
 export const assembleBriefing = async (
   input: AssembleBriefingInput,
@@ -181,6 +215,19 @@ export const assembleBriefing = async (
     // Same block, same one timeout; an older hub renders no section.
     input.tellsNotices === false ? Promise.resolve(NO_NOTICES) : getLandedNotices(hub, repoId),
   ]);
+  // The reads actually sent: a headless run's notices were never asked.
+  const reads: readonly HubResult<unknown>[] = [
+    presenceResult,
+    contextsResult,
+    absencesResult,
+    contradictionsResult,
+    solvedMatchesResult,
+    draftsResult,
+    questionsResult,
+    ghostChecksResult,
+    ...(input.tellsNotices === false ? [] : [landedNoticesResult]),
+  ];
+  const unansweredReads = reads.filter(isUnanswered).length;
   const presence = presenceResult.ok ? presenceResult.data : [];
   const workContexts = contextsResult.ok ? contextsResult.data : [];
   const absences = absencesResult.ok ? absencesResult.data.absences : [];
@@ -265,13 +312,26 @@ export const assembleBriefing = async (
       return entry !== null && briefing.includes(entry.text) ? entry.commitIds : [];
     });
 
+  // Booked HERE, once for every caller — the Claude and Cursor SessionStarts
+  // and the deferred briefings alike — before the line is shown.
+  if (unansweredReads > 0) {
+    await recordBriefingOmission(hub.home, {
+      key: hub.repoKey.length === 0 ? null : hub.repoKey,
+      reason: "hub",
+      now,
+    });
+  }
   return {
     // 07 §13 (D-O3): the solved pointers are briefing-channel deliveries, so
     // where the repo records outcomes the briefing ends with the one clause
     // that says how to record one — after the rendered text, never in it, and
-    // only while the whole still fits the briefing's cap.
-    briefing:
+    // only while the whole still fits the briefing's cap. The unanswered-reads
+    // line goes after even that: it is about the briefing, not in it.
+    briefing: withUnansweredReads(
       recordsOutcomes && shownSolvedIds.length > 0 ? withBriefingOutcomeClause(briefing) : briefing,
+      unansweredReads,
+      reads.length,
+    ),
     shownSolvedIds,
     shownGhostCount,
     shownLandedNoticeIds,
@@ -279,6 +339,7 @@ export const assembleBriefing = async (
     presenceFetched: presenceResult.ok,
     workContexts,
     landed,
+    unansweredReads,
   };
 };
 
