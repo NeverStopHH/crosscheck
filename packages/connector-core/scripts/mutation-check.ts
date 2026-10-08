@@ -977,7 +977,7 @@ export const MUTATIONS: readonly Mutation[
     // capture goes silent and the report stays green.
     label: "the failure event stops being registered",
     file: `${CONNECTOR}/src/cli/settings-merge.ts`,
-    from: "      PostToolUseFailure: group(`${prefix} hook post-tool-use-failure`),\n",
+    from: "      PostToolUseFailure: [group(`${prefix} hook post-tool-use-failure`)],\n",
     to: "",
     test: `${CLI}/test/doctor-global.test.ts`,
     because:
@@ -1777,7 +1777,7 @@ export const MUTATIONS: readonly Mutation[
     // so a machine with no install at all reads "via global install".
     label: "the hooks check trusts a global install that is not there",
     file: `${CLI}/src/cli/doctor.ts`,
-    from: "  REQUIRED_HOOK_EVENTS.every((event) => wiring.hookEvents.includes(event));",
+    from: "  REQUIRED_HOOK_KEYS.every((key) => wiring.hookEvents.includes(key));",
     to: "  wiring.hookEvents.length >= 0;",
     test: `${CLI}/test/doctor-global.test.ts`,
     because:
@@ -11637,16 +11637,16 @@ export const MUTATIONS: readonly Mutation[
     // Landing fetch. The three triggers.
     label: "an edit no longer asks for the fetch",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "  const [output] = await Promise.all([askBeforeEdit(ctx, budget), requestLandingFetchFor(ctx)]);",
-    to: "  const [output] = await Promise.all([askBeforeEdit(ctx, budget)]);",
+    from: "    requestLandingFetchFor(ctx),\n  ]);",
+    to: "  ]);",
     test: `${CONNECTOR}/test/landing-fetch-hook.test.ts`,
     because: "an agent working an hour on one prompt never sees what landed in that hour",
   },
   {
     label: "a prompt no longer asks for the fetch",
     file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
-    from: "  const [output] = await Promise.all([deliverPromptContext(ctx, budget), requestLandingFetchFor(ctx)]);",
-    to: "  const [output] = await Promise.all([deliverPromptContext(ctx, budget)]);",
+    from: "  const [delivery] = await Promise.all([deliverPromptContext(promptCtx, budget), requestLandingFetchFor(ctx)]);",
+    to: "  const [delivery] = await Promise.all([deliverPromptContext(promptCtx, budget)]);",
     test: `${CONNECTOR}/test/landing-fetch-hook.test.ts`,
     because: "a change merged mid-session reaches the stop only when an edit happens to ask",
   },
@@ -20040,8 +20040,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "UserPromptSubmit never carries the draft nudge",
     file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
-    from: "  return nudge;\n};",
-    to: "  return \"\";\n};",
+    from: "  return spoken(nudge);\n};",
+    to: "  return spoken(\"\");\n};",
     test: `${CONNECTOR}/test/draft-nudge-hook.test.ts`,
     because: "Claude Code sessions spend the slot and the agent is never asked to settle its drafts",
   },
@@ -28601,6 +28601,1706 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/landed-probe-cuts.test.ts`,
     because: "every healthy machine's status carries a line about a problem it does not have",
   },
+  // ── Collisions reach the PERSON (pilot, 2026-10-07) ────────────────────
+  // Two teammates edited 11 of the same files over three days and every
+  // collision crosscheck saw went into an agent's context only. Each anchor
+  // below re-opens one way the person goes back to seeing nothing, or sees
+  // something they must not. Guards shell out to git (makeRepo) where they
+  // drive the real hooks — the assertGuardIsGreen caveat.
+  {
+    label: "a tripwire hit tells the agent and never the person again",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "    : askOutput(ctx, answer.reason, notices.length === 0 ? null : renderCollisionNotices(notices, ctx.now()));",
+    to: "    : askOutput(ctx, answer.reason, null);",
+    test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
+    because: "the ask reaches the agent's context and the person, in notice mode or a subagent, reads nothing at all — the pilot's failure",
+  },
+  {
+    label: "the person is told about the same teammate's work on every file",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "    told.value = groups.filter((group) => fresher.includes(group.key));",
+    to: "    told.value = groups;",
+    test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
+    because: "one teammate on eleven files is eleven warnings, and a notice that nags is a notice that gets ignored",
+  },
+  {
+    label: "the agent is never asked to tell the person",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: ": { ...output, additionalContext: `${output.additionalContext}\\n${COLLISION_RELAY_SENTENCE}` };",
+    to: ": output;",
+    test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
+    because: "the facts reach the model as before and nothing asks it to say them, which is exactly how no agent relayed one in the pilot",
+  },
+  {
+    label: "a subagent's collision never reaches the main thread",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "  const queued = ctx.payload.agent_id === undefined || told.length === 0",
+    to: "  const queued = true || told.length === 0",
+    test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
+    because: "the hit stays in the subagent's context, where 91% of the pilot owner's edits were made and nobody reads",
+  },
+  {
+    label: "a subagent's collision is relayed to the main thread on every prompt",
+    file: `${CONNECTOR}/src/hooks/collision-relay.ts`,
+    from: "      return withDrainedCollisionRelays(fresh);",
+    to: "      return fresh;",
+    test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
+    because: "the queue is never emptied, so every later prompt hands the agent the same overlap again",
+  },
+  {
+    label: "a briefing's ghost row is told to the agent and never the person",
+    file: `${CONNECTOR}/src/hooks/session-start.ts`,
+    from: "  return sessionStartContext(briefing, renderCollisionNotices(told, ctx.now()));",
+    to: "  return sessionStartContext(briefing, \"\");",
+    test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
+    because: "the multi-day overlap the live tripwire cannot see stays inside additionalContext, which shows no chat message",
+  },
+  {
+    label: "the statusline hides an overlap the session has",
+    file: `${CONNECTOR}/src/statusline/statusline.ts`,
+    from: "    const line = `${overlap}${presence.line}`;",
+    to: "    const line = presence.line;",
+    test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
+    because: "the one surface a person glances at while working says nothing of a teammate on their files",
+  },
+  {
+    label: "a branch withheld for presence opt-out is printed in the person's notice",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "const isNameableBranch = (raw: string): boolean => raw !== LOCATION_WITHHELD && !isDetachedBranch(raw);",
+    to: "const isNameableBranch = (raw: string): boolean => !isDetachedBranch(raw);",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "the projection's marker is printed as a branch, and the notice tells the reader the teammate opted out",
+  },
+  {
+    label: "a teammate's raw display name reaches the person's notice",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  const name = raw === undefined ? \"\" : personField(raw, COLLISION_NOTICE_NAME_CHARS);",
+    to: "  const name = raw === undefined ? \"\" : raw;",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "a name carrying a newline, a separator or a bidi override forges a second line or verdict in what the person reads",
+  },
+  {
+    label: "a teammate's raw branch reaches the person's notice",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  const branch = isNameableBranch(raw) ? personField(raw, COLLISION_NOTICE_BRANCH_CHARS) : \"\";",
+    to: "  const branch = isNameableBranch(raw) ? raw : \"\";",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "the branch field is the teammate's own text, printed outside any frame",
+  },
+  {
+    label: "the session state keeps a hub-sent path unsanitized and unbounded",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  cappedFromLeft(cleanedWith(unsolicitedHead(path), STORED_STRIP), COLLISION_NOTICE_PATH_CHARS);",
+    to: "  path;",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "a ghost row's shared value is written into the state file as the hub sent it, at any length",
+  },
+  {
+    label: "a file name read back from the state file is printed unsanitized",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  const shown = first === undefined ? \"\" : personField(basename(first), COLLISION_NOTICE_FILE_CHARS);",
+    to: "  const shown = first === undefined ? \"\" : basename(first);",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "a tampered or older state file is trusted more than a hub row, and its path forges structure",
+  },
+  {
+    label: "a ghost row with no shared file is told to the person as a collision",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "    if (files.length === 0) {",
+    to: "    if (false) {",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "an overlap of a failure or of intent words reads 'is working on a file you touched' — a collision that is not one",
+  },
+  {
+    label: "the files a ghost row's sample held back are not counted",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  return entry.sharedTargets.at(-1)?.kind === FILE_KIND ? files + hidden : files;",
+    to: "  return files;",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "a teammate on nine of your files is reported as one, from the hub's bounded sample",
+  },
+  {
+    label: "a partial record behind the person's notice goes unsaid",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "    ...(coverage !== undefined && hasIncompleteRung(coverage) ? { partial: true } : {}),",
+    to: "    ...({}),",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "COV-9: the person learns only from doctor that the overlap rests on an incomplete record and may be wider",
+  },
+  {
+    label: "the overlap indicator grows past its bound",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  return capped(`⚠ overlap: ${segment}`, COLLISION_INDICATOR_MAX_CHARS);",
+    to: "  return `⚠ overlap: ${segment}`;",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "long names push the statusline's capture-health indicator off a ninety-character line",
+  },
+  {
+    label: "a compact tells the person about the same teammate's work again",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  ...(previous.collisionNotices === undefined ? {} : { collisionNotices: previous.collisionNotices }),",
+    to: "  ...({}),",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "every compact and resume re-fires SessionStart inside the same session and repeats the ghost notice",
+  },
+  {
+    label: "a group already told is new again",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  const told = new Set((state.collisionNotices ?? []).map((notice) => notice.key));",
+    to: "  const told = new Set<string>();",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "the once-per-(teammate, file group) rule is gone and the person is told on every hook",
+  },
+  // ── Review of feat/collision-visible, M3: the record survives corruption ──
+  {
+    label: "a malformed told-groups list makes the session state unreadable",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "      const parsed = CollisionNoticeSchema.safeParse(entry);\n      return parsed.success ? [parsed.data] : [];\n    }),\n  )\n  .optional()\n  .catch(undefined);",
+    to: "      const parsed = CollisionNoticeSchema.safeParse(entry);\n      return parsed.success ? [parsed.data] : [];\n    }),\n  )\n  .optional();",
+    test: `${CORE}/test/collision-state.test.ts`,
+    because: "a null state silences every hook of the session, the tripwire and the briefing included",
+  },
+  {
+    label: "one malformed told group drops every told group",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "      const parsed = CollisionNoticeSchema.safeParse(entry);\n      return parsed.success ? [parsed.data] : [];",
+    to: "      return [CollisionNoticeSchema.parse(entry)];",
+    test: `${CORE}/test/collision-state.test.ts`,
+    because: "the person is told again about every teammate the session already named",
+  },
+  {
+    label: "a malformed relay queue makes the session state unreadable",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "    entries.filter((entry): entry is string => typeof entry === \"string\" && entry.length > 0),\n  )\n  .optional()\n  .catch(undefined);",
+    to: "    entries.filter((entry): entry is string => typeof entry === \"string\" && entry.length > 0),\n  )\n  .optional();",
+    test: `${CORE}/test/collision-state.test.ts`,
+    because: "a null state silences every hook of the session, the tripwire and the briefing included",
+  },
+  {
+    label: "one malformed relay key is handed on as a key",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "    entries.filter((entry): entry is string => typeof entry === \"string\" && entry.length > 0),",
+    to: "    entries as string[],",
+    test: `${CORE}/test/collision-state.test.ts`,
+    because: "a number or an object travels as a group key into the main thread's relay",
+  },
+  // ── Review of feat/collision-visible, L6 ───────────────────────────────
+  {
+    label: "a later complete answer erases the gap an earlier one reported",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  const isPartial = told.partial === true || group.partial === true;",
+    to: "  const isPartial = group.partial === true;",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "COV-9: the statusline and the relay stop saying the overlap may be wider while the record still has a hole",
+  },
+  // ── Review of feat/collision-visible, M1: no redaction marker for a person ──
+  {
+    label: "a name, branch or file name that reads like an instruction reaches the person",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  return cleaned.length === 0 || tripsPhraseFilter(cleaned) ? \"\" : capped(cleaned, maxChars);",
+    to: "  return cleaned.length === 0 ? \"\" : capped(cleaned, maxChars);",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "an instruction-shaped field is printed outside any frame on the one line a person reads",
+  },
+  {
+    label: "the state stores the redaction marker in place of a path",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  cappedFromLeft(cleanedWith(unsolicitedHead(path), STORED_STRIP), COLLISION_NOTICE_PATH_CHARS);",
+    to: "  (tripsPhraseFilter(path) ? \"[redacted]\" : cappedFromLeft(cleanedWith(unsolicitedHead(path), STORED_STRIP), COLLISION_NOTICE_PATH_CHARS));",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "two files under overrides/ collapse into one marker, and the person is told one file where there are two",
+  },
+  // ── Review of feat/collision-visible, L1 ───────────────────────────────
+  {
+    label: "a deep path is cut from the right and the file name is lost",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  cappedFromLeft(cleanedWith(unsolicitedHead(path), STORED_STRIP), COLLISION_NOTICE_PATH_CHARS);",
+    to: "  capped(cleanedWith(unsolicitedHead(path), STORED_STRIP), COLLISION_NOTICE_PATH_CHARS);",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "a monorepo path past the cap keeps its directories and drops PlayerMappingGrid.tsx, the one word the person needed",
+  },
+  {
+    label: "the left cut of a stored path splits an astral pair",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  return `${ELLIPSIS}${isLowSurrogate(tail.charCodeAt(0)) ? tail.slice(1) : tail}`;",
+    to: "  return `${ELLIPSIS}${tail}`;",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "a lone surrogate is written into the state file and rendered on the person's line",
+  },
+  {
+    label: "the left cut prints the tail of an oversized value on an unsolicited line",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  cappedFromLeft(cleanedWith(unsolicitedHead(path), STORED_STRIP), COLLISION_NOTICE_PATH_CHARS);",
+    to: "  cappedFromLeft(cleanedWith(path, STORED_STRIP), COLLISION_NOTICE_PATH_CHARS);",
+    test: `${CORE}/test/anchoring-separation.test.ts`,
+    because: "bytes from ten thousand characters into a teammate's value reach a line nobody asked for",
+  },
+  // ── Review of feat/collision-visible, L2: the person-facing strip ──────
+  {
+    label: "a person's line keeps lookalike separators, blank fillers and markdown beacons",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  const cleaned = personCleaned(raw);",
+    to: "  const cleaned = bareCleaned(raw);",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "a name padded with U+2800 or carrying U+2236 and U+2013 forges a second verdict, and ![x](…) is a beacon in a markdown panel",
+  },
+  {
+    label: "the person-facing strip runs only before NFKC",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  personPass(bareCleaned(personPass(raw)))",
+    to: "  bareCleaned(personPass(raw))",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "fullwidth brackets and bangs fold into markdown after the only strip has run",
+  },
+  {
+    label: "the state keeps invisibles and lone surrogates in a stored path",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "const STORED_STRIP = new RegExp(`[${INVISIBLE_CLASS}]`, \"gu\");",
+    to: "const STORED_STRIP = new RegExp(\"[\\\\p{Default_Ignorable_Code_Point}]\", \"gu\");",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "a lone surrogate and a blank filler are written into the session state as part of a path",
+  },
+  // ── Review of feat/collision-visible, L8: landed work is a change, not a plan ──
+  {
+    label: "a landed teammate context is told as work in progress",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "    ...(hasLanded(session.landedAt) ? { landed: true } : {}),",
+    to: "    ...({}),",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "the person is told Mike is working on a file whose change already merged, and talks to him about a plan that is done",
+  },
+  {
+    label: "an unreadable landedAt is told as merged",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  typeof landedAt === \"string\" && !Number.isNaN(Date.parse(landedAt));",
+    to: "  typeof landedAt === \"string\";",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "a hub's garbage in one field turns live work into 'changed (merged)', and the person stops talking to a teammate still on it",
+  },
+  {
+    label: "the tripwire row stops saying whether its context landed",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    landedAt: row.landedAt === null ? null : row.landedAt.toISOString(),",
+    to: "    landedAt: null,",
+    test: `${SERVER}/test/tripwire-rows.test.ts`,
+    because: "every connector reads merged work as a session still working on the file",
+  },
+  // ── Review of feat/collision-visible, M4: every teammate on the file ───
+  {
+    label: "a teammate new on an already-asked file is never asked about",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "    const teammate = found.sessions.find((session) => !askedGroups.includes(liveAskKey(file, session))) ?? null;",
+    to: "    const teammate = fresh.tripwireAskedFiles.includes(file) ? null : (found.sessions[0] ?? null);",
+    test: `${CONNECTOR}/test/collision-teammates-hook.test.ts`,
+    because: "the asked marker is per file again, and Ken, who started on it after Nick, is never named to anybody",
+  },
+  {
+    label: "only the first teammate on a file is told to the person",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "  const groups = found.sessions.map((session) => tripwireCollision(session, file, found.coverage));",
+    to: "  const groups = won.teammate === null ? [] : [tripwireCollision(won.teammate, file, found.coverage)];",
+    test: `${CONNECTOR}/test/collision-teammates-hook.test.ts`,
+    because: "two teammates on the file, and the person hears about one",
+  },
+  {
+    label: "the same teammate on the same file is asked about on every edit",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "      teammate === null ? fresh : withTripwireGroupAsked(withTripwireAsked(fresh, file), liveAskKey(file, teammate));",
+    to: "      teammate === null ? fresh : withTripwireAsked(fresh, file);",
+    test: `${CONNECTOR}/test/collision-teammates-hook.test.ts`,
+    because: "the permission prompt comes back on every save of a file the person already chose to edit",
+  },
+  {
+    label: "the tripwire answers its teammates in storage order",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    .orderBy(desc(agentSessions.lastHeartbeatAt), asc(agentSessions.id), asc(workContexts.id))\n",
+    to: "",
+    test: `${SERVER}/test/tripwire-rows.test.ts`,
+    because: "which teammate the ask names and the order the person reads them in depend on insertion order, and the bound can drop the freshest",
+  },
+  // ── Review of feat/collision-visible, L3: told only when it can be said ──
+  {
+    label: "the tripwire marks a group told with no time left to say it",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "  if (groups.length === 0 || budget.spareMs() <= 0) {",
+    to: "  if (groups.length === 0) {",
+    test: `${CONNECTOR}/test/collision-order-hook.test.ts`,
+    because: "the race abandons the hook after the marker is written, and the person is never told about that teammate",
+  },
+  {
+    label: "a group the tripwire could not tell in time is never told",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "  return answer.reason === null && notices.length === 0",
+    to: "  return answer.reason === null",
+    test: `${CONNECTOR}/test/collision-order-hook.test.ts`,
+    because: "an edit whose pairs were all asked before says nothing, so a line skipped once is skipped for the session",
+  },
+  {
+    label: "a late collision line reaches the agent without its facts",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "          hookSpecificOutput: { hookEventName: \"PreToolUse\", additionalContext: `${notice}\\n${COLLISION_RELAY_SENTENCE}` },",
+    to: "          hookSpecificOutput: { hookEventName: \"PreToolUse\", additionalContext: COLLISION_RELAY_SENTENCE },",
+    test: `${CONNECTOR}/test/collision-order-hook.test.ts`,
+    because: "the agent is asked to mention an overlap it was never shown",
+  },
+  {
+    label: "a subagent relay drains into a prompt hook with no time left",
+    file: `${CONNECTOR}/src/hooks/collision-relay.ts`,
+    from: "    if (ctx.payload.agent_id !== undefined || budget.spareMs() <= 0) {",
+    to: "    if (ctx.payload.agent_id !== undefined) {",
+    test: `${CONNECTOR}/test/collision-order-hook.test.ts`,
+    because: "the queue is emptied into an output the budget race throws away, and the main thread never hears of the overlap",
+  },
+  // ── Review of feat/collision-visible, H1a: the relay reaches the PERSON ──
+  {
+    label: "a relayed subagent collision reaches the main thread's agent and never the person",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    from: "  return JSON.stringify(person.length === 0 ? envelope(text) : { systemMessage: person, ...envelope(text) });",
+    to: "  return JSON.stringify(envelope(text));",
+    test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
+    because: "91% of the pilot owner's edits were subagents', and their collisions reached a context nobody reads and then a reply nobody was asked to write",
+  },
+  // ── Review of feat/collision-visible, L4: a few lines, never a wall ────
+  {
+    label: "a relay of the whole queue prints every group on its own line",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  lines.slice(0, COLLISION_NOTICE_MAX_LINES).reduce<readonly string[]>((fitted, line) => {",
+    to: "  lines.reduce<readonly string[]>((fitted, line) => {",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "thirty-two subagent collisions drain as thirty-two lines on the person's screen, and the person stops reading at the fourth",
+  },
+  {
+    label: "the collision lines are bounded in count but not in characters",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "    return candidate.join(\"\\n\").length + room <= COLLISION_NOTICE_MAX_CHARS ? candidate : fitted;",
+    to: "    return candidate;",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "five lines of maximum-length names, branches and paths are a wall of text no person reads",
+  },
+  {
+    label: "the groups past the cap vanish without a count",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  return [...kept, ...moreTail(lines.length - kept.length + hidden)].join(\"\\n\");",
+    to: "  return kept.join(\"\\n\");",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "the person reads five overlaps as all of them, and the sixth teammate is never named or counted",
+  },
+  // ── Review of feat/collision-visible, H1b: the same turn, not the next prompt ──
+  {
+    label: "init stops registering the subagent-return hook",
+    file: `${CONNECTOR}/src/cli/settings-merge.ts`,
+    from: "        group(`${prefix} hook ${SUBAGENT_RETURN_HOOK}`, SUBAGENT_RETURN_MATCHER),\n",
+    to: "",
+    test: `${CONNECTOR}/test/settings-merge.test.ts`,
+    because: "a foreground subagent's collision waits for the person's next prompt, after the reply that should have mentioned it",
+  },
+  {
+    label: "the subagent-return hook is registered async",
+    file: `${CONNECTOR}/src/cli/settings-merge.ts`,
+    from: "        group(`${prefix} hook ${SUBAGENT_RETURN_HOOK}`, SUBAGENT_RETURN_MATCHER),",
+    to: "        group(`${prefix} hook ${SUBAGENT_RETURN_HOOK}`, SUBAGENT_RETURN_MATCHER, true),",
+    test: `${CONNECTOR}/test/settings-merge.test.ts`,
+    because: "an async hook's systemMessage is shown to nobody and its context reaches the agent a turn late",
+  },
+  {
+    label: "a returning subagent hands its collision to nobody",
+    file: `${CONNECTOR}/src/hooks/subagent-return.ts`,
+    from: "  return agent.length === 0",
+    to: "  return true",
+    test: `${CONNECTOR}/test/subagent-return-hook.test.ts`,
+    because: "the hook fires when the subagent returns and says nothing, so the main thread replies without the overlap",
+  },
+  {
+    label: "the subagent-return hook name runs no handler",
+    file: `${CONNECTOR}/src/hooks/index.ts`,
+    from: "  \"subagent-return\": handleSubagentReturn,",
+    to: "  \"subagent-return\": async () => \"\",",
+    test: `${CONNECTOR}/test/subagent-return-hook.test.ts`,
+    because: "the registered command exits 0 in silence on every subagent return",
+  },
+  {
+    label: "doctor cannot tell the subagent-return hook from the capture hook",
+    file: `${CLI}/src/cli/doctor-global.ts`,
+    from: "  entry.event === \"PostToolUse\" && entry.command.trimEnd().endsWith(`hook ${SUBAGENT_RETURN_HOOK}`)",
+    to: "  false",
+    test: `${CLI}/test/doctor-global.test.ts`,
+    because: "a fresh install reads as missing the hook it just wrote, and an old one reads as complete",
+  },
+  {
+    label: "doctor does not require the subagent-return hook",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "const REQUIRED_HOOK_KEYS: readonly string[] = [...REQUIRED_HOOK_EVENTS, SUBAGENT_RETURN_KEY, TURN_END_KEY];",
+    to: "const REQUIRED_HOOK_KEYS: readonly string[] = [...REQUIRED_HOOK_EVENTS, TURN_END_KEY];",
+    test: `${CLI}/test/doctor-global.test.ts`,
+    because: "every install from before it passes, and its subagents' collisions keep waiting for the next prompt",
+  },
+  {
+    label: "the statusline names a teammate presence no longer lists",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  const listed = new Set(stillPresent(groups, presence).map((group) => group.developerId));",
+    to: "  const listed = new Set(groups.map((group) => group.developerId));",
+    test: `${CONNECTOR}/test/collision-visibility-hook.test.ts`,
+    because: "a teammate who opted out, was muted or ended their session keeps being named for the rest of the session",
+  },
+  {
+    label: "a relayed subagent hit ignores a fresh presence answer",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "entry === undefined ? anonymousCollision(group) : withoutStaleLocation(locatedBy(group, entry), now)",
+    to: "withoutStaleLocation(group, now)",
+    test: `${CONNECTOR}/test/collision-visibility-hook.test.ts`,
+    because: "a teammate who opted out or was muted since the subagent's edit is named to the person anyway",
+  },
+  {
+    label: "a relayed subagent hit keeps its branch past the presence TTL",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: " : withoutStaleLocation(locatedBy(group, entry), now);",
+    to: " : locatedBy(group, entry);",
+    test: `${CORE}/test/collision-relay-presence.test.ts`,
+    because: "a branch and an age the hub stopped giving out are printed from a stale record",
+  },
+  {
+    label: "a self row keeps a teammate's group present",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "presence.some((entry) => !entry.isSelf && entry.developerId === group.developerId)",
+    to: "presence.some((entry) => entry.developerId === group.developerId)",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "the reader's own presence row counts as a teammate's",
+  },
+  {
+    label: "the presence TTL boundary is exclusive",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "ageMs <= PRESENCE_TTL_MS",
+    to: "ageMs < PRESENCE_TTL_MS",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "a hit exactly as old as presence still allows loses a location the hub still gives out",
+  },
+  {
+    label: "an unreadable last-active instant counts as fresh",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  return !Number.isNaN(ms) && ageMs >= 0",
+    to: "  return Number.isNaN(ms) || ageMs >= 0",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "a garbled stamp keeps branch and age forever",
+  },
+  {
+    label: "a briefing paid late tells the agent of its ghost row and never the person",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    from: "  const ghosts = await tellPersonOfGhosts(ctx, delivery.shownGhosts);",
+    to: "  const ghosts = \"\";",
+    test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
+    because: "a late-registered session's multi-day overlap stays inside additionalContext, which shows no chat message",
+  },
+  {
+    label: "a late briefing's ghost lines never reach systemMessage",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    from: "  const person = personCopy(relay, now, [...swept, ...ghosts]);",
+    to: "  const person = personCopy(relay, now, swept);",
+    test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
+    because: "the group is marked told and the line is thrown away",
+  },
+  {
+    label: "a paid deferred briefing hides the ghost rows it shows",
+    file: `${CORE}/src/flows/briefing.ts`,
+    from: "  return { briefing: assembled.briefing, shownGhosts: assembled.shownGhosts };",
+    to: "  return { briefing: assembled.briefing, shownGhosts: [] };",
+    test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
+    because: "the prompt hook has no row to tell the person about",
+  },
+  {
+    label: "a briefing's ghost group is told without being recorded",
+    file: `${CONNECTOR}/src/hooks/ghost-notice.ts`,
+    from: "      return withCollisionNotices(fresh, groups);",
+    to: "      return fresh;",
+    test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
+    because: "every compact, resume or late briefing tells the person about the same teammate's work again",
+  },
+  // ── Review of feat/collision-visible, L9: the ghost claim inside SessionStart's budget ──
+  {
+    label: "SessionStart claims its ghost notice only from the spare the drain spends",
+    file: `${CONNECTOR}/src/hooks/session-start.ts`,
+    from: "await tellPersonOfGhosts(ctx, assembled.shownGhosts);",
+    to: "(budget.spareMs() > 0 ? await tellPersonOfGhosts(ctx, assembled.shownGhosts) : []);",
+    test: `${CONNECTOR}/test/hook-time-budget.test.ts`,
+    because: "a session that starts on a backlog — the one whose drain spends the spare — never tells its person of the multi-day overlap",
+  },
+  // ── Review of feat/collision-visible, L10: the relay's and the record's edges ──
+  {
+    label: "a compact drops a subagent's relay still queued for the main thread",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "...(previous.collisionRelayQueue === undefined ? {} : { collisionRelayQueue: previous.collisionRelayQueue }),",
+    to: "",
+    test: `${CONNECTOR}/test/collision-relay-hook.test.ts`,
+    because: "a subagent's hit marked told before the compact is never relayed after it, and nobody hears of it again",
+  },
+  {
+    label: "a subagent's own hook drains the main thread's relay",
+    file: `${CONNECTOR}/src/hooks/collision-relay.ts`,
+    from: "ctx.payload.agent_id !== undefined || budget",
+    to: "budget",
+    test: `${CONNECTOR}/test/subagent-return-hook.test.ts`,
+    because: "a nested subagent's return takes the queue into a context the conversation never reads",
+  },
+  {
+    label: "the relay hands the main thread every group it was ever told",
+    file: `${CONNECTOR}/src/hooks/collision-relay.ts`,
+    from: "filter((notice) => queue.includes(notice.key))",
+    to: "filter(() => true)",
+    test: `${CONNECTOR}/test/collision-relay-hook.test.ts`,
+    because: "a teammate the person was already told about in place is announced again as a subagent's",
+  },
+  {
+    label: "a told group's file list grows without bound",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "[...new Set([...told.files, ...group.files])].slice(0, MAX_COLLISION_FILES);",
+    to: "[...new Set([...told.files, ...group.files])];",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "a long session against one teammate's work grows the state file every hook of the session reads",
+  },
+  {
+    label: "the relay queue grows without bound",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "    collisionRelayQueue: overflow <= 0 ? merged : merged.slice(overflow),",
+    to: "    collisionRelayQueue: merged,",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "a main thread that never prompts lets its subagents grow the queue every hook reads",
+  },
+  {
+    label: "the remembered groups grow without bound",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  const overflow = merged.length - MAX_COLLISION_NOTICES;\n  if (overflow <= 0) {\n    return { ...state, collisionNotices: [...merged] };",
+    to: "  const overflow = 0;\n  if (overflow <= 0) {\n    return { ...state, collisionNotices: [...merged] };",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "a session against many teammates grows the state file every hook of the session reads",
+  },
+  {
+    label: "the statusline prints a name from the state file as stored",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  const name = capped(displayName(person.name), STATUSLINE_NAME_CHARS);",
+    to: "  const name = capped(person.name, STATUSLINE_NAME_CHARS);",
+    test: `${CONNECTOR}/test/collision-relay-hook.test.ts`,
+    because: "a record no renderer wrote — an older writer, a hand edit — reaches the terminal with its escapes and line breaks",
+  },
+  // ── Review of feat/collision-visible, round 2, L5: the lookalikes round one missed ──
+  {
+    label: "a person's line keeps the round-two colon, dash and dot lookalikes",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "    .replace(SEPARATOR_LOOKALIKES, \" \")\n",
+    to: "",
+    test: `${CORE}/test/collision-person-strip.test.ts`,
+    because: "a name like 'crosscheck<U+02D0> all clear' or 'Mike <U+2219> 9 files' mints a second verdict on the line the person trusts",
+  },
+  {
+    label: "a lookalike separator fuses the words either side of it",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "    .replace(SEPARATOR_LOOKALIKES, \" \")",
+    to: "    .replace(SEPARATOR_LOOKALIKES, \"\")",
+    test: `${CORE}/test/collision-person-strip.test.ts`,
+    because: "a Japanese name written with its katakana middle dot reaches the person as one fused word",
+  },
+  {
+    label: "the dash strip takes the hyphen of a real name or branch",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "const PERSON_KEPT_PUNCTUATION = \"-_.,:/@()'\";",
+    to: "const PERSON_KEPT_PUNCTUATION = \"_.,:/@()'\";",
+    test: `${CORE}/test/collision-person-strip.test.ts`,
+    because: "Jean-Luc on feat/refresh-fix is printed as JeanLuc on feat/refreshfix, a branch nobody can find",
+  },
+  {
+    label: "emphasis markers survive on a person's line",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "const PERSON_KEPT_PUNCTUATION = \"-_.,:/@()'\";",
+    to: "const PERSON_KEPT_PUNCTUATION = \"-_.,:/@()'*~\";",
+    test: `${CORE}/test/collision-person-strip.test.ts`,
+    because: "a markdown panel renders **Mike** and ~~talk before~~ as the renderer's own emphasis",
+  },
+  {
+    label: "an underscore that opens emphasis survives on a person's line",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "    .replace(LOOSE_UNDERSCORE, \"\")\n",
+    to: "",
+    test: `${CORE}/test/collision-person-strip.test.ts`,
+    because: "_crosscheck all clear_ renders as italic text on the person's line",
+  },
+  {
+    label: "the emphasis strip takes the underscore inside a real file name",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "const LOOSE_UNDERSCORE = /(?<![\\p{L}\\p{N}])_|_(?![\\p{L}\\p{N}])/gu;",
+    to: "const LOOSE_UNDERSCORE = /_/gu;",
+    test: `${CORE}/test/collision-person-strip.test.ts`,
+    because: "player_mapping.ts is printed as playermapping.ts, a file the person cannot find",
+  },
+  {
+    label: "a bare www host reaches a markdown panel as a link",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "    .replace(BARE_WWW, \"$1$2\");",
+    to: "    ;",
+    test: `${CORE}/test/collision-person-strip.test.ts`,
+    because: "a teammate named www.evil.example becomes a followable link with no scheme on the person's screen",
+  },
+  // ── Review of feat/collision-visible, round 2, L2: a stamp ahead of the clock ──
+  {
+    label: "a last-active instant ahead of the clock keeps branch and age",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "ageMs >= 0 && ageMs",
+    to: "ageMs",
+    test: `${CORE}/test/collision-relay-presence.test.ts`,
+    because: "a hub clock an hour fast keeps the branch of a teammate the 90 s rule should have stopped locating",
+  },
+  // ── Review of feat/collision-visible, round 2, H1: a queued hit is never nothing ──
+  {
+    label: "a relayed hit whose teammate presence cannot confirm is dropped",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  groups.map((group) => {\n    if (presence === null) {",
+    to: "  groups.filter((group) => presence === null || confirmingEntry(group, presence) !== undefined).map((group) => {\n    if (presence === null) {",
+    test: `${CONNECTOR}/test/collision-relay-unconfirmed.test.ts`,
+    because: "the queue is drained and the group marked told, and a subagent's collision with a teammate who just ended their session reaches nobody",
+  },
+  {
+    label: "the relay treats a stale presence cache as a fresh answer",
+    file: `${CONNECTOR}/src/hooks/collision-relay.ts`,
+    from: "  if (cache !== null && isCacheFresh(cache, now)) {",
+    to: "  if (cache !== null) {",
+    test: `${CONNECTOR}/test/collision-relay-unconfirmed.test.ts`,
+    because: "an hour-old answer decides instead of the refresh, so the same hit reads differently by the cache's age alone",
+  },
+  {
+    label: "an unconfirmed relay line reads as live work in progress",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  if (group.anonymous === true) {",
+    to: "  if (false) {",
+    test: `${CONNECTOR}/test/collision-relay-unconfirmed.test.ts`,
+    because: "an unnamed teammate is told as 'A teammate is working on' it, a live claim presence never confirmed",
+  },
+  {
+    label: "a self row confirms a teammate on the relay",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "boolean =>\n  !entry.isSelf && ",
+    to: "boolean =>\n  ",
+    test: `${CORE}/test/collision-relay-presence.test.ts`,
+    because: "the reader's own presence row would name the teammate it shares an id with",
+  },
+  // ── Review of feat/collision-visible, round 2, L3: where the teammate is NOW ──
+  {
+    label: "a relayed hit is located by its own old heartbeat, not by presence now",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  branch: group.landed === true ? group.branch : entry.branch,\n  lastActiveAt: entry.lastHeartbeatAt,\n",
+    to: "",
+    test: `${CONNECTOR}/test/collision-visibility-hook.test.ts`,
+    because: "a subagent that runs past 90 s loses the teammate's branch while presence still lists them on it",
+  },
+  {
+    label: "of several presence rows the first, not the freshest, locates the teammate",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "freshest === undefined || Date.parse(entry.lastHeartbeatAt) > Date.parse(freshest.lastHeartbeatAt)",
+    to: "freshest === undefined",
+    test: `${CORE}/test/collision-relay-presence.test.ts`,
+    because: "a teammate with two windows open is placed on the branch of the one that went quiet",
+  },
+  {
+    label: "a relayed landed group takes a live branch it never merged on",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "group.landed === true ? group.branch : entry.branch",
+    to: "entry.branch",
+    test: `${CORE}/test/collision-relay-presence.test.ts`,
+    because: "the person is told a change merged from the branch the teammate happens to be on now",
+  },
+  // ── Review of feat/collision-visible, round 2, M1: an offline teammate's overlap stays on the statusline ──
+  {
+    label: "the statusline hides an overlap whose teammate presence does not list",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  const people = byPerson(groups);\n  if (people.length === 0) {\n    return \"\";\n  }\n  const listed",
+    to: "  const people = byPerson(stillPresent(groups, presence));\n  if (people.length === 0) {\n    return \"\";\n  }\n  const listed",
+    test: `${CONNECTOR}/test/collision-statusline-unnamed.test.ts`,
+    because: "a briefing tells the person of an offline teammate's three files and the statusline right after shows nothing, which is the pilot's case",
+  },
+  {
+    label: "two unconfirmed teammates' shared file is counted twice",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  const files = new Set(people.flatMap((person) => [...person.files]));",
+    to: "  const files = { size: people.reduce((total, person) => total + person.files.size, 0) };",
+    test: `${CORE}/test/collision-indicator.test.ts`,
+    because: "two teammates on one file read as an overlap of two files",
+  },
+  {
+    label: "an unconfirmed ghost row's unsampled files go uncounted",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "files.size + countedOnly",
+    to: "files.size",
+    test: `${CORE}/test/collision-indicator.test.ts`,
+    because: "the briefing said three files and the statusline says two",
+  },
+  {
+    label: "an unnamed count after the names reads as one of them",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "`${afterNames ? \"+\" : \"\"}",
+    to: "`",
+    test: `${CORE}/test/collision-indicator.test.ts`,
+    because: "'Nick · 1 file, 1 teammate · 3 files' reads as Nick being that teammate",
+  },
+  {
+    label: "the per-name statusline cap is gone (reviewer M7)",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  const name = capped(displayName(person.name), STATUSLINE_NAME_CHARS);",
+    to: "  const name = displayName(person.name);",
+    test: `${CORE}/test/collision-indicator.test.ts`,
+    because: "one long name takes the whole segment and the next teammate is cut off mid-word",
+  },
+  {
+    label: "the statusline names cached teammates under a rejected key (reviewer R2)",
+    file: `${CONNECTOR}/src/statusline/statusline.ts`,
+    from: "return { line: failureLine(failureHead(HTTP_UNAUTHORIZED, \"http\"), captureAge), present: [] };",
+    to: "return { line: failureLine(failureHead(HTTP_UNAUTHORIZED, \"http\"), captureAge), present: cache.entries };",
+    test: `${CONNECTOR}/test/collision-statusline-unnamed.test.ts`,
+    because: "a teammate the last trusted answer listed keeps being named while the hub refuses the key that would say otherwise",
+  },
+  {
+    label: "the statusline names a stale cache's teammates when the hub is unreadable (reviewer R3)",
+    file: `${CONNECTOR}/src/statusline/statusline.ts`,
+    from: "return { line: failureLine(failureHead(result.status, result.kind), captureAge), present: [] };",
+    to: "return { line: failureLine(failureHead(result.status, result.kind), captureAge), present: cache?.entries ?? [] };",
+    test: `${CONNECTOR}/test/collision-statusline-unnamed.test.ts`,
+    because: "an hour-old answer names a teammate who opted out since, on the line the person glances at",
+  },
+  // ── Review of feat/collision-visible, round 2, L10: the agent's copy names every group ──
+  {
+    label: "the agent's copy of a relay is capped like the person's",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "    ...groups.map((group) => renderCollisionNotice(group, now)),\n    ...moreTail(hidden),",
+    to: "    renderCollisionNotices(groups, now, hidden),",
+    test: `${CONNECTOR}/test/subagent-return-hook.test.ts`,
+    because: "the groups past the person's five lines are drained and marked told, and named to nobody at all",
+  },
+  // ── Review of feat/collision-visible, round 2: reviewer mutation R7 ──
+  {
+    label: "the char cap reserves no room for the +N more line (reviewer R7)",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "    return candidate.join(\"\\n\").length + room <= COLLISION_NOTICE_MAX_CHARS ? candidate : fitted;",
+    to: "    return candidate.join(\"\\n\").length <= COLLISION_NOTICE_MAX_CHARS ? candidate : fitted;",
+    test: `${CORE}/test/collision-notice-bounds.test.ts`,
+    because: "five maximum-length lines fit and the tail that counts the sixth pushes the person's message past its bound",
+  },
+  // ── Review of feat/collision-visible, round 2: reviewer mutation R6 ──
+  {
+    label: "a merged group keeps an older branch the newer row withheld (reviewer R6)",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "    ...rest,\n    files,\n    fileCount: Math.max(told.fileCount, group.fileCount, files.length),",
+    to: "    ...rest,\n    branch: group.branch ?? told.branch,\n    files,\n    fileCount: Math.max(told.fileCount, group.fileCount, files.length),",
+    test: `${CORE}/test/collision-state-eviction.test.ts`,
+    because: "a teammate who turned presence off since the first hit keeps being placed on their old branch",
+  },
+  // ── Review of feat/collision-visible, round 2, L6: a queued group outlives the cap ──
+  {
+    label: "the notice cap evicts a queued group before a merely told one",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  const evictable = merged.filter((notice) => !queue.includes(notice.key)).slice(0, overflow);",
+    to: "  const evictable = merged.slice(0, overflow);",
+    test: `${CORE}/test/collision-state-eviction.test.ts`,
+    because: "a subagent's hit is evicted before the drain by groups the main thread was told in place, and the relay says nothing",
+  },
+  {
+    label: "a queued group the notice cap forces out is dropped uncounted",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "    ...withRelayDrops(state, forced.length),\n",
+    to: "",
+    test: `${CORE}/test/collision-state-eviction.test.ts`,
+    because: "a group the record could not keep vanishes from the relay without a +N more",
+  },
+  {
+    label: "the relay queue's cap drops keys uncounted",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "    ...withRelayDrops(state, overflow),\n",
+    to: "",
+    test: `${CORE}/test/collision-state-eviction.test.ts`,
+    because: "the thirty-third queued collision pushes the first out and nobody is told one is missing",
+  },
+  {
+    label: "the drain leaves the relay's drop tally standing",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  collisionRelayQueue: [],\n  collisionRelayDropped: 0,\n",
+    to: "  collisionRelayQueue: [],\n",
+    test: `${CORE}/test/collision-state-eviction.test.ts`,
+    because: "every later relay repeats a count of groups it already owned up to",
+  },
+  {
+    label: "a compact drops the relay's drop tally",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  ...(previous.collisionRelayDropped === undefined ? {} : { collisionRelayDropped: previous.collisionRelayDropped }),\n",
+    to: "",
+    test: `${CORE}/test/collision-state-eviction.test.ts`,
+    because: "groups dropped before a compact are never counted to the main thread after it",
+  },
+  {
+    label: "a subagent's new group is remembered before it is queued",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "  const queued = ctx.payload.agent_id === undefined || told.length === 0\n    ? state\n    : withQueuedCollisionRelays(state, told);\n  return withCollisionNotices(queued, groups);",
+    to: "  const remembered = withCollisionNotices(state, groups);\n  return ctx.payload.agent_id === undefined || told.length === 0\n    ? remembered\n    : withQueuedCollisionRelays(remembered, told);",
+    test: `${CONNECTOR}/test/subagent-return-hook.test.ts`,
+    because: "on a record full of queued groups the cap evicts the new hit as merely told, and its queued key is relayed without its facts",
+  },
+  {
+    label: "a queue key whose group is gone is relayed as nothing",
+    file: `${CONNECTOR}/src/hooks/collision-relay.ts`,
+    from: "hidden: (state.collisionRelayDropped ?? 0) + queue.length - groups.length",
+    to: "hidden: state.collisionRelayDropped ?? 0",
+    test: `${CONNECTOR}/test/subagent-return-hook.test.ts`,
+    because: "a key an older writer left without its group drains and is marked done with no word to anybody",
+  },
+  {
+    label: "a drop tally with an empty queue is never drained",
+    file: `${CONNECTOR}/src/hooks/collision-relay.ts`,
+    from: " || (state.collisionRelayDropped ?? 0) > 0",
+    to: "",
+    test: `${CONNECTOR}/test/subagent-return-hook.test.ts`,
+    because: "groups the record had to drop are never owned up to once the queue itself is empty",
+  },
+  // ── Review of feat/collision-visible, round 2, L4: one prompt, one bounded line ──
+  {
+    label: "a relay and a briefing's ghost lines are capped apart on one prompt",
+    file: `${CONNECTOR}/src/hooks/collision-relay.ts`,
+    from: "  renderCollisionNotices([...drain.groups, ...alsoTold], now, drain.hidden);",
+    to: "  [renderCollisionNotices(drain.groups, now, drain.hidden), renderCollisionNotices(alsoTold, now)].filter((part) => part.length > 0).join(\"\\n\");",
+    test: `${CONNECTOR}/test/collision-prompt-render.test.ts`,
+    because: "seven queued groups and seven ghost rows make one systemMessage of eight lines, past the cap the person was promised",
+  },
+  // ── Review of feat/collision-visible, round 2: reviewer mutation R10 ──
+  {
+    label: "a ghost group is told even when the briefing write failed (reviewer R10)",
+    file: `${CONNECTOR}/src/hooks/ghost-notice.ts`,
+    from: "    return written ? told.value : [];",
+    to: "    return written ? told.value : groups;",
+    test: `${CONNECTOR}/test/ghost-notice.test.ts`,
+    because: "a group never recorded as told is told again by every compact, resume and late briefing",
+  },
+  // ── Review of feat/collision-visible, round 2, M3: a slow hint hub cannot starve the relay ──
+  {
+    label: "a queued relay is drained only after the prompt's hub calls",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    from: "    hasQueuedRelay(ctx).then((isQueued) => (isQueued ? drainCollisionRelay(ctx, budget) : NO_DRAIN)),\n",
+    to: "    Promise.resolve(NO_DRAIN),\n",
+    test: `${CONNECTOR}/test/collision-relay-slow-hub.test.ts`,
+    because: "a hint hub answering in 390 ms of its 400 ms timeout leaves no spare, and a background subagent's collision is never relayed",
+  },
+  {
+    label: "after an early drain the prompt's hub calls keep their full timeout",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    from: "  const promptCtx = isHoldingTold ? withSpareBoundHub(ctx, budget) : ctx;",
+    to: "  const promptCtx = ctx;",
+    test: `${CONNECTOR}/test/collision-relay-slow-hub.test.ts`,
+    because: "the hint's call runs into the reserve, and the budget race throws away a relay the drain already emptied",
+  },
+  {
+    label: "the spare-bound hub ignores the spare",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    from: "Math.min(configured, budget.spareMs())",
+    to: "configured",
+    test: `${CONNECTOR}/test/collision-relay-slow-hub.test.ts`,
+    because: "the bound exists in name only and a slow hint hub holds the hook past what the budget left",
+  },
+  // ── Coordinator's refinement of round 2 H1: unnamed only on contrary evidence ──
+  {
+    label: "a relay with no fresh presence answer never asks presence",
+    file: `${CONNECTOR}/src/hooks/collision-relay.ts`,
+    from: "  const result = await refreshPresence(ctx, timeoutMs, cache);\n  return result.ok ? result.data : null;",
+    to: "  return null;",
+    test: `${CONNECTOR}/test/collision-relay-unconfirmed.test.ts`,
+    because: "a teammate who ended their session is named, and one who moved branch is placed on the old one, every time a subagent outlives the 10 s cache",
+  },
+  {
+    label: "a failed presence refresh anonymises the relay",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "    if (presence === null) {\n      return unconfirmedCollision(group);\n    }",
+    to: "    if (presence === null) {\n      return anonymousCollision(group);\n    }",
+    test: `${CONNECTOR}/test/collision-relay-unconfirmed.test.ts`,
+    because: "with no contrary evidence the person reads 'A teammate recently worked on 8 files' in every IDE session",
+  },
+  {
+    label: "the relay's presence refresh waits out the request timeout",
+    file: `${CONNECTOR}/src/hooks/collision-relay.ts`,
+    from: "Math.min(RELAY_PRESENCE_REFRESH_MS, ctx.hub.timeoutMs, budget.spareMs())",
+    to: "Math.min(ctx.hub.timeoutMs, budget.spareMs())",
+    test: `${CONNECTOR}/test/collision-relay-unconfirmed.test.ts`,
+    because: "a slow presence answer holds the main thread's turn for a full request timeout on every subagent return",
+  },
+  {
+    label: "a drain that only owns up to dropped groups asks presence anyway",
+    file: `${CONNECTOR}/src/hooks/collision-relay.ts`,
+    from: "  takenFrom(state).groups.length === 0 ? null : presenceAnswer(ctx, budget);",
+    to: "  presenceAnswer(ctx, budget);",
+    test: `${CONNECTOR}/test/subagent-return-hook.test.ts`,
+    because: "a count that names nobody costs a hub call on the main thread",
+  },
+  {
+    label: "a presence refresh leaves the cache stale",
+    file: `${CONNECTOR}/src/hooks/presence-refresh.ts`,
+    from: "      await writePresenceCache(ctx.config.home, ctx.repoKey, result.data, ctx.now(), previous?.lastSeen ?? []);\n",
+    to: "",
+    test: `${CONNECTOR}/test/collision-relay-unconfirmed.test.ts`,
+    because: "the statusline and every later relay ask the hub again for an answer the hook already had",
+  },
+  // ── Review of feat/collision-visible, round 2, M2: the subagent-return hook is near-zero on an empty queue ──
+  {
+    label: "the subagent-return hook prepares the whole runner on an empty queue",
+    file: `${CONNECTOR}/src/hooks/runner.ts`,
+    from: "  if (name === \"subagent-return\" && (await hasNothingToRelay(stdin, env))) {",
+    to: "  if (false) {",
+    test: `${CONNECTOR}/test/subagent-return-cost.test.ts`,
+    because: "every Agent/Task call in the main thread pays four git spawns, a config read and a marker write for nothing",
+  },
+  {
+    label: "a background subagent's launch runs the full subagent-return hook",
+    file: `${CONNECTOR}/src/hooks/subagent-return.ts`,
+    from: " || isAsyncLaunch(payload.tool_response)",
+    to: "",
+    test: `${CONNECTOR}/test/subagent-return-cost.test.ts`,
+    because: "a launch that has not run yet drains the queue its own report-back prompt was meant to carry, at full cost",
+  },
+  {
+    label: "a nested subagent's return runs the full subagent-return hook",
+    file: `${CONNECTOR}/src/hooks/subagent-return.ts`,
+    from: "payload === null || payload.agent_id !== undefined || ",
+    to: "payload === null || ",
+    test: `${CONNECTOR}/test/subagent-return-cost.test.ts`,
+    because: "every nested Agent call inside a subagent pays the runner's git spawns to say nothing",
+  },
+  {
+    label: "the subagent-return shortcut skips a queued relay",
+    file: `${CONNECTOR}/src/hooks/subagent-return.ts`,
+    from: "    return state === null || (!hasPendingRelay(state) && !hasOverdueRests(state, new Date()));",
+    to: "    return true;",
+    test: `${CONNECTOR}/test/subagent-return-cost.test.ts`,
+    because: "a foreground subagent's collision waits for the next prompt again, after the reply that should have mentioned it",
+  },
+  // ── Review of feat/collision-visible, round 2, L7: one line per teammate context ──
+  {
+    label: "a teammate listed twice in one tripwire answer is told twice",
+    file: `${CONNECTOR}/src/hooks/rest-recheck.ts`,
+    from: "groups.filter((group, index) => groups.findIndex((other) => other.key === group.key) === index);",
+    to: "groups;",
+    test: `${CONNECTOR}/test/collision-teammates-hook.test.ts`,
+    because: "a teammate with two windows open on the same work reads as two overlaps on the person's line",
+  },
+  // ── Review of feat/collision-visible, round 2, L1: repeat edits of a collision file ──
+  {
+    label: "every edit of a collision file asks the hub again",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "  const isLiveFresh = isTripwireFresh(state, file, ctx.now());",
+    to: "  const isLiveFresh = false;",
+    test: `${CONNECTOR}/test/collision-tripwire-ttl.test.ts`,
+    because: "each save of a file a teammate is on costs a hub call and a state write for an answer that can only repeat itself",
+  },
+  {
+    label: "a settled tripwire answer never rests its file",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "    const next = isAllAsked(fresh, answer) ? withTripwireChecked(remembered, answer.file, ctx.now()) : remembered;",
+    to: "    const next = remembered;",
+    test: `${CONNECTOR}/test/collision-tripwire-ttl.test.ts`,
+    because: "the re-check window is never opened, and every edit of the file asks the hub again",
+  },
+  {
+    label: "a tripwire answer with a teammate still unasked rests its file",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "    const next = isAllAsked(fresh, answer) ? withTripwireChecked(remembered, answer.file, ctx.now()) : remembered;",
+    to: "    const next = withTripwireChecked(remembered, answer.file, ctx.now());",
+    test: `${CONNECTOR}/test/collision-tripwire-ttl.test.ts`,
+    because: "the second teammate on the file is not asked about until the window passes",
+  },
+  {
+    label: "the tripwire's re-check window never closes",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  return ageMs >= 0 && ageMs < TRIPWIRE_RECHECK_TTL_MS;",
+    to: "  return ageMs >= 0;",
+    test: `${CORE}/test/tripwire-recheck.test.ts`,
+    because: "a teammate who starts on a file already dealt with is never seen for the rest of the session",
+  },
+  {
+    label: "a re-check stamp ahead of the clock rests its file",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  return ageMs >= 0 && ageMs < TRIPWIRE_RECHECK_TTL_MS;",
+    to: "  return ageMs < TRIPWIRE_RECHECK_TTL_MS;",
+    test: `${CORE}/test/tripwire-recheck.test.ts`,
+    because: "a stamp from a clock an hour fast keeps the hub from being asked for an hour",
+  },
+  {
+    label: "the tripwire's re-check stamps grow without bound",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "    tripwireCheckedFiles: evicted === 0 ? merged : merged.slice(evicted),",
+    to: "    tripwireCheckedFiles: merged,",
+    test: `${CORE}/test/tripwire-recheck.test.ts`,
+    because: "a long session of edits grows the state file every hook of the session reads",
+  },
+  // ── Review of feat/collision-visible, round 2, L8 + L9: doctor's subagent-return line ──
+  {
+    label: "doctor counts an async subagent-return entry as installed",
+    file: `${CLI}/src/cli/doctor-global.ts`,
+    from: "  if (entry.isAsync) {\n    return \"registered async\";\n  }\n",
+    to: "",
+    test: `${CLI}/test/doctor-subagent-return.test.ts`,
+    because: "an entry whose systemMessage nobody sees passes as the hook that tells the person in the same turn",
+  },
+  {
+    label: "doctor counts a subagent-return entry on any matcher as installed",
+    file: `${CLI}/src/cli/doctor-global.ts`,
+    from: "  if (entry.matcher === SUBAGENT_RETURN_MATCHER) {",
+    to: "  if (true) {",
+    test: `${CLI}/test/doctor-subagent-return.test.ts`,
+    because: "a hook that never fires when a subagent returns passes as installed",
+  },
+  {
+    label: "doctor says a drifted subagent-return hook is missing without saying why",
+    file: `${CLI}/src/cli/doctor-global.ts`,
+    from: "  return drifted.length === 0 ? \"\" : ` (found ${drifted.join(\", \")})`;",
+    to: "  return \"\";",
+    test: `${CLI}/test/doctor-subagent-return.test.ts`,
+    because: "the reader is told a hook is missing that their settings plainly contain, and edits the wrong thing",
+  },
+  {
+    label: "doctor fails every install from before the subagent-return hook",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "  missing.every((key) => WARN_ONLY_HOOK_KEYS.has(key)) ? \"WARN\" : \"FAIL\";",
+    to: "  \"FAIL\";",
+    test: `${CLI}/test/doctor-subagent-return.test.ts`,
+    because: "a working capture install reads as broken until somebody reruns init",
+  },
+  {
+    label: "doctor only warns when a capture hook is missing",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "  missing.every((key) => WARN_ONLY_HOOK_KEYS.has(key)) ? \"WARN\" : \"FAIL\";",
+    to: "  \"WARN\";",
+    test: `${CLI}/test/doctor-subagent-return.test.ts`,
+    because: "an install that captures no error fingerprints is reported as merely untidy",
+  },
+  // ── Review of feat/collision-visible, round 3, F-M1: a drained relay always leaves the hook ──
+  {
+    label: "a presence cache that cannot be written loses the drained relay",
+    file: `${CONNECTOR}/src/hooks/presence-refresh.ts`,
+    from: "    try {\n      await writePresenceCache(ctx.config.home, ctx.repoKey, result.data, ctx.now(), previous?.lastSeen ?? []);\n    } catch {\n      // Fail open: the next caller finds no fresh cache and asks the hub again.\n    }\n",
+    to: "    await writePresenceCache(ctx.config.home, ctx.repoKey, result.data, ctx.now(), previous?.lastSeen ?? []);\n",
+    test: `${CONNECTOR}/test/collision-relay-durable.test.ts`,
+    because: "a cache path nobody can write empties the queue, marks the groups told and tells nobody",
+  },
+  {
+    label: "the relay empties its queue before the presence answer is in hand",
+    file: `${CONNECTOR}/src/hooks/collision-relay.ts`,
+    from:
+      "    const answer = await answerBeforeDrain(ctx, state, budget);\n" +
+      "    const taken: { value: TakenRelay } = { value: NOTHING_TAKEN };\n" +
+      "    const drained = await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => {\n" +
+      "      if (!hasPendingRelay(fresh)) {\n        return null;\n      }\n" +
+      "      taken.value = takenFrom(fresh);\n      return withDrainedCollisionRelays(fresh);\n    });\n",
+    to:
+      "    const taken: { value: TakenRelay } = { value: NOTHING_TAKEN };\n" +
+      "    const drained = await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => {\n" +
+      "      if (!hasPendingRelay(fresh)) {\n        return null;\n      }\n" +
+      "      taken.value = takenFrom(fresh);\n      return withDrainedCollisionRelays(fresh);\n    });\n" +
+      "    const answer = await answerBeforeDrain(ctx, state, budget);\n",
+    test: `${CONNECTOR}/test/collision-relay-durable.test.ts`,
+    because: "a hook that throws or is abandoned while it waits on presence has already emptied the queue, and the groups are never said",
+  },
+  // ── Review of feat/collision-visible, round 3, F-L1: no presence answer, no location ──
+  {
+    label: "a relay with no presence answer keeps the hit's branch and age",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "    if (presence === null) {\n      return unconfirmedCollision(group);\n    }",
+    to: "    if (presence === null) {\n      return withoutStaleLocation(group, now);\n    }",
+    test: `${CORE}/test/collision-relay-presence.test.ts`,
+    because: "a teammate who opted out since the hit is still placed on a branch, up to 90 s old, whenever the refresh fails",
+  },
+  {
+    label: "a relay with no presence answer says the teammate is on the file now",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  return group.unconfirmed === true\n",
+    to: "  return false\n",
+    test: `${CORE}/test/collision-relay-presence.test.ts`,
+    because: "a subagent that ran for two hours relays 'Mike is working on' from a row as old as its run",
+  },
+  // ── Review of feat/collision-visible, round 3, F-L2: a relay that can only count ──
+  {
+    label: "a count-only relay tells the person '+N more' of nothing",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  if (groups.length === 0) {\n    return hidden > 0 ? countOnlyLine(hidden) : \"\";\n  }\n",
+    to: "",
+    test: `${CORE}/test/collision-count-only.test.ts`,
+    because: "the person reads '+3 more teammate overlaps not shown' with nothing shown and no idea what happened",
+  },
+  {
+    label: "a count-only relay asks the agent to mention an overlap it was never shown",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "    return hidden > 0 ? [SUBAGENT_RELAY_HEADER, countOnlyLine(hidden), COUNT_ONLY_RELAY_SENTENCE].join(\"\\n\") : \"\";",
+    to: "    return hidden > 0 ? [SUBAGENT_RELAY_HEADER, ...moreTail(hidden), COLLISION_RELAY_SENTENCE].join(\"\\n\") : \"\";",
+    test: `${CORE}/test/collision-count-only.test.ts`,
+    because: "the main thread is told to mention 'this overlap' and 'the teammate' with no fact about either in its context",
+  },
+  // ── Review of feat/collision-visible, round 3, F-L3: punctuation by class, not by list ──
+  {
+    label: "a person's line keeps a punctuation or symbol lookalike nobody listed",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "|(?![${PERSON_KEPT_PUNCTUATION}])[\\\\p{P}\\\\p{S}]",
+    to: "",
+    test: `${CORE}/test/collision-person-strip.test.ts`,
+    because: "'crosscheck<Z NOTATION TYPE COLON> all clear' or 'Mike <RING OPERATOR> 9 files' mints a second verdict on the line the person trusts",
+  },
+  {
+    label: "a person's line keeps the ampersand an HTML entity is built from",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "const PERSON_DROP = new RegExp(`[${INVISIBLE_CLASS}()&]`, \"gu\");",
+    to: "const PERSON_DROP = new RegExp(`[${INVISIBLE_CLASS}()]`, \"gu\");",
+    test: `${CORE}/test/collision-person-strip.test.ts`,
+    because: "an ampersand left as a word break is half of an entity reference a later pass or a panel could put back together",
+  },
+  {
+    label: "a spacing mark after a Latin letter reaches a person's line",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "    .replace(STRAY_SPACING_MARK, \"$1 \")\n",
+    to: "",
+    test: `${CORE}/test/collision-person-strip.test.ts`,
+    because: "'crosscheck<DEVANAGARI VISARGA> all clear' reads as 'crosscheck: all clear', and Unicode files the visarga as a mark",
+  },
+  {
+    label: "the stray-mark rule takes a Devanagari word's own visarga",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "/(^|[\\p{Script=Latin}\\p{Script=Greek}\\p{Script=Cyrillic}\\p{Script=Common}\\p{Script=Inherited}])\\p{Mc}+/gu;",
+    to: "/(^|[^])\\p{Mc}+/gu;",
+    test: `${CORE}/test/collision-person-strip.test.ts`,
+    because: "a Hindi name is printed with a hole where its visarga was",
+  },
+  // ── Review of feat/collision-visible, round 3, F-L4: the statusline's presence segment ──
+  {
+    label: "the statusline prints a teammate's presence name unstripped",
+    file: `${CONNECTOR}/src/statusline/statusline.ts`,
+    from: "`${capName(personName(group.name))}${statusSuffix(group.status)}`",
+    to: "`${capName(group.name)}${statusSuffix(group.status)}`",
+    test: `${CONNECTOR}/test/statusline-person-strip.test.ts`,
+    because: "`[click](https://evil.example)` prints beside the stripped overlap segment on the same person-facing line",
+  },
+  {
+    label: "the statusline prints a teammate status that reads like an instruction",
+    file: `${CONNECTOR}/src/statusline/statusline.ts`,
+    from: "  return status.length === 0 || tripsPhraseFilter(status) ? \"\" : `(${status})`;",
+    to: "  return status.length === 0 ? \"\" : `(${status})`;",
+    test: `${CONNECTOR}/test/statusline-person-strip.test.ts`,
+    because: "a forged session status puts 'ignore previous instructions' on the person's statusline",
+  },
+  {
+    label: "the statusline's last-seen names skip the person strip",
+    file: `${CONNECTOR}/src/statusline/statusline.ts`,
+    from: "[`${capName(personName(entry.name))} last seen ${age} ago`]",
+    to: "[`${capName(entry.name)} last seen ${age} ago`]",
+    test: `${CONNECTOR}/test/statusline-person-strip.test.ts`,
+    because: "a teammate who went offline prints a markdown link as their name",
+  },
+  {
+    label: "a teammate whose name the person strip empties drops out of the statusline's count",
+    file: `${CONNECTOR}/src/statusline/statusline.ts`,
+    from: "  const teammates = groupTeammates(entries, now, asReceived);",
+    to: "  const teammates = groupTeammates(entries, now, personText);",
+    test: `${CONNECTOR}/test/statusline-person-strip.test.ts`,
+    because: "a teammate whose display name is symbols alone reads as 'no teammates on this repo'",
+  },
+  // ── Review of feat/collision-visible, round 3, F-L5: a compact under a busy lock ──
+  {
+    label: "a compact under a busy state lock drops the relay queue and the told-record",
+    file: `${CORE}/src/state/session-state.ts`,
+    from:
+      "    const unlocked = await readSessionState(home, state.hostSessionKey);\n" +
+      "    await writeSessionState(home, withCarriedCollisions(measuredFromStart(state), unlocked));\n",
+    to: "    await writeSessionState(home, measuredFromStart(state));\n",
+    test: `${CORE}/test/collision-publish-busy-lock.test.ts`,
+    because: "a subagent's hit waiting for the main thread is never said, and a ghost row already told is told again",
+  },
+  {
+    label: "a busy-lock compact carries collisions from a state file bound to another repo",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "): SessionStateInput => (!isSameBinding(previous, state) ? state : { ...state, ...collisionFieldsOf(previous) });",
+    to: "): SessionStateInput => (previous === null ? state : { ...state, ...collisionFieldsOf(previous) });",
+    test: `${CORE}/test/collision-publish-busy-lock.test.ts`,
+    because: "another repo's teammates are relayed and counted as this session's",
+  },
+  {
+    label: "a busy-lock compact carries the sequence pair from an unlocked read",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "withCarriedCollisions(measuredFromStart(state), unlocked)",
+    to: "withCarriedCapture(measuredFromStart(state), unlocked)",
+    test: `${CORE}/test/collision-publish-busy-lock.test.ts`,
+    because: "a position read beside a lock holder that is advancing it is handed out twice",
+  },
+  // ── Review of feat/collision-visible, round 3, F-L6: doctor's printed matcher ──
+  {
+    label: "doctor prints a committed matcher's control characters raw",
+    file: `${CLI}/src/cli/doctor-global.ts`,
+    from: "`matched on ${JSON.stringify(entry.matcher)}`",
+    to: "`matched on ${entry.matcher}`",
+    test: `${CLI}/test/doctor-subagent-return.test.ts`,
+    because: "a settings file anyone can commit writes OSC 52, line erases and a forged PASS straight to the reader's terminal",
+  },
+  {
+    label: "doctor prints a matcher-less subagent-return group as matched on null",
+    file: `${CLI}/src/cli/doctor-global.ts`,
+    from: "  return entry.matcher === null ? \"matched on every tool\"",
+    to: "  return false ? \"matched on every tool\"",
+    test: `${CLI}/test/doctor-subagent-return.test.ts`,
+    because: "a group that fires on every tool reads 'matched on null', which names no setting the reader can find",
+  },
+  // ── Review of feat/collision-visible, round 3, F-L7 / F-L8: reviewer survivors P3 and P10 ──
+  {
+    label: "the relay's presence refresh ignores what the budget spares",
+    file: `${CONNECTOR}/src/hooks/collision-relay.ts`,
+    from: "Math.min(RELAY_PRESENCE_REFRESH_MS, ctx.hub.timeoutMs, budget.spareMs())",
+    to: "Math.min(RELAY_PRESENCE_REFRESH_MS, ctx.hub.timeoutMs)",
+    test: `${CONNECTOR}/test/collision-relay-unconfirmed.test.ts`,
+    because: "a late drain after a slow hint waits out the cap past the reserve, and the budget race abandons a relay already drained",
+  },
+  {
+    label: "a presence cache dated in the future counts as fresh",
+    file: `${CORE}/src/state/presence-cache.ts`,
+    from: "  return ageMs >= 0 && ageMs < PRESENCE_CACHE_TTL_MS;",
+    to: "  return ageMs < PRESENCE_CACHE_TTL_MS;",
+    test: `${CONNECTOR}/test/collision-relay-unconfirmed.test.ts`,
+    because: "a cache stamped ahead of a clock stepped back decides who is named for as long as the lag lasts",
+  },
+  // ── Review of feat/collision-visible, round 3, F-L8b: reviewer mutation X2, now counted at the spawn ──
+  {
+    label: "an empty relay queue takes the subagent-return hook's full path",
+    file: `${CONNECTOR}/src/hooks/subagent-return.ts`,
+    from: "(!hasPendingRelay(state) && !hasOverdueRests(state, new Date()))",
+    to: "false",
+    test: `${CONNECTOR}/test/subagent-return-cost.test.ts`,
+    because: "every completed Agent/Task call with nothing queued pays the runner's four git spawns and a marker write again",
+  },
+  // ── Review of feat/collision-visible, round 3, F-M2: the turn's end asks again about resting files ──
+  {
+    label: "a teammate who starts on a resting file is never told at the turn's end",
+    file: `${CONNECTOR}/src/hooks/turn-end.ts`,
+    from: "owedRests(state).slice(0, TURN_END_RECHECK_MAX_FILES), {",
+    to: "[], {",
+    test: `${CONNECTOR}/test/turn-end-hook.test.ts`,
+    because: "a teammate who joins inside the 30 s rest, with every later edit of the file inside it too, is never surfaced (probe r3d D1)",
+  },
+  {
+    label: "the turn's end asks about every resting file",
+    file: `${CONNECTOR}/src/hooks/turn-end.ts`,
+    from: ".slice(0, TURN_END_RECHECK_MAX_FILES)",
+    to: "",
+    test: `${CONNECTOR}/test/turn-end-hook.test.ts`,
+    because: "a turn that touched forty files inside their windows makes forty hub calls while the person waits on its end",
+  },
+  {
+    label: "a paid recheck leaves its rest owed",
+    file: `${CONNECTOR}/src/hooks/rest-recheck.ts`,
+    from: "withoutTripwireRests(withCollisionNotices(fresh, groups), settled)",
+    to: "withCollisionNotices(fresh, groups)",
+    test: `${CONNECTOR}/test/turn-end-hook.test.ts`,
+    because: "a file the turn's end already rechecked is asked about again by every hook once its rest is over",
+  },
+  {
+    label: "the turn's end books an unanswered recheck instead of keeping it",
+    file: `${CONNECTOR}/src/hooks/turn-end.ts`,
+    from: "    onFailure: \"keep\",",
+    to: "    onFailure: \"book\",",
+    test: `${CONNECTOR}/test/rest-recheck-guarantee.test.ts`,
+    because: "one hub blip at a turn's end writes off a recheck the next prompt could have made",
+  },
+  {
+    label: "the turn's end tells the person again of a teammate already told",
+    file: `${CONNECTOR}/src/hooks/rest-recheck.ts`,
+    from: "    told.value = groups.filter((group) => fresher.includes(group.key));",
+    to: "    told.value = groups;",
+    test: `${CONNECTOR}/test/turn-end-hook.test.ts`,
+    because: "every turn's end repeats Nick's line beside the one teammate who is new",
+  },
+  {
+    label: "a turn-end tripwire call ignores what the budget spares",
+    file: `${CONNECTOR}/src/hooks/rest-recheck.ts`,
+    from: "Math.min(ctx.hub.timeoutMs, budget.spareMs())",
+    to: "ctx.hub.timeoutMs",
+    test: `${CONNECTOR}/test/turn-end-hook.test.ts`,
+    because: "a slow hub holds the end of the turn past the reserve, and the budget race throws away a teammate already marked told",
+  },
+  {
+    label: "a forced Stop pays the turn-end hook's full path",
+    file: `${CONNECTOR}/src/hooks/turn-end.ts`,
+    from: "payload === null || payload.stop_hook_active === true) {",
+    to: "payload === null) {",
+    test: `${CONNECTOR}/test/turn-end-hook.test.ts`,
+    because: "the same turn seen twice asks the hub twice and spawns the runner's git for an answer it already has",
+  },
+  {
+    label: "the turn-end shortcut skips a resting file",
+    file: `${CONNECTOR}/src/hooks/turn-end.ts`,
+    from: "    return state === null || !hasOwedRests(state);",
+    to: "    return true;",
+    test: `${CONNECTOR}/test/turn-end-hook.test.ts`,
+    because: "the re-check never runs, and a teammate who joined a resting file is never told",
+  },
+  {
+    label: "the turn-end hook prepares the whole runner with nothing resting",
+    file: `${CONNECTOR}/src/hooks/runner.ts`,
+    from: "  if (name === \"turn-end\" && (await hasNothingToRecheck(stdin, env))) {",
+    to: "  if (false) {",
+    test: `${CONNECTOR}/test/turn-end-hook.test.ts`,
+    because: "every turn's end pays four git spawns, a config read and a marker write while the person waits",
+  },
+  {
+    label: "the turn's end skips a rest that ended before the turn did",
+    file: `${CONNECTOR}/src/hooks/turn-end.ts`,
+    from: "owedRests(state).slice(0",
+    to: "owedRests(state).filter((rest) => Date.parse(rest.at) > Date.now() - 30_000).slice(0",
+    test: `${CONNECTOR}/test/turn-end-hook.test.ts`,
+    because: "a rest that ran out mid-turn is never rechecked at the turn's end, and its teammate waits for some later hook",
+  },
+  {
+    label: "the turn's end asks about the oldest rests first",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "(Date.parse(right.at) || 0) - (Date.parse(left.at) || 0)",
+    to: "(Date.parse(left.at) || 0) - (Date.parse(right.at) || 0)",
+    test: `${CORE}/test/tripwire-recheck.test.ts`,
+    because: "a long turn spends its few calls on the files settled first and skips the ones just edited",
+  },
+  {
+    label: "init registers no sync turn-end hook",
+    file: `${CONNECTOR}/src/cli/settings-merge.ts`,
+    from: ", group(`${prefix} hook ${TURN_END_HOOK}`)]",
+    to: "]",
+    test: `${CONNECTOR}/test/settings-merge.test.ts`,
+    because: "no install ever re-asks at a turn's end, and the teammate who joined a resting file stays unseen",
+  },
+  {
+    label: "init registers the turn-end hook async",
+    file: `${CONNECTOR}/src/cli/settings-merge.ts`,
+    from: "group(`${prefix} hook ${TURN_END_HOOK}`)",
+    to: "group(`${prefix} hook ${TURN_END_HOOK}`, undefined, true)",
+    test: `${CONNECTOR}/test/settings-merge.test.ts`,
+    because: "the re-check runs and its systemMessage is shown to nobody",
+  },
+  {
+    label: "doctor counts an async turn-end entry as installed",
+    file: `${CLI}/src/cli/doctor-global.ts`,
+    from: "(entry.isAsync ? \"registered async\" : null);",
+    to: "null;",
+    test: `${CLI}/test/doctor-subagent-return.test.ts`,
+    because: "an entry whose systemMessage nobody sees passes as the hook that tells the person at the turn's end",
+  },
+  {
+    label: "doctor does not require the turn-end hook",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "[...REQUIRED_HOOK_EVENTS, SUBAGENT_RETURN_KEY, TURN_END_KEY]",
+    to: "[...REQUIRED_HOOK_EVENTS, SUBAGENT_RETURN_KEY]",
+    test: `${CLI}/test/doctor-subagent-return.test.ts`,
+    because: "an install without the turn-end hook passes, and nobody is told to re-run init",
+  },
+  {
+    label: "doctor fails every install from before the turn-end hook",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "new Set([SUBAGENT_RETURN_KEY, TURN_END_KEY])",
+    to: "new Set([SUBAGENT_RETURN_KEY])",
+    test: `${CLI}/test/doctor-subagent-return.test.ts`,
+    because: "a working capture install reads as broken until somebody reruns init",
+  },
+  // ── Review of feat/collision-visible, round 3, F-M3: the test guard reaches the children ──
+  {
+    label: "the test guard passes a shell's hub variables on to every child",
+    file: `${CORE}/test/network-guard.ts`,
+    from: "    for (const key of HUB_CONNECTION_KEYS) {\n      delete process.env[key];\n    }\n",
+    to: "",
+    test: `${CORE}/test/network-guard.test.ts`,
+    because: "with CROSSCHECK_HUB_URL exported, an e2e test's installed hook reports to the real hub and a second serve boots on the real archive",
+  },
+  {
+    label: "the test guard leaves children the shell's crosscheck home",
+    file: `${CORE}/test/network-guard.ts`,
+    from: "    process.env[\"CROSSCHECK_HOME\"] = home;\n",
+    to: "",
+    test: `${CORE}/test/network-guard.test.ts`,
+    because: "a child spawned with the runner's env reads and writes the developer's ~/.crosscheck",
+  },
+  {
+    label: "the test guard does not export itself to children",
+    file: `${CORE}/test/network-guard.ts`,
+    from: "  process.env[\"BUN_OPTIONS\"] = withGuardPreload(process.env[\"BUN_OPTIONS\"], import.meta.path);\n",
+    to: "",
+    test: `${CORE}/test/network-guard.test.ts`,
+    because: "a hook, CLI or worker a test spawns can dial 127.0.0.1:7100 with nothing in its way",
+  },
+  {
+    label: "the test guard exports its preload in the space form",
+    file: `${CORE}/test/network-guard-rules.ts`,
+    from: "  const flag = `--preload=${guardPath}`;",
+    to: "  const flag = `--preload ${guardPath}`;",
+    test: `${CORE}/test/network-guard.test.ts`,
+    because: "bun 1.3.13 parses the space form wrongly, so every bun child the suite spawns breaks or runs unguarded",
+  },
+  {
+    label: "a guarded child scrubs the test hub it was handed",
+    file: `${CORE}/test/network-guard.ts`,
+    from: "if (process.env[GUARD_CHILD_ENV] !== \"1\") {",
+    to: "if (true) {",
+    test: `${CORE}/test/network-guard.test.ts`,
+    because: "every hook and CLI a test spawns against its own in-process hub loses that hub's URL and goes silent",
+  },
+  {
+    label: "the test guard misses a fully qualified loopback or tailnet name",
+    file: `${CORE}/test/network-guard-rules.ts`,
+    from: ": lower.replace(/\\.$/u, \"\");",
+    to: ": lower;",
+    test: `${CORE}/test/network-guard.test.ts`,
+    because: "http://localhost.:7100 and hub.ts.net. reach the same machines as the names without the dot, unrefused",
+  },
+  {
+    label: "the test guard misses an IPv4-mapped loopback address",
+    file: `${CORE}/test/network-guard-rules.ts`,
+    from: "  return mappedIpv4(bare) ?? bare;",
+    to: "  return bare;",
+    test: `${CORE}/test/network-guard.test.ts`,
+    because: "http://[::ffff:127.0.0.1]:7100 reaches a real hub listening on 127.0.0.1",
+  },
+  {
+    label: "the test guard misses the loopback range past 127.0.0.1",
+    file: `${CORE}/test/network-guard-rules.ts`,
+    from: "(octets[0] === LOOPBACK_IPV4_FIRST || octets.every((octet) => octet === 0))",
+    to: "(octets.join(\".\") === \"127.0.0.1\" || octets.every((octet) => octet === 0))",
+    test: `${CORE}/test/network-guard.test.ts`,
+    because: "on Linux every 127.x.y.z reaches a hub bound to the wildcard, and 127.0.0.2:7100 is not refused",
+  },
+  {
+    label: "the test guard misses a tailnet IPv6 address",
+    file: `${CORE}/test/network-guard-rules.ts`,
+    from: " || host.startsWith(TAILNET_IPV6_PREFIX)",
+    to: "",
+    test: `${CORE}/test/network-guard.test.ts`,
+    because: "a team hub dialled by its fd7a:115c:a1e0:: address is reachable from a test",
+  },
+  {
+    label: "the test guard misses a tailnet IPv4 address",
+    file: `${CORE}/test/network-guard-rules.ts`,
+    from: "    first === TAILNET_IPV4_FIRST &&",
+    to: "    false &&",
+    test: `${CORE}/test/network-guard.test.ts`,
+    because: "a team hub dialled by its 100.64/10 address is reachable from a test",
+  },
+  {
+    label: "a test spawns a bun child that skips the guard",
+    file: `${CORE}/test/spool-concurrency.test.ts`,
+    from: "    env: { ...process.env },\n",
+    to: "",
+    test: `${CORE}/test/network-guard.test.ts`,
+    because: "a child spawned with no env gets the shell's environment as the runner started with it: the hub variables, no guard",
+  },
+  {
+    label: "the test guard keeps a shell's own hub URL as if a test had set it",
+    file: `${CORE}/test/network-guard-rules.ts`,
+    from: "url.port !== \"\" && !isRealHubUrl(url)",
+    to: "url.port !== \"\"",
+    test: `${CORE}/test/network-guard.test.ts`,
+    because: "a shell exporting http://127.0.0.1:7100 hands every child of the suite the machine's real hub and its key",
+  },
+  {
+    label: "the test guard scrubs the test hub a probe or harness handed its process",
+    file: `${CORE}/test/network-guard.ts`,
+    from: "  if (!isTestHubUrl(process.env[\"CROSSCHECK_HUB_URL\"])) {",
+    to: "  if (true) {",
+    test: `${CORE}/test/network-guard.test.ts`,
+    because: "a CLI or hook spawned with an explicit env and the guard preloaded loses its in-process hub and goes silent",
+  },
+  {
+    label: "the test guard passes a shell's archive directory on to every child",
+    file: `${CORE}/test/network-guard.ts`,
+    from: "  if (!isTempPath(process.env[HUB_DATA_KEY])) {\n    delete process.env[HUB_DATA_KEY];\n  }\n",
+    to: "",
+    test: `${CORE}/test/network-guard.test.ts`,
+    because: "a second crosscheck serve a test boots opens the real archive directory",
+  },
+  {
+    label: "the test guard replaces a test's own temp home",
+    file: `${CORE}/test/network-guard.ts`,
+    from: "  if (!isTempPath(process.env[\"CROSSCHECK_HOME\"])) {",
+    to: "  if (true) {",
+    test: `${CORE}/test/network-guard.test.ts`,
+    because: "a process a test starts on its own fixture home reads and writes a different, empty one",
+  },
+  // ── Round 3, F-M2 as accepted: every rest's recheck is paid, kept for the next hook, or booked ──
+  {
+    label: "a recheck the hub did not answer is booked by no later hook",
+    file: `${CONNECTOR}/src/hooks/rest-recheck.ts`,
+    from: "const failed = policy.onFailure === \"book\" ?",
+    to: "const failed = false ?",
+    test: `${CONNECTOR}/test/rest-recheck-guarantee.test.ts`,
+    because: "a crashed turn followed by an unreachable hub leaves a teammate untold and no loss anywhere to say so",
+  },
+  {
+    label: "a debt the record's cap evicted is never booked",
+    file: `${CONNECTOR}/src/hooks/rest-recheck.ts`,
+    from: "stillOwed(fresh, failed).length + (fresh.tripwireRestsDropped ?? 0);",
+    to: "stillOwed(fresh, failed).length;",
+    test: `${CONNECTOR}/test/rest-recheck-guarantee.test.ts`,
+    because: "a recheck the FIFO cap dropped is gone without a count, the silent drop the guarantee forbids",
+  },
+  {
+    label: "a booked eviction tally is booked again by every pass",
+    file: `${CONNECTOR}/src/hooks/rest-recheck.ts`,
+    from: "const paid = withRestsDroppedBooked(withoutTripwireRests(",
+    to: "const paid = (withoutTripwireRests(",
+    test: `${CONNECTOR}/test/rest-recheck-guarantee.test.ts`,
+    because: "two evicted rechecks are counted as two more losses at every hook that pays a debt",
+  },
+  {
+    label: "a teammate a subagent's recheck finds never reaches the main thread",
+    file: `${CONNECTOR}/src/hooks/rest-recheck.ts`,
+    from: ": withQueuedCollisionRelays(paid, told.value.map((group) => group.key));",
+    to: ": paid;",
+    test: `${CONNECTOR}/test/rest-recheck-guarantee.test.ts`,
+    because: "the line goes to a subagent's systemMessage, which nothing documents a person sees, and is marked told",
+  },
+  {
+    label: "a hook sweeps rests that are still running",
+    file: `${CONNECTOR}/src/hooks/rest-recheck.ts`,
+    from: "(state === null ? [] : overdueRests(state, ctx.now()))",
+    to: "(state === null ? [] : owedRests(state))",
+    test: `${CONNECTOR}/test/rest-recheck-guarantee.test.ts`,
+    because: "every prompt and edit inside a rest asks the hub the very question the rest exists to save",
+  },
+  {
+    label: "a hook sweeps every overdue rest at once",
+    file: `${CONNECTOR}/src/hooks/rest-recheck.ts`,
+    from: ".filter((rest) => !isEditedFile(rest, editedPath))\n      .slice(0, TURN_END_RECHECK_MAX_FILES);",
+    to: ".filter((rest) => !isEditedFile(rest, editedPath));",
+    test: `${CONNECTOR}/test/rest-recheck-guarantee.test.ts`,
+    because: "a backlog of forty overdue rests holds one prompt for forty hub calls",
+  },
+  {
+    label: "an edit's sweep asks again about the file the edit itself asks about",
+    file: `${CONNECTOR}/src/hooks/rest-recheck.ts`,
+    from: "editedPath !== undefined && editedPath.endsWith(`/${rest.file}`)",
+    to: "false",
+    test: `${CONNECTOR}/test/collision-tripwire-ttl.test.ts`,
+    because: "the first edit after a rest pays two tripwire calls for one file",
+  },
+  {
+    label: "the next prompt never pays an overdue rest",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    from: "    recheckOverdueRests(ctx, budget, USER_PROMPT_SUBMIT_HOOK),\n",
+    to: "    Promise.resolve([]),\n",
+    test: `${CONNECTOR}/test/rest-recheck-guarantee.test.ts`,
+    because: "a turn that crashed before its end leaves the teammate who joined its rest untold at the next prompt",
+  },
+  {
+    label: "the next prompt finds a teammate and tells the agent nothing",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    from: "    sweptAgentCopy(swept, now),\n",
+    to: "",
+    test: `${CONNECTOR}/test/rest-recheck-guarantee.test.ts`,
+    because: "a teammate found and marked told reaches neither the agent nor, on a quiet prompt, the person",
+  },
+  {
+    label: "an edit never pays another file's overdue rest",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "    recheckOverdueRests(ctx, budget, PRE_TOOL_USE_HOOK, extractFilePaths(ctx.payload.tool_input)[0]),\n",
+    to: "    Promise.resolve([]),\n",
+    test: `${CONNECTOR}/test/rest-recheck-guarantee.test.ts`,
+    because: "a long turn past a rest leaves its teammate unseen until the turn ends, or never if it crashes",
+  },
+  {
+    label: "a subagent's return skips an overdue rest when nothing is queued",
+    file: `${CONNECTOR}/src/hooks/subagent-return.ts`,
+    from: " && !hasOverdueRests(state, new Date())",
+    to: "",
+    test: `${CONNECTOR}/test/rest-recheck-guarantee.test.ts`,
+    because: "the runner's shortcut answers the return before any recheck, and the debt waits for another hook",
+  },
+  {
+    label: "a subagent's return finds a teammate and tells nobody",
+    file: `${CONNECTOR}/src/hooks/subagent-return.ts`,
+    from: "[agentCopy(drain, ctx.now()), sweptAgentCopy(swept, ctx.now())]",
+    to: "[agentCopy(drain, ctx.now())]",
+    test: `${CONNECTOR}/test/rest-recheck-guarantee.test.ts`,
+    because: "the group is marked told and the hook prints nothing when no relay was queued beside it",
+  },
+  {
+    label: "a session that ends owing rechecks books none of them",
+    file: `${CONNECTOR}/src/hooks/session-end.ts`,
+    from: "  await bookOwedRestsAtEnd(ctx, SESSION_END_HOOK);\n",
+    to: "",
+    test: `${CONNECTOR}/test/rest-recheck-guarantee.test.ts`,
+    because: "the state that held the debts is deleted and no ledger ever says they existed",
+  },
+  {
+    label: "the reaper drops a dead session's owed rechecks unbooked",
+    file: `${CORE}/src/state/session-reap.ts`,
+    from: "      await bookOwedRests(home, parsed.data, now);\n",
+    to: "",
+    test: `${CORE}/test/collision-rest-reap.test.ts`,
+    because: "a session killed mid-turn takes its unpaid rechecks into the deleted corpse",
+  },
+  {
+    label: "a dead session's owed rechecks are dated at the reap",
+    file: `${CORE}/src/state/session-reap.ts`,
+    from: "    now: Number.isFinite(newest) && newest <= now.getTime() ? new Date(newest) : now,",
+    to: "    now,",
+    test: `${CORE}/test/collision-rest-reap.test.ts`,
+    because: "a loss a week old reads as today's, inside every coverage window for another week",
+  },
+  {
+    label: "a compact drops the rechecks still owed",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  ...(previous.tripwireCheckedFiles === undefined ? {} : { tripwireCheckedFiles: previous.tripwireCheckedFiles }),\n",
+    to: "",
+    test: `${CORE}/test/tripwire-recheck.test.ts`,
+    because: "a resume after a crash is exactly when an owed recheck has to survive, and it vanishes",
+  },
+  {
+    label: "the record's cap evicts an owed recheck uncounted",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "    ...(evicted === 0 ? {} : { tripwireRestsDropped: (state.tripwireRestsDropped ?? 0) + evicted }),\n",
+    to: "",
+    test: `${CORE}/test/tripwire-recheck.test.ts`,
+    because: "past a hundred owed rests the oldest disappear and nothing books them",
+  },
+  {
+    label: "a recheck pays a newer rest a racing edit started",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "!rests.some((rest) => rest.file === check.file && rest.at === check.at),",
+    to: "!rests.some((rest) => rest.file === check.file),",
+    test: `${CORE}/test/tripwire-recheck.test.ts`,
+    because: "an edit that re-settled the file while the recheck ran loses its own debt",
+  },
+  {
+    label: "a hook books a debt a racing edit already renewed",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "check.file === rest.file && check.at === rest.at",
+    to: "check.file === rest.file",
+    test: `${CORE}/test/tripwire-recheck.test.ts`,
+    because: "a file whose fresh answer started a new rest is booked as never rechecked",
+  },
+  {
+    label: "a rest still running is taken for an overdue one",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "owedRests(state).filter((check) => !isTripwireFresh(state, check.file, now));",
+    to: "owedRests(state);",
+    test: `${CORE}/test/tripwire-recheck.test.ts`,
+    because: "every hook inside a rest rechecks it, and the rest saves nothing",
+  },
+  {
+    label: "doctor and status never name a rest whose recheck did not run",
+    file: `${CORE}/src/spool/loss-report.ts`,
+    from: "    rests === 0\n      ? null",
+    to: "    true\n      ? null",
+    test: `${CLI}/test/doctor-losses.test.ts`,
+    because: "the loss is counted into the report and printed nowhere a person reads",
+  },
+  {
+    label: "the loss vocabulary has no word for an unchecked rest",
+    file: `${SCHEMA}/src/telemetry-loss.ts`,
+    from: "  \"rest_unchecked\",\n  /** Counted before",
+    to: "  /** Counted before",
+    test: `${SCHEMA}/test/telemetry-loss.test.ts`,
+    because: "the hub folds the kind into unattributed, and coverage can no longer say what was lost",
+  },
+  {
+    label: "the capture-loss ledger refuses an unchecked rest",
+    file: `${CORE}/src/state/loss-ledger.ts`,
+    from: "  \"topic_overflow\",\n  \"rest_unchecked\",\n] as const;",
+    to: "  \"topic_overflow\",\n] as const;",
+    test: `${CORE}/test/collision-rest-reap.test.ts`,
+    because: "every booked rest reads back as a malformed line, and no surface names it",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -28673,16 +30373,17 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-claim-binding.test.ts 4
  * PRINTS: packages/cli/test/doctor-evidence-axes.test.ts 1
  * PRINTS: packages/cli/test/doctor-generated.test.ts 2
- * PRINTS: packages/cli/test/doctor-global.test.ts 3
+ * PRINTS: packages/cli/test/doctor-global.test.ts 5
  * PRINTS: packages/cli/test/doctor-home-repo.test.ts 3
  * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1
  * PRINTS: packages/cli/test/doctor-hub-transport.test.ts 4
  * PRINTS: packages/cli/test/doctor-last-sync.test.ts 1
  * PRINTS: packages/cli/test/doctor-latency.test.ts 2
- * PRINTS: packages/cli/test/doctor-losses.test.ts 14
+ * PRINTS: packages/cli/test/doctor-losses.test.ts 15
  * PRINTS: packages/cli/test/doctor-pilot.test.ts 6
  * PRINTS: packages/cli/test/doctor-search-rebuild.test.ts 2
  * PRINTS: packages/cli/test/doctor-sharing.test.ts 4
+ * PRINTS: packages/cli/test/doctor-subagent-return.test.ts 10
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
  * PRINTS: packages/cli/test/doctor-verdict-legality.test.ts 2
  * PRINTS: packages/cli/test/doctor.test.ts 12
@@ -28761,6 +30462,17 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/briefing-omission-hook.test.ts 4
  * PRINTS: packages/connector-claude/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-claude/test/capture-latency.test.ts 1
+ * PRINTS: packages/connector-claude/test/collision-notice-hook.test.ts 12
+ * PRINTS: packages/connector-claude/test/collision-order-hook.test.ts 4
+ * PRINTS: packages/connector-claude/test/collision-prompt-render.test.ts 1
+ * PRINTS: packages/connector-claude/test/collision-relay-durable.test.ts 2
+ * PRINTS: packages/connector-claude/test/collision-relay-hook.test.ts 3
+ * PRINTS: packages/connector-claude/test/collision-relay-slow-hub.test.ts 3
+ * PRINTS: packages/connector-claude/test/collision-relay-unconfirmed.test.ts 9
+ * PRINTS: packages/connector-claude/test/collision-statusline-unnamed.test.ts 3
+ * PRINTS: packages/connector-claude/test/collision-teammates-hook.test.ts 4
+ * PRINTS: packages/connector-claude/test/collision-tripwire-ttl.test.ts 4
+ * PRINTS: packages/connector-claude/test/collision-visibility-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/conclusion-corpus.test.ts 6
  * PRINTS: packages/connector-claude/test/conference-prompt.test.ts 1
  * PRINTS: packages/connector-claude/test/derive-doctor.test.ts 1
@@ -28770,6 +30482,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/failure-hook.test.ts 2
  * PRINTS: packages/connector-claude/test/fingerprint.test.ts 1
  * PRINTS: packages/connector-claude/test/foreign-model.test.ts 2
+ * PRINTS: packages/connector-claude/test/ghost-notice.test.ts 1
  * PRINTS: packages/connector-claude/test/ghost-worker.test.ts 5
  * PRINTS: packages/connector-claude/test/global-wiring-silence.test.ts 2
  * PRINTS: packages/connector-claude/test/hint-hook.test.ts 4
@@ -28777,6 +30490,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/hook-contract.test.ts 1
  * PRINTS: packages/connector-claude/test/hook-reserve.test.ts 1
  * PRINTS: packages/connector-claude/test/hook-seq.test.ts 3
+ * PRINTS: packages/connector-claude/test/hook-time-budget.test.ts 1
  * PRINTS: packages/connector-claude/test/hook-timeout-loss.test.ts 6
  * PRINTS: packages/connector-claude/test/hook-window-pairing.test.ts 11
  * PRINTS: packages/connector-claude/test/hook-window.test.ts 4
@@ -28793,16 +30507,20 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/recovery-epoch.test.ts 2
  * PRINTS: packages/connector-claude/test/recovery-losses.test.ts 1
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
+ * PRINTS: packages/connector-claude/test/rest-recheck-guarantee.test.ts 13
  * PRINTS: packages/connector-claude/test/resumed-session.test.ts 10
  * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
  * PRINTS: packages/connector-claude/test/settings-merge-removal.test.ts 1
- * PRINTS: packages/connector-claude/test/settings-merge.test.ts 1
+ * PRINTS: packages/connector-claude/test/settings-merge.test.ts 5
  * PRINTS: packages/connector-claude/test/solved-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/state-reap.test.ts 1
+ * PRINTS: packages/connector-claude/test/statusline-person-strip.test.ts 4
  * PRINTS: packages/connector-claude/test/stop-gate.test.ts 6
  * PRINTS: packages/connector-claude/test/stop-git-touches.test.ts 1
  * PRINTS: packages/connector-claude/test/stop-hook.test.ts 2
  * PRINTS: packages/connector-claude/test/stop-latency.test.ts 1
+ * PRINTS: packages/connector-claude/test/subagent-return-cost.test.ts 5
+ * PRINTS: packages/connector-claude/test/subagent-return-hook.test.ts 8
  * PRINTS: packages/connector-claude/test/summarizer-argv.test.ts 3
  * PRINTS: packages/connector-claude/test/summarizer-child-guard.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-worker-env.test.ts 1
@@ -28810,9 +30528,11 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/topic-git-lane.test.ts 9
  * PRINTS: packages/connector-claude/test/topic-nick-shape.test.ts 19
  * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 10
+ * PRINTS: packages/connector-claude/test/turn-end-hook.test.ts 9
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 4
  * PRINTS: packages/connector-core/test/abandoned-temps.test.ts 24
  * PRINTS: packages/connector-core/test/absence-render.test.ts 7
+ * PRINTS: packages/connector-core/test/anchoring-separation.test.ts 1
  * PRINTS: packages/connector-core/test/body-redaction.test.ts 5
  * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 25
  * PRINTS: packages/connector-core/test/briefing-flow.test.ts 7
@@ -28830,6 +30550,16 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/claim-surface.test.ts 1
  * PRINTS: packages/connector-core/test/claim-validity-parity.test.ts 2
  * PRINTS: packages/connector-core/test/claim-validity-render.test.ts 2
+ * PRINTS: packages/connector-core/test/collision-count-only.test.ts 2
+ * PRINTS: packages/connector-core/test/collision-indicator.test.ts 4
+ * PRINTS: packages/connector-core/test/collision-notice-bounds.test.ts 1
+ * PRINTS: packages/connector-core/test/collision-notice.test.ts 30
+ * PRINTS: packages/connector-core/test/collision-person-strip.test.ts 11
+ * PRINTS: packages/connector-core/test/collision-publish-busy-lock.test.ts 3
+ * PRINTS: packages/connector-core/test/collision-relay-presence.test.ts 7
+ * PRINTS: packages/connector-core/test/collision-rest-reap.test.ts 3
+ * PRINTS: packages/connector-core/test/collision-state-eviction.test.ts 6
+ * PRINTS: packages/connector-core/test/collision-state.test.ts 4
  * PRINTS: packages/connector-core/test/commit-evidence.test.ts 1
  * PRINTS: packages/connector-core/test/conference-cost.test.ts 1
  * PRINTS: packages/connector-core/test/conference-report.test.ts 4
@@ -28904,6 +30634,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/mcp-tools.test.ts 4
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
+ * PRINTS: packages/connector-core/test/network-guard.test.ts 15
  * PRINTS: packages/connector-core/test/outcome-clause.test.ts 2
  * PRINTS: packages/connector-core/test/owed-debt-rules.test.ts 22
  * PRINTS: packages/connector-core/test/owed-work-context.test.ts 17
@@ -28953,6 +30684,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/topic-record-marker.test.ts 8
  * PRINTS: packages/connector-core/test/topic-rules.test.ts 15
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
+ * PRINTS: packages/connector-core/test/tripwire-recheck.test.ts 9
  * PRINTS: packages/connector-core/test/verdict-wire.test.ts 2
  * PRINTS: packages/connector-core/test/work-context-ack.test.ts 6
  * PRINTS: packages/connector-core/test/working-days.test.ts 3
@@ -28981,7 +30713,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1
  * PRINTS: packages/schema/test/session.test.ts 1
- * PRINTS: packages/schema/test/telemetry-loss.test.ts 3
+ * PRINTS: packages/schema/test/telemetry-loss.test.ts 4
  * PRINTS: packages/server/test/absences.test.ts 7
  * PRINTS: packages/server/test/calibration.test.ts 1
  * PRINTS: packages/server/test/causal-guarantees.test.ts 23
@@ -29109,6 +30841,7 @@ interface Outcome {
  * PRINTS: packages/server/test/team-settings.test.ts 9
  * PRINTS: packages/server/test/topic-contexts.test.ts 4
  * PRINTS: packages/server/test/tripwire-large-change.test.ts 5
+ * PRINTS: packages/server/test/tripwire-rows.test.ts 2
  * PRINTS: packages/server/test/ui-approvals.test.ts 11
  * PRINTS: packages/server/test/ui-ceremony-localhost.test.ts 6
  * PRINTS: packages/server/test/ui-feed.test.ts 3

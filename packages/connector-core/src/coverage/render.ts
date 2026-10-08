@@ -468,11 +468,19 @@ export const coverageClause = (record: CoverageRecord, now: Date): string => {
   return single === undefined ? twoLines(head, forms) : lineOf(head, single);
 };
 
+/**
+ * Whether some rung is POSITIVELY incomplete — the one condition every
+ * qualifier on a positive answer speaks on. An `unknown` or unreported rung
+ * is not a gap anybody observed, so it says nothing.
+ */
+export const hasIncompleteRung = (record: CoverageRecord): boolean =>
+  record.sources.some((row) => row.state === "incomplete");
+
 export const coverageNote = (
   record: CoverageRecord,
   now: Date,
 ): string | null =>
-  record.sources.some((row) => row.state === "incomplete")
+  hasIncompleteRung(record)
     ? coverageClause(record, now)
     : null;
 

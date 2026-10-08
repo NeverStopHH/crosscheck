@@ -455,6 +455,7 @@ const kindParts = (capture: CaptureLossSummary): readonly (string | null)[] => {
   const drift = capture.byKind["host_contract_drift"] ?? 0;
   const wire = capture.byKind["wire_unobserved"] ?? 0;
   const topics = capture.byKind["topic_overflow"] ?? 0;
+  const rests = capture.byKind["rest_unchecked"] ?? 0;
   return [
     hooks === 0
       ? null
@@ -468,6 +469,10 @@ const kindParts = (capture: CaptureLossSummary): readonly (string | null)[] => {
     topics === 0
       ? null
       : `${plural(topics, "touch", "touches")} filed under the session's own work context past its topic cap — delivered, but not told apart by branch`,
+    // Round 3, F-M2: a 30 s tripwire rest whose recheck never ran.
+    rests === 0
+      ? null
+      : `${plural(rests, "collision file")} rested without the recheck that follows — a teammate who started on ${rests === 1 ? "it" : "one"} meanwhile may not have been told${parenthetical(detailsOf(capture, "rest_unchecked"))}`,
     // Review H3: these were counted into the report and printed nowhere.
     capture.malformed === 0
       ? null

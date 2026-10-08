@@ -2403,6 +2403,12 @@ export const TripwireSessionSchema = z.looseObject({
    * like the ghost row's (GhostCheckEntrySchema.largeChangeFiles).
    */
   largeChangeFiles: z.number().int().min(0).nullable().optional().catch(undefined),
+  /**
+   * When the overlapping work context landed, or null while it is open; an
+   * older hub sends nothing, and anything unreadable counts as open — the
+   * person's line then says "is working on", as it always did.
+   */
+  landedAt: z.string().min(1).nullable().optional().catch(undefined),
 });
 
 export type TripwireSession = z.infer<typeof TripwireSessionSchema>;

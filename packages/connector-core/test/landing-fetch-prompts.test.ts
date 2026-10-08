@@ -247,6 +247,7 @@ const runInPty = async (dir: string, program: string, out: string): Promise<stri
   await writeFile(script, program, "utf8");
   const proc = Bun.spawn({
     cmd: [...inPty([process.execPath, script])],
+    env: { ...process.env },
     stdin: "ignore",
     stdout: "ignore",
     stderr: "ignore",

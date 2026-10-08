@@ -115,6 +115,7 @@ export const LOSS_KINDS = [
   "host_contract_drift",  // host payloads that lacked a field capture needs (payloads, not records)
   "wire_unobserved",      // ACP wire lines the observer could not read (lines, not records)
   "topic_overflow",       // touches filed under the session's own context because the life's topic cap was reached (row 27)
+  "rest_unchecked",       // collision files whose 30 s tripwire rest was never rechecked (files, not records)
   "unattributed",         // counted before the ledger kept reasons, or a kind this hub does not know
 ] as const;
 export const MAX_LOSS_COUNT = 2_147_483_647;               // int4, the type of loss_total (review C1)
@@ -202,7 +203,10 @@ the entries' own `at` the way `newestDropMs` already does (`drops.ts:254-261`). 
 
 **A second ledger for losses that are not records.** `state/loss-ledger.ts`: append-only JSONL at
 `~/.crosscheck/state/losses.jsonl`, one line per event — `{"at", "kind", "count", "key", "detail"}` — where
-`kind` is one of `hook_timed_out`, `host_contract_drift`, `wire_unobserved`; `key` is the repo key when the
+`kind` is one of `hook_timed_out`, `host_contract_drift`, `wire_unobserved`, `rest_unchecked` (round 3 of the
+collision review: a 30 s tripwire rest whose recheck no hook could make — the hub did not answer the next hook's
+recheck, the session ended still owing it, or its corpse was reaped; `detail` names the hook, counted per file);
+`key` is the repo key when the
 writer knows it and `null` when it does not (a hook that timed out before repo identity resolved, a Cursor
 payload with no workspace root); `detail` is the hook name or host event name from the writer's own enum,
 bounded. Append-only for the sync-state lesson (`drops.ts:5-9`), bounded by `MAX_LOSS_LEDGER_BYTES` the way the

@@ -5,7 +5,9 @@ import {
   SESSION_END_BUDGET_RATIO,
   SESSION_START_BUDGET_RATIO,
   STOP_BUDGET_RATIO,
+  SUBAGENT_RETURN_BUDGET_RATIO,
   SUBAGENT_STOP_BUDGET_RATIO,
+  TURN_END_BUDGET_RATIO,
   USER_PROMPT_SUBMIT_BUDGET_RATIO,
 } from "@crosscheck/connector-core/constants.ts";
 import {
@@ -38,6 +40,8 @@ import { bookLandedProbeCut } from "@crosscheck/connector-core/state/landed-prob
 import { extractFilePaths, isEditTool, parseHookPayload } from "../capture/tool-events.ts";
 import type { HookPayload } from "../capture/tool-events.ts";
 import { sessionStartContext } from "./session-start-output.ts";
+import { hasNothingToRelay } from "./subagent-return.ts";
+import { hasNothingToRecheck } from "./turn-end.ts";
 
 export type HookName =
   | "session-start"
@@ -47,7 +51,9 @@ export type HookName =
   | "user-prompt-submit"
   | "pre-tool-use"
   | "stop"
-  | "subagent-stop";
+  | "subagent-stop"
+  | "subagent-return"
+  | "turn-end";
 
 export interface HookContext {
   readonly payload: HookPayload;
@@ -93,6 +99,8 @@ const BUDGET_RATIOS: Readonly<Record<HookName, number>> = {
   "pre-tool-use": PRE_TOOL_USE_BUDGET_RATIO,
   stop: STOP_BUDGET_RATIO,
   "subagent-stop": SUBAGENT_STOP_BUDGET_RATIO,
+  "subagent-return": SUBAGENT_RETURN_BUDGET_RATIO,
+  "turn-end": TURN_END_BUDGET_RATIO,
 };
 
 interface ResolvedHookRepo {
@@ -399,6 +407,20 @@ export const runHookWith = async (
   env: Env,
 ): Promise<string> => {
   if (isSummarizerChild(env)) {
+    return "";
+  }
+  // The subagent-return hook fires on EVERY Agent/Task call in the main
+  // thread, and nearly every one has nothing to relay: answered from the
+  // payload and one state read, BEFORE the budget's config read and the repo
+  // identity's git spawns, and without a fired marker (round 2, M2;
+  // hooks/subagent-return.ts).
+  if (name === "subagent-return" && (await hasNothingToRelay(stdin, env))) {
+    return "";
+  }
+  // The turn-end hook fires at the end of EVERY turn, and nearly every turn
+  // has no file resting: answered the same way (round 3, F-M2;
+  // hooks/turn-end.ts).
+  if (name === "turn-end" && (await hasNothingToRecheck(stdin, env))) {
     return "";
   }
   // A holder rather than a plain `let`, so the assignment inside the

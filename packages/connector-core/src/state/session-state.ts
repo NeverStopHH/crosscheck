@@ -5,6 +5,8 @@ import {
   DERIVE_FIRES_KEPT,
   DOCTOR_ZOMBIE_STATE_WARN_HOURS,
   MAX_BRIEFING_SOLVED_REFS,
+  MAX_COLLISION_FILES,
+  MAX_COLLISION_NOTICES,
   MAX_SHOWN_LANDED_NOTICE_IDS,
   MAX_KNOWN_WORKTREE_ROOTS,
   MAX_PROBED_FINGERPRINTS,
@@ -17,6 +19,7 @@ import {
   SESSION_STATE_LOCK_RETRIES,
   STATUS_MAX_SESSION_STATES,
   SUMMARIZER_TIMEOUT_MS,
+  TRIPWIRE_RECHECK_TTL_MS,
 } from "../constants.ts";
 import {
   readJsonOrNull,
@@ -148,6 +151,83 @@ export const DeriveFiresSchema = z
       return parsed.success ? [parsed.data] : [];
     }),
   );
+
+/**
+ * ONE TEAMMATE FILE GROUP THIS SESSION'S PERSON WAS TOLD ABOUT (pilot,
+ * 2026-10-07; hints/collision-notice.ts renders it). The group is a teammate's
+ * WORK CONTEXT — `key` is the (developer, work context) pair — so a second
+ * file of the same group joins it silently and the person is told once.
+ *
+ * Stored as the renderer will need it and no more: the display name and the
+ * branch already BARE-sanitized and capped (they are re-sanitized at every
+ * render all the same), the branch null whenever the row withheld it, and
+ * the files the reader's own repo-relative paths, capped in count and length.
+ */
+export const CollisionNoticeSchema = z.object({
+  key: z.string().min(1),
+  developerId: z.string().min(1),
+  name: z.string(),
+  files: z.array(z.string().min(1)),
+  fileCount: z.number().int().min(0),
+  branch: z.string().nullable(),
+  lastActiveAt: z.string().nullable(),
+  /** The answer it came from said a rung of the record is incomplete (COV-9). */
+  partial: z.boolean().optional(),
+  /** The teammate's work context had LANDED when the row was read. */
+  landed: z.boolean().optional(),
+});
+
+export type CollisionNotice = z.infer<typeof CollisionNoticeSchema>;
+
+/**
+ * Read ENTRY BY ENTRY like the derive ring below, and OPTIONAL: one malformed
+ * entry costs only itself, a value that is not a list reads as none (the
+ * person may then be told once more — the fail-open direction), and a state
+ * written before the field existed, or by a test, parses unchanged.
+ */
+const CollisionNoticesSchema = z
+  .array(z.unknown())
+  .transform((entries): CollisionNotice[] =>
+    entries.flatMap((entry) => {
+      const parsed = CollisionNoticeSchema.safeParse(entry);
+      return parsed.success ? [parsed.data] : [];
+    }),
+  )
+  .optional()
+  .catch(undefined);
+
+/**
+ * A list of KEYS — the relay queue, the tripwire's asked (file, group)
+ * pairs — read ENTRY BY ENTRY like the notices: a key that is not a non-empty
+ * string costs only itself, and a value that is not a list reads as an empty
+ * list — never as a state file nobody can read.
+ */
+const TolerantKeyListSchema = z
+  .array(z.unknown())
+  .transform((entries): string[] =>
+    entries.filter((entry): entry is string => typeof entry === "string" && entry.length > 0),
+  )
+  .optional()
+  .catch(undefined);
+
+/**
+ * One file the live tripwire last answered for and left nothing new to say
+ * about (round 2, L1), and when. Read entry by entry like the keys above.
+ */
+const TripwireCheckSchema = z.object({ file: z.string().min(1), at: z.string().min(1) });
+
+export type TripwireCheck = z.infer<typeof TripwireCheckSchema>;
+
+const TripwireChecksSchema = z
+  .array(z.unknown())
+  .transform((entries): TripwireCheck[] =>
+    entries.flatMap((entry) => {
+      const parsed = TripwireCheckSchema.safeParse(entry);
+      return parsed.success ? [parsed.data] : [];
+    }),
+  )
+  .optional()
+  .catch(undefined);
 
 /** The ring after one more fire: appended, the newest DERIVE_FIRES_KEPT kept. */
 export const withDeriveFire = (
@@ -728,6 +808,57 @@ const SessionStateObjectSchema = z.looseObject({
    */
   draftNudgeRetryAt: z.string().min(1).nullable().default(null),
   /**
+   * The teammate file groups this session's PERSON was told about — the
+   * human-facing collision notice (hints/collision-notice.ts), once per
+   * (teammate, work context) per session, and the statusline's overlap
+   * indicator reads the same list. Absent on every state written before it.
+   */
+  collisionNotices: CollisionNoticesSchema,
+  /**
+   * Group keys a SUBAGENT ran into (its hook payload carried `agent_id`),
+   * waiting for the MAIN thread's next UserPromptSubmit: a subagent's own
+   * context is not the conversation the person reads, and 91% of the pilot
+   * owner's edits were made by subagents. Drained under the lock, so a group
+   * is relayed at most once.
+   */
+  collisionRelayQueue: TolerantKeyListSchema,
+  /**
+   * Queued groups the record had to let go of before the main thread drained
+   * them (round 2, L6): only when MAX_COLLISION_NOTICES queued groups left no
+   * merely told one to evict first. COUNTED, so the relay's `+N more` still
+   * says they existed; reset by the drain.
+   */
+  collisionRelayDropped: z.number().int().min(0).optional().catch(undefined),
+  /**
+   * The (file, teammate work context) pairs the tripwire already ASKED about
+   * (review M4) — the live half's once-per rule, which used to be per FILE
+   * alone in `tripwireAskedFiles`, so a second teammate on a file already
+   * asked about was never named. `tripwireAskedFiles` still records every
+   * file asked at least once; this list decides who is new on it.
+   */
+  tripwireAskedGroups: TolerantKeyListSchema,
+  /**
+   * Files whose live tripwire answer was fully dealt with — every teammate on
+   * it asked about, every group recorded told — and when (round 2, L1):
+   * within TRIPWIRE_RECHECK_TTL_MS the next edit of the file asks the hub
+   * nothing and writes nothing.
+   *
+   * EACH ENTRY IS A RECHECK STILL OWED (round 3, F-M2, the owner's
+   * condition): a teammate who starts on the file inside its rest is seen by
+   * no edit of it, so the entry stays until a tripwire call has asked about
+   * the file again — the turn's end (hooks/turn-end.ts), any later hook that
+   * finds the rest expired, or the file's next edit, whose answer starts a new
+   * rest. An entry no hook could recheck is booked as a `rest_unchecked`
+   * capture loss, never dropped in silence. FIFO-capped like the asked files,
+   * the evicted ones counted in `tripwireRestsDropped`.
+   */
+  tripwireCheckedFiles: TripwireChecksSchema,
+  /**
+   * Owed rechecks the FIFO cap above had to evict before any hook rechecked
+   * them — counted, so the next hook that books losses books these too.
+   */
+  tripwireRestsDropped: z.number().int().min(0).optional().catch(undefined),
+  /**
    * When each summarizer or derived-intent fire was booked, oldest first, the
    * newest DERIVE_FIRES_KEPT — what lets doctor tell a model run still in
    * flight (or one that finished after SessionEnd, with nowhere left to book
@@ -1100,6 +1231,9 @@ export const withCarriedCapture = (
         // ...and a shell's pending sweep and the lane's deferred count (review H2).
         shellSweepSince: previous.shellSweepSince ?? null,
         gitLaneRootsDeferred: previous.gitLaneRootsDeferred ?? 0,
+        // ...and the collision lane's record of who the person was told
+        // about, its queued relays and owed rechecks (round 3, F-L5).
+        ...collisionFieldsOf(previous),
       };
 
 /** The epoch and counter a state that carries nothing starts on. */
@@ -1107,6 +1241,36 @@ export interface SeqStart {
   readonly seqEpoch: string | null;
   readonly eventSeq: number;
 }
+
+/**
+ * The person is told about a teammate's file group once per SESSION, and a
+ * compact or resume is the same session: dropped, the re-fire's briefing
+ * would tell them again about the same ghost row. The relay queue and its
+ * drop tally come with it, or a subagent's hit waiting for the main thread is
+ * lost to a compact — and so do the rechecks still owed and their eviction
+ * tally (round 3, F-M2): a resume after a crash is exactly when an owed
+ * recheck has to survive.
+ */
+const collisionFieldsOf = (previous: SessionState): Partial<SessionStateInput> => ({
+  ...(previous.collisionNotices === undefined ? {} : { collisionNotices: previous.collisionNotices }),
+  ...(previous.collisionRelayQueue === undefined ? {} : { collisionRelayQueue: previous.collisionRelayQueue }),
+  ...(previous.collisionRelayDropped === undefined ? {} : { collisionRelayDropped: previous.collisionRelayDropped }),
+  ...(previous.tripwireCheckedFiles === undefined ? {} : { tripwireCheckedFiles: previous.tripwireCheckedFiles }),
+  ...(previous.tripwireRestsDropped === undefined ? {} : { tripwireRestsDropped: previous.tripwireRestsDropped }),
+});
+
+/**
+ * The collision fields ALONE carried across a re-fire of the same binding —
+ * what a publication that could not take the lock may still carry (round 3,
+ * F-L5): read without the lock, a queue a sibling is draining may be relayed
+ * twice, which is the safe side of never; the sequence pair and the capture
+ * counters may not be, since a position read beside a lock holder advancing
+ * it would be handed out twice.
+ */
+export const withCarriedCollisions = (
+  state: SessionStateInput,
+  previous: SessionState | null,
+): SessionStateInput => (!isSameBinding(previous, state) ? state : { ...state, ...collisionFieldsOf(previous) });
 
 /**
  * SessionStart's publication: create the state file, or replace one of the
@@ -1117,7 +1281,10 @@ export interface SeqStart {
  * read-then-write outside the lock would drop whatever it recorded. A lock
  * that stays busy falls back to the plain create — publishing state is not
  * optional (spool reap infers "no writer left" from its absence), so the
- * counters lose rather than the file.
+ * counters lose rather than the file. The COLLISION fields are still carried
+ * there, from a best-effort unlocked read (round 3, F-L5): without them a
+ * compact under a busy lock lost every queued relay and the record of who
+ * the person was told about.
  *
  * `startOf` answers the epoch and counter a publish that finds nothing to
  * carry starts on, read under the lock (review-2 round 8, L2): the register's
@@ -1145,7 +1312,8 @@ export const publishSessionState = async (
     },
   );
   if (!published) {
-    await writeSessionState(home, measuredFromStart(state));
+    const unlocked = await readSessionState(home, state.hostSessionKey);
+    await writeSessionState(home, withCarriedCollisions(measuredFromStart(state), unlocked));
   }
 };
 
@@ -1871,6 +2039,189 @@ export const withTripwireAsked = (
       merged.length <= MAX_TRIPWIRE_ASKED_FILES
         ? merged
         : merged.slice(merged.length - MAX_TRIPWIRE_ASKED_FILES),
+  };
+};
+
+/**
+ * The groups among `groups` this session has NOT told its person about yet —
+ * the once-per-(teammate, file group) rule as a pure read. The caller asks it
+ * on the FRESHEST state inside its update, so two racing hooks cannot both
+ * see a group as new (the tripwire marker's check-and-set shape).
+ */
+export const newCollisionKeys = (
+  state: SessionState,
+  groups: readonly CollisionNotice[],
+): readonly string[] => {
+  const told = new Set((state.collisionNotices ?? []).map((notice) => notice.key));
+  return [...new Set(groups.map((group) => group.key))].filter((key) => !told.has(key));
+};
+
+/**
+ * One group folded into a told one: files unioned (capped), the larger count,
+ * and PARTIAL if either answer was — a later complete answer does not vouch
+ * for the gap an earlier one reported.
+ */
+const mergedCollision = (told: CollisionNotice, group: CollisionNotice): CollisionNotice => {
+  const files = [...new Set([...told.files, ...group.files])].slice(0, MAX_COLLISION_FILES);
+  const isPartial = told.partial === true || group.partial === true;
+  const { partial: _dropped, ...rest } = group;
+  return {
+    ...rest,
+    files,
+    fileCount: Math.max(told.fileCount, group.fileCount, files.length),
+    ...(isPartial ? { partial: true } : {}),
+  };
+};
+
+/** `count` more queued groups the record could not keep, added to the tally the relay reports. */
+const withRelayDrops = (state: SessionState, count: number): Partial<SessionState> =>
+  count <= 0 ? {} : { collisionRelayDropped: (state.collisionRelayDropped ?? 0) + count };
+
+/**
+ * The FIFO cap of MAX_COLLISION_NOTICES, MERELY TOLD groups first (round 2,
+ * L6): a group still queued for the main thread is never evicted while a told
+ * one can go — the drain reads the queued group's facts from this list, and a
+ * queue key without them was relayed as nothing. A queued group the cap must
+ * take anyway leaves the queue too and is COUNTED.
+ */
+const withinNoticeCap = (state: SessionState, merged: readonly CollisionNotice[]): SessionState => {
+  const overflow = merged.length - MAX_COLLISION_NOTICES;
+  if (overflow <= 0) {
+    return { ...state, collisionNotices: [...merged] };
+  }
+  const queue = state.collisionRelayQueue ?? [];
+  const evictable = merged.filter((notice) => !queue.includes(notice.key)).slice(0, overflow);
+  const forced = merged.filter((notice) => queue.includes(notice.key)).slice(0, overflow - evictable.length);
+  const gone = new Set([...evictable, ...forced].map((notice) => notice.key));
+  return {
+    ...state,
+    collisionNotices: merged.filter((notice) => !gone.has(notice.key)),
+    ...(forced.length === 0 ? {} : { collisionRelayQueue: queue.filter((key) => !gone.has(key)) }),
+    ...withRelayDrops(state, forced.length),
+  };
+};
+
+/**
+ * Remembers the groups as told. A group already told GROWS — a second file of
+ * the same teammate context joins it, which is what the statusline counts —
+ * and a new one is appended; capped at MAX_COLLISION_NOTICES, oldest TOLD
+ * group out first (`withinNoticeCap`). A subagent's new groups are queued
+ * BEFORE they are remembered (hooks/pre-tool-use.ts), so the cap knows them
+ * for queued.
+ */
+export const withCollisionNotices = (
+  state: SessionState,
+  groups: readonly CollisionNotice[],
+): SessionState => {
+  const merged = groups.reduce<readonly CollisionNotice[]>((notices, group) => {
+    const told = notices.find((notice) => notice.key === group.key);
+    return told === undefined
+      ? [...notices, group]
+      : notices.map((notice) => (notice.key === group.key ? mergedCollision(told, group) : notice));
+  }, state.collisionNotices ?? []);
+  return withinNoticeCap(state, merged);
+};
+
+/**
+ * A subagent's newly told groups, queued for the main thread (deduped,
+ * capped at MAX_COLLISION_NOTICES, oldest out) — and every key the cap pushes
+ * out is COUNTED (round 2, L6), never dropped in silence.
+ */
+export const withQueuedCollisionRelays = (
+  state: SessionState,
+  keys: readonly string[],
+): SessionState => {
+  const merged = [...new Set([...(state.collisionRelayQueue ?? []), ...keys])];
+  const overflow = merged.length - MAX_COLLISION_NOTICES;
+  return {
+    ...state,
+    collisionRelayQueue: overflow <= 0 ? merged : merged.slice(overflow),
+    ...withRelayDrops(state, overflow),
+  };
+};
+
+/** The queue emptied and its drop tally spent — what the main thread's drain writes once it took them. */
+export const withDrainedCollisionRelays = (state: SessionState): SessionState => ({
+  ...state,
+  collisionRelayQueue: [],
+  collisionRelayDropped: 0,
+});
+
+/**
+ * Whether the live tripwire's last answer for `file` was fully dealt with
+ * less than TRIPWIRE_RECHECK_TTL_MS ago (round 2, L1). An instant ahead of
+ * the clock or unreadable is no answer at all.
+ */
+export const isTripwireFresh = (state: SessionState, file: string, now: Date): boolean => {
+  const at = (state.tripwireCheckedFiles ?? []).find((check) => check.file === file)?.at;
+  const ageMs = at === undefined ? Number.NaN : now.getTime() - Date.parse(at);
+  return ageMs >= 0 && ageMs < TRIPWIRE_RECHECK_TTL_MS;
+};
+
+/** The newest rest first; an undatable stamp counts as the oldest. */
+const byNewestRest = (left: TripwireCheck, right: TripwireCheck): number =>
+  (Date.parse(right.at) || 0) - (Date.parse(left.at) || 0);
+
+/**
+ * Every recheck this session still owes (round 3, F-M2), newest rest first:
+ * what the turn-end hook asks about.
+ */
+export const owedRests = (state: SessionState): readonly TripwireCheck[] =>
+  [...(state.tripwireCheckedFiles ?? [])].sort(byNewestRest);
+
+/**
+ * The owed rechecks whose rest is OVER — expired, or stamped by a clock that
+ * stepped back — with no recheck after it: what every other hook asks about
+ * at its own next opportunity (round 3, F-M2). A rest still running is the
+ * turn's end's to recheck.
+ */
+export const overdueRests = (state: SessionState, now: Date): readonly TripwireCheck[] =>
+  owedRests(state).filter((check) => !isTripwireFresh(state, check.file, now));
+
+/**
+ * These owed rechecks discharged — each only while its entry is the SAME rest
+ * (file and stamp) the caller read: a rest a racing edit started since is a
+ * new debt and stays.
+ */
+export const withoutTripwireRests = (state: SessionState, rests: readonly TripwireCheck[]): SessionState => ({
+  ...state,
+  tripwireCheckedFiles: (state.tripwireCheckedFiles ?? []).filter(
+    (check) => !rests.some((rest) => rest.file === check.file && rest.at === check.at),
+  ),
+});
+
+/** The owed rechecks among `rests` this state still holds — what a writer may book or discharge. */
+export const stillOwed = (state: SessionState, rests: readonly TripwireCheck[]): readonly TripwireCheck[] =>
+  rests.filter((rest) => (state.tripwireCheckedFiles ?? []).some((check) => check.file === rest.file && check.at === rest.at));
+
+/** The eviction tally spent: the caller has booked it. */
+export const withRestsDroppedBooked = (state: SessionState): SessionState => ({ ...state, tripwireRestsDropped: 0 });
+
+/**
+ * `file`'s live answer dealt with now — one entry per file, which replaces an
+ * older debt for the same file (this answer IS its recheck) and starts a new
+ * one; FIFO-capped like the asked files, an evicted debt counted, never lost.
+ */
+export const withTripwireChecked = (state: SessionState, file: string, now: Date): SessionState => {
+  const merged = [...(state.tripwireCheckedFiles ?? []).filter((check) => check.file !== file), { file, at: now.toISOString() }];
+  const evicted = Math.max(0, merged.length - MAX_TRIPWIRE_ASKED_FILES);
+  return {
+    ...state,
+    tripwireCheckedFiles: evicted === 0 ? merged : merged.slice(evicted),
+    ...(evicted === 0 ? {} : { tripwireRestsDropped: (state.tripwireRestsDropped ?? 0) + evicted }),
+  };
+};
+
+/** A (file, group) pair the tripwire asked about — FIFO-capped like the asked files. */
+export const withTripwireGroupAsked = (
+  state: SessionState,
+  key: string,
+): SessionState => {
+  const merged = [...new Set([...(state.tripwireAskedGroups ?? []), key])];
+  return {
+    ...state,
+    tripwireAskedGroups:
+      merged.length <= MAX_TRIPWIRE_ASKED_FILES ? merged : merged.slice(merged.length - MAX_TRIPWIRE_ASKED_FILES),
   };
 };
 

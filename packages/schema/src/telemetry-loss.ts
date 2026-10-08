@@ -58,6 +58,13 @@ export const LOSS_KINDS = [
    * many topics").
    */
   "topic_overflow",
+  /**
+   * Collision files whose 30 s tripwire rest was never followed by its recheck
+   * — the turn ended in a crash, a kill or a budget cut, or the recheck could
+   * not reach the hub (files, not records): a teammate who started on one
+   * inside the rest may never have been told.
+   */
+  "rest_unchecked",
   /** Counted before the ledger kept reasons, or a kind this hub does not know. */
   "unattributed",
 ] as const;

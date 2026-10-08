@@ -25,9 +25,23 @@
 | `permission_mode` | Current permission mode                        |
 | `hook_event_name` | Name of the event that fired                   |
 
+Inside a subagent, two additional fields are included:
+
+| Field        | Description                                              |
+| :----------- | :------------------------------------------------------- |
+| `agent_id`   | Unique identifier for the subagent                       |
+| `agent_type` | Agent name                                               |
+
 ### Exit code output
 
 Exit 0 means success.
+
+### JSON output
+
+| Field           | Default | Description                                 |
+| :-------------- | :------ | :------------------------------------------ |
+| `continue`      | `true`  | If `false`, Claude stops processing         |
+| `systemMessage` | none    | Warning message shown to the user           |
 
 ## Hook events
 
@@ -127,6 +141,21 @@ Runs immediately after a tool completes successfully.
     "success": true
   },
   "tool_use_id": "toolu_01ABC123"
+}
+```
+
+#### PostToolUse decision control
+
+| Field               | Description                                                  |
+| :------------------ | :----------------------------------------------------------- |
+| `additionalContext` | String added to Claude's context alongside the tool result   |
+
+```json
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PostToolUse",
+    "additionalContext": "Additional information for Claude"
+  }
 }
 ```
 

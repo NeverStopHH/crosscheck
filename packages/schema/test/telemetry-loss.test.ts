@@ -34,6 +34,7 @@ describe("LOSS_KINDS", () => {
       "host_contract_drift",
       "wire_unobserved",
       "topic_overflow",
+      "rest_unchecked",
       "unattributed",
     ]);
     expect(isLossKind(UNATTRIBUTED_LOSS_KIND)).toBe(true);

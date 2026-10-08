@@ -10,7 +10,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { eq } from "drizzle-orm";
-import { LOSS_KINDS } from "@crosscheck/schema";
+import { LOSS_KINDS, MAX_LOSS_KIND_ENTRIES } from "@crosscheck/schema";
 
 import { COVERAGE_SESSION_WINDOW_DAYS } from "../src/constants.ts";
 import { agentSessions } from "../src/db/schema.ts";
@@ -363,7 +363,9 @@ describe("C1 (review 2026-10-01): one report can break neither the repo's covera
 
   test.each([
     ["an unsafe integer (PROBE E)", lossReport({ total: 1, kinds: { a: 9_007_199_254_740_993 } })],
-    ["more kinds than any vocabulary", lossReport({ kinds: Object.fromEntries(Array.from({ length: 30 }, (_unused, index) => [`k${String(index)}`, 1])) })],
+    // One past the cap, whatever the vocabulary has grown to: a fixed 30 stopped
+    // being "more" once both 1.0 branches' kinds were in (15 kinds, cap 30).
+    ["more kinds than any vocabulary", lossReport({ kinds: Object.fromEntries(Array.from({ length: MAX_LOSS_KIND_ENTRIES + 1 }, (_unused, index) => [`k${String(index)}`, 1])) })],
     ["an instant no ISO parser reads", lossReport({ newestAt: "+275760-09-13T00:00:00.000Z" })],
     ["a block that is not an object", "garbage"],
   ] as const)("M2: %s is a loss the hub records, undated, never a refused session", async (_label, losses) => {

@@ -10,7 +10,9 @@
  *      pinned: the briefing OUTRANKS the hint for that one prompt (the ACP
  *      injector's order — briefing on the first prompt it is ready for, the
  *      hint flow afterwards), and the hint pipeline is not even consulted,
- *      so one prompt carries at most one injection.
+ *      so one prompt carries at most one injection. Its ghost rows that
+ *      share files are told to the PERSON too, as SessionStart's are
+ *      (hooks/ghost-notice.ts; review L5).
  *   2. Otherwise the hint: the WHOLE pipeline — meaning floor, seen-set +
  *      cap, one bounded hub call, one bounded git call, at most ONE hint,
  *      record-then-emit — is the core `selectAndRenderHint` flow since
@@ -48,6 +50,23 @@
  * (claimProbeCutsNote below). Not a fourth delivery competing for the slot —
  * a line about the connector's own reach, in the shape of the briefing's
  * "this briefing is incomplete" line, and it never displaces team knowledge.
+ * It is APPENDED to the prompt's own text, after the hint.
+ *
+ * AND ONE THING THAT RIDES BESIDE WHICHEVER OF THE THREE SPOKE: a teammate
+ * collision a SUBAGENT of this session ran into (hooks/pre-tool-use.ts queues
+ * it). The subagent's own context is not the conversation the person reads —
+ * 91% of the pilot owner's edits were made by subagents, and every tripwire
+ * hit among them reached nobody — so the main thread is handed the facts and
+ * the one relay sentence here, first, drained under the lock so a group is
+ * relayed exactly once. This hook and not Stop: Stop is registered async (its
+ * gate must never hold the model), and the reference delivers an async hook's
+ * fields to Claude only "on the next conversation turn" and never shows them
+ * to the person — which is this hook, and it also fires when a background
+ * subagent reports back. It is a few renderer-owned lines, so it does not
+ * count as the one injection; it costs one state read, and a lock round only
+ * when something is queued. A queue already waiting is drained BEFORE the
+ * prompt's own hub calls, which then get only the budget it leaves (round 2,
+ * M3): a slow hint hub can cost the hint, never the relay.
  *
  * This hook is the Claude-specific shell: payload fields in,
  * `hookSpecificOutput` envelope out.
@@ -55,14 +74,15 @@
 import { resolve } from "node:path";
 
 import { aPersonReads } from "@crosscheck/connector-core/config/tripwire.ts";
-import { INTENT_PROMPT_MAX_CHARS } from "@crosscheck/connector-core/constants.ts";
+import { INTENT_PROMPT_MAX_CHARS, MIN_SPARE_BOUND_TIMEOUT_MS } from "@crosscheck/connector-core/constants.ts";
 import { cutWellFormed } from "@crosscheck/connector-core/briefing/cut.ts";
 import {
   intentPromptPathForSlug,
   sessionSlug,
   writePrivateFile,
 } from "@crosscheck/connector-core/config/paths.ts";
-import { deliverDeferredBriefing } from "@crosscheck/connector-core/flows/briefing.ts";
+import { payDeferredBriefing } from "@crosscheck/connector-core/flows/briefing.ts";
+import type { GhostCheckEntry } from "@crosscheck/connector-core/http/hub.ts";
 import { deliverDraftNudge } from "@crosscheck/connector-core/flows/draft-nudge.ts";
 import { selectAndRenderHint } from "@crosscheck/connector-core/flows/hint.ts";
 import {
@@ -72,6 +92,12 @@ import {
   withLandedProbeCutsTold,
 } from "@crosscheck/connector-core/state/session-state.ts";
 import { landedProbeCutsLine } from "@crosscheck/connector-core/briefing/omission.ts";
+import type { RenderableCollision } from "@crosscheck/connector-core/hints/collision-notice.ts";
+import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
+import { NO_DRAIN, agentCopy, drainCollisionRelay, hasPendingRelay, personCopy, sweptAgentCopy } from "./collision-relay.ts";
+import type { RelayDrain } from "./collision-relay.ts";
+import { tellPersonOfGhosts } from "./ghost-notice.ts";
+import { recheckOverdueRests } from "./rest-recheck.ts";
 import { hasGhostAllowance, withGhostClaimed } from "@crosscheck/connector-core/derive/ghost/gate.ts";
 import { isSubstantivePrompt, withIntentFire } from "@crosscheck/connector-core/derive/intent/gate.ts";
 import { resolveSummarizerTimeoutMs } from "@crosscheck/connector-core/model/runner.ts";
@@ -95,13 +121,61 @@ const GHOST_WORKER_ENTRY_PATH = resolve(
   "worker-entry.ts",
 );
 
-const envelope = (text: string): string =>
-  JSON.stringify({
-    hookSpecificOutput: {
-      hookEventName: "UserPromptSubmit",
-      additionalContext: text,
-    },
-  });
+interface PromptOutput {
+  readonly hookSpecificOutput: {
+    readonly hookEventName: "UserPromptSubmit";
+    readonly additionalContext: string;
+  };
+}
+
+/**
+ * An OBJECT, serialized once in `handleUserPromptSubmit`, so the subagent
+ * relay can ride beside whatever the prompt carries without re-reading JSON.
+ */
+const envelope = (text: string): PromptOutput => ({
+  hookSpecificOutput: {
+    hookEventName: "UserPromptSubmit",
+    additionalContext: text,
+  },
+});
+
+/** What the prompt's own delivery produced, and the ghost rows a paid briefing really shows. */
+interface PromptDelivery {
+  readonly output: PromptOutput | "";
+  readonly shownGhosts: readonly GhostCheckEntry[];
+}
+
+const nonEmpty = (part: string): boolean => part.length > 0;
+
+/**
+ * The relay first, then the prompt's own delivery; "" when neither spoke. A
+ * drained relay is ALSO the person's line (review H1a): `systemMessage` on
+ * this sync hook is shown to the person, which no subagent hook's output is
+ * documented to be — a person who already saw it there sees it twice, which
+ * is the accepted cost of never seeing it at all. A paid briefing's ghost
+ * groups follow it there (review L5), in the SAME render (round 2, L4): two
+ * renders capped apart gave one `systemMessage` eight lines.
+ */
+const serialize = (
+  output: PromptOutput | "",
+  relay: RelayDrain,
+  swept: readonly RenderableCollision[],
+  ghosts: readonly RenderableCollision[],
+  now: Date,
+): string => {
+  const text = [
+    agentCopy(relay, now),
+    sweptAgentCopy(swept, now),
+    output === "" ? "" : output.hookSpecificOutput.additionalContext,
+  ]
+    .filter(nonEmpty)
+    .join("\n\n");
+  if (text.length === 0) {
+    return "";
+  }
+  const person = personCopy(relay, now, [...swept, ...ghosts]);
+  return JSON.stringify(person.length === 0 ? envelope(text) : { systemMessage: person, ...envelope(text) });
+};
 
 /**
  * Fire-and-forget, through the SHARED door (core derive/spawn.ts): the child
@@ -255,17 +329,29 @@ const claimProbeCutsNote = async (ctx: HookContext): Promise<string> => {
   return isWritten && told.cuts > 0 ? landedProbeCutsLine(told.cuts) : "";
 };
 
-/** What this prompt says: its own text, the cut-checks line under it. */
-const deliverPromptContext = async (ctx: HookContext, budget: HookBudget): Promise<string> => {
+/**
+ * What this prompt says: its own text, the cut-checks line APPENDED under it,
+ * and the ghost rows a paid briefing really shows. The relay, drained before
+ * this runs, leads the whole (handleUserPromptSubmit, serialize).
+ */
+const deliverPromptContext = async (ctx: HookContext, budget: HookBudget): Promise<PromptDelivery> => {
   // Fail open, like the two fires: a state file that cannot be read or
   // locked costs this line, never the prompt's own text.
   const note = await claimProbeCutsNote(ctx).catch(() => "");
-  const text = await promptText(ctx, budget);
-  const whole = [text, note].filter((part) => part.length > 0).join("\n");
-  return whole.length === 0 ? "" : envelope(whole);
+  const own = await promptText(ctx, budget);
+  const whole = [own.text, note].filter(nonEmpty).join("\n");
+  return { output: whole.length === 0 ? "" : envelope(whole), shownGhosts: own.shownGhosts };
 };
 
-const promptText = async (ctx: HookContext, budget: HookBudget): Promise<string> => {
+/** The prompt's own text — briefing, hint or nudge — and the ghost rows a paid briefing shows. */
+interface PromptText {
+  readonly text: string;
+  readonly shownGhosts: readonly GhostCheckEntry[];
+}
+
+const spoken = (text: string): PromptText => ({ text, shownGhosts: [] });
+
+const promptText = async (ctx: HookContext, budget: HookBudget): Promise<PromptText> => {
   // The derived-intent fire delivers nothing and runs first, so it happens
   // on the first substantive prompt whatever else this hook goes on to emit.
   await maybeSpawnIntentWorker(ctx);
@@ -276,7 +362,7 @@ const promptText = async (ctx: HookContext, budget: HookBudget): Promise<string>
   // hint pipeline's meaning floor and secret gate: a session owed a briefing
   // gets it whatever the first prompt says. Exactly-once and the
   // failed-assembly semantics live on the flow.
-  const briefing = await deliverDeferredBriefing({
+  const paid = await payDeferredBriefing({
     home: ctx.config.home,
     repoKey: ctx.repoKey,
     hub: ctx.hub,
@@ -286,8 +372,8 @@ const promptText = async (ctx: HookContext, budget: HookBudget): Promise<string>
     now: ctx.now(),
     tellsNotices: aPersonReads(ctx.env),
   });
-  if (briefing.length > 0) {
-    return briefing;
+  if (paid.briefing.length > 0) {
+    return { text: paid.briefing, shownGhosts: paid.shownGhosts };
   }
   const text = await selectAndRenderHint({
     home: ctx.config.home,
@@ -305,7 +391,7 @@ const promptText = async (ctx: HookContext, budget: HookBudget): Promise<string>
     spareMs: () => budget.spareMs(),
   });
   if (text.length > 0) {
-    return text;
+    return spoken(text);
   }
   // THIRD, and only on a prompt nothing else spoke on: the once-per-session
   // draft review nudge (flows/draft-nudge.ts says why a prompt and never Stop).
@@ -318,16 +404,68 @@ const promptText = async (ctx: HookContext, budget: HookBudget): Promise<string>
     personReads: aPersonReads(ctx.env),
     spareMs: budget.spareMs,
   });
-  return nudge;
+  return spoken(nudge);
+};
+
+/** Whether a subagent's collision is waiting for this prompt — one state read. */
+const hasQueuedRelay = async (ctx: HookContext): Promise<boolean> => {
+  const state = await readSessionState(ctx.config.home, ctx.payload.session_id);
+  return state !== null && hasPendingRelay(state);
+};
+
+/**
+ * The prompt's hub calls held to what the budget has LEFT (round 2, M3): the
+ * request timeout every call reads is the configured one or the spare at the
+ * moment the call starts, whichever is smaller — never past the reserve that
+ * carries an already-drained relay out of the hook.
+ */
+const withSpareBoundHub = (ctx: HookContext, budget: HookBudget): HookContext => {
+  const configured = ctx.hub.timeoutMs;
+  const hub: HubContext = {
+    ...ctx.hub,
+    get timeoutMs(): number {
+      return Math.max(MIN_SPARE_BOUND_TIMEOUT_MS, Math.min(configured, budget.spareMs()));
+    },
+  };
+  return { ...ctx, hub };
 };
 
 export const handleUserPromptSubmit = async (
   ctx: HookContext,
   budget: HookBudget,
 ): Promise<string> => {
+  // A subagent's collision queued BEFORE this prompt is drained FIRST (round
+  // 2, M3): the drain is local — one state read and one lock — and drained
+  // last, behind a hint hub answering in 390 ms of a 400 ms timeout, it found
+  // no spare left on every prompt and a background subagent's collision never
+  // reached anybody. The prompt's own delivery then gets only the budget that
+  // is left, so the drained relay always leaves the hook.
+  // Beside it, the rechecks owed for rests that are over (round 3, F-M2;
+  // hooks/rest-recheck.ts) — a turn that crashed, was killed or was cut before
+  // its end pays them on the next prompt — and a group either found is held
+  // the same way: the prompt's own hub calls get only what is left.
+  const [early, swept] = await Promise.all([
+    hasQueuedRelay(ctx).then((isQueued) => (isQueued ? drainCollisionRelay(ctx, budget) : NO_DRAIN)),
+    recheckOverdueRests(ctx, budget, USER_PROMPT_SUBMIT_HOOK),
+  ]);
+  const isDrainedEarly = early.groups.length > 0 || early.hidden > 0;
+  const isHoldingTold = isDrainedEarly || swept.length > 0;
+  const promptCtx = isHoldingTold ? withSpareBoundHub(ctx, budget) : ctx;
   // Delivers nothing, like the two fires above: the background fetch of the
   // landing branches (hooks/landing-fetch.ts), beside the prompt's own work so
   // it adds no wall clock of its own.
-  const [output] = await Promise.all([deliverPromptContext(ctx, budget), requestLandingFetchFor(ctx)]);
-  return output;
+  const [delivery] = await Promise.all([deliverPromptContext(promptCtx, budget), requestLandingFetchFor(ctx)]);
+  // A collision queued WHILE this prompt ran (a background subagent) is
+  // drained last, and only while the spare lasts (review L3): nothing slow
+  // sits between emptying the queue and the relay leaving the hook. Either
+  // way the relay LEADS the emitted text.
+  const relay = isDrainedEarly ? early : await drainCollisionRelay(ctx, budget);
+  // A paid briefing's ghost rows are claimed told after that, as SessionStart
+  // claims its own (review L5): one lock write, the last thing before output,
+  // and not gated on the spare — it is this prompt's own delivery.
+  const ghosts = await tellPersonOfGhosts(ctx, delivery.shownGhosts);
+  return serialize(delivery.output, relay, swept, ghosts, ctx.now());
 };
+
+/** This hook, as the loss ledger names it. */
+const USER_PROMPT_SUBMIT_HOOK = "user-prompt-submit";

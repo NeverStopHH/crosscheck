@@ -136,6 +136,9 @@ const bindFromAnotherProcess = (host: string, port: number): string => {
       "-e",
       `try { Bun.serve({ port: ${String(port)}, hostname: "${host}", fetch: () => new Response("") }); console.log("bound"); } catch { console.log("refused"); } process.exit(0);`,
     ],
+    // The test's own env, so the network guard's preload and scrub reach the
+    // child (connector-core test/network-guard.test.ts, round 3 F-M3).
+    env: { ...process.env },
     timeout: 20_000,
   });
   return new TextDecoder().decode(probe.stdout).trim();

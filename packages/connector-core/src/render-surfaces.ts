@@ -34,6 +34,14 @@ import {
   renderLandedNoticeHint,
   renderTripwireReason,
 } from "./hints/render.ts";
+import {
+  anonymousCollision,
+  ghostCollisions,
+  renderCollisionNotices,
+  renderOverlapIndicator,
+  renderSubagentCollisionRelay,
+  tripwireCollision,
+} from "./hints/collision-notice.ts";
 import { renderOpenQuestions } from "./mcp/tools/list-open-questions.ts";
 import { successText as reviewDraftSuccessText } from "./mcp/tools/review-draft.ts";
 import {
@@ -169,6 +177,7 @@ export const RENDER_LAYER_MODULES: readonly string[] = [
   "src/briefing/landed-notices.ts",
   "src/briefing/questions.ts",
   "src/briefing/render.ts",
+  "src/hints/collision-notice.ts",
   "src/hints/render.ts",
   "src/mcp/render.ts",
   "src/mcp/render-referee.ts",
@@ -1113,6 +1122,61 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     framing: "framed",
     render: (payload) =>
       renderTripwireReason(tripwireSessionWith(payload), "src/app.ts", NOW),
+  },
+  {
+    // The PERSON-facing line of the same collision (pilot, 2026-10-07), on
+    // both lanes that raise one: the tripwire's row — name, branch, and the
+    // reader's own file, which is planted too — and a briefing ghost row's
+    // name and shared file. BARE: Claude Code shows it as `systemMessage`,
+    // outside any frame, so no field may carry a separator the line owns.
+    kind: "corpus",
+    name: "collision-notice",
+    delivery: "unsolicited",
+    module: "src/hints/collision-notice.ts",
+    framing: "bare",
+    // The tripwire half carries the FIXED incomplete record, so the clause a
+    // partial answer adds (COV-9) is held to the same invariants.
+    render: (payload) =>
+      renderCollisionNotices(
+        [
+          tripwireCollision(tripwireSessionWith(payload), payload, CORPUS_COVERAGE),
+          // ...and the LANDED shape, which words the same fields differently
+          tripwireCollision({ ...tripwireSessionWith(payload), landedAt: ISO }, payload),
+          ...ghostCollisions([ghostCheckWith(payload)]),
+          // ...and the UNNAMED shape a relay falls back to when live presence
+          // cannot confirm the teammate (round 2, H1): only the file remains
+          anonymousCollision(tripwireCollision(tripwireSessionWith(payload), payload, CORPUS_COVERAGE)),
+        ],
+        NOW,
+      ),
+  },
+  {
+    // What the MAIN thread is handed for a group its subagent ran into: the
+    // same lines under a header of their own, plus the one relay sentence.
+    kind: "corpus",
+    name: "collision-subagent-relay",
+    delivery: "unsolicited",
+    module: "src/hints/collision-notice.ts",
+    framing: "bare",
+    render: (payload) =>
+      renderSubagentCollisionRelay([tripwireCollision(tripwireSessionWith(payload), payload)], NOW),
+  },
+  {
+    // The statusline's segment: names only, one group per person, bounded —
+    // the tripwire's teammate presence lists, so named, and the ghost row's
+    // third teammate it does not, so counted (round 2, M1).
+    kind: "corpus",
+    name: "collision-overlap-indicator",
+    delivery: "unsolicited",
+    module: "src/hints/collision-notice.ts",
+    framing: "bare",
+    render: (payload) => {
+      const named = tripwireCollision(tripwireSessionWith(payload), payload);
+      return renderOverlapIndicator(
+        [named, ...ghostCollisions([{ ...ghostCheckWith(payload), developerId: "dev_third" }])],
+        [{ developerId: named.developerId, isSelf: false }],
+      );
+    },
   },
   {
     // The landed-change half of the same ask (docs/1.0/landed-changes.md):

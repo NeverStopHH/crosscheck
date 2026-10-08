@@ -1,0 +1,6 @@
+# Test preload: refuses any fetch that could reach a real hub (127.0.0.1:7100,
+# *.ts.net) — see the file's header; every server test serves its own hub on
+# port 0. Bun reads bunfig.toml from the invocation cwd only — the repo-root
+# copy covers runs started from the workspace root (CI, mutation-check).
+[test]
+preload = ["../connector-core/test/network-guard.ts"]

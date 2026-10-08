@@ -57,6 +57,7 @@ export const spawnProxy = (
 export const spawnDirectAgent = (agentArgs: readonly string[]) =>
   Bun.spawn({
     cmd: [process.execPath, FAKE_AGENT_PATH, ...agentArgs],
+    env: { ...process.env },
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",

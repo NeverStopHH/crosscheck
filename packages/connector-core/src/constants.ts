@@ -132,6 +132,15 @@ export const HINT_MIN_TOKEN_CHARS = 3;
 /** Tripwire asks once per file per session; FIFO cap on the remembered set. */
 export const MAX_TRIPWIRE_ASKED_FILES = 100;
 /**
+ * How long a file whose live tripwire answer was fully dealt with — every
+ * teammate on it asked about, every group told — is not asked about again
+ * (round 2, L1): each edit of a collision file used to cost a hub call and a
+ * state write for an answer that could only repeat itself. Short, because a
+ * teammate who STARTS on the file is new on it and only the hub can say so:
+ * the next edit after the window asks again.
+ */
+export const TRIPWIRE_RECHECK_TTL_MS = 30_000;
+/**
  * The failure-time solved probe asks the hub about a fingerprint ONCE per
  * session; FIFO cap on the remembered set, the MAX_TRIPWIRE_ASKED_FILES
  * shape. Sized for the distinct failures one session produces rather than
@@ -1698,6 +1707,17 @@ export const STATUS_MAX_SESSION_STATES = 50;
 export const STATUS_SESSION_IDLE_HOURS = 24;
 
 export const PRESENCE_CACHE_TTL_MS = 10_000;
+/**
+ * How long a heartbeat keeps a session PRESENT on the hub (server
+ * PRESENCE_TTL_SECONDS), as the connector needs it: a teammate fact older
+ * than this — a branch, a "last active" age — is no longer a presence fact
+ * the hub would still give out, so a relayed collision line drops both
+ * (hints/collision-notice.ts; review M2).
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/server/src/constants.ts");console.log(c.PRESENCE_TTL_MS === s.PRESENCE_TTL_SECONDS * 1000)'
+ * PRINTS: true
+ */
+export const PRESENCE_TTL_MS = 90_000;
 export const STATUSLINE_MAX_CHARS = 90;
 /**
  * Teammates the `cx 0` branch may name as last-seen (Anhang A, A4-09). Three,
@@ -1708,6 +1728,46 @@ export const STATUSLINE_MAX_CHARS = 90;
 export const STATUSLINE_MAX_LAST_SEEN = 3;
 export const STATUSLINE_MAX_NAMES = 3;
 export const STATUSLINE_NAME_CHARS = 12;
+
+/**
+ * The PERSON-facing collision notice (hints/collision-notice.ts; pilot,
+ * 2026-10-07: every collision crosscheck saw reached an agent's context and
+ * no person). Field caps for the one line Claude Code shows the person as a
+ * hook's `systemMessage` — a name, the basename of the file, a branch — so
+ * the line stays a line whatever a teammate's fields hold. The stored path
+ * cap bounds what the session state keeps per file, which is the reader's
+ * own repo-relative path and never shown whole.
+ */
+export const COLLISION_NOTICE_NAME_CHARS = 40;
+export const COLLISION_NOTICE_FILE_CHARS = 60;
+export const COLLISION_NOTICE_BRANCH_CHARS = 60;
+export const COLLISION_NOTICE_PATH_CHARS = 200;
+/**
+ * What one session remembers having told its person: groups (one per
+ * teammate work context), FIFO like the tripwire's asked files, and the files
+ * named per group. Small on purpose — a session that collides with more than
+ * thirty-two teammate contexts is told about the newest ones, and the
+ * statusline counts files rather than listing them.
+ */
+export const MAX_COLLISION_NOTICES = 32;
+export const MAX_COLLISION_FILES = 20;
+/**
+ * How much of that ONE hook output may carry (review L4): a relay can drain
+ * every group a session's subagents ran into, so at most this many lines are
+ * named and the rest counted on a line of their own, and the whole is bounded
+ * in characters — far under the 10,000 Claude Code caps `systemMessage` at,
+ * because past a few lines a person stops reading.
+ */
+export const COLLISION_NOTICE_MAX_LINES = 5;
+export const COLLISION_NOTICE_MAX_CHARS = 1600;
+/**
+ * The statusline's overlap indicator (`⚠ overlap: Mike · 3 files`): at most
+ * this many people by name, then a count, and the whole segment bounded so
+ * it never takes the capture-health indicator's characters — it is printed
+ * BEFORE the presence line, which keeps its own STATUSLINE_MAX_CHARS.
+ */
+export const COLLISION_INDICATOR_MAX_NAMES = 2;
+export const COLLISION_INDICATOR_MAX_CHARS = 48;
 
 export const FINGERPRINT_SOURCE_CHARS = 4000;
 export const FINGERPRINT_KEEP_CHARS = 1200;
@@ -2043,6 +2103,75 @@ export const CLAUDE_SETTINGS_FILE = "settings.json";
 export const POST_TOOL_USE_MATCHER = "Edit|Write|MultiEdit|NotebookEdit|Bash";
 /** Tripwire fires on writes only — Bash carries no file to overlap on. */
 export const PRE_TOOL_USE_MATCHER = "Edit|Write|MultiEdit|NotebookEdit";
+
+/**
+ * The SECOND PostToolUse registration, and the only SYNC one (review H1b):
+ * `crosscheck hook subagent-return`, matched on the subagent tools only, so
+ * the moment a foreground subagent RETURNS the main thread drains the
+ * collisions it queued — `systemMessage` for the person, `additionalContext`
+ * "next to the tool result" for the agent, in the same turn. The capture
+ * hook stays async on POST_TOOL_USE_MATCHER; this one never fires on an edit.
+ * `Agent` is the tool the hooks reference documents ("##### Agent — Spawns a
+ * subagent"); `Task` is its earlier name, which older Claude Code builds
+ * still send.
+ */
+export const SUBAGENT_RETURN_HOOK = "subagent-return";
+export const SUBAGENT_RETURN_MATCHER = "Agent|Task";
+/**
+ * Tiny on purpose: one state read and at most one locked drain, and a hub
+ * call only for the one bounded presence refresh a drained group with no
+ * fresh answer gets (RELAY_PRESENCE_REFRESH_MS, below; an empty queue makes
+ * none). Two request timeouts, the least that leaves any spare at all: one is the
+ * reserve that carries the output out (HOOK_RESERVE_RATIO), the other the
+ * room the drain is made in — the hook holds a turn the person waits on.
+ */
+export const SUBAGENT_RETURN_BUDGET_RATIO = 2;
+/**
+ * The SECOND Stop registration, and the only SYNC one (round 3, F-M2):
+ * `crosscheck hook turn-end`. Within TRIPWIRE_RECHECK_TTL_MS of an answer
+ * this session fully dealt with, an edit of the file asks the hub nothing —
+ * so a teammate who started on it inside that rest was seen by no edit, and
+ * if the turn's edits of the file all fell inside the window, by none to
+ * come. When the turn ends, this hook asks again for the files still
+ * resting and tells the person, before the turn is over, about any teammate
+ * the record has not told them of. The capture Stop hook stays async: an
+ * async hook's `systemMessage` is shown to nobody.
+ */
+export const TURN_END_HOOK = "turn-end";
+/**
+ * The most owed rechecks one hook asks about (connector-claude
+ * hooks/rest-recheck.ts) — the turn's end, newest rest first, and every other
+ * sync hook for rests that are over — one bounded tripwire call each, made
+ * side by side. The ones past it are never dropped: they stay owed for the
+ * next hook, and only a recheck the hub would not answer, or a session that
+ * ends still owing, is booked as a `rest_unchecked` loss.
+ */
+export const TURN_END_RECHECK_MAX_FILES = 3;
+/**
+ * Two request timeouts, like SUBAGENT_RETURN_BUDGET_RATIO: one is the reserve
+ * that carries the output out, the other the room the tripwire calls are
+ * made in — the hook holds the end of a turn the person waits on. A turn
+ * with nothing resting answers before the budget is even resolved.
+ */
+export const TURN_END_BUDGET_RATIO = 2;
+/**
+ * The least request timeout a prompt's hub call is given once a relay drained
+ * FIRST holds the rest of the budget (connector-claude hooks/user-prompt-
+ * submit.ts; round 2, M3): `AbortSignal.timeout` wants a positive delay, and
+ * a spare of zero should fail the call at once, not spend the reserve that
+ * carries the drained relay out of the hook.
+ */
+export const MIN_SPARE_BOUND_TIMEOUT_MS = 1;
+/**
+ * The cap on the ONE presence refresh a relay makes when its queue holds a
+ * group and no fresh presence answer is cached (connector-claude
+ * hooks/collision-relay.ts; round 2, H1 as refined): a subagent that runs
+ * past the 10 s cache, in a session with no statusline to refresh it, would
+ * otherwise relay every collision unnamed. Inside the sync budget, under its
+ * spare, and never more than one request timeout; a refresh that fails or
+ * runs out names the teammate as the tripwire's own answer did at the edit.
+ */
+export const RELAY_PRESENCE_REFRESH_MS = 300;
 
 /**
  * The PreToolUse tripwire mode (trial finding #25 + Q2). DESIGN §4 makes `ask`

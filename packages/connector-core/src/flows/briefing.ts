@@ -133,6 +133,12 @@ export interface AssembledBriefing {
    * "the hub answered".
    */
   readonly shownGhostCount: number;
+  /**
+   * The ghost ROWS behind those lines, the same "the text contains it" fact:
+   * what a host with a person-facing channel tells the person about
+   * (hints/collision-notice.ts), so a row the budget cut is told to nobody.
+   */
+  readonly shownGhosts: readonly GhostCheckEntry[];
   /** The `collectLanded` rider's result; empty when no rider was passed. */
   readonly landed: LandedReading;
   /**
@@ -309,11 +315,15 @@ export const assembleBriefing = async (
   // contains it" is the fact — the section may have been dropped whole by
   // the character budget, and a counter that trusted the fetch would report
   // notices nobody saw.
-  const shownGhostCount = ghostChecks
-    .map((entry: GhostCheckEntry) => formatGhostLine(entry, now))
-    .filter((line): line is string => line !== null)
+  const shownGhosts = ghostChecks
+    .flatMap((entry: GhostCheckEntry) => {
+      const line = formatGhostLine(entry, now);
+      return line === null ? [] : [{ entry, line }];
+    })
     .slice(0, MAX_GHOST_POINTERS)
-    .filter((line) => briefing.includes(line)).length;
+    .filter((shown) => briefing.includes(shown.line))
+    .map((shown) => shown.entry);
+  const shownGhostCount = shownGhosts.length;
 
   // The same rule once more: an entry's one spelling is in the text, or it
   // was not shown — and only the commits it names are marked told.
@@ -346,6 +356,7 @@ export const assembleBriefing = async (
     ),
     shownSolvedIds,
     shownGhostCount,
+    shownGhosts,
     shownLandedNoticeIds,
     presence,
     presenceFetched: presenceResult.ok,
@@ -486,16 +497,35 @@ export interface DeliverDeferredBriefingInput {
  */
 export const deliverDeferredBriefing = async (
   input: DeliverDeferredBriefingInput,
-): Promise<string> => {
+): Promise<string> => (await payDeferredBriefing(input)).briefing;
+
+/** A paid deferred briefing: its text, and the ghost rows that text really shows. */
+export interface PaidDeferredBriefing {
+  readonly briefing: string;
+  readonly shownGhosts: readonly GhostCheckEntry[];
+}
+
+const NOTHING_PAID: PaidDeferredBriefing = { briefing: "", shownGhosts: [] };
+
+/**
+ * `deliverDeferredBriefing` for a caller that also tells the PERSON about the
+ * briefing's ghost rows (connector-claude's UserPromptSubmit; review L5): the
+ * late-registered session's briefing carries the same rows SessionStart's
+ * would, and a row only the agent is told about is the pilot's failure again.
+ * Same claim, same record-then-emit; nothing paid is "" and no rows.
+ */
+export const payDeferredBriefing = async (
+  input: DeliverDeferredBriefingInput,
+): Promise<PaidDeferredBriefing> => {
   const state = await readSessionState(input.home, input.hostSessionKey);
   if (state === null || !state.briefingPending) {
-    return "";
+    return NOTHING_PAID;
   }
   // First-wins guard (finding #9): a prompt resolved against ANOTHER repo
   // must not spend this session's debt — the briefing belongs to the repo
   // the session is bound to, and a prompt that resolves there pays it.
   if (state.repoId !== input.repoId) {
-    return "";
+    return NOTHING_PAID;
   }
   const claimed = await updateSessionState(
     input.home,
@@ -504,7 +534,7 @@ export const deliverDeferredBriefing = async (
       fresh.briefingPending ? { ...fresh, briefingPending: false } : null,
   );
   if (!claimed) {
-    return "";
+    return NOTHING_PAID;
   }
   const assembled = await assembleBriefing({
     hub: input.hub,
@@ -515,7 +545,7 @@ export const deliverDeferredBriefing = async (
     tellsNotices: input.tellsNotices,
   });
   if (assembled.briefing.length === 0) {
-    return "";
+    return NOTHING_PAID;
   }
   await recordBriefingDeliveries({
     home: input.home,
@@ -532,5 +562,5 @@ export const deliverDeferredBriefing = async (
     shownLandedNoticeIds: assembled.shownLandedNoticeIds,
     now: input.now,
   });
-  return assembled.briefing;
+  return { briefing: assembled.briefing, shownGhosts: assembled.shownGhosts };
 };

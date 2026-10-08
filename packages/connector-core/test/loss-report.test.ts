@@ -8,7 +8,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmod, rm, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { EMPTY_LOSS_REPORT, MAX_LOSS_COUNT, TelemetryLossReportSchema } from "@crosscheck/schema";
+import { EMPTY_LOSS_REPORT, MAX_LOSS_COUNT, MAX_LOSS_KIND_ENTRIES, TelemetryLossReportSchema } from "@crosscheck/schema";
 
 import { HUB_COVERAGE_WINDOW_DAYS, MAX_LOSS_LEDGER_BYTES } from "../src/constants.ts";
 import {
@@ -478,13 +478,15 @@ describe("review C1/M2, connector half: the report always parses on the hub's sc
 
   test("a report that still fails the wire schema is sent as a loss with no span", () => {
     // Arrange: more kinds than the hub admits — the last line of defence
-    const kinds = Object.fromEntries(Array.from({ length: 30 }, (_unused, index) => [`k${String(index)}`, 1]));
+    // (one past the cap, whatever the vocabulary has grown to)
+    const count = MAX_LOSS_KIND_ENTRIES + 1;
+    const kinds = Object.fromEntries(Array.from({ length: count }, (_unused, index) => [`k${String(index)}`, 1]));
 
     // Act
-    const wire = toWireReport({ total: 30, kinds, oldestAt: T0.toISOString(), newestAt: T4.toISOString() });
+    const wire = toWireReport({ total: count, kinds, oldestAt: T0.toISOString(), newestAt: T4.toISOString() });
 
     // Assert: never zero, never a refused session call
-    expect(wire).toEqual({ total: 30, kinds: { unattributed: 30 }, oldestAt: null, newestAt: null });
+    expect(wire).toEqual({ total: count, kinds: { unattributed: count }, oldestAt: null, newestAt: null });
     expect(TelemetryLossReportSchema.safeParse(wire).success).toBe(true);
   });
 });

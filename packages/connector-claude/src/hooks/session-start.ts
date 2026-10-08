@@ -23,7 +23,7 @@ import { UNKNOWN_DEVELOPER_ID } from "@crosscheck/connector-core/capture/records
 import type { Producer } from "@crosscheck/connector-core/capture/records.ts";
 import { containsSecret } from "@crosscheck/connector-core/capture/secret-scan.ts";
 import { seqAt, withSeq } from "@crosscheck/connector-core/capture/seq.ts";
-import { allocateSeq } from "@crosscheck/connector-core/state/session-state.ts";
+import { allocateSeq, updateSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { endSession } from "@crosscheck/connector-core/http/hub.ts";
 import type { PresenceEntry, WorkContextEntry } from "@crosscheck/connector-core/http/hub.ts";
 import { guaranteeDeclarationFor } from "@crosscheck/connector-core/guarantees/declarations.ts";
@@ -55,6 +55,8 @@ import { reapStaleLineages } from "@crosscheck/connector-core/state/session-line
 import { reapStaleSessionStates } from "@crosscheck/connector-core/state/session-reap.ts";
 import { sweepAbandonedTemps } from "@crosscheck/connector-core/state/temp-sweep.ts";
 import { healerFor } from "./heal.ts";
+import { renderCollisionNotices } from "@crosscheck/connector-core/hints/collision-notice.ts";
+import { tellPersonOfGhosts } from "./ghost-notice.ts";
 import { requestLandingFetchFor } from "./landing-fetch.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 import { sessionStartContext } from "./session-start-output.ts";
@@ -504,5 +506,14 @@ export const handleSessionStart = async (
   if (briefing.length === 0) {
     return "";
   }
-  return sessionStartContext(briefing);
+  // What the PERSON sees is claimed LAST (review L3), after the maintenance:
+  // a group marked told is then one lock write away from the hook's output,
+  // inside the reserve every maintenance step above leaves for carrying the
+  // briefing out. Not gated on the spare — maintenance spends it on purpose,
+  // and this is the hook's own step, not maintenance. The ONE spelling of the
+  // output carries it (session-start-output.ts): the batch's briefing — its
+  // omission, presence-notice and coverage lines inside — and the person's
+  // collision notice beside it.
+  const told = await tellPersonOfGhosts(ctx, assembled.shownGhosts);
+  return sessionStartContext(briefing, renderCollisionNotices(told, ctx.now()));
 };

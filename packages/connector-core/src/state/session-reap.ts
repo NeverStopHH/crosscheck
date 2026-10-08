@@ -33,6 +33,7 @@ import { appendRecords } from "../spool/append.ts";
 import { writeEndMarker } from "../spool/end-marker.ts";
 import { stampReleased } from "../spool/release.ts";
 import { lastWorkContextRecords } from "../spool/work-context-ack.ts";
+import { recordCaptureLoss } from "./loss-ledger.ts";
 import { listSessionStateFiles, sessionSilentForMs } from "./session-scan.ts";
 import { lifeRungOf } from "./session-lineage.ts";
 import { crosscheckSessionIdFor, SessionStateSchema, updateSessionState } from "./session-state.ts";
@@ -138,6 +139,28 @@ const clampDatedAhead = async (home: string, state: SessionState, now: Date): Pr
   }));
 };
 
+/** The loss-ledger detail for a dead session's owed rechecks. */
+const REAPED_REST_DETAIL = "reap";
+
+/**
+ * A DEAD SESSION'S OWED RECHECKS ARE LOSSES (round 3, F-M2): a session that
+ * was killed mid-turn never ran the turn-end recheck its rests were owed, and
+ * no hook of it will ever run again. Booked under its own repo, dated at its
+ * newest rest — when the debt arose, not a week later when the corpse goes.
+ */
+const bookOwedRests = async (home: string, state: SessionState, now: Date): Promise<void> => {
+  const owed = state.tripwireCheckedFiles ?? [];
+  const count = owed.length + (state.tripwireRestsDropped ?? 0);
+  const newest = Math.max(...owed.map((check) => Date.parse(check.at)).filter((ms) => !Number.isNaN(ms)));
+  await recordCaptureLoss(home, {
+    kind: "rest_unchecked",
+    count,
+    key: repoKey(state.hubUrl, state.repoId),
+    detail: REAPED_REST_DETAIL,
+    now: Number.isFinite(newest) && newest <= now.getTime() ? new Date(newest) : now,
+  });
+};
+
 export interface StateReapOptions {
   /** Never reaped, whatever its age: the caller is mid-session inside it. */
   readonly keepHostSessionKey?: string;
@@ -198,6 +221,7 @@ export const reapStaleSessionStates = async (
     await stampReleased(home, key, slug, now);
     await writeDownReapedLife(home, key, slug, parsed.data, now);
     try {
+      await bookOwedRests(home, parsed.data, now);
       await rm(file.path, { force: true });
       reaped += 1;
     } catch {

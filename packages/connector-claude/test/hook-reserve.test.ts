@@ -55,10 +55,20 @@
  * UserPromptSubmit, which tells an author's notice only while the envelope
  * spares room to post it and still print it (connector-core hints/delivery.ts)
  * — and once more by a heartbeat the hub refuses, whose mid-life heal walks
- * the ladder only to the deadline the envelope still spares (hooks/heal.ts):
+ * the ladder only to the deadline the envelope still spares (hooks/heal.ts)
+ * — and twice for a teammate collision (review L3): PreToolUse marks a group
+ * told, and the main thread's hooks drain a subagent's queued relay
+ * (hooks/collision-relay.ts), only while the envelope spares room to carry
+ * the line out — and once more by UserPromptSubmit, which holds the prompt's
+ * own hub calls to what the envelope spares once a queued relay was drained
+ * first (round 2, M3) — and once more by the relay's one presence refresh,
+ * bounded by what the envelope spares (hooks/collision-relay.ts) — and twice
+ * by the recheck every 30 s rest owes (hooks/rest-recheck.ts; round 3, F-M2):
+ * each tripwire call is bounded the same way, and a hook with nothing to
+ * spare leaves the debt for the next one instead of asking at all:
  *
  * VERIFY: grep -rn 'budget\.spareMs()' packages/connector-claude/src | wc -l | tr -d ' '
- * PRINTS: 11
+ * PRINTS: 17
  */
 import { describe, expect, test } from "bun:test";
 

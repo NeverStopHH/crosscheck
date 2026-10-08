@@ -12,6 +12,8 @@ export interface HintHubCalls {
   /** GET /api/solved-matches — the failure-time fingerprint probe. */
   solvedMatches: number;
   records: number;
+  /** GET /api/presence — the statusline's poll and the relay's one refresh. */
+  presence: number;
   other: number;
 }
 
@@ -24,6 +26,8 @@ export interface HintHubLatency {
   records?: number;
   /** GET /api/solved-matches — the failure-time probe's own latency dial. */
   solvedMatches?: number;
+  /** GET /api/presence — holds a presence answer past a caller's bound. */
+  presence?: number;
 }
 
 export interface HintHub {
@@ -38,6 +42,22 @@ export interface HintHub {
   /** The author's notices (landed changes, step 4), on the same response. */
   readonly setNotices: (notices: readonly unknown[]) => void;
   readonly setTripwireSessions: (sessions: readonly unknown[]) => void;
+  /** The sessions the tripwire answers for ONE file; other files keep `setTripwireSessions`'s answer. */
+  readonly setTripwireSessionsFor: (file: string, sessions: readonly unknown[]) => void;
+  /** A status the tripwire fails with (an error envelope), or null to answer again. */
+  readonly setTripwireFailure: (status: number | null) => void;
+  /**
+   * The rows GET /api/presence answers with; null (the default) answers with a
+   * body the client cannot read, which is what this hub always did.
+   */
+  readonly setPresence: (sessions: readonly unknown[] | null) => void;
+  /**
+   * Run while a GET /api/presence is in flight, before it is answered: what a
+   * test sees of the caller's own state at the moment it waits on presence.
+   */
+  readonly setPresenceProbe: (probe: (() => Promise<void>) | null) => void;
+  /** The same, for GET /api/hints/candidates: the caller's state at the moment it asks for a hint. */
+  readonly setCandidatesProbe: (probe: (() => Promise<void>) | null) => void;
   /** Rows GET /api/solved-matches answers with. */
   readonly setSolvedMatches: (matches: readonly unknown[]) => void;
   /** The `?fingerprint=` of the last solved-match probe, or null. */
@@ -233,14 +253,20 @@ export const startHintHub = (
     tripwire: 0,
     solvedMatches: 0,
     records: 0,
+    presence: 0,
     other: 0,
   };
+  let presence: readonly unknown[] | null = null;
+  let presenceProbe: (() => Promise<void>) | null = null;
+  let candidatesProbe: (() => Promise<void>) | null = null;
   let candidates: readonly unknown[] = [rejectedApproachCandidate()];
   /** Absent unless a test sets it — what every hub before 07 §13 sends. */
   let recordsOutcomes: boolean | undefined;
   let answers: readonly unknown[] = [];
   let notices: readonly unknown[] = [];
   let tripwireSessions: readonly unknown[] = [];
+  const tripwireByFile = new Map<string, readonly unknown[]>();
+  let tripwireFailure: number | null = null;
   let solvedMatches: readonly unknown[] = [];
   let lastSolvedFingerprint: string | null = null;
   let lastCandidatesQuery: URLSearchParams | null = null;
@@ -252,6 +278,7 @@ export const startHintHub = (
       if (pathname === "/api/hints/candidates") {
         calls.candidates += 1;
         lastCandidatesQuery = searchParams;
+        await candidatesProbe?.();
         await sleep(latency.candidates);
         return Response.json({
           ok: true,
@@ -272,9 +299,13 @@ export const startHintHub = (
       if (pathname === "/api/hints/tripwire") {
         calls.tripwire += 1;
         await sleep(latency.tripwire);
+        if (tripwireFailure !== null) {
+          return Response.json({ ok: false, error: { code: "unavailable", message: "tripwire down" } }, { status: tripwireFailure });
+        }
+        const sessions = tripwireByFile.get(searchParams.get("value") ?? "") ?? tripwireSessions;
         return Response.json({
           ok: true,
-          data: { sessions: tripwireSessions, ...(recordsOutcomes === undefined ? {} : { recordsOutcomes }) },
+          data: { sessions, ...(recordsOutcomes === undefined ? {} : { recordsOutcomes }) },
         });
       }
       if (pathname === "/api/records") {
@@ -292,7 +323,16 @@ export const startHintHub = (
           },
         });
       }
-      calls.other += 1;
+      if (pathname === "/api/presence") {
+        calls.presence += 1;
+        await presenceProbe?.();
+        await sleep(latency.presence ?? 0);
+        if (presence !== null) {
+          return Response.json({ ok: true, data: { sessions: presence } });
+        }
+      } else {
+        calls.other += 1;
+      }
       return Response.json({
         ok: true,
         data: { session: { id: "cc_x", developerId: SELF_DEVELOPER_ID } },
@@ -318,6 +358,21 @@ export const startHintHub = (
     },
     setTripwireSessions: (next) => {
       tripwireSessions = next;
+    },
+    setTripwireSessionsFor: (file, next) => {
+      tripwireByFile.set(file, next);
+    },
+    setTripwireFailure: (status) => {
+      tripwireFailure = status;
+    },
+    setPresence: (next) => {
+      presence = next;
+    },
+    setPresenceProbe: (next) => {
+      presenceProbe = next;
+    },
+    setCandidatesProbe: (next) => {
+      candidatesProbe = next;
     },
     setSolvedMatches: (next) => {
       solvedMatches = next;

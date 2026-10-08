@@ -6,6 +6,8 @@ import { handleSessionEnd } from "./session-end.ts";
 import { handleSessionStart } from "./session-start.ts";
 import { handleStop } from "./stop.ts";
 import { handleSubagentStop } from "./subagent-stop.ts";
+import { handleSubagentReturn } from "./subagent-return.ts";
+import { handleTurnEnd } from "./turn-end.ts";
 import { handleUserPromptSubmit } from "./user-prompt-submit.ts";
 import { runHookWith } from "./runner.ts";
 import type { HookHandler, HookName } from "./runner.ts";
@@ -19,6 +21,8 @@ const HANDLERS: Readonly<Record<HookName, HookHandler>> = {
   "pre-tool-use": handlePreToolUse,
   stop: handleStop,
   "subagent-stop": handleSubagentStop,
+  "subagent-return": handleSubagentReturn,
+  "turn-end": handleTurnEnd,
 };
 
 export const isHookName = (value: string): value is HookName =>

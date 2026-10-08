@@ -688,6 +688,13 @@ export interface TargetSessionView {
    * row is missing (services/ghost-overlap.ts states the rule).
    */
   readonly largeChangeFiles: number | null;
+  /**
+   * When the overlapping work context LANDED, or null while it is open — so
+   * the person's collision line can say the teammate CHANGED the file and it
+   * merged, rather than that they are working on it (connector-core
+   * hints/collision-notice.ts). The row's matching rule is untouched.
+   */
+  readonly landedAt: string | null;
 }
 
 /**
@@ -713,7 +720,8 @@ const MS_PER_DAY = 86_400_000;
 const byTripwireStrength = (left: TargetSessionView, right: TargetSessionView): number =>
   Number(left.largeChangeFiles !== null) - Number(right.largeChangeFiles !== null) ||
   Date.parse(right.lastHeartbeatAt) - Date.parse(left.lastHeartbeatAt) ||
-  left.sessionId.localeCompare(right.sessionId);
+  left.sessionId.localeCompare(right.sessionId) ||
+  left.workContextId.localeCompare(right.workContextId);
 
 /**
  * Active teammate sessions whose work context targeted `value` on this repo —
@@ -750,6 +758,7 @@ export const listTargetSessions = async (
       workContextId: workContexts.id,
       workContextTitle: workContexts.title,
       workContextIntent: workContexts.intent,
+      landedAt: workContexts.landedAt,
     })
     .from(workContextTargets)
     .innerJoin(
@@ -778,9 +787,12 @@ export const listTargetSessions = async (
         notMutedCondition(callerDeveloperId, agentSessions.developerId),
       ),
     )
-    // Freshest first, then a stable id, so the bounded read keeps the
-    // freshest candidates; the ranking below decides the order shown.
-    .orderBy(desc(agentSessions.lastHeartbeatAt), asc(agentSessions.id))
+    // Freshest first, then stable ids, so the bounded read keeps the
+    // freshest candidates; the ranking below decides the order shown. The
+    // work context's id breaks a tie inside one session (review M4): the
+    // connector names every row and the person's notice lists them in this
+    // order, so it is never the storage order.
+    .orderBy(desc(agentSessions.lastHeartbeatAt), asc(agentSessions.id), asc(workContexts.id))
     .limit(TRIPWIRE_MAX_CANDIDATES);
   const large = await listLargeChanges(
     deps.db,
@@ -800,6 +812,7 @@ export const listTargetSessions = async (
       workContextTitle: row.workContextTitle,
       workContextIntent: row.workContextIntent ?? null,
       largeChangeFiles: large.get(row.workContextId) ?? null,
+      landedAt: row.landedAt === null ? null : row.landedAt.toISOString(),
     }))
     .sort(byTripwireStrength)
     .slice(0, TRIPWIRE_MAX_SESSIONS);

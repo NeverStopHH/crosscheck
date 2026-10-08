@@ -23,8 +23,8 @@
  *
  *   bun test packages/connector-claude/test/hook-contract.test.ts
  *
- *   field names published in bold rather than in backticks   4 observations flip
- *   every heading promoted one level (`###` → `####`)       35 observations flip
+ *   field names published in bold rather than in backticks   6 observations flip
+ *   every heading promoted one level (`###` → `####`)       40 observations flip
  *
  * That direction is a false alarm, not a missed change, so it fails safe: the
  * job goes red, somebody reads the reference and re-records with --write. The
@@ -132,6 +132,21 @@ export const HOOK_PROBES: readonly FieldProbe[] = [
     section: "Common input fields",
     field: "hook_event_name",
   },
+  // THE SUBAGENT MARKER the collision lane reads (hooks/pre-tool-use.ts):
+  // renamed upstream, a subagent's hit is told in place and never queued for
+  // the main thread — a silence, which is why it is watched.
+  {
+    key: "common.input.agent_id",
+    section: "Common input fields",
+    field: "agent_id",
+  },
+  // THE ONE OUTPUT FIELD THE PERSON SEES ("Warning message shown to the
+  // user"): the collision notice rides it on PreToolUse and SessionStart.
+  {
+    key: "common.output.systemMessage",
+    section: "JSON output",
+    field: "systemMessage",
+  },
   { key: "SessionStart.input.source", section: "SessionStart", field: "source" },
   {
     key: "SessionStart.input.session_title",
@@ -187,6 +202,25 @@ export const HOOK_PROBES: readonly FieldProbe[] = [
     key: "PostToolUse.input.file_path",
     section: "PostToolUse",
     field: "file_path",
+  },
+  // THE ONE SYNC PostToolUse REGISTRATION writes these back (review H1b,
+  // hooks/subagent-return.ts): a foreground subagent's collision, next to the
+  // tool result, in the turn it returned. The capture hook is async and
+  // writes nothing.
+  {
+    key: "PostToolUse.output.hookSpecificOutput",
+    section: "PostToolUse",
+    field: "hookSpecificOutput",
+  },
+  {
+    key: "PostToolUse.output.hookEventName",
+    section: "PostToolUse",
+    field: "hookEventName",
+  },
+  {
+    key: "PostToolUse.output.additionalContext",
+    section: "PostToolUse",
+    field: "additionalContext",
   },
   // THE WINDOW PAIRING KEY, read by both halves of the bracket (core
   // state/tool-window-key.ts). Without it no window is opened and every Claude
