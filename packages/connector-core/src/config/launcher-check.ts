@@ -25,6 +25,7 @@ import { basename, isAbsolute } from "node:path";
 
 import type { Env } from "./paths.ts";
 import { NO_ENV_FILE_FLAG } from "./runtime-isolation.ts";
+import { trustedPath, untrustedPathEntries } from "./trusted-path.ts";
 import {
   isEphemeralInstallPath,
   isOwnCrosscheckBin,
@@ -107,7 +108,7 @@ export const checkLauncherCommand = async (
   if (head === "crosscheck") {
     const hit = ((): string | null => {
       try {
-        return Bun.which("crosscheck", { PATH: env["PATH"] ?? "" });
+        return Bun.which("crosscheck", { PATH: trustedPath(env["PATH"] ?? "", process.cwd()) });
       } catch {
         return null;
       }
@@ -122,6 +123,15 @@ export const checkLauncherCommand = async (
       return health(
         "FAIL",
         `${hit} does not identify as the crosscheck cli (--version) — a different tool owns the name on this PATH and would receive the hooks' session json; remove it or rerun crosscheck init --command-prefix with an explicit launcher`,
+      );
+    }
+    // The host resolves the bare name through the whole PATH (review round 2,
+    // N6): a relative or in-repo entry lets a repo answer to it first.
+    const untrusted = untrustedPathEntries(env["PATH"] ?? "", process.cwd());
+    if (untrusted.length > 0) {
+      return health(
+        "WARN",
+        `hooks call the bare name "crosscheck", and PATH carries ${untrusted.join(", ")} (relative, or inside this repo) — a repo that ships a crosscheck there receives every hook; remove those entries, or rerun crosscheck init here, which then writes the absolute launcher`,
       );
     }
     const real = await realpathOrSelf(hit);

@@ -15,7 +15,7 @@
  * attacker or the proxy.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { copyFile, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -346,6 +346,37 @@ describe("a bait repo's bunfig.toml and .env", () => {
       expect(attacker.seen().some((request) => request.path === "/stolen" && request.bearerIsStored)).toBe(true);
     },
     PROCESS_TIMEOUT_MS * 2,
+  );
+
+  test.skipIf(nodeExe === null)(
+    "the npm shim never starts a bun the repo ships on a relative or in-repo PATH entry",
+    async () => {
+      // Arrange — review round 2, N6: node_modules/.bin ahead of the real bun
+      const own = startListener();
+      const attacker = startListener();
+      const proxy = startListener();
+      const bait = await baitRepo("bait-path-bun", own, attacker, proxy);
+      const shim = await installedShim();
+      const repoBin = join(bait.repo, "node_modules", ".bin");
+      const repoBunRan = join(bait.repo, ".bait", "repo-bun-ran");
+      await mkdir(repoBin, { recursive: true });
+      await writeFile(join(repoBin, "bun"), `#!/bin/sh\ntouch ${repoBunRan}\nexit 0\n`, "utf8");
+      await chmod(join(repoBin, "bun"), 0o755);
+      const path = ["node_modules/.bin", repoBin, bait.env.PATH].join(":");
+
+      // Act
+      const status = await runIn(bait, [nodeExe ?? "node", shim, "status"], "", { PATH: path });
+      const byName = await runIn(bait, ["/bin/sh", "-c", "bun --version"], "", { PATH: path });
+
+      // Assert — the real bun ran crosscheck; a plain name lookup (the control) would not have
+      expect(status.stdout).toContain(`hub: ${own.url}`);
+      expect(byName.exitCode).toBe(0);
+      expect(await Bun.file(repoBunRan).exists()).toBe(true);
+      await rm(repoBunRan, { force: true });
+      await runIn(bait, [nodeExe ?? "node", shim, "status"], "", { PATH: path });
+      expect(await Bun.file(repoBunRan).exists()).toBe(false);
+    },
+    PROCESS_TIMEOUT_MS * 3,
   );
 
   test.skipIf(nodeExe === null)(

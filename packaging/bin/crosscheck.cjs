@@ -95,7 +95,67 @@ if (process.versions.bun !== undefined) {
   const { spawn } = require("node:child_process");
   const { homedir } = require("node:os");
 
-  const CANDIDATES = ["bun", path.join(homedir(), ".bun", "bin", "bun")];
+  /*
+   * PATH ENTRIES A REPO CANNOT SUPPLY (connector-core config/trusted-path.ts,
+   * the same rule): spawning "bun" by name let a relative entry such as
+   * node_modules/.bin, or a repo's own bin directory, hand this shim the
+   * repo's bun — probed. So bun is looked up only in absolute entries outside
+   * the repo the cwd is in, and spawned by its absolute path.
+   */
+  /* By real path: a repo behind a symlink (macOS /var) is one directory; a
+   * path that does not exist is its nearest existing ancestor's plus the rest. */
+  const realOrResolved = function (p) {
+    const absolute = path.resolve(p);
+    const parent = path.dirname(absolute);
+    try {
+      return fs.realpathSync(absolute);
+    } catch (_) {
+      return parent === absolute ? absolute : path.join(realOrResolved(parent), path.basename(absolute));
+    }
+  };
+  const enclosingRepoRoot = function (cwd) {
+    const start = realOrResolved(cwd);
+    for (let dir = start; ; dir = path.dirname(dir)) {
+      if (fs.existsSync(path.join(dir, ".git"))) {
+        return dir;
+      }
+      if (path.dirname(dir) === dir) {
+        return start;
+      }
+    }
+  };
+  const isTrustedPathEntry = function (entry, root) {
+    if (entry.length === 0 || !path.isAbsolute(entry)) {
+      return false;
+    }
+    const fromRoot = path.relative(root, realOrResolved(entry));
+    return fromRoot === ".." || fromRoot.startsWith(".." + path.sep) || path.isAbsolute(fromRoot);
+  };
+  const bunOnTrustedPath = function () {
+    const root = enclosingRepoRoot(process.cwd());
+    const names = process.platform === "win32" ? ["bun.exe", "bun"] : ["bun"];
+    for (const entry of (process.env.PATH || "").split(path.delimiter)) {
+      if (!isTrustedPathEntry(entry, root)) {
+        continue;
+      }
+      for (const name of names) {
+        const candidate = path.join(entry, name);
+        try {
+          fs.accessSync(candidate, fs.constants.X_OK);
+          if (fs.statSync(candidate).isFile()) {
+            return candidate;
+          }
+        } catch (_) {
+          /* not here; the next entry */
+        }
+      }
+    }
+    return null;
+  };
+
+  const CANDIDATES = [bunOnTrustedPath(), path.join(homedir(), ".bun", "bin", "bun")].filter(function (candidate) {
+    return candidate !== null;
+  });
 
   /*
    * Forward what a terminal or supervisor sends, so killing the npx wrapper

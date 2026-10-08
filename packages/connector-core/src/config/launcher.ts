@@ -16,6 +16,7 @@ import type { Env } from "./paths.ts";
 import type { McpServerEntry } from "./mcp-config.ts";
 import { selfLaunch } from "./runtime-isolation.ts";
 import type { SelfLaunch } from "./runtime-isolation.ts";
+import { trustedPath, untrustedPathEntries } from "./trusted-path.ts";
 
 /** Characters a POSIX shell passes through untouched. */
 const SHELL_SAFE_PATTERN = /^[\w@%+=:,./-]+$/;
@@ -26,9 +27,10 @@ export const shellQuote = (value: string): string =>
     ? value
     : `'${value.split("'").join(`'\\''`)}'`;
 
+/** A PATH lookup that skips relative and in-repo entries (trusted-path.ts). */
 const whichOnPath = (command: string, env: Env): string | null => {
   try {
-    return Bun.which(command, { PATH: env["PATH"] ?? "" });
+    return Bun.which(command, { PATH: trustedPath(env["PATH"] ?? "", process.cwd()) });
   } catch {
     return null;
   }
@@ -181,8 +183,12 @@ export const resolveLauncher = async (
     return { kind: "override", prefix: override };
   }
   const hit = whichOnPath("crosscheck", env);
+  // The host resolves a bare `crosscheck` through the developer's whole PATH
+  // at hook time, so with a relative or in-repo entry on it the name is a
+  // repo's to answer: the absolute form below is written instead.
   if (
     hit !== null &&
+    untrustedPathEntries(env["PATH"] ?? "", process.cwd()).length === 0 &&
     !isEphemeralInstallPath(await realpathOrSelf(hit)) &&
     (await isOwnCrosscheckBin(hit))
   ) {

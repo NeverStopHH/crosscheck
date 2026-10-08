@@ -24903,6 +24903,47 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/doctor-mcp-probe-trust.test.ts`,
     because: "every repo with an ordinary settings env WARNs, and the line that matters drowns",
   },
+  // ROUND 2, N6: PATH entries a repo can supply.
+  {
+    label: "a PATH lookup trusts a relative entry",
+    file: `${CORE}/src/config/trusted-path.ts`,
+    from: "  entry.length > 0 && isAbsolute(entry) && !isInside(realOrResolved(entry), enclosingRepoRoot(cwd));",
+    to: "  entry.length > 0 && !isInside(realOrResolved(entry), enclosingRepoRoot(cwd));",
+    test: `${CORE}/test/trusted-path.test.ts`,
+    because: "with node_modules/.bin on PATH, whichever repo the hook runs in answers to the name",
+  },
+  {
+    label: "a PATH lookup trusts an entry inside the repo",
+    file: `${CORE}/src/config/trusted-path.ts`,
+    from: "  entry.length > 0 && isAbsolute(entry) && !isInside(realOrResolved(entry), enclosingRepoRoot(cwd));",
+    to: "  entry.length > 0 && isAbsolute(entry);",
+    test: `${CORE}/test/trusted-path.test.ts`,
+    because: "a direnv PATH_add of the repo's bin hands the repo's crosscheck the init that wires every hook",
+  },
+  {
+    label: "init writes the bare name under a PATH a repo has part in",
+    file: `${CORE}/src/config/launcher.ts`,
+    from: '    untrustedPathEntries(env["PATH"] ?? "", process.cwd()).length === 0 &&\n',
+    to: "",
+    test: `${CORE}/test/trusted-path.test.ts`,
+    because: "the host resolves the bare name through the same PATH at hook time, and the repo's crosscheck answers first",
+  },
+  {
+    label: "the npm shim starts bun by name",
+    file: "packaging/bin/crosscheck.cjs",
+    from: '  const CANDIDATES = [bunOnTrustedPath(), path.join(homedir(), ".bun", "bin", "bun")].filter(function (candidate) {',
+    to: '  const CANDIDATES = ["bun", path.join(homedir(), ".bun", "bin", "bun")].filter(function (candidate) {',
+    test: `${CLI}/test/e2e/bait-repo-isolation.e2e.test.ts`,
+    because: "a repo carrying node_modules/.bin/bun runs its own program in place of bun for every hook (probed: REPO-BUN-RAN)",
+  },
+  {
+    label: "doctor is quiet about a bare hook under a PATH a repo has part in",
+    file: `${CORE}/src/config/launcher-check.ts`,
+    from: "    if (untrusted.length > 0) {",
+    to: "    if (false) {",
+    test: `${CORE}/test/trusted-path.test.ts`,
+    because: "a machine whose hooks call the bare name through node_modules/.bin reads PASS on the launcher line",
+  },
   {
     label: "the npm shim starts bun in the repo's bun config",
     file: "packaging/bin/crosscheck.cjs",
@@ -25234,7 +25275,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
  * PRINTS: packages/cli/test/doctor-verdict-legality.test.ts 2
  * PRINTS: packages/cli/test/doctor.test.ts 1
- * PRINTS: packages/cli/test/e2e/bait-repo-isolation.e2e.test.ts 6
+ * PRINTS: packages/cli/test/e2e/bait-repo-isolation.e2e.test.ts 7
  * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
  * PRINTS: packages/cli/test/e2e/worker-spawn-isolation.e2e.test.ts 4
  * PRINTS: packages/cli/test/foreign-hub-lines.test.ts 1
@@ -25477,6 +25518,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/target-paths.test.ts 1
  * PRINTS: packages/connector-core/test/tool-window-pairing.test.ts 6
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
+ * PRINTS: packages/connector-core/test/trusted-path.test.ts 4
  * PRINTS: packages/connector-core/test/verdict-wire.test.ts 2
  * PRINTS: packages/connector-core/test/working-days.test.ts 3
  * PRINTS: packages/connector-cursor/test/briefing-omission.test.ts 3
