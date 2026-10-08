@@ -19692,15 +19692,24 @@ const runTest = async (testPath: string): Promise<TestRun> => {
  * A CATCH IS AN ASSERTION OR A THROWN ERROR — never a test that only timed
  * out, nor a process that died saying nothing: on a loaded runner either one
  * turns a decorative guard into a "caught". Read the way bun lays its report
- * out: an assertion or a throw prints `error: …` before its `(fail)` line; a
+ * out: an assertion or a throw prints its header before its `(fail)` line; a
  * timeout prints `^ this test timed out after …` after it; an error while a
  * file loads prints `# Unhandled error between tests` and no `(fail)` at all.
+ *
+ * THE HEADER NAMES THE ERROR (bun 1.3.13): `error: …` only for a failed
+ * expect and a thrown non-Error; a thrown Error by its class — `TypeError: …`,
+ * `ZodError: …` — and a system error by its code — `ENOENT: …`, `EACCES: …`.
+ * Read as `error: ` alone, a guard that caught a deleted file by failing to
+ * read it, or a crash the anchor names, read as a silent death
+ * (test/mutation-runner.test.ts runs each shape through bun).
  */
-const failedOnAssertion = (output: string): boolean => {
+const ERROR_HEADER = /^(?:error|[A-Z][A-Za-z0-9]*(?:Error|Exception)|E[A-Z][A-Z0-9]+): /;
+
+export const failedOnAssertion = (output: string): boolean => {
   const lines = output.split("\n");
   let pendingError = false;
   for (const [index, line] of lines.entries()) {
-    if (line.startsWith("error: ")) {
+    if (ERROR_HEADER.test(line)) {
       pendingError = true;
     } else if (line.startsWith("(fail) ")) {
       if (pendingError && !/^\s*\^ this test timed out after \d+ms\./.test(lines[index + 1] ?? "")) {
@@ -19709,7 +19718,7 @@ const failedOnAssertion = (output: string): boolean => {
       pendingError = false;
     }
   }
-  return output.includes("# Unhandled error between tests") && lines.some((line) => line.startsWith("error: "));
+  return output.includes("# Unhandled error between tests") && lines.some((line) => ERROR_HEADER.test(line));
 };
 
 interface Outcome {
