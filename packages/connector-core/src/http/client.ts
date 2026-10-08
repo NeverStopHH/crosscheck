@@ -57,6 +57,12 @@ export type HubFailureKind = "network" | "http" | "malformed" | "refused";
 /** The code a `refused` failure carries. */
 export const KEY_ORIGIN_MISMATCH = "key_origin_mismatch";
 
+/** The code a hub's redirect answer carries: it was not followed. */
+export const REDIRECT_REFUSED = "redirect_refused";
+
+const HTTP_REDIRECT_MIN = 300;
+const HTTP_REDIRECT_MAX = 399;
+
 export type HubResult<T> =
   | { readonly ok: true; readonly data: T; readonly dateHeader: string | null }
   | {
@@ -277,6 +283,11 @@ const performRequest = async <T>(
       // Pinned through the real hook binary by test/bunfig-leak.test.ts,
       // whose control arm fails first if a future bun changes the mechanism.
       verbose: false,
+      // NEVER FOLLOWED (key-binding review, L1). The key-origin check above
+      // holds for the first hop only: a 307/308 from the bound hub re-sent
+      // the captured body to another origin (bun strips the key, not the
+      // body). The hub's API never redirects, so any 3xx is refused below.
+      redirect: "manual",
     });
   } catch (error) {
     // Classified rather than passed through: "hub unreachable" hiding a plain
@@ -291,6 +302,14 @@ const performRequest = async <T>(
     );
   }
 
+  if (response.status >= HTTP_REDIRECT_MIN && response.status <= HTTP_REDIRECT_MAX) {
+    return failure(
+      "http",
+      response.status,
+      REDIRECT_REFUSED,
+      `the hub answered with a redirect (HTTP ${String(response.status)}), which crosscheck does not follow — run crosscheck doctor`,
+    );
+  }
   const dateHeader = response.headers.get("date");
   let raw: unknown;
   try {

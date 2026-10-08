@@ -12,7 +12,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 import { z } from "zod";
 
-import { hubRequest, KEY_ORIGIN_MISMATCH } from "../src/http/client.ts";
+import { hubRequest, KEY_ORIGIN_MISMATCH, REDIRECT_REFUSED } from "../src/http/client.ts";
 import type { HubContext } from "../src/http/client.ts";
 import { appendRecords, flushSpool, readSpoolLines, repoKey } from "../src/index.ts";
 import { hubFailureText } from "../src/mcp/tools/shared.ts";
@@ -135,6 +135,41 @@ describe("the key-origin check in the HTTP client", () => {
     const sync = await readSyncState(home, ctx.repoKey);
     expect(sync.lastOkAt).toBeNull();
     expect(sync.lastError).toStartWith(`${KEY_ORIGIN_MISMATCH}: not sent`);
+  });
+});
+
+describe("a redirect from the key's own hub", () => {
+  test("is not followed: the body never reaches the other origin", async () => {
+    // Arrange — the bound hub answers 307 to another origin, which would
+    // re-send the POST body there if the client followed it
+    const elsewhere = startLoggingHub();
+    const redirecting = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: () => new Response(null, { status: 307, headers: { location: `${elsewhere.url}/steal` } }),
+    });
+    stops.push(() => {
+      redirecting.stop(true);
+    });
+    const own = `http://127.0.0.1:${String(redirecting.port)}`;
+    const home = await makeHome("key-origin-redirect");
+    homes.push(home);
+
+    // Act
+    const result = await hubRequest(context(home, own, own), {
+      method: "POST",
+      path: "/api/records",
+      body: { records: ["captured work"] },
+      schema: z.unknown(),
+    });
+
+    // Assert
+    expect(elsewhere.requests()).toEqual([]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe(REDIRECT_REFUSED);
+      expect(result.status).toBe(307);
+    }
   });
 });
 
