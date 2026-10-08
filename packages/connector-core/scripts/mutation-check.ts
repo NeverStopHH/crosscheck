@@ -24566,8 +24566,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the stored key follows a hand-edited hubUrl",
     file: `${CORE}/src/config/key-binding.ts`,
-    from: "  return recorded ?? hubOrigin(stored.hubUrl);",
-    to: "  return hubOrigin(stored.hubUrl);",
+    from: "  stored.keyOrigin === undefined ? hubOrigin(stored.hubUrl) : hubOrigin(stored.keyOrigin);",
+    to: "  hubOrigin(stored.hubUrl);",
     test: `${CORE}/test/key-binding.test.ts`,
     because:
       "an agent that rewrites config.json's hubUrl moves the key with it; the recorded binding is what makes the login, not the file, the authority",
@@ -24584,7 +24584,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a repo connected to another hub is refused uncounted",
     file: `${CORE}/src/state/foreign-hub.ts`,
-    from: '    await appendFile(path, `${JSON.stringify(line)}\\n`, "utf8");',
+    from: '    await writePrivateFile(path, fitToCap(refusals, floorAt, now).map(serialize).join(""));',
     to: "",
     test: `${CONNECTOR}/test/global-wiring-silence.test.ts`,
     because:
@@ -24670,6 +24670,284 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/key-origin-attacker.test.ts`,
     because: "after logging in to a new hub every request is refused, the new key still bound to the hub it replaced",
   },
+  // THE REPO'S FILES NEVER CONFIGURE A CROSSCHECK PROCESS (review C1/H1;
+  // core config/runtime-isolation.ts): bun reads a cwd's bunfig.toml and
+  // .env, and every crosscheck process runs with a repo as its cwd.
+  {
+    label: "a self-spawned crosscheck process reads the repo's bunfig and .env",
+    file: `${CORE}/src/config/runtime-isolation.ts`,
+    from: "export const RUNTIME_ISOLATION_FLAGS: readonly string[] = [\n  NO_ENV_FILE_FLAG,\n  `--config=${ISOLATED_BUNFIG_PATH}`,\n];",
+    to: "export const RUNTIME_ISOLATION_FLAGS: readonly string[] = [];",
+    test: `${CORE}/test/runtime-isolation.test.ts`,
+    because: "every worker and every launcher init writes runs a cloned repo's bunfig preload in the process holding the key",
+  },
+  {
+    label: "init writes a hook command that runs in the repo's bun config",
+    file: `${CORE}/src/config/launcher.ts`,
+    from: '      return [launcher.runtime, ...RUNTIME_ISOLATION_FLAGS, launcher.entry].map(shellQuote).join(" ");',
+    to: '      return [launcher.runtime, launcher.entry].map(shellQuote).join(" ");',
+    test: `${CLI}/test/e2e/bait-repo-isolation.e2e.test.ts`,
+    because: "a bait repo's preload runs at SessionStart and its .env points the key at its own hub, in every session opened there",
+  },
+  {
+    label: "init writes an MCP entry that runs in the repo's bun config",
+    file: `${CORE}/src/config/launcher.ts`,
+    from: '        args: [...RUNTIME_ISOLATION_FLAGS, launcher.entry, "mcp"],',
+    to: '        args: [launcher.entry, "mcp"],',
+    test: `${CLI}/test/mcp-config.test.ts`,
+    because: "the MCP server, started in the project directory, loads that project's bunfig preload and .env with the key in hand",
+  },
+  {
+    label: "the npm shim starts bun in the repo's bun config",
+    file: "packaging/bin/crosscheck.cjs",
+    from: '      ["--no-env-file", "--config=" + ISOLATED_BUNFIG, ENTRY].concat(process.argv.slice(2)),',
+    to: "      [ENTRY].concat(process.argv.slice(2)),",
+    test: `${CLI}/test/e2e/bait-repo-isolation.e2e.test.ts`,
+    because: "every `crosscheck hook` through the installed bin runs the repo's preload and reads its .env — the default install's whole surface",
+  },
+  {
+    label: "the shim starts without its own bunfig",
+    file: "packaging/bin/crosscheck.cjs",
+    from: "  if (!fs.existsSync(ISOLATED_BUNFIG)) {",
+    to: "  if (false) {",
+    test: `${CLI}/test/e2e/bait-repo-isolation.e2e.test.ts`,
+    because: "a package missing the file fails with bun's own config error in every silent hook instead of one clear line",
+  },
+  {
+    label: "doctor passes a hook command written before the isolation flags",
+    file: `${CORE}/src/config/launcher-check.ts`,
+    from: "  if (isBunEntry && !launcherTokens.includes(NO_ENV_FILE_FLAG)) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/runtime-isolation.test.ts`,
+    because: "a machine upgraded without rerunning init keeps loading repos' bunfig and .env in every hook, and doctor says PASS",
+  },
+  {
+    label: "doctor passes a hook command whose bunfig is gone",
+    file: `${CORE}/src/config/launcher-check.ts`,
+    from: "  if (config !== undefined && !(await Bun.file(config.slice(CONFIG_FLAG_PREFIX.length)).exists())) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/runtime-isolation.test.ts`,
+    because: "bun refuses to start, every hook dies silently, and doctor's launcher line still reads PASS",
+  },
+  {
+    label: "doctor runs the command a repo's .mcp.json chose",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    if (scope.isRepo && !(await isEntryCrosscheckWrote(entry))) {",
+    to: "    if (false) {",
+    test: `${CLI}/test/doctor-mcp-probe-trust.test.ts`,
+    because: "typing `crosscheck doctor` in a cloned repo executes whatever its committed .mcp.json registered under the crosscheck key",
+  },
+  {
+    label: "doctor probes the MCP server from inside the repo",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "          await probeMcpServer(target.entry, tmpdir()),",
+    to: "          await probeMcpServer(target.entry, repoRoot),",
+    test: `${CLI}/test/doctor-mcp-probe-trust.test.ts`,
+    because: "an entry written before the isolation flags loads the repo's bunfig preload and .env during doctor's own probe",
+  },
+  {
+    label: "doctor never names a repo's bun preload",
+    file: `${CLI}/src/cli/doctor-repo-runtime.ts`,
+    from: "  return /^\\s*preload\\s*=/m.test(topLevel);",
+    to: "  return false;",
+    test: `${CLI}/test/doctor-repo-runtime.test.ts`,
+    because: "a repo carrying a preload aimed at older hook commands, or at bun run by hand, goes unremarked",
+  },
+  {
+    label: "doctor names every .env key, not just the steering ones",
+    file: `${CLI}/src/cli/doctor-repo-runtime.ts`,
+    from: "      .filter((key): key is string => key !== null && STEERING_KEY_PATTERN.test(key)),",
+    to: "      .filter((key): key is string => key !== null),",
+    test: `${CLI}/test/doctor-repo-runtime.test.ts`,
+    because: "every repo with an ordinary .env reads as steering crosscheck, and the WARN that matters drowns",
+  },
+  // NEVER A LOGIN TO THE REPO'S HUB (review H2).
+  {
+    label: "doctor's remedy hands out a login to the repo's hub",
+    file: `${CORE}/src/config/key-binding.ts`,
+    from: "    `If someone tells you ${foreign.hubOrigin} is your hub under a new address, confirm it with ` +",
+    to: "    `If ${foreign.hubOrigin} is your hub, run crosscheck login ${foreign.hubOrigin}; if someone tells you so, confirm it with ` +",
+    test: `${CORE}/test/key-binding.test.ts`,
+    because: "an agent asked to get crosscheck working runs doctor, copies the login it prints, and sends the key to the bait repo's hub",
+  },
+  {
+    label: "the agent line sends an agent to doctor's fix instead of its person",
+    file: `${CORE}/src/config/key-binding.ts`,
+    from: "  return `crosscheck is not reporting from here: ${named} a different hub ${belongs}, so crosscheck keeps the key and captures nothing. ${AGENT_REMEDY}`;",
+    to: "  return `crosscheck is not reporting from here: ${named} a different hub ${belongs}, so crosscheck keeps the key and captures nothing. \\`crosscheck doctor\\` names both hubs and the fix.`;",
+    test: `${CORE}/test/key-binding.test.ts`,
+    because: "SessionStart routes the agent to the text that names a login, and nothing tells it the login is not its to run",
+  },
+  {
+    label: "an MCP refusal does not tell the agent to leave the login to its person",
+    file: `${CORE}/src/mcp/tools/shared.ts`,
+    from: "      `developer's crosscheck key belongs to. Nothing was recorded. ${AGENT_REMEDY}`",
+    to: "      \"developer's crosscheck key belongs to. Nothing was recorded.\"",
+    test: `${CORE}/test/key-origin-client.test.ts`,
+    because: "a tool call that hits the refusal leaves the agent free to 'fix' crosscheck by logging in itself",
+  },
+  {
+    label: "an env-override refusal gives no rotate advice",
+    file: `${CORE}/src/config/key-binding.ts`,
+    from: "    return `unset CROSSCHECK_HUB_URL, or set it to ${foreign.keyOrigin}${rotateAdvice(foreign)}`;",
+    to: "    return `unset CROSSCHECK_HUB_URL, or set it to ${foreign.keyOrigin}`;",
+    test: `${CORE}/test/key-binding.test.ts`,
+    because: "0.10.0's hooks followed CROSSCHECK_HUB_URL with the stored key, and the developer is never told it may already be gone",
+  },
+  {
+    label: "a repo refusal gives no rotate advice",
+    file: `${CORE}/src/config/key-binding.ts`,
+    from: "    `address, so never let an agent do it${rotateAdvice(foreign)}`",
+    to: "    \"address, so never let an agent do it\"",
+    test: `${CLI}/test/key-origin-attacker.test.ts`,
+    because: "a repo where 0.10.0's status or doctor already sent the key there reads as safe, and the key is never rotated",
+  },
+  {
+    label: "a plain-http spelling of an https hub is not told to stay off http",
+    file: `${CORE}/src/config/key-binding.ts`,
+    from: "  if (isHttpDowngrade(foreign)) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/key-binding.test.ts`,
+    because: "the remedy for a repo naming the same host over http invites a login that sends the key in clear text",
+  },
+  {
+    label: "init hands out a login to the repo's hub",
+    file: `${CLI}/src/cli/init.ts`,
+    from: "    return { error: noApiKeyError(hubUrl, isRepoNamed(options, env, repoConfig)) };",
+    to: "    return { error: noApiKeyError(hubUrl, false) };",
+    test: `${CLI}/test/key-origin-attacker.test.ts`,
+    because: "init in a cloned bait repo prints `crosscheck login <the bait's hub>` as the next step",
+  },
+  {
+    label: "an agent moves this machine's key to another hub",
+    file: `${CLI}/src/cli/login.ts`,
+    from: "    if (!gate.isPerson) {",
+    to: "    if (!gate.isPerson && false) {",
+    test: `${CLI}/test/key-origin-attacker.test.ts`,
+    because: "an agent's login to a bait hub probes it with the key and rebinds config.json there, with no prompt",
+  },
+  {
+    label: "a key move picks up CROSSCHECK_API_KEY silently",
+    file: `${CLI}/src/cli/login.ts`,
+    from: "      : await resolveApiKey(positionalKey, {}, readSecret);",
+    to: "      : await resolveApiKey(positionalKey, env, readSecret);",
+    test: `${CLI}/test/key-origin-attacker.test.ts`,
+    because: "an exported agent key is carried to whatever hub a re-login names, without the person typing it",
+  },
+  // THE REFUSAL LEDGER (review M1-M5, M9, M11; core state/foreign-hub.ts).
+  {
+    label: "every refused hook of a session is counted",
+    file: `${CORE}/src/state/foreign-hub.ts`,
+    from: "    const isCounted = inWindow.some((line) => isSameRefusal(line, wanted));",
+    to: "    const isCounted = false;",
+    test: `${CORE}/test/foreign-hub-ledger.test.ts`,
+    because: "one long refused session fills the ledger, which then counts no later bait repo",
+  },
+  {
+    label: "the ledger keeps refusals that left the window",
+    file: `${CORE}/src/state/foreign-hub.ts`,
+    from: "    const inWindow = lines.filter((line) => line.at >= since);",
+    to: "    const inWindow = lines;",
+    test: `${CORE}/test/foreign-hub-ledger.test.ts`,
+    because: "old bait repos stay in the file for ever, and the cap is reached by history instead of by this week",
+  },
+  {
+    label: "the ledger has no write cap",
+    file: `${CORE}/src/state/foreign-hub.ts`,
+    from: "  const kept = refusals.slice(firstKeptIndex(sizes, MAX_FOREIGN_HUB_LEDGER_BYTES - floorBytes));",
+    to: "  const kept = refusals;",
+    test: `${CORE}/test/foreign-hub-ledger.test.ts`,
+    because: "a machine refusing many sessions grows the file without bound, and every hook reads it",
+  },
+  {
+    label: "a ledger that dropped lines reports exact counts",
+    file: `${CORE}/src/state/foreign-hub.ts`,
+    from: '    isFull: inWindow.some((line) => line.kind === "floor"),',
+    to: "    isFull: false,",
+    test: `${CORE}/test/foreign-hub-ledger.test.ts`,
+    because: "doctor states a count as exact after the cap dropped some of it",
+  },
+  {
+    label: "the read window has no lower bound",
+    file: `${CORE}/src/state/foreign-hub.ts`,
+    from: '  const inWindow = parseLedger(text ?? "").filter((line) => line.at >= since && line.at <= now.getTime());',
+    to: '  const inWindow = parseLedger(text ?? "").filter((line) => line.at <= now.getTime());',
+    test: `${CORE}/test/foreign-hub-ledger.test.ts`,
+    because: "\"in the last 7 days\" counts refusals of any age a file still holds",
+  },
+  {
+    label: "origins read back from the ledger are not re-screened",
+    file: `${CORE}/src/state/foreign-hub.ts`,
+    from: "    const isScreened = isCanonicalOrigin(hub) && (key === null || isCanonicalOrigin(key));",
+    to: "    const isScreened = true;",
+    test: `${CORE}/test/foreign-hub-ledger.test.ts`,
+    because: "a hand-edited line puts arbitrary text where doctor prints an origin, the one claim its 'no instruction text' rests on",
+  },
+  {
+    label: "a floor marker outlives the window",
+    file: `${CORE}/src/state/foreign-hub.ts`,
+    from: '    const floors = inWindow.filter((line): line is FloorLine => line.kind === "floor");',
+    to: '    const floors = lines.filter((line): line is FloorLine => line.kind === "floor");',
+    test: `${CORE}/test/foreign-hub-ledger.test.ts`,
+    because: "one overflow keeps a marker in the file for ever",
+  },
+  {
+    label: "the ledger stores the raw session key",
+    file: `${CORE}/src/state/foreign-hub.ts`,
+    from: "      session: sessionDigest(refusal.sessionKey),",
+    to: "      session: refusal.sessionKey,",
+    test: `${CORE}/test/foreign-hub-ledger.test.ts`,
+    because: "host session ids land on disk in a file doctor reads back, and every line fails the reader's screen",
+  },
+  {
+    label: "the legacy write-back stamps the old hub onto a newer login",
+    file: `${CORE}/src/config/config.ts`,
+    from: "      current.hubUrl === read.hubUrl &&\n      current.apiKey === read.apiKey;",
+    to: "      true;",
+    test: `${CORE}/test/key-binding.test.ts`,
+    because: "an old-version login landing in the upgrade window gets its new key bound to the hub it just left",
+  },
+  {
+    label: "a full ledger reports nothing refused",
+    file: `${CLI}/src/cli/foreign-hub.ts`,
+    from: '  return ledger.isFull\n    ? "not counted — the local refusal ledger is full, so recent refusals were not recorded"\n    : "no session has been refused here yet";',
+    to: '  return "no session has been refused here yet";',
+    test: `${CLI}/test/foreign-hub-lines.test.ts`,
+    because: "the WARN says nothing was refused here exactly when the count stopped",
+  },
+  // THE REST OF THE REVIEW (L1, L3).
+  {
+    label: "the hub client follows a redirect",
+    file: `${CORE}/src/http/client.ts`,
+    from: '      redirect: "manual",',
+    to: '      redirect: "follow",',
+    test: `${CORE}/test/key-origin-client.test.ts`,
+    because: "a 307 from the bound hub re-sends captured work to another origin",
+  },
+  {
+    label: "a redirect answer is read as a hub answer",
+    file: `${CORE}/src/http/client.ts`,
+    from: "  if (response.status >= HTTP_REDIRECT_MIN && response.status <= HTTP_REDIRECT_MAX) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/key-origin-client.test.ts`,
+    because: "a redirect surfaces as an unreadable answer, and nothing says the hub tried to send the request elsewhere",
+  },
+  {
+    label: "a junk recorded keyOrigin falls back to hubUrl",
+    file: `${CORE}/src/config/key-binding.ts`,
+    from: "  stored.keyOrigin === undefined ? hubOrigin(stored.hubUrl) : hubOrigin(stored.keyOrigin);",
+    to: "  stored.keyOrigin === undefined ? hubOrigin(stored.hubUrl) : (hubOrigin(stored.keyOrigin) ?? hubOrigin(stored.hubUrl));",
+    test: `${CORE}/test/key-binding.test.ts`,
+    because: "one bad keyOrigin edit and one hubUrl edit move the key, the move the recorded binding exists to stop",
+  },
+  {
+    label: "a non-string keyOrigin reads as a legacy login",
+    file: `${CORE}/src/config/config.ts`,
+    from: "  keyOrigin: z.string().optional().catch(INVALID_KEY_ORIGIN),",
+    to: "  keyOrigin: z.string().optional().catch(undefined),",
+    test: `${CORE}/test/key-binding.test.ts`,
+    because: "a numeric keyOrigin is re-bound to whatever hubUrl says, so the key follows the next hubUrl edit",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -24742,13 +25020,17 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-last-sync.test.ts 1
  * PRINTS: packages/cli/test/doctor-latency.test.ts 2
  * PRINTS: packages/cli/test/doctor-losses.test.ts 6
+ * PRINTS: packages/cli/test/doctor-mcp-probe-trust.test.ts 2
  * PRINTS: packages/cli/test/doctor-pilot.test.ts 6
+ * PRINTS: packages/cli/test/doctor-repo-runtime.test.ts 2
  * PRINTS: packages/cli/test/doctor-search-rebuild.test.ts 2
  * PRINTS: packages/cli/test/doctor-sharing.test.ts 4
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
  * PRINTS: packages/cli/test/doctor-verdict-legality.test.ts 2
  * PRINTS: packages/cli/test/doctor.test.ts 1
+ * PRINTS: packages/cli/test/e2e/bait-repo-isolation.e2e.test.ts 3
  * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
+ * PRINTS: packages/cli/test/foreign-hub-lines.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
  * PRINTS: packages/cli/test/gitignored-advice.test.ts 11
  * PRINTS: packages/cli/test/init-backups.test.ts 7
@@ -24758,11 +25040,12 @@ interface Outcome {
  * PRINTS: packages/cli/test/init-remove-verdict.test.ts 7
  * PRINTS: packages/cli/test/init-remove.test.ts 17
  * PRINTS: packages/cli/test/intent-cost.test.ts 1
- * PRINTS: packages/cli/test/key-origin-attacker.test.ts 7
+ * PRINTS: packages/cli/test/key-origin-attacker.test.ts 11
  * PRINTS: packages/cli/test/key-rotate.test.ts 6
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 9
  * PRINTS: packages/cli/test/landed-doctor.test.ts 3
  * PRINTS: packages/cli/test/landing-fetch-doctor.test.ts 8
+ * PRINTS: packages/cli/test/mcp-config.test.ts 1
  * PRINTS: packages/cli/test/outcome-cli.test.ts 35
  * PRINTS: packages/cli/test/passkey-status.test.ts 4
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
@@ -24904,6 +25187,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
  * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1
  * PRINTS: packages/connector-core/test/fix-diff.test.ts 7
+ * PRINTS: packages/connector-core/test/foreign-hub-ledger.test.ts 8
  * PRINTS: packages/connector-core/test/generated-targets.test.ts 10
  * PRINTS: packages/connector-core/test/ghost-declare.test.ts 1
  * PRINTS: packages/connector-core/test/ghost-render.test.ts 5
@@ -24924,8 +25208,8 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/injection-corpus.test.ts 8
  * PRINTS: packages/connector-core/test/intent-budget.test.ts 1
  * PRINTS: packages/connector-core/test/intent-chain-render.test.ts 1
- * PRINTS: packages/connector-core/test/key-binding.test.ts 5
- * PRINTS: packages/connector-core/test/key-origin-client.test.ts 4
+ * PRINTS: packages/connector-core/test/key-binding.test.ts 12
+ * PRINTS: packages/connector-core/test/key-origin-client.test.ts 7
  * PRINTS: packages/connector-core/test/kit.test.ts 1
  * PRINTS: packages/connector-core/test/landed-capture.test.ts 5
  * PRINTS: packages/connector-core/test/landed-changes-completeness.test.ts 26
@@ -24968,6 +25252,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 7
  * PRINTS: packages/connector-core/test/repo-ssh-determinism.test.ts 2
  * PRINTS: packages/connector-core/test/review-draft.test.ts 2
+ * PRINTS: packages/connector-core/test/runtime-isolation.test.ts 3
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
