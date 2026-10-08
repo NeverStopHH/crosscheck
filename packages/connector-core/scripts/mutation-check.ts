@@ -19765,6 +19765,23 @@ export const MUTATIONS: readonly Mutation[
     because: "a `pull --rebase` moves HEAD onto the upstream it diverged from, and the rules fold the next branch into a topic it holds none of",
   },
   {
+    // Review M6 of feat/topic-contexts: the git lane sends every untracked and committed path.
+    label: "a credential file's name reaches the hub as a target",
+    file: `${CORE}/src/capture/denylist.ts`,
+    from: "  \"**/.netrc\",\n  \"**/.npmrc\",\n  \"**/.pypirc\",\n  \"**/id_rsa*\",\n",
+    to: "",
+    test: `${CORE}/test/denylist.test.ts`,
+    because: "every swept worktree's .netrc, .npmrc and private keys are listed by path on a shared hub, a credential inventory",
+  },
+  {
+    label: "a service-account key's name reaches the hub as a target",
+    file: `${CORE}/src/capture/denylist.ts`,
+    from: "  \"**/*service-account*.json\",\n",
+    to: "",
+    test: `${CORE}/test/denylist.test.ts`,
+    because: "an untracked cloud service-account key in any worktree is named on the hub",
+  },
+  {
     // Review H2 of feat/topic-contexts: a subagent's shell works in a sibling, its cwd the start checkout.
     label: "a Bash call marks only its cwd's root",
     file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
@@ -20310,6 +20327,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-registry-walk.test.ts 3
  * PRINTS: packages/connector-core/test/coverage-render.test.ts 20
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 3
+ * PRINTS: packages/connector-core/test/denylist.test.ts 2
  * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 2
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
  * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1

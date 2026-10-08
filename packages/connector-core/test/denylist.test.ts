@@ -22,6 +22,33 @@ describe("denylist", () => {
     }
   });
 
+  test("filters credential files by name, wherever they sit (review M6)", () => {
+    // Arrange: what the git lane's untracked and committed halves would otherwise send as paths
+    const denied = [
+      ".netrc",
+      ".npmrc",
+      "deploy/id_ed25519",
+      "id_rsa",
+      "keys/id_rsa.pub",
+      "keys/prod.p12",
+      "certs/client.pfx",
+      "android/release.keystore",
+      "config/credentials.json",
+      "gcp/ci-credentials.json",
+      "secrets/service-account.json",
+      "secrets/my-service-account-key.json",
+      "home/.aws/config",
+      "home/.ssh/known_hosts",
+      "certs/server.pem",
+      "certs/tls.key",
+    ];
+
+    // Act & Assert
+    for (const path of denied) {
+      expect({ path, denied: isDenied(path, DEFAULT_DENYLIST) }).toEqual({ path, denied: true });
+    }
+  });
+
   test("keeps ordinary source files", () => {
     // Arrange
     const kept = [
