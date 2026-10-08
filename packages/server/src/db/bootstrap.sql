@@ -1379,8 +1379,19 @@ BEGIN
 END
 $$;
 
-CREATE UNIQUE INDEX IF NOT EXISTS pilot_marks_ref_marker_idx
-  ON pilot_marks (ref_kind, ref_id, marked_by);
+-- HUMAN PROVENANCE (0.11 §4): who gave the label. From 0.11 a row here is
+-- written only by a passkey confirmation ('human_passkey_confirmed', with its
+-- confirmation); every row already here reads 'unknown_legacy' and is never
+-- upgraded. The CHECK and the foreign key are added once, at the end of this
+-- file, after human_confirmations exists.
+ALTER TABLE pilot_marks ADD COLUMN IF NOT EXISTS provenance text NOT NULL DEFAULT 'unknown_legacy';
+ALTER TABLE pilot_marks ADD COLUMN IF NOT EXISTS confirmation_id text;
+
+-- One label per person per delivery PER PROVENANCE, so a confirmed label never
+-- collides with the legacy one a 0.10 hub holds. The old key goes once.
+CREATE UNIQUE INDEX IF NOT EXISTS pilot_marks_ref_marker_provenance_idx
+  ON pilot_marks (ref_kind, ref_id, marked_by, provenance);
+DROP INDEX IF EXISTS pilot_marks_ref_marker_idx;
 CREATE INDEX IF NOT EXISTS pilot_marks_repo_created_idx
   ON pilot_marks (repo, created_at DESC);
 
@@ -1739,3 +1750,148 @@ CREATE TABLE IF NOT EXISTS waiver_requests (
 );
 
 CREATE INDEX IF NOT EXISTS waiver_requests_repo_idx ON waiver_requests (repo, created_at DESC);
+
+-- ── HUMAN PROVENANCE (0.11) ──────────────────────────────────────────────────
+--
+-- A key only DRAFTS what a person must decide; a passkey ceremony over a frozen
+-- batch confirms it. Kept in sync with db/schema.ts and pinned by
+-- test/ddl-sync-provenance.test.ts. Every value below is spelled in
+-- @crosscheck/schema (provenance.ts): the three classes agent_asserted,
+-- interactive_terminal_asserted, human_passkey_confirmed, and the legacy
+-- marker unknown_legacy.
+
+-- What a key wrote that only a person may decide. APPEND-ONLY: a newer draft on
+-- a subject is its next version; nothing here is updated.
+CREATE TABLE IF NOT EXISTS human_drafts (
+  id text PRIMARY KEY,
+  developer_id text NOT NULL REFERENCES developers(id),
+  repo text,
+  kind text NOT NULL,
+  subject_key text NOT NULL,
+  version integer NOT NULL,
+  payload jsonb NOT NULL,
+  provenance text NOT NULL,
+  created_at timestamptz NOT NULL,
+  CONSTRAINT human_drafts_kind_check
+    CHECK (kind IN ('label', 'pin_ok', 'outcome', 'pin', 'pin_broke', 'mute', 'unmute', 'presence_on')),
+  CONSTRAINT human_drafts_provenance_check
+    CHECK (provenance IN ('agent_asserted', 'interactive_terminal_asserted')),
+  CONSTRAINT human_drafts_version_check CHECK (version >= 1)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS human_drafts_subject_version_idx
+  ON human_drafts (developer_id, subject_key, version);
+CREATE INDEX IF NOT EXISTS human_drafts_developer_created_idx
+  ON human_drafts (developer_id, created_at);
+
+-- One passkey confirmation of one frozen batch: the only writer of
+-- human_passkey_confirmed. The batch id is the key, so a batch is confirmed once.
+CREATE TABLE IF NOT EXISTS human_confirmations (
+  id text PRIMARY KEY,
+  developer_id text NOT NULL REFERENCES developers(id),
+  credential_id text NOT NULL REFERENCES passkeys(credential_id),
+  rp_id text NOT NULL,
+  digest text NOT NULL,
+  pending_fingerprint text NOT NULL,
+  item_count integer NOT NULL,
+  formed_at timestamptz NOT NULL,
+  confirmed_at timestamptz NOT NULL
+);
+CREATE INDEX IF NOT EXISTS human_confirmations_developer_idx
+  ON human_confirmations (developer_id, confirmed_at);
+
+-- Every item of a confirmed batch, exactly as signed.
+CREATE TABLE IF NOT EXISTS human_confirmation_items (
+  confirmation_id text NOT NULL REFERENCES human_confirmations(id),
+  position integer NOT NULL,
+  draft_id text NOT NULL REFERENCES human_drafts(id),
+  draft_version integer NOT NULL,
+  draft_digest text NOT NULL,
+  decision text NOT NULL,
+  content jsonb NOT NULL,
+  PRIMARY KEY (confirmation_id, position),
+  CONSTRAINT human_confirmation_items_decision_check
+    CHECK (decision IN ('confirm', 'discard', 'keep'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS human_confirmation_items_draft_idx
+  ON human_confirmation_items (confirmation_id, draft_id);
+CREATE INDEX IF NOT EXISTS human_confirmation_items_by_draft_idx
+  ON human_confirmation_items (draft_id);
+
+-- The more-private changes a key makes at once (presence off), with their class.
+CREATE TABLE IF NOT EXISTS privacy_changes (
+  id text PRIMARY KEY,
+  developer_id text NOT NULL REFERENCES developers(id),
+  kind text NOT NULL,
+  provenance text NOT NULL,
+  created_at timestamptz NOT NULL,
+  CONSTRAINT privacy_changes_kind_check CHECK (kind IN ('presence_off', 'presence_on')),
+  CONSTRAINT privacy_changes_provenance_check
+    CHECK (provenance IN ('agent_asserted', 'interactive_terminal_asserted', 'human_passkey_confirmed'))
+);
+CREATE INDEX IF NOT EXISTS privacy_changes_developer_created_idx
+  ON privacy_changes (developer_id, created_at);
+
+-- The records that count. pilot_marks gained its columns beside its unique key
+-- (above); the others gain theirs here. Every row already there is a 0.10 row.
+ALTER TABLE noise_reassertions ADD COLUMN IF NOT EXISTS provenance text NOT NULL DEFAULT 'unknown_legacy';
+ALTER TABLE noise_reassertions ADD COLUMN IF NOT EXISTS confirmation_id text;
+ALTER TABLE hint_outcomes ADD COLUMN IF NOT EXISTS provenance text NOT NULL DEFAULT 'unknown_legacy';
+ALTER TABLE hint_outcomes ADD COLUMN IF NOT EXISTS confirmation_id text;
+ALTER TABLE developer_mutes ADD COLUMN IF NOT EXISTS provenance text NOT NULL DEFAULT 'unknown_legacy';
+ALTER TABLE developer_mutes ADD COLUMN IF NOT EXISTS confirmation_id text;
+ALTER TABLE pins ADD COLUMN IF NOT EXISTS provenance text NOT NULL DEFAULT 'unknown_legacy';
+ALTER TABLE pins ADD COLUMN IF NOT EXISTS confirmation_id text;
+ALTER TABLE pins ADD COLUMN IF NOT EXISTS broke_provenance text;
+ALTER TABLE pins ADD COLUMN IF NOT EXISTS broke_confirmation_id text;
+-- A break from before 0.11 is a legacy break. Touches nothing once done: every
+-- later break is written with its provenance (the CHECK below holds it).
+UPDATE pins SET broke_provenance = 'unknown_legacy'
+  WHERE broke_at IS NOT NULL AND broke_provenance IS NULL;
+
+-- The CHECKs and foreign keys, once each: a confirmed row names its
+-- confirmation, a legacy row none, and no draft class ever reaches a record
+-- that counts. Guarded like the body-length constraints, so no restart takes
+-- ACCESS EXCLUSIVE to re-prove what already holds.
+DO $$
+DECLARE
+  target text;
+BEGIN
+  FOREACH target IN ARRAY ARRAY['pilot_marks', 'noise_reassertions', 'hint_outcomes', 'developer_mutes', 'pins'] LOOP
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conname = target || '_provenance_check' AND conrelid = target::regclass
+    ) THEN
+      EXECUTE format(
+        'ALTER TABLE %I ADD CONSTRAINT %I CHECK ('
+          || '(provenance = %L AND confirmation_id IS NULL) OR (provenance = %L AND confirmation_id IS NOT NULL))',
+        target, target || '_provenance_check', 'unknown_legacy', 'human_passkey_confirmed');
+    END IF;
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conname = target || '_confirmation_fk' AND conrelid = target::regclass
+    ) THEN
+      EXECUTE format(
+        'ALTER TABLE %I ADD CONSTRAINT %I FOREIGN KEY (confirmation_id) REFERENCES human_confirmations(id)',
+        target, target || '_confirmation_fk');
+    END IF;
+  END LOOP;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'pins_broke_provenance_check' AND conrelid = 'pins'::regclass
+  ) THEN
+    -- COALESCE: a CHECK that evaluates to NULL passes, so a break with no
+    -- provenance must compare as '' and fail every clause, never as NULL.
+    ALTER TABLE pins ADD CONSTRAINT pins_broke_provenance_check CHECK (
+      (broke_at IS NULL AND broke_provenance IS NULL AND broke_confirmation_id IS NULL)
+      OR (broke_at IS NOT NULL AND COALESCE(broke_provenance, '') = 'unknown_legacy' AND broke_confirmation_id IS NULL)
+      OR (broke_at IS NOT NULL AND COALESCE(broke_provenance, '') = 'human_passkey_confirmed' AND broke_confirmation_id IS NOT NULL));
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'pins_broke_confirmation_fk' AND conrelid = 'pins'::regclass
+  ) THEN
+    ALTER TABLE pins ADD CONSTRAINT pins_broke_confirmation_fk
+      FOREIGN KEY (broke_confirmation_id) REFERENCES human_confirmations(id);
+  END IF;
+END
+$$;

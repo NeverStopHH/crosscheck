@@ -1,4 +1,6 @@
 import { sql } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
+import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import type { FoldedLossKinds } from "@crosscheck/schema";
 
 import {
@@ -78,10 +80,29 @@ import {
   ENROLMENT_SOURCES,
   MAX_PASSKEY_LABEL_CHARS,
   PASSKEY_REVOKERS,
+  DRAFT_DECISIONS,
+  DRAFT_KINDS,
+  DRAFT_PROVENANCES,
+  HUMAN_PROVENANCE,
+  LEGACY_PROVENANCE,
+  PROVENANCE_CLASSES,
+  STORED_JUDGEMENT_PROVENANCES,
 } from "@crosscheck/schema";
 
 const timestamptz = (name: string) =>
   timestamp(name, { withTimezone: true, mode: "date" });
+
+/** `'a', 'b'` — a closed vocabulary as the SQL list a CHECK spells. */
+const sqlList = (values: readonly string[]): SQL => sql.raw(values.map((value) => `'${value}'`).join(", "));
+
+/**
+ * A RECORD THAT COUNTS holds a passkey confirmation or a row from before 0.11,
+ * nothing else (human provenance §4): a draft class never reaches it, a human
+ * row always names the confirmation that wrote it, and a legacy row none.
+ */
+const storedProvenanceCheck = (provenance: AnyPgColumn, confirmationId: AnyPgColumn): SQL =>
+  sql`(${provenance} = '${sql.raw(LEGACY_PROVENANCE)}' AND ${confirmationId} IS NULL)
+   OR (${provenance} = '${sql.raw(HUMAN_PROVENANCE)}' AND ${confirmationId} IS NOT NULL)`;
 
 /**
  * Vectors from different models are not comparable, so every embedding carries
@@ -174,9 +195,17 @@ export const developerMutes = pgTable(
       .notNull()
       .references(() => developers.id),
     createdAt: timestamptz("created_at").notNull(),
+    /**
+     * A mute is the person's setting (human provenance §8): written only by a
+     * passkey confirmation of a draft. `unknown_legacy` labels the mutes from
+     * before 0.11, which keep working. No drizzle default: see `pilotMarks`.
+     */
+    provenance: text("provenance", { enum: STORED_JUDGEMENT_PROVENANCES }).notNull(),
+    confirmationId: text("confirmation_id").references(() => humanConfirmations.id),
   },
   (table) => [
     primaryKey({ columns: [table.readerDeveloperId, table.mutedDeveloperId] }),
+    check("developer_mutes_provenance_check", storedProvenanceCheck(table.provenance, table.confirmationId)),
   ],
 );
 
@@ -995,8 +1024,30 @@ export const pins = pgTable(
     repairsPinId: text("repairs_pin_id"),
     repairsPinVersion: integer("repairs_pin_version"),
     createdAt: timestamptz("created_at").notNull(),
+    /**
+     * WHO MADE THIS A PIN (human provenance §7). A key only DRAFTS a pin
+     * (`human_drafts`), and a draft has no protection effect because it is
+     * not a row here: suspect, the fence, waiver requests and the registry all
+     * read this table. A row is written by a passkey confirmation, or is a pin
+     * from before 0.11 (`unknown_legacy`, which keeps its effect and is never
+     * scored as a human's). No drizzle default: see `pilotMarks`.
+     */
+    provenance: text("provenance", { enum: STORED_JUDGEMENT_PROVENANCES }).notNull(),
+    confirmationId: text("confirmation_id").references(() => humanConfirmations.id),
+    /** The same for the retraction: null while unbroken; legacy for a break from before 0.11. */
+    brokeProvenance: text("broke_provenance", { enum: STORED_JUDGEMENT_PROVENANCES }),
+    brokeConfirmationId: text("broke_confirmation_id").references(() => humanConfirmations.id),
   },
   (table) => [
+    check("pins_provenance_check", storedProvenanceCheck(table.provenance, table.confirmationId)),
+    check(
+      "pins_broke_provenance_check",
+      // COALESCE: a CHECK that evaluates to NULL passes, so a break with no
+      // provenance compares as '' and fails every clause.
+      sql`(${table.brokeAt} IS NULL AND ${table.brokeProvenance} IS NULL AND ${table.brokeConfirmationId} IS NULL)
+   OR (${table.brokeAt} IS NOT NULL AND COALESCE(${table.brokeProvenance}, '') = '${sql.raw(LEGACY_PROVENANCE)}' AND ${table.brokeConfirmationId} IS NULL)
+   OR (${table.brokeAt} IS NOT NULL AND COALESCE(${table.brokeProvenance}, '') = '${sql.raw(HUMAN_PROVENANCE)}' AND ${table.brokeConfirmationId} IS NOT NULL)`,
+    ),
     check(
       "pins_surface_length_check",
       sql`char_length(${table.surface}) <= ${sql.raw(String(MAX_PIN_SURFACE_CHARS))}`,
@@ -1351,16 +1402,29 @@ export const pilotMarks = pgTable(
     createdAt: timestamptz("created_at").notNull(),
     /** Null is the ordinary case: a label needs no sentence. */
     reason: text("reason"),
+    /**
+     * WHO GAVE THIS LABEL (human provenance §4): a passkey confirmation, or a
+     * row from before 0.11. A key only drafts a label (`human_drafts`), so no
+     * agent's and no terminal's word is ever a row here. NO DRIZZLE DEFAULT, on
+     * purpose: every insert must say which (04a's `authority` precedent); the
+     * database DEFAULT 'unknown_legacy' only labels the rows already there.
+     */
+    provenance: text("provenance", { enum: STORED_JUDGEMENT_PROVENANCES }).notNull(),
+    confirmationId: text("confirmation_id").references(() => humanConfirmations.id),
   },
   (table) => [
     check(
       "pilot_marks_reason_length_check",
       sql`${table.reason} IS NULL OR char_length(${table.reason}) <= ${sql.raw(String(MAX_PILOT_LABEL_REASON_CHARS))}`,
     ),
-    uniqueIndex("pilot_marks_ref_marker_idx").on(
+    check("pilot_marks_provenance_check", storedProvenanceCheck(table.provenance, table.confirmationId)),
+    // One label per person per delivery PER PROVENANCE: a confirmed label never
+    // collides with the legacy one a 0.10 hub already holds.
+    uniqueIndex("pilot_marks_ref_marker_provenance_idx").on(
       table.refKind,
       table.refId,
       table.markedBy,
+      table.provenance,
     ),
     // The report asks "this repo's marks in this window", newest first.
     index("pilot_marks_repo_created_idx").on(table.repo, table.createdAt.desc()),
@@ -1402,9 +1466,18 @@ export const hintOutcomes = pgTable(
      * an agent's. Null on rows from before the column, read as an agent's.
      */
     recordedVia: text("recorded_via", { enum: HINT_OUTCOME_CHANNELS }),
+    /**
+     * WHO SAID IT, PROVEN OR NOT (human provenance §4). From 0.11 a row here is
+     * written only by a passkey confirmation; the agent's and the terminal's
+     * words are drafts. Rows from before read `unknown_legacy`. No drizzle
+     * default: see `pilotMarks`.
+     */
+    provenance: text("provenance", { enum: STORED_JUDGEMENT_PROVENANCES }).notNull(),
+    confirmationId: text("confirmation_id").references(() => humanConfirmations.id),
   },
   (table) => [
     check("hint_outcomes_recorded_via_check", sql`${table.recordedVia} IS NULL OR ${table.recordedVia} IN ('agent', 'person')`),
+    check("hint_outcomes_provenance_check", storedProvenanceCheck(table.provenance, table.confirmationId)),
     check(
       "hint_outcomes_reason_length_check",
       sql`${table.reason} IS NULL OR char_length(${table.reason}) <= ${sql.raw(String(MAX_HINT_OUTCOME_REASON_CHARS))}`,
@@ -1438,8 +1511,12 @@ export const noiseReassertions = pgTable(
     /** The sentence said with it, kept; null is the ordinary case. */
     reason: text("reason"),
     createdAt: timestamptz("created_at").notNull(),
+    /** As on `pilot_marks`: confirmed, or from before 0.11. */
+    provenance: text("provenance", { enum: STORED_JUDGEMENT_PROVENANCES }).notNull(),
+    confirmationId: text("confirmation_id").references(() => humanConfirmations.id),
   },
   (table) => [
+    check("noise_reassertions_provenance_check", storedProvenanceCheck(table.provenance, table.confirmationId)),
     check(
       "noise_reassertions_reason_length_check",
       sql`${table.reason} IS NULL OR char_length(${table.reason}) <= ${sql.raw(String(MAX_PILOT_LABEL_REASON_CHARS))}`,
@@ -2209,5 +2286,123 @@ export const ciTestResults = pgTable(
   (table) => [
     primaryKey({ columns: [table.ciRunId, table.testId] }),
     index("ci_test_results_repo_test_idx").on(table.repo, table.testId),
+  ],
+);
+
+/**
+ * WHAT A KEY WROTE THAT ONLY A PERSON MAY DECIDE (human provenance §4): a
+ * label, `pin --ok`, an outcome, a pin, its retraction, a mute, an unmute, or
+ * switching presence back on. A draft has NO effect and NO human standing; a
+ * passkey confirmation of a frozen batch applies it through the ordinary
+ * writer, as a new row in the record that counts.
+ *
+ * APPEND-ONLY. A newer draft on the same SUBJECT (what one decision is about,
+ * e.g. `outcome:<session>:<ref>`) is its next VERSION; the older one stays,
+ * superseded. Nothing here is ever updated, and a confirmation never rewrites
+ * the row it confirms.
+ */
+export const humanDrafts = pgTable(
+  "human_drafts",
+  {
+    id: text("id").primaryKey(),
+    developerId: text("developer_id")
+      .notNull()
+      .references(() => developers.id),
+    /** Null for a setting, which belongs to no repo. */
+    repo: text("repo"),
+    kind: text("kind", { enum: DRAFT_KINDS }).notNull(),
+    subjectKey: text("subject_key").notNull(),
+    version: integer("version").notNull(),
+    /** The validated body, in the shape the kind's writer takes. */
+    payload: jsonb("payload").$type<Readonly<Record<string, unknown>>>().notNull(),
+    provenance: text("provenance", { enum: DRAFT_PROVENANCES }).notNull(),
+    createdAt: timestamptz("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("human_drafts_subject_version_idx").on(table.developerId, table.subjectKey, table.version),
+    index("human_drafts_developer_created_idx").on(table.developerId, table.createdAt),
+    check("human_drafts_kind_check", sql`${table.kind} IN (${sqlList(DRAFT_KINDS)})`),
+    check("human_drafts_provenance_check", sql`${table.provenance} IN (${sqlList(DRAFT_PROVENANCES)})`),
+    check("human_drafts_version_check", sql`${table.version} >= 1`),
+  ],
+);
+
+/**
+ * ONE PASSKEY CONFIRMATION OF ONE FROZEN BATCH (human provenance §6) — the
+ * only writer of `human_passkey_confirmed`. Written in the transaction that
+ * applies the batch, after the signature over `digest` verified; the batch id
+ * is the primary key, so a batch is confirmed at most once.
+ */
+export const humanConfirmations = pgTable(
+  "human_confirmations",
+  {
+    /** The batch id the ceremony was bound to. */
+    id: text("id").primaryKey(),
+    developerId: text("developer_id")
+      .notNull()
+      .references(() => developers.id),
+    /** Which device said yes — answerable after it is revoked (04a). */
+    credentialId: text("credential_id")
+      .notNull()
+      .references(() => passkeys.credentialId),
+    rpId: text("rp_id").notNull(),
+    /** SHA-256 over every item's (draft id, version, draft digest, decision, final content). */
+    digest: text("digest").notNull(),
+    /** The pending set the person reviewed: any change before the tap refused the batch. */
+    pendingFingerprint: text("pending_fingerprint").notNull(),
+    itemCount: integer("item_count").notNull(),
+    formedAt: timestamptz("formed_at").notNull(),
+    confirmedAt: timestamptz("confirmed_at").notNull(),
+  },
+  (table) => [index("human_confirmations_developer_idx").on(table.developerId, table.confirmedAt)],
+);
+
+/** Every item of a confirmed batch, exactly as signed: its decision and its final content. */
+export const humanConfirmationItems = pgTable(
+  "human_confirmation_items",
+  {
+    confirmationId: text("confirmation_id")
+      .notNull()
+      .references(() => humanConfirmations.id),
+    position: integer("position").notNull(),
+    draftId: text("draft_id")
+      .notNull()
+      .references(() => humanDrafts.id),
+    draftVersion: integer("draft_version").notNull(),
+    draftDigest: text("draft_digest").notNull(),
+    decision: text("decision", { enum: DRAFT_DECISIONS }).notNull(),
+    /** What the person confirmed, edited or not; the draft's own payload is never changed. */
+    content: jsonb("content").$type<Readonly<Record<string, unknown>>>().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.confirmationId, table.position] }),
+    uniqueIndex("human_confirmation_items_draft_idx").on(table.confirmationId, table.draftId),
+    // "Is this draft resolved?" is the one read: by draft.
+    index("human_confirmation_items_by_draft_idx").on(table.draftId),
+    check("human_confirmation_items_decision_check", sql`${table.decision} IN (${sqlList(DRAFT_DECISIONS)})`),
+  ],
+);
+
+/**
+ * THE MORE-PRIVATE CHANGES A KEY MAKES AT ONCE (human provenance §8): a
+ * works-council opt-out never waits for a passkey, so presence off takes
+ * effect immediately — and is recorded here with its class, and shown to the
+ * person, who did not necessarily make it. Presence back on is a draft.
+ */
+export const privacyChanges = pgTable(
+  "privacy_changes",
+  {
+    id: text("id").primaryKey(),
+    developerId: text("developer_id")
+      .notNull()
+      .references(() => developers.id),
+    kind: text("kind", { enum: ["presence_off", "presence_on"] }).notNull(),
+    provenance: text("provenance", { enum: PROVENANCE_CLASSES }).notNull(),
+    createdAt: timestamptz("created_at").notNull(),
+  },
+  (table) => [
+    index("privacy_changes_developer_created_idx").on(table.developerId, table.createdAt),
+    check("privacy_changes_kind_check", sql`${table.kind} IN ('presence_off', 'presence_on')`),
+    check("privacy_changes_provenance_check", sql`${table.provenance} IN (${sqlList(PROVENANCE_CLASSES)})`),
   ],
 );

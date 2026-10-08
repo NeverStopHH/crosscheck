@@ -1194,3 +1194,21 @@ export const HINT_OUTCOME_MAX_SOURCES = 10;
  */
 export const HINT_OUTCOME_MAX_REASONS = PILOT_REPORT_MAX_LABEL_REASONS;
 
+// ── Human provenance (0.11, ~/worktrees/.cx-workflows/designs/human-provenance.md) ──
+
+/**
+ * HOW MANY UNDECIDED SUBJECTS ONE PERSON'S DRAFTS MAY HOLD (§4). Every key on
+ * the person's machine can draft, and a confirmation batch covers EVERY
+ * pending draft, so the page a person reviews must stay a page. A new subject
+ * past this is refused; a newer version of one already pending never is, so
+ * an agent correcting its own word is never locked out. Two hundred: about a
+ * pilot week of hints at the rate the first fortnight measured (157 in 14 days).
+ */
+export const MAX_PENDING_DRAFT_SUBJECTS = 200;
+
+/**
+ * HOW LONG A FORMED BATCH WAITS FOR ITS PASSKEY (§6): the ceremony's own five
+ * minutes, so a batch never outlives the prompt that would confirm it.
+ */
+export const CONFIRM_BATCH_TTL_MS = 5 * 60_000;
+
