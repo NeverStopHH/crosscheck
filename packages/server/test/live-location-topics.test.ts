@@ -133,8 +133,27 @@ describe("an opted-out developer's unmarked topic on a local repo", () => {
     // Arrange
     const world = await seedOptedOutWorld();
 
-    // Act: the topic lands, and a colleague searches the one word only its branch holds
-    await openUnmarkedLocalTopic(world);
+    // Act: the topic lands ALONE — a target after it would write the doc again,
+    // once her branch is known — and a colleague searches the one word only
+    // its branch holds
+    const posted = await postRecords(world.harness, world.robin, {
+      records: [
+        recordEnvelope(
+          "work_context",
+          validWorkContextBody({
+            id: ROBIN_LOCAL_TOPIC,
+            sessionId: ROBIN_LOCAL,
+            title: SECRET_LOCAL_TOPIC_BRANCH,
+            status: "implementing",
+            branch: SECRET_LOCAL_TOPIC_BRANCH,
+            baseCommit: SECRET_TOPIC_SHA,
+            createdAt: CREATED_AT,
+          }),
+          { sessionId: ROBIN_LOCAL },
+        ),
+      ],
+    });
+    expect(posted.data?.accepted).toBe(1);
     const response = await world.harness.app.request(
       `/api/search?repo=${encodeURIComponent(LOCAL_REPO)}&query=${encodeURIComponent("locarno")}`,
       jsonRequest("GET", world.nick.apiKey),
