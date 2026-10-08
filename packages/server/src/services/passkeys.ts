@@ -237,6 +237,23 @@ export const usableCredentials = async (input: {
   return rows.map((row) => ({ passkeyId: row.id, credential: storedOf(row) }));
 };
 
+/**
+ * THE CREDENTIALS THAT MAY CONFIRM ONE'S OWN DRAFTS (human provenance §6, Q19):
+ * not revoked, cooling off or not. Confirming one's own labels, ratings, pins
+ * and privacy settings is not a privileged action, so a passkey enrolled a
+ * minute ago may do it at once; the enrolment is still announced.
+ */
+export const confirmingCredentials = async (input: {
+  readonly db: DbExecutor;
+  readonly developerId: string;
+}): Promise<readonly UsableCredential[]> => {
+  const rows = await input.db
+    .select()
+    .from(passkeys)
+    .where(and(eq(passkeys.developerId, input.developerId), isNull(passkeys.revokedAt)));
+  return rows.map((row) => ({ passkeyId: row.id, credential: storedOf(row) }));
+};
+
 /** Every unrevoked credential, cooling off or not — what a new registration must not duplicate. */
 export const enrolledCredentials = async (input: {
   readonly db: DbExecutor;

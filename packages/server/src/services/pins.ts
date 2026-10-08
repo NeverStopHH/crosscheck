@@ -159,7 +159,8 @@ const iso = (value: Date | null): string | null =>
  * files: "you may not pin that" with no path is a refusal nobody can act on.
  */
 export const untouchedByDeveloper = async (
-  deps: Deps,
+  // An open transaction too: a confirmation checks the policy again at the tap.
+  deps: { readonly db: DbExecutor },
   developerId: string,
   repo: string,
   files: readonly string[],
