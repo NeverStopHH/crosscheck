@@ -24635,6 +24635,23 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/doctor-subagent-return.test.ts`,
     because: "a settings file anyone can commit writes OSC 52, line erases and a forged PASS straight to the reader's terminal",
   },
+  // ── Review of feat/collision-visible, round 3, F-L7 / F-L8: reviewer survivors P3 and P10 ──
+  {
+    label: "the relay's presence refresh ignores what the budget spares",
+    file: `${CONNECTOR}/src/hooks/collision-relay.ts`,
+    from: "Math.min(RELAY_PRESENCE_REFRESH_MS, ctx.hub.timeoutMs, budget.spareMs())",
+    to: "Math.min(RELAY_PRESENCE_REFRESH_MS, ctx.hub.timeoutMs)",
+    test: `${CONNECTOR}/test/collision-relay-unconfirmed.test.ts`,
+    because: "a late drain after a slow hint waits out the cap past the reserve, and the budget race abandons a relay already drained",
+  },
+  {
+    label: "a presence cache dated in the future counts as fresh",
+    file: `${CORE}/src/state/presence-cache.ts`,
+    from: "  return ageMs >= 0 && ageMs < PRESENCE_CACHE_TTL_MS;",
+    to: "  return ageMs < PRESENCE_CACHE_TTL_MS;",
+    test: `${CONNECTOR}/test/collision-relay-unconfirmed.test.ts`,
+    because: "a cache stamped ahead of a clock stepped back decides who is named for as long as the lag lasts",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {

@@ -24,6 +24,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
 import { runHook } from "../src/index.ts";
+import { prepareHook } from "../src/hooks/runner.ts";
+import { NO_DRAIN, drainCollisionRelay, personCopy } from "../src/hooks/collision-relay.ts";
 import {
   COLLISION_RELAY_SENTENCE,
   SUBAGENT_RELAY_HEADER,
@@ -245,5 +247,71 @@ describe("with no fresh answer, the relay asks presence once", () => {
     // Assert
     expect(output.systemMessage).toBe(NICK_RECENT_NOTICE);
     expect(Date.now() - started).toBeLessThan(WITHIN_CAP_MS);
+  });
+});
+
+/** What the budget spares a LATE drain: a prompt whose hint hub spent the rest. */
+const NEAR_SPENT_SPARE_MS = 50;
+
+/**
+ * Slower than that spare and well inside RELAY_PRESENCE_REFRESH_MS: a refresh
+ * held to the spare gives up first whatever the load (both timers run in this
+ * process, and the earlier deadline fires first), and one held only to the
+ * cap has the answer 200 ms before it would give up.
+ */
+const PRESENCE_BETWEEN_SPARE_AND_CAP_MS = 100;
+
+describe("the refresh is held to what the budget spares (round 3, F-L7; reviewer mutation P3)", () => {
+  test("a late drain with 50 ms to spare waits no longer for presence, and still relays the hit", async () => {
+    // Arrange: a subagent ran into Nick; presence answers WITHOUT him, but only after 100 ms
+    const fix = await roomyFixture("ru-spare-bound");
+    await runHook("pre-tool-use", editPayload(fix.repo, OVERLAP_FILE, SUBAGENT), fix.env);
+    fix.hub.setPresence([presenceRow("dev_someone_else", "feat/other")]);
+    fix.hub.latency.presence = PRESENCE_BETWEEN_SPARE_AND_CAP_MS;
+    const ctx = await prepareHook(promptPayload(fix.repo), fix.env);
+
+    // Act: the prompt's late drain, handed the spare a slow hint left
+    const drain = ctx === null ? NO_DRAIN : await drainCollisionRelay(ctx, { spareMs: () => NEAR_SPENT_SPARE_MS });
+
+    // Assert: relayed, and named from the hit — the answer that would have
+    // unnamed Nick came after the 50 ms the budget could spare
+    expect(personCopy(drain, new Date())).toBe(NICK_RECENT_NOTICE);
+    expect(fix.hub.calls.presence).toBe(1);
+    const state = await readSessionState(fix.home, SESSION_ID);
+    expect(state?.collisionRelayQueue).toEqual([]);
+  });
+});
+
+/** A cache stamped an hour ahead of the clock — a clock stepped back after it was written. */
+const FUTURE = (): Date => new Date(Date.now() + 3_600_000);
+
+describe("a presence cache dated in the future is no answer (round 3, F-L8; reviewer mutation P10)", () => {
+  test("one that lists the teammate decides nothing: the refresh that omits them unnames the hit", async () => {
+    // Arrange
+    const fix = await roomyFixture("ru-future-lists");
+    await runHook("pre-tool-use", editPayload(fix.repo, OVERLAP_FILE, SUBAGENT), fix.env);
+    await presentNow(fix, [TEAMMATE_DEVELOPER_ID], { fetchedAt: FUTURE() });
+    fix.hub.setPresence([]);
+
+    // Act
+    const output = parsed(await runHook("subagent-return", agentReturned(fix.repo), fix.env));
+
+    // Assert
+    expect(output.systemMessage).toBe(UNNAMED_REFRESH_NOTICE);
+    expect(fix.hub.calls.presence).toBe(1);
+  });
+
+  test("one that omits the teammate, beside a failing refresh, names them from the hit", async () => {
+    // Arrange: the hub's presence answer cannot be read
+    const fix = await roomyFixture("ru-future-omits");
+    await runHook("pre-tool-use", editPayload(fix.repo, OVERLAP_FILE, SUBAGENT), fix.env);
+    await presentNow(fix, [], { fetchedAt: FUTURE() });
+
+    // Act
+    const output = parsed(await runHook("user-prompt-submit", promptPayload(fix.repo), fix.env));
+
+    // Assert
+    expect(output.systemMessage).toBe(NICK_RECENT_NOTICE);
+    expect(fix.hub.calls.presence).toBe(1);
   });
 });
