@@ -46,7 +46,7 @@ import { getHintCandidates } from "../http/hub.ts";
 import type { AnsweredQuestion, HintCandidatesResult, HubContext, LandedNotice } from "../http/hub.ts";
 import { rememberHintDelivery, rememberLandedNoticeDelivery } from "../hints/delivery.ts";
 import { hintBodyHash } from "../hints/echo.ts";
-import { classifyPrompt, exactTargetToken, isHarnessTurn, promptTerms, shownSubstance } from "@crosscheck/schema";
+import { classifyPrompt, exactTargetToken, isHarnessTurn, promptTaskOf, promptTerms, shownSubstance } from "@crosscheck/schema";
 import type { ClassifiedPrompt, PromptTerms } from "@crosscheck/schema";
 import {
   hintTrailerReserve,
@@ -352,10 +352,13 @@ export const selectAndRenderHint = async (
   // (@crosscheck/schema prompt-terms.ts), so a hub too old to know it is
   // never asked (review 1006b, L5). Whether a prompt WITH content matches a
   // teammate's work is the hub's call — only the hub holds their words.
-  // AND A PROMPT THAT CARRIES THE SESSION ON IS NOT ASKED ABOUT (round 4,
-  // C1): "cache fix is merged, next" reports on the session's own work and
-  // hands it back — no call, whatever else it says.
-  const promptQuery = terms.isContentFree || terms.hasContinuation ? "" : queryOf(humanText, terms.ranked);
+  // AND A PROMPT THAT CARRIES THE SESSION ON IS ASKED ABOUT ONLY FOR WHAT
+  // FOLLOWS ITS LEADING CONTINUATION (round 4, C1; round 5, C1): "next: add
+  // rate limiting to the upload endpoint" asks about the rate limiting; "cache
+  // fix is merged, next" reports on the session's own work and hands it back
+  // — no call (@crosscheck/schema prompt-task.ts, the hub's own rule).
+  const task = promptTaskOf(humanText, terms);
+  const promptQuery = task === null ? "" : queryOf(task.text, task.terms.ranked);
   // NOTHING STANDS IN for a prompt that said nothing — not the session's
   // intent either (owner decision, review 1006b M6): no call at all, and the
   // turn is counted as floored whatever the session's budget (M7).
@@ -392,8 +395,9 @@ export const selectAndRenderHint = async (
   }
   // THE QUERY SENT is what an old hub's candidates are recounted on, by the
   // hub's own rule (round 3, follow-up): a prompt past the route's cap went
-  // as its window, so it is the window that is classified then.
-  const sent = promptQuery === humanText ? terms : promptTerms(promptQuery);
+  // as its window, so it is the window that is classified then — and a prompt
+  // led by a continuation went as what follows it (round 5, C1).
+  const sent = task !== null && promptQuery === task.text ? task.terms : promptTerms(promptQuery);
   const text = await hintFromAnswer(input, state, result.data, sent);
   // A CALL THE HUB ANSWERED THAT ENDED IN NO HINT is counted, and only
   // counted (hold-out review round 3, L5): with the turns stood down on, it

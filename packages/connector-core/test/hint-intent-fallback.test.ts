@@ -137,20 +137,38 @@ describe("what goes on the wire: never the intent in a prompt's place (owner dec
     },
   );
 
-  test.each([["continue, but first fix why the refresh call 500s after the key rotation"], ["the refresh call 500s after the key rotation, mach weiter"], ["cool, refresh fix is merged, next"]])(
-    "a prompt that carries the session on, %p, makes no call whatever else it says (round 4, C1)",
-    async (prompt) => {
-      // Arrange
-      const f = await fixture("if-continuation", SESSION_INTENT);
+  test.each([
+    ["the refresh call 500s after the key rotation, mach weiter"],
+    ["cool, refresh fix is merged, next"],
+    ["continue the refresh fix for the key rotation"],
+    ["continue: the refresh token fix is deployed"],
+  ])("a prompt that carries the session on, %p, makes no call whatever else it says (round 4, C1; round 5, C1)", async (prompt) => {
+    // Arrange
+    const f = await fixture("if-continuation", SESSION_INTENT);
 
-      // Act
-      const text = await selectAndRenderHint(flowInput(f, prompt));
+    // Act
+    const text = await selectAndRenderHint(flowInput(f, prompt));
 
-      // Assert
-      expect(text).toBe("");
-      expect(f.hub.calls.candidates).toBe(0);
-    },
-  );
+    // Assert
+    expect(text).toBe("");
+    expect(f.hub.calls.candidates).toBe(0);
+  });
+
+  test.each([
+    ["continue, but first fix why the refresh call 500s after the key rotation", "but first fix why the refresh call 500s after the key rotation"],
+    ["next: fix why the refresh call 500s after the key rotation", "fix why the refresh call 500s after the key rotation"],
+    ["ok weiter, und dann den refresh call nach der key rotation fixen", "den refresh call nach der key rotation fixen"],
+  ])("a continuation that only leads, %p, sends what follows it (round 5, C1)", async (prompt, rest) => {
+    // Arrange
+    const f = await fixture("if-leading", SESSION_INTENT);
+
+    // Act
+    await selectAndRenderHint(flowInput(f, prompt));
+
+    // Assert — one call, on the task, never the continuation before it
+    expect(f.hub.calls.candidates).toBe(1);
+    expect(f.hub.lastCandidatesQuery()?.get("query")).toBe(rest);
+  });
 
   test("a prompt with words is sent alone — the intent never rides beside it", async () => {
     // Arrange

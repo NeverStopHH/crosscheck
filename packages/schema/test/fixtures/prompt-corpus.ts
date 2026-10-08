@@ -386,6 +386,39 @@ const RELABELLED_CONTENT_FREE: readonly CorpusPrompt[] = [
   free("retry limit restart", "en", "review"),
 ];
 
+/**
+ * BOTH CLAUSE ORDERS OF A CONTINUATION (hold-out review round 5, C1). A
+ * continuation that only LEADS hands the session back and then names a task:
+ * the task is asked about, and reaches its tree. One that TRAILS a clause
+ * with content reports and hands back: no call.
+ */
+const ROUND5_LEADING_CONTINUATION_TASKS: readonly CorpusPrompt[] = [
+  task("next: the database migration stalls on the orders table lock", "en", "review", "wc_db_migration"),
+  task("ok cool, next: the OAuth refresh race when two tabs refresh the token", "en", "review", "wc_oauth_refresh"),
+  task("go ahead and then fix the flaky integration tests that share one database", "en", "review", "wc_flaky_tests"),
+  task("weiter, und dann: der Worker stirbt beim Deploy mitten im Batch", "de", "review", "wc_worker_dies"),
+];
+
+const ROUND5_TRAILING_CONTINUATION: readonly CorpusPrompt[] = [
+  free("the database migration on the orders table is merged, next", "en", "review"),
+  free("die flaky integration tests laufen lokal wieder, mach weiter", "de", "review"),
+  free("the OAuth refresh race fix works on staging now, carry on", "en", "review"),
+];
+
+/**
+ * A STATUS REPORT AFTER A LEADING CONTINUATION (round 5, C1): what follows the
+ * continuation reports on the session's own work — deployed, merged, läuft,
+ * works, ist fertig, green — and is no task. Six probes, one per word.
+ */
+const ROUND5_STATUS_REPORTS: readonly CorpusPrompt[] = [
+  free("continue: the refresh token fix is deployed", "en", "review"),
+  free("next, the database migration for the orders table is merged", "en", "review"),
+  free("weiter, der Import-Worker läuft wieder", "de", "review"),
+  free("go on — the OAuth refresh race fix works now", "en", "review"),
+  free("mach weiter, der PDF-Export ist fertig", "de", "review"),
+  free("keep going, the flaky integration tests are green again", "en", "review"),
+];
+
 export const PROMPT_CORPUS: readonly CorpusPrompt[] = [
   ...REVIEW_CONTENT_FREE,
   ...PILOT_CONTENT_FREE,
@@ -393,7 +426,10 @@ export const PROMPT_CORPUS: readonly CorpusPrompt[] = [
   ...RELABELLED_CONTENT_FREE,
   ...HOLDOUT_CONTENT_FREE,
   ...HOLDOUT_OPERATIONS,
+  ...ROUND5_TRAILING_CONTINUATION,
+  ...ROUND5_STATUS_REPORTS,
   ...REVIEW_TASKS,
   ...SYNTHETIC_TASKS,
   ...HOLDOUT_TASKS,
+  ...ROUND5_LEADING_CONTINUATION_TASKS,
 ];

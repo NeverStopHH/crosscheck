@@ -66,6 +66,7 @@ import {
   humanPromptText,
   isConventionalFileName,
   isStrongSubstanceMatch,
+  promptTaskOf,
   promptTerms,
   qualifiesAsSubstance,
   sharedLexemes,
@@ -1014,14 +1015,17 @@ export const listHintCandidates = async (
   // steering word never counts beside a real one either (review 1006b, H1).
   const terms = promptTerms(humanText);
   // And a prompt that carries the session on — "cache fix is merged, next" —
-  // is matched to nothing, whatever else it says, for every connector that
-  // still sends it (round 4, C1).
-  if (terms.isContentFree || terms.hasContinuation) {
+  // is matched to nothing, and one whose continuation only leads — "next: add
+  // rate limiting to the upload endpoint" — on what follows it, for every
+  // connector that still sends the whole prompt (round 4, C1; round 5, C1;
+  // @crosscheck/schema prompt-task.ts, the connector's own rule).
+  const task = promptTaskOf(humanText, terms);
+  if (task === null) {
     return [];
   }
   return matchCandidates(deps, callerDeveloperId, {
-    text: humanText,
-    floor: await hubFloorTermsOf(deps.db, input.repo, terms, input.query.length >= HINT_WINDOW_QUERY_MIN_CHARS, callerDeveloperId),
+    text: task.text,
+    floor: await hubFloorTermsOf(deps.db, input.repo, task.terms, input.query.length >= HINT_WINDOW_QUERY_MIN_CHARS, callerDeveloperId),
     repo: input.repo,
     on: "prompt",
   });

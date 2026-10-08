@@ -51,18 +51,23 @@ const CONTENT_FREE_HINT_MAX_RATE = 0;
 const TASK_FALSE_FLOOR_MAX = 0;
 
 /**
- * TASKS WRITTEN IN THE SAME BREATH AS A CONTINUATION (round 4, C1): a prompt
- * that carries the session on gets no hint, whatever else it says, and these
- * are the corpus's real tasks that decision costs — named, so a new one shows.
+ * TASKS WRITTEN IN THE SAME BREATH AS A CONTINUATION (round 4, C1; round 5,
+ * C1): a prompt whose continuation is its one clause — "continue the
+ * migration" — or trails a clause with content — "…, keep going on that" —
+ * gets no hint, and these are the corpus's real tasks that decision costs —
+ * named, so a new one shows. A continuation that only LEADS asks about what
+ * follows it since round 5: "next step: password reset flow" left this list,
+ * and so did "continue button does nothing", whose "continue" names a button.
+ * "Okay, the limit was reset, so please continue …, then fix the OAuth
+ * refresh race" stays: "the limit was reset" asks about the machinery, so the
+ * continuation after it trails.
  */
 const CONTINUATION_TASKS: ReadonlySet<string> = new Set([
   "continue the migration",
   "Okay, the limit was reset, so please continue and keep going with everything you were doing before, then fix the OAuth refresh race",
   "continue the database migration on the orders table",
-  "continue button does nothing",
   "continue the prisma migration",
   "weiter mit dem Passwort-Reset",
-  "next step: password reset flow",
   "go on with the JWT refresh fix",
   "mach weiter mit dem JWT refresh",
   "weiter mit OOM im Worker",

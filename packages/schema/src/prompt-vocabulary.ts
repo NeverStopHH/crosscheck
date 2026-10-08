@@ -72,6 +72,19 @@ export const CONTINUATION_PHRASES: readonly (readonly string[])[] = [
 ];
 
 /**
+ * A STATUS REPORT after a leading continuation (hold-out review round 5, C1):
+ * "continue: the refresh token fix is deployed" carries the session on and
+ * reports on its own work — what follows the continuation is no task when
+ * every clause of it says one of these, folded. A negation turns a report
+ * into a problem: "der Export klappt nicht" is a task (NEGATION_WORDS).
+ */
+export const STATUS_REPORT_WORDS: readonly string[] = ["merged", "deployed", "works", "done", "green", "lauft", "klappt", "passt"];
+export const STATUS_REPORT_PHRASES: readonly (readonly string[])[] = [["ist", "fertig"]];
+
+/** Words that turn a status word into a problem: "doesn't work", "klappt nicht", "not merged" — and every "…n't". */
+export const NEGATION_WORDS: readonly string[] = ["not", "no", "never", "nicht", "kein", "keine", "keinen", "keiner", "nie", "nichts"];
+
+/**
  * FILLER AND DICTATION (hold-out review round 3, H1): what speech-to-text and
  * a hesitating hand leave in a prompt — "ähm", "hm", the dictated
  * punctuation ("Komma", "Punkt", "Fragezeichen", "neue Zeile", "period"),

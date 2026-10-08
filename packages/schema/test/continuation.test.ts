@@ -15,7 +15,7 @@ import { foldWord } from "../src/session-control.ts";
 
 const DICTIONARY = "/usr/share/dict/words";
 
-describe("a continuation signal, anywhere in the prompt", () => {
+describe("a continuation signal, in a clause of the prompt", () => {
   test.each([
     ["cool, cache fix is merged, next"],
     ["die e2e tests laufen lokal, mach weiter"],
@@ -43,6 +43,10 @@ describe("a continuation signal, anywhere in the prompt", () => {
     ["Request failed with status 503 — rerun"],
     ["session expired, restart please"],
     ["resume"],
+    ["sigue con lo siguiente de la lista"],
+    ["the limit was reset but StatsBomb still returns 429, continue debugging"],
+    ["keep going, and then the HEIC thumbnails"],
+    ["next then fix the HEIC thumbnails"],
   ])("%p carries the session on", (prompt) => {
     expect(hasContinuationSignal(prompt)).toBe(true);
   });
@@ -76,6 +80,9 @@ describe("a continuation signal, anywhere in the prompt", () => {
     ["rerun the checkout e2e tests", "a restart verb beside words of the task"],
     ["the worker should restart after an OOM kill", "a restart verb in a sentence about the worker"],
     ["the preceding migration dropped the index", "one slip from proceeding is a word of its own (round 5, L1)"],
+    ["continue button in checkout does nothing", "continue names the button (round 5, L1)"],
+    ["try it on the staging build first", "try it beside no again"],
+    ["the proceed button is greyed out on mobile", "proceed names the button (round 5, L1)"],
   ])("%p does not — %s", (prompt) => {
     expect(hasContinuationSignal(prompt)).toBe(false);
   });

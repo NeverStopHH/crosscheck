@@ -71,16 +71,16 @@ const TIED_TASKS: ReadonlyMap<string, string> = new Map<string, string>([
 ]);
 
 /**
- * TASKS WRITTEN IN THE SAME BREATH AS A CONTINUATION (round 4, C1): floored by
- * decision — a prompt that carries the session on gets no hint, whatever else
- * it says. Named, so a new one shows; their rate is printed, never excused.
+ * TASKS WRITTEN IN THE SAME BREATH AS A CONTINUATION (round 4, C1; round 5,
+ * C1): floored by decision — a continuation that trails a clause with content
+ * hands the session back, and the prompt gets no hint. Named, so a new one
+ * shows; their rate is printed, never excused. A continuation that only
+ * LEADS asks about what follows it since round 5, and t056, t058, t059, t060
+ * and t062 ("mach weiter, und danach …", "ok thanks, next: …", "passt,
+ * weiter. …", "continue, but first …", "jo weida, und dann …") left this list
+ * and reach their trees.
  */
 const CONTINUATION_TASKS: ReadonlyMap<string, string> = new Map([
-  ["t056", "\"mach weiter, und danach …\""],
-  ["t058", "\"ok thanks, next: …\""],
-  ["t059", "\"passt, weiter. …\""],
-  ["t060", "\"continue, but first …\""],
-  ["t062", "\"jo weida, und dann …\""],
   ["t070", "\"… before you continue with the list from earlier: …\""],
 ]);
 
