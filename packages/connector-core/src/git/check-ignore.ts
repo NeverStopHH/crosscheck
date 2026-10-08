@@ -16,13 +16,12 @@
  * exactly what it rendered before this module existed. Advice that is
  * confidently wrong is worse than advice that is merely old.
  */
-import { GIT_TIMEOUT_MS } from "../constants.ts";
-import { runBoundedCommand } from "./git.ts";
+import { runGit } from "./git.ts";
 
 /**
  * `true` = ignored, `false` = not ignored, `null` = git could not say.
  *
- * TWO commands rather than one, because `runBoundedCommand` folds a non-zero
+ * TWO commands rather than one, because `runGit` folds a non-zero
  * exit and an empty stdout into the same `null` — and `git check-ignore -q`
  * says everything through its exit code and prints nothing at all, so through
  * that helper "ignored" and "git is missing" would be indistinguishable.
@@ -40,11 +39,7 @@ export const isPathIgnored = async (
   repoRoot: string,
   relativePath: string,
 ): Promise<boolean | null> => {
-  const ignored = await runBoundedCommand(
-    ["git", "check-ignore", relativePath],
-    repoRoot,
-    GIT_TIMEOUT_MS,
-  );
+  const ignored = await runGit(["check-ignore", relativePath], repoRoot);
   if (ignored !== null) {
     return true;
   }
@@ -57,11 +52,7 @@ export const isPathIgnored = async (
  * say", and that is `null`, never `false`.
  */
 const falseIfGitAnswers = async (repoRoot: string): Promise<false | null> => {
-  const inWorkTree = await runBoundedCommand(
-    ["git", "rev-parse", "--is-inside-work-tree"],
-    repoRoot,
-    GIT_TIMEOUT_MS,
-  );
+  const inWorkTree = await runGit(["rev-parse", "--is-inside-work-tree"], repoRoot);
   return inWorkTree === "true" ? false : null;
 };
 
@@ -76,7 +67,7 @@ const falseIfGitAnswers = async (repoRoot: string): Promise<false | null> => {
  * the whole team receives, and the command has to say so.
  *
  * `git ls-files --error-unmatch` exits non-zero for an untracked path, which
- * `runBoundedCommand` reports as null — the same null a missing git gives. So
+ * `runGit` reports as null — the same null a missing git gives. So
  * the answer is taken from the STDOUT of the plain listing instead: the path
  * echoed back means tracked, silence means either untracked or no git, and
  * the `rev-parse` above tells those apart (the check-ignore shape).
@@ -85,11 +76,7 @@ export const isPathTracked = async (
   repoRoot: string,
   relativePath: string,
 ): Promise<boolean | null> => {
-  const listed = await runBoundedCommand(
-    ["git", "ls-files", "--", relativePath],
-    repoRoot,
-    GIT_TIMEOUT_MS,
-  );
+  const listed = await runGit(["ls-files", "--", relativePath], repoRoot);
   if (listed !== null) {
     return true;
   }

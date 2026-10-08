@@ -24773,6 +24773,63 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/doctor-mcp-probe-trust.test.ts`,
     because: "a repo's .mcp.json naming ./tools/bun with the right flags and entry runs the repo's binary when a person types doctor (review round 2, R7)",
   },
+  // ROUND 2, N3: crosscheck's git runs no command a repo's config names.
+  {
+    label: "crosscheck's git uses a committed directory laid out as a bare repo",
+    file: `${CORE}/src/git/git.ts`,
+    from: '  "-c",\n  "safe.bareRepository=explicit",\n',
+    to: "",
+    test: `${CORE}/test/git-safety-pins.test.ts`,
+    because: "an agent that cds into a committed tools/gen makes the Stop hook's git run that directory's committed fsmonitor and filter",
+  },
+  {
+    label: "crosscheck's git runs the clone's fsmonitor",
+    file: `${CORE}/src/git/git.ts`,
+    from: '  "-c",\n  "core.fsmonitor=false",\n',
+    to: "",
+    test: `${CORE}/test/git-safety-pins.test.ts`,
+    because: "diff, check-attr and ls-files at Stop run whatever core.fsmonitor names, on crosscheck's account",
+  },
+  {
+    label: "crosscheck's git runs the clone's hooks",
+    file: `${CORE}/src/git/git.ts`,
+    from: '  "-c",\n  "core.hooksPath=/dev/null",\n',
+    to: "",
+    test: `${CORE}/test/git-safety-pins.test.ts`,
+    because: "the Stop hook's diff refreshes the index and fires post-index-change from a committed .githooks",
+  },
+  {
+    label: "crosscheck's git verifies signatures",
+    file: `${CORE}/src/git/git.ts`,
+    from: '  "-c",\n  "log.showSignature=false",\n',
+    to: "",
+    test: `${CORE}/test/git-safety-pins.test.ts`,
+    because: "commit evidence and pin sweeps run gpg.program on every signed commit they read",
+  },
+  {
+    label: "the landing fetch runs the clone's uploadpack",
+    file: `${CORE}/src/git/git.ts`,
+    from: '  ["ls-remote", ["--upload-pack=git-upload-pack"]],\n  ["fetch", ["--upload-pack=git-upload-pack"]],\n',
+    to: "",
+    test: `${CORE}/test/git-safety-pins.test.ts`,
+    because: "the detached worker runs remote.origin.uploadpack from the clone's config with no terminal and no person watching",
+  },
+  {
+    label: "crosscheck's diff, log and show may run a diff program",
+    file: `${CORE}/src/git/git.ts`,
+    from: '  ["diff", ["--no-ext-diff", "--no-textconv"]],',
+    to: '  ["diff", []],',
+    test: `${CORE}/test/git-safety-pins.test.ts`,
+    because: "a diff that renders content would run diff.external, a driver or a textconv the clone's config names",
+  },
+  {
+    label: "a git call skips the safety pins",
+    file: `${CORE}/src/git/check-ignore.ts`,
+    from: '  const listed = await runGit(["ls-files", "--", relativePath], repoRoot);',
+    to: '  const listed = await runBoundedCommand(["git", "ls-files", "--", relativePath], repoRoot, 10_000);',
+    test: `${CORE}/test/git-safety-pins.test.ts`,
+    because: "one call site that builds its own git argv runs fsmonitor and hooks again, and nothing pins the rest",
+  },
   {
     label: "the npm shim starts bun in the repo's bun config",
     file: "packaging/bin/crosscheck.cjs",
@@ -25096,7 +25153,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-last-sync.test.ts 1
  * PRINTS: packages/cli/test/doctor-latency.test.ts 2
  * PRINTS: packages/cli/test/doctor-losses.test.ts 6
- * PRINTS: packages/cli/test/doctor-mcp-probe-trust.test.ts 2
+ * PRINTS: packages/cli/test/doctor-mcp-probe-trust.test.ts 3
  * PRINTS: packages/cli/test/doctor-pilot.test.ts 6
  * PRINTS: packages/cli/test/doctor-repo-runtime.test.ts 2
  * PRINTS: packages/cli/test/doctor-search-rebuild.test.ts 2
@@ -25104,8 +25161,9 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
  * PRINTS: packages/cli/test/doctor-verdict-legality.test.ts 2
  * PRINTS: packages/cli/test/doctor.test.ts 1
- * PRINTS: packages/cli/test/e2e/bait-repo-isolation.e2e.test.ts 3
+ * PRINTS: packages/cli/test/e2e/bait-repo-isolation.e2e.test.ts 4
  * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
+ * PRINTS: packages/cli/test/e2e/worker-spawn-isolation.e2e.test.ts 4
  * PRINTS: packages/cli/test/foreign-hub-lines.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
  * PRINTS: packages/cli/test/gitignored-advice.test.ts 11
@@ -25156,7 +25214,7 @@ interface Outcome {
  * PRINTS: packages/connector-acp/test/derive-gap.test.ts 1
  * PRINTS: packages/connector-acp/test/derive.test.ts 8
  * PRINTS: packages/connector-acp/test/draft-nudge-inject.test.ts 6
- * PRINTS: packages/connector-acp/test/injector.test.ts 6
+ * PRINTS: packages/connector-acp/test/injector.test.ts 7
  * PRINTS: packages/connector-acp/test/key-origin-acp.test.ts 1
  * PRINTS: packages/connector-acp/test/key-rotation-acp.test.ts 2
  * PRINTS: packages/connector-acp/test/pool-starvation.test.ts 1
@@ -25268,6 +25326,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/ghost-declare.test.ts 1
  * PRINTS: packages/connector-core/test/ghost-render.test.ts 5
  * PRINTS: packages/connector-core/test/git-lane-cost.test.ts 1
+ * PRINTS: packages/connector-core/test/git-safety-pins.test.ts 7
  * PRINTS: packages/connector-core/test/git-timeout.test.ts 4
  * PRINTS: packages/connector-core/test/guarantee-declarations.test.ts 28
  * PRINTS: packages/connector-core/test/guarantee-doctor.test.ts 3
@@ -25328,7 +25387,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 7
  * PRINTS: packages/connector-core/test/repo-ssh-determinism.test.ts 2
  * PRINTS: packages/connector-core/test/review-draft.test.ts 2
- * PRINTS: packages/connector-core/test/runtime-isolation.test.ts 3
+ * PRINTS: packages/connector-core/test/runtime-isolation.test.ts 5
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
