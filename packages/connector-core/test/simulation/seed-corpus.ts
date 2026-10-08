@@ -277,6 +277,26 @@ const PR75_REVIEW: readonly CorpusSeed[] = [
     ],
   },
   { seed: 4643, generator: "sleep", invariant: "checker", fix: "9143fe41", bug: "the generated scenario", events: scenarioOf(4643, GENERATORS.sleep) },
+  {
+    seed: 31214,
+    generator: "all",
+    invariant: "I3",
+    fix: "4e0e9e89",
+    bug: "a life resumed after every trace of it aged out minted a second epoch into the session the hub's reaper had ended",
+    events: [
+      start(1),
+      age(1),
+      start(2),
+      wake(1),
+      VACATION,
+      crash(1, "before"),
+      start(1),
+      start(0),
+      par(end(1), start(1)),
+    ],
+  },
+  { seed: 31214, generator: "all", invariant: "I3", fix: "4e0e9e89", bug: "the generated scenario", events: scenarioOf(31214, GENERATORS.all) },
+  { seed: 4286, generator: "sleep", invariant: "I3", fix: "4e0e9e89", bug: "the same class, two vacations apart (the generated scenario)", events: scenarioOf(4286, GENERATORS.sleep) },
 ];
 
 export const SEED_CORPUS: readonly CorpusSeed[] = [
