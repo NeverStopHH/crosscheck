@@ -62,8 +62,8 @@ const env = (home: string): Env => ({
 });
 
 /** The owner's shape: a connected repo, `count` sibling worktrees on `feat/topic-<n>`, the start checkout detached. */
-const nickShape = async (label: string, count: number): Promise<World> => {
-  const main = await makeRepo(label, { remote: "git@github.com:acme/api.git" });
+const nickShape = async (label: string, count: number, refFormat?: "reftable"): Promise<World> => {
+  const main = await makeRepo(label, { remote: "git@github.com:acme/api.git", ...(refFormat === undefined ? {} : { refFormat }) });
   await git(main, ["commit", "--amend", "--no-edit", `--date=${BEFORE_THE_SESSION}`]);
   await writeFile(join(main, ".crosscheck.json"), `${JSON.stringify({ hubUrl: DEAD_HUB_URL })}\n`, "utf8");
   await git(main, ["add", "."]);
@@ -306,5 +306,29 @@ describe("H2: a subagent's shell work in a sibling it never edited is captured",
     for (const index of world.siblings.keys()) {
       expect({ index, files: topics[`feat/topic-${String(index)}`] }).toEqual({ index, files: [`src/s${String(index)}.ts:git_commit`] });
     }
+  });
+});
+
+describe("M3: a reftable repository files its work under the session, and the lane still sweeps it", () => {
+  test("no `.invalid` topic; the sibling's commit and new file are still read", async () => {
+    // Arrange: the owner's shape in a reftable repo — every HEAD file says `ref: refs/heads/.invalid`
+    const world = await nickShape("m3-reftable", 1, "reftable");
+    const [sibling = ""] = world.siblings;
+    await sessionStart(world);
+    await edit(world, await writeRepoFile(sibling, "src/edited.ts", "export const e = 1;\n"));
+    await writeRepoFile(sibling, "src/committed.ts", "export const c = 1;\n");
+    await commitAll(sibling, "in a reftable worktree");
+    await writeRepoFile(sibling, "src/untracked.ts", "export const u = 1;\n");
+
+    // Act
+    await stop(world);
+
+    // Assert: one context — the session's own — holding the edit, the commit and the new file
+    const records = await spooled(world);
+    const titles = records.filter((record) => record.kind === "work_context").map((record) => record.body.title ?? "");
+    expect(titles.some((title) => title.includes(".invalid"))).toBe(false);
+    expect(filesByTopic(records)).toEqual({
+      "(session)": ["src/committed.ts:git_commit", "src/edited.ts:tool_edit", "src/untracked.ts:git_diff"],
+    });
   });
 });

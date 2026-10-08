@@ -275,17 +275,26 @@ const REFS_PREFIX = "refs/";
 const GITDIR_PREFIX = "gitdir: ";
 /** SHA-1 or SHA-256, as git writes a detached HEAD: lower-case hex, nothing else. */
 const COMMIT_ID_PATTERN = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
+/**
+ * What a REFTABLE repository's HEAD file always says (review M3): the real
+ * HEAD lives in the reftable, and the file is a placeholder older tools read
+ * as a broken branch. `.invalid` can never be a branch — git refuses a ref
+ * component that starts with a dot.
+ */
+const REFTABLE_HEAD_PLACEHOLDER = "refs/heads/.invalid";
 
 /**
  * The branch a HEAD file names: the short name of a `refs/heads/` ref, the
  * whole ref otherwise, and `detached@<sha>` for a bare commit id — never a
  * branch that merely points at the same commit (flows/work-context-title.ts
- * says why that guess was wrong). Null for content that is neither.
+ * says why that guess was wrong). Null for content that is neither, and for a
+ * reftable repository's placeholder — the files cannot tell its branch, and
+ * reading it as one would make one `.invalid` topic of every branch.
  */
 export const branchLabelOfHead = (content: string): string | null => {
   if (content.startsWith(SYMBOLIC_REF_PREFIX)) {
     const ref = content.slice(SYMBOLIC_REF_PREFIX.length).trim();
-    if (ref.length === 0) {
+    if (ref.length === 0 || ref === REFTABLE_HEAD_PLACEHOLDER) {
       return null;
     }
     return ref.startsWith(HEADS_PREFIX) ? ref.slice(HEADS_PREFIX.length) : ref;
@@ -335,6 +344,10 @@ export const readHeadFile = async (root: string): Promise<HeadFile | null> => {
   const branch = content === null ? null : branchLabelOfHead(content);
   return content === null || branch === null ? null : { content, branch, gitDir };
 };
+
+/** A git dir whose refs and reflogs live in the reftable — its HEAD file is the placeholder (review M3). */
+export const isReftableGitDir = async (gitDir: string): Promise<boolean> =>
+  (await readTrimmed(join(gitDir, "HEAD"))) === `${SYMBOLIC_REF_PREFIX}${REFTABLE_HEAD_PLACEHOLDER}`;
 
 /** The shared git dir a linked worktree's refs live in — its `commondir` file, or the git dir itself. */
 export const commonDirOf = async (gitDir: string): Promise<string> => {

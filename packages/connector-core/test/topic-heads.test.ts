@@ -71,6 +71,11 @@ describe("branchLabelOfHead", () => {
     expect(branchLabelOfHead("not a head")).toBeNull();
     expect(branchLabelOfHead(SHA.toUpperCase())).toBeNull();
   });
+
+  test("a reftable repository's placeholder HEAD names no branch (review M3)", () => {
+    // `.invalid` can never be a branch: git refuses a ref component that starts with a dot
+    expect(branchLabelOfHead("ref: refs/heads/.invalid")).toBeNull();
+  });
 });
 
 describe("readHeadFile and resolveHeadCommit read git's files, not git", () => {
@@ -110,6 +115,22 @@ describe("readHeadFile and resolveHeadCommit read git's files, not git", () => {
 
   test("a directory that is no checkout has no HEAD", async () => {
     expect(await readHeadFile("/cx-topic-heads/nowhere")).toBeNull();
+  });
+
+  test("a reftable checkout and its worktree have no HEAD the files can tell (review M3)", async () => {
+    // Arrange: git 2.45+ — the branch lives in the reftable, the HEAD file is a placeholder
+    const main = await realpath(await makeRepo("heads-reftable", { refFormat: "reftable" }));
+    const sibling = `${main}-feat`;
+    cleanups.push(main, sibling);
+    await git(main, ["worktree", "add", "-b", "feat/x", sibling]);
+
+    // Act
+    const mainHead = await readHeadFile(main);
+    const siblingHead = await readHeadFile(sibling);
+
+    // Assert: unknown, never one `.invalid` topic for every branch
+    expect(mainHead).toBeNull();
+    expect(siblingHead).toBeNull();
   });
 });
 

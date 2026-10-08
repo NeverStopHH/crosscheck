@@ -45,9 +45,11 @@ import {
   GIT_TOUCHES_TIMEOUT_MS,
   MAX_GIT_LANE_COMMITS,
   MAX_GIT_TOUCH_CANDIDATES,
+  MAX_REFTABLE_REFLOG_ENTRIES,
 } from "../constants.ts";
 import { runGit, runGitOutcome } from "../git/git.ts";
-import { commitsMadeInHeadLog } from "../git/head-history.ts";
+import { commitsMadeAmong, commitsMadeInHeadLog, movesOfReflogShow } from "../git/head-history.ts";
+import { isReftableGitDir } from "../git/repo-identity.ts";
 import { sessionSlug } from "../config/paths.ts";
 import { recordDrop } from "../spool/drops.ts";
 import { captureFileTargets } from "./capture-targets.ts";
@@ -267,6 +269,27 @@ const authoredPaths = (stdout: string, author: string, since: Date): readonly st
 };
 
 /**
+ * The commits this worktree made, from its HEAD log — read from the file, or,
+ * in a REFTABLE repository (review M3), where the log lives in the table
+ * files, from one bounded `git reflog show`. Null when that git did not answer
+ * in time; a reflog git refuses (an unborn HEAD) made nothing.
+ */
+const commitsMadeIn = async (input: CaptureGitTouchesInput, gitDir: string, timeoutMs: number): Promise<readonly string[] | null> => {
+  if (!(await isReftableGitDir(gitDir))) {
+    return commitsMadeInHeadLog(gitDir, input.since);
+  }
+  const reflog = await runGitOutcome(
+    ["reflog", "show", "--date=unix", "--format=%H%x09%gd%x09%gs", "-n", String(MAX_REFTABLE_REFLOG_ENTRIES), "HEAD", "--"],
+    input.repoRoot,
+    timeoutMs,
+  );
+  if (!reflog.ok) {
+    return reflog.timedOut ? null : [];
+  }
+  return commitsMadeAmong(movesOfReflogShow(reflog.stdout), input.since);
+};
+
+/**
  * THE COMMIT HALF (DESIGN.md "One session, many topics"): the files of the
  * commits THIS developer made IN THIS WORKTREE since `since` — a session that
  * commits through a shell leaves a clean tree, and `git diff` cannot see work
@@ -293,7 +316,10 @@ export const readGitCommits = async (
   input: CaptureGitTouchesInput & { readonly gitDir: string | null; readonly authorEmail?: string | null },
 ): Promise<readonly string[] | null> => {
   const timeoutMs = input.gitTimeoutMs ?? GIT_TOUCHES_TIMEOUT_MS;
-  const made = input.gitDir === null ? [] : await commitsMadeInHeadLog(input.gitDir, input.since);
+  const made = input.gitDir === null ? [] : await commitsMadeIn(input, input.gitDir, timeoutMs);
+  if (made === null) {
+    return null;
+  }
   if (made.length === 0) {
     return [];
   }

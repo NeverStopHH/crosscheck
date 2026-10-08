@@ -22,6 +22,8 @@ export const git = async (
 
 export interface MakeRepoOptions {
   readonly remote?: string;
+  /** `reftable` keeps refs and reflogs in git's table files: HEAD reads `ref: refs/heads/.invalid`, no `logs/HEAD` (review M3). */
+  readonly refFormat?: "files" | "reftable";
 }
 
 /** A real git repo with one commit — repo identity is git-derived, not mocked. */
@@ -30,7 +32,7 @@ export const makeRepo = async (
   options: MakeRepoOptions = {},
 ): Promise<string> => {
   const root = await mkdtemp(join(tmpdir(), `cx-${label}-`));
-  await git(root, ["init", "--initial-branch=main"]);
+  await git(root, ["init", "--initial-branch=main", ...(options.refFormat === undefined ? [] : [`--ref-format=${options.refFormat}`])]);
   await git(root, ["config", "user.email", "dev@example.com"]);
   await git(root, ["config", "user.name", "Dev"]);
   await writeFile(join(root, "README.md"), "# fixture\n", "utf8");

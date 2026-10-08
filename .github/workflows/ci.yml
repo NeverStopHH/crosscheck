@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1877
+    # PRINTS: 1882
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -281,13 +281,13 @@ jobs:
     # PRINTS: derive/summarizer/gate.ts 7
     # PRINTS: evidence/render.ts 1
     # PRINTS: flows/briefing.ts 5
-    # PRINTS: flows/capture-git-touches.ts 3
+    # PRINTS: flows/capture-git-touches.ts 4
     # PRINTS: flows/capture-targets.ts 5
     # PRINTS: flows/capture-touched-files.ts 5
     # PRINTS: flows/claim-revalidation.ts 2
     # PRINTS: flows/claim-surface.ts 1
     # PRINTS: flows/end-session.ts 13
-    # PRINTS: flows/git-lane.ts 7
+    # PRINTS: flows/git-lane.ts 9
     # PRINTS: flows/heal-session.ts 22
     # PRINTS: flows/heartbeat.ts 3
     # PRINTS: flows/hint.ts 5
@@ -300,10 +300,10 @@ jobs:
     # PRINTS: git/claim-drift.ts 5
     # PRINTS: git/fix-diff.ts 7
     # PRINTS: git/git.ts 4
-    # PRINTS: git/head-history.ts 4
+    # PRINTS: git/head-history.ts 5
     # PRINTS: git/pin-paths.ts 8
     # PRINTS: git/pin-sweep.ts 2
-    # PRINTS: git/repo-identity.ts 1
+    # PRINTS: git/repo-identity.ts 2
     # PRINTS: git/ssh-hostname.ts 2
     # PRINTS: guarantees/check.ts 17
     # PRINTS: guarantees/declarations.ts 5
@@ -508,7 +508,7 @@ jobs:
     # PRINTS: calibration.ts 1
     # PRINTS: capabilities.ts 6
     # PRINTS: capture-bookkeeping.ts 6
-    # PRINTS: capture-git-touches.ts 3
+    # PRINTS: capture-git-touches.ts 4
     # PRINTS: capture-health.ts 2
     # PRINTS: capture-latency.test.ts 1
     # PRINTS: capture-targets.ts 5
@@ -588,10 +588,10 @@ jobs:
     # PRINTS: ghost-overlap.ts 4
     # PRINTS: ghost.ts 2
     # PRINTS: git-lane-cost.ts 2
-    # PRINTS: git-lane.ts 10
+    # PRINTS: git-lane.ts 12
     # PRINTS: git-queries.ts 15
     # PRINTS: git.ts 4
-    # PRINTS: head-history.ts 4
+    # PRINTS: head-history.ts 5
     # PRINTS: heal-session.ts 22
     # PRINTS: heartbeat.ts 3
     # PRINTS: hint-deliveries.ts 3
@@ -688,7 +688,7 @@ jobs:
     # PRINTS: render-surface-registry.test.ts 1
     # PRINTS: render-surfaces.ts 1
     # PRINTS: render.ts 83
-    # PRINTS: repo-identity.ts 1
+    # PRINTS: repo-identity.ts 2
     # PRINTS: repo-path.ts 1
     # PRINTS: report.ts 9
     # PRINTS: retention-registry.ts 9

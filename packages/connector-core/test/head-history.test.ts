@@ -11,7 +11,13 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { commitsMadeInHeadLog, descendsInHeadLog, isRenamedInHeadLog } from "../src/git/head-history.ts";
+import {
+  commitsMadeAmong,
+  commitsMadeInHeadLog,
+  descendsInHeadLog,
+  isRenamedInHeadLog,
+  movesOfReflogShow,
+} from "../src/git/head-history.ts";
 
 const A = "a".repeat(40);
 const B = "b".repeat(40);
@@ -107,6 +113,29 @@ describe("the commits a worktree made (review H1)", () => {
 
   test("are none when the HEAD log is gone", async () => {
     expect(await commitsMadeInHeadLog("/cx-head-log/nowhere", new Date(T0 * 1000))).toEqual([]);
+  });
+
+  test("read the same off a reftable's log as git prints it, newest first (review M3)", () => {
+    // Arrange: `git reflog show --date=unix --format=%H%x09%gd%x09%gs`, newest line first
+    const printed = [
+      `${D}\tHEAD@{${String(T0 + 3)}}\tcherry-pick: a fix from elsewhere`,
+      `${C}\tHEAD@{${String(T0 + 2)}}\tcommit (amend): one, fixed`,
+      `${B}\tHEAD@{${String(T0 + 1)}}\tcommit: one`,
+      `${A}\tHEAD@{${String(T0 - 60)}}\tcommit (initial): before the session`,
+      "",
+    ].join("\n");
+
+    // Act
+    const moves = movesOfReflogShow(printed);
+
+    // Assert: oldest first, each move from the commit the older line moved to
+    expect(moves.map((move) => [move.from, move.to])).toEqual([
+      ["0".repeat(40), A],
+      [A, B],
+      [B, C],
+      [C, D],
+    ]);
+    expect(commitsMadeAmong(moves, new Date(T0 * 1000))).toEqual([C, D]);
   });
 });
 

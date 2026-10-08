@@ -43,7 +43,7 @@ import type { DenylistConfig } from "../capture/denylist.ts";
 import type { Producer } from "../capture/records.ts";
 import { seqAfter, seqSlice } from "../capture/seq.ts";
 import type { RootHead, TouchedRootsResolution } from "../capture/touched-root.ts";
-import { readHeadFile } from "../git/repo-identity.ts";
+import { gitDirOf, readHeadFile } from "../git/repo-identity.ts";
 import { changedWorktreesOf, commonDirOfRoot } from "../git/shell-roots.ts";
 import type { HeadFile } from "../git/repo-identity.ts";
 import { appendRecords } from "../spool/append.ts";
@@ -237,8 +237,12 @@ const readRoot = async (input: SweepGitRootsInput, lane: GitLaneRoot): Promise<R
     return { lane, head, gone: true, commits: [], touches: [] };
   }
   const base = laneInput(input, lane);
+  // A HEAD the files cannot tell — a reftable's placeholder (review M3) — is
+  // still a worktree git answers for: its work files under the session, and
+  // its commits come from its own HEAD log all the same.
+  const gitDir = head?.gitDir ?? (await gitDirOf(lane.root));
   const [commits, touches] = await Promise.all([
-    readGitCommits({ ...base, gitDir: head?.gitDir ?? null }),
+    readGitCommits({ ...base, gitDir }),
     readGitTouches({ ...base, includeUntracked: true }),
   ]);
   return { lane, head, gone: false, commits, touches };

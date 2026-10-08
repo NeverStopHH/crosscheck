@@ -309,6 +309,15 @@ export const TOPIC_KEY_HEX_CHARS = 12;
 export const MAX_HEAD_LOG_BYTES = 262_144;
 
 /**
+ * How many of a REFTABLE worktree's HEAD-log entries the git lane's commit
+ * half asks git for (review M3): the reftable keeps the log where no file
+ * read reaches, so one bounded `git reflog show -n` stands in for the
+ * MAX_HEAD_LOG_BYTES tail — about as many moves as a quarter megabyte of
+ * `logs/HEAD` lines holds.
+ */
+export const MAX_REFTABLE_REFLOG_ENTRIES = 2048;
+
+/**
  * Tool-call ids an ACP session remembers as ALREADY having booked their
  * edit-tool fire (capture/engine.ts). One fire belongs to one tool CALL, not
  * to one wire row: an agent may announce a call with no `kind`, reveal

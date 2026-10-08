@@ -20000,12 +20000,55 @@ export const MUTATIONS: readonly Mutation[
     because: "a merge, rebase or cherry-pick of a teammate's work names this session as having touched their files",
   },
   {
+    // Re-pointed by review M3, which hands a placeholder HEAD's root its git dir.
     label: "the git lane never reads work committed during the session",
     file: `${CORE}/src/flows/git-lane.ts`,
-    from: "    readGitCommits({ ...base, gitDir: head?.gitDir ?? null }),\n",
+    from: "    readGitCommits({ ...base, gitDir }),\n",
     to: "    Promise.resolve([]),\n",
     test: `${CONNECTOR}/test/topic-git-lane.test.ts`,
     because: "a session that commits through a shell leaves a clean tree, and the lane records nothing of it",
+  },
+  {
+    // Review M3: a reftable repository's HEAD file is always the placeholder.
+    label: "a reftable repository's placeholder HEAD is read as a branch",
+    file: `${CORE}/src/git/repo-identity.ts`,
+    from: "    if (ref.length === 0 || ref === REFTABLE_HEAD_PLACEHOLDER) {",
+    to: "    if (ref.length === 0) {",
+    test: `${CORE}/test/topic-heads.test.ts`,
+    because: "review M3: every branch of a reftable root is one `.invalid @ repo` topic, a switch never flips it, and none has a base commit",
+  },
+  {
+    // Review mutation #5.
+    label: "an unreadable HEAD counts as a removed worktree",
+    file: `${CORE}/src/flows/git-lane.ts`,
+    from: "  if (head === null && !(await hasGitEntry(lane.root))) {",
+    to: "  if (head === null) {",
+    test: `${CONNECTOR}/test/topic-nick-shape.test.ts`,
+    because: "a live worktree whose HEAD the files cannot tell — every reftable root — is never swept, and its commits and new files are lost without a count",
+  },
+  {
+    label: "a placeholder HEAD's root gets no git dir for its commit half",
+    file: `${CORE}/src/flows/git-lane.ts`,
+    from: "  const gitDir = head?.gitDir ?? (await gitDirOf(lane.root));",
+    to: "  const gitDir = head?.gitDir ?? null;",
+    test: `${CONNECTOR}/test/topic-nick-shape.test.ts`,
+    because: "a reftable worktree's commits are never read, and a shell's `git commit` there leaves nothing",
+  },
+  {
+    label: "a reftable worktree's commits are read from a HEAD log file it does not have",
+    file: `${CORE}/src/flows/capture-git-touches.ts`,
+    from: "  if (!(await isReftableGitDir(gitDir))) {",
+    to: "  if (true) {",
+    test: `${CONNECTOR}/test/topic-nick-shape.test.ts`,
+    because: "the reftable keeps the HEAD log in its tables, so `logs/HEAD` is absent and every commit made there reads as none",
+  },
+  {
+    label: "a reftable's printed HEAD log moves every entry from nowhere",
+    file: `${CORE}/src/git/head-history.ts`,
+    from: "  return entries.map((entry, index) => ({ ...entry, from: entries[index + 1]?.to ?? NULL_COMMIT })).reverse();",
+    to: "  return entries.map((entry) => ({ ...entry, from: NULL_COMMIT })).reverse();",
+    test: `${CORE}/test/head-history.test.ts`,
+    because: "an amend in a reftable worktree no longer names the commit it replaced, and the replaced version is filed as work",
   },
   {
     label: "a new file git does not track stays invisible to the git lane",
@@ -20339,7 +20382,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/summarizer-worker-env.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/topic-git-lane.test.ts 9
- * PRINTS: packages/connector-claude/test/topic-nick-shape.test.ts 5
+ * PRINTS: packages/connector-claude/test/topic-nick-shape.test.ts 8
  * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 4
  * PRINTS: packages/connector-core/test/absence-render.test.ts 7
@@ -20380,7 +20423,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/git-timeout.test.ts 4
  * PRINTS: packages/connector-core/test/guarantee-declarations.test.ts 28
  * PRINTS: packages/connector-core/test/guarantee-doctor.test.ts 3
- * PRINTS: packages/connector-core/test/head-history.test.ts 2
+ * PRINTS: packages/connector-core/test/head-history.test.ts 3
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 2
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4
@@ -20452,7 +20495,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/target-paths.test.ts 1
  * PRINTS: packages/connector-core/test/tool-window-pairing.test.ts 6
  * PRINTS: packages/connector-core/test/topic-contexts.test.ts 15
- * PRINTS: packages/connector-core/test/topic-heads.test.ts 2
+ * PRINTS: packages/connector-core/test/topic-heads.test.ts 3
  * PRINTS: packages/connector-core/test/topic-rules.test.ts 13
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
  * PRINTS: packages/connector-core/test/verdict-wire.test.ts 2

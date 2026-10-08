@@ -99,7 +99,7 @@ const COMMIT_ID = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 const MS_PER_SECOND = 1000;
 
 /** A line's parts: the commits it moved from and to, when (whole seconds), and its message. */
-interface HeadMove {
+export interface HeadMove {
   readonly from: string;
   readonly to: string;
   readonly atSeconds: number;
@@ -134,9 +134,31 @@ const movesOf = (log: string): readonly HeadMove[] =>
  * amend replaced is left out: the amend is the commit now, and the version it
  * replaced may carry what was taken out of it.
  */
-export const commitsMadeInHeadLog = async (gitDir: string, since: Date): Promise<readonly string[]> => {
+export const commitsMadeInHeadLog = async (gitDir: string, since: Date): Promise<readonly string[]> =>
+  commitsMadeAmong(movesOf(await readLogTail(gitDir)), since);
+
+/** `<sha>\tHEAD@{<seconds>}\t<message>`, as `git reflog show --date=unix --format=%H%x09%gd%x09%gs` prints it. */
+const REFLOG_SHOW_LINE = /^([0-9a-f]{40}(?:[0-9a-f]{24})?)\t[^\t]*@\{(\d+)\}\t(.*)$/;
+const NULL_COMMIT = "0".repeat(40);
+
+/**
+ * A REFTABLE worktree's HEAD log, as git prints it (review M3): the reftable
+ * keeps it where no file read reaches, so the caller asks git for the newest
+ * entries — newest first, each line the commit HEAD moved TO. The commit it
+ * moved from is the next (older) line's; the oldest shown has none. Returned
+ * oldest first, the order `logs/HEAD` is written in.
+ */
+export const movesOfReflogShow = (stdout: string): readonly HeadMove[] => {
+  const entries = stdout.split("\n").flatMap((line) => {
+    const match = REFLOG_SHOW_LINE.exec(line);
+    return match === null ? [] : [{ to: match[1] ?? "", atSeconds: Number(match[2]), message: match[3] ?? "" }];
+  });
+  return entries.map((entry, index) => ({ ...entry, from: entries[index + 1]?.to ?? NULL_COMMIT })).reverse();
+};
+
+/** `commitsMadeInHeadLog` over moves read any way — the files backend's log, or git's for a reftable. */
+export const commitsMadeAmong = (moves: readonly HeadMove[], since: Date): readonly string[] => {
   const sinceSeconds = Math.floor(since.getTime() / MS_PER_SECOND);
-  const moves = movesOf(await readLogTail(gitDir));
   const amended = new Set(moves.filter((move) => move.message.startsWith(AMEND_MESSAGE)).map((move) => move.from));
   const made = moves
     .filter((move) => move.atSeconds >= sinceSeconds && MADE_MESSAGES.some((prefix) => move.message.startsWith(prefix)))
