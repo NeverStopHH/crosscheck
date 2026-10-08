@@ -19,6 +19,7 @@ import { MAX_SPOOL_AGE_DAYS, MS_PER_DAY, MS_PER_SECOND, REFUSED_END_GRACE_MS, SE
 import {
   repoKey,
   sessionEpochPathForSlug,
+  sessionLineagePathForSlug,
   sessionSlug,
   sessionStatePath,
   spoolDataPath,
@@ -1559,23 +1560,25 @@ describe("a SessionStart beside another SessionStart or a SessionEnd (review-2 r
     expect(await readSessionCausalOrder(db, life.crosscheckSessionId)).toMatchObject({ state: "usable", epochs: 1 });
   });
 
-  test("and without a readable end marker, starts that life on a fresh mint rather than its positions again", async () => {
-    // Arrange: as above
+  test("and with neither a readable end marker nor a readable lineage, starts that life on a fresh mint rather than its positions again", async () => {
+    // Arrange: as above, the re-fire's register held at the proxy, with no timing
     const fx = await fixture("own-life-torn-marker");
     const life = await register(fx, fx.proxied);
     await captureTarget(fx, "src/one.ts");
     await captureTarget(fx, "src/two.ts");
     await flushAsHook(fx, fx.proxied);
-    registerDelayMs = WALK_DELAY_MS;
     refuseEnds = true;
+    const hold = holdNextRegister();
 
-    // Act: the SessionEnd beside the re-fire leaves a marker nothing can read
+    // Act: the SessionEnd beside the re-fire leaves a marker and a lineage nothing can
+    // read — either one keeps the end's position (all seed 30495)
     const refire = register(fx, fx.proxied);
-    await Bun.sleep(WALK_HEAD_START_MS);
+    await hold.isReached;
     await endViaFlow(fx, fx.proxied);
     await writeFile(spoolPendingEndPath(fx.home, fx.key, sessionSlug(fx.hostSessionKey)), "{torn");
+    await writeFile(sessionLineagePathForSlug(fx.home, sessionSlug(fx.hostSessionKey)), "{torn");
+    hold.release();
     await refire;
-    registerDelayMs = 0;
     refuseEnds = false;
     await captureTarget(fx, "src/three.ts");
     await flushAsHook(fx, fx.proxied);

@@ -10105,11 +10105,13 @@ export const MUTATIONS: readonly Mutation[
       "the table grows without bound while doctor prints a PASS about a sweep that is not running",
   },
   {
-    // 01a §5. A hub's sweep failures are that hub's.
+    // 01a §5. A hub's sweep failures are that hub's. Every hub keyed by the
+    // one module-level object there is: EMPTY_LEDGER was renamed EMPTY_STATE,
+    // and a mutation naming it only crashed the module.
     label: "one hub reports another hub's sweep failures",
     file: `${SERVER}/src/services/retention.ts`,
     from: "const ledgerKey = (db: Db): object => db;",
-    to: "const ledgerKey = (_db: Db): object => EMPTY_LEDGER;",
+    to: "const ledgerKey = (_db: Db): object => EMPTY_STATE;",
     test: `${SERVER}/test/skeleton-sweep.test.ts`,
     because:
       "a healthy hub WARNs about a failure it never had, and a person goes looking for a broken sweep that is somebody else's",
@@ -17533,10 +17535,12 @@ export const MUTATIONS: readonly Mutation[
     because: "review P5: a parallel hook's flush drops the records the sibling's walk was about to give a life",
   },
   {
+    // With the `counted` every other answer carries: without it the mutated
+    // flush only crashed reading it, and the guard caught the TypeError.
     label: "a flush told to wait for a walk drops its batch anyway",
     file: `${CORE}/src/spool/flush-heal.ts`,
     from: '  if (result.outcome === "pending") {\n    return null;',
-    to: '  if (result.outcome === "pending") {\n    return { summary: input.first, heal: null, asked: true };',
+    to: '  if (result.outcome === "pending") {\n    return { summary: input.first, heal: null, asked: true, counted };',
     test: `${CORE}/test/session-lives.test.ts`,
     because: "the pending answer is ignored and the records a landing walk would have carried are dropped",
   },
