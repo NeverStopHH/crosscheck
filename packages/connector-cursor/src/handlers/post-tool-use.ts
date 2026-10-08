@@ -41,7 +41,7 @@ import { heartbeatMaybe } from "@crosscheck/connector-core/flows/heartbeat.ts";
 import { extractFailureText } from "@crosscheck/connector-core/capture/failure-text.ts";
 import { UNKNOWN_DEVELOPER_ID } from "@crosscheck/connector-core/capture/records.ts";
 import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
-import { updateSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import { readSessionState, updateSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import type { HookBudget } from "@crosscheck/connector-core/config/hook-budget.ts";
 
 import type { CursorHookContext } from "../runner.ts";
@@ -53,6 +53,7 @@ import { attemptFailureHint } from "../inject/hint.ts";
 import { cursorInjectionOutput } from "../inject/output.ts";
 import { maybeSpawnCursorGhostWorker } from "../derive/triggers.ts";
 import { requireSessionState } from "./recover.ts";
+import { healerFor, onRefusedHeartbeat } from "./heal.ts";
 
 /**
  * The documented tool_output string, parsed tolerantly: not a string, not
@@ -149,7 +150,7 @@ export const handleCursorPostToolUse = async (
   // call and the state write is what keeps this session's spool safe.
   await flushSpool(
     ctx.hub,
-    { sessionId: state.crosscheckSessionId, developerId: state.developerId },
+    { sessionId: state.crosscheckSessionId, developerId: state.developerId, heal: healerFor(ctx) },
     budget.spareMs(),
   );
   // The heartbeat runs AFTER the hint is in hand, so it may spend the spare
@@ -158,14 +159,18 @@ export const handleCursorPostToolUse = async (
   // race then discards the delivered text it exists to carry out
   // (budget.test.ts pins both halves: skip at zero, clamp when hung).
   const roomMs = budget.spareMs();
+  // The life the state names NOW: the flush above may have healed it, and a
+  // beat at the refused id tells the new life nothing (review P3).
+  const current = (await readSessionState(ctx.config.home, ctx.hostSessionKey)) ?? state;
   const didHeartbeat =
     roomMs <= 0
       ? false
       : await heartbeatMaybe({
           hub: { ...ctx.hub, timeoutMs: Math.min(ctx.hub.timeoutMs, roomMs) },
-          crosscheckSessionId: state.crosscheckSessionId,
-          lastHeartbeatAt: state.lastHeartbeatAt,
+          crosscheckSessionId: current.crosscheckSessionId,
+          lastHeartbeatAt: current.lastHeartbeatAt,
           now,
+          onRefused: onRefusedHeartbeat(ctx, budget, current.crosscheckSessionId),
         });
   if (didHeartbeat) {
     await updateSessionState(ctx.config.home, ctx.hostSessionKey, (fresh) => ({

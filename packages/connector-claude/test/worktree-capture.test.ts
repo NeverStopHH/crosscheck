@@ -101,6 +101,8 @@ const sessionState = (repoRoot: string): SessionState => ({
   summarizerLastUnreadable: null,
   workContextTitle: null,
   workContextStatus: null,
+  agentKind: null,
+  workContextAcked: null,
   intentNoneCount: 0,
   intentSetCount: 0,
   intentFailCount: 0,

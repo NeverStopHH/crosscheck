@@ -1462,6 +1462,15 @@ export const MS_PER_DAY =
 /** Clock skew above this breaks the 90 s presence TTL (server PRESENCE_TTL_SECONDS). */
 export const MAX_CLOCK_SKEW_SECONDS = 120;
 
+/**
+ * How far ahead of the clock that reads it a local stamp may be and still be
+ * taken as written (review-2 round 8, L5). A heartbeat or heal stamp past it
+ * was written while the clock ran ahead, and is clamped to now plus this and
+ * written down, so it ages from there — read as dated, it stayed fresh until
+ * the clock caught up. The same bound as the hub's, one skew for both.
+ */
+export const CLOCK_SKEW_MS = MAX_CLOCK_SKEW_SECONDS * MS_PER_SECOND;
+
 export const DOCTOR_SPOOL_DEPTH_WARN = 200;
 export const DOCTOR_SPOOL_DEPTH_FAIL = 1500;
 export const DOCTOR_SPOOL_AGE_WARN_HOURS = 24;
@@ -1609,8 +1618,86 @@ export const SESSION_STATE_SCAN_MAX_FILES = 200;
  * unlink storm on the hook whose latency the developer feels most.
  */
 export const SESSION_STATE_REAP_MAX_PER_RUN = 25;
+/**
+ * Most register calls ONE walk of the life ladder makes (state/session-lineage.ts).
+ *
+ * The ladder used to be three fixed rungs — `cc_<id>`, `~r1`, `~r2` — and the
+ * pilot ran off its end: one Claude Code conversation is ONE host session id
+ * for its whole life, every VS Code reload or exit ENDS its crosscheck session,
+ * and the fourth life found all three rungs ended and fell back to the base id
+ * the hub had just refused. Every record of that conversation was then
+ * rejected as a late write, for a month (docs/1.0/loss-accounting.md §4.3).
+ *
+ * The walk starts at the newest life this machine knows — above it when that
+ * life was ended — and gallops from there (+0, +1, +2, +4, …), so a resume
+ * costs one call and a re-fire one;
+ * twelve attempts reach 1024 lives past the start when nothing is known —
+ * a lost lineage file, or one past its age — and a wrong guess about which
+ * rungs are taken costs a skipped rung name, never a refused record.
+ */
+export const REGISTER_LADDER_MAX_ATTEMPTS = 12;
+/**
+ * How long a session waits between two mid-life heals (flows/heal-session.ts).
+ *
+ * A flush or a heartbeat the hub refuses for the session's OWN id walks the
+ * ladder above once and registers the next life. A hub that refuses every
+ * register — down, misconfigured, a key it no longer takes — would otherwise
+ * turn every tool call into a register round trip on the hook the developer is
+ * waiting for. Five minutes is one walk per a few dozen tool calls at most;
+ * the attempt is stamped before the walk, so a hook killed mid-walk still
+ * counts it.
+ */
+export const HEAL_COOLDOWN_MS = 5 * 60 * 1000;
+/**
+ * How many times the hub may refuse an owed work context before the debt is
+ * released (spool/owed-work-context.ts, review-2 round 7 M3). A refusal is
+ * the hub's verdict on the record itself — its own-session refusals are the
+ * heal's to answer and never count — and one drain sends a debt once, so
+ * three refusals are three drains that got the same answer. Released, the
+ * debt and the records it pinned are counted `owed_wc_refused`, so a debt the
+ * hub will never take neither pins its life's records for good nor holds its
+ * SessionEnd open; MAX_SPOOL_AGE_DAYS from the first refusal bounds it too.
+ */
+export const OWED_WORK_CONTEXT_MAX_REFUSALS = 3;
+/**
+ * The least room a mid-life heal needs before it stamps an attempt: one
+ * register round trip against a reachable hub, which answers in tens of
+ * milliseconds. Below it the walk could not reach the hub, and stamping would
+ * cost the next caller — one with room — its turn for five minutes.
+ */
+export const HEAL_MIN_ROOM_MS = 100;
+/**
+ * Most refused lives one repo's note keeps (spool/refused-lives.ts): the newest
+ * ones, each younger than REFUSED_LIFE_KEEP_DAYS or still owning records on
+ * disk. A machine heals a handful of times a week; the bound keeps the note a
+ * few kilobytes on the drain path that reads it, whatever a pathological hub
+ * does.
+ */
+export const REFUSED_LIVES_MAX = 64;
+/**
+ * The least a refused-lives entry is kept, whatever is on disk (review-2 round
+ * 8, H1): TWICE the age bound. A spool is released as abandoned only after its
+ * host has been silent MAX_SPOOL_AGE_DAYS, and expires MAX_SPOOL_AGE_DAYS after
+ * that release (spool/reap.ts) — an entry kept for one bound aged out exactly
+ * when the successor could first send the stragglers it was there to withhold.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.REFUSED_LIFE_KEEP_DAYS >= 2 * c.MAX_SPOOL_AGE_DAYS)'
+ * PRINTS: true
+ */
+export const REFUSED_LIFE_KEEP_DAYS = 2 * MAX_SPOOL_AGE_DAYS;
+/**
+ * How long a SessionEnd's own refused-lives entry outlives an empty spool
+ * (review-2 round 9, H2). Every SessionEnd writes one (round 8, M1), and kept
+ * the full REFUSED_LIFE_KEEP_DAYS they filled the note and evicted the one
+ * entry still withholding a straggler. What such an entry guards is a record a
+ * hook still in flight beside the end appends — within its host's hook
+ * timeout, Claude Code's default being 60 s — so ten minutes outlasts any.
+ */
+export const REFUSED_END_GRACE_MS = 10 * SECONDS_PER_MINUTE * MS_PER_SECOND;
 /** A deferred end whose session the hub has never heard of (trial finding M6). */
 export const HTTP_NOT_FOUND = 404;
+/** A session the hub holds as ended, or an id somebody else owns. */
+export const HTTP_CONFLICT = 409;
 
 export const EXIT_OK = 0;
 export const EXIT_WARN = 1;

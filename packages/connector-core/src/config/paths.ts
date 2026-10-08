@@ -90,6 +90,35 @@ export const sessionStatePathForSlug = (home: string, slug: string): string =>
 export const intentPromptPathForSlug = (home: string, slug: string): string =>
   join(home, "sessions", `${slug}.intent-prompt`);
 
+/**
+ * The crosscheck session a host session ENDED last (state/session-lineage.ts):
+ * written by `endSessionFlow`, read by the next register of the same host
+ * session so a resumed conversation starts its next life one rung up instead
+ * of walking every ended life again. Not `.json`, so no reader of session
+ * state ever mistakes it for one.
+ */
+export const sessionLineagePathForSlug = (home: string, slug: string): string =>
+  join(home, "sessions", `${slug}.lineage`);
+
+/**
+ * When a host session last walked the ladder MID-LIFE (flows/heal-session.ts):
+ * the cooldown's clock. Beside the state file rather than in it, so the state
+ * schema every hook parses does not grow for one timestamp; swept with the
+ * lineage notes (state/session-lineage.ts).
+ */
+export const sessionHealPathForSlug = (home: string, slug: string): string =>
+  join(home, "sessions", `${slug}.heal`);
+
+/**
+ * The epoch a SessionStart's register carried before its state file was
+ * written (flows/register-session.ts): a hook killed between the two left the
+ * hub holding `session.started` under an epoch nothing on disk named, and the
+ * next SessionStart minted another — split for good. Swept with the lineage
+ * notes (state/session-lineage.ts).
+ */
+export const sessionEpochPathForSlug = (home: string, slug: string): string =>
+  join(home, "sessions", `${slug}.epoch`);
+
 export const sessionStatePath = (
   home: string,
   hostSessionKey: string,
@@ -133,12 +162,54 @@ export const spoolCursorPath = (
  * deferral was made, which is what MAX_SPOOL_AGE_DAYS is measured against.
  *
  * The suffix keeps it out of the `.jsonl` and `.drops` listings that reap walks.
+ *
+ * ONE PER LIFE, not per host session (review-2 finding 3): a conversation
+ * resumed after a deferred end ends again under the same slug, and a second
+ * marker written over the first lost that life's end for good. The base life
+ * keeps the name every earlier connector wrote.
+ *
+ * A LATER LIFE'S IS NO `.pending-end` NAME (review-2 MEDIUM-2):
+ * `<slug>.r<n>.pending-life`. Every reap before per-life markers lists the
+ * `.pending-end` files and reads each whole stem as a slug — a proxy started
+ * before an upgrade still runs one — and it read `<slug>@r1` as a session
+ * with no spool, saw nothing pending, and ended the life while `<slug>.jsonl`
+ * still held its records. The rung is the last `.r<n>` before the suffix, so
+ * a slug with dots in it reads back whole.
  */
+export const PENDING_LIFE_SUFFIX = ".pending-life";
+
+const pendingEndName = (slug: string, rung: number): string =>
+  rung === 0 ? `${slug}.pending-end` : `${slug}.r${String(rung)}${PENDING_LIFE_SUFFIX}`;
+
 export const spoolPendingEndPath = (
   home: string,
   key: string,
   slug: string,
-): string => join(spoolDir(home, key), `${slug}.pending-end`);
+  rung = 0,
+): string => join(spoolDir(home, key), pendingEndName(slug, rung));
+
+/**
+ * The work context a heal owes the hub for one life of this host session,
+ * until the hub takes it (spool/owed-work-context.ts). Beside the spool, not
+ * in the state file: SessionEnd deletes the state while the records it is
+ * owed for may still wait here.
+ */
+export const spoolOwedWorkContextPath = (
+  home: string,
+  key: string,
+  slug: string,
+): string => join(spoolDir(home, key), `${slug}.owed-wc`);
+
+/**
+ * When a spool was released to every flusher (spool/release.ts): its host
+ * session's state reaped as stale, or the spool first sent as abandoned. Reap
+ * expires a released spool MAX_SPOOL_AGE_DAYS after this, never sooner.
+ */
+export const spoolReleasedPath = (
+  home: string,
+  key: string,
+  slug: string,
+): string => join(spoolDir(home, key), `${slug}.released`);
 
 /** Append-only ledger of dropped batches: the source of truth for `spoolDropped`. */
 export const spoolDropsPath = (
@@ -187,6 +258,15 @@ export const spoolUnrecordedDropsPath = (home: string, key: string): string =>
  */
 export const spoolUnclosedPath = (home: string, key: string): string =>
   join(spoolDir(home, key), "unclosed.endsummary");
+
+/**
+ * The crosscheck sessions a mid-life heal left behind on this repo
+ * (spool/refused-lives.ts): append-only, one line per healed life. The
+ * `.lives` suffix keeps it out of every listing the sweep walks, and no
+ * slug-derived name can produce it.
+ */
+export const spoolRefusedLivesPath = (home: string, key: string): string =>
+  join(spoolDir(home, key), "refused.lives");
 
 /**
  * Guards flush and reap only. Appends never take it, so a lock that is busy or

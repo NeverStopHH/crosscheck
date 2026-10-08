@@ -7,7 +7,8 @@
  * realities make this path live: hooks installed mid-conversation (no
  * sessionStart ever fired here), and a conversation REOPENED after its
  * sessionEnd (same conversation_id, hub session already ended — the flow's
- * `~r1` retry mints the fresh session Claude's recovery cannot).
+ * `~r1` retry mints the fresh session). Claude's recovery runs this same flow
+ * since review-2 round 9 (M2).
  */
 import { registerSessionFlow } from "@crosscheck/connector-core/flows/register-session.ts";
 import { guaranteeDeclarationFor } from "@crosscheck/connector-core/guarantees/declarations.ts";

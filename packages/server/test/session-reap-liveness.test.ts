@@ -166,6 +166,42 @@ describe("a reaped session is revived by the evidence that disproves the reap", 
     expect((await sessionRow(harness, "ses_01"))?.endedAt ?? null).toBeNull();
   });
 
+  test("a heartbeat revives it too, rather than answering already_ended (review-2 round 9, H1)", async () => {
+    // Arrange: a session asleep overnight, reaped
+    const { harness, developer } = await seed();
+    await registerTestSession(harness, developer.apiKey);
+    harness.clock.advanceSeconds(7 * HOUR_SECONDS);
+    await reapStaleSessions({ db: harness.db, now: harness.clock.now });
+
+    // Act: the first hook after the night beats
+    const response = await harness.app.request(
+      "/api/sessions/ses_01/heartbeat",
+      jsonRequest("POST", developer.apiKey, {}),
+    );
+
+    // Assert
+    expect(response.status).toBe(200);
+    const revived = await sessionRow(harness, "ses_01");
+    expect(revived?.endedAt ?? null).toBeNull();
+    expect(revived?.reapedAt ?? null).toBeNull();
+  });
+
+  test("a heartbeat of a session ended by its OWN SessionEnd is still refused", async () => {
+    // Arrange
+    const { harness, developer } = await seed();
+    await registerTestSession(harness, developer.apiKey);
+    await harness.app.request("/api/sessions/ses_01/end", jsonRequest("POST", developer.apiKey, {}));
+
+    // Act
+    const response = await harness.app.request(
+      "/api/sessions/ses_01/heartbeat",
+      jsonRequest("POST", developer.apiKey, {}),
+    );
+
+    // Assert
+    expect(response.status).toBe(409);
+  });
+
   test("a session ended by its OWN SessionEnd still rejects late writes", async () => {
     // Arrange: the semantics the producer gate was built for
     const { harness, developer } = await seed();

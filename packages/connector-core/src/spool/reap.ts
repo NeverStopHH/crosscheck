@@ -71,7 +71,8 @@ import {
   spoolDataPath,
   spoolDir,
   spoolFlushLockPath,
-  spoolPendingEndPath,
+  spoolOwedWorkContextPath,
+  PENDING_LIFE_SUFFIX,
 } from "../config/paths.ts";
 import {
   DROPS_SUFFIX,
@@ -84,6 +85,9 @@ import type { SessionSpool } from "./files.ts";
 import { isSameFile, readHandleFacts } from "./identity.ts";
 import { byteLength, completeLines, toLines } from "./lines.ts";
 import { withLock } from "./lock.ts";
+import { readOwedWorkContext } from "./owed-work-context.ts";
+import { recordRefusedLife } from "./refused-lives.ts";
+import { releasedAtMs, removeReleaseStamp } from "./release.ts";
 import { recordUnclosedSession } from "./unclosed.ts";
 import { appendOnce } from "./write.ts";
 
@@ -101,6 +105,26 @@ const NOTHING_REAPED: ReapResult = { delivered: 0, expired: 0, dropped: 0 };
 const isSessionLive = async (home: string, slug: string): Promise<boolean> =>
   Bun.file(sessionStatePathForSlug(home, slug)).exists();
 
+/**
+ * Whether the LIFE a pending end names is the one still running under its
+ * host session. A host keeps one session id across lives (state/session-lineage.ts):
+ * when the end of life K was deferred and the conversation resumed, the state
+ * file now names life K+1, and K — which the hub may still hold open — must
+ * still be ended from its marker. Any state with an unreadable id, or a marker
+ * whose id could not be read, keeps the old reading: a state file is a live
+ * writer.
+ */
+const isLifeLive = async (home: string, slug: string, lifeId: string | null): Promise<boolean> => {
+  if (!(await isSessionLive(home, slug))) {
+    return false;
+  }
+  const state = (await readJsonOrNull(sessionStatePathForSlug(home, slug))) as {
+    crosscheckSessionId?: unknown;
+  } | null;
+  const liveId = state?.crosscheckSessionId;
+  return lifeId === null || typeof liveId !== "string" || liveId === lifeId;
+};
+
 const isOlderThanMaxAge = async (path: string, now: Date): Promise<boolean> => {
   try {
     const { mtimeMs } = await stat(path);
@@ -108,6 +132,30 @@ const isOlderThanMaxAge = async (path: string, now: Date): Promise<boolean> => {
   } catch {
     return false;
   }
+};
+
+/** The envelope ids of the lines an expiry counts; a torn line has none (spool/drops.ts recordDrop). */
+const envelopeIdsOf = (lines: readonly string[]): readonly string[] =>
+  lines.flatMap((line) => {
+    try {
+      const id = (JSON.parse(line) as { id?: unknown } | null)?.id;
+      return typeof id === "string" ? [id] : [];
+    } catch {
+      return [];
+    }
+  });
+
+/**
+ * Past the age bound, counted from the spool's RELEASE when one was stamped
+ * (spool/release.ts, review-2 round 8, H2) — a dead host's data file is a week
+ * old the moment its spool is released, and its successor needs the hooks of a
+ * whole bound to send it — else from its last write.
+ */
+const isPastExpiry = async (home: string, key: string, spool: SessionSpool, now: Date): Promise<boolean> => {
+  const releasedMs = await releasedAtMs(home, key, spool.slug);
+  return releasedMs === null
+    ? isOlderThanMaxAge(spool.dataPath, now)
+    : now.getTime() - releasedMs > MAX_SPOOL_AGE_DAYS * MS_PER_DAY;
 };
 
 /**
@@ -230,6 +278,10 @@ const removeSessionData = async (
   // could be read against, and skipping records is the unrecoverable direction.
   await removeFile(spool.cursorPath);
   await removeFile(spool.dataPath);
+  // ...and any work context still owed for the spool's lives: the records it
+  // was owed for are gone with the file (spool/owed-work-context.ts).
+  await removeFile(spoolOwedWorkContextPath(home, key, spool.slug));
+  await removeReleaseStamp(home, key, spool.slug);
   await rescueTail(home, key, spool, handle, now);
 };
 
@@ -258,8 +310,7 @@ const reapSlug = async (
   // and nothing delivered. It has nothing to deliver and no reason to go; the
   // age branch below still stops empty files from accumulating.
   const isDelivered = spool.size > 0 && spool.offset >= spool.size;
-  const isExpired =
-    !isDelivered && (await isOlderThanMaxAge(spool.dataPath, now));
+  const isExpired = !isDelivered && (await isPastExpiry(home, key, spool, now));
   if (!isDelivered && !isExpired) {
     return NOTHING_REAPED;
   }
@@ -278,7 +329,7 @@ const reapSlug = async (
       return { delivered: 1, expired: 0, dropped: 0 };
     }
     // Counted before the bytes go, and into a file the removal does not touch.
-    await recordDrop(home, key, slug, spool.lines.length, "expired", now);
+    await recordDrop(home, key, slug, spool.lines.length, "expired", now, {}, {}, envelopeIdsOf(spool.lines));
     await removeSessionData(home, key, spool, handle, now);
     return { delivered: 0, expired: 1, dropped: spool.lines.length };
   } finally {
@@ -360,14 +411,43 @@ export type DeferredEnder = (
   seq?: SeqField,
 ) => Promise<DeferredEndOutcome>;
 
-const pendingEndSlugs = async (
+/** A deferred-end marker on disk: the host session whose life it ends, and its file. */
+interface PendingEndMarker {
+  readonly slug: string;
+  readonly path: string;
+}
+
+/** A later life's marker: the slug, then its rung — the last `.r<n>` before the suffix. */
+const LATER_LIFE_MARKER = new RegExp(`^(.+)\\.r\\d+${PENDING_LIFE_SUFFIX.replace(".", "\\.")}$`, "u");
+
+/**
+ * Where a stray marker from one build of this branch put the rung,
+ * `<slug>@r<n>.pending-end`: no slug holds `@` (`encodeURIComponent` escapes
+ * it), so what precedes it is the slug (review-2 round 6, LOW-2).
+ */
+const STRAY_RUNG_SEPARATOR = "@";
+
+/** The host session's slug a marker name belongs to, or null for any other file. */
+const slugOfMarker = (name: string): string | null =>
+  name.endsWith(PENDING_END_SUFFIX)
+    ? (name.slice(0, -PENDING_END_SUFFIX.length).split(STRAY_RUNG_SEPARATOR)[0] ?? null)
+    : (LATER_LIFE_MARKER.exec(name)?.[1] ?? null);
+
+/**
+ * Every deferred end in the repo's spool, ONE PER LIFE (config/paths.ts
+ * spoolPendingEndPath, review-2 finding 3): the base life's `.pending-end`,
+ * and a later life's `.r<n>.pending-life` — a name no older reap lists
+ * (review-2 MEDIUM-2).
+ */
+const pendingEndMarkers = async (
   home: string,
   key: string,
-): Promise<readonly string[]> => {
+): Promise<readonly PendingEndMarker[]> => {
   try {
-    return (await readdir(spoolDir(home, key)))
-      .filter((name) => name.endsWith(PENDING_END_SUFFIX))
-      .map((name) => name.slice(0, -PENDING_END_SUFFIX.length));
+    return (await readdir(spoolDir(home, key))).flatMap((name) => {
+      const slug = slugOfMarker(name);
+      return slug === null ? [] : [{ slug, path: join(spoolDir(home, key), name) }];
+    });
   } catch {
     return [];
   }
@@ -425,16 +505,16 @@ const isMarkerExpired = (deferredAt: Date, now: Date): boolean =>
 const endDeferredSession = async (
   home: string,
   key: string,
-  slug: string,
+  { slug, path }: PendingEndMarker,
   ender: DeferredEnder | undefined,
   now: Date,
 ): Promise<void> => {
-  // A state file again means the same session id came back: it will end itself.
-  if (await isSessionLive(home, slug)) {
+  const parsed = PendingEndSchema.safeParse(await readJsonOrNull(path));
+  // A state file naming THIS life again means it came back: it will end
+  // itself. A state file naming the NEXT life does not — this one is over.
+  if (await isLifeLive(home, slug, parsed.success ? parsed.data.crosscheckSessionId : null)) {
     return;
   }
-  const path = spoolPendingEndPath(home, key, slug);
-  const parsed = PendingEndSchema.safeParse(await readJsonOrNull(path));
   if (!parsed.success) {
     // Nothing can be ended from an id that cannot be read, and a marker nobody
     // can act on would otherwise sit in the spool directory for good.
@@ -470,6 +550,17 @@ const endDeferredSession = async (
   if (spool.lines.length > 0) {
     return;
   }
+  // ...nor while the life's work context is still owed (review-2 round 7,
+  // found by the spool simulation): ended now, the payment that follows would
+  // be filed into the session past its end — SessionEnd defers on it too.
+  if ((await readOwedWorkContext(home, key, slug))?.sessionId === parsed.data.crosscheckSessionId) {
+    return;
+  }
+  // Ending now: a record of it a parallel process appends later is withheld,
+  // never filed into the ended session (review-2 round 8, M1). Written down
+  // before the end goes out (review-2 round 9, M3): a "retry" may be an end
+  // the hub committed with its answer lost.
+  await recordRefusedLife(home, key, parsed.data.crosscheckSessionId, now, "end");
   const outcome = await ender(parsed.data.crosscheckSessionId, parsed.data.seq);
   if (outcome === "retry") {
     return;
@@ -509,12 +600,11 @@ export const hasSpendablePendingEnd = async (
   key: string,
   now: Date,
 ): Promise<boolean> => {
-  for (const slug of await pendingEndSlugs(home, key)) {
-    if (await isSessionLive(home, slug)) {
+  for (const { slug, path } of await pendingEndMarkers(home, key)) {
+    const parsed = PendingEndSchema.safeParse(await readJsonOrNull(path));
+    if (await isLifeLive(home, slug, parsed.success ? parsed.data.crosscheckSessionId : null)) {
       continue;
     }
-    const path = spoolPendingEndPath(home, key, slug);
-    const parsed = PendingEndSchema.safeParse(await readJsonOrNull(path));
     if (!parsed.success) {
       continue;
     }
@@ -541,17 +631,34 @@ const total = (results: readonly ReapResult[]): ReapResult =>
     NOTHING_REAPED,
   );
 
-const dropSlugs = async (
+const slugsWithSuffix = async (
   home: string,
   key: string,
+  suffix: string,
 ): Promise<readonly string[]> => {
   try {
     return (await readdir(spoolDir(home, key)))
-      .filter((name) => name.endsWith(DROPS_SUFFIX))
-      .map((name) => name.slice(0, -DROPS_SUFFIX.length));
+      .filter((name) => name.endsWith(suffix))
+      .map((name) => name.slice(0, -suffix.length));
   } catch {
     return [];
   }
+};
+
+const dropSlugs = (home: string, key: string): Promise<readonly string[]> =>
+  slugsWithSuffix(home, key, DROPS_SUFFIX);
+
+const OWED_SUFFIX = ".owed-wc";
+
+/**
+ * A work context owed for a host session that is over and whose spool is
+ * gone: no batch will ever carry its life's records, so nothing will pay it.
+ */
+const reapOrphanDebt = async (home: string, key: string, slug: string): Promise<void> => {
+  if ((await isSessionLive(home, slug)) || (await Bun.file(spoolDataPath(home, key, slug)).exists())) {
+    return;
+  }
+  await removeFile(spoolOwedWorkContextPath(home, key, slug));
 };
 
 /**
@@ -589,11 +696,14 @@ export const reapSpool = async (
       // After the reaping, so a spool emptied in this very pass counts as
       // drained. Sequential rather than parallel: each one may cost a hub call
       // out of the hook's spare time.
-      for (const slug of await pendingEndSlugs(home, key)) {
-        await endDeferredSession(home, key, slug, endDeferred, now);
+      for (const marker of await pendingEndMarkers(home, key)) {
+        await endDeferredSession(home, key, marker, endDeferred, now);
       }
       for (const slug of await dropSlugs(home, key)) {
         await reapOrphanDrops(home, key, slug, now);
+      }
+      for (const slug of await slugsWithSuffix(home, key, OWED_SUFFIX)) {
+        await reapOrphanDebt(home, key, slug);
       }
       return reaped;
     },

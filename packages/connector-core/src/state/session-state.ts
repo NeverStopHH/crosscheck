@@ -387,6 +387,29 @@ const SessionStateObjectSchema = z.looseObject({
   workContextTitle: z.string().min(1).nullable().default(null),
   workContextStatus: z.string().min(1).nullable().default(null),
   /**
+   * The agent kind the life registered as (review-2 round 8, L7): the producer
+   * of the work context SessionEnd sends for it. Null on a state from before
+   * the field, whose end sends none.
+   */
+  agentKind: z.string().min(1).nullable().default(null),
+  /**
+   * THE STATUS THE HUB LAST ACKNOWLEDGED, and for which work context (review-2
+   * round 8, L7): the last update it accepted, from a flush or from
+   * set_intent's own post. SessionEnd sends the life's work context once more
+   * when the state's status is not this one — a post that may have landed and
+   * did not left the hub on the status before it, and no later sender of the
+   * work context was coming to make the two agree.
+   *
+   * `uncertain`: a set_intent post since then may have landed and was never
+   * answered, so the hub may hold ITS status instead — SessionEnd sends the
+   * work context whatever the state's status is. The next acknowledgement
+   * clears it.
+   */
+  workContextAcked: z
+    .object({ id: z.string().min(1), status: z.string().min(1), uncertain: z.boolean().optional() })
+    .nullable()
+    .default(null),
+  /**
    * Derived-intent telemetry (trial finding #16; the finding-#14 lesson — a
    * fire that lands nothing must be a number somebody can explain): fires
    * booked by the UserPromptSubmit hook under the lock BEFORE the worker
@@ -576,6 +599,16 @@ const SessionStateObjectSchema = z.looseObject({
    * that a machine losing brackets stops reading exactly like one that is not.
    */
   toolWindowMisses: z.number().int().min(0).default(0),
+  /**
+   * A LIFE RESUMED ON AN EPOCH ITS HUB COULD NOT CONFIRM (seeds 31214, 4286):
+   * a register with no epoch of its own, onto a session the hub already held,
+   * answered by a hub too old to say which epoch it holds. The life's order on
+   * that hub is split between the epoch it started under and this one — the
+   * known residual against an older hub; a newer one hands its epoch back and
+   * the life goes on from it. Counted, never a WARN: the remedy is the hub's
+   * upgrade, and nothing on this machine can do better. Absent reads as none.
+   */
+  epochUnconfirmed: z.number().int().min(0).optional(),
 });
 
 /**
@@ -802,7 +835,29 @@ export const withCarriedCapture = (
         // reason: a number that restarts on every compact cannot say whether
         // this machine is losing them.
         toolWindowMisses: previous.toolWindowMisses,
+        // ...and the life it fires in stays on the epoch it resumed on, so the
+        // count of an epoch the hub could not confirm stays too.
+        ...(previous.epochUnconfirmed === undefined ? {} : { epochUnconfirmed: previous.epochUnconfirmed }),
+        // A RE-FIRE ON THE SAME LIFE KEEPS ITS WORK CONTEXT'S TITLE AND STATUS
+        // (review-2 round 8, L1): set_intent writes the status into this file
+        // first, and one that ran while this fire's register was out would
+        // otherwise be put back to the status the fire read before it. Read
+        // here, under the lock, from the file as it is now.
+        ...(previous.crosscheckSessionId === state.crosscheckSessionId
+          ? {
+              workContextTitle: previous.workContextTitle ?? state.workContextTitle,
+              workContextStatus: previous.workContextStatus ?? state.workContextStatus,
+              // ...and what the hub acknowledged of it (L7).
+              workContextAcked: previous.workContextAcked,
+            }
+          : {}),
       };
+
+/** The epoch and counter a state that carries nothing starts on. */
+export interface SeqStart {
+  readonly seqEpoch: string | null;
+  readonly eventSeq: number;
+}
 
 /**
  * SessionStart's publication: create the state file, or replace one of the
@@ -814,17 +869,29 @@ export const withCarriedCapture = (
  * that stays busy falls back to the plain create — publishing state is not
  * optional (spool reap infers "no writer left" from its absence), so the
  * counters lose rather than the file.
+ *
+ * `startOf` answers the epoch and counter a publish that finds nothing to
+ * carry starts on, read under the lock (review-2 round 8, L2): the register's
+ * caller knows which epoch the life's `session.started` went out under — and,
+ * from the life's end marker, how far its positions went (review-2 round 9,
+ * L4) — and a SessionEnd that deleted the state while the register was out
+ * leaves nothing else to name them. Under the lock because SessionEnd writes
+ * its marker before it deletes the state under this same lock: a publish that
+ * finds the state gone finds the marker there. The busy-lock fallback keeps
+ * `state` as it is — it may overwrite a state it never read, and only a fresh
+ * epoch is safe beside a counter at 0.
  */
 export const publishSessionState = async (
   home: string,
   state: SessionStateInput,
+  startOf: () => Promise<SeqStart> = () => Promise.resolve({ seqEpoch: state.seqEpoch ?? null, eventSeq: state.eventSeq ?? 0 }),
 ): Promise<void> => {
   const published = await withSessionStateLock(
     sessionStateLockPath(home, state.hostSessionKey),
     false,
     async () => {
       const previous = await readSessionState(home, state.hostSessionKey);
-      await writeSessionState(home, withCarriedCapture(state, previous));
+      await writeSessionState(home, withCarriedCapture({ ...state, ...(await startOf()) }, previous));
       return true;
     },
   );
@@ -904,6 +971,67 @@ export const allocateSeq = async (
       return { epoch: fresh.seqEpoch, from, count };
     },
   );
+
+/**
+ * A step that must not interleave with the state's own writers — a heal's
+ * switch, a debt it settles — under the state file's lock, with the same
+ * patience as every acquisition here. `fallback` is the answer when the lock
+ * stays busy.
+ */
+export const underSessionStateLock = <T>(
+  home: string,
+  hostSessionKey: string,
+  fallback: T,
+  action: () => Promise<T>,
+): Promise<T> => withSessionStateLock(sessionStateLockPath(home, hostSessionKey), fallback, action);
+
+/** A life SessionEnd found the state on that is not the one it ends, and that life's end position. */
+export interface MovedLife {
+  readonly crosscheckSessionId: string;
+  readonly seq: SeqRange | null;
+}
+
+const closeState = async (
+  home: string,
+  hostSessionKey: string,
+  crosscheckSessionId: string,
+): Promise<MovedLife | null> => {
+  const fresh = await readSessionState(home, hostSessionKey);
+  await deleteSessionState(home, hostSessionKey);
+  if (fresh === null || fresh.crosscheckSessionId === crosscheckSessionId) {
+    return null;
+  }
+  return {
+    crosscheckSessionId: fresh.crosscheckSessionId,
+    seq: fresh.seqEpoch === null ? null : { epoch: fresh.seqEpoch, from: fresh.eventSeq + 1, count: 1 },
+  };
+};
+
+/**
+ * SessionEnd's delete, COMPARED under the state lock (review-2 finding 2).
+ * SessionEnd reads the life it ends at its start; a mid-life heal can move
+ * the state to the next life before this delete, and a delete that did not
+ * look left that life open on the hub with nothing naming it — the next
+ * resume landed on it under a fresh epoch and split its order.
+ *
+ * The state goes either way: this SessionEnd closes the host session. When it
+ * named ANOTHER life, that life is returned with the position its end takes —
+ * past everything the counter handed out, in the same acquisition — and the
+ * caller ends it too. A lock that stays busy falls back to the same read and
+ * delete without it: a state file that outlives its session pins its spool.
+ */
+export const closeSessionState = async (
+  home: string,
+  hostSessionKey: string,
+  crosscheckSessionId: string,
+): Promise<MovedLife | null> => {
+  const closed = await withSessionStateLock<{ readonly moved: MovedLife | null } | null>(
+    sessionStateLockPath(home, hostSessionKey),
+    null,
+    async () => ({ moved: await closeState(home, hostSessionKey, crosscheckSessionId) }),
+  );
+  return closed === null ? closeState(home, hostSessionKey, crosscheckSessionId) : closed.moved;
+};
 
 /**
  * OPENS THE WINDOW A TOOL IS ABOUT TO RUN IN, in the SAME acquisition that
@@ -1474,6 +1602,8 @@ export const deriveSessionState = (
     summarizerLastUnreadable: null,
     workContextTitle: null,
     workContextStatus: null,
+    agentKind: null,
+    workContextAcked: null,
     intentFireCount: 0,
     intentNoneCount: 0,
     intentSetCount: 0,

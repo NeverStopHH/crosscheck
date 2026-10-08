@@ -408,6 +408,14 @@ describe("hub down", () => {
       }),
       flakyEnv,
     );
+    // ...and the session ends while the hub is still down: its backlog is no
+    // live conversation's now, so the next session's drain sends it
+    // (core spool/ownership.ts)
+    await runHook(
+      "session-end",
+      JSON.stringify({ session_id: offlineSession, cwd: bob.repo, hook_event_name: "SessionEnd", reason: "clear" }),
+      flakyEnv,
+    );
     const spooledOffline = await readSpoolLines(bob.home, flakyKey);
 
     // Act: the hub comes back, and a DIFFERENT session runs one SessionStart.

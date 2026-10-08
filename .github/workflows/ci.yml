@@ -131,8 +131,17 @@ jobs:
     # job would give a flaky assertion several more chances to redden a pull
     # request for no extra signal. The test file's header carries the measured
     # oversubscription sweep and the triage rule derived from it.
+    #
+    # The two capture-latency files carry one PURE STOPWATCH each (the "one
+    # spool append" p95 < 5 ms, and the ACP flood whose only clock is bun's
+    # per-test timeout). They are gated on CX_BUDGET_LANE
+    # (connector-core/test/fixtures/budget-lane.ts): every ordinary `bun test`
+    # skips them loudly, and only this lane — isolated, same thresholds — runs
+    # them. The rest of each file runs in both places, as before.
     name: Hook budgets
     runs-on: ubuntu-latest
+    env:
+      CX_BUDGET_LANE: "1"
     steps:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
@@ -140,7 +149,9 @@ jobs:
       - run: |
           bun test \
             packages/connector-claude/test/hook-reserve.test.ts \
-            packages/connector-claude/test/hook-time-budget.test.ts
+            packages/connector-claude/test/hook-time-budget.test.ts \
+            packages/connector-claude/test/capture-latency.test.ts \
+            packages/connector-acp/test/capture-latency.test.ts
 
   mutation:
     # A check nobody proved can fail is decoration. This re-introduces the
@@ -157,7 +168,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1538
+    # PRINTS: 1825
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -181,9 +192,9 @@ jobs:
     # PRINTS: packages/cli/src/cli/doctor-landed-authors.ts 9
     # PRINTS: packages/cli/src/cli/doctor-landed.ts 2
     # PRINTS: packages/cli/src/cli/doctor-landing-fetch.ts 6
-    # PRINTS: packages/cli/src/cli/doctor-losses.ts 4
+    # PRINTS: packages/cli/src/cli/doctor-losses.ts 7
     # PRINTS: packages/cli/src/cli/doctor-retention.ts 3
-    # PRINTS: packages/cli/src/cli/doctor.ts 54
+    # PRINTS: packages/cli/src/cli/doctor.ts 59
     # PRINTS: packages/cli/src/cli/index.ts 4
     # PRINTS: packages/cli/src/cli/init-global.ts 2
     # PRINTS: packages/cli/src/cli/init-io.ts 8
@@ -203,7 +214,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/pin.ts 9
     # PRINTS: packages/cli/src/cli/project-copy.ts 9
     # PRINTS: packages/cli/src/cli/revalidate.ts 2
-    # PRINTS: packages/cli/src/cli/status.ts 9
+    # PRINTS: packages/cli/src/cli/status.ts 12
     # PRINTS: packages/cli/src/cli/suspect-render.ts 3
     # PRINTS: packages/cli/src/cli/terminal.ts 3
     # PRINTS: packages/cli/src/cli/verdict-render.ts 3
@@ -211,7 +222,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/wiring-removal.ts 7
     # PRINTS: packages/cli/src/cli/wiring-scope.ts 3
     # PRINTS: packages/connector-acp/src/capabilities.ts 3
-    # PRINTS: packages/connector-acp/src/capture/engine.ts 18
+    # PRINTS: packages/connector-acp/src/capture/engine.ts 24
     # PRINTS: packages/connector-acp/src/derive/slice.ts 2
     # PRINTS: packages/connector-acp/src/doctor.ts 2
     # PRINTS: packages/connector-acp/src/fd-io.ts 1
@@ -238,7 +249,7 @@ jobs:
     # PRINTS: doctor.ts 1
     # PRINTS: hooks/landed-why.ts 2
     # PRINTS: hooks/post-tool-use-failure.ts 5
-    # PRINTS: hooks/post-tool-use.ts 9
+    # PRINTS: hooks/post-tool-use.ts 12
     # PRINTS: hooks/pre-tool-use.ts 18
     # PRINTS: hooks/runner.ts 7
     # PRINTS: hooks/session-start.ts 4
@@ -253,7 +264,7 @@ jobs:
     # PRINTS: briefing/landed-notices.ts 5
     # PRINTS: briefing/questions.ts 2
     # PRINTS: briefing/render.ts 19
-    # PRINTS: briefing/sanitize.ts 10
+    # PRINTS: briefing/sanitize.ts 12
     # PRINTS: capture/commit-evidence.ts 1
     # PRINTS: capture/records.ts 1
     # PRINTS: capture/target-paths.ts 1
@@ -263,8 +274,8 @@ jobs:
     # PRINTS: config/config.ts 4
     # PRINTS: config/connected-repo.ts 3
     # PRINTS: config/hook-budget.ts 2
-    # PRINTS: config/paths.ts 2
-    # PRINTS: constants.ts 9
+    # PRINTS: config/paths.ts 3
+    # PRINTS: constants.ts 11
     # PRINTS: coverage/exempt-surfaces.ts 2
     # PRINTS: coverage/render.ts 20
     # PRINTS: derive/capabilities.ts 1
@@ -284,10 +295,11 @@ jobs:
     # PRINTS: flows/capture-touched-files.ts 3
     # PRINTS: flows/claim-revalidation.ts 2
     # PRINTS: flows/claim-surface.ts 1
-    # PRINTS: flows/end-session.ts 3
-    # PRINTS: flows/heartbeat.ts 1
+    # PRINTS: flows/end-session.ts 14
+    # PRINTS: flows/heal-session.ts 22
+    # PRINTS: flows/heartbeat.ts 3
     # PRINTS: flows/hint.ts 5
-    # PRINTS: flows/register-session.ts 4
+    # PRINTS: flows/register-session.ts 36
     # PRINTS: flows/solved-hint.ts 4
     # PRINTS: git/check-ignore.ts 1
     # PRINTS: git/claim-drift.ts 5
@@ -325,6 +337,7 @@ jobs:
     # PRINTS: mcp/tools/answer-question.ts 1
     # PRINTS: mcp/tools/ask-teammate.ts 1
     # PRINTS: mcp/tools/get-diagnosis.ts 2
+    # PRINTS: mcp/tools/intent-write.ts 11
     # PRINTS: mcp/tools/publish-claim.ts 2
     # PRINTS: mcp/tools/review-draft.ts 1
     # PRINTS: mcp/tools/search-related-work.ts 1
@@ -335,22 +348,34 @@ jobs:
     # PRINTS: model/runner.ts 5
     # PRINTS: model/worker-env.ts 1
     # PRINTS: render-surfaces.ts 1
+    # PRINTS: spool/batch-losses.ts 7
     # PRINTS: spool/counts.ts 1
-    # PRINTS: spool/drops.ts 10
-    # PRINTS: spool/flush.ts 2
+    # PRINTS: spool/cursor.ts 1
+    # PRINTS: spool/drops.ts 14
+    # PRINTS: spool/end-marker.ts 2
+    # PRINTS: spool/flush-heal.ts 14
+    # PRINTS: spool/flush.ts 34
     # PRINTS: spool/ledger-read.ts 2
     # PRINTS: spool/lock.ts 2
-    # PRINTS: spool/loss-report.ts 14
-    # PRINTS: spool/reap.ts 1
+    # PRINTS: spool/loss-report.ts 18
+    # PRINTS: spool/owed-work-context.ts 16
+    # PRINTS: spool/ownership.ts 16
+    # PRINTS: spool/reap.ts 15
+    # PRINTS: spool/refused-lives.ts 7
+    # PRINTS: spool/reject-cause.ts 3
+    # PRINTS: spool/release.ts 1
+    # PRINTS: spool/work-context-ack.ts 8
     # PRINTS: state/capture-bookkeeping.ts 6
     # PRINTS: state/capture-health.ts 2
     # PRINTS: state/conference-cost.ts 1
     # PRINTS: state/git-lane-cost.ts 2
     # PRINTS: state/loss-ledger.ts 10
     # PRINTS: state/loss-refusals.ts 1
-    # PRINTS: state/seq-cost.ts 8
+    # PRINTS: state/seq-cost.ts 9
+    # PRINTS: state/session-lineage.ts 4
+    # PRINTS: state/session-reap.ts 9
     # PRINTS: state/session-scan.ts 2
-    # PRINTS: state/session-state.ts 20
+    # PRINTS: state/session-state.ts 26
     # PRINTS: state/tool-window-key.ts 2
     # PRINTS: packages/connector-core/test/intent-budget.test.ts 1
     # PRINTS: packages/connector-core/test/render-surface-registry.test.ts 1
@@ -359,9 +384,9 @@ jobs:
     # PRINTS: packages/connector-cursor/src/derive/triggers.ts 2
     # PRINTS: packages/connector-cursor/src/doctor.ts 10
     # PRINTS: packages/connector-cursor/src/handlers/before-submit-prompt.ts 1
-    # PRINTS: packages/connector-cursor/src/handlers/file-edit.ts 3
+    # PRINTS: packages/connector-cursor/src/handlers/file-edit.ts 4
     # PRINTS: packages/connector-cursor/src/handlers/recover.ts 4
-    # PRINTS: packages/connector-cursor/src/handlers/session-start.ts 2
+    # PRINTS: packages/connector-cursor/src/handlers/session-start.ts 4
     # PRINTS: packages/connector-cursor/src/handlers/stop.ts 1
     # PRINTS: packages/connector-cursor/src/handlers/tool-failure.ts 3
     # PRINTS: packages/connector-cursor/src/init/init.ts 1
@@ -374,22 +399,25 @@ jobs:
     # PRINTS: packages/schema/src/commit-evidence.ts 2
     # PRINTS: packages/schema/src/delivery-id.ts 2
     # PRINTS: packages/schema/src/enums.ts 2
-    # PRINTS: packages/schema/src/envelope.ts 1
+    # PRINTS: packages/schema/src/envelope.ts 2
     # PRINTS: packages/schema/src/evidence-axes.ts 1
     # PRINTS: packages/schema/src/file-ref.ts 5
     # PRINTS: packages/schema/src/landed-context.ts 3
     # PRINTS: packages/schema/src/landed-notice.ts 5
     # PRINTS: packages/schema/src/pilot-mark.ts 5
     # PRINTS: packages/schema/src/pin.ts 2
+    # PRINTS: packages/schema/src/question.ts 1
     # PRINTS: packages/schema/src/repo-path.ts 1
     # PRINTS: packages/schema/src/secret-scan.ts 1
     # PRINTS: packages/schema/src/session.ts 2
-    # PRINTS: packages/schema/src/telemetry-loss.ts 6
-    # PRINTS: packages/server/src/constants.ts 1
-    # PRINTS: packages/server/src/db/bootstrap.sql 17
+    # PRINTS: packages/schema/src/telemetry-loss.ts 8
+    # PRINTS: packages/server/src/constants.ts 2
+    # PRINTS: packages/server/src/db/bootstrap.sql 18
     # PRINTS: packages/server/src/db/client.ts 8
-    # PRINTS: packages/server/src/db/schema.ts 1
+    # PRINTS: packages/server/src/db/schema.ts 2
+    # PRINTS: packages/server/src/db/yield-to-requests.ts 2
     # PRINTS: packages/server/src/http/schemas.ts 1
+    # PRINTS: packages/server/src/index.ts 1
     # PRINTS: packages/server/src/routes/absences.ts 2
     # PRINTS: packages/server/src/routes/events.ts 1
     # PRINTS: packages/server/src/routes/fence-waivers.ts 1
@@ -399,7 +427,7 @@ jobs:
     # PRINTS: packages/server/src/routes/pilot-marks.ts 2
     # PRINTS: packages/server/src/routes/pins.ts 3
     # PRINTS: packages/server/src/routes/search.ts 1
-    # PRINTS: packages/server/src/routes/sessions.ts 2
+    # PRINTS: packages/server/src/routes/sessions.ts 3
     # PRINTS: packages/server/src/routes/suspect.ts 5
     # PRINTS: packages/server/src/routes/ui-ceremony.ts 5
     # PRINTS: packages/server/src/routes/ui-passkeys.tsx 1
@@ -439,7 +467,8 @@ jobs:
     # PRINTS: packages/server/src/services/presence.ts 1
     # PRINTS: packages/server/src/services/questions.ts 8
     # PRINTS: packages/server/src/services/record-handlers.ts 22
-    # PRINTS: packages/server/src/services/records.ts 2
+    # PRINTS: packages/server/src/services/record-receipts.ts 7
+    # PRINTS: packages/server/src/services/records.ts 9
     # PRINTS: packages/server/src/services/refusal.ts 3
     # PRINTS: packages/server/src/services/retention-registry.ts 9
     # PRINTS: packages/server/src/services/retention.ts 24
@@ -447,8 +476,8 @@ jobs:
     # PRINTS: packages/server/src/services/search.ts 11
     # PRINTS: packages/server/src/services/session-events.ts 9
     # PRINTS: packages/server/src/services/session-order.ts 9
-    # PRINTS: packages/server/src/services/sessions.ts 13
-    # PRINTS: packages/server/src/services/skeleton-identity.ts 8
+    # PRINTS: packages/server/src/services/sessions.ts 19
+    # PRINTS: packages/server/src/services/skeleton-identity.ts 9
     # PRINTS: packages/server/src/services/solved-counts.ts 1
     # PRINTS: packages/server/src/services/solved-matches.ts 9
     # PRINTS: packages/server/src/services/solved.ts 1
@@ -473,8 +502,9 @@ jobs:
     # PRINTS: args.ts 2
     # PRINTS: ask-teammate.ts 1
     # PRINTS: attempt.ts 5
+    # PRINTS: batch-losses.ts 7
     # PRINTS: before-submit-prompt.ts 1
-    # PRINTS: bootstrap.sql 17
+    # PRINTS: bootstrap.sql 18
     # PRINTS: briefing.ts 5
     # PRINTS: calibration.ts 1
     # PRINTS: capabilities.ts 6
@@ -502,7 +532,7 @@ jobs:
     # PRINTS: conference.ts 17
     # PRINTS: config.ts 4
     # PRINTS: connected-repo.ts 3
-    # PRINTS: constants.ts 10
+    # PRINTS: constants.ts 13
     # PRINTS: context-group.ts 1
     # PRINTS: contradictions.ts 1
     # PRINTS: cost.ts 2
@@ -510,6 +540,7 @@ jobs:
     # PRINTS: coverage-order.ts 5
     # PRINTS: coverage.ts 35
     # PRINTS: crosscheck.ts 1
+    # PRINTS: cursor.ts 1
     # PRINTS: declarations.ts 5
     # PRINTS: delivery-id.ts 2
     # PRINTS: delivery.ts 7
@@ -523,16 +554,17 @@ jobs:
     # PRINTS: doctor-landed-authors.ts 9
     # PRINTS: doctor-landed.ts 2
     # PRINTS: doctor-landing-fetch.ts 6
-    # PRINTS: doctor-losses.ts 4
+    # PRINTS: doctor-losses.ts 7
     # PRINTS: doctor-retention.ts 3
-    # PRINTS: doctor.ts 70
+    # PRINTS: doctor.ts 75
     # PRINTS: driver.ts 2
-    # PRINTS: drops.ts 10
-    # PRINTS: end-session.ts 3
-    # PRINTS: engine.ts 18
+    # PRINTS: drops.ts 14
+    # PRINTS: end-marker.ts 2
+    # PRINTS: end-session.ts 14
+    # PRINTS: engine.ts 24
     # PRINTS: entry.ts 1
     # PRINTS: enums.ts 2
-    # PRINTS: envelope.ts 1
+    # PRINTS: envelope.ts 2
     # PRINTS: events.ts 1
     # PRINTS: evidence-axes.ts 3
     # PRINTS: exec.ts 1
@@ -544,11 +576,12 @@ jobs:
     # PRINTS: fetch-switch.ts 4
     # PRINTS: fetch-trigger.ts 3
     # PRINTS: fetch-worker.ts 23
-    # PRINTS: file-edit.ts 3
+    # PRINTS: file-edit.ts 4
     # PRINTS: file-ref.ts 5
     # PRINTS: fix-diff.ts 7
     # PRINTS: fixture.ts 1
-    # PRINTS: flush.ts 2
+    # PRINTS: flush-heal.ts 14
+    # PRINTS: flush.ts 34
     # PRINTS: gate.ts 7
     # PRINTS: gates.ts 1
     # PRINTS: get-diagnosis.ts 2
@@ -557,13 +590,14 @@ jobs:
     # PRINTS: git-lane-cost.ts 2
     # PRINTS: git-queries.ts 15
     # PRINTS: git.ts 4
-    # PRINTS: heartbeat.ts 1
+    # PRINTS: heal-session.ts 22
+    # PRINTS: heartbeat.ts 3
     # PRINTS: hint-deliveries.ts 3
     # PRINTS: hint.ts 6
     # PRINTS: hints.ts 5
     # PRINTS: hook-budget.ts 2
     # PRINTS: hub.ts 12
-    # PRINTS: index.ts 4
+    # PRINTS: index.ts 5
     # PRINTS: init-global.ts 2
     # PRINTS: init-io.ts 8
     # PRINTS: init-remove-plan.ts 6
@@ -575,6 +609,7 @@ jobs:
     # PRINTS: intent-budget.test.ts 1
     # PRINTS: intent-ledger-authority.test.ts 1
     # PRINTS: intent-ledger.ts 12
+    # PRINTS: intent-write.ts 11
     # PRINTS: intent.ts 1
     # PRINTS: junit.ts 2
     # PRINTS: key.ts 6
@@ -590,16 +625,18 @@ jobs:
     # PRINTS: lock.ts 2
     # PRINTS: loss-ledger.ts 10
     # PRINTS: loss-refusals.ts 1
-    # PRINTS: loss-report.ts 14
+    # PRINTS: loss-report.ts 18
     # PRINTS: manifest-doc.ts 2
     # PRINTS: noise.ts 7
     # PRINTS: normalized-doc.ts 2
     # PRINTS: output.ts 1
+    # PRINTS: owed-work-context.ts 16
+    # PRINTS: ownership.ts 16
     # PRINTS: parse.ts 2
     # PRINTS: passkey-status.ts 4
     # PRINTS: passkeys.ts 8
     # PRINTS: passkeys.tsx 1
-    # PRINTS: paths.ts 2
+    # PRINTS: paths.ts 3
     # PRINTS: payload.ts 1
     # PRINTS: pilot-candidates.ts 15
     # PRINTS: pilot-label-figures.ts 12
@@ -618,7 +655,7 @@ jobs:
     # PRINTS: pin.ts 11
     # PRINTS: pins.ts 12
     # PRINTS: post-tool-use-failure.ts 5
-    # PRINTS: post-tool-use.ts 9
+    # PRINTS: post-tool-use.ts 12
     # PRINTS: post.ts 1
     # PRINTS: pre-tool-use.ts 18
     # PRINTS: precision.ts 2
@@ -631,14 +668,19 @@ jobs:
     # PRINTS: publish-claim.ts 2
     # PRINTS: publish.yml 2
     # PRINTS: pump.ts 1
+    # PRINTS: question.ts 1
     # PRINTS: questions.ts 10
-    # PRINTS: reap.ts 1
+    # PRINTS: reap.ts 15
     # PRINTS: record-handlers.ts 22
-    # PRINTS: records.ts 3
+    # PRINTS: record-receipts.ts 7
+    # PRINTS: records.ts 10
     # PRINTS: recover.ts 4
     # PRINTS: refusal.ts 3
-    # PRINTS: register-session.ts 4
+    # PRINTS: refused-lives.ts 7
+    # PRINTS: register-session.ts 36
+    # PRINTS: reject-cause.ts 3
     # PRINTS: release-preflight.ts 5
+    # PRINTS: release.ts 1
     # PRINTS: render-intent-chain.ts 1
     # PRINTS: render-referee.ts 3
     # PRINTS: render-surface-registry.test.ts 1
@@ -652,26 +694,28 @@ jobs:
     # PRINTS: review-draft.ts 1
     # PRINTS: run.ts 9
     # PRINTS: runner.ts 17
-    # PRINTS: sanitize.ts 10
-    # PRINTS: schema.ts 1
+    # PRINTS: sanitize.ts 12
+    # PRINTS: schema.ts 2
     # PRINTS: schemas.ts 1
     # PRINTS: search-related-work.ts 1
     # PRINTS: search-tokens.ts 4
     # PRINTS: search.ts 12
     # PRINTS: secret-scan.ts 1
     # PRINTS: select.ts 10
-    # PRINTS: seq-cost.ts 8
+    # PRINTS: seq-cost.ts 9
     # PRINTS: session-events.ts 9
+    # PRINTS: session-lineage.ts 4
     # PRINTS: session-order.ts 9
+    # PRINTS: session-reap.ts 9
     # PRINTS: session-scan.ts 2
-    # PRINTS: session-start.ts 6
-    # PRINTS: session-state.ts 20
+    # PRINTS: session-start.ts 8
+    # PRINTS: session-state.ts 26
     # PRINTS: session.ts 4
-    # PRINTS: sessions.ts 15
+    # PRINTS: sessions.ts 22
     # PRINTS: set-intent.ts 4
     # PRINTS: settings-merge.ts 2
     # PRINTS: shared.ts 2
-    # PRINTS: skeleton-identity.ts 8
+    # PRINTS: skeleton-identity.ts 9
     # PRINTS: slice.ts 2
     # PRINTS: solved-counts.ts 1
     # PRINTS: solved-hint.ts 4
@@ -680,7 +724,7 @@ jobs:
     # PRINTS: spawn.ts 2
     # PRINTS: ssh-hostname.ts 2
     # PRINTS: stats.ts 1
-    # PRINTS: status.ts 9
+    # PRINTS: status.ts 12
     # PRINTS: stop.ts 3
     # PRINTS: stream.ts 3
     # PRINTS: suspect-render.ts 3
@@ -688,7 +732,7 @@ jobs:
     # PRINTS: sweep.ts 3
     # PRINTS: target-paths.ts 1
     # PRINTS: team-settings.ts 2
-    # PRINTS: telemetry-loss.ts 6
+    # PRINTS: telemetry-loss.ts 8
     # PRINTS: terminal.ts 3
     # PRINTS: time-window.ts 1
     # PRINTS: tool-events.ts 2
@@ -712,10 +756,12 @@ jobs:
     # PRINTS: wiring-lookalikes.ts 2
     # PRINTS: wiring-removal.ts 7
     # PRINTS: wiring-scope.ts 3
+    # PRINTS: work-context-ack.ts 8
     # PRINTS: work-contexts.ts 2
     # PRINTS: worker-env.ts 1
     # PRINTS: worker.ts 7
     # PRINTS: working-days.ts 3
+    # PRINTS: yield-to-requests.ts 2
     name: Mutation proof
     runs-on: ubuntu-latest
     steps:

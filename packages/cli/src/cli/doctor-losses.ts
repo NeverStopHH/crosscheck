@@ -2,10 +2,11 @@
  * WHAT THIS MACHINE LOST, AND WHETHER THE HUB KNOWS (docs/1.0/loss-accounting.md
  * §5.1, §5.2).
  *
- * Three lines from the machine's own ledgers, spelled once in
+ * Four lines from the machine's own ledgers, spelled once in
  * connector-core/src/spool/loss-report.ts `formatLossLines` so `doctor` and
  * `status` cannot describe one loss two ways: records discarded (by reason),
- * record kinds an older hub ignored (by kind — what an upgrade recovers), and
+ * records the hub rejected (by cause — why, and what clears it), record kinds
+ * an older hub ignored (by kind — what an upgrade recovers), and
  * losses upstream of any record (timed-out hooks, host drift, unread wire
  * lines). Each is a WARN when non-zero and a PASS "none" otherwise.
  *
@@ -68,8 +69,15 @@ export const lossChecks = (local: LocalLosses, now: Date): readonly Check[] => {
   const lines = formatLossLines(local, now);
   return [
     lineCheck("spool drops", lines.dropped),
+    // WHY the hub refused what `spool drops` counts as `rejected` (§4.3).
+    lineCheck("hub rejected records", lines.rejected),
+    // ...and what was never sent because the hub had ended its life.
+    lineCheck("withheld records", lines.withheld),
     ignoredCheck(lines),
     lineCheck("capture losses", lines.capture),
+    // ...and what a connector before 1.0 lost, apart from all of the above:
+    // its ledgers kept only counts, so nothing of it is re-sent.
+    lineCheck("legacy losses", lines.legacy),
   ];
 };
 

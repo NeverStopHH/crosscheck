@@ -15,9 +15,11 @@
  * the other two. Those run on every pull request.
  *
  * Each guarding test is run UNMUTATED first, and an already-red one aborts the
- * run. Without that, `caught: exitCode !== 0` reports a defect as detected when
- * the guard was simply broken to begin with — see assertGuardIsGreen for the
- * container in which this script did exactly that.
+ * run. Without that, a failing guard reports a defect as detected when the
+ * guard was simply broken to begin with — see assertGuardIsGreen for the
+ * container in which this script did exactly that. And a mutated run counts
+ * as caught only when it failed on an assertion or a thrown error, never on a
+ * timeout or a silent death (failedOnAssertion).
  *
  * Every file is restored in a `finally`, so a run that dies half-way leaves the
  * tree as it found it. If one ever does not, `git checkout -- packages .github`
@@ -1444,7 +1446,7 @@ export const MUTATIONS: readonly Mutation[
     // Re-pointed when the #17 port folded the capture counters into the same
     // write: the seen-set merge is now the inner call of that fold, so the
     // anchor moved while the defect it re-creates did not.
-    from: "withSeenTargets(fresh, files)",
+    from: "withSeenTargets(fresh, fresh.crosscheckSessionId === state.crosscheckSessionId ? files : [])",
     to: "fresh",
     test: `${CURSOR}/test/handlers.test.ts`,
     because:
@@ -1615,11 +1617,9 @@ export const MUTATIONS: readonly Mutation[
     // own repo although a sibling already bound the session elsewhere —
     // the pre-claim defect verbatim.
     label: "the recovery claim's loser proceeds as if it had won",
-    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
-    from: "  const claim = await claimSessionState(ctx.config.home, recovered);",
-    to:
-      "  await claimSessionState(ctx.config.home, recovered);\n" +
-      "  const claim = { claimed: true, state: recovered } as const;",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "    if (claim === null || !claim.claimed) {",
+    to: "    if (claim === null) {",
     test: `${CONNECTOR}/test/recovery-race.test.ts`,
     because:
       "two racing state-less recoveries both spool work contexts and the " +
@@ -5179,7 +5179,7 @@ export const MUTATIONS: readonly Mutation[
     // register call is the only place it can be sent from.
     label: "a session start is filed as a connector too old for the field",
     file: `${CORE}/src/flows/register-session.ts`,
-    from: "      seq: { epoch, n: 0 },\n",
+    from: "      seq: input.seq,\n",
     to: "",
     test: `${CORE}/test/register-seq.test.ts`,
     because:
@@ -5194,13 +5194,8 @@ export const MUTATIONS: readonly Mutation[
     // uses.
     label: "a re-fire registers under an epoch the session does not use",
     file: `${CORE}/src/flows/register-session.ts`,
-    from:
-      "  const seqEpoch = carriedSeqEpoch(\n" +
-      "    await readSessionState(input.home, input.hostSessionKey),\n" +
-      "    input,\n" +
-      "    mintedEpoch,\n" +
-      "  );",
-    to: "  const seqEpoch = mintedEpoch;",
+    from: "  const seqEpoch = carriedSeqEpoch(previous, input, fresh);",
+    to: "  const seqEpoch = fresh;",
     test: `${CORE}/test/register-seq.test.ts`,
     because:
       "UNSAFE: a session whose FIRST register never landed has " +
@@ -5583,8 +5578,8 @@ export const MUTATIONS: readonly Mutation[
     // allocates in the same window.
     label: "the end reads a position something else already owns",
     file: `${CORE}/src/flows/end-session.ts`,
-    from: "  const seq = seqAt(await allocateSeq(input.home, input.hostSessionKey, 1), 0);",
-    to: "  const seq = seqAt(await allocateSeq(input.home, input.hostSessionKey, 0), 0);",
+    from: "    seqAt(await allocateSeq(input.home, input.hostSessionKey, 1), 0),",
+    to: "    seqAt(await allocateSeq(input.home, input.hostSessionKey, 0), 0),",
     test: `${CORE}/test/end-session-seq.test.ts`,
     because:
       "`session.ended` lands on a position the session already issued, so the " +
@@ -5595,9 +5590,9 @@ export const MUTATIONS: readonly Mutation[
     // The deferred half. The marker is the ONLY carrier once the state file is
     // deleted, and reap's DeferredEnder runs in a later process.
     label: "a deferred end is silently unsequenced",
-    file: `${CORE}/src/flows/end-session.ts`,
-    from: "      seq,\n    })}\\n`,",
-    to: "    })}\\n`,",
+    file: `${CORE}/src/spool/end-marker.ts`,
+    from: "      ...(marker.seq === undefined ? {} : { seq: marker.seq }),\n",
+    to: "",
     test: `${CORE}/test/end-session-seq.test.ts`,
     because:
       "every session that ended with a backlog on disk — an offline " +
@@ -7271,7 +7266,7 @@ export const MUTATIONS: readonly Mutation[
     // The connector half of the same answer.
     label: "set_intent prints success over the hub's refusal to record",
     file: `${CORE}/src/mcp/tools/set-intent.ts`,
-    from: '  if (outcome?.status === "ignored") {',
+    from: '  if (written.outcome === "ignored") {',
     to: "  if (false) {",
     test: `${CORE}/test/set-intent.test.ts`,
     because:
@@ -10110,11 +10105,13 @@ export const MUTATIONS: readonly Mutation[
       "the table grows without bound while doctor prints a PASS about a sweep that is not running",
   },
   {
-    // 01a §5. A hub's sweep failures are that hub's.
+    // 01a §5. A hub's sweep failures are that hub's. Every hub keyed by the
+    // one module-level object there is: EMPTY_LEDGER was renamed EMPTY_STATE,
+    // and a mutation naming it only crashed the module.
     label: "one hub reports another hub's sweep failures",
     file: `${SERVER}/src/services/retention.ts`,
     from: "const ledgerKey = (db: Db): object => db;",
-    to: "const ledgerKey = (_db: Db): object => EMPTY_LEDGER;",
+    to: "const ledgerKey = (_db: Db): object => EMPTY_STATE;",
     test: `${SERVER}/test/skeleton-sweep.test.ts`,
     because:
       "a healthy hub WARNs about a failure it never had, and a person goes looking for a broken sweep that is somebody else's",
@@ -13346,7 +13343,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a reason word a hand edit planted in a ledger reaches the terminal as written",
     file: `${CORE}/src/spool/loss-report.ts`,
-    from: "const screenReason = (reason: string): string =>\n  isDropReasonWord(reason) || reason === UNATTRIBUTED_DROP_REASON ? reason : OTHER_REASON;",
+    from: "const screenReason = (reason: string): string =>\n  isDropReasonWord(reason) || reason === UNATTRIBUTED_DROP_REASON || reason === LEGACY_DROP_REASON\n    ? reason\n    : OTHER_REASON;",
     to: "const screenReason = (reason: string): string => reason;",
     test: `${CORE}/test/loss-report.test.ts`,
     because:
@@ -13506,8 +13503,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the loss-kind fold keeps a key the hub does not know",
     file: `${SCHEMA}/src/telemetry-loss.ts`,
-    from: "    const kind: LossKind = isLossKind(key) ? key : UNATTRIBUTED_LOSS_KIND;",
-    to: "    const kind = key as LossKind;",
+    from: "      const kind: LossKind = vocabulary.has(key) && isLossKind(key) ? key : UNATTRIBUTED_LOSS_KIND;",
+    to: "      const kind = key as LossKind;",
     test: `${SCHEMA}/test/telemetry-loss.test.ts`,
     because: "the fold every hub write goes through passes a connector's free-text key straight onto the row",
   },
@@ -13543,10 +13540,18 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an archive from before reasons reports its count under no kind",
     file: `${CORE}/src/spool/drops.ts`,
-    from: "      unattributed > 0\n        ? addCounts(byReason, { [UNATTRIBUTED_DROP_REASON]: unattributed })\n        : byReason,",
-    to: "      byReason,",
+    from: "      ...(legacy > 0 ? { [LEGACY_DROP_REASON]: legacy } : {}),\n",
+    to: "",
     test: `${CORE}/test/loss-report.test.ts`,
     because: "the kinds of a pre-reason archive sum to less than its total, and the report's kinds understate the loss",
+  },
+  {
+    label: "an archive's count no reason accounts for goes under no kind",
+    file: `${CORE}/src/spool/drops.ts`,
+    from: "      ...(unattributed > 0 ? { [UNATTRIBUTED_DROP_REASON]: unattributed } : {}),\n",
+    to: "",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "an unreadable ledger's floor folded into an archive leaves its kinds below its total, and the report understates the loss",
   },
   {
     // LOSS-8's named mutation: drop `losses` from the heartbeat body.
@@ -13561,8 +13566,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the heartbeat flow reads the report and never sends it",
     file: `${CORE}/src/flows/heartbeat.ts`,
-    from: "  await heartbeatSession(input.hub, input.crosscheckSessionId, input.status, losses);",
-    to: "  await heartbeatSession(input.hub, input.crosscheckSessionId, input.status);",
+    from: "  const result = await heartbeatSession(input.hub, input.crosscheckSessionId, input.status, losses);",
+    to: "  const result = await heartbeatSession(input.hub, input.crosscheckSessionId, input.status);",
     test: `${CORE}/test/session-losses.test.ts`,
     because: "every host's beat (Claude, Cursor, ACP) goes through this one flow, so all three stop reporting at once",
   },
@@ -13578,8 +13583,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a session's end never carries its last report",
     file: `${CORE}/src/flows/end-session.ts`,
-    from: "endSession(input.hub, input.crosscheckSessionId, seq, losses)",
-    to: "endSession(input.hub, input.crosscheckSessionId, seq)",
+    from: "endSession(input.hub, end.sessionId, end.seq, losses)",
+    to: "endSession(input.hub, end.sessionId, end.seq)",
     test: `${CORE}/test/session-losses.test.ts`,
     because: "a batch the final drain saw refused or ignored reaches the hub only with whichever session registers next",
   },
@@ -14039,10 +14044,11 @@ export const MUTATIONS: readonly Mutation[
     because: "a session/new whose answer arrives after its eviction never registers, and the proxy's only record of it is pending-evictions in the exit log",
   },
   {
-    // Review LOW: not every register carried the report.
+    // Review LOW: not every register carried the report. The recovery walks
+    // the shared life ladder now, which sends the report on every rung.
     label: "a recovered session registers without the loss report",
-    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
-    from: "    losses: await readTelemetryLossReport(ctx.config.home, ctx.repoKey),\n",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "      losses,\n",
     to: "",
     test: `${CONNECTOR}/test/recovery-losses.test.ts`,
     because: "a hook installed mid-session rebuilds its row as 'never reported' until a heartbeat lands, and a recovered session that ends first never reports at all",
@@ -17273,6 +17279,2243 @@ export const MUTATIONS: readonly Mutation[
     because: "the commits are dropped silently again, which is what the review found",
   },
   {
+    label: "the life ladder is three rungs long again",
+    file: `${CORE}/src/constants.ts`,
+    from: "export const REGISTER_LADDER_MAX_ATTEMPTS = 12;",
+    to: "export const REGISTER_LADDER_MAX_ATTEMPTS = 3;",
+    test: `${CONNECTOR}/test/resumed-session.test.ts`,
+    because: "the pilot's defect: a conversation with no lineage note finds three ended rungs, registers nothing and has every record rejected as a late write",
+  },
+  {
+    label: "an end no longer writes down the life it closed",
+    file: `${CORE}/src/flows/end-session.ts`,
+    from: "  await recordEndedLife(\n    input.home,\n    input.hostSessionKey,\n    end.sessionId,\n    input.now(),\n    isSeqStamp(end.seq) ? end.seq.epoch : null,\n    isSeqStamp(end.seq) ? end.seq.n : null,\n  );\n",
+    to: "",
+    test: `${CONNECTOR}/test/resumed-session.test.ts`,
+    because: "every resume walks every ended life again from the base id, one register call each, on the hook whose latency the developer feels",
+  },
+  {
+    label: "the ladder no longer reads the life the last end wrote down",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "    await readEndedLifeRung(input.home, input.hostSessionKey, baseId),",
+    to: "    null,",
+    test: `${CONNECTOR}/test/resumed-session.test.ts`,
+    because: "the lineage note is written and never consulted, so a resume pays for every ended life",
+  },
+  {
+    label: "the ladder ignores the life the state file is on",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "    liveSessionId: previous?.crosscheckSessionId ?? null,",
+    to: "    liveSessionId: null,",
+    test: `${CONNECTOR}/test/resumed-session.test.ts`,
+    because: "every compact inside a live life re-walks the ended lives below it, a register call each",
+  },
+  {
+    label: "the ladder walks rung by rung instead of galloping",
+    file: `${CORE}/src/state/session-lineage.ts`,
+    from: "    (_, attempt) => start + (attempt === 0 ? 0 : 2 ** (attempt - 1)),",
+    to: "    (_, attempt) => start + attempt,",
+    test: `${CORE}/test/session-lineage.test.ts`,
+    because: "with the lineage note gone the walk reaches twelve lives instead of a thousand, and a long-lived conversation is deaf again",
+  },
+  {
+    label: "Claude's recovery captures under the base id the hub ended",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "  const crosscheckSessionId = ladder.sessionId;\n  const developerId = registration?.developerId",
+    to: "  const crosscheckSessionId = baseSessionId;\n  const developerId = registration?.developerId",
+    test: `${CONNECTOR}/test/resumed-session.test.ts`,
+    because: "a conversation that SessionEnd closed and that continues without a SessionStart has every record rejected",
+  },
+  {
+    label: "a rejected ledger line forgets why the hub refused it",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "      rejectCauses(uncounted, causeIn(sendable, released)),\n",
+    to: "",
+    test: `${CORE}/test/reject-cause.test.ts`,
+    because: "the pilot's state: 433 records dropped and nothing on the machine that says why",
+  },
+  {
+    label: "the hub's late-write sentence is no longer recognised",
+    file: `${CORE}/src/spool/reject-cause.ts`,
+    from: '  [/^producer\\.sessionId: session has already ended/, "session_ended"],\n',
+    to: "",
+    test: `${CORE}/test/reject-cause.test.ts`,
+    because: "a refusal for an ended session is filed under `other`, and doctor sends the reader to the hub's response instead of the resume fix",
+  },
+  {
+    label: "the archive fold drops the rejection causes",
+    file: `${CORE}/src/spool/drops.ts`,
+    from: "      rejectedCauses: total.rejectedCauses,\n",
+    to: "",
+    test: `${CORE}/test/reject-cause.test.ts`,
+    because: "a week after the loss the age sweep turns every named cause into 'no cause recorded'",
+  },
+  {
+    label: "the rejected line is never formatted",
+    file: `${CORE}/src/spool/loss-report.ts`,
+    from: "  rejected: rejectedLine(local),",
+    to: "  rejected: null,",
+    test: `${CLI}/test/doctor-losses.test.ts`,
+    because: "doctor and status count rejected records and say nothing about why",
+  },
+  {
+    label: "doctor drops its hub rejected records line",
+    file: `${CLI}/src/cli/doctor-losses.ts`,
+    from: '    lineCheck("hub rejected records", lines.rejected),\n',
+    to: "",
+    test: `${CLI}/test/doctor-losses.test.ts`,
+    because: "the cause is kept in the ledger and printed nowhere a person runs",
+  },
+  {
+    label: "status's losses line leaves the rejection causes out",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "  const parts = [rejected, withheld, ignored, capture, legacy].filter((part): part is string => part !== null);",
+    to: "  const parts = [withheld, ignored, capture, legacy].filter((part): part is string => part !== null);",
+    test: `${CLI}/test/doctor-losses.test.ts`,
+    because: "status says '433 dropped' beside nothing that explains it, which is what the pilot read",
+  },
+  {
+    label: "the flush never asks its healer when the hub refuses its own session",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "    healer: input.heal,",
+    to: "    healer: undefined,",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "a session the hub ended mid-life stays refused until the host's next SessionStart, every record in between lost",
+  },
+  {
+    label: "a refused session's heal re-sends the records its refused life produced",
+    file: `${CORE}/src/spool/flush-heal.ts`,
+    from: '  !(bodyNamesItsSession(record["kind"]) && writtenBy(record) === heal.refusedSessionId);',
+    to: "  true;",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "an edit made after the hub ended the life is filed into that ended session past its end, and its order is misstated",
+  },
+  {
+    label: "a session registered late re-sends only part of its own batch",
+    file: `${CORE}/src/spool/flush-heal.ts`,
+    from: "  heal.sessionId === heal.refusedSessionId ||",
+    to: "  false ||",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "a SessionStart whose register did not land loses its work context and every target, though the heal registered that very session",
+  },
+  {
+    label: "a never-registered session is not healed",
+    file: `${CORE}/src/spool/flush-heal.ts`,
+    from: 'const OWN_SESSION_CAUSES: ReadonlySet<RejectCause> = new Set(["session_ended", "session_unknown"]);',
+    to: 'const OWN_SESSION_CAUSES: ReadonlySet<RejectCause> = new Set(["session_ended"]);',
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "a session whose SessionStart register timed out is refused for the rest of its life",
+  },
+  {
+    label: "a refused life's straggler is delivered under the healed life",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "    isRefusedLifeRecord(record, refusedLives, input.sessionId);",
+    to: "    false;",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "a parallel hook's edit of the refused life is filed into the ended session on the next flush",
+  },
+  {
+    label: "the heal ignores its cooldown",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: "  if (stamp !== null && now.getTime() - stamp.atMs < HEAL_COOLDOWN_MS) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "a hub that refuses every register turns every tool call into a register round trip",
+  },
+  {
+    label: "the heal registers the next life and spools no work context for it",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: "    await oweWorkContext(input.home, input.repoKey, sessionSlug(input.hostSessionKey), {\n      sessionId,\n      record: workContext,\n    });\n",
+    to: "",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "every target of the healed life names a work context the hub never heard of and is rejected",
+  },
+  {
+    label: "the healed life keeps the refused life's seen-set",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: "      seenTargets: [],\n    });",
+    to: "      seenTargets: fresh.seenTargets,\n    });",
+    test: `${CONNECTOR}/test/resumed-session.test.ts`,
+    because: "a file the ended life had captured is never captured into the next life's work context",
+  },
+  {
+    label: "the heal's walk ignores the flush's deadline",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "  return roomMs <= 0 ? null : { ...input.hub, timeoutMs: Math.min(input.hub.timeoutMs, roomMs) };",
+    to: "  return input.hub;",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "a slow hub's register runs past the hook's budget and takes its output and its state write with it",
+  },
+  {
+    label: "a heartbeat the hub refuses heals nothing",
+    file: `${CORE}/src/flows/heartbeat.ts`,
+    from: "    await input.onRefused?.(refused);\n",
+    to: "",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "the heartbeat's 409 is discarded again, and only a refused flush can heal",
+  },
+  {
+    label: "Claude's PostToolUse flushes without a healer",
+    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
+    from: "      heal: healerFor(ctx),\n",
+    to: "",
+    test: `${CONNECTOR}/test/resumed-session.test.ts`,
+    because: "a Claude Code conversation the hub ended mid-life stays deaf until its next SessionStart",
+  },
+  {
+    label: "Cursor's afterFileEdit flushes without a healer",
+    file: `${CURSOR}/src/handlers/file-edit.ts`,
+    from: "    { sessionId: state.crosscheckSessionId, developerId: state.developerId, heal: healerFor(ctx) },",
+    to: "    { sessionId: state.crosscheckSessionId, developerId: state.developerId },",
+    test: `${CURSOR}/test/resumed-session.test.ts`,
+    because: "a Cursor chat the hub ended in another window stays deaf until it is reopened",
+  },
+  {
+    label: "the ACP engine's session does not follow its heal",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "        session.workContextId = workContextIdFor(healed.sessionId);\n",
+    to: "",
+    test: `${ACP}/test/resumed-session.test.ts`,
+    because: "every capture after the heal still names the refused life's work context and is withheld",
+  },
+  {
+    label: "a resume starts on the rung its last end wrote down",
+    file: `${CORE}/src/state/session-lineage.ts`,
+    from: "  return endedRung !== null && (live === null || endedRung >= live) ? endedRung + 1 : (live ?? 0);",
+    to: "  return Math.max(live ?? 0, endedRung ?? 0);",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review E2E-1: a life whose end never reached the hub is re-entered under the resume's fresh epoch, and its order reads epoch_split for good",
+  },
+  {
+    label: "a deferred end is skipped whenever its host session has a state file",
+    file: `${CORE}/src/spool/reap.ts`,
+    from: '  return lifeId === null || typeof liveId !== "string" || liveId === lifeId;',
+    to: "  return true;",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "the life the host ended stays open on the hub for good once the conversation resumes, because the next life's state file hides its marker",
+  },
+  {
+    label: "a register that does not land falls back to the base id",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "  const crosscheckSessionId = ladder.sessionId;\n  const developerId = registration?.developerId",
+    to: "  const crosscheckSessionId = registration?.sessionId ?? baseSessionId;\n  const developerId = registration?.developerId",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review E2E-2: a re-fire whose register is slow puts the live conversation back on the life the hub ended, and the next flush spends the repo spool under it",
+  },
+  {
+    label: "a refused flusher spends another conversation's records when it cannot heal",
+    file: `${CORE}/src/spool/flush-heal.ts`,
+    from: "    return neededLater ? null : { summary: input.first, heal: null, asked: true, counted };",
+    to: "    return { summary: input.first, heal: null, asked: true, counted };",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review P7: one conversation's dead session drops another conversation's edits, cursor and all",
+  },
+  {
+    label: "a refused drain with no healer spends another conversation's records",
+    file: `${CORE}/src/spool/flush-heal.ts`,
+    from: "    return neededLater ? null : { summary: input.first, heal: null, asked: false, counted: NONE_COUNTED };",
+    to: "    return { summary: input.first, heal: null, asked: false, counted: NONE_COUNTED };",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "SessionEnd's drain under a session the hub refuses drops whatever other conversations left on disk",
+  },
+  {
+    label: "a heal with no room still stamps its cooldown",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: '  return deadlineMs - Date.now() < HEAL_MIN_ROOM_MS ? PENDING : "walk";',
+    to: '  return "walk";',
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review P6: a heartbeat refused at the end of a spent hook burns five minutes of cooldown and the next flush, with room, drops what it could have re-sent",
+  },
+  {
+    label: "a sibling's walk in flight reads as a failed heal",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: "    return stamp.walking && Date.now() < stamp.untilMs ? PENDING : FAILED;",
+    to: "    return FAILED;",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review P5: a parallel hook's flush drops the records the sibling's walk was about to give a life",
+  },
+  {
+    // With the `counted` every other answer carries: without it the mutated
+    // flush only crashed reading it, and the guard caught the TypeError.
+    label: "a flush told to wait for a walk drops its batch anyway",
+    file: `${CORE}/src/spool/flush-heal.ts`,
+    from: '  if (result.outcome === "pending") {\n    return null;',
+    to: '  if (result.outcome === "pending") {\n    return { summary: input.first, heal: null, asked: true, counted };',
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "the pending answer is ignored and the records a landing walk would have carried are dropped",
+  },
+  {
+    label: "a heal of an ended life spends a register call on its sure 409",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: '    ...(refusal.cause === "session_ended" ? { endedSessionId: refusal.sessionId } : {}),\n',
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "every heal walks the refused rung first and pays one more round trip on the hook's budget",
+  },
+  {
+    label: "the heal that loses the state race answers a dead end",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: "    return moved === null ? FAILED : healedTo(refusal.sessionId, moved);\n  }\n  return healedTo(",
+    to: "    return FAILED;\n  }\n  return healedTo(",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review P4: the loser of two concurrent heals throws its batch away although the winner registered the very life it walked to",
+  },
+  {
+    label: "the heal's register is sent before the refusal's loss is written",
+    file: `${CORE}/src/spool/batch-losses.ts`,
+    from: "    await recordSealed(ctx, spool, refused.map((line) => line.record));\n",
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review P3: the next life reports no loss from its first word, and coverage reads complete over the records the refusal just cost",
+  },
+  {
+    label: "a refusal the walk already wrote down is counted again",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "  const uncounted = (summary.results ?? []).filter((result) => !healed.counted.has(result.index));",
+    to: "  const uncounted = summary.results ?? [];",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "every record a heal's refusal cost is booked twice in the drop ledger",
+  },
+  {
+    label: "Claude's heartbeat after a heal beats the refused life",
+    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
+    from: "  const current = (await readSessionState(ctx.config.home, ctx.payload.session_id)) ?? state;",
+    to: "  const current = state;",
+    test: `${CONNECTOR}/test/resumed-session.test.ts`,
+    because: "review P3b: the beat right after a heal is a 409 at the dead id, and the new life's loss report waits a whole throttle interval",
+  },
+  {
+    label: "a file captured into the refused life stays seen in the next one",
+    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
+    from: "withSeenTargets(fresh, fresh.crosscheckSessionId === state.crosscheckSessionId ? files : [])",
+    to: "withSeenTargets(fresh, files)",
+    test: `${CONNECTOR}/test/resumed-session.test.ts`,
+    because: "an edit made in the hook the hub refused is never captured into the healed life, however often the file is edited again",
+  },
+  {
+    label: "a withheld straggler is booked as rejected by the hub",
+    file: `${CORE}/src/spool/batch-losses.ts`,
+    from: '      withheld.length,\n      "withheld",',
+    to: '      withheld.length,\n      "rejected",',
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review finding 5: doctor says the hub rejected records that were never sent",
+  },
+  {
+    label: "the withheld line is never formatted",
+    file: `${CORE}/src/spool/loss-report.ts`,
+    from: "  withheld: withheldLine(local),",
+    to: "  withheld: null,",
+    test: `${CLI}/test/doctor-losses.test.ts`,
+    because: "records the connector withheld are counted in `spool drops` and explained nowhere",
+  },
+  {
+    label: "doctor drops its withheld records line",
+    file: `${CLI}/src/cli/doctor-losses.ts`,
+    from: '    lineCheck("withheld records", lines.withheld),\n',
+    to: "",
+    test: `${CLI}/test/doctor-losses.test.ts`,
+    because: "the withheld count is kept and printed nowhere a person runs",
+  },
+  {
+    label: "status's losses line leaves the withheld records out",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "  const parts = [rejected, withheld, ignored, capture, legacy].filter((part): part is string => part !== null);",
+    to: "  const parts = [rejected, ignored, capture, legacy].filter((part): part is string => part !== null);",
+    test: `${CLI}/test/doctor-losses.test.ts`,
+    because: "status counts withheld records as dropped beside nothing that says why",
+  },
+  {
+    label: "a heal that loses its life to a SessionEnd leaves it open",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: "    await retireOrphan(input, ladder.sessionId, now, deadlineMs);\n    const moved",
+    to: "    const moved",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review finding 6: the orphan life stays open, the next resume lands on it under a fresh epoch, and its order splits",
+  },
+  {
+    label: "an orphaned life is written down but never ended",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: "      await endSession({ ...input.hub, timeoutMs: Math.min(input.hub.timeoutMs, roomMs) }, sessionId, ALLOCATION_FAILED);\n",
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "the life a raced heal registered stays open on the hub until the reaper guesses it dead",
+  },
+  {
+    label: "a heal binds the next life to the hook's repo",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: "    const result = await walk(boundToSession(input, state), state, refusal, deadlineMs, now);",
+    to: "    const result = await walk(input, state, refusal, deadlineMs, now);",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review finding 7: a Stop in another repo of a multi-repo workspace re-homes the session to that repo on the hub",
+  },
+  {
+    label: "the refused-lives note only ever grows",
+    file: `${CORE}/src/spool/refused-lives.ts`,
+    from: "  if (kept.length === lines.length && kept.length < REFUSED_LIVES_MAX) {",
+    to: "  if (true) {",
+    test: `${CORE}/test/session-lineage.test.ts`,
+    because: "review finding 8: lines past their age stay on file for good, read on every drain",
+  },
+  {
+    label: "a Cursor-only machine never sweeps lineage notes and heal stamps",
+    file: `${CURSOR}/src/handlers/session-start.ts`,
+    from: "  await reapStaleLineages(ctx.config.home, now);\n",
+    to: "",
+    test: `${CURSOR}/test/resumed-session.test.ts`,
+    because: "review finding 8: the side files of every conversation that never came back pile up in the sessions directory",
+  },
+  {
+    label: "an ACP-only machine never sweeps lineage notes and heal stamps",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "          await reapStaleLineages(session.config.home, now());\n",
+    to: "",
+    test: `${ACP}/test/resumed-session.test.ts`,
+    because: "review finding 8: the proxy's machines keep every side file of every session it ever loaded",
+  },
+  {
+    label: "a refusal no heal answered spends an unregistered life's own work context",
+    file: `${CORE}/src/spool/flush-heal.ts`,
+    from: "    spendsAnotherConversation(input, refusals) || spendsOwnWorkContext(input, refusals, cause);",
+    to: "    spendsAnotherConversation(input, refusals);",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 finding 1: the heal that later registers the life as itself finds its work context gone, and every edit after it is refused",
+  },
+  {
+    label: "the work context kept on disk is an ended life's, not an unregistered one's",
+    file: `${CORE}/src/spool/flush-heal.ts`,
+    from: "  cause === \"session_unknown\" &&\n",
+    to: "  cause !== \"session_unknown\" &&\n",
+    test: `${CONNECTOR}/test/resumed-session.test.ts`,
+    because: "review-2 E2E-3: `--resume` while the hub refuses registers spends the resumed life's work context, and every edit after the hub recovers is refused as `other`",
+  },
+  {
+    label: "a heal onto the same id spools no work context",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: "    await oweWorkContext(input.home, input.repoKey, sessionSlug(input.hostSessionKey), {\n      sessionId,\n      record: workContext,\n    });\n",
+    to: "    if (sessionId !== refusedSessionId) {\n      await oweWorkContext(input.home, input.repoKey, sessionSlug(input.hostSessionKey), {\n        sessionId,\n        record: workContext,\n      });\n    }\n",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 finding 1: a work context another conversation's flush spent is never sent again, and the life's edits are refused for good",
+  },
+  {
+    label: "ACP's registration flush carries no healer",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "        developerId: registered.developerId,\n        heal: healerFor(session),\n",
+    to: "        developerId: registered.developerId,\n",
+    test: `${ACP}/test/resumed-session.test.ts`,
+    because: "review-2 finding 1: a register the hub refused at session/new stays unregistered until the first capture, its work context never reaching the hub before it",
+  },
+  {
+    label: "a resumed life's deferred end overwrites the one before it",
+    file: `${CORE}/src/flows/end-session.ts`,
+    from: "    lifeRungOf(crosscheckSessionIdFor(input.hostSessionKey), lifeId) ?? 0,\n",
+    to: "    0,\n",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 finding 3: the earlier life is never ended from this machine, its session.ended position is lost, and doctor's unclosed count never sees it",
+  },
+  {
+    label: "reap reads a later life's marker as a host session of its own",
+    file: `${CORE}/src/spool/reap.ts`,
+    from: "    : (LATER_LIFE_MARKER.exec(name)?.[1] ?? null);",
+    to: "    : name.endsWith(PENDING_LIFE_SUFFIX) ? name.slice(0, -PENDING_LIFE_SUFFIX.length) : null;",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "a resumed life's deferred end is published while its records are still on disk, under a spool nobody writes",
+  },
+  {
+    label: "SessionEnd deletes a state a heal moved on and leaves that life open",
+    file: `${CORE}/src/flows/end-session.ts`,
+    from: "  const healed = moved === null ? null : lifeEnd(input, moved.crosscheckSessionId, seqAt(moved.seq, 0));\n",
+    to: "  const healed = null as LifeEnd | null;\n",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 finding 2: the healed life stays open with no state naming it, the next resume lands on it under a fresh epoch, and its order splits",
+  },
+  {
+    label: "SessionEnd's state delete never looks at which life the state names",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  if (fresh === null || fresh.crosscheckSessionId === crosscheckSessionId) {\n    return null;\n  }\n",
+    to: "  if (true) {\n    return null;\n  }\n",
+    test: `${ACP}/test/resumed-session.test.ts`,
+    because: "review-2 finding 2: an ACP proxy that exits while its in-memory session still names the life a heal moved off leaves the healed life open for the next session/load",
+  },
+  {
+    label: "a batch a walk leaves on disk never notes what the walk wrote down",
+    file: `${CORE}/src/spool/batch-losses.ts`,
+    from: "      await writeCountedLines(spool.dataPath, spool.cursorPath, spool.offset, withEnds(earlier, counted), spool);\n",
+    to: "",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 finding 4 and LOW-3: the next walk — or the flush after a hook killed mid-walk — meets the same lines with nothing to say they were counted, and counts them again",
+  },
+  {
+    label: "withheld records reach the hub as records it refused",
+    file: `${CORE}/src/spool/loss-report.ts`,
+    from: '  withheld: "spool_withheld",',
+    to: '  withheld: "hub_rejected",',
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "review-2 honesty: the hub's loss kinds say it answered 200 and refused records that were never sent",
+  },
+  {
+    label: "the hub stores the withheld kind as unattributed",
+    file: `${SCHEMA}/src/telemetry-loss.ts`,
+    from: '  "spool_withheld",\n',
+    to: "",
+    test: `${SERVER}/test/coverage-losses.test.ts`,
+    because: "review-2 honesty: a loss the connector named arrives at its own hub unnamed",
+  },
+  {
+    label: "an older hub's fold is stated against this hub's vocabulary",
+    file: `${SCHEMA}/src/telemetry-loss.ts`,
+    from: "      const kind: LossKind = vocabulary.has(key) && isLossKind(key) ? key : UNATTRIBUTED_LOSS_KIND;",
+    to: "      const kind: LossKind = isLossKind(key) ? key : UNATTRIBUTED_LOSS_KIND;",
+    test: `${SCHEMA}/test/telemetry-loss.test.ts`,
+    because: "the test that says what a hub from before spool_withheld does with it would pass whatever that hub does",
+  },
+  {
+    label: "a heal re-sends a batch without the life's work context ahead of it",
+    file: `${CORE}/src/spool/flush-heal.ts`,
+    from: "      ...ahead,\n",
+    to: "",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 MEDIUM-1: a life whose work context was spent before its heal has every re-sent edit refused again, the work context spooled behind them",
+  },
+  {
+    label: "a heal onto the same id keeps the seen-set",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: "      seenTargets: [],\n    });",
+    to: "      seenTargets: sessionId === refusedSessionId ? fresh.seenTargets : [],\n    });",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 MEDIUM-1 (M18): a file whose records the refused life lost is never captured again, and no further loss is counted",
+  },
+  {
+    label: "a later life's marker is a name an older connector's reap lists",
+    file: `${CORE}/src/config/paths.ts`,
+    from: "  rung === 0 ? `${slug}.pending-end` : `${slug}.r${String(rung)}${PENDING_LIFE_SUFFIX}`;",
+    to: "  rung === 0 ? `${slug}.pending-end` : `${slug}.r${String(rung)}.pending-end`;",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 MEDIUM-2: a proxy started before the upgrade reads the marker as a session with no spool and ends the life while its records are still on disk",
+  },
+  {
+    label: "reap never lists a later life's marker",
+    file: `${CORE}/src/spool/reap.ts`,
+    from: "    : (LATER_LIFE_MARKER.exec(name)?.[1] ?? null);",
+    to: "    : null;",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "a resumed life's deferred end is never delivered and never ages into doctor's unclosed count",
+  },
+  {
+    label: "a SessionEnd between a heal's switch and its re-send ends the healed life",
+    file: `${CORE}/src/flows/end-session.ts`,
+    from: "    (await readSessionSpool(input.home, input.repoKey, slug)).lines.length + (owesEnding ? 1 : 0);",
+    to: "    (await readSessionSpool(input.home, input.repoKey, slug)).lines.length;",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 LOW-4: the heal's re-send goes under a life SessionEnd already ended, and another conversation's backlog is refused as a late write",
+  },
+  {
+    label: "a record whose work context the hub never saw is refused for no named reason",
+    file: `${CORE}/src/spool/reject-cause.ts`,
+    from: '  [/^workContextId: work context ".*" not found$/, "author_unknown"],\n',
+    to: "",
+    test: `${CORE}/test/reject-cause.test.ts`,
+    because: "review-2 LOW-5: doctor calls the pilot's own failure class \"a reason this connector does not name\"",
+  },
+  {
+    label: "a record whose own session the hub never saw is refused for no named reason",
+    file: `${CORE}/src/spool/reject-cause.ts`,
+    from: '  [/^(sessionId|authorSessionId): session ".*" not found$/, "author_unknown"],\n',
+    to: "",
+    test: `${CORE}/test/reject-cause.test.ts`,
+    because: "review-2 LOW-5: a work context delivered before its own session registered is counted as other",
+  },
+  {
+    label: "a hook inside a failed walk's cooldown re-sends its pinned batch",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "  if ((await input.heal?.refusedFor?.(input.sessionId)) === true) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 LOW-5: every hook for five minutes posts the same batch for the hub to refuse again",
+  },
+  {
+    label: "a failed walk leaves no mark of the life it failed for",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: 'result.outcome === "healed" ? null : refusal.sessionId',
+    to: "null",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 LOW-5: the cooldown cannot say a send would be refused, and the pinned batch is re-sent on every hook",
+  },
+  {
+    label: "the flusher's own work context is held whoever wrote it (M1)",
+    file: `${CORE}/src/spool/flush-heal.ts`,
+    from: '    return record?.["kind"] === "work_context" && writtenBy(record) === input.flusherSessionId;',
+    to: '    return record?.["kind"] === "work_context";',
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 LOW-6: another life's work context pins the whole spool until a heal that cannot help it",
+  },
+  {
+    label: "an ended life's own work context is held for a heal that never comes (M2)",
+    file: `${CORE}/src/spool/flush-heal.ts`,
+    from: '  cause === "session_unknown" &&\n',
+    to: "  true &&\n",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 LOW-6: an ended life is never registered again, and its batch stalls the spool behind it",
+  },
+  {
+    label: "any refused record of an unregistered life pins its batch (M12)",
+    file: `${CORE}/src/spool/flush-heal.ts`,
+    from: '    return record?.["kind"] === "work_context" && writtenBy(record) === input.flusherSessionId;',
+    to: "    return writtenBy(record ?? {}) === input.flusherSessionId;",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 LOW-6: a heal-less drain keeps every refused record on disk instead of counting it",
+  },
+  {
+    label: "a refusal an earlier walk wrote down is counted again when the batch goes (M5)",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "    .filter((line) => !earlier.has(line.end));",
+    to: "    .filter(() => true);",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 LOW-6: one refused record reads as two in the ledger and in the hub's loss_total",
+  },
+  {
+    label: "a batch's losses are written twice in a flush whose walk heals (M14)",
+    file: `${CORE}/src/spool/batch-losses.ts`,
+    from: "      running ??= run(sealed);",
+    to: "      running = run(sealed);",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 LOW-6: every torn line of a batch a heal delivered is counted twice",
+  },
+  {
+    label: "a deferred SessionEnd never writes down the healed life's end (M8)",
+    file: `${CORE}/src/flows/end-session.ts`,
+    from: "    await writeDownEnd(input, healed, standing);\n",
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 LOW-6: the healed life is never ended from its marker, and the next resume lands on it under a fresh epoch",
+  },
+  {
+    label: "a SessionEnd whose state lock stays busy keeps the state (M11)",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  return closed === null ? closeState(home, hostSessionKey, crosscheckSessionId) : closed.moved;",
+    to: "  return closed === null ? null : closed.moved;",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 LOW-6: a state file outlives its session and pins its spool against reap",
+  },
+  {
+    label: "a batch carrying an owed life's records goes without its work context ahead",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "  const paying = owed !== null && (isLoneDebt || sendable.some((line) => isOwedFor(owed, line.record))) ? owed : null;",
+    to: "  const paying = owed !== null && isLoneDebt ? owed : null;",
+    test: `${CORE}/test/owed-work-context.test.ts`,
+    because: "review-2 round 6 HIGH-1: a heal's re-send that fails once leaves the backlog to a flush with no work context ahead, and every record is refused author_unknown and spent",
+  },
+  {
+    label: "a batch is not sized one short while a work context is owed",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "const BATCH_LINES = MAX_INGEST_BATCH - 1;",
+    to: "const BATCH_LINES = MAX_INGEST_BATCH;",
+    test: `${CORE}/test/owed-work-context.test.ts`,
+    because: "review-2 round 6 HIGH-1: a full backlog plus the work context is past the hub's batch limit and refused whole, every flush",
+  },
+  {
+    label: "a work context the hub took stays owed",
+    file: `${CORE}/src/spool/owed-work-context.ts`,
+    from: "  if (isTaken(answer)) {\n    await settleOwedWorkContext(home, key, slug, workContextId);\n",
+    to: "  if (isTaken(answer)) {\n",
+    test: `${CORE}/test/owed-work-context.test.ts`,
+    because: "every later batch of the life pays it again, one record short of the limit, for good",
+  },
+  {
+    label: "a life's own records refused for the work context it is owed are spent",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "  if (await isPinnedByDebt(ctx, spool, summary, sendable)) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/owed-work-context.test.ts`,
+    because: "review-2 round 6 HIGH-1: author_unknown on the flusher's own life while its work context is owed is needed later, and spending it loses the edit",
+  },
+  {
+    label: "a debt nothing will ever pay is kept for good",
+    file: `${CORE}/src/spool/reap.ts`,
+    from: "  await removeFile(spoolOwedWorkContextPath(home, key, slug));\n};",
+    to: "};",
+    test: `${CORE}/test/owed-work-context.test.ts`,
+    because: "the side file of every heal whose life ended with no records piles up in the spool directory",
+  },
+  {
+    label: "a Cursor-only machine never reaps stale session states",
+    file: `${CURSOR}/src/handlers/session-start.ts`,
+    from: "  await reapStaleSessionStates(ctx.config.home, now, { keepHostSessionKey: ctx.hostSessionKey });\n",
+    to: "",
+    test: `${CURSOR}/test/resumed-session.test.ts`,
+    because: "review-2 round 6 HIGH-2: corpses pin their spools, with no path that removes them",
+  },
+  {
+    label: "an ACP-only machine never reaps stale session states",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "          await reapStaleSessionStates(session.config.home, now(), { keepHostSessionKey: session.hostSessionKey });\n",
+    to: "",
+    test: `${ACP}/test/resumed-session.test.ts`,
+    because: "review-2 round 6 HIGH-2: the proxy's machines keep every corpse of every session that died without an end",
+  },
+  {
+    label: "doctor says nothing of records waiting for their own conversation",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    ...(await waitingChecks(home, key, now)),\n",
+    to: "",
+    test: `${CLI}/test/doctor.test.ts`,
+    because: "review-2 round 7: another live session's backlog, which no other flusher sends, shows nowhere",
+  },
+  {
+    label: "a heal reads a busy state lock as a switch that landed",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: '  if (swap === "lock_busy") {',
+    to: '  if (swap === "lock_busy" && false) {',
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 6 MEDIUM-1 (RS5-B): the heal answers a life the state never switched to, or retires the one it names",
+  },
+  {
+    label: "an orphan is retired although the state names it",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: "    if ((await readSessionState(input.home, input.hostSessionKey))?.crosscheckSessionId === sessionId) {\n      return false;\n    }\n",
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 6 MEDIUM-1, round 7: a heal that lost the switch to a SessionStart on the very life it registered ends that live life on the hub",
+  },
+  {
+    label: "a heal whose switch met a busy lock spends a cooldown",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: '    if (result.outcome === "pending") {\n',
+    to: "    if (false) {\n",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 6 MEDIUM-1 (RS5-B2): the stamp says failed, and the life sends nothing for five minutes although nothing was refused",
+  },
+  {
+    label: "a register that lands keeps a failed walk's verdict",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "  if (registration !== null) {\n    // A register that landed answers",
+    to: "  if (false) {\n    // A register that landed answers",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 round 6 LOW-1 (RS5-D): a life the hub now knows posts nothing for up to five minutes after its re-register",
+  },
+  {
+    label: "a stray round-4 marker is read as a host session of its own",
+    file: `${CORE}/src/spool/reap.ts`,
+    from: "    ? (name.slice(0, -PENDING_END_SUFFIX.length).split(STRAY_RUNG_SEPARATOR)[0] ?? null)",
+    to: "    ? name.slice(0, -PENDING_END_SUFFIX.length)",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 6 LOW-2: `<slug>@r1.pending-end` has no spool of its own, so the life is ended while its records are still on disk",
+  },
+  {
+    label: "ACP keeps its seen-set on a heal onto the same id (E1)",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: '      if (healed.outcome === "healed") {',
+    to: '      if (healed.outcome === "healed" && healed.sessionId !== session.crosscheckSessionId) {',
+    test: `${ACP}/test/resumed-session.test.ts`,
+    because: "review-2 round 6 MEDIUM-2: a file whose record was lost before the heal is never captured again by the proxy",
+  },
+  {
+    label: "ACP's twin of the healer drops the cooldown's verdict (E2)",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "heal.refusedFor === undefined ? twin : Object.assign(twin, { refusedFor: heal.refusedFor })",
+    to: "twin",
+    test: `${ACP}/test/resumed-session.test.ts`,
+    because: "review-2 round 6 MEDIUM-2: every capture inside a failed walk's cooldown posts a batch the hub refuses again",
+  },
+  {
+    label: "a heal's re-send reads its answers one place off (A1)",
+    file: `${CORE}/src/spool/flush-heal.ts`,
+    from: "merged(input.first, resent, again.data, ahead.length)",
+    to: "merged(input.first, resent, again.data, 0)",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 round 6 MEDIUM-2: each re-sent record wears the answer of the one before it, and the last refusal is never counted",
+  },
+  {
+    label: "a batch whose walk counted a single line leaves no note (B1)",
+    file: `${CORE}/src/spool/batch-losses.ts`,
+    from: "    if (counted.length > 0) {",
+    to: "    if (counted.length > 1) {",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 round 6 MEDIUM-2: one torn line of a stuck batch is counted again on every walk",
+  },
+  {
+    label: "reap cuts a later life's slug at its first `.r` (K1)",
+    file: `${CORE}/src/spool/reap.ts`,
+    from: "    : (LATER_LIFE_MARKER.exec(name)?.[1] ?? null);",
+    to: '    : name.endsWith(PENDING_LIFE_SUFFIX) ? name.split(".r")[0] ?? null : null;',
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 6 MEDIUM-2: a host session whose slug holds `.r` has its later life ended while its records wait",
+  },
+  {
+    label: "a flush inside a failed walk's cooldown answers empty (F7)",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: '    return { outcome: "failed", remaining: pendingTotal(await pendingSpools(ctx)) };\n  }\n  let sent = 0;',
+    to: '    return { outcome: "empty" };\n  }\n  let sent = 0;',
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 round 6 MEDIUM-2: a caller reading the outcome believes the spool is empty while the life's records wait",
+  },
+  {
+    label: "a cursor note is believed for a data file recreated in its place (M6)",
+    file: `${CORE}/src/spool/cursor.ts`,
+    from: "!parsed.success || !isSameFile(at, parsed.data) || parsed.data.offset !== at.offset",
+    to: "!parsed.success || parsed.data.offset !== at.offset",
+    test: `${CORE}/test/spool-durability.test.ts`,
+    because: "review-2 round 6 MEDIUM-2: the new file's lines are taken for settled and are never sent",
+  },
+  {
+    label: "a flusher sends another live conversation's spool",
+    file: `${CORE}/src/spool/ownership.ts`,
+    from: '    : { owner: "live-elsewhere", silentMs: sessionSilentForMs(stamps, wroteAtMs, now.getTime()) };',
+    to: '    : sighted("abandoned");',
+    test: `${CORE}/test/spool-ownership.test.ts`,
+    because: "review-2 round 7 (H1, M2, P3): another conversation spends a live life's records — before its register, or without the work context it is owed",
+  },
+  {
+    label: "an ended conversation's spool waits for an owner that never comes",
+    file: `${CORE}/src/spool/ownership.ts`,
+    from: '  if (wroteAtMs === null) {\n    return sighted("ended");',
+    to: '  if (wroteAtMs === null) {\n    return sighted("live-elsewhere");',
+    test: `${CORE}/test/spool-ownership.test.ts`,
+    because: "review-2 round 7: what a conversation left on disk at its end is delivered by nobody and expires",
+  },
+  {
+    label: "an abandoned conversation's spool waits for an owner that never comes",
+    file: `${CORE}/src/spool/ownership.ts`,
+    from: '    ? sighted("abandoned")\n',
+    to: '    ? sighted("live-elsewhere")\n',
+    test: `${CORE}/test/spool-ownership.test.ts`,
+    because: "review-2 round 7: a host that died without SessionEnd leaves its backlog to expire, its state past the reap bound",
+  },
+  {
+    label: "a flusher's own spool reads as another conversation's",
+    file: `${CORE}/src/spool/ownership.ts`,
+    from: '  if (state?.crosscheckSessionId === flusherSessionId) {\n    return sighted("own");',
+    to: '  if (state?.crosscheckSessionId === flusherSessionId) {\n    return sighted("live-elsewhere");',
+    test: `${CORE}/test/spool-ownership.test.ts`,
+    because: "review-2 round 7: a conversation never delivers its own records",
+  },
+  {
+    label: "the drain ignores whose spool it is sending",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "    if (!pinned.has(spool.slug) && (await mayFlusherSend(ctx.home, ctx.repoKey, spool, flusherSessionId, ctx.now()))) {",
+    to: "    if (!pinned.has(spool.slug)) {",
+    test: `${CORE}/test/spool-ownership.test.ts`,
+    because: "review-2 round 7 (H1, P4, p4b): a healing flusher re-sends another conversation's owed life's records without its work context, and they are spent as author_unknown",
+  },
+  {
+    label: "the abandoned bound is any silence at all",
+    file: `${CORE}/src/state/session-reap.ts`,
+    from: "  return silentMs !== null && silentMs > MAX_SPOOL_AGE_DAYS * MS_PER_DAY;",
+    to: "  return silentMs !== null;",
+    test: `${CORE}/test/spool-ownership.test.ts`,
+    because: "review-2 round 7 (M2): an idle but alive conversation's records are spent by a successor, and session-reap deletes its state",
+  },
+  {
+    label: "doctor counts no live session's waiting records",
+    file: `${CORE}/src/spool/ownership.ts`,
+    from: '    records: recordsOf("live-elsewhere"),',
+    to: '    records: recordsOf("own"),',
+    test: `${CLI}/test/doctor.test.ts`,
+    because: "review-2 round 7: records that wait for their own conversation show nowhere",
+  },
+  {
+    label: "doctor counts no record held for a state file it cannot look at",
+    file: `${CORE}/src/spool/ownership.ts`,
+    from: '    unreadableRecords: recordsOf("unreadable"),',
+    to: "    unreadableRecords: 0,",
+    test: `${CLI}/test/doctor.test.ts`,
+    because: "review-2 round 8, L4: records held for good, until the file can be read again, show nowhere",
+  },
+  {
+    label: "doctor says nothing while only an unreadable state's records wait",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "  if (records === 0 && reboundRecords === 0 && unreadableRecords === 0) {",
+    to: "  if (records === 0 && reboundRecords === 0) {",
+    test: `${CLI}/test/doctor.test.ts`,
+    because: "review-2 round 8, L4: the one line that says why a spool stopped draining is never printed",
+  },
+  {
+    label: "a state file no flusher can look at reads as an ended conversation",
+    file: `${CORE}/src/spool/ownership.ts`,
+    from: '    return isAbsence(error) ? null : "unreadable";',
+    to: "    return null;",
+    test: `${CORE}/test/spool-ownership.test.ts`,
+    because: "review-2 round 8, L4: an EACCES or EIO on stat hands a live conversation's records to the next flusher",
+  },
+  {
+    label: "a flusher sends the records of a conversation whose state it cannot look at",
+    file: `${CORE}/src/spool/ownership.ts`,
+    from: '  return owner === "own" || owner === "ended" || owner === "rebound" || owner === "abandoned";',
+    to: '  return owner !== "live-elsewhere";',
+    test: `${CORE}/test/spool-ownership.test.ts`,
+    because: "review-2 round 8, L4: held for a writer that may be live, its records are spent under another life",
+  },
+  {
+    label: "a batch carries two lives' records",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "  const batch = oneLife(spool.lines.slice(0, BATCH_LINES));",
+    to: "  const batch = spool.lines.slice(0, BATCH_LINES);",
+    test: `${CORE}/test/owed-work-context.test.ts`,
+    because: "review-2 round 7: two owed lives in one batch, and a heal inside it re-sends another life's records under the wrong debt",
+  },
+  {
+    label: "a torn line ends its life's batch",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "  const other = writers.findIndex((writer) => writer !== undefined && writer !== life);",
+    to: "  const other = writers.findIndex((writer) => writer !== life);",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 round 7: a batch that starts at a torn line is empty, and the drain spins on it without counting it",
+  },
+  {
+    label: "a debt with no record left to carry it is never paid",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "  const isLoneDebt = owed !== null && batch.length === 0;",
+    to: "  const isLoneDebt = false;",
+    test: `${CORE}/test/owed-work-context.test.ts`,
+    because: "review-2 round 7: a life that writes nothing after its heal never pays its work context, and SessionEnd defers on it for good",
+  },
+  {
+    label: "a spool that only owes a work context is never drained",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "(spool.lines.length > 0 ? true : owesAlone(ctx, spool))",
+    to: "spool.lines.length > 0",
+    test: `${CORE}/test/owed-work-context.test.ts`,
+    because: "review-2 round 7: the lone debt is left for a batch that never comes",
+  },
+  {
+    label: "a spool with a torn debt file counts as owing",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "  (await readOwedWorkContext(ctx.home, ctx.repoKey, spool.slug)) !== null;",
+    to: "  (await readOwedWorkContext(ctx.home, ctx.repoKey, spool.slug)) !== undefined;",
+    test: `${CORE}/test/owed-work-context.test.ts`,
+    because: "review-2 round 8, L3 (unreadable-debt probe): it takes every batch of the drain, sends nothing, and 11 records wait behind it",
+  },
+  {
+    label: "the owed work context goes with the status the heal saw",
+    file: `${CORE}/src/spool/owed-work-context.ts`,
+    from: '      status: textOr(named?.workContextStatus, body["status"]),',
+    to: '      status: textOr(body["status"], body["status"]),',
+    test: `${CORE}/test/owed-work-context.test.ts`,
+    because: "review-2 round 7 (M1, P2, p4b revert): paying the debt reverts the status set_intent set since the heal",
+  },
+  {
+    label: "set_intent leaves the debt its post paid open",
+    file: `${CORE}/src/mcp/tools/intent-write.ts`,
+    from: "  await settleOwedOnIntent(deps.home, deps.repoKey, own.hostSessionKey, own.workContextId);\n",
+    to: "",
+    test: `${CORE}/test/set-intent.test.ts`,
+    because: "review-2 round 7 (M1): the next flush pays the debt over the status set_intent just set",
+  },
+  {
+    label: "a settle deletes the debt of another work context (O1)",
+    file: `${CORE}/src/spool/owed-work-context.ts`,
+    from: "    if (owed !== null && workContextIdOf(owed.record) === workContextId) {",
+    to: "    if (owed !== null) {",
+    test: `${CORE}/test/set-intent.test.ts`,
+    because: "review-2 round 6 survivor O1: a payment for one life settles the debt a later heal wrote for the next, and that life's records are refused author_unknown",
+  },
+  {
+    label: "a debt the hub refuses is never released",
+    file: `${CORE}/src/spool/owed-work-context.ts`,
+    from: "    if (!isPastBound(refusals, firstRefusedAt, now)) {",
+    to: "    if (true) {",
+    test: `${CORE}/test/owed-debt-rules.test.ts`,
+    because: "review-2 round 7 M3 (P1): a work context the hub refuses for good pins its life's records and holds its SessionEnd open forever",
+  },
+  {
+    label: "the debt's bound ignores how often the hub refused it",
+    file: `${CORE}/src/spool/owed-work-context.ts`,
+    from: "  refusals >= OWED_WORK_CONTEXT_MAX_REFUSALS ||",
+    to: "  false ||",
+    test: `${CORE}/test/owed-debt-rules.test.ts`,
+    because: "review-2 round 7 M3: a debt refused on every drain waits a week before it is released",
+  },
+  {
+    label: "the debt's bound ignores how long ago it was first refused",
+    file: `${CORE}/src/spool/owed-work-context.ts`,
+    from: "  now.getTime() - Date.parse(firstRefusedAt) >= MAX_SPOOL_AGE_DAYS * MS_PER_DAY;",
+    to: "  false;",
+    test: `${CORE}/test/owed-debt-rules.test.ts`,
+    because: "review-2 round 7 M3: a debt refused once a week is never released",
+  },
+  {
+    label: "a released debt is counted nowhere",
+    file: `${CORE}/src/spool/owed-work-context.ts`,
+    from: '    await recordDrop(home, key, slug, 1, "rejected", now, { work_context: 1 }, { owed_wc_refused: 1 });\n',
+    to: "",
+    test: `${CORE}/test/owed-debt-rules.test.ts`,
+    because: "review-2 round 7 M3: the work context a life never got onto the hub vanishes from the ledger",
+  },
+  {
+    label: "a refused debt counts no refusal",
+    file: `${CORE}/src/spool/owed-work-context.ts`,
+    from: '  return isRecordRefused ? recordRefusal(home, key, slug, workContextId, now) : "open";',
+    to: '  return "open";',
+    test: `${CORE}/test/owed-debt-rules.test.ts`,
+    because: "review-2 round 7 M3: the bound never moves, and the debt pins its life for good",
+  },
+  {
+    label: "a refusal of the sending session counts against the debt",
+    file: `${CORE}/src/spool/owed-work-context.ts`,
+    from: '  const isRecordRefused = answer?.status === "rejected" && !OWN_SESSION_CAUSES.has(rejectCauseOf(answer.issues));',
+    to: '  const isRecordRefused = answer?.status === "rejected";',
+    test: `${CORE}/test/owed-debt-rules.test.ts`,
+    because: "review-2 round 7 M3: a debt is released because the flusher's own life was ended, though the hub never refused the work context",
+  },
+  {
+    label: "a pinned spool fails the whole drain",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "  if (await isPinnedByDebt(ctx, spool, summary, sendable)) {\n    return PINNED;",
+    to: "  if (await isPinnedByDebt(ctx, spool, summary, sendable)) {\n    return null;",
+    test: `${CORE}/test/owed-debt-rules.test.ts`,
+    because: "review-2 round 7 M3 (P1): one refused debt starves every other spool the flusher may send",
+  },
+  {
+    label: "a pinned spool is never passed over",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "    pinned = delivered.isPinned ? new Set([...pinned, target.slug]) : pinned;",
+    to: "    pinned = pinned;",
+    test: `${CORE}/test/owed-debt-rules.test.ts`,
+    because: "review-2 round 7 M3: the drain re-sends the refused debt batch after batch, and spends its bound in one hook",
+  },
+  {
+    label: "a refused debt goes again in the same drain",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "isPinned: isDebtRefused };",
+    to: "isPinned: false };",
+    test: `${CORE}/test/owed-debt-rules.test.ts`,
+    because: "review-2 round 7 M3: one drain counts two refusals, and the bound counts sends instead of drains",
+  },
+  {
+    label: "a lone debt the hub refused goes again in the same drain",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "      ? { sent: 0, heal: null, healAsked: false, isPinned: false }\n      : PINNED;",
+    to: "      ? { sent: 0, heal: null, healAsked: false, isPinned: false }\n      : { sent: 0, heal: null, healAsked: false, isPinned: false };",
+    test: `${CORE}/test/owed-debt-rules.test.ts`,
+    because: "review-2 round 7: a lone debt is re-posted round after round until the drain's budget is spent",
+  },
+  {
+    label: "a released debt's records are counted as if nobody knew why",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: '      ? "owed_wc_refused"\n      : cause;',
+    to: "      ? cause\n      : cause;",
+    test: `${CORE}/test/owed-debt-rules.test.ts`,
+    because: "review-2 round 7 M3: doctor names the records a refused work context cost author_unknown, the cause for a life that never registered",
+  },
+  {
+    label: "any refusal of an owed life's record pins its batch (O7)",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: '        rejectCauseOf(result.issues) === "author_unknown" &&\n',
+    to: "",
+    test: `${CORE}/test/owed-debt-rules.test.ts`,
+    because: "review-2 round 6 survivor O7: a record the hub refuses on its own merits waits for a debt that cannot help it, uncounted",
+  },
+  {
+    label: "another life's author_unknown refusal pins the batch while a debt is open (O8)",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "        line !== undefined &&\n        isOwedFor(owed, line.record)\n",
+    to: "        line !== undefined\n",
+    test: `${CORE}/test/owed-debt-rules.test.ts`,
+    because: "review-2 round 6 survivor O8: a record of a life the hub never knew waits on another life's debt, never counted",
+  },
+  {
+    label: "a duplicate answer for the owed work context leaves the debt (O3)",
+    file: `${CORE}/src/spool/owed-work-context.ts`,
+    from: 'const TAKEN: ReadonlySet<string> = new Set(["accepted", "duplicate"]);',
+    to: 'const TAKEN: ReadonlySet<string> = new Set(["accepted"]);',
+    test: `${CORE}/test/owed-debt-rules.test.ts`,
+    because: "review-2 round 6 survivor O3: a debt the hub already holds is paid on every batch, one record short, for good",
+  },
+  {
+    label: "the owed work context's own answer counts as a batch answer (O4b)",
+    file: `${CORE}/src/spool/owed-work-context.ts`,
+    from: "    .filter((result) => result.index > 0)",
+    to: "    .filter((result) => result.index >= 0)",
+    test: `${CORE}/test/owed-debt-rules.test.ts`,
+    because: "review-2 round 6 survivor O4b: a refused work context is counted as a refused record that never existed",
+  },
+  {
+    label: "the debt reads the first record's answer, not its own (O5)",
+    file: `${CORE}/src/spool/owed-work-context.ts`,
+    from: "    owedAnswer: result.data.results?.find((answer) => answer.index === 0),",
+    to: "    owedAnswer: result.data.results?.find((answer) => answer.index === 1),",
+    test: `${CORE}/test/owed-debt-rules.test.ts`,
+    because: "review-2 round 6 survivor O5: a refused work context is settled because the record behind it landed",
+  },
+  {
+    label: "reap drops a live session's debt when its spool file is gone (O10)",
+    file: `${CORE}/src/spool/reap.ts`,
+    from: "  if ((await isSessionLive(home, slug)) || (await Bun.file(spoolDataPath(home, key, slug)).exists())) {",
+    to: "  if (await Bun.file(spoolDataPath(home, key, slug)).exists()) {",
+    test: `${CORE}/test/owed-debt-rules.test.ts`,
+    because: "review-2 round 6 survivor O10: a live life's next records go with no work context ahead, refused author_unknown",
+  },
+  {
+    label: "SessionEnd ignores a debt for the life it ends (O11b)",
+    file: `${CORE}/src/flows/end-session.ts`,
+    from: "(owed.sessionId === input.crosscheckSessionId || owed.sessionId === healed?.sessionId)",
+    to: "owed.sessionId === healed?.sessionId",
+    test: `${CORE}/test/owed-debt-rules.test.ts`,
+    because: "review-2 round 6 survivor O11b: the life is ended on the hub with its work context still owed, and the payment is refused as a late write",
+  },
+  {
+    label: "a SessionStart re-fire puts the host's starting status back",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "      ? (current.workContextStatus ?? input.status)",
+    to: "      ? input.status",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 7, simulation seed 10 (I4): compact, resume or clear reverts the status set_intent set",
+  },
+  {
+    label: "a SessionStart re-fire spools the status it read before its register went out",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "  const current = await readSessionState(input.home, input.hostSessionKey);",
+    to: "  const current = previous;",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because:
+      "review-2 round 8, L1 (seeds 184, 1255, 1384): set_intent's status, written while the re-fire's register was out, is put back on the hub",
+  },
+  {
+    label: "a re-fire's state drops the status set_intent wrote while its register was out",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "              workContextStatus: previous.workContextStatus ?? state.workContextStatus,",
+    to: "              workContextStatus: state.workContextStatus,",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 8, L1 (seeds 1605, 1715): the published state reverts the status set_intent wrote under the lock",
+  },
+  {
+    label: "a re-fire's state drops the title set_intent wrote while its register was out",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "              workContextTitle: previous.workContextTitle ?? state.workContextTitle,",
+    to: "              workContextTitle: state.workContextTitle,",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 8, L1: the intent writers re-send the title the state holds, and the fire's would replace set_intent's",
+  },
+  {
+    label: "a ladder that climbs past an ended life leaves its records deliverable into it",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "      await recordRefusedLife(input.home, input.repoKey, sessionId, new Date());\n",
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 7, simulation seed 8 (I2): the next life files the ended life's edits into it past its end",
+  },
+  {
+    label: "a heartbeat refused as ended tells no later flush (H1)",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "      await recordRefusedLife(input.home, input.repoKey, sessionId, new Date());\n",
+    to: "",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because:
+      "review-2 round 9, H1: a heartbeat's 409 is written down by the ladder once the same life's re-register is refused; without it, a successor files the ended life's records into it",
+  },
+  {
+    label: "a state-less register ignores the epoch it reserved",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "  (await readReservedEpoch(input)) ??\n",
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 7, simulation seed 113 (I3): a SessionStart killed after its register splits the session's epoch for good",
+  },
+  {
+    label: "a register reserves no epoch before its POST",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "  await reserveEpoch(input, seqEpoch);\n",
+    to: "",
+    test: `${CORE}/test/spool-simulation.test.ts`,
+    because: "review-2 round 7, simulation seed 113 (I3): nothing on disk names the epoch the hub filed session.started under",
+  },
+  {
+    label: "two SessionStarts of one conversation decide their epochs side by side",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "    (await underSessionStateLock<WireEpoch | null>(input.home, input.hostSessionKey, null, decide)) ??\n",
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 8, L2 (seeds 134, 11285): both read before either reserved, and the state took the epoch the hub did not",
+  },
+  {
+    label: "a re-fire reserves its fresh mint, not the epoch its register carries",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "  await reserveEpoch(input, seqEpoch);\n",
+    to: "  await reserveEpoch(input, fresh);\n",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 8, L2 (seed 11683): a re-fire killed after climbing to the next life left its epoch nowhere once SessionEnd deleted the state",
+  },
+  {
+    label: "a re-fire whose state SessionEnd deleted starts the next life on a fresh mint",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "        ? { seqEpoch: previous?.crosscheckSessionId === crosscheckSessionId ? fresh : seqEpoch, eventSeq: 0 }",
+    to: "        ? { seqEpoch: fresh, eventSeq: 0 }",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 8, L2 (seeds 1933, 11974): session.started under the carried epoch, every later event under the mint",
+  },
+  {
+    label: "a re-fire whose own life's state SessionEnd deleted restarts its counter under the carried epoch",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "        ? { seqEpoch: previous?.crosscheckSessionId === crosscheckSessionId ? fresh : seqEpoch, eventSeq: 0 }",
+    to: "        ? { seqEpoch: seqEpoch, eventSeq: 0 }",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 8, L2: positions the life already handed out under that epoch are handed out again",
+  },
+  {
+    label: "a publish that finds nothing to carry ignores the epoch the register sent",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "      await writeSessionState(home, withCarriedCapture({ ...state, ...(await startOf()) }, previous));",
+    to: "      await writeSessionState(home, withCarriedCapture(state, previous));",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 8, L2 (seed 1933): a SessionEnd beside the re-fire deleted the state, and its publish split the next life",
+  },
+  {
+    label: "a state-less register ignores the epoch the conversation's last life ended on",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "  (await readEndedLifeEpoch(input.home, input.hostSessionKey));",
+    to: "  null;",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 8, L2 (seed 11974): a resume onto a life a heal registered unheard files a second epoch into it",
+  },
+  {
+    label: "an end writes down the life it closed without its epoch",
+    file: `${CORE}/src/flows/end-session.ts`,
+    from: "    isSeqStamp(end.seq) ? end.seq.epoch : null,\n",
+    to: "    null,\n",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 8, L2 (seed 11974): the resume finds no epoch for the life the unheard heal opened",
+  },
+  {
+    label: "the lineage drops the epoch it was handed",
+    file: `${CORE}/src/state/session-lineage.ts`,
+    from: "      `${JSON.stringify({ crosscheckSessionId, ...(epoch === null ? {} : { epoch, ...(n === null ? {} : { n }) }), at: now.toISOString() })}\\n`,",
+    to: "      `${JSON.stringify({ crosscheckSessionId, at: now.toISOString() })}\\n`,",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 8, L2 (seed 11974): the epoch written at the end never reaches the resume",
+  },
+  {
+    label: "the state takes a fresh mint beside the reserved epoch on the wire",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "    seqEpoch: restored?.epoch ?? fresh,\n    eventSeq: restored?.n ?? 0,",
+    to: "    seqEpoch: restored?.epoch ?? mintedEpoch,\n    eventSeq: restored?.n ?? 0,",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 7 (I3): session.started under one epoch, every later event under another",
+  },
+  {
+    label: "set_intent writes its status into the state only after the hub took it",
+    file: `${CORE}/src/mcp/tools/intent-write.ts`,
+    from: "  if (isNewStatus) {\n    await writeStatus(deps, own, status);\n  }\n",
+    to: "",
+    test: `${CORE}/test/set-intent.test.ts`,
+    because: "review-2 round 7, simulation seed 10 (I4): killed between the post and the state write, the next re-fire or debt puts the old status back",
+  },
+  {
+    label: "set_intent leaves a status the hub surely never took in the state",
+    file: `${CORE}/src/mcp/tools/intent-write.ts`,
+    from: "    } else {\n      await keepOldStatus();\n    }\n",
+    to: "    }\n",
+    test: `${CORE}/test/set-intent.test.ts`,
+    because: "review-2 round 7: a refused post's status goes to the hub later, under the one tool result that said it failed",
+  },
+  {
+    label: "set_intent puts the old status back over a post that may have landed",
+    file: `${CORE}/src/mcp/tools/intent-write.ts`,
+    from: "    if (mayHaveLanded(posted)) {\n      await updateSessionState(deps.home, own.hostSessionKey, (fresh) => withUncertainAck(fresh, own));\n    } else {",
+    to: "    {\n      await updateSessionState(deps.home, own.hostSessionKey, (fresh) => withUncertainAck(fresh, own));\n    }\n    {",
+    test: `${CORE}/test/set-intent.test.ts`,
+    because: "review-2 round 7, simulation seed 1020 (I4): the hub holds the new status, and the next sender reverts it",
+  },
+  {
+    label: "set_intent refused as ended tells no flusher",
+    file: `${CORE}/src/mcp/tools/intent-write.ts`,
+    from: "      await recordRefusedLife(deps.home, deps.repoKey, own.crosscheckSessionId, deps.now());\n",
+    to: "",
+    test: `${CORE}/test/set-intent.test.ts`,
+    because: "review-2 round 7, simulation seed 1033 (I2): a successor files the ended life's records into it",
+  },
+  {
+    label: "set_intent puts the status back before it writes the refusal down (sleep 31110)",
+    file: `${CORE}/src/mcp/tools/intent-write.ts`,
+    from: "  if (result?.status === \"rejected\") {\n    if (rejectCauseOf(issuesOf(result)) === \"session_ended\") {\n",
+    to: "  if (result?.status === \"rejected\") {\n    await keepOldStatus();\n    if (rejectCauseOf(issuesOf(result)) === \"session_ended\") {\n",
+    test: `${CORE}/test/spool-simulation.test.ts`,
+    because: "a hook killed as it puts the status back leaves the refusal unwritten, and session-reap sends the dead host's last word into the ended life (I2)",
+  },
+  {
+    label: "a spooled work context goes with the status it was spooled with",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "  const spooled = sendable.map((line) => withLifeState(line.record, lifeState));",
+    to: "  const spooled = sendable.map((line) => line.record);",
+    test: `${CORE}/test/owed-work-context.test.ts`,
+    because: "review-2 round 7, simulation seed 349 (I4): the registration's copy reverts the status set_intent reached the hub with first",
+  },
+  {
+    label: "an ended life's work context forgets the status its end left on the marker",
+    file: `${CORE}/src/spool/owed-work-context.ts`,
+    from: "  return marker?.crosscheckSessionId === sessionId ? marker : null;",
+    to: "  return null;",
+    test: `${CORE}/test/owed-work-context.test.ts`,
+    because: "review-2 round 7, simulation seeds 3062/3098 (I4): after SessionEnd, the spooled copy reverts the status",
+  },
+  {
+    label: "SessionEnd's marker keeps no status",
+    file: `${CORE}/src/spool/end-marker.ts`,
+    from: "      ...(marker.standing.workContextStatus === null ? {} : { workContextStatus: marker.standing.workContextStatus }),\n",
+    to: "",
+    test: `${CORE}/test/owed-work-context.test.ts`,
+    because: "review-2 round 7 (I4): nothing past the state remembers the status set_intent set",
+  },
+  {
+    label: "a refusal as ended tells no later flush when no heal moved past it",
+    file: `${CORE}/src/spool/flush-heal.ts`,
+    from: "    await recordRefusedLife(input.ctx.home, input.ctx.repoKey, input.flusherSessionId, input.ctx.now());\n",
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because:
+      "review-2 round 7, simulation seed 500 (I2): the flushed repo's note is the only one that names the life when the heal was asked from a hook in another repo, and a successor there files the ended life's stragglers into it",
+  },
+  {
+    label: "a heal asked from another repo tells the session's own repo nothing of the ended life",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: "      await recordRefusedLife(input.home, boundToSession(input, state).repoKey, refusal.sessionId, input.now());\n",
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because:
+      "review-2 round 7 (I2): the heal is the only writer into the session's own repo when it was asked from another repo and its walk lands nothing, and a successor there files the ended life's records into it",
+  },
+  {
+    label: "a debt of a life the hub ended is paid into it",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "  if (owed === null || owed.sessionId === flusherSessionId || !refusedLives.has(owed.sessionId)) {",
+    to: "  if (true) {",
+    test: `${CORE}/test/owed-debt-rules.test.ts`,
+    because: "review-2 round 7, simulation seed 772 (I2): the work context is filed into an ended session past its end",
+  },
+  {
+    label: "a lone debt refused as ended tells no later flush",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "      await recordRefusedLife(ctx.home, ctx.repoKey, input.sessionId, ctx.now());\n",
+    to: "",
+    test: `${CORE}/test/spool-simulation.test.ts`,
+    because: "review-2 round 7, simulation seed 772 (I2): the janitor pays the debt into the life SessionEnd was just told ended",
+  },
+  {
+    label: "the deferred end ends a life whose work context is still owed",
+    file: `${CORE}/src/spool/reap.ts`,
+    from: "  if ((await readOwedWorkContext(home, key, slug))?.sessionId === parsed.data.crosscheckSessionId) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/owed-debt-rules.test.ts`,
+    because: "review-2 round 7, simulation seed 7019 (I2): the payment that follows is filed into the session past its end",
+  },
+  {
+    label: "a life refused again is written down again",
+    file: `${CORE}/src/spool/refused-lives.ts`,
+    from: "  if (kept.some((entry) => entry.sessionId === sessionId)) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/owed-debt-rules.test.ts`,
+    because: "review-2 round 7: one life refused on every hook pushes older refused lives out of the window, and their stragglers are delivered",
+  },
+  {
+    label: "retiring an orphan holds the walk past its deadline (L3)",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: "      await endSession({ ...input.hub, timeoutMs: Math.min(input.hub.timeoutMs, roomMs) }, sessionId, ALLOCATION_FAILED);",
+    to: "      await endSession(input.hub, sessionId, ALLOCATION_FAILED);",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 round 7 L3: a slow hub's end call spends the hook's budget the developer is waiting on",
+  },
+  {
+    label: "a register that failed removes the failed walk's verdict (O29)",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "  if (registration !== null) {\n    // A register that landed answers",
+    to: "  if (true) {\n    // A register that landed answers",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 round 6 survivor O29: a re-fire the hub refused re-opens the cooldown, and every hook walks again",
+  },
+  {
+    label: "a switch that met a busy lock retires the life it registered (O27)",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: '    return PENDING;\n  }\n  if (swap === "cas_lost") {',
+    to: '    await retireOrphan(input, ladder.sessionId, now, deadlineMs);\n    return PENDING;\n  }\n  if (swap === "cas_lost") {',
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 6 survivor O27: the next walk lands on the very life this one registered, and finds it ended — a third life for one refusal",
+  },
+  {
+    label: "an unreadable state file hands its records to the next flusher (U19)",
+    file: `${CORE}/src/spool/ownership.ts`,
+    from: '  if (state?.crosscheckSessionId === flusherSessionId) {\n    return sighted("own");\n  }\n',
+    to: '  if (state?.crosscheckSessionId === flusherSessionId) {\n    return sighted("own");\n  }\n  if (state === null) {\n    return sighted("ended");\n  }\n',
+    test: `${CORE}/test/spool-ownership.test.ts`,
+    because: "review-2 round 6 survivor U19: a state file a reader could not parse gives a live conversation's records to another, refused for want of their own life",
+  },
+  {
+    label: "an unreadable state file is never read as abandoned (U19)",
+    file: `${CORE}/src/spool/ownership.ts`,
+    from: "  return isPastReapBound(stamps, wroteAtMs, now.getTime())\n",
+    to: "  return isPastReapBound(stamps, state === null ? null : wroteAtMs, now.getTime())\n",
+    test: `${CORE}/test/spool-ownership.test.ts`,
+    because: "review-2 round 6 survivor U19: a conversation that died with an undatable state leaves its records to expire unsent",
+  },
+  {
+    label: "doctor says nothing of an owed work context (L4)",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    ...(await debtChecks(home, key)),\n",
+    to: "",
+    test: `${CLI}/test/doctor.test.ts`,
+    because: "review-2 round 7 L4: a debt that pins its life's records, or a refused one on its way to release, shows nowhere",
+  },
+  {
+    label: "doctor counts a refused debt as one still waiting (L4)",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "  const open = owed.filter((debt) => debt.refusals === 0).length;",
+    to: "  const open = owed.length;",
+    test: `${CLI}/test/doctor.test.ts`,
+    because: "review-2 round 7 L4: a debt the hub refuses reads as an ordinary wait, and its release comes unannounced",
+  },
+  {
+    label: "an unreadable debt file reads as nothing owed (L4)",
+    file: `${CORE}/src/spool/owed-work-context.ts`,
+    from: '    : { kind: "unreadable" };',
+    to: '    : { kind: "none" };',
+    test: `${CLI}/test/doctor.test.ts`,
+    because: "review-2 round 7 L4: a corrupt debt is silent — doctor says nothing is owed while a heal's work context is lost",
+  },
+  {
+    label: "the refused-lives note ages out at a day (R7-M10)",
+    file: `${CORE}/src/spool/refused-lives.ts`,
+    from: "const cutoffOf = (now: Date): number => now.getTime() - REFUSED_LIFE_KEEP_DAYS * MS_PER_DAY;",
+    to: "const cutoffOf = (now: Date): number => now.getTime() - 1 * MS_PER_DAY;",
+    test: `${CORE}/test/release-clock.test.ts`,
+    because: "review-2 round 8 H1: a refused life's stragglers are released before its dead host's spool is, and filed into the ended session",
+  },
+  {
+    label: "the refused-lives note is kept no longer than the age bound",
+    file: `${CORE}/src/constants.ts`,
+    from: "export const REFUSED_LIFE_KEEP_DAYS = 2 * MAX_SPOOL_AGE_DAYS;",
+    to: "export const REFUSED_LIFE_KEEP_DAYS = MAX_SPOOL_AGE_DAYS;",
+    test: `${CORE}/test/release-clock.test.ts`,
+    because: "review-2 round 8 H1: the note ages out exactly when a successor may first send a dead host's spool",
+  },
+  {
+    label: "a refused life's note ages out while its host session still has records on disk",
+    file: `${CORE}/src/spool/refused-lives.ts`,
+    from: "  return isWithinBound || (await ownsLeftovers(home, key, life.sessionId))",
+    to: "  return isWithinBound",
+    test: `${CORE}/test/release-clock.test.ts`,
+    because: "review-2 round 8 H1: a released spool waits up to a bound past its release, and its stragglers outlive the note",
+  },
+  {
+    label: "a debt does not keep its life's refused-lives note",
+    file: `${CORE}/src/spool/refused-lives.ts`,
+    from: "    (await readSessionSpool(home, key, slug)).lines.length > 0 ||\n    (await Bun.file(spoolOwedWorkContextPath(home, key, slug)).exists())",
+    to: "    (await readSessionSpool(home, key, slug)).lines.length > 0",
+    test: `${CORE}/test/release-clock.test.ts`,
+    because: "review-2 round 8 H1: an open debt of an ended life is paid into it once the note that made it moot ages out",
+  },
+  {
+    label: "session-reap deletes a stale state without releasing its spool",
+    file: `${CORE}/src/state/session-reap.ts`,
+    from: "    await stampReleased(home, key, slug, now);\n",
+    to: "",
+    test: `${CORE}/test/release-clock.test.ts`,
+    because: "review-2 round 8 H2: the next SessionStart expires the dead host's backlog its successor had not sent yet (2605 of 3000)",
+  },
+  {
+    label: "reap expires a released spool by its last write",
+    file: `${CORE}/src/spool/reap.ts`,
+    from: "  return releasedMs === null\n    ? isOlderThanMaxAge(spool.dataPath, now)",
+    to: "  return true\n    ? isOlderThanMaxAge(spool.dataPath, now)",
+    test: `${CORE}/test/release-clock.test.ts`,
+    because: "review-2 round 8 H2: a dead host's data file is a week old the moment it is released, and expires at once",
+  },
+  {
+    label: "the first send of an abandoned spool releases nothing",
+    file: `${CORE}/src/spool/ownership.ts`,
+    from: "  if (owner === \"abandoned\") {\n    await stampReleased(home, key, spool.slug, now);\n  }\n",
+    to: "",
+    test: `${CORE}/test/release-clock.test.ts`,
+    because: "review-2 round 8 H2: a spool sent as abandoned keeps its clock unstarted until session-reap, however late that comes",
+  },
+  {
+    label: "SessionEnd's own end leaves its life deliverable into (M1)",
+    file: `${CORE}/src/flows/end-session.ts`,
+    from: '  await recordRefusedLife(input.home, input.repoKey, end.sessionId, input.now(), "end");\n',
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 8 M1, seed 782: a reload's re-fire beside SessionEnd spools a record a successor files into the ended session",
+  },
+  {
+    label: "a deferred end that lands leaves its life deliverable into (M1)",
+    file: `${CORE}/src/spool/reap.ts`,
+    from: '  await recordRefusedLife(home, key, parsed.data.crosscheckSessionId, now, "end");\n',
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 8 M1: a record of the life appended after reap ended it is filed into the ended session",
+  },
+  {
+    label: "a conversation re-bound to another repo still owns its spool here (M2)",
+    file: `${CORE}/src/spool/ownership.ts`,
+    from: "  if (isBoundElsewhere(state, key)) {\n    return sighted(\"rebound\");\n  }\n",
+    to: "",
+    test: `${CORE}/test/spool-ownership.test.ts`,
+    because: "review-2 round 8 M2: resumed from another checkout, it never flushes this repo again, and reap expires nothing while its state exists",
+  },
+  {
+    label: "a flusher holds a re-bound conversation's records like a live one's",
+    file: `${CORE}/src/spool/ownership.ts`,
+    from: '  return owner === "own" || owner === "ended" || owner === "rebound" || owner === "abandoned";',
+    to: '  return owner === "own" || owner === "ended" || owner === "abandoned";',
+    test: `${CORE}/test/spool-ownership.test.ts`,
+    because: "review-2 round 8, L9: told apart for doctor, the re-bound owner lost its M2 fix — its records wait for good",
+  },
+  {
+    label: "doctor counts no re-bound conversation's waiting records",
+    file: `${CORE}/src/spool/ownership.ts`,
+    from: '    reboundRecords: recordsOf("rebound"),',
+    to: "    reboundRecords: 0,",
+    test: `${CLI}/test/doctor.test.ts`,
+    because: "review-2 round 8, L9: records only this repo's next session sends show nowhere",
+  },
+  {
+    label: "doctor gives no age for the oldest waiting record",
+    file: `${CORE}/src/spool/ownership.ts`,
+    from: '    oldestAtMs: minOf(ownedBy("live-elsewhere").map(writtenAt)),',
+    to: "    oldestAtMs: null,",
+    test: `${CLI}/test/doctor.test.ts`,
+    because: "review-2 round 8, L9: a week-old backlog reads like one written a minute ago",
+  },
+  {
+    label: "doctor dates a waiting record's release from now, not from its owner's last sign",
+    file: `${CORE}/src/spool/ownership.ts`,
+    from: "now.getTime() - silentMs + MAX_SPOOL_AGE_DAYS * MS_PER_DAY",
+    to: "now.getTime() + MAX_SPOOL_AGE_DAYS * MS_PER_DAY",
+    test: `${CLI}/test/doctor.test.ts`,
+    because: "review-2 round 8, L9: a crashed owner's records are promised days later than they go",
+  },
+  {
+    label: "doctor calls a silent owner another live session",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "silentMs > DOCTOR_ZOMBIE_STATE_WARN_HOURS * MS_PER_HOUR",
+    to: "silentMs > Number.POSITIVE_INFINITY",
+    test: `${CLI}/test/doctor.test.ts`,
+    because: "review-2 round 8, L9: the developer waits for a process that is gone, for a week",
+  },
+  {
+    label: "session-reap deletes a state without leaving its life's last title and status (M3)",
+    file: `${CORE}/src/state/session-reap.ts`,
+    from: "    await writeDownReapedLife(home, key, slug, parsed.data, now);\n",
+    to: "",
+    test: `${CORE}/test/owed-work-context.test.ts`,
+    because: "review-2 round 8 M3, seed 10895: the dead host's spooled work context goes out with its SessionStart status and reverts set_intent",
+  },
+  {
+    label: "a reaped life's marker overwrites the one SessionEnd wrote (M3)",
+    file: `${CORE}/src/state/session-reap.ts`,
+    from: "  const path = spoolPendingEndPath(home, key, slug, rung);\n  if (await Bun.file(path).exists()) {\n    return;\n  }\n",
+    to: "  const path = spoolPendingEndPath(home, key, slug, rung);\n",
+    test: `${CORE}/test/owed-work-context.test.ts`,
+    because: "review-2 round 8 M3: the deferred end loses the position SessionEnd allocated and is filed unsequenced",
+  },
+  {
+    label: "the hub refuses an envelope it holds when its producer has ended (M4)",
+    file: `${SERVER}/src/services/records.ts`,
+    from: "    if (holds === undefined) {\n      return { outcome: rejectedOutcome(gateIssue) };\n    }",
+    to: "    if (true) {\n      return { outcome: rejectedOutcome(gateIssue) };\n    }",
+    test: `${SERVER}/test/record-receipts.test.ts`,
+    because: "review-2 round 8 M4: a re-send of a batch whose answer timed out reads rejected, and the connector counts records the hub holds as lost",
+  },
+  {
+    label: "the hub keeps no receipt of what it took (M4)",
+    file: `${SERVER}/src/services/records.ts`,
+    from: "      await writeReceipt(deps, developerId, receipt);\n",
+    to: "",
+    test: `${SERVER}/test/record-receipts.test.ts`,
+    because: "review-2 round 8 M4: nothing ever answers duplicate before the producer check, and over-counts return",
+  },
+  {
+    label: "the hub never forgets an envelope it took (M4)",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: '    await pruneRecordReceipts(deps).catch((error: unknown) => {\n      console.error("[crosscheck] record receipts prune failed; the next pass retries", error);\n    });\n',
+    to: "",
+    test: `${SERVER}/test/record-receipts.test.ts`,
+    because: "review-2 round 8 M4: a receipt per record ever ingested, for good",
+  },
+  {
+    label: "a rejected batch's drop names none of its records (M4)",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: '      idsWithStatus(records, uncounted, "rejected"),\n',
+    to: "      [],\n",
+    test: `${CORE}/test/spool-simulation.test.ts`,
+    because: "review-2 round 8 M4: the per-record audit cannot tell which records a refusal counted",
+  },
+  {
+    label: "a withheld straggler's drop names none of its records (M4)",
+    file: `${CORE}/src/spool/batch-losses.ts`,
+    from: "      idsOf(withheld),\n",
+    to: "      [],\n",
+    test: `${CORE}/test/spool-simulation.test.ts`,
+    because: "review-2 round 8 M4: the per-record audit cannot tell which records were withheld",
+  },
+  {
+    label: "a refusal no heal carries names none of its records (M4)",
+    file: `${CORE}/src/spool/batch-losses.ts`,
+    from: "      idsOf(sealed),\n",
+    to: "      [],\n",
+    test: `${CORE}/test/spool-simulation.test.ts`,
+    because: "review-2 round 8 M4: the per-record audit cannot tell which records a sealed refusal counted",
+  },
+  {
+    label: "an expiry names none of the records it counts (M4)",
+    file: `${CORE}/src/spool/reap.ts`,
+    from: '"expired", now, {}, {}, envelopeIdsOf(spool.lines));',
+    to: '"expired", now, {}, {}, []);',
+    test: `${CORE}/test/spool-simulation.test.ts`,
+    because: "review-2 round 8 M4: the per-record audit cannot tell which records expired",
+  },
+  {
+    label: "an ignored batch's drop names none of its records (M4)",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: '      idsWithStatus(records, summary.results, "ignored"),\n',
+    to: "      [],\n",
+    test: `${CORE}/test/spool-simulation.test.ts`,
+    because: "review-2 round 8 M4: the per-record audit cannot tell which records the hub ignored",
+  },
+  {
+    label: "set_intent reads a plain HTTP 500 as surely not landed (R7-M5)",
+    file: `${CORE}/src/mcp/tools/intent-write.ts`,
+    from: '    : failure.kind === "malformed" || failure.status >= HTTP_SERVER_ERROR;',
+    to: '    : failure.kind === "malformed" || failure.status > HTTP_SERVER_ERROR;',
+    test: `${CORE}/test/set-intent.test.ts`,
+    because: "review-2 round 8 R7-M5: the old status is put back over a post a failing hub may have committed",
+  },
+  {
+    label: "set_intent reads a timeout as never sent (R7-M6)",
+    file: `${CORE}/src/mcp/tools/intent-write.ts`,
+    from: 'const NEVER_SENT: ReadonlySet<string> = new Set(["dns", "refused", "tls"]);',
+    to: 'const NEVER_SENT: ReadonlySet<string> = new Set(["dns", "refused", "tls", "timeout"]);',
+    test: `${CORE}/test/set-intent.test.ts`,
+    because: "review-2 round 8 R7-M6, the seed-1020 class: the old status is put back over a post that may have landed",
+  },
+  {
+    label: "set_intent keeps a status the hub ignored (R7-M7)",
+    file: `${CORE}/src/mcp/tools/intent-write.ts`,
+    from: '  if (result?.status === "ignored") {\n    await keepOldStatus();',
+    to: '  if (result?.status === "ignored") {\n    await Promise.resolve();',
+    test: `${CORE}/test/set-intent.test.ts`,
+    because: "review-2 round 8 R7-M7: the state holds a status the hub refused to record, and every later sender carries it",
+  },
+  {
+    label: "a spool that is not there is stamped released",
+    file: `${CORE}/src/spool/release.ts`,
+    from: "  if ((await Bun.file(path).exists()) || !(await Bun.file(spoolDataPath(home, key, slug)).exists())) {",
+    to: "  if (await Bun.file(path).exists()) {",
+    test: `${CORE}/test/release-clock.test.ts`,
+    because: "review-2 round 8 H2: a later spool of the same host session inherits the stamp, and expires a bound after a release it never had",
+  },
+  {
+    label: "a release stamp outlives the spool it timed",
+    file: `${CORE}/src/spool/reap.ts`,
+    from: "  await removeReleaseStamp(home, key, spool.slug);\n",
+    to: "",
+    test: `${CORE}/test/release-clock.test.ts`,
+    because: "review-2 round 8 H2: a later spool of the same host session starts on the old clock and expires at its first release",
+  },
+  {
+    label: "a state dated ahead of the clock is left as dated",
+    file: `${CORE}/src/state/session-reap.ts`,
+    from: "    if (isDatedAhead(parsed.data, file.mtimeMs, now.getTime())) {\n      await clampDatedAhead(home, parsed.data, now);\n      continue;\n    }\n",
+    to: "",
+    test: `${CORE}/test/future-stamps.test.ts`,
+    because: "review-2 round 8, L5: a dead host's state reads as fresh until the clock catches up — never reaped, its spool never released",
+  },
+  {
+    label: "a state dated ahead keeps its heartbeat ahead",
+    file: `${CORE}/src/state/session-reap.ts`,
+    from: "    lastHeartbeatAt: atMost(fresh.lastHeartbeatAt ?? fresh.startedAt, boundMs),",
+    to: "    lastHeartbeatAt: fresh.lastHeartbeatAt,",
+    test: `${CORE}/test/future-stamps.test.ts`,
+    because: "review-2 round 8, L5: the rewrite clamps the file's write and not the stamp, and the state stays fresh",
+  },
+  {
+    label: "a state whose file alone is dated ahead is left as dated",
+    file: `${CORE}/src/state/session-reap.ts`,
+    from: " || wroteAtMs > boundMs;",
+    to: ";",
+    test: `${CORE}/test/future-stamps.test.ts`,
+    because: "review-2 round 8, L5: silence runs from the newer of stamp and write, and a write a year ahead holds the state that long",
+  },
+  {
+    label: "a heal stamp dated ahead of the clock is read as dated",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: "  return atMs > input.now().getTime() + CLOCK_SKEW_MS ? clampStamp(input, read) : read;",
+    to: "  return read;",
+    test: `${CORE}/test/future-stamps.test.ts`,
+    because: "review-2 round 8, L5: its cooldown runs until the clock catches up, and its life's records are held that long",
+  },
+  {
+    label: "a heal stamp's clamp is never written down",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: '  await writeStamp(input, new Date(atMs), "done", 0, stamp.failedFor);\n',
+    to: "",
+    test: `${CORE}/test/future-stamps.test.ts`,
+    because: "review-2 round 8, L5: every read clamps to its own now, and the cooldown never runs out",
+  },
+  {
+    label: "a heal retires a life without writing it down as refused (sleep 52221)",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: '      await recordRefusedLife(input.home, input.repoKey, sessionId, now, "end");\n',
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "the work context the SessionStart spooled for the retired life is sent by a successor into the life the retirement ended (I2)",
+  },
+  {
+    label: "SessionEnd never sends the work context the hub is behind on",
+    file: `${CORE}/src/flows/end-session.ts`,
+    from: "  await spoolLastWorkContext(input);\n",
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 8, L7: a set_intent post that may have landed and did not leaves the hub on the status before it for good",
+  },
+  {
+    label: "SessionEnd sends the work context whatever the hub acknowledged",
+    file: `${CORE}/src/spool/work-context-ack.ts`,
+    from: "  (state.workContextAcked.uncertain === true || state.workContextAcked.status !== state.workContextStatus);",
+    to: "  true;",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 8, L7: every end sends one more work context, for nothing",
+  },
+  {
+    label: "SessionEnd sends the work context of a life the hub never took",
+    file: `${CORE}/src/spool/work-context-ack.ts`,
+    from: "  state.workContextAcked?.id === state.workContextId &&\n  (state.workContextAcked.uncertain === true || state.workContextAcked.status !== state.workContextStatus);",
+    to: "  (state.workContextAcked?.uncertain === true || state.workContextAcked?.status !== state.workContextStatus);",
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 round 8, L7: a life whose register never landed has one more record refused and counted at its end",
+  },
+  {
+    // L7 again: set_intent's post went unanswered, a later one failed back to
+    // the acknowledged status, and SessionEnd read the two as agreeing.
+    label: "an unanswered set_intent post leaves the acknowledgement telling",
+    file: `${CORE}/src/mcp/tools/intent-write.ts`,
+    from: "      await updateSessionState(deps.home, own.hostSessionKey, (fresh) => withUncertainAck(fresh, own));",
+    to: "      await Promise.resolve(own);",
+    test: `${CORE}/test/set-intent.test.ts`,
+    because: "SessionEnd reads the state and the hub as agreeing while the hub holds the status of a post nobody heard answered, and the session ends on it",
+  },
+  {
+    label: "an uncertain acknowledgement reads as the hub in step",
+    file: `${CORE}/src/spool/work-context-ack.ts`,
+    from: "  (state.workContextAcked.uncertain === true || state.workContextAcked.status !== state.workContextStatus);",
+    to: "  state.workContextAcked.status !== state.workContextStatus;",
+    test: `${CORE}/test/work-context-ack.test.ts`,
+    because: "the mark is written and never read, and SessionEnd stays silent over a status the hub may hold instead",
+  },
+  {
+    label: "an acceptance leaves the acknowledgement uncertain",
+    file: `${CORE}/src/spool/work-context-ack.ts`,
+    from: "        fresh.workContextAcked.status !== last.status ||\n        fresh.workContextAcked.uncertain === true);",
+    to: "        fresh.workContextAcked.status !== last.status);",
+    test: `${CORE}/test/work-context-ack.test.ts`,
+    because: "every SessionEnd after one unanswered post re-sends its work context though the hub has since confirmed it",
+  },
+  {
+    label: "a reaped host's last word is never sent",
+    file: `${CORE}/src/state/session-reap.ts`,
+    from: "    const records = lastWorkContextRecords(state, now);\n    if (records.length > 0) {\n      await appendRecords(home, key, state.hostSessionKey, records, now);\n    }\n",
+    to: "",
+    test: `${CORE}/test/spool-simulation.test.ts`,
+    because: "a host that died after an unanswered set_intent post leaves the hub for good on a status its state moved past",
+  },
+  {
+    // The release-gate e2e finding: every pointer to a healed life's context named an id that does not exist.
+    label: "safeId strips the ~ of a healed life's id",
+    file: `${CORE}/src/briefing/sanitize.ts`,
+    from: "  raw.length <= MAX_ID_CHARS && SAFE_ID_PATTERN.test(raw) ? raw : raw.replace(ID_ALPHABET, \"\").slice(0, MAX_ID_CHARS);",
+    to: "  raw.replace(ID_ALPHABET, \"\").slice(0, MAX_ID_CHARS);",
+    test: `${CORE}/test/pointer-round-trip.test.ts`,
+    because: "get_diagnosis wc_cc_<key>r1 — every briefing, hint and search pointer to a resumed or healed life names a context the hub has never heard of",
+  },
+  {
+    label: "the renderer's id grammar lets a ~ stand anywhere",
+    file: `${CORE}/src/briefing/sanitize.ts`,
+    from: "const ID_SUFFIX_SOURCE = \"(?:~r[0-9]+)?(?:~t[0-9a-f]+\\\\.[0-9]+)?\";",
+    to: "const ID_SUFFIX_SOURCE = \"(?:~+[A-Za-z0-9_.:-]*)*\";",
+    test: `${CORE}/test/pointer-round-trip.test.ts`,
+    because: "an id carrying ~~ is printed as it came, and a teammate-written id strikes through the line an agent reads",
+  },
+  {
+    label: "the hub's id pattern refuses a healed life's id",
+    file: `${SCHEMA}/src/question.ts`,
+    from: "export const SAFE_ID_PATTERN = /^[A-Za-z0-9_.:-]+(?:~r[0-9]+)?(?:~t[0-9a-f]+\\.[0-9]+)?$/;",
+    to: "export const SAFE_ID_PATTERN = /^[A-Za-z0-9_.:-]+$/;",
+    test: `${CORE}/test/pointer-round-trip.test.ts`,
+    because: "a question about a resumed or healed life's work context is refused by the hub, and the tool arguments refuse the right id when an agent types it",
+  },
+  {
+    label: "a flush writes down nothing the hub accepted",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "noteWorkContextAcked(ctx.home, spool.slug, input.sessionId, [",
+    to: 'noteWorkContextAcked(ctx.home, spool.slug, "", [',
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 8, L7: SessionEnd has no acknowledged status to compare the state's with, and sends none",
+  },
+  // CAUGHT ONLY SOMETIMES, until its own test (CI Mutation proof, PR #75):
+  // release-clock.test.ts's backlog probe meets this write only when the
+  // successor's first SessionStart drain has its first batch answered inside
+  // HTTP_TIMEOUT_MS. On a loaded runner the flush gives up on a batch the hub
+  // took, session-reap deletes the dead host's state, the re-send is answered
+  // `duplicate` — and the mutated write never runs. "the silence of a dead host
+  // (L7)", in the same file, cuts no request short: the acknowledgement always
+  // reaches the flush while the dead host's state is there.
+  {
+    label: "a flush writes its acknowledgement into another conversation's state",
+    file: `${CORE}/src/spool/work-context-ack.ts`,
+    from: "    return fresh.crosscheckSessionId === flusherSessionId && isNew ? { ...fresh, workContextAcked: last } : null;",
+    to: "    return isNew ? { ...fresh, workContextAcked: last } : null;",
+    test: `${CORE}/test/release-clock.test.ts`,
+    because: "review-2 round 8, L7: the write revives an abandoned host's state, and its backlog is held from every successor",
+  },
+  {
+    label: "a flush writes down no debt the hub accepted",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "    ...(first.owedSent === null ? [] : ackedIn(",
+    to: "    ...(true ? [] : ackedIn(",
+    test: `${CORE}/test/owed-work-context.test.ts`,
+    because: "review-2 round 8, L7: a healed life's work context, paid as a debt, is never seen as taken",
+  },
+  {
+    label: "set_intent writes down no status the hub accepted",
+    file: `${CORE}/src/mcp/tools/intent-write.ts`,
+    from: '    workContextAcked: result?.status === "accepted" ? { id: own.workContextId, status } : fresh.workContextAcked,',
+    to: "    workContextAcked: fresh.workContextAcked,",
+    test: `${CORE}/test/set-intent.test.ts`,
+    because: "review-2 round 8, L7: SessionEnd compares the state's status with the one before set_intent's",
+  },
+  {
+    label: "the state names no agent kind for SessionEnd's work context",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "    // The producer of the work context SessionEnd may send for this life (L7).\n    agentKind: input.agentKind,\n",
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 8, L7: SessionEnd has no producer for the work context, and sends none",
+  },
+  {
+    label: "a SessionStart re-fire forgets what the hub acknowledged",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "              workContextAcked: previous.workContextAcked,\n",
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 8, L7: after a compact, SessionEnd has nothing to compare the state's status with",
+  },
+  {
+    label: "a debt refused author_unknown never counts a refusal (R7-M3)",
+    file: `${CORE}/src/spool/owed-work-context.ts`,
+    from: 'const OWN_SESSION_CAUSES: ReadonlySet<string> = new Set(["session_ended", "session_unknown"]);',
+    to: 'const OWN_SESSION_CAUSES: ReadonlySet<string> = new Set(["session_ended", "session_unknown", "author_unknown"]);',
+    test: `${CORE}/test/owed-debt-rules.test.ts`,
+    because: "review-2 round 8, L10: a debt for a life the hub never registered never reaches its bound, and holds SessionEnd open for good",
+  },
+  {
+    label: "a spooled work context goes with the title it was spooled with (R7-M9)",
+    file: `${CORE}/src/spool/owed-work-context.ts`,
+    from: '          title: textOr(state.workContextTitle, body["title"]),',
+    to: '          title: textOr(body["title"], state.workContextTitle),',
+    test: `${CORE}/test/owed-work-context.test.ts`,
+    because: "review-2 round 8, L10: a re-fire on a new branch renames the hub's work context away from the title its state holds",
+  },
+  {
+    label: "a heartbeat answers a reaped session already_ended (H1)",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "    // one was then withheld for good.\n    await reviveReapedSession(deps, existing);",
+    to: '    // one was then withheld for good.\n    return { outcome: "already_ended" };',
+    test: `${SERVER}/test/session-reap-liveness.test.ts`,
+    because: "review-2 round 9, H1: the first hook after a night heals the conversation to its next life, and a parallel hook's record of the old one is withheld",
+  },
+  {
+    label: "a heartbeat's 409 is read as the life's end (H1)",
+    file: `${CORE}/src/flows/heartbeat.ts`,
+    from: 'status === HTTP_CONFLICT ? "heartbeat_ended" :',
+    to: 'status === HTTP_CONFLICT ? "session_ended" :',
+    test: `${CORE}/test/session-heal.test.ts`,
+    because: "review-2 round 9, H1: on hubs up to 0.10 a reaped session's heartbeat moves the conversation to its next life, and its stragglers are withheld",
+  },
+  {
+    label: "a full refused-lives note evicts a life that still owns records (H2)",
+    file: `${CORE}/src/spool/refused-lives.ts`,
+    from: "    if (entry.isWithinBound && !(await ownsLeftovers(home, key, entry.sessionId))) {",
+    to: "    if (true) {",
+    test: `${CORE}/test/session-lineage.test.ts`,
+    because: "review-2 round 9, H2 (probe C1): 64 SessionEnds push out the entry withholding a straggler, and a successor files it into the ended session",
+  },
+  {
+    label: "a SessionEnd's refused-lives entry stays a fortnight (H2)",
+    file: `${CORE}/src/spool/refused-lives.ts`,
+    from: '  const isWithinBound = life.by === "end" ? isInGrace(life, now) : isYoung(life, cutoffOf(now));',
+    to: "  const isWithinBound = isYoung(life, cutoffOf(now));",
+    test: `${CORE}/test/session-lineage.test.ts`,
+    because: "review-2 round 9, H2: every SessionEnd's entry crowds the note for REFUSED_LIFE_KEEP_DAYS",
+  },
+  {
+    label: "SessionEnd writes its life down as a heal would (H2)",
+    file: `${CORE}/src/flows/end-session.ts`,
+    from: '  await recordRefusedLife(input.home, input.repoKey, end.sessionId, input.now(), "end");',
+    to: "  await recordRefusedLife(input.home, input.repoKey, end.sessionId, input.now());",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 9, H2: the end's entry outlives its empty spool by a fortnight",
+  },
+  {
+    label: "a deferred end writes its life down as a heal would (H2)",
+    file: `${CORE}/src/spool/reap.ts`,
+    from: '  await recordRefusedLife(home, key, parsed.data.crosscheckSessionId, now, "end");',
+    to: "  await recordRefusedLife(home, key, parsed.data.crosscheckSessionId, now);",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 9, H2: the deferred end's entry outlives its empty spool by a fortnight",
+  },
+  {
+    label: "a receipts prune leaves its dead rows behind (H3)",
+    file: `${SERVER}/src/services/record-receipts.ts`,
+    from: "    await deps.db.execute(sql`VACUUM record_receipts`);\n",
+    to: "",
+    test: `${SERVER}/test/record-receipts-bloat.test.ts`,
+    because: "review-2 round 9, H3: PGlite runs no autovacuum, and the table grows six times its retention's size in half a year",
+  },
+  {
+    label: "session-reap's marker keeps no epoch or position (M1+M2)",
+    file: `${CORE}/src/state/session-reap.ts`,
+    from: "      ...(state.seqEpoch === null ? {} : { seq: { epoch: state.seqEpoch, n: state.eventSeq + 1 } }),\n",
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 9, M1+M2 (probes E1, E3): a resume after a week asleep splits the life's order, or issues its positions twice",
+  },
+  {
+    label: "a state-less register sends the lineage's epoch past the life's own marker (M1+M2)",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "  (await readMarkedPosition(input, await firstRungLife(input)))?.epoch ??\n",
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 9, M1+M2: a life the hub never registered files session.started under one epoch and its records under its own",
+  },
+  {
+    label: "a state-less claim starts a marked life's state at position zero (M1+M2)",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "  const restored = previous === null ? await readMarkedPosition(input, crosscheckSessionId) : null;",
+    to: "  const restored = null as SeqStamp | null;",
+    test: `${CORE}/test/spool-simulation.test.ts`,
+    because: "review-2 round 9, M1+M2 (probes E2, E4): a PostToolUse recovery after a week issues the life's positions twice",
+  },
+  // Option A for all 31214 / sleep 4286: the hub hands back the order it holds,
+  // and a register with no epoch of its own goes on from it.
+  {
+    label: "the hub answers a register without the order it holds (31214)",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "    held: existing.endedAt === null ? null : await readHeldSeq(deps.db, input.id),\n",
+    to: "    held: null,\n",
+    test: `${SERVER}/test/session-register-held.test.ts`,
+    because: "a connector that resumes a life it kept nothing of mints a second epoch into it, and its order is split for good (I3)",
+  },
+  {
+    label: "the hub hands a live session's order to a second writer (M6)",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "    held: existing.endedAt === null ? null : await readHeldSeq(deps.db, input.id),\n",
+    to: "    held: await readHeldSeq(deps.db, input.id),\n",
+    test: `${SERVER}/test/session-register-held.test.ts`,
+    because: "two machines on one life both hand out the same positions: the split that residual costs becomes a conflict",
+  },
+  {
+    label: "the register route leaves the held order out (31214)",
+    file: `${SERVER}/src/routes/sessions.ts`,
+    from: "    return ok(c, { session: result.session, held: result.held });",
+    to: "    return ok(c, { session: result.session });",
+    test: `${SERVER}/test/session-register-held.test.ts`,
+    because: "every answer reads as an older hub's, and a resume onto a held life splits its order",
+  },
+  {
+    label: "a register with no epoch of its own ignores the order the hub holds (31214)",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "  const adopted = isMinted && restored === null ? (registration?.held ?? null) : null;",
+    to: "  const adopted = null as SeqStamp | null;",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "a resume onto a life this machine kept nothing of mints a second epoch into it, and its order is split for good (I3)",
+  },
+  {
+    label: "a register with an epoch of its own takes the hub's instead (31214)",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "  const isMinted = previous === null && fresh === mintedEpoch;",
+    to: "  const isMinted = previous === null;",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "the epoch a register reserved and sent is thrown away for the hub's, and the session.started it filed is split from the state",
+  },
+  {
+    label: "a split against an older hub is counted nowhere (31214)",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "    ...(isUnconfirmed ? { epochUnconfirmed: 1 } : {}),\n",
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "the known residual against a hub too old to hand its epoch back goes silent",
+  },
+  {
+    label: "every first register against an older hub reads as a split (31214)",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "  return Number.isFinite(started) && Number.isFinite(answered) && answered - started > PREEXISTING_SESSION_MIN_AGE_MS;",
+    to: "  return true;",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "doctor counts a split for every session a hub too old to say had never seen",
+  },
+  {
+    label: "doctor drops the lives an older hub could not confirm (31214)",
+    file: `${CORE}/src/state/seq-cost.ts`,
+    from: "      epochUnconfirmed: total.epochUnconfirmed + (state.epochUnconfirmed ?? 0),",
+    to: "      epochUnconfirmed: total.epochUnconfirmed,",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "the event-sequence line says nothing of a split this machine counted",
+  },
+  {
+    label: "a resume onto a marked life takes SessionStart's status (sleep 2687)",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "      : ((await readMarkedStatus(input, crosscheckSessionId)) ?? input.status);",
+    to: "      : input.status;",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "the M3 family again: a resume onto a life session-reap took over puts SessionStart's status back over the one set_intent left (I4)",
+  },
+  // All seed 30495: an end that LANDED removes its marker, so the position a
+  // re-fire beside it goes on from is the lineage's.
+  {
+    label: "an end writes down the life it closed without its position (all 30495)",
+    file: `${CORE}/src/flows/end-session.ts`,
+    from: "    isSeqStamp(end.seq) ? end.seq.n : null,\n",
+    to: "    null,\n",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "a re-fire beside a SessionEnd whose end landed starts the life on a fresh mint, and the heal after it splits the next life's order",
+  },
+  {
+    label: "a publish that finds the state and the marker gone ignores the lineage's position (all 30495)",
+    file: `${CORE}/src/state/session-lineage.ts`,
+    from: "  return epoch === undefined || n === undefined ? null : { epoch, n };",
+    to: "  return null;",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "a re-fire beside a SessionEnd whose end landed starts the life on a fresh mint, and the heal after it splits the next life's order",
+  },
+  {
+    label: "a publish that finds the state gone ignores the life's end marker (L4)",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "      const marked = await readMarkedPosition(input, crosscheckSessionId);\n",
+    to: "      const marked = null as SeqStamp | null;\n",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 9, L4 (focus seeds 361, 662, 1811): a re-fire beside its own SessionEnd starts the life on a fresh mint, and its order splits",
+  },
+  {
+    label: "a publish restores a marked life's epoch at position zero (L4)",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "        : { seqEpoch: marked.epoch, eventSeq: marked.n };",
+    to: "        : { seqEpoch: marked.epoch, eventSeq: 0 };",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 9, L4: the positions the life handed out before the fire are handed out again",
+  },
+  {
+    label: "connector-claude's recovery writes no agent kind (M1+M2)",
+    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
+    from: "    agentKind: ctx.config.agentKind,\n    hostSessionKey: ctx.payload.session_id,\n    repoId: ctx.identity.repoId,\n    repoRoot: ctx.identity.root,",
+    to: "    hostSessionKey: ctx.payload.session_id,\n    repoId: ctx.identity.repoId,\n    repoRoot: ctx.identity.root,",
+    test: `${CONNECTOR}/test/recovery-epoch.test.ts`,
+    because: "review-2 round 9, M1+M2: SessionEnd has no producer for the recovered life's work context",
+  },
+  {
+    label: "connector-claude's recovery owes no briefing (M1+M2)",
+    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
+    from: "    briefingPending: true,\n    now: ctx.now(),",
+    to: "    now: ctx.now(),",
+    test: `${CONNECTOR}/test/recovery-epoch.test.ts`,
+    because: "a recovered session was never briefed, and nothing would pay that debt",
+  },
+  {
+    label: "SessionEnd writes its life down as refused only once the hub answered its end (M3)",
+    file: `${CORE}/src/flows/end-session.ts`,
+    from: '  await recordRefusedLife(input.home, input.repoKey, end.sessionId, input.now(), "end");\n  const result = await endSession(input.hub, end.sessionId, end.seq, losses);\n  if (result.ok) {\n    await removeFile(end.markerPath);\n  }\n',
+    to: '  const result = await endSession(input.hub, end.sessionId, end.seq, losses);\n  if (result.ok) {\n    await removeFile(end.markerPath);\n    await recordRefusedLife(input.home, input.repoKey, end.sessionId, input.now(), "end");\n  }\n',
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 9, M3 (probe L1): an end the hub committed with its answer lost leaves a straggler of the life to be filed into the ended session",
+  },
+  {
+    label: "a deferred end writes its life down as refused only once the hub answered (M3)",
+    file: `${CORE}/src/spool/reap.ts`,
+    from: '  await recordRefusedLife(home, key, parsed.data.crosscheckSessionId, now, "end");\n  const outcome = await ender(parsed.data.crosscheckSessionId, parsed.data.seq);\n  if (outcome === "retry") {\n    return;\n  }\n',
+    to: '  const outcome = await ender(parsed.data.crosscheckSessionId, parsed.data.seq);\n  if (outcome === "retry") {\n    return;\n  }\n  await recordRefusedLife(home, key, parsed.data.crosscheckSessionId, now, "end");\n',
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 9, M3: a deferred end the hub committed with its answer lost leaves a straggler of the life to be filed into the ended session",
+  },
+  {
+    label: "a SessionStart's register prunes every developer's receipts (M4)",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "  if (options.developerId === undefined) {\n    await pruneRecordReceipts(deps).catch(",
+    to: "  if (true) {\n    await pruneRecordReceipts(deps).catch(",
+    test: `${SERVER}/test/record-receipts.test.ts`,
+    because: "review-2 round 9, M4: the first SessionStart after a restart pays the hub's whole backlog, past the connector's 400 ms timeout",
+  },
+  {
+    label: "the receipts prune takes its whole backlog in one statement (M4)",
+    file: `${SERVER}/src/services/record-receipts.ts`,
+    from: "    .limit(RECORD_RECEIPT_PRUNE_CHUNK);\n",
+    to: ";\n",
+    test: `${SERVER}/test/record-receipts.test.ts`,
+    because: "review-2 round 9, M4: a million receipts past the retention hold every request for 457 ms",
+  },
+  {
+    label: "the receipts prune never yields to a request (M4)",
+    file: `${SERVER}/src/db/yield-to-requests.ts`,
+    from: "export const yieldToRequests = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));",
+    to: "export const yieldToRequests = (): Promise<void> => Promise.resolve();",
+    test: `${SERVER}/test/record-receipts.test.ts`,
+    because: "review-2 round 9, M4: PGlite answers in microtasks, so no request is read until the whole backlog is gone",
+  },
+  {
+    label: "a receipts prune stops after its first chunk (M4)",
+    file: `${SERVER}/src/services/record-receipts.ts`,
+    from: "    if (chunk < RECORD_RECEIPT_PRUNE_CHUNK) {\n      return pruned;\n    }\n",
+    to: "    return pruned;\n",
+    test: `${SERVER}/test/record-receipts.test.ts`,
+    because: "review-2 round 9, M4: a backlog larger than one chunk outlives its retention by a pass per chunk",
+  },
+  {
+    label: "the hub prunes no receipts at boot (M4)",
+    file: `${SERVER}/src/index.ts`,
+    from: "  void pruneRecordReceipts({ db, now: () => new Date() }).then(",
+    to: "  void Promise.resolve(0).then(",
+    test: `${SERVER}/test/record-receipts-boot.test.ts`,
+    because: "review-2 round 9, M4: a hub restarted after weeks off keeps their receipts until its timer's first pass",
+  },
+  {
+    label: "the hub looks up receipts for every raw envelope id (M5)",
+    file: `${SERVER}/src/services/records.ts`,
+    from: "  const held = await heldReceipts(deps, developerId, receiptIdsOf(parsed));",
+    to: '  const held = await heldReceipts(deps, developerId, inputs.flatMap((input) => (typeof (input as { id?: unknown }).id === "string" ? [(input as { id: string }).id] : [])));',
+    test: `${SERVER}/test/record-receipts.test.ts`,
+    because: "review-2 round 9, M5: a NUL in one id fails the read before a single envelope is parsed, and the batch with it",
+  },
+  {
+    label: "the hub looks up receipts for an unknown kind's id (M5)",
+    file: `${SERVER}/src/services/records.ts`,
+    from: "(record.ok && !record.unknownKind ? [record.envelope.id] : [])",
+    to: "(record.ok ? [record.envelope.id] : [])",
+    test: `${SERVER}/test/record-receipts.test.ts`,
+    because: "review-2 round 9, M5: no schema screened an unknown kind's id for a NUL, and the read fails for every re-send beside it",
+  },
+  {
+    label: "the envelope id has no length cap (M5)",
+    file: `${SCHEMA}/src/envelope.ts`,
+    from: "  id: z.string().min(1).max(ENVELOPE_ID_MAX_LENGTH),",
+    to: "  id: z.string().min(1),",
+    test: `${SERVER}/test/unstorable-text.test.ts`,
+    because: "review-2 round 9, M5: a 4.3 kB id lands its record and fails the receipt's INSERT, a 500 on every retry",
+  },
+  {
+    label: "a receipt read that fails fails the batch (M5)",
+    file: `${SERVER}/src/services/record-receipts.ts`,
+    from: '    console.error("[crosscheck] reading record receipts failed; this flush is answered without them", error);\n    return new Map();\n',
+    to: "    throw error;\n",
+    test: `${SERVER}/test/record-receipts.test.ts`,
+    because: "review-2 round 9, M5: a receipt only spares a re-send its refusal, and its failure takes the batch down",
+  },
+  {
+    label: "a receipt write that fails fails the batch (M5)",
+    file: `${SERVER}/src/services/record-receipts.ts`,
+    from: '    console.error("[crosscheck] writing record receipts failed; their records landed without them", error);\n',
+    to: "    throw error;\n",
+    test: `${SERVER}/test/record-receipts.test.ts`,
+    because: "review-2 round 9, M5: records that landed are answered 500, re-sent, and the spool pins behind them",
+  },
+  {
+    label: "the receipts read is any developer's (M6)",
+    file: `${SERVER}/src/services/record-receipts.ts`,
+    from: ".where(and(eq(recordReceipts.developerId, developerId), inArray(recordReceipts.id, [...ids])));",
+    to: ".where(inArray(recordReceipts.id, [...ids]));",
+    test: `${SERVER}/test/record-receipts.test.ts`,
+    because: "review-2 round 9, M6: another developer's envelope id is answered duplicate, with the first developer's result id",
+  },
+  {
+    label: "a receipt write conflicts on the envelope id alone (M6, L3)",
+    file: `${SERVER}/src/services/record-receipts.ts`,
+    from: "        target: [recordReceipts.developerId, recordReceipts.id],\n",
+    to: "        target: recordReceipts.id,\n",
+    test: `${SERVER}/test/record-receipts.test.ts`,
+    because: "review-2 round 9, M6 and L3: one developer's envelope under another's id goes unreceipted, and its re-send is counted lost",
+  },
+  {
+    label: "the hub keeps a receipt of what it refused (M6)",
+    file: `${SERVER}/src/services/records.ts`,
+    from: 'const KEPT: ReadonlySet<RecordStatus> = new Set(["accepted", "duplicate", "ignored"]);',
+    to: 'const KEPT: ReadonlySet<RecordStatus> = new Set(["accepted", "duplicate", "ignored", "rejected"]);',
+    test: `${SERVER}/test/record-receipts.test.ts`,
+    because: "review-2 round 9, M6: a refused record re-sent after its producer ended is answered duplicate, and silently lost",
+  },
+  {
+    label: "the hub forgets every receipt on its next pass (M6)",
+    file: `${SERVER}/src/constants.ts`,
+    from: "export const RECORD_RECEIPT_RETENTION_DAYS = 30;",
+    to: "export const RECORD_RECEIPT_RETENTION_DAYS = 0;",
+    test: `${SERVER}/test/record-receipts.test.ts`,
+    because: "review-2 round 9, M6: the duplicate a receipt answers lasts only until the next reaper pass",
+  },
+  {
+    label: "a duplicate answer counts as the hub's acknowledgement (M6)",
+    file: `${CORE}/src/spool/work-context-ack.ts`,
+    from: '    .filter((result) => result.status === "accepted")\n',
+    to: '    .filter((result) => result.status === "accepted" || result.status === "duplicate")\n',
+    test: `${CORE}/test/work-context-ack.test.ts`,
+    because: "review-2 round 9, M6: an envelope the hub held before reads as the status it holds now, and SessionEnd skips the last one",
+  },
+  {
+    label: "a flush notes another work context's acknowledgement as the state's own (M6)",
+    file: `${CORE}/src/spool/work-context-ack.ts`,
+    from: "    const last = acked.filter((ack) => ack.id === fresh.workContextId).at(-1);",
+    to: "    const last = acked.at(-1);",
+    test: `${CORE}/test/work-context-ack.test.ts`,
+    because: "review-2 round 9, M6: SessionEnd compares the state's status with what the hub took for another work context",
+  },
+  {
+    label: "an acknowledgement of another work context puts the hub behind the state (M6)",
+    file: `${CORE}/src/spool/work-context-ack.ts`,
+    from: "  state.workContextAcked?.id === state.workContextId &&\n",
+    to: "  state.workContextAcked != null &&\n",
+    test: `${CORE}/test/work-context-ack.test.ts`,
+    because: "review-2 round 9, M6: SessionEnd re-sends a work context on another one's acknowledgement",
+  },
+  {
+    label: "a re-fire's busy-lock fallback keeps the life's epoch beside a counter at zero (M6)",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "    seqEpoch: restored?.epoch ?? fresh,\n",
+    to: "    seqEpoch: restored?.epoch ?? seqEpoch,\n",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 9, M6: the positions the life already handed out are handed out again",
+  },
+  {
+    label: "a receipts prune that fails takes the reap down (L3)",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: '    await pruneRecordReceipts(deps).catch((error: unknown) => {\n      console.error("[crosscheck] record receipts prune failed; the next pass retries", error);\n    });\n',
+    to: "    await pruneRecordReceipts(deps);\n",
+    test: `${SERVER}/test/session-reaper.test.ts`,
+    because: "review-2 round 9, L3: a receipts table the prune cannot touch leaves every stale session open",
+  },
+  {
+    label: "the hub keeps no receipt of what it ignored (L3)",
+    file: `${SERVER}/src/services/records.ts`,
+    from: 'const KEPT: ReadonlySet<RecordStatus> = new Set(["accepted", "duplicate", "ignored"]);',
+    to: 'const KEPT: ReadonlySet<RecordStatus> = new Set(["accepted", "duplicate"]);',
+    test: `${SERVER}/test/record-receipts.test.ts`,
+    because: "review-2 round 9, L3: a record the hub kept without its change is refused when re-sent, and counted lost",
+  },
+  {
+    label: "a held envelope the hub ignored is answered duplicate (L3)",
+    file: `${SERVER}/src/services/records.ts`,
+    from: '  return holds.isIgnored ? { status: "ignored", ...id, issues: [HELD_IGNORED_ISSUE] } : { status: "duplicate", ...id };',
+    to: '  return { status: "duplicate", ...id };',
+    test: `${SERVER}/test/record-receipts.test.ts`,
+    because: "review-2 round 9, L3: the re-send of a change the hub kept back reads as taken",
+  },
+  {
+    label: "drizzle keys a receipt by its envelope id alone (L3)",
+    file: `${SERVER}/src/db/schema.ts`,
+    from: '    primaryKey({ name: "record_receipts_pkey", columns: [table.developerId, table.id] }),',
+    to: '    primaryKey({ name: "record_receipts_pkey", columns: [table.id] }),',
+    test: `${SERVER}/test/ddl-sync-record-receipts.test.ts`,
+    because: "review-2 round 9, L3: the two DDL sources disagree on the receipts' key",
+  },
+  {
+    label: "an older hub's receipts stay keyed by the envelope id alone (L3)",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "    ALTER TABLE record_receipts ADD CONSTRAINT record_receipts_pkey PRIMARY KEY (developer_id, id);",
+    to: "    ALTER TABLE record_receipts ADD CONSTRAINT record_receipts_pkey PRIMARY KEY (id);",
+    test: `${SERVER}/test/ddl-sync-record-receipts.test.ts`,
+    because: "review-2 round 9, L3: an upgraded hub lets the first developer to send an id hold it",
+  },
+  {
     label: "a file only this machine's own rule skips is called unrecorded by everyone",
     file: `${CLI}/src/cli/pin-observability.ts`,
     from: "shadow.shippedPattern === null ? \"here\" : \"everywhere\"",
@@ -17409,6 +19652,78 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/init-remove-safety.test.ts`,
     because: "every checkout sharing the linked directory is wired by one repo's install",
   },
+  {
+    label: "a batch the heal leaves on disk forgets what the hub took (io seed 1993)",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "    await noteTaken(spool, sendable, first.summary.results);\n",
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 9, io seed 1993: a record the hub holds is withheld once its life is refused, and counted lost",
+  },
+  {
+    label: "a batch the heal leaves on disk keeps only what the hub accepted (io seed 1993)",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: 'const HELD: ReadonlySet<string> = new Set(["accepted", "duplicate"]);',
+    to: 'const HELD: ReadonlySet<string> = new Set(["accepted"]);',
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "review-2 round 9, io seed 1993: a re-send the hub answered duplicate is withheld later, and counted lost",
+  },
+  {
+    label: "the skeleton backfill never yields to a request",
+    file: `${SERVER}/src/db/yield-to-requests.ts`,
+    from: "export const yieldToRequests = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));",
+    to: "export const yieldToRequests = (): Promise<void> => Promise.resolve();",
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because: "review-2 round 9: PGlite answers in microtasks, so a boot's backfill reads no request until every page is done",
+  },
+  {
+    label: "the skeleton backfill's paged UPDATE reads no request until its walk is done",
+    file: `${SERVER}/src/services/skeleton-identity.ts`,
+    from: "    written += Number(row.written ?? 0);\n    await yieldToRequests();\n",
+    to: "    written += Number(row.written ?? 0);\n",
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because: "review-2 round 9: the provider and claim-context walks hold every request behind them at boot",
+  },
+  {
+    label: "a 0.10 archive's total reads as unattributed, beside an unreadable ledger's floor",
+    file: `${CORE}/src/spool/drops.ts`,
+    from: "  const legacy = parsed.data.byReason === undefined ? parsed.data.count : (parsed.data.legacy ?? 0);",
+    to: "  const legacy = 0;",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "the 1.0 release gate: the late-write losses a 0.10 connector archived blend into the floor of unreadable ledgers, and no line says they are legacy",
+  },
+  {
+    label: "a fold writes the legacy total back as a remainder nobody can tell from the unreadable floor",
+    file: `${CORE}/src/spool/drops.ts`,
+    from: "      ...(legacy > 0 ? { legacy } : {}),\n",
+    to: "",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "the 1.0 release gate: the first reap after the upgrade turns the 0.10 losses into unattributed ones for good",
+  },
+  {
+    label: "the legacy line leaves out the rejections a 0.10 ledger kept without a cause",
+    file: `${CORE}/src/spool/loss-report.ts`,
+    from: '  const rejected = Math.max(0, (local.drops.byReason["rejected"] ?? 0) - causes);',
+    to: "  const rejected = 0;",
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "the 1.0 release gate: the 0.10 late-write losses read only as this connector's rejections, never as what was lost before the fix",
+  },
+  {
+    label: "doctor drops the legacy losses line",
+    file: `${CLI}/src/cli/doctor-losses.ts`,
+    from: '    lineCheck("legacy losses", lines.legacy),\n',
+    to: "",
+    test: `${CLI}/test/doctor-losses.test.ts`,
+    because: "the 1.0 release gate: doctor never says what a connector before 1.0 lost, apart from this one's losses",
+  },
+  {
+    label: "status leaves the legacy losses off its losses line",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "  const parts = [rejected, withheld, ignored, capture, legacy].filter((part): part is string => part !== null);",
+    to: "  const parts = [rejected, withheld, ignored, capture].filter((part): part is string => part !== null);",
+    test: `${CLI}/test/doctor-losses.test.ts`,
+    because: "the 1.0 release gate: status counts the 0.10 losses in its dropped total and never says what they were",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -17423,21 +19738,73 @@ const readOriginal = async (mutation: Mutation): Promise<string> => {
   return original;
 };
 
-const runTest = async (testPath: string): Promise<number> => {
+/**
+ * The per-test timeout of every run here: the unit-test job's own (ci.yml,
+ * PR #74), so a guard slow on a shared runner is not red for being slow.
+ */
+const TEST_TIMEOUT_MS = 20_000;
+
+interface TestRun {
+  readonly exitCode: number;
+  readonly output: string;
+}
+
+const runTest = async (testPath: string): Promise<TestRun> => {
   const proc = Bun.spawn({
     // process.execPath, not "bun": this has to work from a checkout where the
     // runtime is not on PATH, which is how it is invoked in CI.
-    cmd: [process.execPath, "test", testPath],
+    cmd: [process.execPath, "test", `--timeout=${String(TEST_TIMEOUT_MS)}`, testPath],
     cwd: REPO_ROOT,
-    stdout: "ignore",
-    stderr: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+    // A guard gated to the Hook budgets lane (connector-core/test/fixtures/
+    // budget-lane.ts) must run when it is the guard: one guard file at a
+    // time is the same isolation that lane gives it. Set here rather than
+    // only in ci.yml so a local run proves the same anchors CI does.
+    env: { ...process.env, CX_BUDGET_LANE: "1" },
   });
-  return proc.exited;
+  const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+  return { exitCode: await proc.exited, output: `${stdout}\n${stderr}` };
+};
+
+/**
+ * A CATCH IS AN ASSERTION OR A THROWN ERROR — never a test that only timed
+ * out, nor a process that died saying nothing: on a loaded runner either one
+ * turns a decorative guard into a "caught". Read the way bun lays its report
+ * out: an assertion or a throw prints its header before its `(fail)` line; a
+ * timeout prints `^ this test timed out after …` after it; an error while a
+ * file loads prints `# Unhandled error between tests` and no `(fail)` at all.
+ *
+ * THE HEADER NAMES THE ERROR (bun 1.3.13): `error: …` only for a failed
+ * expect and a thrown non-Error; a thrown Error by its class — `TypeError: …`,
+ * `ZodError: …` — and a system error by its code — `ENOENT: …`, `EACCES: …`.
+ * Read as `error: ` alone, a guard that caught a deleted file by failing to
+ * read it, or a crash the anchor names, read as a silent death
+ * (test/mutation-runner.test.ts runs each shape through bun).
+ */
+const ERROR_HEADER = /^(?:error|[A-Z][A-Za-z0-9]*(?:Error|Exception)|E[A-Z][A-Z0-9]+): /;
+
+export const failedOnAssertion = (output: string): boolean => {
+  const lines = output.split("\n");
+  let pendingError = false;
+  for (const [index, line] of lines.entries()) {
+    if (ERROR_HEADER.test(line)) {
+      pendingError = true;
+    } else if (line.startsWith("(fail) ")) {
+      if (pendingError && !/^\s*\^ this test timed out after \d+ms\./.test(lines[index + 1] ?? "")) {
+        return true;
+      }
+      pendingError = false;
+    }
+  }
+  return output.includes("# Unhandled error between tests") && lines.some((line) => ERROR_HEADER.test(line));
 };
 
 interface Outcome {
   readonly label: string;
   readonly caught: boolean;
+  /** The mutated run failed, but only by timing out or dying silently. */
+  readonly failedWithoutAssertion: boolean;
 }
 
 /**
@@ -17477,11 +19844,11 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1
  * PRINTS: packages/cli/test/doctor-last-sync.test.ts 1
  * PRINTS: packages/cli/test/doctor-latency.test.ts 2
- * PRINTS: packages/cli/test/doctor-losses.test.ts 6
+ * PRINTS: packages/cli/test/doctor-losses.test.ts 14
  * PRINTS: packages/cli/test/doctor-pilot.test.ts 6
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
  * PRINTS: packages/cli/test/doctor-verdict-legality.test.ts 2
- * PRINTS: packages/cli/test/doctor.test.ts 1
+ * PRINTS: packages/cli/test/doctor.test.ts 12
  * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
  * PRINTS: packages/cli/test/gitignored-advice.test.ts 11
@@ -17526,6 +19893,7 @@ interface Outcome {
  * PRINTS: packages/connector-acp/test/key-rotation-acp.test.ts 2
  * PRINTS: packages/connector-acp/test/pool-starvation.test.ts 1
  * PRINTS: packages/connector-acp/test/proxy-e2e.test.ts 1
+ * PRINTS: packages/connector-acp/test/resumed-session.test.ts 7
  * PRINTS: packages/connector-acp/test/transparency.test.ts 1
  * PRINTS: packages/connector-acp/test/turn-slice.test.ts 2
  * PRINTS: packages/connector-acp/test/wire-loss.test.ts 3
@@ -17568,8 +19936,10 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/landed-notice-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/landed-why-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/landing-fetch-hook.test.ts 3
+ * PRINTS: packages/connector-claude/test/recovery-epoch.test.ts 2
  * PRINTS: packages/connector-claude/test/recovery-losses.test.ts 1
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
+ * PRINTS: packages/connector-claude/test/resumed-session.test.ts 10
  * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
  * PRINTS: packages/connector-claude/test/settings-merge-removal.test.ts 1
  * PRINTS: packages/connector-claude/test/stop-gate.test.ts 4
@@ -17612,6 +19982,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
  * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1
  * PRINTS: packages/connector-core/test/fix-diff.test.ts 7
+ * PRINTS: packages/connector-core/test/future-stamps.test.ts 5
  * PRINTS: packages/connector-core/test/ghost-declare.test.ts 1
  * PRINTS: packages/connector-core/test/ghost-render.test.ts 2
  * PRINTS: packages/connector-core/test/git-lane-cost.test.ts 1
@@ -17640,7 +20011,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/landing-fetch-worker.test.ts 20
  * PRINTS: packages/connector-core/test/latency.test.ts 3
  * PRINTS: packages/connector-core/test/loss-ledger.test.ts 5
- * PRINTS: packages/connector-core/test/loss-report.test.ts 33
+ * PRINTS: packages/connector-core/test/loss-report.test.ts 38
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 5
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3
@@ -17650,35 +20021,46 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/mcp-tools.test.ts 4
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
+ * PRINTS: packages/connector-core/test/owed-debt-rules.test.ts 22
+ * PRINTS: packages/connector-core/test/owed-work-context.test.ts 17
  * PRINTS: packages/connector-core/test/pilot-client.test.ts 4
  * PRINTS: packages/connector-core/test/pilot-platform-refusals.test.ts 2
  * PRINTS: packages/connector-core/test/pin-paths.test.ts 8
  * PRINTS: packages/connector-core/test/pin-sweep.test.ts 2
+ * PRINTS: packages/connector-core/test/pointer-round-trip.test.ts 3
  * PRINTS: packages/connector-core/test/precision-corpus.test.ts 1
  * PRINTS: packages/connector-core/test/question-delivery.test.ts 1
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3
  * PRINTS: packages/connector-core/test/read-text.test.ts 1
  * PRINTS: packages/connector-core/test/register-guarantees.test.ts 2
  * PRINTS: packages/connector-core/test/register-seq.test.ts 3
+ * PRINTS: packages/connector-core/test/reject-cause.test.ts 5
+ * PRINTS: packages/connector-core/test/release-clock.test.ts 10
  * PRINTS: packages/connector-core/test/remember-developer.test.ts 1
  * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 6
  * PRINTS: packages/connector-core/test/repo-ssh-determinism.test.ts 2
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
+ * PRINTS: packages/connector-core/test/session-heal.test.ts 32
+ * PRINTS: packages/connector-core/test/session-lineage.test.ts 4
+ * PRINTS: packages/connector-core/test/session-lives.test.ts 73
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
- * PRINTS: packages/connector-core/test/set-intent.test.ts 3
+ * PRINTS: packages/connector-core/test/set-intent.test.ts 14
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4
- * PRINTS: packages/connector-core/test/spool-durability.test.ts 1
+ * PRINTS: packages/connector-core/test/spool-durability.test.ts 2
  * PRINTS: packages/connector-core/test/spool-ignored.test.ts 2
  * PRINTS: packages/connector-core/test/spool-lock.test.ts 2
+ * PRINTS: packages/connector-core/test/spool-ownership.test.ts 12
+ * PRINTS: packages/connector-core/test/spool-simulation.test.ts 10
  * PRINTS: packages/connector-core/test/staleness-axis.test.ts 1
  * PRINTS: packages/connector-core/test/target-paths.test.ts 1
  * PRINTS: packages/connector-core/test/tool-window-pairing.test.ts 6
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
  * PRINTS: packages/connector-core/test/verdict-wire.test.ts 2
+ * PRINTS: packages/connector-core/test/work-context-ack.test.ts 5
  * PRINTS: packages/connector-core/test/working-days.test.ts 3
  * PRINTS: packages/connector-cursor/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-cursor/test/budget.test.ts 1
@@ -17688,6 +20070,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/drift-loss.test.ts 5
  * PRINTS: packages/connector-cursor/test/handlers.test.ts 4
  * PRINTS: packages/connector-cursor/test/injection.test.ts 4
+ * PRINTS: packages/connector-cursor/test/resumed-session.test.ts 3
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/causal-guarantees.test.ts 7
  * PRINTS: packages/schema/test/claim.test.ts 1
@@ -17696,7 +20079,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1
  * PRINTS: packages/schema/test/session.test.ts 1
- * PRINTS: packages/schema/test/telemetry-loss.test.ts 2
+ * PRINTS: packages/schema/test/telemetry-loss.test.ts 3
  * PRINTS: packages/server/test/absences.test.ts 7
  * PRINTS: packages/server/test/calibration.test.ts 1
  * PRINTS: packages/server/test/causal-guarantees.test.ts 23
@@ -17709,11 +20092,12 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage-answer-sessions.test.ts 10
  * PRINTS: packages/server/test/coverage-instant-privacy.test.ts 3
  * PRINTS: packages/server/test/coverage-judgeable.test.ts 2
- * PRINTS: packages/server/test/coverage-losses.test.ts 15
+ * PRINTS: packages/server/test/coverage-losses.test.ts 16
  * PRINTS: packages/server/test/coverage-measurement.test.ts 2
  * PRINTS: packages/server/test/coverage-order.test.ts 11
  * PRINTS: packages/server/test/coverage-successor-session.test.ts 3
  * PRINTS: packages/server/test/coverage.test.ts 13
+ * PRINTS: packages/server/test/ddl-sync-record-receipts.test.ts 2
  * PRINTS: packages/server/test/ddl-sync-waiver-authority.test.ts 5
  * PRINTS: packages/server/test/ddl-sync-work-context-updater.test.ts 1
  * PRINTS: packages/server/test/ddl-sync.test.ts 11
@@ -17748,6 +20132,9 @@ interface Outcome {
  * PRINTS: packages/server/test/pins.test.ts 4
  * PRINTS: packages/server/test/presence.test.ts 1
  * PRINTS: packages/server/test/questions.test.ts 8
+ * PRINTS: packages/server/test/record-receipts-bloat.test.ts 1
+ * PRINTS: packages/server/test/record-receipts-boot.test.ts 1
+ * PRINTS: packages/server/test/record-receipts.test.ts 17
  * PRINTS: packages/server/test/records.test.ts 2
  * PRINTS: packages/server/test/retention-registry.test.ts 2
  * PRINTS: packages/server/test/search-filters.test.ts 10
@@ -17759,10 +20146,11 @@ interface Outcome {
  * PRINTS: packages/server/test/session-events.test.ts 2
  * PRINTS: packages/server/test/session-order-window.test.ts 3
  * PRINTS: packages/server/test/session-order.test.ts 7
- * PRINTS: packages/server/test/session-reap-liveness.test.ts 1
- * PRINTS: packages/server/test/session-reaper.test.ts 2
+ * PRINTS: packages/server/test/session-reap-liveness.test.ts 2
+ * PRINTS: packages/server/test/session-reaper.test.ts 3
+ * PRINTS: packages/server/test/session-register-held.test.ts 3
  * PRINTS: packages/server/test/sessions.test.ts 1
- * PRINTS: packages/server/test/skeleton-identity.test.ts 17
+ * PRINTS: packages/server/test/skeleton-identity.test.ts 19
  * PRINTS: packages/server/test/skeleton-sweep.test.ts 35
  * PRINTS: packages/server/test/solved-counts.test.ts 1
  * PRINTS: packages/server/test/solved-cross-repo.test.ts 4
@@ -17773,7 +20161,7 @@ interface Outcome {
  * PRINTS: packages/server/test/suspect.test.ts 5
  * PRINTS: packages/server/test/team-settings.test.ts 2
  * PRINTS: packages/server/test/ui-passkeys.test.ts 9
- * PRINTS: packages/server/test/unstorable-text.test.ts 1
+ * PRINTS: packages/server/test/unstorable-text.test.ts 2
  * PRINTS: packages/server/test/upgrade.test.ts 1
  * PRINTS: packages/server/test/verdict-latency.test.ts 1
  * PRINTS: packages/server/test/verdict.test.ts 3
@@ -17821,7 +20209,7 @@ const assertGuardIsGreen = async (testPath: string): Promise<void> => {
   if (greenGuards.get(testPath) === true) {
     return;
   }
-  const exitCode = await runTest(testPath);
+  const { exitCode } = await runTest(testPath);
   greenGuards.set(testPath, exitCode === 0);
   if (exitCode !== 0) {
     throw new Error(
@@ -17842,8 +20230,9 @@ const applyAndRun = async (mutation: Mutation): Promise<Outcome> => {
   await assertGuardIsGreen(mutation.test);
   try {
     await Bun.write(path, original.replace(mutation.from, mutation.to));
-    const exitCode = await runTest(mutation.test);
-    return { label: mutation.label, caught: exitCode !== 0 };
+    const run = await runTest(mutation.test);
+    const caught = run.exitCode !== 0 && failedOnAssertion(run.output);
+    return { label: mutation.label, caught, failedWithoutAssertion: run.exitCode !== 0 && !caught };
   } finally {
     await Bun.write(path, original);
   }
@@ -17868,7 +20257,9 @@ const main = async (): Promise<number> => {
     process.stdout.write(
       outcome.caught
         ? `  caught by ${mutation.test}\n`
-        : `::error::NOT CAUGHT by ${mutation.test} — ${mutation.because}\n`,
+        : outcome.failedWithoutAssertion
+          ? `::error::NOT CAUGHT by ${mutation.test} — it failed only by timing out or dying silently, which is no assertion — ${mutation.because}\n`
+          : `::error::NOT CAUGHT by ${mutation.test} — ${mutation.because}\n`,
     );
   }
   const missed = outcomes.filter((outcome) => !outcome.caught);

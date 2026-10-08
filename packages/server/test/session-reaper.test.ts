@@ -13,7 +13,7 @@
  * thing that must be right.
  */
 import { describe, expect, test } from "bun:test";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 import { agentSessions } from "../src/db/schema.ts";
 import {
@@ -98,6 +98,21 @@ describe("reapStaleSessions", () => {
     expect(
       (ended[0]?.payload as { reapedAfterHours?: number }).reapedAfterHours,
     ).toBe(6);
+  });
+
+  test("a receipts prune that fails takes nothing of the reap with it (review-2 round 9, L3)", async () => {
+    // Arrange: a session silent for seven hours, on a hub whose receipts table is gone
+    const { harness, developer } = await seed();
+    await registerTestSession(harness, developer.apiKey);
+    harness.clock.advanceSeconds(7 * HOUR_SECONDS);
+    await harness.db.execute(sql`DROP TABLE record_receipts`);
+
+    // Act
+    const reaped = await reapStaleSessions({ db: harness.db, now: harness.clock.now });
+
+    // Assert
+    expect(reaped.ended).toHaveLength(1);
+    expect(await endedAtOf(harness, "ses_01")).not.toBeNull();
   });
 
   test("the reap is confined to one developer when asked", async () => {

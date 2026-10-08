@@ -4,7 +4,7 @@
  * §5 scheduling note). These are the Claude hook-handler bodies with payload
  * parsing peeled off, so every pin here is shipped behavior restated:
  *
- *   - registerSessionFlow: register (+~r1/~r2 on 409) → state file BEFORE
+ *   - registerSessionFlow: register (+ the ~r<n> life ladder on 409) → state file BEFORE
  *     any append (reap's aliveness invariant) → work-context record;
  *   - captureFileTargets: toRepoRelative → denylist → seen-set → secret-scan
  *     → target records;

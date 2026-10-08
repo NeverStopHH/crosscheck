@@ -744,6 +744,25 @@ export const LANDED_WHY_FLUSH_SLACK_MS = 60 * 60_000;
  * refuses a stop that reaches the hub later than that.
  */
 export const LANDED_NOTICE_TTL_DAYS = 7;
+/**
+ * How long the hub remembers an envelope it took (services/records.ts, review-2
+ * round 8, M4). A receipt is read only for an envelope whose producer has
+ * ended: a batch whose answer never arrived, re-sent by the life's next flush
+ * after the hub ended that life, which is a duplicate, not a refusal. A
+ * machine off for D days re-sends its spool up to D + 7 days later (connector
+ * spool/reap.ts), past any fixed retention for a long enough D, but under a
+ * live producer — the woken life, which its records revive on the hub, or a
+ * successor — so the producer check passes and no receipt is read (review-2
+ * round 9, L3). Thirty days is room for the re-sends that do read one.
+ */
+export const RECORD_RECEIPT_RETENTION_DAYS = 30;
+/**
+ * Receipts one DELETE of the prune takes (services/record-receipts.ts, review-2
+ * round 9, M4). PGlite serves one statement at a time, so a request waits out
+ * at most one chunk: 2000 rows took 6 ms at the median and 15 ms at worst out
+ * of a 300 000-row backlog, where one DELETE of all of it took 100 ms.
+ */
+export const RECORD_RECEIPT_PRUNE_CHUNK = 2000;
 /** Reader-and-file groups one listing answers: a briefing section, a prompt. */
 export const LANDED_NOTICE_GROUPS_LISTED = 3;
 /**

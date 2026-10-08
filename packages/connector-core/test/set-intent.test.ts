@@ -12,15 +12,20 @@ import { rm } from "node:fs/promises";
 
 import { createDb, createServer } from "@crosscheck/server";
 import type { Db } from "@crosscheck/server";
-import { MAX_INTENT_CHAIN_VERSIONS, MAX_INTENT_SUMMARY_CHARS } from "@crosscheck/schema";
+import { MAX_INTENT_CHAIN_VERSIONS, MAX_INTENT_SUMMARY_CHARS, PROTOCOL_VERSION } from "@crosscheck/schema";
 
 import { QUOTED_DATA_NOTICE } from "../src/briefing/render.ts";
 import { hintBodyHash } from "../src/hints/echo.ts";
 import { prepareMcp } from "../src/mcp/context.ts";
 import type { McpContext } from "../src/mcp/context.ts";
 import { findTool } from "../src/mcp/tools/index.ts";
+import { writeIntent } from "../src/mcp/tools/intent-write.ts";
 import { NO_SESSION } from "../src/mcp/tools/publish-claim.ts";
 import { INTENT_ECHO_REFUSAL, INTENT_SECRET_REFUSAL, NO_TITLE } from "../src/mcp/tools/set-intent.ts";
+import { repoKey, sessionSlug } from "../src/config/paths.ts";
+import { oweWorkContext, readOwedWorkContext } from "../src/spool/owed-work-context.ts";
+import { readRefusedLives } from "../src/spool/refused-lives.ts";
+import { isHubBehindState } from "../src/spool/work-context-ack.ts";
 import { readSessionState, writeSessionState } from "../src/state/session-state.ts";
 import type { Env } from "../src/index.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
@@ -28,6 +33,10 @@ import { makeHome, makeRepo } from "./helpers.ts";
 const ADMIN_TOKEN = "set-intent-admin";
 const REPO_ID = "github.com/acme/api";
 const TITLE = "detached@0badc0f · fix: refresh 500s @ api";
+const HTTP_INTERNAL_ERROR = 500;
+/** A request timeout the gateway below outlasts. */
+const SHORT_TIMEOUT_MS = 150;
+const SLOW_GATEWAY_MS = 600;
 
 let db: Db;
 let server: ReturnType<typeof Bun.serve>;
@@ -84,8 +93,11 @@ const workContextRecordFor = (
   },
 });
 
-/** A developer with a hub session, a work context and the state SessionStart writes (title included). */
-const setUpDeveloper = async (label: string, name: string, email: string): Promise<Developer> => {
+/**
+ * A developer with a hub session, a work context and the state SessionStart
+ * writes (title included), bound to `url` — the hub, or a gateway in front of it.
+ */
+const setUpDeveloper = async (label: string, name: string, email: string, url: string = hubUrl): Promise<Developer> => {
   const account = await createDeveloper(name, email);
   const home = await makeHome(label);
   const repo = await makeRepo(label, { remote: "git@github.com:acme/api.git" });
@@ -105,7 +117,7 @@ const setUpDeveloper = async (label: string, name: string, email: string): Promi
     workContextId,
     repoId: REPO_ID,
     repoRoot: repo,
-    hubUrl,
+    hubUrl: url,
     developerId: account.developerId,
     startedAt,
     lastHeartbeatAt: startedAt,
@@ -124,9 +136,39 @@ const setUpDeveloper = async (label: string, name: string, email: string): Promi
     home,
     repo,
     hostSessionKey,
-    env: { CROSSCHECK_HOME: home, CROSSCHECK_HUB_URL: hubUrl, CROSSCHECK_API_KEY: account.apiKey },
+    env: { CROSSCHECK_HOME: home, CROSSCHECK_HUB_URL: url, CROSSCHECK_API_KEY: account.apiKey },
   };
 };
+
+/**
+ * A gateway in front of the hub that answers every record post itself — an HTTP status as a failure envelope,
+ * or a whole response — or forwards it, running `onRecords` first, while the post is in flight.
+ */
+const gatewayAnswering = (
+  respond: () => number | Response | null,
+  onRecords: () => Promise<void> = async () => undefined,
+) =>
+  Bun.serve({
+    port: 0,
+    fetch: async (request) => {
+      const { pathname, search } = new URL(request.url);
+      if (pathname === "/api/records") {
+        await onRecords();
+      }
+      const answer = pathname === "/api/records" ? respond() : null;
+      if (typeof answer === "number") {
+        return Response.json({ ok: false, error: { code: "gateway", message: "gateway" } }, { status: answer });
+      }
+      if (answer !== null) {
+        return answer;
+      }
+      return fetch(`${hubUrl}${pathname}${search}`, {
+        method: request.method,
+        headers: request.headers,
+        body: request.method === "GET" ? undefined : await request.arrayBuffer(),
+      });
+    },
+  });
 
 const contextFor = async (developer: Developer): Promise<McpContext> => {
   const setup = await prepareMcp(developer.env, developer.repo);
@@ -325,6 +367,194 @@ describe("set_intent", () => {
     });
     const body = (await response.json()) as { data: { workContext: { status: string } } };
     expect(body.data.workContext.status).toBe("implementing");
+  });
+
+  test("a status the hub accepted is the one SessionEnd compares the state's with (review-2 round 8, L7)", async () => {
+    // Act
+    await call(alice, { summary: "Ship the JWKS refetch behind a flag, acknowledged", status: "blocked" });
+
+    // Assert
+    expect((await readSessionState(alice.home, alice.hostSessionKey))?.workContextAcked).toEqual({
+      id: alice.workContextId,
+      status: "blocked",
+    });
+  });
+
+  test("settles the work context a heal still owes for that life, and only that one (review-2 round 7, M1)", async () => {
+    // Arrange: a debt for Alice's work context, as a heal leaves it
+    const key = repoKey(hubUrl, REPO_ID);
+    const slug = sessionSlug(alice.hostSessionKey);
+    const owed = (workContextId: string) => ({
+      sessionId: alice.sessionId,
+      record: workContextRecordFor({ ...alice, workContextId }),
+    });
+    await oweWorkContext(alice.home, key, slug, owed(alice.workContextId));
+
+    // Act
+    await call(alice, { summary: "Settle the owed work context", status: "blocked" });
+    const afterOwn = await readOwedWorkContext(alice.home, key, slug);
+    await oweWorkContext(alice.home, key, slug, owed(`${alice.workContextId}~other`));
+    await call(alice, { summary: "Leave another debt alone", status: "blocked" });
+
+    // Assert
+    expect(afterOwn).toBeNull();
+    expect((await readOwedWorkContext(alice.home, key, slug))?.sessionId).toBe(alice.sessionId);
+  });
+
+  test("a status the hub surely never took is not left in the state, and one it may have taken stays (review-2 round 7)", async () => {
+    // Arrange: a developer behind a gateway that refuses every record post with 400, then answers 504
+    let answer = 400;
+    const gateway = gatewayAnswering(() => answer);
+    const erin = await setUpDeveloper("si-gateway", "Erin", "erin-intent@example.com", `http://127.0.0.1:${String(gateway.port)}`);
+    const statusOf = async () => (await readSessionState(erin.home, erin.hostSessionKey))?.workContextStatus;
+
+    // Act: refused for sure; then lost on the way back
+    const refused = await call(erin, { summary: "Refused at the door", status: "testing" });
+    const afterRefused = await statusOf();
+    answer = 504;
+    const lost = await call(erin, { summary: "Maybe taken", status: "blocked" });
+    gateway.stop(true);
+
+    // Assert: both failed at the hub, not at the argument check
+    expect(refused).toMatchObject({ isError: true, text: expect.stringContaining("HTTP 400") });
+    expect(lost).toMatchObject({ isError: true, text: expect.stringContaining("HTTP 504") });
+    expect(afterRefused).toBe("analyzing");
+    expect(await statusOf()).toBe("blocked");
+  });
+
+  test("the new status is in the state before its post leaves, for a hook killed after it (review-2 round 7, seed 10)", async () => {
+    // Arrange: a gateway that reads the state while the post is in flight
+    const statuses: unknown[] = [];
+    const gateway = gatewayAnswering(
+      () => null,
+      async () => {
+        statuses.push((await readSessionState(frank.home, frank.hostSessionKey))?.workContextStatus);
+      },
+    );
+    const frank = await setUpDeveloper("si-in-flight", "Frank", "frank-intent@example.com", `http://127.0.0.1:${String(gateway.port)}`);
+
+    // Act
+    const result = await call(frank, { summary: "Read while in flight", status: "testing" });
+    gateway.stop(true);
+
+    // Assert: what a re-fire or a debt's payment would build from, had the hook died with the post
+    expect(result).toMatchObject({ isError: false });
+    expect(statuses[0]).toBe("testing");
+  });
+
+  test("keeps the new status over a plain HTTP 500: the post may have landed (review-2 round 8, R7-M5)", async () => {
+    // Arrange: a gateway that answers every record post with 500
+    const gateway = gatewayAnswering(() => HTTP_INTERNAL_ERROR);
+    const gina = await setUpDeveloper("si-500", "Gina", "gina-intent@example.com", `http://127.0.0.1:${String(gateway.port)}`);
+
+    // Act
+    const result = await call(gina, { summary: "Maybe taken behind a 500", status: "blocked" });
+    gateway.stop(true);
+
+    // Assert
+    expect(result).toMatchObject({ isError: true, text: expect.stringContaining("HTTP 500") });
+    expect((await readSessionState(gina.home, gina.hostSessionKey))?.workContextStatus).toBe("blocked");
+  });
+
+  test("an unanswered post leaves the acknowledgement uncertain, so SessionEnd sends once more (L7)", async () => {
+    // Arrange: a gateway that forwards the first post, then answers every record post with 500
+    let answer: number | null = null;
+    const gateway = gatewayAnswering(() => answer);
+    const jo = await setUpDeveloper("si-uncertain", "Jo", "jo-intent@example.com", `http://127.0.0.1:${String(gateway.port)}`);
+    await call(jo, { summary: "Acknowledged before the gateway failed", status: "blocked" });
+    answer = HTTP_INTERNAL_ERROR;
+
+    // Act: a post the hub may have taken, then one putting the state back on the acknowledged status
+    await call(jo, { summary: "Maybe taken behind a 500", status: "done" });
+    await call(jo, { summary: "Back where the hub last agreed", status: "blocked" });
+    gateway.stop(true);
+
+    // Assert: the state agrees with the acknowledgement, and SessionEnd still reads the hub as behind
+    const state = await readSessionState(jo.home, jo.hostSessionKey);
+    expect(state?.workContextAcked).toEqual({ id: jo.workContextId, status: "blocked", uncertain: true });
+    expect(state === null ? null : isHubBehindState(state)).toBe(true);
+  });
+
+  test("puts the old status back when the hub ignores the change (review-2 round 8, R7-M7)", async () => {
+    // Arrange: a gateway that answers every record post as the hub does past the amendment cap
+    const gateway = gatewayAnswering(() =>
+      Response.json({
+        ok: true,
+        data: {
+          accepted: 0,
+          duplicates: 0,
+          ignored: 1,
+          rejected: 0,
+          results: [{ index: 0, status: "ignored", issues: ["intent: amendment cap reached"] }],
+        },
+      }),
+    );
+    const ivan = await setUpDeveloper("si-ignored", "Ivan", "ivan-intent@example.com", `http://127.0.0.1:${String(gateway.port)}`);
+
+    // Act
+    const result = await call(ivan, { summary: "Past the cap", status: "blocked" });
+    gateway.stop(true);
+
+    // Assert
+    expect(result.isError).toBe(true);
+    expect((await readSessionState(ivan.home, ivan.hostSessionKey))?.workContextStatus).toBe("analyzing");
+  });
+
+  test("keeps the new status when its post times out after the hub may have taken it (review-2 round 8, R7-M6)", async () => {
+    // Arrange: a gateway slower than the request's timeout; the write itself, with that short timeout
+    const gateway = gatewayAnswering(
+      () => null,
+      () => Bun.sleep(SLOW_GATEWAY_MS),
+    );
+    const url = `http://127.0.0.1:${String(gateway.port)}`;
+    const hana = await setUpDeveloper("si-timeout", "Hana", "hana-intent@example.com", url);
+    const state = await readSessionState(hana.home, hana.hostSessionKey);
+    if (state === null) throw new Error("no session state");
+    const key = repoKey(url, REPO_ID);
+    const now = () => new Date();
+
+    // Act
+    const outcome = await writeIntent(
+      {
+        home: hana.home,
+        repoKey: key,
+        hub: { hubUrl: url, apiKey: hana.apiKey, timeoutMs: SHORT_TIMEOUT_MS, home: hana.home, repoKey: key, now },
+        now,
+        envelope: (producer, body, seq) => ({
+          cx: PROTOCOL_VERSION,
+          id: `env_${crypto.randomUUID()}`,
+          ts: now().toISOString(),
+          producer: { developerId: producer.developerId, agentKind: "claude-code", sessionId: producer.sessionId },
+          kind: "work_context",
+          body,
+          seq,
+        }),
+      },
+      { ...state, workContextTitle: TITLE, workContextStatus: "analyzing", sessionAmbiguous: false },
+      {
+        summary: "Taken after the timeout",
+        status: "blocked",
+        intent: { summary: "Taken after the timeout", provenance: "declared", confidence: 1, capturedAt: now().toISOString() },
+      },
+    );
+    gateway.stop(true);
+
+    // Assert
+    expect(outcome.outcome).toBe("failed");
+    expect((await readSessionState(hana.home, hana.hostSessionKey))?.workContextStatus).toBe("blocked");
+  });
+
+  test("a life the hub refuses as ended is written down as refused (review-2 round 7)", async () => {
+    // Arrange: a developer whose session the hub has ended
+    const ended = await setUpDeveloper("si-ended", "Ended", "ended-intent@example.com");
+    await post(`/api/sessions/${encodeURIComponent(ended.sessionId)}/end`, ended.apiKey, { status: "done" });
+
+    // Act
+    const result = await call(ended, { summary: "Too late for this life" });
+
+    // Assert
+    expect(result.isError).toBe(true);
+    expect(await readRefusedLives(ended.home, repoKey(hubUrl, REPO_ID), new Date())).toContain(ended.sessionId);
   });
 
   test("another developer's context is unreachable: Bob's declaration never touches Alice's", async () => {

@@ -237,6 +237,8 @@ const seededState = (
   summarizerLastUnreadable: null,
   workContextTitle: null,
   workContextStatus: null,
+  agentKind: null,
+  workContextAcked: null,
   intentFireCount: 0,
   intentNoneCount: 0,
   intentSetCount: 0,

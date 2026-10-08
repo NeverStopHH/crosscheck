@@ -57,7 +57,7 @@ export interface LedgerText {
 const ABSENT: LedgerText = { text: null, writtenBy: null, unreadable: false };
 
 /** Absence, not failure: the one outcome that may read as "nothing lost". */
-const isAbsence = (error: unknown): boolean => {
+export const isAbsence = (error: unknown): boolean => {
   const code = (error as { code?: unknown } | null)?.code;
   return code === "ENOENT" || code === "ENOTDIR";
 };

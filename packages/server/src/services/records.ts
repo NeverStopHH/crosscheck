@@ -9,6 +9,7 @@ import type {
   LandedEvidence,
   LandedNoticeDelivery,
   LandedStop,
+  ParseRecordResult,
   Question,
   QuestionAnswer,
   SeqField,
@@ -23,6 +24,8 @@ import { ingestHintDelivery } from "./hint-deliveries.ts";
 import { ingestLandedEvidence } from "./landed.ts";
 import { ingestLandedNoticeDelivery, ingestLandedStop } from "./landed-notices.ts";
 import { embedContextDoc } from "./normalized-doc.ts";
+import { heldReceipts, writeReceipt } from "./record-receipts.ts";
+import type { Held, Receipt } from "./record-receipts.ts";
 import { answerQuestion, askQuestionFromRecord } from "./questions.ts";
 import {
   ingestClaim,
@@ -303,14 +306,41 @@ interface IngestOneResult {
   readonly touched?: string;
   /** Set once the producer gate passed — the session is provably running. */
   readonly liveProducer?: string;
+  /** Set when the hub now holds this envelope: what its receipt records. */
+  readonly receipt?: Receipt;
 }
+
+/**
+ * The answers a receipt is kept of: every one that says the hub holds the
+ * record, `ignored` among them (review-2 round 9, L3) — the hub kept the
+ * record and not the change inside it. Never a refusal: its re-send is
+ * refused again.
+ */
+const KEPT: ReadonlySet<RecordStatus> = new Set(["accepted", "duplicate", "ignored"]);
+
+const HELD_IGNORED_ISSUE = "held: the hub kept this record when it first came, and not the change inside it";
+
+/** A held envelope's answer, as the first one went: `ignored` again, or `duplicate`. */
+const heldOutcome = (holds: Held): HandlerOutcome => {
+  const id = holds.resultId === null ? {} : { id: holds.resultId };
+  return holds.isIgnored ? { status: "ignored", ...id, issues: [HELD_IGNORED_ISSUE] } : { status: "duplicate", ...id };
+};
+
+/**
+ * The envelope ids a flush carries that a receipt may name: only those of
+ * envelopes that parsed as a known kind (review-2 round 9, M5), which
+ * parseRecord has screened for text no column can hold. The raw ids used to
+ * go to SQL first, and a NUL in one failed the batch.
+ */
+const receiptIdsOf = (records: readonly ParseRecordResult[]): readonly string[] =>
+  records.flatMap((record) => (record.ok && !record.unknownKind ? [record.envelope.id] : []));
 
 const ingestOne = async (
   deps: Deps,
   developerId: string,
-  input: unknown,
+  parsed: ParseRecordResult,
+  held: ReadonlyMap<string, Held>,
 ): Promise<IngestOneResult> => {
-  const parsed = parseRecord(input);
   if (!parsed.ok) {
     return { outcome: { status: "rejected", issues: parsed.issues } };
   }
@@ -330,6 +360,7 @@ const ingestOne = async (
       ),
     };
   }
+  const envelopeId = parsed.envelope.id;
   const liveProducer = parsed.envelope.producer.sessionId;
   const gateIssue = await checkProducerSession(
     deps,
@@ -337,7 +368,19 @@ const ingestOne = async (
     liveProducer,
   );
   if (gateIssue !== null) {
-    return { outcome: rejectedOutcome(gateIssue) };
+    // AN ENVELOPE THE HUB ALREADY HOLDS is no refusal (review-2 round 8, M4):
+    // a re-send of a batch whose answer never arrived, under a life the hub
+    // has ended since, is a record the hub has, and `rejected` would have the
+    // connector count it as lost (services/record-receipts.ts). Its body may
+    // be newer — a spooled work context goes with its life's status as it is
+    // when sent — and only that change, which the life's own later posts
+    // carry, is not applied. While its producer can still write, the envelope
+    // goes through every check as the update it is.
+    const holds = held.get(envelopeId);
+    if (holds === undefined) {
+      return { outcome: rejectedOutcome(gateIssue) };
+    }
+    return { outcome: heldOutcome(holds), receipt: { id: envelopeId, ...holds } };
   }
   const ingestableKind = kind as IngestableKind;
   const outcome = await dispatchRecord(
@@ -348,13 +391,16 @@ const ingestOne = async (
     parsed.envelope.seq,
     liveProducer,
   );
+  const kept = KEPT.has(outcome.status)
+    ? { receipt: { id: envelopeId, resultId: outcome.id ?? null, isIgnored: outcome.status === "ignored" } }
+    : {};
   if (outcome.status !== "accepted") {
-    return { outcome, liveProducer };
+    return { outcome, liveProducer, ...kept };
   }
   const touched = touchedContextId(ingestableKind, parsed.body);
   return touched === undefined
-    ? { outcome, liveProducer }
-    : { outcome, touched, liveProducer };
+    ? { outcome, liveProducer, ...kept }
+    : { outcome, touched, liveProducer, ...kept };
 };
 
 const countByStatus = (
@@ -381,11 +427,14 @@ export const ingestRecords = async (
   const results: RecordResult[] = [];
   const touchedContexts = new Set<string>();
   const liveProducers = new Set<string>();
-  for (let index = 0; index < inputs.length; index += 1) {
-    const { outcome, touched, liveProducer } = await ingestOne(
+  const parsed = inputs.map(parseRecord);
+  const held = await heldReceipts(deps, developerId, receiptIdsOf(parsed));
+  for (const [index, record] of parsed.entries()) {
+    const { outcome, touched, liveProducer, receipt } = await ingestOne(
       deps,
       developerId,
-      inputs[index],
+      record,
+      held,
     );
     results.push({ index, ...outcome });
     if (touched !== undefined) {
@@ -393,6 +442,9 @@ export const ingestRecords = async (
     }
     if (liveProducer !== undefined) {
       liveProducers.add(liveProducer);
+    }
+    if (receipt !== undefined) {
+      await writeReceipt(deps, developerId, receipt);
     }
   }
   await touchProducerHeartbeats(deps, liveProducers);

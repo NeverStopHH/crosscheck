@@ -118,7 +118,10 @@ export const sessionsRoutes = (deps: AppDeps): Hono<AppEnv> => {
         "session is registered to a different repo",
       );
     }
-    return ok(c, { session: result.session });
+    // `held` is in every answer from this hub, null for a session it just
+    // created: an older hub leaves it out, and that absence is how a connector
+    // tells "a new session" from "a hub that cannot say".
+    return ok(c, { session: result.session, held: result.held });
   });
 
   router.post("/:id/heartbeat", async (c) => {

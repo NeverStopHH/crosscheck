@@ -52,6 +52,10 @@ import {
 } from "../../connector-core/test/fixtures/hint-hub.ts";
 import { hintDeliveryRecord } from "@crosscheck/connector-core/capture/records.ts";
 import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
+import {
+  IN_BUDGET_LANE,
+  announceBudgetLaneSkip,
+} from "../../connector-core/test/fixtures/budget-lane.ts";
 
 const REPO_ID = "github.com/acme/api";
 const SESSION_ID = "capture-latency-uuid";
@@ -123,6 +127,8 @@ const sessionState = (repoRoot: string): SessionState => ({
   summarizerLastUnreadable: null,
   workContextTitle: null,
   workContextStatus: null,
+  agentKind: null,
+  workContextAcked: null,
   intentNoneCount: 0,
   intentSetCount: 0,
   intentFailCount: 0,
@@ -297,7 +303,14 @@ describe("the per-tool worktree resolution fits the PostToolUse budget", () => {
     }
   });
 
-  test("the record the ask added costs one spool append, measured (07 PIL-9)", async () => {
+  // A pure stopwatch — p95 of 50 appends against 5 ms — so it runs in the Hook
+  // budgets lane only (fixtures/budget-lane.ts): beside six other suites it
+  // read 21 ms with no behaviour wrong.
+  announceBudgetLaneSkip(
+    "packages/connector-claude/test/capture-latency.test.ts",
+    "the record the ask added costs one spool append, measured (07 PIL-9)",
+  );
+  test.skipIf(!IN_BUDGET_LANE)("the record the ask added costs one spool append, measured (07 PIL-9)", async () => {
     // Arrange
     const home = await makeHome("prelat-append");
     paths.push(home);

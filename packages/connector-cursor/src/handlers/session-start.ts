@@ -53,6 +53,9 @@ import type { HookBudget } from "@crosscheck/connector-core/config/hook-budget.t
 import type { CursorHookContext } from "../runner.ts";
 import { recordInjectionOutcome } from "../inject/ledger.ts";
 import { cursorInjectionOutput } from "../inject/output.ts";
+import { healerFor } from "./heal.ts";
+import { reapStaleLineages } from "@crosscheck/connector-core/state/session-lineage.ts";
+import { reapStaleSessionStates } from "@crosscheck/connector-core/state/session-reap.ts";
 
 const INITIAL_STATUS = "analyzing";
 
@@ -160,12 +163,22 @@ export const handleCursorSessionStart = async (
   ))
     ? ctx.hub.timeoutMs
     : 0;
+  // WITH the healer, like Claude's SessionStart: an unregistered life is
+  // registered, never used to spend the repo's spool under a refused id.
   await flushSpool(
     ctx.hub,
-    { sessionId: crosscheckSessionId, developerId },
+    { sessionId: crosscheckSessionId, developerId, heal: healerFor(ctx) },
     budget.spareMs() - endHoldbackMs,
   );
   await reapSpool(ctx.config.home, ctx.repoKey, now, deferredEnder(ctx, budget));
+  // The lineage notes and heal stamps of lives that never came back
+  // (state/session-lineage.ts) — Claude's SessionStart sweeps them too, but a
+  // Cursor-only machine has no other path that does.
+  await reapStaleLineages(ctx.config.home, now);
+  // ...and the state files of sessions that died without sessionEnd, the
+  // way Claude's SessionStart sweeps them (state/session-reap.ts): a corpse
+  // pins its spool against reap.
+  await reapStaleSessionStates(ctx.config.home, now, { keepHostSessionKey: ctx.hostSessionKey });
 
   return briefing.length === 0 ? "" : cursorInjectionOutput(briefing);
 };

@@ -104,6 +104,7 @@ export const LOSS_KINDS = [
   "spool_refused",        // append refused: file at MAX_SPOOL_BYTES, a short write, a write that failed
   "spool_torn",           // a complete line on disk that is not JSON, counted at flush
   "spool_expired",        // undelivered records of a dead session past MAX_SPOOL_AGE_DAYS
+  "spool_withheld",       // records of a life the hub had ended, held back and never sent (review-2)
   "hub_rejected",         // the hub answered 200 and refused the record
   "hub_ignored",          // the hub answered 200 and ignored the record's kind
   "capture_capped",       // paths past MAX_TARGETS_PER_INVOCATION in one tool call
@@ -251,6 +252,696 @@ when a connected repo (a `.git` boundary that commits `.crosscheck.json`, or the
 sits above one of its paths (`config/connected-repo.ts mayBeConnectedRepo`), and not at all otherwise — where no
 run of the hook would have captured for any repo. Unkeyed charges still over-report; they are never exact.
 
+**`rejected` keeps its cause** (pilot, 2026-10-05). Nick's machine held 433 dropped records, every 0.10 line
+`{"at","count":1,"reason":"rejected"}`, 225 of them from ONE Claude Code conversation resumed over a month. The
+cause: a host keeps one session id for a conversation's whole life, every SessionEnd ends its crosscheck session
+for good (`server/src/services/records.ts` checkProducerSession refuses later writes; only a REAPED end revives),
+and the next life registers one rung up — `cc_<id>`, `~r1`, `~r2`. That ladder had three rungs. The fourth life
+found all three ended, registered nothing, kept the base id the hub had just refused (`flows/register-session.ts`
+before this fix), and every record it captured was rejected while the cursor moved past it — for the rest of the
+conversation. Cursor (`conversation_id`) and ACP (`session/load`) shared the flow and the defect; Claude's
+state-less recovery took the same 409 for "nothing to recover" and captured nothing, silently.
+
+The fix keeps every end final and every order inside one `(session, epoch)` (01 §3.4): a life after an end is a
+NEW crosscheck session on the next rung, with its own epoch and its own `session.started`, the ended ones kept
+as they were. The walk is unbounded in practice and cheap: it starts at the newest life the machine knows — the
+state file's, or the one `endSessionFlow` writes down in `sessions/<slug>.lineage` — and gallops from there
+(`state/session-lineage.ts`, `REGISTER_LADDER_MAX_ATTEMPTS`). Nothing reopens an ended session, so a write after
+a final end with no resume stays rejected. Records already rejected are gone; after the upgrade the next
+SessionStart of a deaf conversation registers a live life and capture resumes. Coverage follows the evidence: a
+deaf life touched no session row (register and heartbeat answered 409, every record refused), so its author read
+as `commit authors with no reported session` on the git rung; the new life's register closes that, while the
+rejected records travel in the loss report and keep the agent rung `incomplete / telemetry_lost` inside the window.
+A deaf conversation's flush also stamped OTHER sessions' backlogs with its ended id (`spool/flush.ts` stamps the
+flushing session; the drop is filed under the writer's ledger) — the likely source of the short sessions' one to
+four `rejected` records each, which the new `causes` field will name from now on.
+
+A `rejected` line now carries `causes`, the hub's refusal as a word from a closed list
+(`spool/reject-cause.ts`: `session_ended`, `session_unknown`, `session_foreign`, `developer_mismatch`,
+`author_unknown`, `other`),
+matched against the hub's own sentence and never storing it; the archive folds it as `rejectedCauses`. Readers
+from before the field parse the line unchanged (their schema is a loose object), and doctor's `hub rejected
+records` line and `status`'s `losses:` say why — counting the lines that carry no cause as "cause not recorded".
+The causes name the session that DELIVERED the records — the hub's issue is about `producer.sessionId`, which the
+flush stamps with the flushing session — never the session that wrote them or a resume that may not have happened.
+
+**A refused session heals mid-life** (`flows/heal-session.ts`, `spool/flush-heal.ts`). The ladder above ran only
+at SessionStart, so a session the hub ended or never registered — a sibling process's SessionEnd after a reload, a
+register that did not land, a conversation already deaf at upgrade — stayed refused until the host fired
+SessionStart again. Now a flush whose records come back `session_ended` or `session_unknown` for its OWN
+producer, or a heartbeat answered 409/404, walks the ladder once: at most one walk per flush, at most one per
+`HEAL_COOLDOWN_MS` per session (stamped in `sessions/<slug>.heal` before the walk), each rung clamped to the
+flush's deadline. A NEW life is registered with `session.started` at `(state epoch, 0)` — the counter runs on, so
+no position is issued twice — the state switches to it, and its work context is spooled; a session the hub never
+registered is registered as itself. The refused batch is re-sent under the life the walk landed on, except for one
+class: a record whose body names its session (`target`, `claim`, `claim_edge`, `work_context`) and that the
+refused life produced. The hub positions those in the session the body names, so under any other producer they
+would land in an ended session past its end, or under an epoch it never had. They stay `rejected / session_ended`;
+that life's stragglers in later flushes are never sent at all (`spool/refused-lives.ts`, one line per healed life)
+and are counted under their own reason, `withheld`, with doctor's `withheld records` line — never as "rejected by the
+hub", which would be a sentence about a request that did not happen. Everything
+else is re-sent: producer-filed kinds lose their position on the way (`foreign_session_delivery`), and another
+session's backlog lands where its body says, as any successor flush delivers it. The edits between the hub's end
+and the heal are the cost; every edit after it is captured.
+
+**A life the hub never registered keeps its work context** (review-2 finding 1). Every later record of such a
+life names its work context, and the life may still be registered AS ITSELF — so a refusal no heal answered (a
+flush with no healer, a walk the hub refused too) used to spend that one record, and after the hub recovered and a
+heal registered the life, every edit was refused as `other` for a work context the hub never saw (`claude
+--resume` while registers failed: every later edit of the conversation). Now a `session_unknown` refusal that
+falls on the flusher's own `work_context` and is not healed keeps the batch on disk, as one that falls on another
+conversation's records does; a life the hub ENDED is never registered again, so its own is still spent. And every
+heal that lands spools the life's work context, a heal onto the same id too — the copy a heal finds missing was
+spent by another conversation's flush or an older connector; a second copy is a duplicate to the hub. ACP's
+registration flush now carries the healer, as SessionStart's does on the other hosts.
+
+**One deferred end per life** (review-2 finding 3). The `.pending-end` marker was one per HOST session, so a
+conversation resumed after a deferred end wrote the next life's marker over it: the earlier life was never ended
+from this machine (left to the hub's reaper), its `session.ended` position was lost, and it never reached doctor's
+`unclosed sessions` count, which counts markers as they age out. A later life's marker now carries its rung —
+`<slug>.r<n>.pending-life`, the base life keeps `<slug>.pending-end` — reap lists both and reads the slug back
+from before the last `.r<n>`, and each life's end waits for the conversation's backlog and lands — or ages out
+and is counted — on its own. The later-life name is deliberately no `.pending-end` name (review-2 MEDIUM-2): every
+reap before per-life markers lists those and reads the whole stem as a slug, and a proxy started before an upgrade
+read the first spelling, `<slug>@r1.pending-end`, as a session with no spool, saw nothing pending, and ended the
+life while `<slug>.jsonl` still held its records. An older reap never sees a `.pending-life` file at all. A stray
+marker in that first spelling is still read right by this reap: `@` never occurs in a slug, so the part before it
+is the slug (round 6 LOW-2).
+
+**SessionEnd compares before it deletes** (review-2 finding 2). SessionEnd reads the life it ends at its start and
+deleted the state unconditionally at its end; a mid-life heal landing in between (`K → K~r1`) left the healed life
+open on the hub with no state naming it, and the next resume landed on it under a fresh epoch — `epoch_split`.
+ACP's proxy reaches the same window from its exit, which races the dispatch chain against a timer while its
+in-memory session still names the old life. The delete now runs under the state lock and reads what the state
+names (`closeSessionState`): the state goes either way, and a life other than the one being ended is ended with
+it — its own position past the counter, its own marker, written to the lineage — so the next resume starts above
+it. The backlog is counted after the state goes, so a work context the heal spooled meanwhile holds both ends back.
+And the heal owes that work context IN THE SAME LOCKED STEP that switches the state (review-2 LOW-4, as rebuilt
+in round 6): switched first and spooled after, a SessionEnd in between found the new life with nothing on disk,
+ended it, and the heal's re-send then went under an ended life — another conversation's backlog spent as
+`session_ended`, against P7 — while a parallel capture could put a target ahead of the work context it names. Now
+the state never names a life without its owed work context, and SessionEnd counts that debt as undelivered.
+
+**A switch that meets a busy lock is not a lost race** (review-2 round 6, MEDIUM-1). The switch answered a plain
+no, the heal took it for a sibling's win, found the state still on the refused id — the very life a same-id heal had
+just registered — and retired it: the live life ended on the hub and its first window was refused as late writes.
+The switch now answers swapped, `cas_lost` or `lock_busy`; a busy lock makes the heal `pending` with no cooldown
+and no `failed` verdict, so the next hook walks again; and an orphan is retired only after a check under the state
+lock that the state does not name it. A register that lands — a SessionStart re-fire after a failed walk — removes
+the stamp and its `failed` verdict too (round 6 LOW-1): the hub knows the life, and the verdict kept every flush from
+sending for the rest of the cooldown.
+
+**A batch a walk leaves on disk is counted once** (review-2 finding 4). What a batch has lost whatever comes next
+— torn lines, withheld stragglers, refusals no heal can carry — is written before the walk's register (review P3),
+and a walk can leave the batch on disk: no life registered with another conversation's records at stake, no room
+left to re-send. Every later walk wrote the same lines again — one torn line and one straggler read as
+`{unparsable: 3, withheld: 3}` after three cooldowns, up to the spool's seven-day bound, all of it in the hub's
+`loss_total`. The flush now notes on the cursor which lines' losses are in the ledger (`spool/batch-losses.ts`,
+by each line's end offset in that data file; the cursor write that moves past the batch drops the note), and
+writes only lines not on it — one line, one loss, whatever it was first counted as. The note is written right
+after the ledger appends, inside the same step (review-2 LOW-3): written once the heal came back, it was missing
+after a hook killed mid-walk, and the next flush counted the batch again.
+
+**`withheld` travels as its own kind, `spool_withheld`** (review-2 honesty residual). The ledger kept `withheld`
+apart from `rejected` from the start, but the loss report mapped both to `hub_rejected` — *"the hub answered 200
+and refused the record"*, a sentence about a request that never happened. The kind is additive: this hub stores
+it by name, and a hub that knows the loss report but not this kind folds it into `unattributed` by the rule it
+already runs (`foldLossKinds`, unchanged since the report shipped), so the loss is still counted and the rung
+still reads `incomplete / telemetry_lost`. `MAX_LOSS_KIND_ENTRIES` follows the vocabulary (`LOSS_KINDS.length × 2`,
+now 26), as `MAX_GUARANTEE_TRIPLES` already did.
+
+**An unregistered life beside a live conversation keeps its first window** (review-2 MEDIUM-1). The fix above
+held while the unregistered life flushed alone. With a second live conversation in the repo, that conversation's
+flush drained the deaf life's spool under its own name, the hub refused its work context ("session not found")
+and its targets ("work context not found"), and they were spent as someone else's refusals; the heal five
+minutes later registered the life as itself and spooled its work context at the TAIL, behind the very edit that
+named it, and the seen-set kept every lost file from being captured again — of a, b, c, d edited, the hub held c
+and d. Three changes, each needed: a successor flush leaves that life's records where they are (the ownership rule
+below, which replaced round 6's `unregistered` hold); a heal sends the life's work context AHEAD of the batch it
+re-sends (`flush-heal.ts`), the spooled copy a duplicate at worst; and every heal clears the seen-set, the same
+id's too.
+
+**The work context a heal owes is a persisted debt** (review-2 round 6, HIGH-1). That ahead copy rode only the
+healing flush's one re-send: any failure of that POST — a 503, a timeout, no room left, or a full batch plus the
+work context past `MAX_INGEST_BATCH` (100 + 1, refused whole) — left the backlog to a flush with no work context
+ahead of it, and every record was refused `author_unknown` and spent: 100 of 100, 150 of 150, 3 of 3 with one
+503. The heal now writes the debt — `<slug>.owed-wc` beside the spool, in the same locked step that switches the
+state (`spool/owed-work-context.ts`) — and every drain that sends a batch carrying the life's records sends the
+owed work context at its head, the batch sized one short of the limit, until the hub's answer for it is accepted
+or a duplicate. The tail copy is gone (it could also revert a status `set_intent` set since). Beside the spool,
+not in the state: SessionEnd deletes the state while the records the debt is owed for may still wait on disk, and
+SessionEnd counts an open debt for the life it ends — or the one a heal moved it to — as undelivered and defers.
+The life's own records refused `author_unknown` while its debt is open are kept, never spent. Reap removes a debt
+with its spool, or once no live session and no spool can ever pay it.
+
+**A flush sends only what is its own** (review-2 round 7). Round 6 held an `unregistered` life's records from
+other flushers, and each repair of the hold opened another way to lose them: a mark that never cleared held a
+crashed life's backlog until it expired; an hour of silence released a life that was idle but alive, and a
+successor spent its records (P3); and a flusher healing its own life inside a batch of ANOTHER conversation's
+owed life re-sent those records without the work context they were owed, so all three were refused
+`author_unknown` (H1, P4). The hold, its mark, its expiry and its per-life cursor notes are gone. In their place is
+one rule (`spool/ownership.ts`): a flusher sends its own host session's spool (the state names its life), an ENDED
+one's (no state file), or an ABANDONED one's (a state silent past the bound session-reap deletes on,
+`isPastReapBound`), and never another live conversation's. That conversation delivers its own records, heals
+its own life and pays its own work context. Doctor says `N records wait for their own conversation (another live
+session)` while any do. Cursor's sessionStart and the ACP proxy's shutdown reap stale session states as Claude's
+SessionStart does, each sparing its own.
+
+**One life per batch, and a debt with nothing to ride on is paid alone** (review-2 round 7). A batch is the head of
+the spool up to the first line another life wrote, so at most one owed work context goes ahead of it, the debt of
+the life it carries, settled under the spool that owes it; a heal inside it re-sends one life's records. Every
+batch keeps the work context's slot (`MAX_INGEST_BATCH - 1` lines, debt or not), so a batch is the same lines on
+every flush that meets it, and a walk's cursor note always lies inside the batch that settles it (L1). A spool that
+owes a work context and holds no record to carry it, including after a heal that re-sent nothing because the batch
+was the refused life's own, is drained like any other: the debt goes alone in the same drain. A payment that does
+not land waits for the next drain, never the next batch.
+
+**The owed work context is built when it is sent, and set_intent settles it** (review-2 round 7, M1). The heal wrote
+the work context it owed with the status the state held then, and a debt still open when `set_intent` set a new
+status was paid later with the old one, which reverted it (P2, p4b revert: `blocked` back to `analyzing`). The
+payment is now built at each send from the title and status the life's state holds then, in a fresh envelope so the
+hub never answers a stale copy `duplicate`, and settled by the work context's id. `set_intent`'s own post, once the
+hub took it, settles the debt for that work context. The one window left is a payment already in flight when
+`set_intent` posts (the hub keeps whichever lands last); both run in the same conversation, and the hosts run a
+tool's hooks after the tool.
+
+**A debt the hub refuses is bounded, and never stalls the drain** (review-2 round 7, M3, P1). A work context the hub
+refused every time pinned its life's records for good, failed every drain of its own flusher, and held its
+SessionEnd open. The debt now keeps its refusal count and the time of its first refusal. A refusal is the hub's
+verdict on the record itself; a refusal of the session that sent it is the heal's to answer and never counts. A
+refused debt goes once per drain, because its spool is passed over for the rest of that drain while every other
+spool the flusher may send still goes. After `OWED_WORK_CONTEXT_MAX_REFUSALS` (3) refusals, or `MAX_SPOOL_AGE_DAYS`
+after the first, the debt is released: it is counted as one drop with its own cause, `owed_wc_refused`, and so are
+the life's records the hub refused for want of it, and the life's records then go like any others.
+
+**The spool, simulated** (review-2 round 7). `connector-core/test/spool-simulation.test.ts` is a seeded,
+deterministic, model-based test that runs the real register, flush, heal and SessionEnd code against the real hub (in-memory
+PGlite) behind a fault-injecting proxy. Each seed is a scenario of one to three conversations on one repo spool. The
+events are SessionStart (resumes climb the life ladder), edits, `set_intent`, SessionEnd, a sibling ending a live
+life on the hub, an hour of idleness, a host that dies silently for good, an older connector's flush, 503s, answers
+lost after the hub committed, refused registers, a work context the hub refuses for good, and a crash before or after
+any hooked write (state, cursor, debt, stamps, markers, spool appends, ledger appends). After the scenario drains, six
+invariants must hold, all checked against what the proxy and the write hooks logged:
+
+- (I1) every captured record is delivered or counted once;
+- (I2) no record goes under the wrong life, nor into a session the connector had been told was ended;
+- (I3) no session's order breaks;
+- (I4) no work context ends older than the newest status `set_intent` wrote;
+- (I5) every drain keeps its deadline and the scenario settles;
+- (I6) no flusher moves another live conversation's cursor or ledger.
+
+A failing seed is shrunk to a minimal trace. CI runs 300 seeds, about 20 s; `SIM_SEEDS` widens the sweep, and 10,000
+seeds ran clean before this round shipped. Every reviewer probe (P1–P5, p4b) is a fixed scenario, and so is every seed that failed
+while the test was written. The sweep found these, and each is fixed:
+
+- a SessionStart re-fire put the host's starting status back over `set_intent`'s, and so did the work context the
+  register had spooled when `set_intent` reached the hub first. A spooled work context now goes with its life's state,
+  or, once SessionEnd ran, with the title and status its end left on the deferred-end marker;
+- a SessionStart whose ladder climbed past an ended life, a heartbeat or `set_intent` refused as ended, a flush
+  refused as ended with no heal past it, and a lone debt refused as ended each left that life's records deliverable
+  into it. Each now writes the life down as refused (once per life), and a debt of a refused life is settled as moot;
+- a SessionStart killed between its register and its state write split the session's epoch. The register now
+  reserves its epoch before the POST (`sessions/<slug>.epoch`, swept with the lineage notes);
+- `set_intent` killed between a post the hub took and its state write let the next sender revert the status. It now
+  writes the status into the state first, puts it back only when the hub surely did not take it, and keeps it when
+  the post may have landed;
+- the deferred end ended a life whose work context was still owed, and the payment was then filed past the end.
+
+Residuals the invariants allow for, each counted, never silent:
+
+- a record the hub took while the connector never learned it (the answer was lost, or the hook died before the cursor
+  write) is counted as lost when a re-send is refused or the record is withheld, because the hub answers the producer
+  before the duplicate;
+- the ledger may over-count after a crash between a ledger append and the cursor write past it, the honest direction
+  §4.3 already accepts;
+- the ledger may over-count after a reap killed between removing a spool's cursor and removing its data file
+  (`spool/reap.ts` removeSessionData). The cursor goes first on purpose: a crash there leaves lines with no cursor,
+  which re-send rather than skip, and skipping is the unrecoverable direction. The lines it re-exposes are delivered
+  ones too. A live or ended conversation re-sends them and hears `duplicate`, but a conversation whose life the hub
+  ended withholds them, and they are counted lost though the hub holds them (sleep seed 3851, residual `I1r`);
+- a record delivered into a session whose end only a sibling saw is filed past that end, because no flusher here was
+  told;
+- an older connector's flush neither honours ownership nor reads the refused-lives note. It spends a live
+  conversation's records (author_unknown, counted; the P5 scenario shows it) and can send a spooled work context as it
+  was spooled (L5).
+
+**The edges the round-6 review left** (review-2 round 7):
+
+- A heal that retires a life nobody names now ends it inside the walk's deadline, and makes no end call once nothing
+  is left; the lineage still keeps a resume off that life (L3).
+- A switch that meets a busy state lock no longer tries to retire anything. The retire needs the same lock, and the
+  next walk lands on the very life this one registered (O27). A switch that loses its compare-and-swap decides
+  under the state lock whether the life it registered is an orphan, so a SessionStart that moved the state onto that
+  very life in between keeps it open.
+- A SessionStart re-fire whose register fails keeps the failed walk's cooldown verdict (O29).
+- A state file that will not parse still speaks for a live conversation until the file itself has been silent past
+  the reap bound; then its records go as an abandoned conversation's (U19).
+- The walk no longer writes the refused life down itself: the heal does for a refusal as ended, the ladder does
+  for a 409 on the state's life, and a flush with no healer (SessionEnd's) does for its own refusal.
+- Doctor reports what is owed: `WARN owed work contexts: N owed, waiting for their lives' next batch; M refused by the
+  hub (k of 3 refusals before they are released); P debt files that will not parse`. A corrupt debt file is counted
+  as the problem it is, never read as "nothing owed" (L4).
+
+**The simulation, extended** (review-2 round 8). The round-7 review extended the simulation with three things it did
+not model, and they are part of it now:
+
+- two connector processes at once (`par`), interleaving at every file and network await: parallel tool calls, and a
+  reload's SessionEnd beside its SessionStart;
+- a slow hub that commits a record or register POST and holds its answer for 600, 1400 or 1700 ms;
+- a host that dies while a week passes for every file on disk (`age`), not only its state.
+
+The timing is production's: the request timeout is `HTTP_TIMEOUT_MS` (400 ms), and each hook's drain gets what its real
+budget spares it (`config/hook-budget.ts`). A batch the hub committed after the connector stopped waiting is logged as
+taken unheard, which at 400 ms against the in-memory hub is common, as on a laptop. CI runs 300 seeds in about 50 s and
+prints the over-count with every run: records the ledger counts lost that the hub holds. Each seed the review's sweep
+failed is a fixed scenario named by its seed and finding. Two of them, 1018 and 1034, were the checker's: it read a
+conversation's phase before a step in which a parallel SessionEnd ended it, so a successor sending its spool looked
+like a send while it was live. At production timing the sweep found the mirror image (seed 10009: a conversation a
+parallel SessionStart restarted after the other process found it ended). A send counts as into a live conversation
+now only when that conversation was live on both sides of the step.
+
+**The simulation, extended again** (review-2 round 9). The round-8 review added five things, and they are part of the
+simulation now, each a generator `SIM_ADD` picks:
+
+- `io`: a disk that refuses a run of a step's writes (ENOSPC, EACCES), with the process living on, or exiting on the
+  error;
+- `sleep`: a night the hub reaps through (8 h), a week away for every file AND the hub, a conversation woken after it,
+  connector-claude's state recovery on a PostToolUse, and a heartbeat with its heal;
+- `focus`: two processes of one conversation around set_intent, SessionStart and SessionEnd, behind a slow hub, with
+  an end the hub committed whose answer was lost.
+
+An end the connector SENT counts as one it may know about, heard or not: I2 holds it to that. The review's probes (a
+night with a heartbeat, a week asleep then a resume or a recovery, 64 SessionEnds, an end committed unheard) and every
+seed its sweeps failed are fixed scenarios. Each one still open names the fix it waits for, and the sweep skips its
+seed.
+
+One class is a documented residual, I1u, and the sweep counts it without failing. It is a drop the disk refused to
+write down anywhere: the ledger line and its fallback marker both failed, so nothing on that disk can count it. Each
+`io` seed that found it is a fixed scenario asserting that this, and nothing else, happened.
+
+A second one, I1r, is the reap's removal window above. The checker allows it only for lines that were in the spool
+data file at the moment a step died between that file's cursor removal and its own removal (`sim-hooks.ts`
+logRemoval). Those lines must then have been withheld or expired, never re-sent. Every other record counted though the
+hub holds it is still I1. Sleep seed 3851 is its fixed scenario.
+
+**The simulation as a standing method** (review-2 round 9). Each review round found its bugs in a few thousand seeds
+across the generators, a few per thousand, so the sweep runs at three widths:
+
+- **Every pull request** runs 300 seeds of `shipped` with the suite, plus every seed any sweep ever found failing.
+  Those seeds live in the historical corpus, `connector-core/test/simulation/seed-corpus.ts`: each with the seed, its
+  generator, the invariant it broke, the bug in one line and the commit that fixed it. Each runs as a fixed scenario
+  with its shrunk events, since a generator's draw for a seed changes as the generator grows. A residual names its class
+  and may fall only in that class; a fixed bug allows none. Moving the fixed scenarios into the corpus cost PR CI 1.7 s
+  (14.1 to 15.8 s for the fixed scenarios), for one seed the round-9 sweep added (focus 270, L1) and the corpus check.
+- **Every night**, `.github/workflows/simulation-nightly.yml` sweeps every generator (`shipped`, `io`, `sleep`, `focus`,
+  `all`) at 2000 seeds each, one job per generator. The starting seed moves on with each run, so the nights keep drawing
+  seeds no sweep has seen. A failing seed fails its job and is listed in the run's summary table. The job uploads each
+  generator's report: its failing seeds, the shrunk events and trace of the first three, its residuals and its
+  over-count. 2000 `focus` seeds take about 9 minutes on a laptop; each job is bounded at 150 minutes.
+- **Before a release**, the release-candidate sweep runs 5000 seeds of every generator:
+  `bun run packages/connector-core/scripts/sim-sweep.ts --rc --report sim-report`, or the workflow by hand with `rc`.
+  The same script runs any slice (`--generators io,focus --seeds 500 --base 4001`). One seed replays alone with
+  `SIM_ADD=<generator> SIM_SEED_BASE=<seed> SIM_SEEDS=1 bun test test/spool-simulation.test.ts -t "seeded scenarios"`.
+
+A seed the nightly or the release-candidate sweep finds failing goes into the corpus with the fix, using the shrunk
+events from its report. Until the fix lands it is marked `open` (and `racy`, if it fails on some interleavings only):
+the sweep skips it, and its fixed scenario is marked failing.
+
+**A night's reap is revoked by the first heartbeat** (review-2 round 9, H1; a regression from the mid-life heal). The
+hub reaps a session silent past `SESSION_REAP_STALE_HOURS`, so every laptop that slept loses its session overnight. A
+register or a record from that session revives it, because both prove it alive, but a heartbeat was answered
+`already_ended`. The first hook after a night beats, so its heal took the 409 for the life's end: it wrote the life down
+as refused and moved the conversation to the next life. A parallel hook's record of the old life was then withheld for
+good. Probe H1 dropped one record that way.
+
+- The hub's heartbeat now revives a reaped session as a register and a record do. A session ended by its own SessionEnd
+  is still refused.
+- For older hubs the connector reads a heartbeat's 409 as `heartbeat_ended`, which is no verdict. The heal re-registers
+  the SAME life first. On 0.10.0, as now, a register of a reaped id revives it (`registerSession`: `reapedAt` set →
+  `reviveReapedSession`), and so does a record; only the heartbeat refuses it. Only a refusal of that register writes the
+  life down as refused, which the ladder does, and climbs.
+- A re-register that cannot reach the hub leaves nothing written down. A life a sibling's SessionEnd on this machine
+  ended was written down by that SessionEnd already (round 8, M1).
+
+Probe H1 now drops nothing.
+
+**A refused-lives entry that owns leftovers is never evicted** (review-2 round 9, H2). Every SessionEnd writes its life
+down too (round 8, M1), and the note keeps `REFUSED_LIVES_MAX` (64) entries. With 64 later SessionEnds, young and
+owning nothing, the oldest entry was pushed out: the one still withholding a straggler, which a successor then filed into
+its ended session (probe C1). Two rules now apply:
+
+- over the cap, the oldest entries that own nothing go first, and an entry whose host session still has records or a
+  debt on disk never goes;
+- a SessionEnd's own entry, marked `by: "end"`, goes once its spool is empty and `REFUSED_END_GRACE_MS` (10 minutes)
+  has passed, the most a hook still in flight beside the end can take to append.
+
+The note is read on every drain. The review's bench, against this code: 64 young entries read in 0.1 ms (p50); 64 past
+the keep bound, each owning a 2000-line spool, in 11 ms (p50) and 15 ms (p95); a full note's write in 0.4 ms. The
+past-bound read grows with the cap, so the cap stays 64.
+
+**The receipts table stays its retention's size** (review-2 round 9, H3). PGlite runs no autovacuum, so every receipt
+the daily prune deleted left a dead row for good. At 10 000 receipts a day the review measured the table at 74 MB on day
+30 and 443 MB on day 180, and the prune on the SessionStart register route went from 1 ms to 94 ms. A prune that deleted
+rows now VACUUMs `record_receipts`, as the skeleton backfill does for `session_events`, and the space is reused.
+`record-receipts-bloat.test.ts` runs 180 simulated days of 2000 receipts with a daily prune. The table ends within 25%
+of its size at the retention; without the VACUUM it ends six times that.
+
+**A life keeps its epoch across a week asleep, a recovery and an end beside its start** (review-2 round 9, M1, M2
+and L4). The counter lives in the state file, and three ways of losing that file left a register to guess the
+life's epoch:
+
+- a laptop asleep a week came back to a state session-reap had taken; the resume minted a fresh epoch onto a life the
+  hub held under its own (`epoch_split`, probes E3 and E4, sleep seeds 3, 365, 935, 936, 1955), or took the epoch of the
+  life before from the lineage and issued positions that life had already used (`epoch_conflict`, probe E1);
+- connector-claude's PostToolUse recovery walked the ladder itself under a mint of its own (E2, E4);
+- a SessionEnd beside a re-fire deleted the state while the re-fire's register was out, and the re-fire started its own
+  life on a fresh mint (L4, focus seeds 361, 662, 1811).
+
+The fixes:
+
+- session-reap's end marker now carries the life's epoch and the position past its counter, as SessionEnd's own marker
+  does.
+- A state-less register sends the epoch of the marker of the life its walk starts on, ahead of the lineage's, so a life
+  the hub never registered files `session.started` under its own epoch.
+- A register onto a life a marker speaks for restores that epoch and goes on from that position. For a state-less
+  register this happens on its state input. For a publish that finds the state gone, the marker is read under the
+  state's lock, and SessionEnd writes its marker before it deletes the state under that same lock.
+- connector-claude's `recoverState` runs `registerSessionFlow({ recovery: true })`, as connector-cursor's does, so a
+  recovery decides its epoch the one way every register does and names its agent kind.
+
+A lineage or reserved epoch is now reused only where no marker speaks for the life. That is a life the register created,
+or one the hub holds with nothing but `session.started` under that epoch (a heal's unheard register, a register killed
+after its POST). In each case nothing was ever positioned in it. Without a readable marker, a re-fire's own life starts
+on a fresh mint: its order splits honestly, and no position is handed out twice. The par[end ‖ start] split (L4) is
+fixed by the same marker, so I3 needs no exemption for it.
+
+**The receipts prune is no SessionStart's to pay** (review-2 round 9, M4). It ran hub-wide on the register route, where
+the skeleton sweep beside it was guarded, and PGlite serves one statement at a time. After a restart the first
+SessionStart paid the whole backlog: one DELETE of a million receipts held the hub 457 ms, past the connector's 400 ms
+timeout. The prune now runs on the hub's own timer pass and once at boot, off the request path. It deletes
+`RECORD_RECEIPT_PRUNE_CHUNK` (2000) receipts per statement and VACUUMs after each chunk; one VACUUM of a million dead
+rows took 230 ms. It yields a turn of the event loop after every statement, because PGlite answers in microtasks and a
+loop that never yields reads no request until it is done. Against a million receipts past the retention beside 300 000
+live ones, a query issued during the prune waited 12 ms at most (p99 1 ms). Before the yield it was not served until the
+prune ended, five seconds later. The skeleton backfill a hub runs at boot walks its pages the same way, and now yields
+after every statement too (`db/yield-to-requests.ts`).
+
+**A bad envelope id refuses its own record, never the batch** (review-2 round 9, M5). Ingest read the receipts for the
+raw ids of a whole flush before it parsed a single envelope. A NUL in one id failed that read, and with it the batch: a
+500 where that record alone used to be refused. A 4.3 kB id passed every check, landed its record, and then failed the
+receipt's INSERT, because a btree row holds 2704 bytes; that batch answered 500 on every retry and pinned its spool. Now
+only the ids of envelopes that parsed as a known kind are looked up, and those `parseRecord` has screened for text no
+column can hold. The envelope schema caps an id at 128 characters (connectors mint `env_<uuid>`, 40). The receipt read
+and write are best-effort: a receipt only spares a re-send its refusal, so one that cannot be read or written leaves the
+flush answered as a hub without receipts would answer it.
+
+**Round 8's own guards** (review-2 round 9, M6). The review's own mutations walked through every test on seven lines of
+round 8's code. Each now has a test and an anchor:
+
+- the receipt read keeps to its developer, so another developer's envelope id is never answered from it;
+- a receipt write never takes over another developer's receipt;
+- a refused or ignored record leaves no receipt that would answer its re-send as held;
+- a receipt outlives the next day's reaper pass (`record-receipts.test.ts`, a unit test, where only the slow simulation
+  had noticed a retention of zero days);
+- a duplicate answer is no acknowledgement of a status, and an acknowledgement of another work context is neither noted
+  nor compared as the state's own (`work-context-ack.test.ts`);
+- a re-fire whose publish meets a busy lock writes a fresh epoch beside its counter at zero, never the life's own.
+
+**Two set_intents of one conversation at once: a documented residual** (review-2 round 8, L1, accepted in round 9). A
+set_intent whose status matches the state's when it starts writes no state, and its post may land last on the hub. The
+acknowledgement follows the order the answers arrive in, not the order the hub applied the posts. So SessionEnd finds
+the state's status acknowledged and sends nothing, and the hub keeps the older status (I4, focus seeds 18, 313, 1786,
+1791). Seed 399 is the same shape with set_intent beside the conversation's own SessionEnd: the checker reads the status
+written after that end deleted the state.
+
+A compare-and-swap on set_intent's put-back of the old status does not help, because neither post fails. With it the
+seeds failed 5, 0, 8 and 8 of 8 replays; without it 8, 0, 4 and 8. The sweep counts this class as residual `L1` and
+prints it: an I4 on a conversation where a set_intent ran beside another set_intent or beside its SessionEnd in one
+`par`. Any other I4 still fails the build.
+
+**A loss the disk let nothing count** (review-2 round 9, L2) is the residual `I1u` above. The hub knows its own
+`rejected` answers and could count them beside the connector's ledger; that cross-check is not built.
+
+**Receipts, per record and per developer** (review-2 round 9, L3):
+
+- Receipts were written after the whole flush, so a batch that failed midway left the records before the failure landed
+  and unreceipted, and their re-send was refused. Each receipt is now written as its record lands, which costs a 99-record
+  flush about 13 ms (172 to 186 ms at the median).
+- The key is `(developer_id, id)`. Keyed by the id alone, the first developer to send an id held it, and another
+  developer's envelope under it went unreceipted. An existing hub is re-keyed once at boot.
+- A failing receipts prune is logged and leaves the reap that pass runs.
+- An `ignored` answer keeps a receipt, and its re-send after the producer ended is answered `ignored` again, rather than
+  refused.
+- The retention comment is corrected. A receipt is read only for a re-send whose producer has ended. A machine off for
+  days re-sends under a live producer and reads none.
+
+**What the hub took stays taken when a heal leaves its batch on disk** (review-2 round 9, io seed 1993, found by the
+round's own sweep). A flush whose life the hub had ended sent a batch the hub answered `duplicate` for one record and
+`session_ended` for the next. The heal stayed pending, so the whole batch stayed on disk, the held record with it. Once
+the conversation was over, the next flusher withheld both as the refused life's records and counted the held one lost
+(I1, 8 of 16 replays at round 8's code). The lines the hub answered as held now go on the cursor's note of settled lines
+(`spool/cursor.ts`), which a later flush neither sends nor counts. The seed passes 16 of 16 replays and is a fixed
+scenario.
+
+**Three clocks that were one** (review-2 round 8, H1 and H2). The refused-lives note dropped an entry
+`MAX_SPOOL_AGE_DAYS` after it was written. A flush reads a silent host session as abandoned after the same span. Reap
+expired a spool whose data file was that old. So when a host died:
+
+- its spool was released exactly when the notes saying which of its lives the hub had ended aged out, and a successor
+  filed their stragglers into the ended sessions (H1, seeds 455, 10005 and 11379);
+- the first successor SessionStart reaped the dead host's state, and the next one expired whatever that successor had
+  not yet sent. In the review's probe that was 2605 of a 3000-record backlog, counted, but lost all the same (H2).
+
+Now a refused-lives entry is kept while its host session still has records or a debt on that repo's disk, and never
+less than `REFUSED_LIFE_KEEP_DAYS` (twice the bound). A spool's release is stamped once, when session-reap deletes its
+stale state or a flush first sends it as abandoned, beside the spool as `<slug>.released`. Reap expires a released
+spool `MAX_SPOOL_AGE_DAYS` after that stamp, never sooner. A spool its own SessionEnd released has no stamp and expires
+from its last write, as before. The probe's backlog is now delivered over the successor's hooks, and none of it
+expires (`connector-core/test/release-clock.test.ts`).
+
+**A life SessionEnd ended is written down as refused** (review-2 round 8, M1). Every refusal as ended wrote the life
+into the refused-lives note, but the end the connector sends itself never did. A record of the life appended after its
+end was sent by a successor and filed into the ended session. That record comes from a reload's SessionStart re-fire
+beside the old process's SessionEnd, or from a hook still in flight (seed 782, probe C1). SessionEnd's own end, and the
+deferred end reap sends from its marker, now record the life. Since review-2 round 9 (M3) they do so before the end goes
+out, not once the hub answered it. An end the hub committed whose answer was lost is as final as one it answered (probe
+L1). An end that never went is still sent from its marker.
+
+**A conversation re-bound to another repo is over for this one** (review-2 round 8, M2). Ownership never compared the
+state's repo binding with the spool's. A conversation resumed from another checkout re-binds its state to that repo,
+flushes that repo from then on, and never this one. Every flusher of this repo read its spool here as
+`live-elsewhere`, and reap expires nothing while a state exists, so its records here waited for good (the review's
+rebind probe: 2 lines left after a month). A state bound to another repo now reads as ended for this repo's spool, and
+the next flusher here sends it.
+
+Two residuals:
+
+- A multi-repo workspace whose hooks capture into a second repo's spool for a conversation bound to the first has that
+  spool sent by the second repo's flushers too. Its records are a live, registered life's, and the hub takes them.
+- A straggler there of a life the hub has ended is withheld only if that repo's refused-lives note names the life.
+  Refusals a flush or SessionEnd in that repo sees are written there, but a heal writes to the bound repo's note.
+
+**A reaped state leaves its life's last word** (review-2 round 8, M3, seed 10895). A work context spooled or owed for a
+life goes with the title and status its state holds when it is sent, or, once SessionEnd ran, with what its end
+marker kept. A host that died has no SessionEnd. When session-reap deleted its state, nothing remembered the status
+`set_intent` had set, and the copy spooled at SessionStart put the old one back. Before it deletes a stale state,
+session-reap now writes the life's end marker (`spool/end-marker.ts`, the shape SessionEnd writes) with the state's last
+title and status. The marker is also the dead life's deferred end: reap ends it on the hub once its backlog is gone,
+unsequenced, since nothing allocated it a position. A marker a SessionEnd already wrote is never overwritten.
+
+**I1 is per record, and the hub answers what it holds** (review-2 round 8, M4). The simulation's I1 compared totals
+with allowances, so an over-count could cancel a silent loss of the same size. Now every drop carries its records'
+envelope ids, though the ledger line does not keep them (`spool/drops.ts recordDrop`). Each captured record must be
+delivered or counted exactly once: never both, never neither. A drop that counts records the code holds must name
+every one of them.
+
+The over-count was real. A connector that never heard the answer to a batch sends it again, and by then the hub may
+have ended the life it sends under. The hub checked the producer before anything else and answered `rejected` for
+records it held, so the connector counted them as lost. At production timing that was 94 of 1430 counted losses (6.6%)
+over 4000 seeds, and the review measured 8.6% on the shipped generator.
+
+The hub now keeps a receipt of every envelope it takes: its id, and the id it answered with (`record_receipts`, kept
+`RECORD_RECEIPT_RETENTION_DAYS`). Where the producer check would refuse an envelope the hub holds, it answers
+`duplicate`. The re-sent body may be newer, as a spooled work context re-sent with its life's current status is. Only
+that change is not applied, and the life's own later posts carry it. While the producer can still write, the envelope
+goes through every check as the update it is. The residuals I1 allows are each still counted:
+
+- a record taken unheard and then withheld or expired, never re-sent, so no `duplicate` could tell the connector the
+  hub has it;
+- a record counted by a step that died between the ledger append and the cursor write past it.
+
+**The simulation runs set_intent's own write** (review-2 round 8, M5). The simulation re-implemented `set_intent` instead
+of calling it, and the tool's may-have-landed rule went unguarded. A plain 500, a timeout and an ignored post each
+survived a mutation (R7-M5, R7-M6, R7-M7). The write is now one function, `mcp/tools/intent-write.ts writeIntent`:
+
+- the status goes into the state first;
+- then the post;
+- then each answer decides what the state keeps, what is written down as refused, and whether an owed work context is
+  paid.
+
+The MCP tool calls it after its argument, secret, echo and contract checks. The simulation calls the same function,
+and a status the tool's arguments refuse writes nothing there too. Tests pin all three cases: a 500 or a timeout
+keeps the new status, and an ignored post puts the old one back.
+
+**set_intent's state-first window, accepted** (review-2 round 8, L6). The status goes into the state BEFORE the post,
+because a set_intent killed between a post that landed and a later state write left the old status in the state. The
+next re-fire or debt then put that old status back on the hub (round 7, simulation seed 10). The cost is a window. From the
+state write until the post's answer, every other sender of the work context reads the new status:
+
+- a flush's spooled copy (`withLifeState`);
+- an owed debt (`owedRecordNow`);
+- a re-fire's register.
+
+Any of them may carry the new status to the hub first. When the post then surely never landed (`dns`, `refused` or
+`tls`), or the hub ignored or rejected it, set_intent puts the old status back in the state and says it failed. The hub
+may hold the new one until the next sender of that work context carries the state's old status over it. Nothing is
+lost or miscounted, but the hub can briefly show a status set_intent reported as failed. A post that may have landed
+(a 500, a timeout) keeps the new status in the state, so the two agree. Closing the window would mean holding every
+other sender of the work context for the post's round trip, and a status that converges is not worth that. The
+simulation's I4 holds the converged end to account: once a scenario has settled, the hub's status must be the newest
+the hub took from set_intent, or the newest set_intent left in the state.
+
+**One host session key on two machines is a residual, counted** (review-2 round 8, M6). A cloud agent and a local
+resume of the same conversation share a host session key, so both machines register the same life id. They capture
+and flush as usual, and the hub's order for that session breaks (`epoch_split`, two epochs). One machine's
+SessionEnd ends the life the other still writes under, and that machine's records are refused as late writes. It
+then heals to the next life, which the first machine's later resume lands on, and that one splits too. This is
+accepted for now, because nothing is silent:
+
+- every record either machine captured is on the hub, or counted in that machine's loss ledger;
+- the broken order is there for every reader of the session (`connector-core/test/two-machines.test.ts`).
+
+The fix is an installation discriminator in the life id: a per-machine id minted once into the crosscheck home and
+folded into `cc_<key>`. Two machines would then register two lives of one conversation, never one life twice.
+Alternatively, the hub could refuse a live re-register that comes from another installation.
+
+**A life resumed after every trace of it here aged out goes on from the hub's order** (all seed 31214, sleep seed
+4286). Two weeks away retire the life's end marker into the unclosed count, expire its spool and its lineage, and the
+resume then registers with no epoch of its own, onto a session the hub's reaper had ended. The register used to mint
+one, and the session's order split for good. The hub now answers a register that revives a reaped session with
+`held`: the epoch its `session.started` was filed under and the highest position in it. A register with no epoch of
+its own goes on from there, and one with an epoch of its own (a state, a reservation, a marker or a lineage) keeps
+it. A LIVE session is answered `held: null`, because another machine may be on the same life (M6 above), and its
+epoch handed to a second writer would turn that residual's split into two writers handing out one position. One
+residual is left, counted: a hub from before `held` leaves the field out, the register mints as it always did, and
+when the hub had started the session well before its answer (its `Date` header against `startedAt`) the state counts
+`epochUnconfirmed`. Doctor's event-sequence line prints those lives. The remedy is the hub's upgrade
+(`server/test/session-register-held.test.ts`, `connector-core/test/session-lives.test.ts`).
+
+**A SessionStart re-fire keeps the status set_intent writes beside it** (review-2 round 8, L1). The re-fire read
+the life's status before its register POST and published it after. A `set_intent` that ran in between was put back,
+in the state and in the work context the register spools. The extended sweep found it on 13 seeds, plus 912, 1494
+and 11268 at production timing, all `par[intent ‖ start]`. Two reads close it:
+
+- the register reads the status AFTER its POST, so the work context it spools carries what `set_intent` wrote while
+  it was out;
+- the publish carries the file's title and status under the state lock (`withCarriedCapture`), so a `set_intent`
+  between that read and the publish is kept too.
+
+Before the fix, 97 of 128 replays of the 16 seeds broke I4; after it, none did. The fixed scenarios are ordinary tests
+now, and `session-lives.test.ts` pins both windows.
+
+**One life, one epoch, whatever runs beside its SessionStart** (review-2 round 8, L2). The hub filed a life's
+`session.started` under one epoch while the state took another, so I3 broke with `epoch_split`. Five seeds found
+three ways in:
+
+- **Two SessionStarts at once** (seeds 134, 11285). Both read before either reserved, so each minted its own epoch. The
+  register that landed and the state that was published first could disagree. The register now reads and reserves
+  under the state lock, and the second finds the first's reservation.
+- **A SessionEnd beside a re-fire** (1933, 11683). The end deleted the state while the re-fire's register was out.
+  The register had climbed to the next life under the carried epoch, and its publish found nothing to carry, so it
+  started the state on a fresh mint. Two changes close this:
+  - the reservation now names whatever goes out, a carried epoch too;
+  - a publish that finds nothing to carry starts on the epoch the register sent (`publishSessionState`'s
+    `startEpoch`).
+
+  A life the state already named keeps the fresh mint. Its counter is gone with the file, and its positions under the
+  carried epoch were handed out. A split there costs comparability and never re-issues a position, which a test pins.
+  The busy-lock fallback is unchanged.
+- **A resume onto a life a heal opened unheard** (11974, production timing). A heal registered the next life under
+  the state's epoch and stopped listening before the hub answered, so the state never moved. SessionEnd then ended the
+  old life and deleted the file, and the resume landed on the open life under a fresh mint. The lineage that
+  SessionEnd writes now carries the ended life's epoch. A state-less register takes its reservation first, then that
+  epoch, and mints only when neither exists.
+
+Before the fix, 35 of 40 replays of the five seeds broke I3; after it, none did. Their fixed scenarios are ordinary
+tests, and no seed is open in the sweep any more.
+
+**A torn debt file holds no drain** (review-2 round 8, L3). A spool with nothing left to send counted as pending
+whenever its debt file existed. With a torn file there was nothing to pay, yet as the oldest pending spool it took
+every batch of the drain. The unreadable-debt probe sent 0 records, and 11 waited behind it. A spool now owes alone only
+a debt it can read. The torn file goes when reap removes its spool, as every debt does.
+
+**Only a missing state file is an ended conversation** (review-2 round 8, L4). `ownerOf` read any failed `stat` of
+a state file as "no file". A state the flusher may not look at, through EACCES or EIO, therefore handed a possibly live
+conversation's records to whichever flusher came next. Now only absence (ENOENT, or ENOTDIR for a path that cannot
+hold the file, the same rule as `ledger-read.ts isAbsence`) ends a conversation. Any other failure is a new owner,
+`unreadable`, and its records are held like a live writer's. Doctor's waiting-records line names them, because nothing
+sends them until the file can be read again.
+
+**A stamp dated ahead of the clock ages from now** (review-2 round 8, L5). A heartbeat, a state file's write, or a
+heal stamp written while the clock ran ahead (a VM resumed with a drifted clock, an NTP step back) read as fresh until
+the clock caught up. In that time a dead host's state was never reaped and its spool never released, and a heal's
+cooldown never ran out, so its life's records were held as long. Readers now treat any stamp past now plus
+`CLOCK_SKEW_MS`, the hub's two-minute skew bound, as dated ahead. They clamp it to that bound and write the clamp down,
+so it ages from there:
+
+- SessionStart's state reap clamps the heartbeat and rewrites the file under its lock;
+- the healer rewrites its stamp as a finished walk.
+
+`future-stamps.test.ts` dates each stamp a year ahead. The state is reaped a week after the clamp, and the cooldown
+ends one cooldown after it.
+
+**The life's last status goes with its end** (review-2 round 8, L7). Every sender of a work context builds it from
+the state, so the next one makes the hub agree with it. At SessionEnd no next sender comes. A set_intent post that may
+have landed and did not left the hub on the old status for good. One that surely did not, put back after the window
+above had carried the new status, left the hub ahead. The state now remembers the last status the hub ACCEPTED for its
+work context (`workContextAcked`), from three sources:
+
+- a flush's spooled copy or a paid debt (`spool/work-context-ack.ts`);
+- set_intent's own post;
+- the same record, carried across a SessionStart re-fire.
+
+SessionEnd spools the work context once more, ahead of its drain, when the hub last accepted another status than the
+state holds. It sends none for a work context the hub was never seen to take. That one's own copies are on their way
+or counted, and one more would only be refused beside them. A state from before the life's `agentKind` was written
+down has no producer to send it under.
+
+Only `accepted` counts, never `duplicate`, and only the flusher's own state is written. Another conversation's state
+file is its liveness, and a write there revived an abandoned host and held its backlog from every successor (the
+release-clock probe caught it).
+
+**Doctor's waiting-records line says how long, and until when** (review-2 round 8, L9). "N records wait for their own
+conversation (another live session)" told a developer to wait, even for a process that was gone, whose records then
+waited a week for the reap bound. The line now gives:
+
+- the oldest waiting record's age;
+- the day the records go to any flusher if no owner is heard from again (the reap bound past the most recent sign of
+  life).
+
+An owner silent past the hour doctor calls a state a zombie is named as a conversation that may have crashed, with that
+release day. A conversation re-bound to another repo (M2) is now its own owner, `rebound`. Like an ended one it is
+sendable by any flusher of this repo, and doctor says its records wait for this repo's next session.
+
+**Two round-7 guards had no test** (review-2 round 8, L10). The reviewer showed that two mutations survived. Each now
+has a test and an anchor:
+
+- R7-M3: a debt refused `author_unknown` never counted a refusal. That happens when its own life was never registered
+  on the hub, and such a debt never reached its bound and held SessionEnd open for good. `owed-debt-rules.test.ts`
+  pays it alone and expects one refusal counted.
+- R7-M9: a spooled work context went with the title it was spooled with, not its state's. A re-fire on a new branch
+  spools that title while the state keeps the life's. `owed-work-context.test.ts` expects the state's title on the hub.
+ `owed-work-context.test.ts` replays the probe, and all 11
+records land.
+
+**The hub's author-side refusals have a word, and a cooldown sends nothing** (review-2 LOW-5). A record whose own
+session or work context the hub never saw is refused with `sessionId: session "…" not found` (also
+`authorSessionId:`) or `workContextId: work context "…" not found` — the body's session, not the producer's — and
+those were `other`, "a reason this connector does not name", for exactly the pilot's failure class. They are
+`author_unknown` now; an older reader folds the word into `other`. And a flush whose own life's last walk
+registered nothing sends nothing until that walk's cooldown is over (the stamp records the life it failed for):
+a batch pinned on disk was re-sent, and refused again, by every hook for five minutes.
+
 ### 4.4 The hub — six columns, derived on read
 
 No new table, so no entry in the retention registry (`server/src/services/retention-registry.ts:7-24`: a
@@ -368,6 +1059,29 @@ which is the one place the distinction can be acted on.
 **An old hub strips the field with a 200** (§4.2's directive). The connector cannot see that from the call, so
 doctor derives it from data it already fetches (§5.2). Coverage from such a hub is 03's own `unknown /
 hub_did_not_report` or its five real rows, unchanged.
+
+**What a connector before 1.0 lost is counted, not migrated** (the 1.0 release gate: "the old late-write losses
+migrated or counted"). The code of 0.10.0 says what is left of a record its hub refused:
+
+- The drop ledger keeps a line of `{at, count, reason: "rejected"}`, with no cause, no record kind and no envelope id.
+- The record itself stays in the session's spool file, behind the cursor, only until reap removes the delivered spool.
+- After `MAX_SPOOL_AGE_DAYS`, reap folds the ledger into an archive of the total alone, with no reason.
+- A 0.10.0 connector sent the hub no loss report, so the hub never heard of them.
+
+Nothing can be re-sent. No line says which records were refused, and the spools are mostly gone. Those records also
+name lives the hub had ended: under a healed life they would be filed into the ended session past its end, which is the
+filing the ownership rule and the refused-lives note exist to prevent (I2, I3).
+
+So they are counted as what the ledgers can prove, on a line of their own, `legacy losses`, in `doctor` and on
+`status`'s `losses:` line. It shows the rejections recorded without a cause, and an archive's total from before reasons
+were kept, read under the reason word `legacy` rather than beside an unreadable ledger's floor. It does not call them
+late writes. The pilot's diagnosis from the hub's own log (2026-10-05) put 225 of 433 rejections down to an ended
+session, not all of them, so the line says a refusal then was often a late write, and that only the hub's log says
+which.
+
+The wire is unchanged: they go under the hub's kinds `hub_rejected` and `unattributed`, with their own instants.
+`crosscheck pilot`'s coverage proof reads them only through the hub's window rule (§4.5), so they count against the
+window they happened in and none after it (`server/test/coverage-losses.test.ts`).
 
 ### 4.8 What stays local, with the proof that it cannot affect a judgment
 

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { CausalGuaranteeTriple, TelemetryLossReport } from "@crosscheck/schema";
-import { COMMIT_SHA_PATTERN, ClaimValiditySchema } from "@crosscheck/schema";
+import { COMMIT_SHA_PATTERN, ClaimValiditySchema, SEQ_EPOCH_PATTERN } from "@crosscheck/schema";
 import type { ClaimRevalidationEntry, LandedContextRequest } from "@crosscheck/schema";
 import type { ClaimValidity } from "@crosscheck/schema";
 import {
@@ -151,11 +151,24 @@ const tolerantList = <T>(
         .map((parsed) => parsed.data),
     );
 
+/**
+ * THE ORDER THE HUB ALREADY HOLDS for the session that registered (seeds
+ * 31214, 4286): the epoch its `session.started` was filed under and the
+ * highest position in it, or null for a session the hub just created. ADDITIVE
+ * AND OPTIONAL: an older hub leaves it out, and an answer that cannot be read
+ * reads as one that left it out — never as an epoch to adopt.
+ */
+const HeldSeqSchema = z.object({
+  epoch: z.string().regex(SEQ_EPOCH_PATTERN),
+  n: z.number().int().min(0),
+});
+
 const SessionResponseSchema = z.looseObject({
   session: z.looseObject({
     id: z.string().min(1),
     developerId: z.string().min(1),
   }),
+  held: HeldSeqSchema.nullable().optional().catch(undefined),
 });
 
 /**

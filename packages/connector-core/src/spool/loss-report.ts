@@ -29,11 +29,20 @@ import { addCount } from "./counts.ts";
 import type { Counts } from "./counts.ts";
 import { NO_UNDATED, ledgerInstant, mergeUndated, undatedOf } from "./ledger-read.ts";
 import {
+  LEGACY_DROP_REASON,
   UNATTRIBUTED_DROP_REASON,
   readDropDetail,
   readUnrecordedDrop,
 } from "./drops.ts";
 import type { DropDetail, UnrecordedDrop } from "./drops.ts";
+import {
+  LEGACY_LOSS_REMEDY,
+  LEGACY_LOSS_SENTENCE,
+  REJECT_CAUSES,
+  REJECT_CAUSE_SENTENCES,
+  UNRECORDED_CAUSE_SENTENCE,
+  WITHHELD_SENTENCE,
+} from "./reject-cause.ts";
 
 /**
  * The ledger's reason words → the wire's kinds. Three append refusals share
@@ -48,6 +57,11 @@ const DROP_REASON_KINDS: Readonly<Record<string, LossKind>> = {
   unparsable: "spool_torn",
   expired: "spool_expired",
   rejected: "hub_rejected",
+  // Never sent, so never the hub's refusal — "the hub answered 200 and
+  // refused the record" would be a sentence about a request that did not
+  // happen. A hub from before this kind folds it into `unattributed`, still
+  // counted (schema telemetry-loss.ts foldLossKindsFor).
+  withheld: "spool_withheld",
   ignored: "hub_ignored",
   "capture-capped": "capture_capped",
   "secret-path": "capture_secret_path",
@@ -290,12 +304,18 @@ const detailsOf = (capture: CaptureLossSummary, kind: LossKind): string =>
 export interface LossLines {
   /** The spool-drops sentence: records discarded, in batches, by reason. */
   readonly dropped: string | null;
+  /** Records the hub rejected, and WHY, cause by cause (loss-accounting §4.3). */
+  readonly rejected: string | null;
+  /** Records never sent because the hub had ended the life that wrote them. */
+  readonly withheld: string | null;
   /** Records a hub older than this connector threw away INSIDE the hub's window, with their kinds and the remedy. */
   readonly ignored: string | null;
   /** Ignored records whose newest predates the window: said, without telling anyone to upgrade (review M3). */
   readonly ignoredEarlier: string | null;
   /** Losses upstream of any record: timed-out hooks, host drift, wire lines. */
   readonly capture: string | null;
+  /** What a connector before 1.0 lost, whose ledgers kept only counts: apart from this connector's losses. */
+  readonly legacy: string | null;
 }
 
 /** A word no ledger writer spells — what a hand edit or a torn line left. */
@@ -308,7 +328,9 @@ const OTHER_REASON = "other";
  * marker's instant is re-formatted from `Date.parse` or printed `undated`.
  */
 const screenReason = (reason: string): string =>
-  isDropReasonWord(reason) || reason === UNATTRIBUTED_DROP_REASON ? reason : OTHER_REASON;
+  isDropReasonWord(reason) || reason === UNATTRIBUTED_DROP_REASON || reason === LEGACY_DROP_REASON
+    ? reason
+    : OTHER_REASON;
 
 const screenReasons = (counts: Counts): Counts =>
   Object.entries(counts).reduce<Counts>(
@@ -341,6 +363,58 @@ const droppedLine = (local: LocalLosses): string | null => {
     `${plural(summary.records, "record")} discarded in ${plural(summary.entries, "batch", "batches")}` +
     `${parenthetical(breakdown(screenReasons(local.drops.byReason)))}${malformed}${unreadable}${markerClause(local.unrecorded)}`
   );
+};
+
+/**
+ * WHY THE HUB REJECTED RECORDS (pilot, 2026-10-05): `433 dropped` was all the
+ * pilot's machine could say, and only the hub's source told 225 of them
+ * apart as a conversation the hub held as ended. Each cause a ledger line
+ * names gets its count and its sentence; the rejected records no line names a
+ * cause for — ledgers from before the field — are counted as such, never
+ * guessed into one.
+ */
+const rejectedLine = (local: LocalLosses): string | null => {
+  const records = local.drops.byReason["rejected"] ?? 0;
+  if (records === 0) {
+    return null;
+  }
+  const causes = local.drops.rejectedCauses;
+  const named = REJECT_CAUSES.filter((cause) => (causes[cause] ?? 0) > 0).map(
+    (cause) => `${String(causes[cause] ?? 0)} ${REJECT_CAUSE_SENTENCES[cause]}`,
+  );
+  const unnamed = records - Object.values(causes).reduce((sum, count) => sum + count, 0);
+  const parts = unnamed > 0 ? [...named, `${String(unnamed)} ${UNRECORDED_CAUSE_SENTENCE}`] : named;
+  return `${plural(records, "record")} rejected by the hub: ${parts.join(" · ")}`;
+};
+
+/**
+ * WHAT A CONNECTOR BEFORE 1.0 LOST (the 1.0 release gate: the old late-write
+ * losses). A 0.10 connector kept a refused record as a count and the word
+ * `rejected`, and its archive kept the total alone; reap removed the delivered
+ * spools the records were in, and nothing said which refusal was a late write.
+ * They are counted here, on their own line, as what the ledgers can prove —
+ * never re-sent, never folded into this connector's causes, never guessed into
+ * one. The wire still carries them, under the hub's own kinds and their own
+ * instants, so coverage judges them by when they happened.
+ */
+const legacyLine = (local: LocalLosses): string | null => {
+  const causes = Object.values(local.drops.rejectedCauses).reduce((sum, count) => sum + count, 0);
+  const rejected = Math.max(0, (local.drops.byReason["rejected"] ?? 0) - causes);
+  const archived = local.drops.byReason[LEGACY_DROP_REASON] ?? 0;
+  if (rejected + archived === 0) {
+    return null;
+  }
+  const parts = [
+    ...(rejected > 0 ? [`${String(rejected)} rejected by the hub with no cause recorded`] : []),
+    ...(archived > 0 ? [`${String(archived)} in a ledger archive that kept only the total`] : []),
+  ];
+  return `${plural(rejected + archived, "record")} ${LEGACY_LOSS_SENTENCE}: ${parts.join(" · ")} — ${LEGACY_LOSS_REMEDY}`;
+};
+
+/** Withheld records, in their own words — never "rejected by the hub" (review finding 5). */
+const withheldLine = (local: LocalLosses): string | null => {
+  const records = local.drops.byReason["withheld"] ?? 0;
+  return records === 0 ? null : `${plural(records, "record")} ${WITHHELD_SENTENCE}`;
 };
 
 /**
@@ -439,6 +513,9 @@ const captureLine = (local: LocalLosses): string | null => {
 /** One spelling for both commands (the spool-drops discipline). */
 export const formatLossLines = (local: LocalLosses, now: Date): LossLines => ({
   dropped: droppedLine(local),
+  rejected: rejectedLine(local),
+  withheld: withheldLine(local),
   ...ignoredLines(local, now),
   capture: captureLine(local),
+  legacy: legacyLine(local),
 });

@@ -13,10 +13,11 @@
  * `now` as its new `lastHeartbeatAt`, whatever the hub answered (fail-open:
  * a dead hub must not turn the throttle into a hammer).
  */
-import { HEARTBEAT_MIN_INTERVAL_MS } from "../constants.ts";
+import { HEARTBEAT_MIN_INTERVAL_MS, HTTP_CONFLICT, HTTP_NOT_FOUND } from "../constants.ts";
 import { heartbeatSession } from "../http/hub.ts";
 import type { HubContext } from "../http/client.ts";
 import { readTelemetryLossReport } from "../spool/loss-report.ts";
+import type { RefusalCause } from "../spool/flush-heal.ts";
 
 export interface HeartbeatMaybeInput {
   readonly hub: HubContext;
@@ -24,7 +25,22 @@ export interface HeartbeatMaybeInput {
   readonly lastHeartbeatAt: string | null;
   readonly now: Date;
   readonly status?: string | undefined;
+  /**
+   * Called when the hub refuses the session itself — 409, already ended, or
+   * 404, never registered (server routes/sessions.ts). The caller binds its
+   * healer (flows/heal-session.ts), whose cooldown bounds how often this costs
+   * a walk. Absent: the answer is discarded, as it always was.
+   */
+  readonly onRefused?: (cause: RefusalCause) => Promise<unknown>;
 }
+
+/**
+ * The two answers that mean the session is dead to the hub, not that the hub
+ * is down. A 409 is `heartbeat_ended`, not `session_ended`: hubs up to 0.10
+ * give it for a session reaped overnight too (review-2 round 9, H1).
+ */
+const refusalOf = (status: number): RefusalCause | null =>
+  status === HTTP_CONFLICT ? "heartbeat_ended" : status === HTTP_NOT_FOUND ? "session_unknown" : null;
 
 export const heartbeatMaybe = async (
   input: HeartbeatMaybeInput,
@@ -44,6 +60,10 @@ export const heartbeatMaybe = async (
   // at the end. Read AFTER the throttle decided a beat is due, so a hook that
   // beats nothing pays nothing; a local read of the ledgers, no round trip.
   const losses = await readTelemetryLossReport(input.hub.home, input.hub.repoKey);
-  await heartbeatSession(input.hub, input.crosscheckSessionId, input.status, losses);
+  const result = await heartbeatSession(input.hub, input.crosscheckSessionId, input.status, losses);
+  const refused = result.ok ? null : refusalOf(result.status);
+  if (refused !== null) {
+    await input.onRefused?.(refused);
+  }
   return true;
 };

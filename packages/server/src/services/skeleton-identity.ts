@@ -26,6 +26,7 @@ import type { SQL } from "drizzle-orm";
 import { SKELETON_BACKFILL_BATCH } from "../constants.ts";
 import type { DbExecutor } from "../db/client.ts";
 import { pinFileRefs, pinFiles } from "../db/schema.ts";
+import { yieldToRequests } from "../db/yield-to-requests.ts";
 import type { Clock } from "../types.ts";
 
 interface Deps {
@@ -198,7 +199,9 @@ const seedPinFileRefs = async (deps: Deps): Promise<number> => {
  * hook request behind it for as long as it ran. Each page is a keyset slice
  * of the rows still missing a value (`pending`), and `write` is the UPDATE
  * restricted to that page's ids; a page whose rows cannot be filled still
- * moves the cursor, so the walk ends.
+ * moves the cursor, so the walk ends. A TURN OF THE EVENT LOOP after each
+ * page (review-2 round 9, db/yield-to-requests.ts): without it, no request
+ * was read until the whole walk was done.
  */
 const pagedUpdate = async (
   deps: Deps,
@@ -221,6 +224,7 @@ const pagedUpdate = async (
              (SELECT max(id) FROM page) AS last`);
     const row = (result.rows[0] ?? {}) as { written?: number; last?: string | null };
     written += Number(row.written ?? 0);
+    await yieldToRequests();
     if (row.last === null || row.last === undefined) {
       return written;
     }
@@ -333,6 +337,7 @@ const backfillTargets = async (
   let unresolved = 0;
   for (;;) {
     const page = await targetPage(deps, cursor, batch);
+    await yieldToRequests();
     const last = page.at(-1);
     if (last === undefined) {
       return { workContexts, fileRefs, unresolved };
@@ -369,6 +374,7 @@ const backfillTargets = async (
           sql`, `,
         )}) AS v(id, wc, fr)
        WHERE se.id = v.id`);
+    await yieldToRequests();
   }
 };
 
