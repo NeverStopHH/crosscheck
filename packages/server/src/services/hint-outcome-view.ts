@@ -179,6 +179,12 @@ export interface YourWork {
   readonly periodStartIso: string;
   readonly periodEndIso: string;
   readonly followed: number | null;
+  /**
+   * Follows of your work CONFIRMED in this month about hints of an earlier one
+   * (review M6), apart from `followed` — present only when there are some and
+   * `followed` is shown.
+   */
+  readonly followedLate?: number;
   readonly withheld: HintOutcomeWithholding | null;
   /** The pilot paused inside the month: only its enrolled time was counted (review LOW). */
   readonly pausedInPeriod: boolean;
@@ -298,6 +304,7 @@ const readYourWork = async (
   return {
     ...stamps,
     followed: withheld === null ? aggregate.followed : null,
+    ...(withheld === null && aggregate.late.followed > 0 ? { followedLate: aggregate.late.followed } : {}),
     withheld,
     pausedInPeriod: span.paused,
     reconstructed: span.reconstructed,

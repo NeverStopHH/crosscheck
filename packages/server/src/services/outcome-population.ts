@@ -181,8 +181,39 @@ const before = (column: SQL, until: Date | null): SQL =>
 const rollingWindow = (since: Date, until: Date | null): SQL =>
   until === null ? sql`AND hd.delivered_at >= ${since.toISOString()}::timestamptz` : sql``;
 
+/**
+ * A WORD CONFIRMED LATE (human provenance; review M6): the recipient said a
+ * word about this pointer inside [since, until) — a passkey confirmation's
+ * instant — although the pointer's first delivery is older. Drafts make that
+ * lag structural, so a closed period counts such a pointer too, marked late,
+ * apart from its own interventions: in the month the word was CONFIRMED,
+ * never re-opening the month the hint was delivered in.
+ */
+const saidInPeriod = (since: Date, until: Date): SQL => {
+  const within = (column: SQL): SQL =>
+    sql`${column} >= ${since.toISOString()}::timestamptz AND ${column} < ${until.toISOString()}::timestamptz`;
+  return sql`EXISTS (
+    SELECT 1 FROM hint_outcomes lo JOIN hint_deliveries lod ON lod.id = lo.delivery_id
+    WHERE lod.session_id = hd.session_id AND lod.ref_id = hd.ref_id AND lo.recorded_by = s.developer_id
+      AND ${within(sql`lo.created_at`)}
+    UNION ALL
+    SELECT 1 FROM pilot_marks lm JOIN hint_deliveries lmd ON lmd.id = lm.ref_id
+    WHERE lm.ref_kind = 'hint_delivery' AND lmd.session_id = hd.session_id AND lmd.ref_id = hd.ref_id
+      AND lm.marked_by = s.developer_id AND ${within(sql`lm.created_at`)}
+    UNION ALL
+    SELECT 1 FROM noise_reassertions lr JOIN hint_deliveries lrd ON lrd.id = lr.delivery_id
+    WHERE lrd.session_id = hd.session_id AND lrd.ref_id = hd.ref_id AND lr.marked_by = s.developer_id
+      AND ${within(sql`lr.created_at`)})`;
+};
+
 const closedMonthStart = (since: Date, until: Date | null): SQL =>
-  until === null ? sql`` : sql`HAVING min(hd.delivered_at) >= ${since.toISOString()}::timestamptz`;
+  until === null
+    ? sql``
+    : sql`HAVING min(hd.delivered_at) >= ${since.toISOString()}::timestamptz OR ${saidInPeriod(since, until)}`;
+
+/** Whether a pointer is a late one in a closed period: first delivered before it. */
+const lateColumn = (since: Date, until: Date | null): SQL =>
+  until === null ? sql`false` : sql`min(hd.delivered_at) < ${since.toISOString()}::timestamptz`;
 
 /**
  * Every unasked intervention — one pointer in one session — to the recipients
@@ -201,7 +232,8 @@ export const deliveryStates = (
   at: Date,
 ): SQL => sql`
   WITH received AS (
-    SELECT min(hd.id) AS id, hd.session_id, min(hd.ref_kind) AS ref_kind, hd.ref_id, s.developer_id AS recipient
+    SELECT min(hd.id) AS id, hd.session_id, min(hd.ref_kind) AS ref_kind, hd.ref_id, s.developer_id AS recipient,
+      ${lateColumn(since, until)} AS late
     FROM hint_deliveries hd
     JOIN agent_sessions s ON s.id = hd.session_id
     WHERE s.repo = ${repo}
@@ -252,7 +284,7 @@ export const deliveryStates = (
       ORDER BY l.at DESC, l.id DESC LIMIT 1
     ) lab ON true
   ), stated AS (
-    SELECT la.id, la.recipient, la.source_id, la.label_word, la.label_reason, la.label_at,
+    SELECT la.id, la.recipient, la.source_id, la.late, la.label_word, la.label_reason, la.label_at,
            said.word, said.reason, said.at AS outcome_at, said.reasserted
     FROM labelled la
     LEFT JOIN LATERAL (
@@ -274,7 +306,7 @@ export const deliveryStates = (
       ORDER BY spoken.at DESC, spoken.is_label DESC, spoken.id DESC LIMIT 1
     ) said ON true
   ), states AS (
-    SELECT id, recipient, source_id, outcome_at,
+    SELECT id, recipient, source_id, outcome_at, late,
       COALESCE(word, 'unmarked') AS state,
       reason,
       COALESCE(reasserted, false) AS reasserted,
@@ -286,6 +318,9 @@ export const deliveryStates = (
       CASE WHEN label_word = 'helpful' THEN label_reason END AS helpful_reason,
       CASE WHEN label_word = 'helpful' THEN label_at END AS helpful_at
     FROM stated
+    -- a late pointer counts only by the word that stands on it, and only when that word was
+    -- confirmed inside this period (review M6)
+    WHERE NOT late OR (word IS NOT NULL AND outcome_at >= ${since.toISOString()}::timestamptz)
   )`;
 
 /**
@@ -308,6 +343,20 @@ export interface PeriodAggregate {
   readonly sourcesWithoutAnyOne: number;
   /** The words left once the recorder who said most is left out — the dominance rule. */
   readonly wordsWithoutLargest: number;
+  /**
+   * Words CONFIRMED in this period about hints of an earlier one (review M6),
+   * apart from the period's own interventions and counts, and inside every
+   * minimum above: they are people's words this period discloses.
+   */
+  readonly late: LateCounts;
+}
+
+/** The words a period carries late, by what they stand at. */
+export interface LateCounts {
+  readonly followed: number;
+  readonly overrode: number;
+  readonly notRelevantNow: number;
+  readonly noise: number;
 }
 
 type AggregateRow = {
@@ -321,6 +370,11 @@ type AggregateRow = {
   readonly followers: number;
   readonly sources_without_any_one: number;
   readonly largest_recorder_words: number;
+  readonly words: number;
+  readonly late_followed: number;
+  readonly late_overrode: number;
+  readonly late_not_relevant_now: number;
+  readonly late_noise: number;
 };
 
 /**
@@ -352,17 +406,22 @@ export const readPeriodAggregate = async (
     ${deliveryStates(input.repo, input.from, input.who, input.until, input.at)},
     scoped AS (SELECT * FROM states ${input.sourceIs === null ? sql`` : sql`WHERE source_id = ${input.sourceIs}`}),
     words AS (SELECT recipient, source_id FROM scoped WHERE state <> 'unmarked')
-    SELECT count(*)::int AS interventions,
-      count(*) FILTER (WHERE state = 'followed')::int AS followed,
-      count(*) FILTER (WHERE state = 'overrode')::int AS overrode,
-      count(*) FILTER (WHERE state = 'not_relevant_now')::int AS not_relevant_now,
-      count(*) FILTER (WHERE state = 'noise')::int AS noise,
-      count(*) FILTER (WHERE state = 'unmarked')::int AS unmarked,
+    SELECT count(*) FILTER (WHERE NOT late)::int AS interventions,
+      count(*) FILTER (WHERE NOT late AND state = 'followed')::int AS followed,
+      count(*) FILTER (WHERE NOT late AND state = 'overrode')::int AS overrode,
+      count(*) FILTER (WHERE NOT late AND state = 'not_relevant_now')::int AS not_relevant_now,
+      count(*) FILTER (WHERE NOT late AND state = 'noise')::int AS noise,
+      count(*) FILTER (WHERE NOT late AND state = 'unmarked')::int AS unmarked,
+      count(*) FILTER (WHERE late AND state = 'followed')::int AS late_followed,
+      count(*) FILTER (WHERE late AND state = 'overrode')::int AS late_overrode,
+      count(*) FILTER (WHERE late AND state = 'not_relevant_now')::int AS late_not_relevant_now,
+      count(*) FILTER (WHERE late AND state = 'noise')::int AS late_noise,
       count(DISTINCT recipient) FILTER (WHERE state = 'followed')::int AS followers,
+      (SELECT count(*) FROM words)::int AS words,
       ${subtractionSafeColumns}
     FROM scoped`);
   const row = rows.rows[0];
-  const recorded = Number(row?.interventions ?? 0) - Number(row?.unmarked ?? 0);
+  const recorded = Number(row?.words ?? 0);
   return {
     interventions: Number(row?.interventions ?? 0),
     followed: Number(row?.followed ?? 0),
@@ -374,6 +433,12 @@ export const readPeriodAggregate = async (
     followers: Number(row?.followers ?? 0),
     sourcesWithoutAnyOne: Number(row?.sources_without_any_one ?? 0),
     wordsWithoutLargest: recorded - Number(row?.largest_recorder_words ?? 0),
+    late: {
+      followed: Number(row?.late_followed ?? 0),
+      overrode: Number(row?.late_overrode ?? 0),
+      notRelevantNow: Number(row?.late_not_relevant_now ?? 0),
+      noise: Number(row?.late_noise ?? 0),
+    },
   };
 };
 

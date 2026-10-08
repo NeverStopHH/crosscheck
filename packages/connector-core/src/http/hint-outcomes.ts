@@ -146,6 +146,8 @@ const CreditSchema = z
     pausedInPeriod: z.boolean().optional(),
     /** 07 §13.12 (review M-3): counted over an enrolment an upgrade reconstructed. Absent from an older hub. */
     reconstructed: z.boolean().optional(),
+    /** Review M6: follows confirmed this month about earlier months' hints. Absent from an older hub. */
+    followedLate: CountSchema.nullable().optional().catch(undefined),
   })
   .refine((credit) => (credit.withheld === null) === (credit.followed !== null), {
     message: "a source credit is either withheld or counted",

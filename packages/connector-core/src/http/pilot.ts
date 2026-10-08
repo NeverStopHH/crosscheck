@@ -115,6 +115,11 @@ const OutcomeBlockSchema = z
         notRelevantNow: CountSchema,
         noise: CountSchema,
         unmarked: CountSchema,
+        /** Review M6: words confirmed this month about earlier months' hints. Absent from an older hub. */
+        confirmedLate: z
+          .looseObject({ followed: CountSchema, overrode: CountSchema, notRelevantNow: CountSchema, noise: CountSchema })
+          .optional()
+          .catch(undefined),
       })
       .nullable(),
   })

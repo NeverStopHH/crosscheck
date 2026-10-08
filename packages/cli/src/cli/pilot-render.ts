@@ -490,6 +490,26 @@ const outcomeLine = (report: PilotReport): string => {
   );
 };
 
+/**
+ * WORDS CONFIRMED LATE (review M6): confirmed in the closed month shown,
+ * about hints of an earlier one — counted here, apart, never in the month
+ * they were about (which stays as it closed), and outside the rates above.
+ */
+const lateOutcomeLines = (report: PilotReport): readonly string[] => {
+  const block = report.outcomes;
+  if (block === undefined || "unreadable" in block || block.withheld !== null || block.figures === null) {
+    return [];
+  }
+  const late = block.figures.confirmedLate;
+  if (late === undefined || late.followed + late.overrode + late.notRelevantNow + late.noise === 0) {
+    return [];
+  }
+  return [
+    `${INDENT}  confirmed late in ${monthOf(block.periodStartIso)}, about hints of earlier months (counted here, never there): ` +
+      `followed ${count(late.followed)} · overrode ${count(late.overrode)} · not relevant now ${count(late.notRelevantNow)} · noise ${count(late.noise)}`,
+  ];
+};
+
 const precisionLines = (report: PilotReport): readonly string[] => {
   const proof = report.precision;
   return [
@@ -504,6 +524,7 @@ const precisionLines = (report: PilotReport): readonly string[] => {
     `${INDENT}surface-ok marks ${count(proof.surfaceOkMarks)}`,
     ...reasonLines(proof),
     outcomeLine(report),
+    ...lateOutcomeLines(report),
     ...cohortLines(report.cohorts),
   ];
 };

@@ -120,8 +120,11 @@ const BELOW_MINIMUMS_CREDIT = `no count — below the disclosure minimums: leavi
  * a zero is every recorder's verdict at once.
  */
 const creditWords = (credit: Credit): string => {
-  if (credit.withheld === null && credit.followed !== null && credit.followed > 0) {
-    return `followed ${plural(credit.followed, "time")} — shown once, leaving out any one person, at least ${PEOPLE_MINIMUM} people followed it`;
+  const late = credit.followedLate ?? 0;
+  if (credit.withheld === null && credit.followed !== null && credit.followed + late > 0) {
+    // review M6: a follow confirmed this month about an earlier month's hint is counted here, marked late
+    const lateWords = late > 0 ? ` (and ${String(late)} confirmed late, about earlier months' hints)` : "";
+    return `followed ${plural(credit.followed, "time")}${lateWords} — shown once, leaving out any one person, at least ${PEOPLE_MINIMUM} people followed it`;
   }
   return credit.withheld === "not_recordable" ? NOT_RECORDABLE_CREDIT : BELOW_MINIMUMS_CREDIT;
 };

@@ -31,6 +31,7 @@ import {
   readPeriodAggregate,
   withholdingOf,
 } from "./outcome-population.ts";
+import type { LateCounts } from "./outcome-population.ts";
 import type { Db } from "../db/client.ts";
 
 interface Deps {
@@ -45,6 +46,13 @@ export interface OutcomeCounts {
   readonly notRelevantNow: number;
   readonly noise: number;
   readonly unmarked: number;
+  /**
+   * Words confirmed in this period about hints of an earlier one (review M6):
+   * counted here, marked late, never in the period they were about — which
+   * stays as it closed. Not part of `interventions` or the rates. Present only
+   * when there are some.
+   */
+  readonly confirmedLate?: LateCounts;
 }
 
 export interface OutcomeFigures {
@@ -77,6 +85,8 @@ const notRecordable = (
   withheld: "not_recordable",
   figures: null,
 });
+
+const hasLate = (late: LateCounts): boolean => late.followed + late.overrode + late.notRelevantNow + late.noise > 0;
 
 /** What a repo that never enrolled reports: no instant, nothing counted. */
 export const noOutcomeFigures = (now: Date): OutcomeFigures => notRecordable(lastWholeMonth(now), null);
@@ -116,6 +126,7 @@ export const readOutcomeFigures = async (
             notRelevantNow: aggregate.notRelevantNow,
             noise: aggregate.noise,
             unmarked: aggregate.unmarked,
+            ...(hasLate(aggregate.late) ? { confirmedLate: aggregate.late } : {}),
           }
         : null,
   };
