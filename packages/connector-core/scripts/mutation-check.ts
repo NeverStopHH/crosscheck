@@ -19578,9 +19578,10 @@ export const MUTATIONS: readonly Mutation[
       "every overlap check ignores, titled after the start checkout",
   },
   {
+    // Re-pointed by review M4, which sends a retitled topic's context in the same append.
     label: "a topic's work context is never spooled ahead of its targets",
     file: `${CORE}/src/flows/capture-touched-files.ts`,
-    from: "  if (plan.opened.length === 0) {\n    return true;\n  }",
+    from: "  if (records.length === 0) {\n    return true;\n  }",
     to: "  if (true) {\n    return true;\n  }",
     test: `${CORE}/test/topic-contexts.test.ts`,
     because:
@@ -19726,20 +19727,72 @@ export const MUTATIONS: readonly Mutation[
     because: "the second file a topic touches opens a topic of its own, and one branch's work is scattered over a context per file",
   },
   {
+    // Re-pointed by review M4, which split the rename from the detach.
     label: "a branch renamed in place opens a new topic",
     file: `${CORE}/src/flows/topic-rules.ts`,
-    from: "  if (isDetached(branch) || (await isRenamedTo(last, branch, gitDir))) {",
-    to: "  if (isDetached(branch)) {",
+    from: "  if (await isRenamedTo(last, branch, gitDir)) {",
+    to: "  if (false) {",
     test: `${CORE}/test/topic-rules.test.ts`,
     because: "`git branch -m` cuts one piece of work into two topics, and the second starts with none of the first's files",
   },
   {
+    // Re-pointed by review M4, which split the rename from the detach.
     label: "a detached HEAD on top of a topic's work opens a topic of its own",
     file: `${CORE}/src/flows/topic-rules.ts`,
-    from: "  if (isDetached(branch) || (await isRenamedTo(last, branch, gitDir))) {",
-    to: "  if (await isRenamedTo(last, branch, gitDir)) {",
+    from: "  if (isDetached(branch)) {\n    return keep(last, relabel);\n  }",
+    to: "  if (false) {\n    return keep(last, relabel);\n  }",
     test: `${CORE}/test/topic-rules.test.ts`,
     because: "a rebase or a bisect step detaches HEAD on top of the work, and every touch there leaves its topic",
+  },
+  {
+    // Review M4 of feat/topic-contexts.
+    label: "a renamed branch's topic keeps the old branch's title",
+    file: `${CORE}/src/flows/topic-rules.ts`,
+    from: "    return keep(last, { ...relabel, title: last.id === null ? null : fallbackWorkContextTitle(branch, life.repoId) });",
+    to: "    return keep(last, relabel);",
+    test: `${CONNECTOR}/test/topic-nick-shape.test.ts`,
+    because: "review M4: after `git branch -m` the topic is titled after a branch that no longer exists, for good — the pilot's stale branch title, per topic",
+  },
+  {
+    label: "a rename retitles the session's own context",
+    file: `${CORE}/src/flows/topic-rules.ts`,
+    from: "    return keep(last, { ...relabel, title: last.id === null ? null : fallbackWorkContextTitle(branch, life.repoId) });",
+    to: "    return keep(last, { ...relabel, title: fallbackWorkContextTitle(branch, life.repoId) });",
+    test: `${CORE}/test/topic-rules.test.ts`,
+    because: "the session's own title — a host's, or the one its intent gave it — is never the start topic's to replace",
+  },
+  {
+    label: "a retitle stays out of the state's topic registry",
+    file: `${CORE}/src/flows/topic-contexts.ts`,
+    from: "        title: relabel.title ?? current.title,",
+    to: "        title: current.title,",
+    test: `${CORE}/test/topic-rules.test.ts`,
+    because: "the flush rewrites a topic's context from the state, so the new title is replaced by the old one on the wire",
+  },
+  {
+    label: "a retitled topic's context is never sent",
+    file: `${CORE}/src/flows/topic-contexts.ts`,
+    from: "  return [...plan.opened, ...retitled].map((topic) => topicRecord(topic, producer, now));",
+    to: "  return plan.opened.map((topic) => topicRecord(topic, producer, now));",
+    test: `${CONNECTOR}/test/topic-nick-shape.test.ts`,
+    because: "the state holds the new title, but the hub keeps the old one: nothing re-sends a topic's context",
+  },
+  {
+    label: "a retitle the spool refused is kept as the topic's title",
+    file: `${CORE}/src/flows/topic-contexts.ts`,
+    from: "  isPersisted ? relabels : relabels.map((relabel) => ({ ...relabel, title: null }));",
+    to: "  relabels;",
+    test: `${CORE}/test/topic-contexts.test.ts`,
+    because: "the state names a title the hub was never sent, and every later copy built from the state disagrees with what teammates see",
+  },
+  {
+    // Review mutation #9.
+    label: "targets of a topic whose context never persisted still name it",
+    file: `${CORE}/src/flows/capture-touched-files.ts`,
+    from: "    const filing = planned.key !== null && unopened.has(planned.key) ? fallback : planned;",
+    to: "    const filing = planned;",
+    test: `${CORE}/test/topic-contexts.test.ts`,
+    because: "the hub refuses every target that names a context it was never sent (`work context … not found`), and the touch is lost",
   },
   {
     label: "a branch that continues a topic's work never keeps the topic",
@@ -20382,7 +20435,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/summarizer-worker-env.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/topic-git-lane.test.ts 9
- * PRINTS: packages/connector-claude/test/topic-nick-shape.test.ts 8
+ * PRINTS: packages/connector-claude/test/topic-nick-shape.test.ts 10
  * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 4
  * PRINTS: packages/connector-core/test/absence-render.test.ts 7
@@ -20494,9 +20547,9 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/staleness-axis.test.ts 1
  * PRINTS: packages/connector-core/test/target-paths.test.ts 1
  * PRINTS: packages/connector-core/test/tool-window-pairing.test.ts 6
- * PRINTS: packages/connector-core/test/topic-contexts.test.ts 15
+ * PRINTS: packages/connector-core/test/topic-contexts.test.ts 17
  * PRINTS: packages/connector-core/test/topic-heads.test.ts 3
- * PRINTS: packages/connector-core/test/topic-rules.test.ts 13
+ * PRINTS: packages/connector-core/test/topic-rules.test.ts 15
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
  * PRINTS: packages/connector-core/test/verdict-wire.test.ts 2
  * PRINTS: packages/connector-core/test/work-context-ack.test.ts 6

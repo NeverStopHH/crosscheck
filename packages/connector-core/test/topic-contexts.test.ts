@@ -19,11 +19,13 @@ import { repoKey } from "../src/config/paths.ts";
 import type { Producer } from "../src/capture/records.ts";
 import type { RootHead, TouchedRootsResolution } from "../src/capture/touched-root.ts";
 import { captureTouchedFiles } from "../src/flows/capture-touched-files.ts";
+import type { CaptureTouchedFilesInput } from "../src/flows/capture-touched-files.ts";
 import { fallbackWorkContextTitle, registerSessionFlow } from "../src/flows/register-session.ts";
 import { sessionHealer } from "../src/flows/heal-session.ts";
 import {
   intentTargetOf,
   mintTopicId,
+  relabelsKept,
   topicLifeOf,
   topicSeenKey,
   topicWorkContextIdFor,
@@ -97,8 +99,10 @@ const capture = async (
   state: SessionState,
   paths: readonly string[],
   branchOf: (root: string) => string | null,
+  seams: Pick<CaptureTouchedFilesInput, "appendTopicContexts"> = {},
 ) =>
   captureTouchedFiles({
+    ...seams,
     home,
     repoKey: repoKey(state.hubUrl, REPO_ID),
     hostSessionKey: state.hostSessionKey,
@@ -170,6 +174,34 @@ describe("where a touch files", () => {
     expect(records[0]?.body).toMatchObject({ title: "feat/one @ api", branch: "feat/one", baseCommit: "a".repeat(40) });
     expect(result.captured).toEqual(["src/a.ts", topicSeenKey(firstTopicIn("wt1"), "src/a.ts")]);
     expect(result.topics?.opened.map((topic) => topic.branch)).toEqual(["feat/one"]);
+  });
+
+  test("a topic whose context the spool did not take files its targets under the session's own context (review mutation #9)", async () => {
+    // Arrange: the context append refused, the target appends after it taken
+    const home = await makeHome("topic-unpersisted");
+    cleanups.push(home);
+    const state = stateAt();
+    const refused: NonNullable<CaptureTouchedFilesInput["appendTopicContexts"]> = async () => ({ persisted: false, dropped: 1 });
+
+    // Act
+    const result = await capture(home, state, ["/cx-topics/wt1/src/a.ts"], () => "feat/one", { appendTopicContexts: refused });
+
+    // Assert: no target names a context the spool does not hold, and nothing registers it
+    const records = await spooledOf(home);
+    expect(records.map((record) => [record.kind, record.body["workContextId"]])).toEqual([["target", state.workContextId]]);
+    expect(result.captured).toEqual(["src/a.ts"]);
+    const folded = withTopicCapture(state, result.topics);
+    expect(folded.topicContexts).toEqual([]);
+    expect(folded.sessionTouchedAt).toBe(NOW.toISOString());
+  });
+
+  test("a retitle the spool did not take is not kept as the topic's title (review M4)", () => {
+    // Arrange
+    const renamed = [{ id: "k.1", label: "feat/new", head: null, title: "feat/new @ api" }];
+
+    // Act + Assert: the branch still joins the affinity; the title waits for a record that went out
+    expect(relabelsKept(renamed, true)).toEqual(renamed);
+    expect(relabelsKept(renamed, false)).toEqual([{ id: "k.1", label: "feat/new", head: null, title: null }]);
   });
 
   test("a root whose HEAD cannot be read files under the session's own context", async () => {

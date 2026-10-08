@@ -309,6 +309,47 @@ describe("H2: a subagent's shell work in a sibling it never edited is captured",
   });
 });
 
+describe("M4: a renamed branch's topic is retitled on the hub", () => {
+  test("`git branch -m` in a sibling: the topic keeps its id and opening branch, and goes out titled by the new name", async () => {
+    // Arrange: a topic on feat/topic-0, then the branch renamed and edited on
+    const world = await nickShape("m4-rename", 1);
+    const [sibling = ""] = world.siblings;
+    await sessionStart(world);
+    await edit(world, await writeRepoFile(sibling, "src/before.ts", "export const b = 1;\n"));
+    await git(sibling, ["branch", "-m", "feat/topic-0", "feat/renamed"]);
+
+    // Act
+    await edit(world, await writeRepoFile(sibling, "src/after.ts", "export const a = 1;\n"));
+
+    // Assert: two records of ONE context, the later one carrying the new title
+    const contexts = (await spooled(world)).filter((record) => record.kind === "work_context" && record.body.branch === "feat/topic-0");
+    expect(new Set(contexts.map((record) => record.body.id)).size).toBe(1);
+    expect(contexts.map((record) => record.body.title)).toEqual(["feat/topic-0 @ api", "feat/renamed @ api"]);
+    const topic = (await readSessionState(world.home, SESSION_ID))?.topicContexts.find((entry) => entry.branch === "feat/topic-0");
+    expect(topic?.title).toBe("feat/renamed @ api");
+    expect(filesByTopic(await spooled(world))["feat/topic-0"]).toEqual(["src/after.ts:tool_edit", "src/before.ts:tool_edit"]);
+  });
+
+  test("a rename seen first by the Stop sweep — a shell's commit, no edit — retitles the topic too", async () => {
+    // Arrange
+    const world = await nickShape("m4-rename-lane", 1);
+    const [sibling = ""] = world.siblings;
+    await sessionStart(world);
+    await edit(world, await writeRepoFile(sibling, "src/before.ts", "export const b = 1;\n"));
+    await git(sibling, ["branch", "-m", "feat/topic-0", "feat/renamed"]);
+    await writeRepoFile(sibling, "src/shell.ts", "export const s = 1;\n");
+    await commitAll(sibling, "through a shell");
+
+    // Act
+    await stop(world);
+
+    // Assert
+    const contexts = (await spooled(world)).filter((record) => record.kind === "work_context" && record.body.branch === "feat/topic-0");
+    expect(contexts.map((record) => record.body.title)).toEqual(["feat/topic-0 @ api", "feat/renamed @ api"]);
+    expect(filesByTopic(await spooled(world))["feat/topic-0"]).toContain("src/shell.ts:git_commit");
+  });
+});
+
 describe("M3: a reftable repository files its work under the session, and the lane still sweeps it", () => {
   test("no `.invalid` topic; the sibling's commit and new file are still read", async () => {
     // Arrange: the owner's shape in a reftable repo — every HEAD file says `ref: refs/heads/.invalid`

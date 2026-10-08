@@ -59,7 +59,7 @@ import type {
 import { seqAfter } from "../capture/seq.ts";
 import { captureFileTargets } from "./capture-targets.ts";
 import type { CaptureFileTargetsInput } from "./capture-targets.ts";
-import { openedTopicRecords, seenPathsOf, topicSeenKey } from "./topic-contexts.ts";
+import { plannedTopicRecords, relabelsKept, seenPathsOf, topicSeenKey } from "./topic-contexts.ts";
 import type { Filing, TopicCapture, TopicLife, TopicPlan } from "./topic-contexts.ts";
 import { planTopics } from "./topic-rules.ts";
 
@@ -88,6 +88,12 @@ export interface CaptureTouchedFilesInput
   readonly topics?: TopicLife;
   /** The pre-pass, real by default; injected only by a test that has no git. */
   readonly resolveRoots?: (input: ResolveTouchedRootsInput) => Promise<TouchedRootsResolution>;
+  /**
+   * The append of the topics' contexts, real by default; injected only by a
+   * test that needs it NOT to persist while the targets after it do (review
+   * mutation #9) — a full or unwritable spool refuses both.
+   */
+  readonly appendTopicContexts?: typeof appendRecords;
 }
 
 export interface CaptureTouchedFilesResult {
@@ -129,22 +135,20 @@ const resolveRootFrom = (
  * context it has not been sent (`work context … not found`), so the order is
  * not a nicety. An append that did not persist leaves those topics unopened:
  * their paths file under the session's own context instead, never under a
- * context the spool does not hold.
+ * context the spool does not hold. A topic a rename retitled goes in the same
+ * append (review M4); a failed one leaves the old title in the state too.
  */
 const spoolOpenedTopics = async (
   input: CaptureTouchedFilesInput,
   plan: TopicPlan,
+  life: TopicLife,
 ): Promise<boolean> => {
-  if (plan.opened.length === 0) {
+  const records = plannedTopicRecords(plan, life, input.producer, input.now);
+  if (records.length === 0) {
     return true;
   }
-  const appended = await appendRecords(
-    input.home,
-    input.repoKey,
-    input.hostSessionKey,
-    openedTopicRecords(plan.opened, input.producer, input.now),
-    input.now,
-  );
+  const append = input.appendTopicContexts ?? appendRecords;
+  const appended = await append(input.home, input.repoKey, input.hostSessionKey, records, input.now);
   return appended.persisted;
 };
 
@@ -182,7 +186,7 @@ const captureByTopic = async (
   life: TopicLife,
 ): Promise<{ readonly captured: readonly string[]; readonly topics: TopicCapture }> => {
   const plan = await planTopics(life, resolution, input.paths, input.now, input.cwd);
-  const isOpened = await spoolOpenedTopics(input, plan);
+  const isOpened = await spoolOpenedTopics(input, plan, life);
   const session: Filing = { key: null, workContextId: life.sessionWorkContextId };
   const unopened = new Set(isOpened ? [] : plan.opened.map((topic) => topic.key));
   const captured: string[] = [];
@@ -212,7 +216,7 @@ const captureByTopic = async (
     topics: {
       sessionId: life.sessionId,
       opened: isOpened ? plan.opened : [],
-      relabeled: plan.relabeled,
+      relabeled: relabelsKept(plan.relabeled, isOpened),
       touched: new Map([...plan.touched].filter(([key]) => !unopened.has(key))),
       sessionTouched: plan.sessionTouched || unopened.size > 0,
       overflowed: plan.overflowed,

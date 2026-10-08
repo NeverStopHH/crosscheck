@@ -131,9 +131,14 @@ const decide = async (
   if (!(await descendsInHeadLog(gitDir, last.head, commit))) {
     return { kind: "open", branch, commit };
   }
-  const relabel: Relabel = { id: last.id, label: branch, head: commit };
-  if (isDetached(branch) || (await isRenamedTo(last, branch, gitDir))) {
+  const relabel: Relabel = { id: last.id, label: branch, head: commit, title: null };
+  if (isDetached(branch)) {
     return keep(last, relabel);
+  }
+  if (await isRenamedTo(last, branch, gitDir)) {
+    // The same branch under a new name: the old title names nothing that
+    // exists any more (review M4). The start topic's title is the session's.
+    return keep(last, { ...relabel, title: last.id === null ? null : fallbackWorkContextTitle(branch, life.repoId) });
   }
   return overlaps(paths, seenPathsOf(life.seenTargets, last.id)) ? keep(last, relabel) : { kind: "open", branch, commit };
 };

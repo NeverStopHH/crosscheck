@@ -52,7 +52,7 @@ import { withSweptRoot } from "../state/session-state.ts";
 import type { SeqRange, SessionState } from "../state/session-state.ts";
 import { readGitCommits, readGitTouches, spoolGitTouches } from "./capture-git-touches.ts";
 import type { CaptureGitTouchesInput } from "./capture-git-touches.ts";
-import { mergeTopicCaptures, openedTopicRecords, seenPathsOf, topicLifeOf, topicSeenKey } from "./topic-contexts.ts";
+import { mergeTopicCaptures, plannedTopicRecords, relabelsKept, seenPathsOf, topicLifeOf, topicSeenKey } from "./topic-contexts.ts";
 import type { Filing, TopicCapture, TopicLife } from "./topic-contexts.ts";
 import { planTopics } from "./topic-rules.ts";
 
@@ -302,9 +302,9 @@ const spoolRoot = async (
   }
   const plan = await planTopics(life, resolutionOf(read, paths, input.state, input.now), paths, input.now, read.lane.root);
   const session: Filing = { key: null, workContextId: life.sessionWorkContextId };
+  const records = plannedTopicRecords(plan, life, input.producer, input.now);
   const isOpened =
-    plan.opened.length === 0 ||
-    (await appendRecords(input.home, input.repoKey, input.hostSessionKey, openedTopicRecords(plan.opened, input.producer, input.now), input.now)).persisted;
+    records.length === 0 || (await appendRecords(input.home, input.repoKey, input.hostSessionKey, records, input.now)).persisted;
   const filing = isOpened ? (plan.filingByPath.get(first) ?? session) : session;
   const block = seqSlice(input.seq, index, MAX_TARGETS_PER_INVOCATION);
   const base = {
@@ -332,7 +332,7 @@ const spoolRoot = async (
     topic: {
       sessionId: life.sessionId,
       opened: isOpened ? plan.opened : [],
-      relabeled: plan.relabeled,
+      relabeled: relabelsKept(plan.relabeled, isOpened),
       touched: filing.key === null ? new Map() : new Map([[filing.key, read.lane.root]]),
       sessionTouched: filing.key === null,
       overflowed: plan.overflowed,

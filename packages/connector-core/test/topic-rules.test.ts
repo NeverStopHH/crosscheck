@@ -196,15 +196,31 @@ describe("(b) a rename keeps the topic", () => {
     // Act: a file the topic never touched — the rename alone is enough
     const { plan, state } = await touch(first.state, sibling, ["src/other.ts"], 2);
 
-    // Assert
+    // Assert: same id, the new name in the affinity — and in the title (review M4)
     const id = mintTopicId(REPO_ID, sibling, "feat/a");
     expect(plan.opened).toEqual([]);
     expect(keysOf(plan)).toEqual([id]);
-    expect(plan.relabeled).toEqual([{ id, label: "feat/a-renamed", head: await headCommit(sibling) }]);
+    expect(plan.relabeled).toEqual([{ id, label: "feat/a-renamed", head: await headCommit(sibling), title: "feat/a-renamed @ api" }]);
     const topic = state.topicContexts.find((entry) => entry.key === id);
     expect(topic?.branches).toEqual(["feat/a", "feat/a-renamed"]);
     expect(topic?.head).toBe(await headCommit(sibling));
-    expect(topic?.title).toBe("feat/a @ api");
+    expect(topic?.title).toBe("feat/a-renamed @ api");
+    expect(topic?.branch).toBe("feat/a");
+  });
+
+  test("a rename of the session's start branch leaves the session's own title to the session (review M4)", async () => {
+    // Arrange: the session's own checkout on a branch of its own, then renamed
+    const { main } = await world("rules-b-start");
+    await git(main, ["switch", "-c", "feat/start"]);
+    const state = { ...(await sessionIn(main)), startBranch: "feat/start", workContextTitle: "Teach the importer @ api" };
+    await git(main, ["branch", "-m", "feat/start", "feat/start-renamed"]);
+
+    // Act
+    const { plan, state: after } = await touch(state, main, ["src/a.ts"], 1);
+
+    // Assert
+    expect(plan.relabeled).toEqual([{ id: null, label: "feat/start-renamed", head: await headCommit(main), title: null }]);
+    expect(after.workContextTitle).toBe("Teach the importer @ api");
   });
 
   test("a second rename is judged against the topic's NEWEST name, and keeps the topic again", async () => {
@@ -253,11 +269,14 @@ describe("(c) a move to another branch", () => {
     // Act
     const { plan, state } = await touch(first.state, sibling, ["src/a.ts"], 2);
 
-    // Assert
+    // Assert: the follow-up joins the affinity; the title stays the opening
+    // branch's — only a rename is the same branch under a new name
     const id = mintTopicId(REPO_ID, sibling, "feat/a");
     expect(plan.opened).toEqual([]);
     expect(keysOf(plan)).toEqual([id]);
+    expect(plan.relabeled.map((relabel) => relabel.title)).toEqual([null]);
     expect(state.topicContexts.find((entry) => entry.key === id)?.branches).toEqual(["feat/a", "feat/a-2"]);
+    expect(state.topicContexts.find((entry) => entry.key === id)?.title).toBe("feat/a @ api");
   });
 
   test("the same move with files the topic never touched opens the worktree's second topic", async () => {
@@ -309,6 +328,7 @@ describe("(d) a detached HEAD", () => {
     expect(plan.opened).toEqual([]);
     expect(keysOf(plan)).toEqual([id]);
     expect(state.topicContexts.find((entry) => entry.key === id)?.branches).toEqual(["feat/a", label]);
+    expect(state.topicContexts.find((entry) => entry.key === id)?.title).toBe("feat/a @ api");
   });
 
   test("a HEAD detached on a commit the topic never reached opens `detached@<sha>`", async () => {

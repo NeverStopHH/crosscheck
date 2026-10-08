@@ -158,6 +158,14 @@ export interface Relabel {
   readonly id: string | null;
   readonly label: string;
   readonly head: string | null;
+  /**
+   * The title the topic takes with it (review M4): `<new branch> @ <repo>` for
+   * a RENAME (rule b) of a topic — the same branch under a new name, so the
+   * old title names nothing that exists. Null for a continuation or a detach
+   * (the opening branch still names the work), and for the start topic, whose
+   * title is the session's own.
+   */
+  readonly title: string | null;
 }
 
 export interface TopicPlan {
@@ -174,26 +182,50 @@ export interface TopicPlan {
   readonly overflowed: number;
 }
 
+const topicRecord = (topic: TopicContext, producer: Producer, now: Date): Envelope =>
+  workContextRecord(
+    {
+      workContextId: topic.workContextId,
+      sessionId: topic.sessionId,
+      title: topic.title,
+      status: topic.status,
+      branch: topic.branch,
+      baseCommit: topic.baseCommit,
+    },
+    producer,
+    now,
+  );
+
 /** The work_context records of topics just opened — what goes into the spool ahead of their first targets. */
 export const openedTopicRecords = (
   opened: readonly TopicContext[],
   producer: Producer,
   now: Date,
-): readonly Envelope[] =>
-  opened.map((topic) =>
-    workContextRecord(
-      {
-        workContextId: topic.workContextId,
-        sessionId: topic.sessionId,
-        title: topic.title,
-        status: topic.status,
-        branch: topic.branch,
-        baseCommit: topic.baseCommit,
-      },
-      producer,
-      now,
-    ),
-  );
+): readonly Envelope[] => opened.map((topic) => topicRecord(topic, producer, now));
+
+/**
+ * THE CONTEXTS ONE PLAN OWES THE HUB, in one append: every topic it opens,
+ * then every topic a rename retitled (review M4) — the hub's title replaces,
+ * its `branch` stays the opening one. Only this life's topics: another life's
+ * topic of the same (root, branch) has the same key and its own context.
+ */
+export const plannedTopicRecords = (
+  plan: Pick<TopicPlan, "opened" | "relabeled">,
+  life: Pick<TopicLife, "sessionId" | "topics">,
+  producer: Producer,
+  now: Date,
+): readonly Envelope[] => {
+  const live = life.topics.filter((topic) => topic.sessionId === life.sessionId);
+  const retitled = plan.relabeled.flatMap((relabel) => {
+    const topic = live.find((entry) => entry.key === relabel.id);
+    return topic === undefined || relabel.title === null ? [] : [{ ...topic, title: relabel.title }];
+  });
+  return [...plan.opened, ...retitled].map((topic) => topicRecord(topic, producer, now));
+};
+
+/** The plan's relabels as the state may keep them: a retitle the spool did not take is not the hub's title (review M4). */
+export const relabelsKept = (relabels: readonly Relabel[], isPersisted: boolean): readonly Relabel[] =>
+  isPersisted ? relabels : relabels.map((relabel) => ({ ...relabel, title: null }));
 
 /** One event's topic outcome, as the caller folds it into its single locked state write. */
 export interface TopicCapture {
@@ -237,6 +269,7 @@ const relabeledTopic = (topic: TopicContext, relabels: readonly Relabel[]): Topi
         ...current,
         branches: [...withLabel(labelsOf(current), relabel.label)],
         head: relabel.head ?? current.head,
+        title: relabel.title ?? current.title,
       }),
       topic,
     );
