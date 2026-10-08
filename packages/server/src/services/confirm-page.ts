@@ -23,6 +23,8 @@ import type { Clock } from "../types.ts";
 export interface DraftContext {
   readonly id: string;
   readonly version: number;
+  /** What the decision is about — signed with the rest (review M2). */
+  readonly subjectKey: string;
   readonly kind: DraftKind;
   readonly provenance: DraftProvenance;
   readonly createdAt: string;
@@ -104,6 +106,7 @@ const contextOf = async (db: Db, hidden: HiddenLocations, draft: DraftRow): Prom
   const base = {
     id: draft.id,
     version: draft.version,
+    subjectKey: draft.subjectKey,
     kind: draft.kind,
     provenance: draft.provenance,
     createdAt: draft.createdAt.toISOString(),

@@ -76,11 +76,12 @@ const Subject: FC<{ readonly draft: DraftContext }> = ({ draft }) => {
     );
   }
   if (draft.kind === "pin" || draft.kind === "pin_broke" || draft.kind === "pin_ok") {
+    const files = draft.payload["files"];
     return (
       <span class="meta">
         pin {capped(text(draft, "pinId") || text(draft, "id"), UI_MAX_LABEL_CHARS)} «
         {capped(draft.pinSurface ?? "", UI_MAX_TITLE_CHARS)}»
-        {draft.kind === "pin" ? ` · files ${capped(String(draft.payload["files"] ?? ""), UI_MAX_NOTE_CHARS)}` : ""}
+        {Array.isArray(files) ? ` · ${String(files.length)} file(s), every one listed below` : ""}
       </span>
     );
   }
@@ -89,6 +90,53 @@ const Subject: FC<{ readonly draft: DraftContext }> = ({ draft }) => {
   }
   return null;
 };
+
+/** One signed value, in full: a list as every item, scrollable; nothing cut (review M2). */
+const TermValue: FC<{ readonly value: unknown }> = ({ value }) => {
+  if (Array.isArray(value)) {
+    return (
+      <ol class="signed-list">
+        {value.map((item) => (
+          <li>{String(item)}</li>
+        ))}
+      </ol>
+    );
+  }
+  if (value === null || value === undefined) {
+    return <>—</>;
+  }
+  return <>{typeof value === "object" ? JSON.stringify(value) : String(value)}</>;
+};
+
+/**
+ * EVERYTHING THE SIGNATURE COVERS (§6; review M2): the digest is over the
+ * draft's id, version, subject and WHOLE payload, and this page is the only
+ * place a person sees those terms (R6) — so every one is listed, uncut: a
+ * pin's check recipe, its commit, every file. Escaped like every other text.
+ */
+const SignedTerms: FC<{ readonly draft: DraftContext }> = ({ draft }) => (
+  <details class="signed-terms" open>
+    <summary>exactly what your passkey signs for this one</summary>
+    <dl>
+      <dt>draft</dt>
+      <dd>
+        {draft.id} · version {String(draft.version)}
+      </dd>
+      <dt>about</dt>
+      <dd>{draft.subjectKey}</dd>
+      {Object.keys(draft.payload)
+        .sort()
+        .map((key) => (
+          <>
+            <dt data-term={key}>{key}</dt>
+            <dd>
+              <TermValue value={draft.payload[key]} />
+            </dd>
+          </>
+        ))}
+    </dl>
+  </details>
+);
 
 const DraftCard: FC<{ readonly draft: DraftContext }> = ({ draft }) => (
   <li class="artifact" data-draft-id={draft.id} data-version={String(draft.version)}>
@@ -99,6 +147,7 @@ const DraftCard: FC<{ readonly draft: DraftContext }> = ({ draft }) => (
     </span>{" "}
     <Subject draft={draft} />
     {text(draft, "reason") === "" ? null : <blockquote>{capped(text(draft, "reason"), UI_MAX_NOTE_CHARS)}</blockquote>}
+    <SignedTerms draft={draft} />
     <div>
       <label>
         Decision{" "}
