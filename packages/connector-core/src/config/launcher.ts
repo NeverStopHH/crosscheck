@@ -14,7 +14,8 @@ import { realpath } from "node:fs/promises";
 
 import type { Env } from "./paths.ts";
 import type { McpServerEntry } from "./mcp-config.ts";
-import { RUNTIME_ISOLATION_FLAGS } from "./runtime-isolation.ts";
+import { selfLaunch } from "./runtime-isolation.ts";
+import type { SelfLaunch } from "./runtime-isolation.ts";
 
 /** Characters a POSIX shell passes through untouched. */
 const SHELL_SAFE_PATTERN = /^[\w@%+=:,./-]+$/;
@@ -149,7 +150,9 @@ export const isOwnCrosscheckBin = async (binPath: string): Promise<boolean> => {
 export type Launcher =
   | { readonly kind: "override"; readonly prefix: string }
   | { readonly kind: "bare"; readonly path: string }
-  | { readonly kind: "entry"; readonly runtime: string; readonly entry: string }
+  // The absolute form carries its finished, isolated start and nothing a
+  // caller could reassemble without the flags (config/runtime-isolation.ts).
+  | { readonly kind: "entry"; readonly launch: SelfLaunch }
   | { readonly kind: "refused"; readonly reason: string };
 
 export type UsableLauncher = Exclude<Launcher, { kind: "refused" }>;
@@ -191,7 +194,7 @@ export const resolveLauncher = async (
     if (isEphemeralInstallPath(await realpathOrSelf(entryPath))) {
       return { kind: "refused", reason: CACHE_REFUSAL };
     }
-    return { kind: "entry", runtime: process.execPath, entry: entryPath };
+    return { kind: "entry", launch: selfLaunch(entryPath) };
   }
   return { kind: "refused", reason: NO_LAUNCHER_REFUSAL };
 };
@@ -207,7 +210,7 @@ export const resolveCommandPrefix = (launcher: UsableLauncher): string => {
       // Isolated from the repo it runs in (config/runtime-isolation.ts): the
       // hook fires with the project as cwd, and bun would read its bunfig
       // preload and .env first.
-      return [launcher.runtime, ...RUNTIME_ISOLATION_FLAGS, launcher.entry].map(shellQuote).join(" ");
+      return [launcher.launch.command, ...launcher.launch.args].map(shellQuote).join(" ");
   }
 };
 
@@ -233,8 +236,8 @@ export const resolveMcpLauncher = (launcher: UsableLauncher): McpServerEntry => 
     case "entry":
       return {
         type: "stdio",
-        command: launcher.runtime,
-        args: [...RUNTIME_ISOLATION_FLAGS, launcher.entry, "mcp"],
+        command: launcher.launch.command,
+        args: [...launcher.launch.args, "mcp"],
       };
   }
 };

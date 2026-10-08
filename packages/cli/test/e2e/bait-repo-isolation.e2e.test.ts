@@ -21,6 +21,8 @@ import { dirname, join, resolve } from "node:path";
 
 import { saveConfig } from "@crosscheck/connector-core/config/config.ts";
 import { resolveCommandPrefix } from "@crosscheck/connector-core/config/launcher.ts";
+import { selfLaunch } from "@crosscheck/connector-core/config/runtime-isolation.ts";
+import { resolveAcpMcpServer } from "../../../connector-acp/src/inject/launcher.ts";
 import { makeHome, makeRepo } from "../../../connector-core/test/helpers.ts";
 
 const REPO_ROOT = resolve(import.meta.dir, "..", "..", "..", "..");
@@ -195,7 +197,7 @@ describe("a bait repo's bunfig.toml and .env", () => {
       const attacker = startListener();
       const proxy = startListener();
       const bait = await baitRepo("bait-entry", own, attacker, proxy);
-      const prefix = resolveCommandPrefix({ kind: "entry", runtime: process.execPath, entry: ENTRY });
+      const prefix = resolveCommandPrefix({ kind: "entry", launch: selfLaunch(ENTRY) });
 
       // Act — the hook command goes through a shell, as the host runs it
       const hook = await runIn(bait, ["/bin/sh", "-c", `${prefix} hook session-start`], sessionStart(bait.repo, "bait-entry-uuid"));
@@ -206,6 +208,36 @@ describe("a bait repo's bunfig.toml and .env", () => {
       expect(proxy.seen()).toEqual([]);
       expect(hook.exitCode).toBe(0);
       expect(own.seen().some((request) => request.path === "/api/sessions" && request.bearerIsStored)).toBe(true);
+    },
+    PROCESS_TIMEOUT_MS * 2,
+  );
+
+  test(
+    "steer nothing in the MCP server the ACP proxy injects into an agent's session",
+    async () => {
+      // Arrange — the entry the proxy hands the agent when no durable
+      // `crosscheck` is on its PATH (review round 2, N1: it once had no flags)
+      const own = startListener();
+      const attacker = startListener();
+      const proxy = startListener();
+      const bait = await baitRepo("bait-acp", own, attacker, proxy);
+      const resolved = await resolveAcpMcpServer({ PATH: "/usr/bin:/bin" }, ENTRY);
+      if (resolved.kind !== "entry") {
+        throw new Error(`expected an injectable entry, got: ${resolved.reason}`);
+      }
+
+      // Act — the agent spawns it with the session's project as cwd
+      const frames =
+        `${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })}\n` +
+        `${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} })}\n`;
+      const server = await runIn(bait, [resolved.entry.command, ...resolved.entry.args], frames);
+
+      // Assert — the server answered, and the repo's preload never ran in it
+      expect(server.stdout).toContain('"id":2');
+      expect(server.stdout).toContain('"tools"');
+      expect(await Bun.file(bait.marker).exists()).toBe(false);
+      expect(attacker.seen()).toEqual([]);
+      expect(proxy.seen()).toEqual([]);
     },
     PROCESS_TIMEOUT_MS * 2,
   );

@@ -176,6 +176,7 @@ import { repoRuntimeChecks } from "./doctor-repo-runtime.ts";
 import {
   ISOLATED_BUNFIG_PATH,
   RUNTIME_ISOLATION_FLAGS,
+  selfLaunch,
 } from "@crosscheck/connector-core/config/runtime-isolation.ts";
 import { readForeignHubRefusals } from "@crosscheck/connector-core/state/foreign-hub.ts";
 import { readBriefingOmissions } from "@crosscheck/connector-core/state/briefing-omissions.ts";
@@ -1326,7 +1327,7 @@ const isEntryCrosscheckWrote = async (entry: McpServerEntry): Promise<boolean> =
   const hasFlags = noEnvFile === RUNTIME_ISOLATION_FLAGS[0] && config === RUNTIME_ISOLATION_FLAGS[1];
   const [command, ownRuntime, entryReal, ownEntry] = await Promise.all([
     realOrNull(entry.command),
-    realOrNull(process.execPath),
+    realOrNull(selfLaunch(OWN_ENTRY_PATH).command),
     realOrNull(script),
     realOrNull(OWN_ENTRY_PATH),
   ]);

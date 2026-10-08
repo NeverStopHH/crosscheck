@@ -13,11 +13,33 @@ import { resolveCommandPrefix, resolveMcpLauncher } from "../src/config/launcher
 import {
   ISOLATED_BUNFIG_PATH,
   RUNTIME_ISOLATION_FLAGS,
+  selfLaunch,
   selfSpawnCmd,
 } from "../src/config/runtime-isolation.ts";
 
 const ENTRY = new URL("../../cli/src/bin/crosscheck.ts", import.meta.url).pathname;
 const KEYWORDS = ["hook", "statusline", "mcp"];
+const PACKAGES_DIR = new URL("../../", import.meta.url).pathname;
+const THIS_MODULE = "connector-core/src/config/runtime-isolation.ts";
+
+/** Every source file a package ships: its `src/`, which is what pack-npm.ts packs. */
+const shippedSources = async (): Promise<readonly string[]> => {
+  const files: string[] = [];
+  for await (const file of new Bun.Glob("*/src/**/*.{ts,tsx,js,cjs,mjs}").scan({ cwd: PACKAGES_DIR })) {
+    files.push(file);
+  }
+  return files.sort();
+};
+
+const filesMatching = async (pattern: RegExp): Promise<readonly string[]> => {
+  const hits: string[] = [];
+  for (const file of await shippedSources()) {
+    if (pattern.test(await Bun.file(`${PACKAGES_DIR}${file}`).text())) {
+      hits.push(file);
+    }
+  }
+  return hits;
+};
 
 describe("the isolation flags", () => {
   test("are --no-env-file and crosscheck's own packaged bunfig, which exists", async () => {
@@ -44,7 +66,7 @@ describe("the isolation flags", () => {
 
   test("are in the hook prefix and the MCP entry init writes for the entry form", () => {
     // Arrange
-    const launcher = { kind: "entry", runtime: process.execPath, entry: ENTRY } as const;
+    const launcher = { kind: "entry", launch: selfLaunch(ENTRY) } as const;
 
     // Act
     const prefix = resolveCommandPrefix(launcher);
@@ -57,6 +79,45 @@ describe("the isolation flags", () => {
       command: process.execPath,
       args: ["--no-env-file", `--config=${ISOLATED_BUNFIG_PATH}`, ENTRY, "mcp"],
     });
+  });
+});
+
+describe("the one place that names the running bun", () => {
+  // Structural, not lexical (review round 2, N1 and R1): a grep for two
+  // spellings of an unflagged spawn missed `[launcher.runtime, entry, "mcp"]`
+  // in the ACP injector and `String(process.execPath)` in a worker. A start
+  // that does not take its argv from runtime-isolation.ts cannot name the
+  // runtime without one of these words appearing in its file.
+  test("is runtime-isolation.ts: no other shipped source mentions the runtime's path", async () => {
+    // Arrange
+    const sources = await shippedSources();
+
+    // Act
+    const naming = await filesMatching(/execPath|argv0/);
+
+    // Assert — the walk is real (it sees the worker spawn sites), and only
+    // the isolation module names the runtime
+    expect(sources.length).toBeGreaterThan(100);
+    expect(sources).toContain("connector-claude/src/hooks/landing-fetch.ts");
+    expect(sources).toContain("connector-acp/src/inject/launcher.ts");
+    expect(naming).toEqual([THIS_MODULE]);
+  });
+
+  test("no shipped source starts bun by its bare name", async () => {
+    // Act
+    const byName = await filesMatching(/cmd:\s*\[\s*["'`]bun["'`]|spawn\(\s*["'`]bun["'`]/);
+
+    // Assert
+    expect(byName).toEqual([]);
+  });
+
+  test("the absolute launcher carries only the finished isolated start", async () => {
+    // Act
+    const launch = selfLaunch(ENTRY);
+
+    // Assert — there is no bare runtime or entry field a caller could reassemble
+    expect(launch).toEqual({ command: process.execPath, args: [...RUNTIME_ISOLATION_FLAGS, ENTRY] });
+    expect(Object.keys(launch).sort()).toEqual(["args", "command"]);
   });
 });
 
@@ -73,7 +134,7 @@ describe("doctor's launcher check on the isolation flags", () => {
 
   test("the command init writes now passes", async () => {
     // Act
-    const prefix = resolveCommandPrefix({ kind: "entry", runtime: process.execPath, entry: ENTRY });
+    const prefix = resolveCommandPrefix({ kind: "entry", launch: selfLaunch(ENTRY) });
     const health = await checkLauncherCommand(`${prefix} hook session-start`, {}, KEYWORDS);
 
     // Assert

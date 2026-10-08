@@ -23,12 +23,19 @@
  * still wins, which is the point — the developer's shell is theirs, a repo's
  * files are not.
  *
- * Every self-spawn goes through `selfSpawnCmd`, and the launcher writes the
- * same two flags into hook commands and MCP entries (config/launcher.ts).
- * The npm shim (packaging/bin/crosscheck.cjs) passes them too, naming this
- * file by its path inside the package.
+ * THIS FILE IS THE ONLY PLACE THAT NAMES THE RUNNING BUN. Every self-spawn
+ * takes its argv from `selfSpawnCmd`, and the launcher's absolute form is a
+ * `selfLaunch` (config/launcher.ts), from which the hook prefix, the
+ * `.mcp.json` entry and the ACP-injected MCP entry are all derived. A start
+ * that does not come from here cannot name the runtime at all. Round 2 of the
+ * review found a hand-built `[runtime, entry, "mcp"]` in the ACP injector
+ * that a lexical grep for two spellings could not see, so the guard is now
+ * structural: no shipped source except this file mentions the runtime's path
+ * (packages/connector-core/test/runtime-isolation.test.ts walks every
+ * package's src for it). The npm shim (packaging/bin/crosscheck.cjs) passes
+ * the same flags, naming this bunfig by its path inside the package.
  *
- * VERIFY: grep -rnE "cmd: \[process\.execPath|^[[:space:]]*process\.execPath,$" packages/connector-claude/src packages/connector-cursor/src packages/connector-acp/src packages/connector-core/src | grep -v runtime-isolation.ts | wc -l | tr -d ' '
+ * VERIFY: grep -rlE "execPath|argv0" packages --exclude-dir=node_modules | grep -E "^packages/[^/]+/src/" | grep -v "/runtime-isolation.ts$" | wc -l | tr -d ' '
  * PRINTS: 0
  */
 import { resolve } from "node:path";
@@ -44,10 +51,29 @@ export const RUNTIME_ISOLATION_FLAGS: readonly string[] = [
   `--config=${ISOLATED_BUNFIG_PATH}`,
 ];
 
+/** A start of one of crosscheck's own entries, as a command and its leading args. */
+export interface SelfLaunch {
+  readonly command: string;
+  readonly args: readonly string[];
+}
+
+/** The running bun, the isolation flags, then the entry: the only shape a self-start takes. */
+export const selfLaunch = (entry: string): SelfLaunch => ({
+  command: process.execPath,
+  args: [...RUNTIME_ISOLATION_FLAGS, entry],
+});
+
 /** The argv that starts one of crosscheck's own entries under the running bun, isolated. */
-export const selfSpawnCmd = (entry: string, args: readonly string[] = []): readonly string[] => [
-  process.execPath,
-  ...RUNTIME_ISOLATION_FLAGS,
-  entry,
-  ...args,
-];
+export const selfSpawnCmd = (entry: string, args: readonly string[] = []): readonly string[] => {
+  const launch = selfLaunch(entry);
+  return [launch.command, ...launch.args, ...args];
+};
+
+/**
+ * The one start that is deliberately NOT isolated: `crosscheck ci-report`
+ * re-runs the repo's own failing tests in CI, and those must see the repo's
+ * bunfig (its preload sets the tests up) exactly as the primary run did. It
+ * starts no crosscheck entry, so nothing of crosscheck's runs under the repo's
+ * bunfig, and it uses the running bun rather than whichever is first on PATH.
+ */
+export const repoTestRunCmd = (args: readonly string[]): readonly string[] => [process.execPath, ...args];
