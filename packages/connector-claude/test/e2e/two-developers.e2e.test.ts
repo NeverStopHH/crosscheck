@@ -18,6 +18,10 @@ import {
 import { runCli } from "../../../cli/src/cli/index.ts";
 import type { Env } from "../../src/index.ts";
 import { git, makeHome, makeRepo, writeRepoFile } from "../../../connector-core/test/helpers.ts";
+import { unansweredReadsLine } from "@crosscheck/connector-core/briefing/omission.ts";
+
+/** The briefing's parallel reads a person's session sends (connector-core flows/briefing.ts). */
+const BRIEFING_READS = 9;
 
 const ADMIN_TOKEN = "e2e-admin-token";
 const REPO_ID = "github.com/acme/api";
@@ -331,7 +335,7 @@ describe("hub down", () => {
     deadKey = repoKey(`http://127.0.0.1:${DEAD_PORT}`, REPO_ID);
   });
 
-  test("every hook exits silently and the spool keeps the unsent records", async () => {
+  test("capture and end exit silently, the start says why it has no briefing, and the spool keeps the unsent records", async () => {
     // Act
     const started = await runHook(
       "session-start",
@@ -356,8 +360,11 @@ describe("hub down", () => {
       deadEnv,
     );
 
-    // Assert
-    expect([started, captured, ended]).toEqual(["", "", ""]);
+    // Assert: capture and end stay silent; the start no longer does — an
+    // offline session is told it has no briefing and why (2026-10-08), so it
+    // never reads as a quiet repo.
+    expect([captured, ended]).toEqual(["", ""]);
+    expect(started).toContain(unansweredReadsLine(BRIEFING_READS, BRIEFING_READS, true));
     const lines = await readSpoolLines(bob.home, deadKey);
     expect(lines.length).toBeGreaterThanOrEqual(2);
     expect(lines.join("\n")).toContain("src/limiter.ts");

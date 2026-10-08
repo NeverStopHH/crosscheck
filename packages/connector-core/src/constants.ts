@@ -2098,6 +2098,21 @@ export const HUB_COVERAGE_WINDOW_DAYS = 14;
 export const MAX_LOSS_LEDGER_BYTES = 65_536;
 
 /**
+ * How far back `doctor` counts briefings this machine did not deliver whole
+ * (state/briefing-omissions.ts): one working week, the ghost check's own
+ * horizon — long enough to see a pattern across a person's sessions, short
+ * enough that a slow week last month is not today's warning.
+ */
+export const BRIEFING_OMISSION_WINDOW_DAYS = 7;
+
+/**
+ * The briefing-omission ledger's byte cap, the capture-loss ledger's figure:
+ * a line is ~90 bytes, so the cap holds weeks of a hub that never answers,
+ * and past it the appends stop rather than the file growing for ever.
+ */
+export const MAX_BRIEFING_OMISSION_LEDGER_BYTES = 65_536;
+
+/**
  * Target rows one diagnosis SHOWS, of however many the hub sent.
  *
  * The section exists so a reader about to edit the same corner sees the

@@ -55,6 +55,7 @@ import { reapStaleSessionStates } from "@crosscheck/connector-core/state/session
 import { sweepAbandonedTemps } from "@crosscheck/connector-core/state/temp-sweep.ts";
 import { requestLandingFetchFor } from "./landing-fetch.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
+import { sessionStartContext } from "./session-start-output.ts";
 
 const INITIAL_STATUS = "analyzing";
 
@@ -494,10 +495,5 @@ export const handleSessionStart = async (
   if (briefing.length === 0) {
     return "";
   }
-  return JSON.stringify({
-    hookSpecificOutput: {
-      hookEventName: "SessionStart",
-      additionalContext: briefing,
-    },
-  });
+  return sessionStartContext(briefing);
 };

@@ -23783,6 +23783,137 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/conference-report.test.ts`,
     because: "the hub says one side is a rename and the report reads it as two people's plan",
   },
+  // A briefing that did not arrive whole says so (2026-10-08): the budget,
+  // a thrown handler, and hub reads that did not answer all used to end in
+  // "", so an empty session read exactly like a quiet repo.
+  {
+    label: "a SessionStart the budget cut answers nothing again",
+    file: `${CONNECTOR}/src/hooks/runner.ts`,
+    from: "    return outcome.timedOut\n      ? ((await skippedBriefing(name, \"budget\", resolved.value, stdin, env)) ?? outcome.output)\n      : outcome.output;",
+    to: "    return outcome.output;",
+    test: `${CONNECTOR}/test/briefing-omission-hook.test.ts`,
+    because: "a slow hub or git costs the person the briefing and the session looks like a quiet repo",
+  },
+  {
+    label: "a SessionStart whose handler threw answers nothing again",
+    file: `${CONNECTOR}/src/hooks/runner.ts`,
+    from: "    return (await skippedBriefing(name, \"error\", resolved.value, stdin, env).catch(() => null)) ?? \"\";",
+    to: "    return \"\";",
+    test: `${CONNECTOR}/test/briefing-omission-hook.test.ts`,
+    because: "a connector bug silently costs every session its briefing, and nothing counts it",
+  },
+  {
+    label: "a cut SessionStart speaks in a checkout no connected repo owns",
+    file: `${CONNECTOR}/src/hooks/runner.ts`,
+    from: "  const owner = resolvedOwner ?? (await unresolvedOwner(stdin, env));\n  if (owner === null) {\n    return null;\n  }\n  await recordBriefingOmission(owner.home",
+    to: "  const owner = resolvedOwner ?? { home: crosscheckHome(env), key: null };\n  await recordBriefingOmission(owner.home",
+    test: `${CONNECTOR}/test/briefing-omission-hook.test.ts`,
+    because: "under a user-level install every directory's session starts with a line about a briefing nobody owed it",
+  },
+  {
+    label: "a skipped briefing is told but never counted",
+    file: `${CONNECTOR}/src/hooks/runner.ts`,
+    from: "  await recordBriefingOmission(owner.home, { key: owner.key, reason, now: new Date() });\n  return output(briefingSkippedLine(reason));",
+    to: "  return output(briefingSkippedLine(reason));",
+    test: `${CONNECTOR}/test/briefing-omission-hook.test.ts`,
+    because: "doctor reports no lost briefings on a machine that lost them all week",
+  },
+  {
+    label: "hub reads that did not answer leave the briefing silent again",
+    file: `${CORE}/src/flows/briefing.ts`,
+    from: "const isUnanswered = (result: HubResult<unknown>): boolean => !result.ok && result.kind === \"network\";",
+    to: "const isUnanswered = (_result: HubResult<unknown>): boolean => false;",
+    test: `${CORE}/test/briefing-flow.test.ts`,
+    because: "every per-request timeout expiring under contention empties the briefing and nothing says so",
+  },
+  {
+    label: "an older hub's missing route is called an omission",
+    file: `${CORE}/src/flows/briefing.ts`,
+    from: "const isUnanswered = (result: HubResult<unknown>): boolean => !result.ok && result.kind === \"network\";",
+    to: "const isUnanswered = (result: HubResult<unknown>): boolean => !result.ok;",
+    test: `${CORE}/test/briefing-flow.test.ts`,
+    because: "every session against a hub one release behind starts with a false warning",
+  },
+  {
+    label: "an incomplete briefing does not say it is incomplete",
+    file: `${CORE}/src/flows/briefing.ts`,
+    from: "      : `${briefing}\\n${unansweredReadsLine(unanswered, reads, false)}`;",
+    to: "      : briefing;",
+    test: `${CORE}/test/briefing-flow.test.ts`,
+    because: "a briefing missing sections reads as the whole picture",
+  },
+  {
+    label: "unanswered hub reads are never counted",
+    file: `${CORE}/src/flows/briefing.ts`,
+    from: "  if (unansweredReads > 0) {\n    await recordBriefingOmission(hub.home, {",
+    to: "  if (false) {\n    await recordBriefingOmission(hub.home, {",
+    test: `${CORE}/test/briefing-flow.test.ts`,
+    because: "doctor reports no lost briefings on a machine whose hub never answered",
+  },
+  {
+    label: "a Cursor sessionStart the budget cut answers the no-op again",
+    file: `${CURSOR}/src/runner.ts`,
+    from: "    const skipped = outcome.timedOut ? await skippedCursorBriefing(event, \"budget\", resolved.value, stdin, env) : null;",
+    to: "    const skipped = null;",
+    test: `${CURSOR}/test/briefing-omission.test.ts`,
+    because: "a slow hub costs a Cursor session its briefing and nothing tells the person",
+  },
+  {
+    label: "a Cursor sessionStart whose handler threw answers the no-op again",
+    file: `${CURSOR}/src/runner.ts`,
+    from: "      (await skippedCursorBriefing(event, \"error\", resolved.value, stdin, env).catch(() => null)) ??\n",
+    to: "",
+    test: `${CURSOR}/test/briefing-omission.test.ts`,
+    because: "a connector bug silently costs every Cursor session its briefing",
+  },
+  {
+    label: "a background agent is told its suppressed briefing was lost",
+    file: `${CURSOR}/src/runner.ts`,
+    from: "  if (event !== \"sessionStart\" || parseCursorPayload(stdin)?.is_background_agent === true) {",
+    to: "  if (event !== \"sessionStart\") {",
+    test: `${CURSOR}/test/briefing-omission.test.ts`,
+    because: "a background agent's context carries a false line about a briefing it was never meant to get",
+  },
+  {
+    label: "doctor passes a machine that lost briefings",
+    file: `${CLI}/src/cli/doctor-briefings.ts`,
+    from: "  counts.total === 0\n    ? { level: \"PASS\", name: NAME",
+    to: "  true\n    ? { level: \"PASS\", name: NAME",
+    test: `${CLI}/test/doctor-briefings.test.ts`,
+    because: "a week of missing briefings reads as PASS",
+  },
+  {
+    label: "doctor never prints the briefings line",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    briefingOmissionsCheck(await readBriefingOmissions(config.home, key, now)),\n",
+    to: "",
+    test: `${CLI}/test/doctor-briefings.test.ts`,
+    because: "the count exists and no surface shows it",
+  },
+  {
+    label: "a briefing lost last month still warns",
+    file: `${CORE}/src/state/briefing-omissions.ts`,
+    from: "  const since = now.getTime() - BRIEFING_OMISSION_WINDOW_DAYS * MS_PER_DAY;",
+    to: "  const since = 0;",
+    test: `${CORE}/test/briefing-omissions.test.ts`,
+    because: "a slow week a month ago is today's WARN for ever",
+  },
+  {
+    label: "another repo's lost briefing is charged to this one",
+    file: `${CORE}/src/state/briefing-omissions.ts`,
+    from: "(entry.key === null || entry.key === key)",
+    to: "true",
+    test: `${CORE}/test/briefing-omissions.test.ts`,
+    because: "doctor in a healthy repo warns about a sibling repo's hub",
+  },
+  {
+    label: "the briefing-omission ledger grows for ever",
+    file: `${CORE}/src/state/briefing-omissions.ts`,
+    from: "    if (size >= MAX_BRIEFING_OMISSION_LEDGER_BYTES) {\n      return;\n    }\n",
+    to: "",
+    test: `${CORE}/test/briefing-omissions.test.ts`,
+    because: "a hub that never answers grows a file in the home on every session start",
+  },
   // A base already on the default branch, however it got there.
   {
     label: "a session ON the default branch is stamped landed by its base",
@@ -24098,6 +24229,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/coverage-cli.test.ts 6
  * PRINTS: packages/cli/test/cursor-doctor.test.ts 4
  * PRINTS: packages/cli/test/cursor-init.test.ts 1
+ * PRINTS: packages/cli/test/doctor-briefings.test.ts 2
  * PRINTS: packages/cli/test/doctor-capture.test.ts 7
  * PRINTS: packages/cli/test/doctor-ci.test.ts 3
  * PRINTS: packages/cli/test/doctor-claim-binding.test.ts 4
@@ -24183,6 +24315,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/at7-run.test.ts 5
  * PRINTS: packages/connector-claude/test/at7-stats.test.ts 1
  * PRINTS: packages/connector-claude/test/at7-stream.test.ts 3
+ * PRINTS: packages/connector-claude/test/briefing-omission-hook.test.ts 4
  * PRINTS: packages/connector-claude/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-claude/test/capture-latency.test.ts 1
  * PRINTS: packages/connector-claude/test/conclusion-corpus.test.ts 6
@@ -24233,8 +24366,9 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/absence-render.test.ts 7
  * PRINTS: packages/connector-core/test/body-redaction.test.ts 5
  * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 25
- * PRINTS: packages/connector-core/test/briefing-flow.test.ts 3
+ * PRINTS: packages/connector-core/test/briefing-flow.test.ts 7
  * PRINTS: packages/connector-core/test/briefing-notice.test.ts 1
+ * PRINTS: packages/connector-core/test/briefing-omissions.test.ts 3
  * PRINTS: packages/connector-core/test/briefing-presence-topics.test.ts 6
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 5
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 3
@@ -24345,6 +24479,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
  * PRINTS: packages/connector-core/test/verdict-wire.test.ts 2
  * PRINTS: packages/connector-core/test/working-days.test.ts 3
+ * PRINTS: packages/connector-cursor/test/briefing-omission.test.ts 3
  * PRINTS: packages/connector-cursor/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-cursor/test/budget.test.ts 2
  * PRINTS: packages/connector-cursor/test/derive-doctor.test.ts 3

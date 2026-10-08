@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 2306
+    # PRINTS: 2322
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -179,6 +179,7 @@ jobs:
     # PRINTS: packages/cli/src/ci-report/run.ts 4
     # PRINTS: packages/cli/src/cli/agent-host.ts 7
     # PRINTS: packages/cli/src/cli/conference.ts 15
+    # PRINTS: packages/cli/src/cli/doctor-briefings.ts 1
     # PRINTS: packages/cli/src/cli/doctor-global.ts 4
     # PRINTS: packages/cli/src/cli/doctor-landed-authors.ts 9
     # PRINTS: packages/cli/src/cli/doctor-landed.ts 2
@@ -186,7 +187,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/doctor-losses.ts 4
     # PRINTS: packages/cli/src/cli/doctor-retention.ts 3
     # PRINTS: packages/cli/src/cli/doctor-sharing.ts 3
-    # PRINTS: packages/cli/src/cli/doctor.ts 57
+    # PRINTS: packages/cli/src/cli/doctor.ts 58
     # PRINTS: packages/cli/src/cli/index.ts 6
     # PRINTS: packages/cli/src/cli/init-global.ts 2
     # PRINTS: packages/cli/src/cli/init-io.ts 10
@@ -250,7 +251,7 @@ jobs:
     # PRINTS: hooks/post-tool-use-failure.ts 5
     # PRINTS: hooks/post-tool-use.ts 10
     # PRINTS: hooks/pre-tool-use.ts 19
-    # PRINTS: hooks/runner.ts 7
+    # PRINTS: hooks/runner.ts 11
     # PRINTS: hooks/session-start.ts 9
     # PRINTS: hooks/stop.ts 3
     # PRINTS: hooks/user-prompt-submit.ts 6
@@ -294,7 +295,7 @@ jobs:
     # PRINTS: derive/summarizer/derive.ts 2
     # PRINTS: derive/summarizer/gate.ts 8
     # PRINTS: evidence/render.ts 1
-    # PRINTS: flows/briefing.ts 7
+    # PRINTS: flows/briefing.ts 11
     # PRINTS: flows/capture-git-touches.ts 1
     # PRINTS: flows/capture-targets.ts 5
     # PRINTS: flows/capture-touched-files.ts 3
@@ -364,6 +365,7 @@ jobs:
     # PRINTS: spool/lock.ts 2
     # PRINTS: spool/loss-report.ts 14
     # PRINTS: spool/reap.ts 1
+    # PRINTS: state/briefing-omissions.ts 3
     # PRINTS: state/capture-bookkeeping.ts 6
     # PRINTS: state/capture-health.ts 2
     # PRINTS: state/conference-cost.ts 1
@@ -394,7 +396,7 @@ jobs:
     # PRINTS: packages/connector-cursor/src/inject/hint.ts 2
     # PRINTS: packages/connector-cursor/src/inject/output.ts 1
     # PRINTS: packages/connector-cursor/src/payload.ts 1
-    # PRINTS: packages/connector-cursor/src/runner.ts 5
+    # PRINTS: packages/connector-cursor/src/runner.ts 8
     # PRINTS: packages/schema/src/causal-guarantees.ts 9
     # PRINTS: packages/schema/src/claim-revalidation.ts 1
     # PRINTS: packages/schema/src/commit-evidence.ts 2
@@ -535,7 +537,8 @@ jobs:
     # PRINTS: attempt.ts 5
     # PRINTS: before-submit-prompt.ts 1
     # PRINTS: bootstrap.sql 42
-    # PRINTS: briefing.ts 7
+    # PRINTS: briefing-omissions.ts 3
+    # PRINTS: briefing.ts 11
     # PRINTS: calibration.ts 1
     # PRINTS: capabilities.ts 9
     # PRINTS: capture-bookkeeping.ts 6
@@ -582,6 +585,7 @@ jobs:
     # PRINTS: developers.ts 13
     # PRINTS: diagnosis.ts 16
     # PRINTS: doc-upgrade.ts 10
+    # PRINTS: doctor-briefings.ts 1
     # PRINTS: doctor-global.ts 4
     # PRINTS: doctor-landed-authors.ts 9
     # PRINTS: doctor-landed.ts 2
@@ -589,7 +593,7 @@ jobs:
     # PRINTS: doctor-losses.ts 4
     # PRINTS: doctor-retention.ts 3
     # PRINTS: doctor-sharing.ts 3
-    # PRINTS: doctor.ts 75
+    # PRINTS: doctor.ts 76
     # PRINTS: draft-backlog.ts 8
     # PRINTS: draft-link-cleanup.ts 17
     # PRINTS: draft-nudge-spent.ts 5
@@ -741,7 +745,7 @@ jobs:
     # PRINTS: revalidate.ts 2
     # PRINTS: review-draft.ts 2
     # PRINTS: run.ts 9
-    # PRINTS: runner.ts 19
+    # PRINTS: runner.ts 26
     # PRINTS: sanitize.ts 10
     # PRINTS: schema.ts 1
     # PRINTS: schemas.ts 1
