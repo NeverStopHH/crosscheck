@@ -22,6 +22,7 @@ import type { EventView } from "../services/events.ts";
 import {
   listArtifactsForWorkContext,
   listOwnedNeedsApproval,
+  setArtifactApproval,
 } from "../services/artifacts.ts";
 import { getDiagnosis } from "../services/diagnosis.ts";
 import { listMembers } from "../services/members.ts";
@@ -29,7 +30,7 @@ import { usableCredentials } from "../services/passkeys.ts";
 import { getRefereeBrief } from "../services/referee.ts";
 import { listSolvedInfo } from "../services/solved.ts";
 import { UI_FEED_LIMIT, UI_MAX_ARTIFACTS, UI_PASSKEY_CSP } from "../ui/constants.ts";
-import { forbidden, notFoundPage, viewerChrome } from "../ui/route-helpers.tsx";
+import { forbidden, isPostedCsrfValid, notFoundPage, viewerChrome } from "../ui/route-helpers.tsx";
 import { ApprovalsPage } from "../ui/pages/approvals.tsx";
 import { FeedPage } from "../ui/pages/feed.tsx";
 import type { FeedEntry } from "../ui/pages/feed.tsx";
@@ -39,6 +40,7 @@ import { WorkContextPage } from "../ui/pages/work-context.tsx";
 import type { AppDeps, AppEnv } from "../types.ts";
 
 const FEED_PATH = "/ui/feed";
+const APPROVALS_PATH = "/ui/approvals";
 
 // ── Feed assembly ───────────────────────────────────────────────────────────
 
@@ -173,15 +175,32 @@ const contradictionIdsFor = async (
  * opened with an API key, which any agent holding the key can open, used to
  * release a needs_approval artifact with one form post. Releasing takes a
  * passkey ceremony on /ui/approvals (routes/ui-ceremony-artifacts.ts). The
- * routes stay, refusing, for the reason fence-waivers.ts keeps its own: a 404
+ * route stays, refusing, for the reason fence-waivers.ts keeps its own: a 404
  * would send an old recipe looking for another way in.
  */
 const FORM_RELEASE_REFUSED =
-  "Releasing or withdrawing an artifact takes your passkey now: use the buttons on the Approvals page. " +
+  "Releasing an artifact takes your passkey now: use the button on the Approvals page. " +
   "A session opened with an API key cannot do it alone.";
 
 const refuseFormRelease = (c: Context<AppEnv>): Response | Promise<Response> =>
   forbidden(c, FORM_RELEASE_REFUSED);
+
+/**
+ * WITHDRAWING A RELEASE STAYS A PLAIN FORM (review of the hub hardening, M3).
+ * It makes content more private, like switching presence off, so the owner
+ * withdraws from the session with its CSRF token, no passkey and no cool-off.
+ * An agent that withdraws its person's release harms availability, never
+ * disclosure. Ownership is checked inside the UPDATE (services/artifacts.ts),
+ * and a non-owner hears the same 404 as a missing id.
+ */
+const withdrawFromForm = async (c: Context<AppEnv>, deps: AppDeps): Promise<Response> => {
+  if (!(await isPostedCsrfValid(c, deps))) {
+    return forbidden(c, "Invalid or missing CSRF token.");
+  }
+  const artifactId = c.req.param("id") ?? "";
+  const outcome = await setArtifactApproval(deps.db, c.get("developer").id, artifactId, false);
+  return outcome === "not_found" ? notFoundPage(c) : c.redirect(APPROVALS_PATH, 303);
+};
 
 // ── Router ──────────────────────────────────────────────────────────────────
 
@@ -282,7 +301,7 @@ export const uiPagesRoutes = (deps: AppDeps): Hono<AppEnv> => {
   });
 
   router.post("/artifacts/:id/approve", (c) => refuseFormRelease(c));
-  router.post("/artifacts/:id/revoke", (c) => refuseFormRelease(c));
+  router.post("/artifacts/:id/revoke", (c) => withdrawFromForm(c, deps));
 
   return router;
 };

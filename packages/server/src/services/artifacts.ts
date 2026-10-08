@@ -151,6 +151,22 @@ export const readOwnedNeedsApproval = async (
 export type ApprovalOutcome = "updated" | "not_found";
 
 /**
+ * THE OPERATOR'S RE-HIDE (review of the hub hardening, M3): withdraw any
+ * needs_approval artifact's release, whoever owns it, for an incident such as
+ * a release an agent made through the 0.10 form post. Withdrawing only makes
+ * content MORE private, so it takes the admin token and nothing else.
+ * `not_found` for a missing id or an artifact that never needed approval.
+ */
+export const withdrawArtifactAsOperator = async (db: Db, artifactId: string): Promise<ApprovalOutcome> => {
+  const updated = await db
+    .update(artifacts)
+    .set({ approvedBy: null })
+    .where(and(eq(artifacts.id, artifactId), eq(artifacts.sensitivity, NEEDS_APPROVAL_SENSITIVITY)))
+    .returning({ id: artifacts.id });
+  return updated.length > 0 ? "updated" : "not_found";
+};
+
+/**
  * Approve or revoke one owned needs_approval artifact. `not_found` covers
  * both a missing id and a non-owner caller — deliberately indistinguishable,
  * so probing ids through this endpoint teaches nothing.

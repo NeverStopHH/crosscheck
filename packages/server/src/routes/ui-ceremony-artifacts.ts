@@ -6,9 +6,14 @@
  * §2.1): releasing one is a person's disclosure decision. It used to be a
  * session form post, and any API key opens a session through /ui/login, so
  * an agent holding the key could release its person's artifact to the whole
- * team. Now approve and revoke are ceremonies like the fence's, with the same
- * cool-off (a passkey younger than a day signs nothing). Revoke goes the same
- * way, as closing a fence does (04a §10): the key asks for nothing here at all.
+ * team. Now approving is a ceremony like the fence's, with the same cool-off
+ * (a passkey younger than a day signs nothing).
+ *
+ * WITHDRAWING IS NOT GATED (review of the hub hardening, M3): it makes content
+ * more private, so the owner withdraws with a plain session form
+ * (routes/ui-pages.tsx) and the operator with the admin token
+ * (routes/artifacts.ts). The `revoke_artifact` ceremony stays, optional, for a
+ * person who wants the withdrawal signed.
  *
  * WHAT IS SIGNED: the artifact id and a digest of its content as stored, so a
  * signature releases exactly the bytes the page showed. Ownership is checked

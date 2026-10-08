@@ -677,10 +677,16 @@ const WRITE_ROUTES: Readonly<Record<string, RouteSpec>> = {
     self: { none: WRITE_ACK },
   },
   "POST /ui/artifacts/:id/revoke": {
-    variants: [{ path: "/ui/artifacts/art_none/revoke", body: { _csrf: "not-this-session" }, refused: "a form post; withdrawal takes a passkey ceremony" }],
-    whyNoVariants: "refuses every post: withdrawal is a passkey ceremony on /ui/webauthn",
+    variants: [{ path: "/ui/artifacts/art_none/revoke", body: { _csrf: "not-this-session" }, refused: "no such artifact; a form post" }],
+    whyNoVariants: "withdraws the caller's own release; none seeded",
     colleague: { hidden: NONE_SEEDED },
     self: { none: WRITE_ACK },
+  },
+  "POST /api/artifacts/:id/withdraw": {
+    variants: refusedPost("/api/artifacts/art_none/withdraw", ADMIN_ONLY),
+    whyNoVariants: "the operator's re-hide of a release",
+    colleague: { hidden: ADMIN_ONLY },
+    self: { none: ADMIN_ONLY },
   },
   "POST /ui/passkeys/:id/revoke": {
     variants: [{ path: "/ui/passkeys/pk_none/revoke", body: { _csrf: "not-this-session" }, refused: "no such passkey; a form post" }],

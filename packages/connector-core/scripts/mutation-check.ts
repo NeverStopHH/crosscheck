@@ -24109,14 +24109,14 @@ export const MUTATIONS: readonly Mutation[
     because: "any agent holding the API key logs in, reads the CSRF token and discloses its person's artifact to the team",
   },
   {
-    label: "a key-opened web session withdraws an artifact with a form post",
+    // Replaced by the review of the hub hardening, M3: withdrawing is the more
+    // private direction and is a plain form again; the defect is now refusing it.
+    label: "the owner cannot withdraw a release without a cooled passkey",
     file: `${SERVER}/src/routes/ui-pages.tsx`,
-    from: '  router.post("/artifacts/:id/revoke", (c) => refuseFormRelease(c));',
-    to:
-      '  router.post("/artifacts/:id/revoke", async (c) => { const { setArtifactApproval } = await import("../services/artifacts.ts"); ' +
-      'await setArtifactApproval(deps.db, c.get("developer").id, c.req.param("id"), false); return c.redirect("/ui/approvals", 303); });',
+    from: '  router.post("/artifacts/:id/revoke", (c) => withdrawFromForm(c, deps));',
+    to: '  router.post("/artifacts/:id/revoke", (c) => refuseFormRelease(c));',
     test: `${SERVER}/test/ui-approvals.test.ts`,
-    because: "the key undoes a release the person signed, with no gesture of theirs",
+    because: "for the day a re-enrolled passkey cools off, nobody can hide a release an agent made",
   },
   {
     label: "an artifact release signs no content",
@@ -24306,6 +24306,39 @@ export const MUTATIONS: readonly Mutation[
     to: "  return false\n    ? `Your presence opt-out was switched off at ${instant} through an API key, which any agent holding the key can do, and is on again now",
     test: `${CORE}/test/briefing-presence-notice.test.ts`,
     because: "the session is told to restore an opt-out that is already restored, and not that teammates watched in between",
+  },
+  // Review of the hub hardening, M3 and X7: withdrawing is frictionless, and owner-scoped.
+  {
+    label: "the withdraw form takes no CSRF token",
+    file: `${SERVER}/src/routes/ui-pages.tsx`,
+    from: '  if (!(await isPostedCsrfValid(c, deps))) {\n    return forbidden(c, "Invalid or missing CSRF token.");\n  }\n  const artifactId = c.req.param("id") ?? "";',
+    to: '  if (false) {\n    return forbidden(c, "Invalid or missing CSRF token.");\n  }\n  const artifactId = c.req.param("id") ?? "";',
+    test: `${SERVER}/test/ui-approvals.test.ts`,
+    because: "any page the person opens can hide their release with a cross-site form",
+  },
+  {
+    label: "the release UPDATE checks no owner",
+    file: `${SERVER}/src/services/artifacts.ts`,
+    from: "            AND owner_session.developer_id = ${viewerDeveloperId}\n",
+    to: "",
+    test: `${SERVER}/test/ui-approvals.test.ts`,
+    because: "a teammate's withdraw form hides somebody else's release, and the release path keeps one owner check instead of two",
+  },
+  {
+    label: "the operator's re-hide withdraws nothing",
+    file: `${SERVER}/src/services/artifacts.ts`,
+    from: "    .where(and(eq(artifacts.id, artifactId), eq(artifacts.sensitivity, NEEDS_APPROVAL_SENSITIVITY)))",
+    to: '    .where(and(eq(artifacts.id, artifactId), eq(artifacts.sensitivity, "team_visible")))',
+    test: `${SERVER}/test/ui-approvals.test.ts`,
+    because: "during an incident the admin token answers but the release stays visible to the team",
+  },
+  {
+    label: "the operator's re-hide takes any key",
+    file: `${SERVER}/src/routes/artifacts.ts`,
+    from: '  router.use("*", requireAdmin(deps.adminToken));',
+    to: '  router.use("*", async (_c, next) => { await next(); });',
+    test: `${SERVER}/test/ui-approvals.test.ts`,
+    because: "every agent holding any member key hides every member's releases",
   },
 ];
 
@@ -24757,7 +24790,7 @@ interface Outcome {
  * PRINTS: packages/server/test/suspect.test.ts 9
  * PRINTS: packages/server/test/target-last-seen.test.ts 1
  * PRINTS: packages/server/test/team-settings.test.ts 9
- * PRINTS: packages/server/test/ui-approvals.test.ts 5
+ * PRINTS: packages/server/test/ui-approvals.test.ts 9
  * PRINTS: packages/server/test/ui-ceremony-localhost.test.ts 5
  * PRINTS: packages/server/test/ui-feed.test.ts 3
  * PRINTS: packages/server/test/ui-passkeys.test.ts 9
