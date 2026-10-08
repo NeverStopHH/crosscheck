@@ -156,7 +156,8 @@ describe("an MCP tool told of a refusal", () => {
     // Assert
     expect(text).toContain("crosscheck did not send this request");
     expect(text).not.toContain(attacker.url);
-    expect(text).not.toContain("crosscheck login");
+    expect(text).not.toContain("crosscheck login http");
+    expect(text).toContain("Do not run `crosscheck login` or edit crosscheck's config yourself.");
   });
 });
 

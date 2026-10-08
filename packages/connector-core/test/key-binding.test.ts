@@ -179,9 +179,10 @@ describe("CROSSCHECK_HUB_URL overrides only its own key's hub", () => {
     expect(why).toContain(ATTACKER_HUB);
     expect(why).toContain(PILOT_HUB);
     expect(why).not.toContain(STORED_KEY);
-    expect(foreignHubFix(config?.foreignHub ?? (null as never))).toBe(
-      `unset CROSSCHECK_HUB_URL, or set it to ${PILOT_HUB}`,
-    );
+    const fix = foreignHubFix(config?.foreignHub ?? (null as never));
+    expect(fix).toStartWith(`unset CROSSCHECK_HUB_URL, or set it to ${PILOT_HUB}`);
+    // Up to 0.10.0 the hooks followed CROSSCHECK_HUB_URL with the stored key.
+    expect(fix).toContain(`your key may already have gone to ${ATTACKER_HUB}: rotate it with \`crosscheck key rotate\``);
   });
 
   test("an override naming the login's origin in another spelling is accepted", async () => {
@@ -287,11 +288,31 @@ describe("the pilot-shaped config keeps working", () => {
     expect(resolved.kind).toBe("foreign_hub");
     if (resolved.kind === "foreign_hub") {
       const fix = foreignHubFix(resolved.foreignHub);
-      expect(fix).toContain(`crosscheck login ${PILOT_HUB}`);
+      // The safe edit is the repo's; the repo's hub is never handed out as a
+      // login target — the person confirms it out of band first.
       expect(fix).toContain(`"hubUrl" in .crosscheck.json to ${PILOT_HUB_BY_IP}`);
-      // The agent's line names the key's hub, never the one the repo chose.
-      expect(foreignHubAgentLine(resolved.foreignHub)).toContain(PILOT_HUB_BY_IP);
-      expect(foreignHubAgentLine(resolved.foreignHub)).not.toContain(PILOT_HUB);
+      expect(fix).not.toContain(`crosscheck login ${PILOT_HUB}`);
+      expect(fix).toContain("confirm it with whoever runs the hub before you log in there yourself");
+      // The agent's line names the key's hub, never the one the repo chose,
+      // and sends the agent to its person rather than to a login.
+      const agentLine = foreignHubAgentLine(resolved.foreignHub);
+      expect(agentLine).toContain(PILOT_HUB_BY_IP);
+      expect(agentLine).not.toContain(PILOT_HUB);
+      expect(agentLine).toContain("Do not run `crosscheck login` or edit crosscheck's config yourself.");
     }
+  });
+
+  test("a repo naming the key's host over plain http is told never to log in over http", () => {
+    // Arrange
+    const binding = { apiKey: STORED_KEY, keyOrigin: "https://hub.example", keySource: "login" as const };
+    const foreign = foreignHubOf("http://hub.example", "repo", binding);
+
+    // Act
+    const fix = foreign === null ? "" : foreignHubFix(foreign);
+
+    // Assert
+    expect(fix).toContain('change "hubUrl" in .crosscheck.json to https://hub.example');
+    expect(fix).toContain("never log in over http");
+    expect(fix).not.toContain("crosscheck login http://hub.example");
   });
 });

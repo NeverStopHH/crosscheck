@@ -12,6 +12,7 @@ import { z } from "zod";
 import { PROTOCOL_VERSION } from "@crosscheck/schema";
 
 import { MAX_HUB_MESSAGE_CHARS, MAX_ID_CHARS } from "../../constants.ts";
+import { AGENT_REMEDY } from "../../config/key-binding.ts";
 import { ALLOCATION_FAILED, AMBIGUOUS_SESSION } from "../../capture/seq.ts";
 import type { SeqAllocation } from "../../capture/seq.ts";
 import { allocateSeq } from "../../state/session-state.ts";
@@ -58,8 +59,7 @@ export const hubFailureText = (hubUrl: string, failure: HubFailure): string => {
   if (failure.kind === "refused") {
     return (
       "crosscheck did not send this request: the hub it was for is not the one the " +
-      "developer's crosscheck key belongs to. Nothing was recorded; `crosscheck doctor` " +
-      "names both hubs and the fix."
+      `developer's crosscheck key belongs to. Nothing was recorded. ${AGENT_REMEDY}`
     );
   }
   if (failure.kind === "network") {

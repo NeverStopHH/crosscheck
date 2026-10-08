@@ -113,35 +113,72 @@ const NAMER: Readonly<Record<HubSource, string>> = {
  */
 export const foreignHubWhy = (foreign: ForeignHub): string => {
   if (foreign.keyOrigin === null) {
-    return (
-      `${NAMER[foreign.hubSource]} names ${foreign.hubOrigin}, but your key comes from ` +
-      "CROSSCHECK_API_KEY with no CROSSCHECK_HUB_URL and no login, so it is bound to no hub " +
-      "and is sent nowhere"
-    );
+    const unbound =
+      foreign.keySource === "login"
+        ? "your login's recorded keyOrigin is not a hub address, so its key is bound to no hub"
+        : "your key comes from CROSSCHECK_API_KEY with no CROSSCHECK_HUB_URL and no login, so it is bound to no hub";
+    return `${NAMER[foreign.hubSource]} names ${foreign.hubOrigin}, but ${unbound} and is sent nowhere`;
   }
   return (
     `${NAMER[foreign.hubSource]} names ${foreign.hubOrigin}, but your crosscheck key belongs to ` +
-    `${foreign.keyOrigin}. The key is sent only to ${foreign.keyOrigin}, so nothing from here ` +
-    "is captured or sent to either hub"
+    `${foreign.keyOrigin}; nothing from here was captured or sent to either hub`
   );
 };
 
-/** The remedy for the same person, by where the foreign hub came from. */
+/**
+ * Keys an OLDER crosscheck may already have sent. Up to 0.10.0, `status` and
+ * most of `doctor` sent the stored key to the hub a repo named, and the hooks
+ * followed CROSSCHECK_HUB_URL with it, so a mismatch seen now can be one that
+ * already leaked; the refusal is about the present, this is about the past.
+ */
+const rotateAdvice = (foreign: ForeignHub): string =>
+  `. If crosscheck 0.10.0 or older ran \`status\` or \`doctor\` here, your key may already have gone to ` +
+  `${foreign.hubOrigin}: rotate it with \`crosscheck key rotate\``;
+
+/** The same host, the repo's side on plain http and the key's on https. */
+const isHttpDowngrade = (foreign: ForeignHub): boolean => {
+  if (foreign.keyOrigin === null) {
+    return false;
+  }
+  try {
+    const repo = new URL(foreign.hubOrigin);
+    const key = new URL(foreign.keyOrigin);
+    return repo.protocol === "http:" && key.protocol === "https:" && repo.hostname === key.hostname;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * The remedy for the same person, by where the foreign hub came from. NEVER a
+ * copy-pasteable `crosscheck login <the repo's hub>`: that one command is the
+ * lure a bait repo wants (a login sends the key to the address it names), and
+ * whoever reads doctor may be an agent. The repo's hub can be confirmed only
+ * out of band, by whoever runs the hub; the safe edit is always the repo's.
+ */
 export const foreignHubFix = (foreign: ForeignHub): string => {
   if (foreign.keyOrigin === null) {
-    return "set CROSSCHECK_HUB_URL to the hub this key belongs to, or log in: crosscheck login <hubUrl>";
+    return foreign.keySource === "login"
+      ? "log in again, yourself, with the address of your team's hub: crosscheck login <your hub's url>"
+      : "set CROSSCHECK_HUB_URL to the hub this key belongs to, or log in yourself: crosscheck login <your hub's url>";
   }
   if (foreign.hubSource === "env") {
-    return `unset CROSSCHECK_HUB_URL, or set it to ${foreign.keyOrigin}`;
+    return `unset CROSSCHECK_HUB_URL, or set it to ${foreign.keyOrigin}${rotateAdvice(foreign)}`;
   }
   if (foreign.hubSource === "login") {
     return `log in again with the hub this key belongs to: crosscheck login ${foreign.keyOrigin}`;
   }
+  if (isHttpDowngrade(foreign)) {
+    return (
+      `this repo names your hub's host over plain http: change "hubUrl" in .crosscheck.json to ` +
+      `${foreign.keyOrigin}, and never log in over http${rotateAdvice(foreign)}`
+    );
+  }
   return (
-    `if ${foreign.hubOrigin} is your team's hub under another address, log in with the ` +
-    `address this repo uses (crosscheck login ${foreign.hubOrigin}), or set "hubUrl" in ` +
-    `.crosscheck.json to ${foreign.keyOrigin}. If you do not recognise ${foreign.hubOrigin}, ` +
-    "change nothing: a repo cannot make crosscheck send your key there"
+    `if this repo should report to your hub, set "hubUrl" in .crosscheck.json to ${foreign.keyOrigin}. ` +
+    `If someone tells you ${foreign.hubOrigin} is your hub under a new address, confirm it with ` +
+    "whoever runs the hub before you log in there yourself: logging in sends your key to that " +
+    `address, so never let an agent do it${rotateAdvice(foreign)}`
   );
 };
 
@@ -162,8 +199,14 @@ export const foreignHubAgentLine = (foreign: ForeignHub): string => {
     foreign.keyOrigin === null
       ? "than any hub the developer's crosscheck key is bound to"
       : `than the one the developer's crosscheck key belongs to (${foreign.keyOrigin})`;
-  return (
-    `crosscheck is not reporting from here: ${named} a different hub ${belongs}, so crosscheck ` +
-    "keeps the key and captures nothing. `crosscheck doctor` names both hubs and the fix."
-  );
+  return `crosscheck is not reporting from here: ${named} a different hub ${belongs}, so crosscheck keeps the key and captures nothing. ${AGENT_REMEDY}`;
 };
+
+/**
+ * What an agent is told to do about it: hand it to the person. An agent that
+ * "gets crosscheck working" by itself is exactly how a bait repo's hub would
+ * receive the key (a login sends it), so the line says so in as many words.
+ */
+export const AGENT_REMEDY =
+  "Ask the developer to run `crosscheck doctor` in their own terminal. Do not run " +
+  "`crosscheck login` or edit crosscheck's config yourself.";
