@@ -14,6 +14,9 @@ import type { DraftKind, DraftProvenance } from "@crosscheck/schema";
 
 import { pendingFingerprint, readPendingDrafts } from "./human-drafts.ts";
 import type { DraftPayload, DraftRow } from "./human-drafts.ts";
+import { locationHiddenFrom, projectRow, titleSourceOf } from "./live-location.ts";
+import type { HiddenLocations } from "./live-location.ts";
+import { POINTED_WORK_CONTEXT } from "./pilot-candidates.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
@@ -44,22 +47,48 @@ type DeliveryRow = {
   readonly channel: string;
   readonly delivered_at: string | Date;
   readonly title: string | null;
+  readonly title_source: string | null;
+  readonly owner_developer_id: string | null;
+  readonly owner_branch: string | null;
   readonly source_name: string | null;
 };
 
+/**
+ * The hint a draft is about: its channel and instant, and the pointed work —
+ * on this repo only — with what the live-location projection needs to judge
+ * its title: an opted-out owner's branch-derived title is withheld here as on
+ * every other surface (services/live-location.ts, the label walk's rule).
+ */
 const deliveryContext = async (db: Db, draft: DraftRow): Promise<DeliveryRow | undefined> => {
   const deliveryId = String(draft.payload["deliveryId"] ?? "");
   const rows = await db.execute<DeliveryRow>(sql`
-    SELECT hd.channel, hd.delivered_at,
-      (SELECT wc.title FROM work_contexts wc JOIN agent_sessions ws ON ws.id = wc.session_id
-        WHERE ws.repo = ${draft.repo} AND wc.id = CASE WHEN hd.ref_kind = 'work_context' THEN hd.ref_id
-          ELSE (SELECT c.work_context_id FROM claims c WHERE c.id = hd.ref_id) END) AS title,
+    SELECT hd.channel, hd.delivered_at, wc.title, wc.title_source,
+      ws.developer_id AS owner_developer_id, ws.branch AS owner_branch,
       (SELECT d.name FROM agent_sessions src JOIN developers d ON d.id = src.developer_id
         WHERE src.repo = ${draft.repo} AND src.id = CASE WHEN hd.ref_kind = 'work_context'
-          THEN (SELECT wc.session_id FROM work_contexts wc WHERE wc.id = hd.ref_id)
+          THEN (SELECT w.session_id FROM work_contexts w WHERE w.id = hd.ref_id)
           ELSE (SELECT c.author_session_id FROM claims c WHERE c.id = hd.ref_id) END) AS source_name
-    FROM hint_deliveries hd WHERE hd.id = ${deliveryId}`);
+    FROM hint_deliveries hd
+    LEFT JOIN work_contexts wc ON wc.id = (${POINTED_WORK_CONTEXT})
+      AND EXISTS (SELECT 1 FROM agent_sessions owner WHERE owner.id = wc.session_id AND owner.repo = ${draft.repo})
+    LEFT JOIN agent_sessions ws ON ws.id = wc.session_id
+    WHERE hd.id = ${deliveryId}`);
   return rows.rows[0];
+};
+
+/** The pointed title as this viewer may see it. */
+const visibleTitle = (hidden: HiddenLocations, draft: DraftRow, delivery: DeliveryRow): string | null => {
+  if (delivery.owner_developer_id === null) {
+    return delivery.title;
+  }
+  return projectRow(
+    hidden,
+    {
+      developerId: delivery.owner_developer_id,
+      titleFacts: { repo: draft.repo ?? "", branch: delivery.owner_branch, titleSource: titleSourceOf(delivery.title_source) },
+    },
+    { title: delivery.title },
+  ).title;
 };
 
 const pinSurfaceOf = async (db: Db, draft: DraftRow): Promise<string | null> => {
@@ -71,7 +100,7 @@ const pinSurfaceOf = async (db: Db, draft: DraftRow): Promise<string | null> => 
   return rows.rows[0]?.surface ?? null;
 };
 
-const contextOf = async (db: Db, draft: DraftRow): Promise<DraftContext> => {
+const contextOf = async (db: Db, hidden: HiddenLocations, draft: DraftRow): Promise<DraftContext> => {
   const base = {
     id: draft.id,
     version: draft.version,
@@ -89,7 +118,7 @@ const contextOf = async (db: Db, draft: DraftRow): Promise<DraftContext> => {
       ...none,
       channel: delivery?.channel ?? null,
       deliveredAt: delivery === undefined ? null : new Date(delivery.delivered_at).toISOString(),
-      pointedTitle: delivery?.title ?? null,
+      pointedTitle: delivery === undefined ? null : visibleTitle(hidden, draft, delivery),
       sourceName: delivery?.source_name ?? null,
     };
   }
@@ -112,8 +141,9 @@ export const readConfirmPage = async (
   developerId: string,
 ): Promise<ConfirmPageView> => {
   const drafts = await readPendingDrafts(deps, developerId, { scope: CONFIRM_PAGE_SCOPE });
+  const hidden = await locationHiddenFrom(deps.db, developerId);
   return {
     fingerprint: pendingFingerprint(drafts),
-    drafts: await Promise.all(drafts.map((draft) => contextOf(deps.db, draft))),
+    drafts: await Promise.all(drafts.map((draft) => contextOf(deps.db, hidden, draft))),
   };
 };
