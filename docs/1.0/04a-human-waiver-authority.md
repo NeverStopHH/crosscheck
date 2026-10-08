@@ -528,3 +528,69 @@ Tests: server `listen`, `listen-boot`, `forwarded-trust`,
 `presence-reenable`, `hub-status-transport`; core `briefing-presence-notice`;
 cli `doctor-hub-transport`, `presence-reenabled-cli`. Each guard has an anchor
 at the tail of `connector-core/scripts/mutation-check.ts`, every one `caught`.
+
+## 14. What the review of the hub hardening found (2026-10-08)
+
+*Appended, never inserted: §13 is cited by item number.* An independent
+review of `fix/hub-listen-and-origin` at `0341e466` found no critical or high
+defect: all six §13 fixes hold. It found three medium and seven low ones, and
+mutations that survived on defence-in-depth lines. This corrects §13 where it
+was wrong.
+
+**Fixed:**
+
+1. **§13 item 6 was wrong about the opt-out "answering" the notice** (M1). The
+   notice ended as soon as presence was opted out again, and an agent holding
+   the key can make that PUT too: switch presence on, let the team watch,
+   switch it off, and the person was never told. `presenceReenabledAt` now
+   runs its full seven days whatever the setting, and every line says whether
+   presence is still on or off again.
+2. **§13 item 4 made withdrawing a release a cooled ceremony** (M3). After the
+   prescribed origin change, nobody could hide a release for the day a new
+   passkey cools off. Withdrawing makes content more private, so the owner
+   withdraws with a plain CSRF form again, and the operator re-hides any
+   release with `POST /api/artifacts/:id/withdraw` (admin token). Releasing
+   stays a cooled ceremony. The `revoke_artifact` ceremony remains as an
+   option.
+3. **The release UPDATE did not re-check the signed content** (L1). It now
+   matches the content's SHA-256 against the digest the ceremony signed.
+4. **Listen addresses were compared by spelling** (L2), and the port probe
+   missed `::1` for `::` and the machine's own addresses on the
+   every-interface plan (L4). Addresses are canonicalised, and wildcards are
+   knocked at the loopbacks and every interface address.
+5. **`CROSSCHECK_TRUSTED_PROXIES` accepted `0.0.0.0/0`, `::/0` and
+   `::ffff:0:0/96`** (L3). Each now stops the hub at startup.
+6. **A restore into a fresh data dir went quiet on loopback** (L5). The boot
+   warns when a loopback-recorded install holds members created before it.
+   The bootstrap comment about a part-way start is corrected: PGlite runs the
+   script as one transaction and leaves nothing (I1).
+7. **RFC 7239 `Forwarded: proto=https` never marked a request https** (L6). It
+   now does, from a trusted peer, when no `X-Forwarded-Proto` is present.
+8. **The re-enable notice reached the person only through surfaces the agent
+   drives** (L7). Their own `/ui/feed` now carries a banner for the same
+   seven days.
+9. **Surviving mutations** X3 (the mapped loopback peer), X7 (the owner check
+   inside the release UPDATE), X8 (stopping the servers already started after
+   a failed bind), X9 (the `::1` knock) and X11 (an emptied `hub_install`
+   reads as every interface) each have a test and an anchor. X5 (`FOR UPDATE`
+   on PGlite) and X10 (the second injection guard behind the schema's) are
+   equivalent today and stay without.
+
+**Open, stated rather than hidden** (adds to §13):
+
+1. **The pilot hub stays on `*:7100` until its `hub.env` is edited** (M2). By
+   design, an old data dir keeps every interface. Setting `CROSSCHECK_LISTEN`
+   and the https-only `CROSSCHECK_WEBAUTHN_ORIGINS` is part of the same
+   rollout as the merge, verified with `lsof` ([OPERATIONS.md, step
+   4](../OPERATIONS.md#upgrading-a-010-hub-the-pilots-included)).
+2. **§13 open item 6 is wider than socat and `serve --tcp`** (I4). nginx's
+   default `proxy_pass` and `ssh -L 7100:localhost:7100` add no forwarded
+   header either, and look like the hub's own browser. The answer is the
+   same: list the https origin.
+3. **A `presence_reenabled` row is a permanent record of a prior opt-out**
+   (I5). Even a legitimate re-enable leaves, in every feed for good, that the
+   person had opted out until then. Repeated toggles by a key holder mint a
+   timeline of that key's activity: residual 8 of §13 with a sharper edge.
+4. **Withdrawing a release by key** is now possible for an agent holding its
+   person's key. That harms availability, never disclosure, and the person or
+   the operator can release again by passkey.
