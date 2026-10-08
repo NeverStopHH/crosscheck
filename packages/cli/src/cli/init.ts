@@ -14,7 +14,6 @@ import { crosscheckHome, ensureDir } from "@crosscheck/connector-core/config/pat
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import {
   readRepoConfig,
-  renderRepoConfig,
   repoConfigPath,
 } from "@crosscheck/connector-core/config/repo-config.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
@@ -38,6 +37,7 @@ import {
   renderJsonFile,
   saveProjectOriginals,
 } from "./init-io.ts";
+import { plannedRepoConfig } from "./init-repo-config.ts";
 import type { CliResult } from "./login.ts";
 import { doubleWiringRemedy, readProjectCopy } from "./project-copy.ts";
 import { wiringPaths } from "./wiring-removal.ts";
@@ -250,6 +250,18 @@ export const runInit = async (
       exitCode: EXIT_ABORTED,
     };
   }
+  // The team's committed file is merged onto, never written over
+  // (init-repo-config.ts), so a file init cannot merge onto is refused here,
+  // before anything is written.
+  const repoConfigFile = repoConfigPath(identity.root);
+  const repoConfigRead = await readJsonConfig(repoConfigFile);
+  if (!repoConfigRead.ok) {
+    return {
+      stdout: `${refusalMessage(repoConfigFile, repoConfigRead.reason)}\n`,
+      exitCode: EXIT_ABORTED,
+    };
+  }
+  const repoConfigNext = plannedRepoConfig(repoConfigRead.value, repoConfigRead.raw, hubUrl);
   const prefix = resolveCommandPrefix(launcher);
   const mcpEntry = resolveMcpLauncher(launcher);
   // DYNAMIC import like the bin's cursor-hook branch: hooks and the
@@ -298,11 +310,9 @@ export const runInit = async (
   await ensureDir(settingsDir);
   await writeFile(settingsPath, settingsNext, "utf8");
   await writeFile(mcpPath, mcpNext, "utf8");
-  await writeFile(
-    repoConfigPath(identity.root),
-    renderRepoConfig(hubUrl),
-    "utf8",
-  );
+  if (repoConfigNext !== null) {
+    await writeFile(repoConfigFile, repoConfigNext, "utf8");
+  }
   if (cursorPlan !== null && cursorPlan.ok) {
     await cursorPlan.apply();
   }
@@ -360,7 +370,9 @@ export const runInit = async (
   ];
   return {
     stdout: [
-      `wrote ${repoConfigPath(identity.root)}`,
+      repoConfigNext === null
+        ? `kept ${repoConfigFile} (it already connects this repo to ${hubUrl})`
+        : `wrote ${repoConfigFile}`,
       `wrote ${settingsPath}${savedSuffix(settingsPath)}`,
       `wrote ${mcpPath}${savedSuffix(mcpPath)}`,
       ...cursorFiles.map((file) => `wrote ${file.path}${savedSuffix(file.path)}`),

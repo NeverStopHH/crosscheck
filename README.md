@@ -106,7 +106,7 @@ Files that are mechanically generated and non-authoritative — lockfiles, `__ge
 { "hubUrl": "https://hub.example.com", "authoritativeGenerated": ["api/openapi.json", "migrations/**", "clients/**"] }
 ```
 
-The list is repo-relative globs (at most 32); it can only make crosscheck warn about more files, never fewer, and `crosscheck doctor` names any entry it could not honour.
+The list is repo-relative globs (at most 32); it can only make crosscheck warn about more files, never fewer, and `crosscheck doctor` names any entry it could not honour. Re-running `crosscheck init` keeps every field it does not own: it changes only `hubUrl` and `protocol`, in place and only when they differ, and leaves the file byte for byte otherwise.
 
 Plain `crosscheck init` (no flag) remains the narrower alternative: besides connecting the repo it wires that one checkout's `.claude/settings.json` + `.mcp.json`, committable so teammates are wired on `git pull`. It covers exactly that checkout — fresh worktrees and editor workspaces rooted at the repo's parent folder are only covered by `--global`. Running both is harmless (identical hook commands run once; `doctor` flags the redundancy); `crosscheck init --global --remove` uninstalls the user-level side, and `crosscheck init --remove` the project side (it keeps `.crosscheck.json`, so the repo stays connected).
 

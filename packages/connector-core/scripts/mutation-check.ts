@@ -24502,6 +24502,46 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/doctor-generated.test.ts`,
     because: "every session started on the previous build loses its state file on upgrade",
   },
+  {
+    label: "re-running init deletes the team's fields from .crosscheck.json",
+    file: `${CLI}/src/cli/init-repo-config.ts`,
+    from: "  return renderJsonFile({ ...existing, ...owned });",
+    to: "  return renderJsonFile({ ...owned });",
+    test: `${CLI}/test/init-repo-config.test.ts`,
+    because: "authoritativeGenerated, landingBranches and landingFetch vanish on the next init, silently restoring every default they overrode",
+  },
+  {
+    label: "init moves its own fields in .crosscheck.json to the end",
+    file: `${CLI}/src/cli/init-repo-config.ts`,
+    from: "  return renderJsonFile({ ...existing, ...owned });",
+    to: "  return renderJsonFile({ ...Object.fromEntries(Object.entries(existing).filter(([key]) => !(key in owned))), ...owned });",
+    test: `${CLI}/test/init-repo-config.test.ts`,
+    because: "a hub change reorders the team's committed file, so its diff shows lines nobody changed",
+  },
+  {
+    label: "re-running init rewrites a .crosscheck.json that already says it",
+    file: `${CLI}/src/cli/init-repo-config.ts`,
+    from: "  if (raw !== null && unchanged) {",
+    to: "  if (false) {",
+    test: `${CLI}/test/init-repo-config.test.ts`,
+    because: "every re-run reformats the team's committed file and leaves a diff that changes nothing",
+  },
+  {
+    label: "init rewrites a hub url that names the same hub",
+    file: `${CLI}/src/cli/init-repo-config.ts`,
+    from: "  return { hubUrl: sameHub ? current : hubUrl, protocol: PROTOCOL_VERSION };",
+    to: "  return { hubUrl, protocol: PROTOCOL_VERSION };",
+    test: `${CLI}/test/init-repo-config.test.ts`,
+    because: "a re-run that was not asked for a new hub still edits the committed hub url",
+  },
+  {
+    label: "init writes over a .crosscheck.json it cannot merge onto",
+    file: `${CLI}/src/cli/init.ts`,
+    from: "  const repoConfigRead = await readJsonConfig(repoConfigFile);",
+    to: "  const repoConfigRead = { ok: true as const, value: {}, raw: null };",
+    test: `${CLI}/test/init-repo-config.test.ts`,
+    because: "a merge conflict in the committed file is \"fixed\" by deleting every team field along with it",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -24588,6 +24628,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/init-remove-safety.test.ts 14
  * PRINTS: packages/cli/test/init-remove-verdict.test.ts 7
  * PRINTS: packages/cli/test/init-remove.test.ts 17
+ * PRINTS: packages/cli/test/init-repo-config.test.ts 5
  * PRINTS: packages/cli/test/intent-cost.test.ts 1
  * PRINTS: packages/cli/test/key-rotate.test.ts 6
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 9
