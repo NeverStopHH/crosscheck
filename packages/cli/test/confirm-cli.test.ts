@@ -84,12 +84,16 @@ describe("doctor's confirmation lines", () => {
     expect(checks[0]?.detail).toBe(NO_HTTPS_LINE);
   });
 
-  test("a hub that does not answer is a WARN, never a PASS", () => {
+  test("a hub that answered with an error is a WARN; one unreachable is not measured, as on every hub-read line", () => {
     // Act
-    const checks = confirmChecks({ ok: false, kind: "network", status: 0, code: "network", message: "refused" }, HUB);
+    const failed = confirmChecks({ ok: false, kind: "http", status: 500, code: "internal", message: "boom" }, HUB);
+    const unreachable = confirmChecks({ ok: false, kind: "network", status: 0, code: "network", message: "refused" }, HUB);
 
-    // Assert
-    expect(checks.map((check) => check.level)).toEqual(["WARN"]);
+    // Assert — the reachability line already counts an outage; it is never counted twice
+    expect(failed.map((check) => check.level)).toEqual(["WARN"]);
+    expect(unreachable.map((check) => [check.level, check.detail])).toEqual([
+      ["PASS", "not measured (the hub could not be reached)"],
+    ]);
   });
 });
 
