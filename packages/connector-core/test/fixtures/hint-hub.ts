@@ -51,6 +51,8 @@ export interface HintHub {
    * test sees of the caller's own state at the moment it waits on presence.
    */
   readonly setPresenceProbe: (probe: (() => Promise<void>) | null) => void;
+  /** The same, for GET /api/hints/candidates: the caller's state at the moment it asks for a hint. */
+  readonly setCandidatesProbe: (probe: (() => Promise<void>) | null) => void;
   /** Rows GET /api/solved-matches answers with. */
   readonly setSolvedMatches: (matches: readonly unknown[]) => void;
   /** The `?fingerprint=` of the last solved-match probe, or null. */
@@ -251,6 +253,7 @@ export const startHintHub = (
   };
   let presence: readonly unknown[] | null = null;
   let presenceProbe: (() => Promise<void>) | null = null;
+  let candidatesProbe: (() => Promise<void>) | null = null;
   let candidates: readonly unknown[] = [rejectedApproachCandidate()];
   /** Absent unless a test sets it — what every hub before 07 §13 sends. */
   let recordsOutcomes: boolean | undefined;
@@ -268,6 +271,7 @@ export const startHintHub = (
       if (pathname === "/api/hints/candidates") {
         calls.candidates += 1;
         lastCandidatesQuery = searchParams;
+        await candidatesProbe?.();
         await sleep(latency.candidates);
         return Response.json({
           ok: true,
@@ -349,6 +353,9 @@ export const startHintHub = (
     },
     setPresenceProbe: (next) => {
       presenceProbe = next;
+    },
+    setCandidatesProbe: (next) => {
+      candidatesProbe = next;
     },
     setSolvedMatches: (next) => {
       solvedMatches = next;

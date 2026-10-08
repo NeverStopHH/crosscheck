@@ -49,8 +49,22 @@ export interface CollisionFixture {
   readonly env: Env;
 }
 
+/**
+ * How a test's hooks are timed. `requestTimeoutMs` sets CROSSCHECK_TIMEOUT_MS,
+ * and with it every hook's budget (a ratio of it): a test about what a hook
+ * DOES, not how fast, takes a roomy one, so a loaded machine cannot spend the
+ * 800 ms the default leaves and turn a correct hook into a silent one (round
+ * 3, F-L9). A test about the budget itself keeps the default.
+ */
+export interface CollisionTiming {
+  readonly requestTimeoutMs?: string;
+}
+
+/** The request timeout of a test about behaviour, not about the budget. */
+export const BEHAVIOUR_TIMING: CollisionTiming = { requestTimeoutMs: "2000" };
+
 /** A registered session on a repo whose hub reports Nick on OVERLAP_FILE. */
-export const collisionFixture = async (label: string): Promise<CollisionFixture> => {
+export const collisionFixture = async (label: string, timing: CollisionTiming = {}): Promise<CollisionFixture> => {
   const repo = await makeRepo(label, { remote: "git@github.com:acme/api.git" });
   const home = await makeHome(label);
   paths.push(repo, home);
@@ -77,7 +91,12 @@ export const collisionFixture = async (label: string): Promise<CollisionFixture>
     repo,
     home,
     hub,
-    env: { CROSSCHECK_HOME: home, CROSSCHECK_HUB_URL: hub.url, CROSSCHECK_API_KEY: "test-key" },
+    env: {
+      CROSSCHECK_HOME: home,
+      CROSSCHECK_HUB_URL: hub.url,
+      CROSSCHECK_API_KEY: "test-key",
+      ...(timing.requestTimeoutMs === undefined ? {} : { CROSSCHECK_TIMEOUT_MS: timing.requestTimeoutMs }),
+    },
   };
 };
 

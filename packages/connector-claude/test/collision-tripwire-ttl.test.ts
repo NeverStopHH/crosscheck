@@ -17,17 +17,26 @@ import { sessionStatePath } from "@crosscheck/connector-core/config/paths.ts";
 import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { activeTeammateSession } from "../../connector-core/test/fixtures/hint-hub.ts";
 import {
+  BEHAVIOUR_TIMING,
   OVERLAP_FILE,
   SESSION_ID,
   cleanupCollisionFixtures,
-  collisionFixture,
+  collisionFixture as fixtureUntimed,
   editPayload,
   kenSession,
   parsed,
   pastRecheckWindow,
 } from "./fixtures/collision-fixture.ts";
+import type { CollisionFixture } from "./fixtures/collision-fixture.ts";
 
 afterEach(cleanupCollisionFixtures);
+
+/**
+ * What a hook DOES on a repeat edit, not how fast: a roomy request timeout,
+ * so a loaded machine cannot spend the default 800 ms budget and silence a
+ * correct hook (round 3, F-L9 — one combined run went red here).
+ */
+const collisionFixture = (label: string): Promise<CollisionFixture> => fixtureUntimed(label, BEHAVIOUR_TIMING);
 
 const REPEATS = 5;
 

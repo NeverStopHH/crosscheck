@@ -100,11 +100,15 @@ const roomyFixture = async (label: string): Promise<CollisionFixture> => {
   return { ...fix, env: { ...fix.env, CROSSCHECK_TIMEOUT_MS: ROOMY_TIMEOUT_MS } };
 };
 
-/** Far past RELAY_PRESENCE_REFRESH_MS, inside the roomy request timeout. */
+/** Far past RELAY_PRESENCE_REFRESH_MS. */
 const SLOW_PRESENCE_MS = 1_500;
 
-/** The cap plus the hook's own work, well under the slow presence answer. */
-const WITHIN_CAP_MS = 800;
+/**
+ * A request timeout whose spare outlasts SLOW_PRESENCE_MS however long a
+ * loaded machine takes to reach the refresh, so only the relay's own cap can
+ * be what cuts the call (round 3, F-L9).
+ */
+const PAST_SLOW_PRESENCE_TIMEOUT_MS = "5000";
 
 describe("a FRESH presence answer decides, with no hub call", () => {
   test("Nick ends his session before the subagent returns: the answer omits him, and the file is still relayed", async () => {
@@ -235,18 +239,18 @@ describe("with no fresh answer, the relay asks presence once", () => {
   test("a refresh slower than its cap is no answer: named from the hit, without waiting for presence", async () => {
     // Arrange: a roomy request timeout, so only the relay's own cap can cut the call
     const fix = await roomyFixture("ru-refresh-slow");
-    const env = { ...fix.env, CROSSCHECK_TIMEOUT_MS: ROOMY_TIMEOUT_MS };
+    const env = { ...fix.env, CROSSCHECK_TIMEOUT_MS: PAST_SLOW_PRESENCE_TIMEOUT_MS };
     await runHook("pre-tool-use", editPayload(fix.repo, OVERLAP_FILE, SUBAGENT), env);
     fix.hub.setPresence([presenceRow("dev_someone_else", "feat/other")]);
     fix.hub.latency.presence = SLOW_PRESENCE_MS;
-    const started = Date.now();
 
     // Act
     const output = parsed(await runHook("subagent-return", agentReturned(fix.repo), env));
 
-    // Assert
+    // Assert: the answer would have unnamed Nick, so a named line IS the proof
+    // the relay stopped waiting at its cap — no clock needed (round 3, F-L9)
     expect(output.systemMessage).toBe(NICK_RECENT_NOTICE);
-    expect(Date.now() - started).toBeLessThan(WITHIN_CAP_MS);
+    expect(fix.hub.calls.presence).toBe(1);
   });
 });
 

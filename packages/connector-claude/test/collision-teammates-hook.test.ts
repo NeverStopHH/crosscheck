@@ -12,16 +12,25 @@ import { runHook } from "../src/index.ts";
 import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { activeTeammateSession } from "../../connector-core/test/fixtures/hint-hub.ts";
 import {
+  BEHAVIOUR_TIMING,
   NICK_NOTICE,
   OVERLAP_FILE,
   SESSION_ID,
   cleanupCollisionFixtures,
-  collisionFixture,
+  collisionFixture as fixtureUntimed,
   editPayload,
   kenSession,
   parsed,
   pastRecheckWindow,
 } from "./fixtures/collision-fixture.ts";
+import type { CollisionFixture } from "./fixtures/collision-fixture.ts";
+
+/**
+ * What a hook TELLS, not how fast: a roomy request timeout, so a loaded
+ * machine cannot spend the default 800 ms budget and silence a correct hook
+ * (round 3, F-L9 — one combined run went red here at 737 ms).
+ */
+const collisionFixture = (label: string): Promise<CollisionFixture> => fixtureUntimed(label, BEHAVIOUR_TIMING);
 
 const KEN_NOTICE =
   "crosscheck: Ken is working on refresh.ts on branch feat/ken-rotation (last active just now) — " +

@@ -21,6 +21,7 @@ import { presenceCachePath, repoKey } from "@crosscheck/connector-core/config/pa
 import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { TEAMMATE_DEVELOPER_ID } from "../../connector-core/test/fixtures/hint-hub.ts";
 import {
+  BEHAVIOUR_TIMING,
   NICK_NOTICE,
   OVERLAP_FILE,
   REPO_ID,
@@ -51,10 +52,7 @@ const agentReturned = (repo: string): string =>
  * A request timeout roomy enough that a loaded machine cannot spend the spare
  * the refresh is bounded by: only the relay's own cap can cut it.
  */
-const roomyFixture = async (label: string): Promise<CollisionFixture> => {
-  const fix = await collisionFixture(label);
-  return { ...fix, env: { ...fix.env, CROSSCHECK_TIMEOUT_MS: "2000" } };
-};
+const roomyFixture = (label: string): Promise<CollisionFixture> => collisionFixture(label, BEHAVIOUR_TIMING);
 
 /** A presence answer that lists Nick, live now. */
 const nickPresent = (fix: CollisionFixture): void => {
