@@ -22232,12 +22232,15 @@ export const MUTATIONS: readonly Mutation[
       "branch prints as `1 topic, 1 session` over a topic line",
   },
   {
-    // Round 3: ONE projection (services/live-location.ts) — the vocabulary
-    // entry is what withholds the field on every row that carries it.
+    // Round 3: ONE projection (services/live-location.ts). The conference's
+    // lastActiveAt reaches it as ISO text, so what withholds it is the shape
+    // test's calendar-time branch. The FIELD_FORMS `marker` entry only names
+    // the form, which is already the default for text: deleting it, this
+    // anchor's earlier mutation, changed nothing.
     label: "the conference tells a colleague when an opted-out teammate was last active",
     file: `${SERVER}/src/services/live-location.ts`,
-    from: "  lastActiveAt: \"marker\",\n",
-    to: "",
+    from: "  (typeof value === \"string\" && WHOLE_CALENDAR_TIME.test(value) && !Number.isNaN(Date.parse(asIsoText(value))));",
+    to: "  false;",
     test: `${SERVER}/test/live-location-surfaces.test.ts`,
     because:
       "crosscheck conference prints `last active 4m ago` beside an opted-out " +
@@ -22288,10 +22291,14 @@ export const MUTATIONS: readonly Mutation[
       "and the instant her session began, before Nick edits the file",
   },
   {
+    // workStartedAt reaches the projection as ISO text (landed-context.ts),
+    // withheld by the shape test's calendar-time branch; its FIELD_FORMS
+    // `marker` entry is the default form for text, so deleting it — this
+    // anchor's earlier mutation — changed nothing.
     label: "a landed stop says when an opted-out teammate's session started",
     file: `${SERVER}/src/services/live-location.ts`,
-    from: "  workStartedAt: \"marker\",\n",
-    to: "",
+    from: "  (typeof value === \"string\" && WHOLE_CALENDAR_TIME.test(value) && !Number.isNaN(Date.parse(asIsoText(value))));",
+    to: "  false;",
     test: `${SERVER}/test/live-location-surfaces.test.ts`,
     because:
       "workStartedAt is the moment her session began, which is when she " +
@@ -22420,14 +22427,31 @@ export const MUTATIONS: readonly Mutation[
       "@ api» — reads «untitled work» to every colleague",
   },
   {
+    // On the hub the title is judged against the session's branch AND every
+    // branch she reported (developer_branches, which always holds the
+    // session's own: register records it, boot backfills it), so either
+    // clause alone still names a bare-branch title. Dropping both is what
+    // lets it through.
     label: "an unmarked bare-branch title on a local repo reaches colleagues",
     file: `${SCHEMA}/src/fallback-title.ts`,
-    from: "    (facts.branch !== null && facts.title === facts.branch) ||",
+    from: "    (facts.branch !== null && facts.title === facts.branch) ||\n    (facts.branches ?? []).includes(facts.title) ||",
     to: "    false ||",
     test: `${SERVER}/test/live-location-surfaces.test.ts`,
     because:
       "a no-remote repo's fallback is the bare branch, with no ` @ <label>` " +
       "for the shape rule to spot",
+  },
+  {
+    // The predicate's own contract, for a caller that passes no reported
+    // branches: the session's branch alone names the title.
+    label: "an unmarked title that is its session's own branch reads as a work title",
+    file: `${SCHEMA}/src/fallback-title.ts`,
+    from: "    (facts.branch !== null && facts.title === facts.branch) ||",
+    to: "    false ||",
+    test: `${SCHEMA}/test/fallback-title.test.ts`,
+    because:
+      "isLocationTitle without `branches` calls a local repo's bare-branch title " +
+      "the owner's own words, and every caller that omits the list withholds nothing",
   },
   {
     // Review round 3, survivor I.
@@ -22597,10 +22621,14 @@ export const MUTATIONS: readonly Mutation[
       "rows was never read",
   },
   {
-    label: "survivor N: the listing adds a raw last-touch field under a new name (guard)",
+    // The field is added PAST the projection: inside it, round 4's
+    // withheld-by-shape rule drops any ISO value whatever its name, so the
+    // mutation never reached the guard it exists to prove — the walk's
+    // secrets, which must include her instants and not only branch and HEAD.
+    label: "survivor N: the listing adds a raw last-touch field under a new name past the projection (guard)",
     file: `${SERVER}/src/services/diagnosis.ts`,
     from: "      branch: row.branch,\n    }),\n  );",
-    to: "      branch: row.branch,\n      seenAt: row.workContext.updatedAt?.toISOString() ?? null,\n    }),\n  );",
+    to: "      branch: row.branch,\n    }),\n  ).map((view, index) => ({ ...view, seenAt: rows[index]?.workContext.updatedAt?.toISOString() ?? null }));",
     test: `${SERVER}/test/live-location-privacy.test.ts`,
     because:
       "the guard's secrets were branch and HEAD only, so an instant of hers " +
@@ -24371,7 +24399,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/causal-guarantees.test.ts 7
  * PRINTS: packages/schema/test/claim.test.ts 1
  * PRINTS: packages/schema/test/default-branch.test.ts 1
- * PRINTS: packages/schema/test/fallback-title.test.ts 2
+ * PRINTS: packages/schema/test/fallback-title.test.ts 3
  * PRINTS: packages/schema/test/file-ref.test.ts 5
  * PRINTS: packages/schema/test/hint-outcome.test.ts 2
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
