@@ -24311,7 +24311,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a failed presence refresh anonymises the relay",
     file: `${CORE}/src/hints/collision-notice.ts`,
-    from: "    if (presence === null) {\n      return withoutStaleLocation(group, now);\n    }",
+    from: "    if (presence === null) {\n      return unconfirmedCollision(group);\n    }",
     to: "    if (presence === null) {\n      return anonymousCollision(group);\n    }",
     test: `${CONNECTOR}/test/collision-relay-unconfirmed.test.ts`,
     because: "with no contrary evidence the person reads 'A teammate recently worked on 8 files' in every IDE session",
@@ -24498,6 +24498,23 @@ export const MUTATIONS: readonly Mutation[
       "    const answer = await answerBeforeDrain(ctx, state, budget);\n",
     test: `${CONNECTOR}/test/collision-relay-durable.test.ts`,
     because: "a hook that throws or is abandoned while it waits on presence has already emptied the queue, and the groups are never said",
+  },
+  // ── Review of feat/collision-visible, round 3, F-L1: no presence answer, no location ──
+  {
+    label: "a relay with no presence answer keeps the hit's branch and age",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "    if (presence === null) {\n      return unconfirmedCollision(group);\n    }",
+    to: "    if (presence === null) {\n      return withoutStaleLocation(group, now);\n    }",
+    test: `${CORE}/test/collision-relay-presence.test.ts`,
+    because: "a teammate who opted out since the hit is still placed on a branch, up to 90 s old, whenever the refresh fails",
+  },
+  {
+    label: "a relay with no presence answer says the teammate is on the file now",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  return group.unconfirmed === true\n",
+    to: "  return false\n",
+    test: `${CORE}/test/collision-relay-presence.test.ts`,
+    because: "a subagent that ran for two hours relays 'Mike is working on' from a row as old as its run",
   },
 ];
 

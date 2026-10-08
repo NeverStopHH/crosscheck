@@ -333,12 +333,17 @@ const ageClause = (iso: string | null, now: Date): string => {
 const basename = (path: string): string => path.split("/").filter((part) => part.length > 0).at(-1) ?? "";
 
 /**
- * A group as a RENDERER takes it: a told group, or one whose teammate live
- * presence could not confirm at the moment it is shown LATER (round 2, H1),
- * which is told UNNAMED — no name, no branch, no age — rather than not at
- * all. Never stored: `anonymous` exists only between the relay and the line.
+ * A group as a RENDERER takes it: a told group; one whose teammate a presence
+ * answer OMITS at the moment it is shown LATER (round 2, H1), told UNNAMED —
+ * no name, no branch, no age — rather than not at all; or one shown later
+ * with NO presence answer to hold it to (round 3, F-L1), told by name in the
+ * past tense with no branch and no age. Never stored: both flags exist only
+ * between the relay and the line.
  */
-export type RenderableCollision = CollisionNotice & { readonly anonymous?: true };
+export type RenderableCollision = CollisionNotice & {
+  readonly anonymous?: true;
+  readonly unconfirmed?: true;
+};
 
 /** The group with everything that says WHO and WHERE dropped; the file stays. */
 export const anonymousCollision = (group: CollisionNotice): RenderableCollision => ({
@@ -350,9 +355,23 @@ export const anonymousCollision = (group: CollisionNotice): RenderableCollision 
 });
 
 /**
+ * The group with everything that says WHERE dropped and the name kept (round
+ * 3, F-L1): a relay with no presence answer has the tripwire's hit-time row
+ * and nothing newer, so it says who worked on the file, not who is on it now,
+ * and carries no location a teammate's opt-out since might have withheld.
+ */
+export const unconfirmedCollision = (group: CollisionNotice): RenderableCollision => ({
+  ...group,
+  branch: null,
+  lastActiveAt: null,
+  unconfirmed: true,
+});
+
+/**
  * ONE LINE for the person:
- * `crosscheck: Mike is working on PlayerMappingGrid.tsx on branch feat/x (last active 3m ago) — talk before you both change it`,
- * or, unconfirmed, `crosscheck: A teammate recently worked on PlayerMappingGrid.tsx — talk to your team before you change it`.
+ * `crosscheck: Mike is working on PlayerMappingGrid.tsx on branch feat/x (last active 3m ago) — talk before you both change it`;
+ * with no presence answer, `crosscheck: Mike recently worked on PlayerMappingGrid.tsx — talk before you change it`;
+ * or, omitted by presence, `crosscheck: A teammate recently worked on PlayerMappingGrid.tsx — talk to your team before you change it`.
  * Every field is sanitized HERE, at render, whatever the group was built
  * from — a group read back from a state file is no more trusted than a row.
  */
@@ -373,8 +392,12 @@ export const renderCollisionNotice = (group: RenderableCollision, now: Date): st
   // LANDED work is a change already made, not a plan in flight: the person
   // is told what merged, and the advice drops "both" — only they are about
   // to change it. No age: a heartbeat says nothing about when it merged.
-  return group.landed === true
-    ? `crosscheck: ${name} changed ${what}${where} (merged) — talk before you change ${pronoun}${partial}`
+  if (group.landed === true) {
+    return `crosscheck: ${name} changed ${what}${where} (merged) — talk before you change ${pronoun}${partial}`;
+  }
+  // UNCONFIRMED is the past tense of the same fact, without a location.
+  return group.unconfirmed === true
+    ? `crosscheck: ${name} recently worked on ${what} — talk before you change ${pronoun}${partial}`
     : `crosscheck: ${name} is working on ${what}${where}${ageClause(group.lastActiveAt, now)} — ` +
         `talk before you both change ${pronoun}${partial}`;
 };
@@ -456,9 +479,12 @@ const locatedBy = (group: CollisionNotice, entry: PresenceFact): CollisionNotice
  * A teammate the answer lists is named, with the branch and age of that
  * answer's row. `presence` is null when no answer could be had — a refresh
  * that failed or ran out of time — and then each group is named as the
- * tripwire's own answer named it at the edit: a row the hub had already put
- * through this developer's opt-out projection, still held to the 90 s rule.
- * The outcome depends on the answer alone, never on how old a cache was.
+ * tripwire's own answer named it at the edit, a row the hub had already put
+ * through this developer's opt-out projection, but in the PAST tense and
+ * with no branch and no age (round 3, F-L1): that row is as old as the
+ * subagent's run, and its location is exactly what an opt-out since would
+ * withhold. The outcome depends on the answer alone, never on how old a
+ * cache was.
  */
 export const relayedCollisions = (
   groups: readonly CollisionNotice[],
@@ -467,7 +493,7 @@ export const relayedCollisions = (
 ): readonly RenderableCollision[] =>
   groups.map((group) => {
     if (presence === null) {
-      return withoutStaleLocation(group, now);
+      return unconfirmedCollision(group);
     }
     const entry = confirmingEntry(group, presence);
     return entry === undefined ? anonymousCollision(group) : withoutStaleLocation(locatedBy(group, entry), now);

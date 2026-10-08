@@ -13,7 +13,9 @@
  *     cache — a subagent that ran past the 10 s cache in a session with no
  *     statusline (every IDE session) would otherwise have no answer at all;
  *   - when that refresh fails or runs out, the teammate is named as the
- *     tripwire's own answer named them at the edit.
+ *     tripwire's own answer named them at the edit — in the past tense,
+ *     with no branch and no age (round 3, F-L1): that row is as old as the
+ *     subagent's run, and its location is what an opt-out since withholds.
  *
  * The outcome depends on the answer alone: a stale cache decides nothing.
  * Probe r2 C2: a subagent edits refresh.ts while Nick is on it, then Nick
@@ -33,6 +35,7 @@ import { readSessionState } from "@crosscheck/connector-core/state/session-state
 import { TEAMMATE_DEVELOPER_ID } from "../../connector-core/test/fixtures/hint-hub.ts";
 import {
   NICK_NOTICE,
+  NICK_RECENT_NOTICE,
   OVERLAP_FILE,
   REPO_ID,
   SESSION_ID,
@@ -191,8 +194,8 @@ describe("with no fresh answer, the relay asks presence once", () => {
     // Act
     const output = parsed(await runHook("user-prompt-submit", promptPayload(fix.repo), fix.env));
 
-    // Assert: the stale cache decided nothing; no answer means the hit's own name
-    expect(output.systemMessage).toBe(NICK_NOTICE);
+    // Assert: the stale cache decided nothing; no answer means the hit's own name, and no location
+    expect(output.systemMessage).toBe(NICK_RECENT_NOTICE);
     expect(fix.hub.calls.presence).toBe(1);
   });
 
@@ -210,16 +213,21 @@ describe("with no fresh answer, the relay asks presence once", () => {
     expect(output.systemMessage).toBe(UNNAMED_REFRESH_NOTICE);
   });
 
-  test("no cache and a failing refresh: the hit is relayed, named as the tripwire named it", async () => {
-    // Arrange
+  test("no cache and a failing refresh: the hit is relayed, named as the tripwire named it, with no branch or age (round 3, F-L1)", async () => {
+    // Arrange: the hit's own row is seconds old, inside the presence TTL
     const fix = await roomyFixture("ru-nocache");
     await runHook("pre-tool-use", editPayload(fix.repo, OVERLAP_FILE, SUBAGENT), fix.env);
 
     // Act
     const output = parsed(await runHook("subagent-return", agentReturned(fix.repo), fix.env));
 
-    // Assert
-    expect(output.systemMessage).toBe(NICK_NOTICE);
+    // Assert: past tense on both copies, and nothing that says where
+    expect(output.systemMessage).toBe(NICK_RECENT_NOTICE);
+    expect(output.hookSpecificOutput?.additionalContext).toBe(
+      [SUBAGENT_RELAY_HEADER, NICK_RECENT_NOTICE, COLLISION_RELAY_SENTENCE].join("\n"),
+    );
+    expect(JSON.stringify(output)).not.toContain("feat/refresh-fix");
+    expect(JSON.stringify(output)).not.toContain("last active");
   });
 
   test("a refresh slower than its cap is no answer: named from the hit, without waiting for presence", async () => {
@@ -235,7 +243,7 @@ describe("with no fresh answer, the relay asks presence once", () => {
     const output = parsed(await runHook("subagent-return", agentReturned(fix.repo), env));
 
     // Assert
-    expect(output.systemMessage).toBe(NICK_NOTICE);
+    expect(output.systemMessage).toBe(NICK_RECENT_NOTICE);
     expect(Date.now() - started).toBeLessThan(WITHIN_CAP_MS);
   });
 });

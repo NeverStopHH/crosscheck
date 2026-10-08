@@ -265,6 +265,13 @@ export const pastRecheckWindow = async (home: string): Promise<void> => {
   }));
 };
 
+/**
+ * The relayed line for Nick on OVERLAP_FILE when the relay had NO presence
+ * answer to hold the hit to (round 3, F-L1): named as the tripwire's row named
+ * him, in the past tense, with no branch and no age.
+ */
+export const NICK_RECENT_NOTICE = "crosscheck: Nick recently worked on refresh.ts — talk before you change it";
+
 /** The relayed line for a teammate live presence did not confirm, on OVERLAP_FILE. */
 export const UNNAMED_REFRESH_NOTICE =
   "crosscheck: A teammate recently worked on refresh.ts — talk to your team before you change it";

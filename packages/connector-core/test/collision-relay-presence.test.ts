@@ -81,14 +81,26 @@ describe("a relayed group is unnamed only when a presence answer omits the teamm
     expect(relayed.map((group) => group.anonymous)).toEqual([true, true]);
   });
 
-  test("NO answer at all (null) names each group as its tripwire row did — there is no contrary evidence", () => {
-    // Act
+  test("NO answer at all (null) names each group as its tripwire row did, in the past tense and with no location (round 3, F-L1)", () => {
+    // Act: a hit 30 s old, well inside the presence TTL
     const [relayed] = relayedCollisions([nick()], null, NOW);
 
-    // Assert
+    // Assert: no contrary evidence, so named; no current answer, so no branch, no age, no "is working"
     expect(relayed?.anonymous).toBeUndefined();
+    expect(relayed?.branch).toBeNull();
+    expect(relayed?.lastActiveAt).toBeNull();
     expect(renderCollisionNotice(relayed ?? nick(), NOW)).toBe(
-      "crosscheck: Nick is working on refresh.ts on branch feat/refresh-fix (last active just now) — talk before you both change it",
+      "crosscheck: Nick recently worked on refresh.ts — talk before you change it",
+    );
+  });
+
+  test("with no answer, LANDED work keeps its merged wording and drops the branch too", () => {
+    // Act
+    const [relayed] = relayedCollisions([{ ...nick(), landed: true }], null, NOW);
+
+    // Assert
+    expect(renderCollisionNotice(relayed ?? nick(), NOW)).toBe(
+      "crosscheck: Nick changed refresh.ts (merged) — talk before you change it",
     );
   });
 
