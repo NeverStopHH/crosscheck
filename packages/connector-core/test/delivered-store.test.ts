@@ -67,20 +67,29 @@ describe("delivered-hint hash store", () => {
   });
 
   test("the store is FIFO-capped per repo — the oldest hashes fall out", async () => {
-    // Arrange: two more than the cap, so the first two must age out
+    // Arrange: a store already AT the cap, seeded in its own on-disk shape —
+    // not by MAX_DELIVERED_HINT_HASHES_PER_REPO locked read-merge-writes in a
+    // row. That loop was 512 lock acquisitions and file rewrites inside bun's
+    // 5 s per-test budget, and it ran out of it (5012 ms) only when every
+    // suite ran at once. The cap is what this test pins, so the two writes
+    // that CROSS it are the only ones that go through the store.
     const home = await freshHome();
-    const total = MAX_DELIVERED_HINT_HASHES_PER_REPO + 2;
+    const bodyHash = (index: number): string => hintBodyHash(`body ${String(index)}`);
+    expect(await recordDeliveredHintHash(home, REPO_KEY, bodyHash(0))).toBe(true);
+    const atCap = Array.from({ length: MAX_DELIVERED_HINT_HASHES_PER_REPO }, (_, index) => bodyHash(index));
+    await writeFile(deliveredHintsPath(home, REPO_KEY), `${JSON.stringify(atCap, null, 2)}\n`, "utf8");
+    expect(await readDeliveredHintHashes(home, REPO_KEY)).toEqual(atCap);
 
-    // Act
-    for (let index = 0; index < total; index += 1) {
-      await recordDeliveredHintHash(home, REPO_KEY, hintBodyHash(`body ${String(index)}`));
-    }
+    // Act: two more than the cap, so the first two must age out
+    const total = MAX_DELIVERED_HINT_HASHES_PER_REPO + 2;
+    expect(await recordDeliveredHintHash(home, REPO_KEY, bodyHash(total - 2))).toBe(true);
+    expect(await recordDeliveredHintHash(home, REPO_KEY, bodyHash(total - 1))).toBe(true);
 
     // Assert
     const stored = await readDeliveredHintHashes(home, REPO_KEY);
     expect(stored.length).toBe(MAX_DELIVERED_HINT_HASHES_PER_REPO);
-    expect(stored[0]).toBe(hintBodyHash("body 2"));
-    expect(stored[stored.length - 1]).toBe(hintBodyHash(`body ${String(total - 1)}`));
+    expect(stored[0]).toBe(bodyHash(2));
+    expect(stored[stored.length - 1]).toBe(bodyHash(total - 1));
   });
 
   test("a missing or corrupt store file reads as empty, never a throw", async () => {
