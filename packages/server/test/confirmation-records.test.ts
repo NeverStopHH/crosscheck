@@ -12,6 +12,7 @@ import { describe, expect, test } from "bun:test";
 import { verifyAuthenticationResponse } from "@simplewebauthn/server";
 import { isoBase64URL } from "@simplewebauthn/server/helpers";
 
+import { hintOutcomes } from "../src/db/schema.ts";
 import { confirmPending, prepareConfirmer } from "./fixtures/confirm-driver.ts";
 import { KEN_CLAIM, KEN_CONTEXT, NICK_SESSION, createOutcomeWorld, recordOutcome } from "./fixtures/hint-outcome-world.ts";
 import type { OutcomeWorld } from "./fixtures/hint-outcome-world.ts";
@@ -20,6 +21,8 @@ import type { TestDeveloper } from "./helpers.ts";
 
 interface Item {
   readonly position: number;
+  /** The rows of the person's records this item became (review M5/P9); none for a discard. */
+  readonly rows: readonly { readonly table: string; readonly id: string }[];
   readonly decision: string;
   readonly content: Record<string, unknown>;
   readonly draftDigest: string;
@@ -177,6 +180,30 @@ describe("GET /api/confirm/confirmations", () => {
 
     // Act & Assert
     await expect(verifyLocally(tampered)).rejects.toThrow("the batch digest does not match its items");
+  });
+
+  test("review M5/P9: each confirmed item names the row it became — a client checks every row of theirs against what was signed", async () => {
+    // Arrange
+    const world = await confirmedWorld();
+    const [record] = await confirmationsOf(world, world.nick);
+    if (record === undefined) {
+      throw new Error("no confirmation listed");
+    }
+    const [outcome] = await world.harness.db
+      .select({ id: hintOutcomes.id, at: hintOutcomes.confirmationPosition })
+      .from(hintOutcomes);
+
+    // Act
+    const byDecision = record.items.map((item) => [item.decision, item.rows]);
+
+    // Assert — the confirmed outcome names its row; the discarded word became none
+    expect(byDecision).toEqual(
+      expect.arrayContaining([
+        ["confirm", [{ table: "hint_outcomes", id: outcome?.id }]],
+        ["discard", []],
+      ]),
+    );
+    expect(record.items.find((item) => item.decision === "confirm")?.position).toEqual(outcome?.at ?? -1);
   });
 
   test("another person reads none of it", async () => {

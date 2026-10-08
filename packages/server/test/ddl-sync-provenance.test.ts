@@ -23,6 +23,7 @@ import {
   privacyChanges,
 } from "../src/db/schema.ts";
 import { BOOTSTRAP_SQL_URL } from "./fixtures/bootstrap-sql.ts";
+import { seedHumanStamp } from "./fixtures/human-confirmation.ts";
 import { createTestDeveloper, createTestHarness } from "./helpers.ts";
 import type { TestHarness } from "./helpers.ts";
 
@@ -83,6 +84,54 @@ describe("human provenance DDL sync", () => {
       expect(found[index]).toContain("provenance");
       expect(found[index]).toContain("confirmation_id");
     }
+  });
+
+  test("review M5/P9: each record that counts names the confirmation ITEM that signed it, in both authorities", async () => {
+    // Arrange
+    const harness = await createTestHarness();
+
+    // Act
+    const found = await Promise.all(COUNTING_TABLES.map(async ([name]) => columnsOf(harness, name)));
+    const foreignKeys = await harness.db.execute(sql`
+      SELECT conrelid::regclass::text AS t, pg_get_constraintdef(oid) AS d FROM pg_constraint
+      WHERE contype = 'f' AND confrelid = 'human_confirmation_items'::regclass ORDER BY 1, 2`);
+
+    // Assert — the column, and a composite foreign key to the item, on every table (and a pin's break)
+    for (const [index, [name]] of COUNTING_TABLES.entries()) {
+      expect({ name, has: found[index]?.includes("confirmation_position") }).toEqual({ name, has: true });
+    }
+    const referencing = foreignKeys.rows.map((row) => [String(row["t"]), String(row["d"])]);
+    for (const [name] of COUNTING_TABLES) {
+      expect(referencing).toContainEqual([
+        name,
+        "FOREIGN KEY (confirmation_id, confirmation_position) REFERENCES human_confirmation_items(confirmation_id, \"position\")",
+      ]);
+    }
+    expect(referencing).toContainEqual([
+      "pins",
+      "FOREIGN KEY (broke_confirmation_id, broke_confirmation_position) REFERENCES human_confirmation_items(confirmation_id, \"position\")",
+    ]);
+  });
+
+  test("review M5/P9: a row upgraded to human by naming only a confirmation is refused by the database", async () => {
+    // Arrange — a legacy label, and an honest confirmation of something else
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick-ddl-item@example.com");
+    const stamp = await seedHumanStamp(harness.db, nick.developerId);
+    await harness.db.execute(sql`INSERT INTO pilot_marks (id, repo, ref_kind, ref_id, mark, marked_by, capture_mode, created_at, provenance, confirmation_id)
+      VALUES ('pm_old', 'github.com/acme/api', 'hint_delivery', 'hd_old', 'helpful', ${nick.developerId}, 'human', ${AT.toISOString()}::timestamptz, 'unknown_legacy', NULL)`);
+
+    // Act & Assert — the P9 UPDATE: a confirmation id alone, or an item that does not exist
+    await expect(
+      attempt(harness.db.execute(sql`UPDATE pilot_marks SET provenance = 'human_passkey_confirmed', confirmation_id = ${stamp.confirmationId} WHERE id = 'pm_old'`)),
+    ).rejects.toThrow();
+    await expect(
+      attempt(
+        harness.db.execute(
+          sql`UPDATE pilot_marks SET provenance = 'human_passkey_confirmed', confirmation_id = ${stamp.confirmationId}, confirmation_position = 7 WHERE id = 'pm_old'`,
+        ),
+      ),
+    ).rejects.toThrow();
   });
 
   test("drizzle gives provenance no default, so a writer that forgets it does not compile", () => {
