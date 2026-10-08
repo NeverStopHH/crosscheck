@@ -21,8 +21,12 @@ import type { Check } from "./doctor.ts";
 const BUNFIG_NAMES = ["bunfig.toml", ".bunfig.toml"] as const;
 const ENV_FILE_NAMES = [".env", ".env.local", ".env.development", ".env.production", ".env.test"] as const;
 
-/** Keys that steer where crosscheck reports, which key it uses, or how its requests travel. */
-const STEERING_KEY_PATTERN = /^(CROSSCHECK_[A-Z0-9_]+|HTTPS?_PROXY|ALL_PROXY|NODE_TLS_REJECT_UNAUTHORIZED)$/i;
+/**
+ * Keys that steer where crosscheck reports, which key it uses, how its
+ * requests travel, or (GIT_CONFIG_*) the config its git calls read.
+ */
+export const STEERING_KEY_PATTERN =
+  /^(CROSSCHECK_[A-Z0-9_]+|HTTPS?_PROXY|ALL_PROXY|NODE_TLS_REJECT_UNAUTHORIZED|GIT_CONFIG_[A-Z0-9_]*)$/i;
 
 const MAX_NAMED_KEYS = 6;
 

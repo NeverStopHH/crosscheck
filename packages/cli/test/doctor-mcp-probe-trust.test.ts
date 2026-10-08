@@ -125,6 +125,62 @@ describe("doctor's MCP probe", () => {
     expect(result.stdout).toMatch(/mcp tools usable[^\n]*\d+ tools, and they will call/);
   }, 30_000);
 
+  test("does not probe even the entry init writes once it carries an env block, and names its keys only", async () => {
+    // Arrange — review round 2, N2: the host hands `env` to the server
+    const s = await setup("probe-trust-env-block");
+    const entry = {
+      type: "stdio",
+      command: process.execPath,
+      args: [...RUNTIME_ISOLATION_FLAGS, OWN_ENTRY, "mcp"],
+      env: { HTTP_PROXY: "http://proxy-value.invalid:9", BUN_OPTIONS: "--preload ./bait-value.ts" },
+    };
+    await writeFile(join(s.repo, ".mcp.json"), `${JSON.stringify({ mcpServers: { crosscheck: entry } })}\n`, "utf8");
+
+    // Act
+    const result = await runDoctor(s.env, s.repo, async () => null);
+
+    // Assert
+    expect(result.stdout).toContain("its entry carries an env block, which crosscheck never writes");
+    expect(result.stdout).not.toMatch(/mcp tools usable[^\n]*\d+ tools, and they will call/);
+    expect(result.stdout).toMatch(/host-supplied env[^\n]*passes HTTP_PROXY, BUN_OPTIONS to the server/);
+    expect(result.stdout).not.toContain("proxy-value");
+    expect(result.stdout).not.toContain("bait-value");
+  }, 30_000);
+
+  test("does not run the developer's user-scope entry either once it carries an env block", async () => {
+    // Arrange — the control arm below runs this same entry without the block
+    const s = await setup("probe-trust-user-env");
+    const entry = { ...baitEntry(s.marker), env: { CROSSCHECK_HOME: "./elsewhere" } };
+    await writeFile(join(s.home, ".claude.json"), `${JSON.stringify({ mcpServers: { crosscheck: entry } })}\n`, "utf8");
+
+    // Act
+    const result = await runDoctor(s.env, s.repo, async () => null);
+
+    // Assert
+    expect(await Bun.file(s.marker).exists()).toBe(false);
+    expect(result.stdout).toMatch(/host-supplied env[^\n]*passes CROSSCHECK_HOME to the server/);
+  });
+
+  test("names the steering keys a repo's .claude/settings.json env sets, and only those", async () => {
+    // Arrange
+    const s = await setup("probe-trust-settings-env");
+    await mkdir(join(s.repo, ".claude"), { recursive: true });
+    await writeFile(
+      join(s.repo, ".claude", "settings.json"),
+      `${JSON.stringify({ env: { BUN_OPTIONS: "--preload x", HTTPS_PROXY: "http://secret-value.invalid", EDITOR: "vim" } })}\n`,
+      "utf8",
+    );
+
+    // Act
+    const result = await runDoctor(s.env, s.repo, async () => null);
+
+    // Assert
+    expect(result.stdout).toMatch(/host-supplied env[^\n]*settings\.json sets BUN_OPTIONS, HTTPS_PROXY for the session/);
+    expect(result.stdout).toContain("whether a settings env reaches hooks is not verified");
+    expect(result.stdout).not.toContain("EDITOR");
+    expect(result.stdout).not.toContain("secret-value");
+  });
+
   test("still probes the developer's own user-scope entry (the control arm)", async () => {
     // Arrange — the same command, in a file only the developer writes
     const s = await setup("probe-trust-user");

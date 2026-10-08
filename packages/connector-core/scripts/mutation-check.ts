@@ -24830,6 +24830,79 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/git-safety-pins.test.ts`,
     because: "one call site that builds its own git argv runs fsmonitor and hooks again, and nothing pins the rest",
   },
+  // ROUND 2, N2: environment a host passes, and the doctor line that names it.
+  {
+    label: "the entry keeps the bun startup variables a host passed",
+    file: `${CORE}/src/config/runtime-isolation.ts`,
+    from: "  if (!Object.keys(process.env).some((name) => BUN_STARTUP_KEY.test(name))) {",
+    to: "  if (true) {",
+    test: `${CLI}/test/e2e/bait-repo-isolation.e2e.test.ts`,
+    because: "an .mcp.json env block's BUN_OPTIONS preload wraps fetch inside the process that loads the key, and copies the bearer out",
+  },
+  {
+    label: "the restart is not isolated",
+    file: `${CORE}/src/config/runtime-isolation.ts`,
+    from: "    cmd: [...selfSpawnCmd(entry, args)],",
+    to: "    cmd: [process.execPath, entry, ...args],",
+    test: `${CORE}/test/runtime-isolation.test.ts`,
+    because: "a host variable turns an isolated hook into one that reads the repo's bunfig and .env on its second start",
+  },
+  {
+    label: "NODE_OPTIONS reaches crosscheck's children",
+    file: `${CORE}/src/config/runtime-isolation.ts`,
+    from: '    delete process.env["NODE_OPTIONS"];\n',
+    to: "",
+    test: `${CORE}/test/runtime-isolation.test.ts`,
+    because: "a host's --require runs inside the summarizer's model CLI, which crosscheck starts",
+  },
+  {
+    label: "a worker entry loads before the runtime is cleaned",
+    file: `${CONNECTOR}/src/landing-fetch/worker-entry.ts`,
+    from: 'import "@crosscheck/connector-core/config/clean-runtime.ts";\n',
+    to: "",
+    test: `${CORE}/test/runtime-isolation.test.ts`,
+    because: "the one entry without the guard runs with whatever runtime variables reached it",
+  },
+  {
+    label: "a worker inherits the runtime variables",
+    file: `${CORE}/src/model/worker-env.ts`,
+    from: "      value === undefined || PARENT_SESSION_MARKER_PATTERN.test(name) || isRuntimeInjectionKey(name)",
+    to: "      value === undefined || PARENT_SESSION_MARKER_PATTERN.test(name)",
+    test: `${CORE}/test/runtime-isolation.test.ts`,
+    because: "a detached worker starts with the BUN_OPTIONS its parent was handed",
+  },
+  {
+    label: "the npm shim hands bun a host's runtime variables",
+    file: "packaging/bin/crosscheck.cjs",
+    from: '      { stdio: "inherit", env: withoutRuntimeInjection(process.env) },',
+    to: '      { stdio: "inherit" },',
+    test: `${CLI}/test/e2e/bait-repo-isolation.e2e.test.ts`,
+    because: "a .mcp.json env block's BUN_OPTIONS preloads the repo's code in the bun the shim starts",
+  },
+  {
+    label: "doctor probes an MCP entry that carries an env block",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    if (mcpEntryEnvKeys(raw).length > 0) {",
+    to: "    if (false) {",
+    test: `${CLI}/test/doctor-mcp-probe-trust.test.ts`,
+    because: "doctor vouches for an entry by probing it without the env the host will start it with",
+  },
+  {
+    label: "doctor is silent about an MCP entry's env block",
+    file: `${CLI}/src/cli/doctor-host-env.ts`,
+    from: "      return keys.length === 0 ? null : `the crosscheck entry in ${path} passes ${named(keys)} to the server`;",
+    to: "      return null;",
+    test: `${CLI}/test/doctor-mcp-probe-trust.test.ts`,
+    because: "a committed HTTP_PROXY that receives the bearer goes unnamed while doctor reads PASS",
+  },
+  {
+    label: "doctor prints every key a settings env sets",
+    file: `${CLI}/src/cli/doctor-host-env.ts`,
+    from: "        const keys = isRecord(block) ? Object.keys(block).filter(steers) : [];",
+    to: "        const keys = isRecord(block) ? Object.keys(block) : [];",
+    test: `${CLI}/test/doctor-mcp-probe-trust.test.ts`,
+    because: "every repo with an ordinary settings env WARNs, and the line that matters drowns",
+  },
   {
     label: "the npm shim starts bun in the repo's bun config",
     file: "packaging/bin/crosscheck.cjs",
@@ -25153,7 +25226,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-last-sync.test.ts 1
  * PRINTS: packages/cli/test/doctor-latency.test.ts 2
  * PRINTS: packages/cli/test/doctor-losses.test.ts 6
- * PRINTS: packages/cli/test/doctor-mcp-probe-trust.test.ts 3
+ * PRINTS: packages/cli/test/doctor-mcp-probe-trust.test.ts 6
  * PRINTS: packages/cli/test/doctor-pilot.test.ts 6
  * PRINTS: packages/cli/test/doctor-repo-runtime.test.ts 2
  * PRINTS: packages/cli/test/doctor-search-rebuild.test.ts 2
@@ -25161,7 +25234,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
  * PRINTS: packages/cli/test/doctor-verdict-legality.test.ts 2
  * PRINTS: packages/cli/test/doctor.test.ts 1
- * PRINTS: packages/cli/test/e2e/bait-repo-isolation.e2e.test.ts 4
+ * PRINTS: packages/cli/test/e2e/bait-repo-isolation.e2e.test.ts 6
  * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
  * PRINTS: packages/cli/test/e2e/worker-spawn-isolation.e2e.test.ts 4
  * PRINTS: packages/cli/test/foreign-hub-lines.test.ts 1
@@ -25387,7 +25460,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 7
  * PRINTS: packages/connector-core/test/repo-ssh-determinism.test.ts 2
  * PRINTS: packages/connector-core/test/review-draft.test.ts 2
- * PRINTS: packages/connector-core/test/runtime-isolation.test.ts 5
+ * PRINTS: packages/connector-core/test/runtime-isolation.test.ts 9
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1

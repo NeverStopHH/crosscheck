@@ -12,6 +12,7 @@
  * Same contract as the bin branch: no stdin read — input is named by flags —
  * and the exit code is the worker's own (nothing downstream reads it).
  */
+import "@crosscheck/connector-core/config/clean-runtime.ts";
 import { runSummarizeWorker } from "./worker.ts";
 
 process.exit(await runSummarizeWorker(process.argv.slice(2), process.env));

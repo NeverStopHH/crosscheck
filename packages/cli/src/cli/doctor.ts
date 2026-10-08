@@ -173,6 +173,7 @@ import { coverageReportingCheck, lossChecks } from "./doctor-losses.ts";
 import { briefingOmissionsCheck } from "./doctor-briefings.ts";
 import { FOREIGN_HUB_MCP_CHECK, keyOriginChecks } from "./foreign-hub.ts";
 import { repoRuntimeChecks } from "./doctor-repo-runtime.ts";
+import { hostEnvChecks, mcpEntryEnvKeys } from "./doctor-host-env.ts";
 import {
   ISOLATED_BUNFIG_PATH,
   RUNTIME_ISOLATION_FLAGS,
@@ -1354,6 +1355,15 @@ const mcpProbeTarget = async (repoRoot: string, env: Env): Promise<McpProbeTarge
       continue;
     }
     const entry: McpServerEntry = { type: "stdio", command: parsed.data.command, args: parsed.data.args };
+    // Any scope: init never writes an env block, and the host hands it to
+    // the server — a probe without it would vouch for a process the host
+    // starts differently (review round 2, N2; doctor-host-env.ts names it).
+    if (mcpEntryEnvKeys(raw).length > 0) {
+      return {
+        kind: "skip",
+        why: "its entry carries an env block, which crosscheck never writes, and doctor runs no server a file configures",
+      };
+    }
     if (scope.isRepo && !(await isEntryCrosscheckWrote(entry))) {
       return {
         kind: "skip",
@@ -3697,8 +3707,12 @@ export const runDoctor = async (
       : check("PASS", "repo identity", identity.repoId);
 
   const bunfigCheck = await checkBunfig(env, cwd, identity?.root ?? null);
-  // What the repo tries to hand bun; empty unless something is there.
-  const repoRuntime = await repoRuntimeChecks(cwd, identity?.root ?? null);
+  // What the repo tries to hand bun, and what a host hands crosscheck as
+  // environment; each empty unless something is there.
+  const repoRuntime = [
+    ...(await repoRuntimeChecks(cwd, identity?.root ?? null)),
+    ...(await hostEnvChecks(identity?.root ?? null, env)),
+  ];
   const config = await loadConfig({ env, repoRoot: identity?.root });
   // "Connected" in the committed sense (DESIGN.md §2.1): the repo root
   // carries .crosscheck.json. Only when the cwd is NOT that does the

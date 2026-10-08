@@ -70,6 +70,65 @@ export const selfSpawnCmd = (entry: string, args: readonly string[] = []): reado
 };
 
 /**
+ * ENVIRONMENT THAT CONFIGURES THE RUNTIME ITSELF (review round 2, N2).
+ *
+ * The flags keep a repo's FILES out; a host can still hand crosscheck an
+ * environment. A committed `.mcp.json` server entry's `env` block is passed to
+ * the server by Claude Code and Cursor, and a developer's direnv or mise can
+ * export a repo's values. Bun reads these at startup:
+ * - `BUN_OPTIONS` (`--preload ./x.ts` ran a repo preload under the flags —
+ *   measured);
+ * - `BUN_CONFIG_*` (`BUN_CONFIG_VERBOSE_FETCH=curl` printed every request
+ *   header of a fetch that does not opt out, a bearer included, to stderr —
+ *   measured; deleting it from `process.env` afterwards changed nothing.
+ *   crosscheck's hub client opts out on every request, http/client.ts);
+ * - `BUN_INSPECT*` (an inspector a local client can drive).
+ * `NODE_OPTIONS` is ignored by bun but read by any node a crosscheck process
+ * starts (the npm shim, the summarizer's model CLI).
+ */
+const BUN_STARTUP_KEY = /^(BUN_OPTIONS|BUN_CONFIG_[A-Z0-9_]+|BUN_INSPECT[A-Z0-9_]*)$/;
+const NODE_STARTUP_KEY = /^NODE_OPTIONS$/;
+
+export const isRuntimeInjectionKey = (name: string): boolean =>
+  BUN_STARTUP_KEY.test(name) || NODE_STARTUP_KEY.test(name);
+
+/** `env` without the runtime-configuring keys, and without unset values: what a child is given. */
+export const withoutRuntimeInjection = (env: Readonly<Record<string, string | undefined>>): Record<string, string> =>
+  Object.fromEntries(
+    Object.entries(env).flatMap(([name, value]) =>
+      value === undefined || isRuntimeInjectionKey(name) ? [] : [[name, value]],
+    ),
+  );
+
+/**
+ * RUN ONCE, BEFORE ANYTHING ELSE LOADS, IN EVERY CROSSCHECK ENTRY.
+ *
+ * A bun variable is read before the first line of ours, so stripping it here
+ * cannot undo it for THIS process: when one is present, the entry is started
+ * again — isolated, with the variables removed, the same stdio — and this
+ * process exits with its code. Whatever a `BUN_OPTIONS` preload did in the
+ * first process has happened (it ran as the developer, before crosscheck read
+ * any config); the process that loads the key never has these variables.
+ * `NODE_OPTIONS` alone costs no restart, since bun ignores it: it is removed
+ * from this process's environment, so no child inherits it.
+ */
+export const ensureCleanRuntime = (): void => {
+  if (!Object.keys(process.env).some((name) => BUN_STARTUP_KEY.test(name))) {
+    delete process.env["NODE_OPTIONS"];
+    return;
+  }
+  const [, entry = "", ...args] = process.argv;
+  const child = Bun.spawnSync({
+    cmd: [...selfSpawnCmd(entry, args)],
+    env: withoutRuntimeInjection(process.env),
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  process.exit(child.exitCode ?? 1);
+};
+
+/**
  * The one start that is deliberately NOT isolated: `crosscheck ci-report`
  * re-runs the repo's own failing tests in CI, and those must see the repo's
  * bunfig (its preload sets the tests up) exactly as the primary run did. It

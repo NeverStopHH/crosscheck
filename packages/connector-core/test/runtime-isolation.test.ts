@@ -7,15 +7,21 @@
  * writes, and doctor's verdict on a hook command written before the flags.
  */
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { checkLauncherCommand } from "../src/config/launcher-check.ts";
 import { resolveCommandPrefix, resolveMcpLauncher } from "../src/config/launcher.ts";
 import {
   ISOLATED_BUNFIG_PATH,
   RUNTIME_ISOLATION_FLAGS,
+  isRuntimeInjectionKey,
   selfLaunch,
   selfSpawnCmd,
+  withoutRuntimeInjection,
 } from "../src/config/runtime-isolation.ts";
+import { summarizerWorkerEnv } from "../src/model/worker-env.ts";
 
 const ENTRY = new URL("../../cli/src/bin/crosscheck.ts", import.meta.url).pathname;
 const KEYWORDS = ["hook", "statusline", "mcp"];
@@ -118,6 +124,119 @@ describe("the one place that names the running bun", () => {
     // Assert — there is no bare runtime or entry field a caller could reassemble
     expect(launch).toEqual({ command: process.execPath, args: [...RUNTIME_ISOLATION_FLAGS, ENTRY] });
     expect(Object.keys(launch).sort()).toEqual(["args", "command"]);
+  });
+});
+
+describe("environment that configures the runtime (review round 2, N2)", () => {
+  const INJECTION = ["BUN_OPTIONS", "BUN_CONFIG_VERBOSE_FETCH", "BUN_CONFIG_REGISTRY", "BUN_INSPECT", "BUN_INSPECT_CONNECT_TO", "NODE_OPTIONS"];
+  const ORDINARY = ["PATH", "HOME", "BUN_INSTALL", "CROSSCHECK_HOME", "NODE_EXTRA_CA_CERTS", "HTTPS_PROXY", "XBUN_OPTIONS"];
+
+  test("is bun's startup variables and NODE_OPTIONS, nothing else", () => {
+    // Act + Assert
+    expect(INJECTION.filter(isRuntimeInjectionKey)).toEqual(INJECTION);
+    expect(ORDINARY.filter(isRuntimeInjectionKey)).toEqual([]);
+  });
+
+  test("is left out of what a child or a worker is given", () => {
+    // Arrange
+    const env = { PATH: "/bin", BUN_OPTIONS: "--preload ./x.ts", BUN_CONFIG_VERBOSE_FETCH: "curl", NODE_OPTIONS: "--require ./y.js", UNSET: undefined };
+
+    // Act
+    const child = withoutRuntimeInjection(env);
+    const worker = summarizerWorkerEnv(env, "/tmp/home");
+
+    // Assert
+    expect(child).toEqual({ PATH: "/bin" });
+    expect(Object.keys(worker).filter(isRuntimeInjectionKey)).toEqual([]);
+    expect(worker["PATH"]).toBe("/bin");
+  });
+
+  test("is cleared first in every entry: the CLI and every worker import clean-runtime.ts before anything", async () => {
+    // Arrange
+    const entries: string[] = ["cli/src/bin/crosscheck.ts"];
+    for await (const file of new Bun.Glob("*/src/**/*worker-entry.ts").scan({ cwd: PACKAGES_DIR })) {
+      entries.push(file);
+    }
+
+    // Act
+    const firstImports = await Promise.all(
+      entries.map(async (file) => {
+        const text = await Bun.file(`${PACKAGES_DIR}${file}`).text();
+        return { file, first: /^import [^\n]*;$/m.exec(text)?.[0] ?? null };
+      }),
+    );
+
+    // Assert — all ten workers and the CLI
+    expect(entries.length).toBe(11);
+    for (const entry of firstImports) {
+      expect(entry).toEqual({ file: entry.file, first: 'import "@crosscheck/connector-core/config/clean-runtime.ts";' });
+    }
+  });
+
+  /** An entry whose first import is clean-runtime.ts, reporting what it ended up with. */
+  const runEntry = async (env: Record<string, string>): Promise<{ readonly exitCode: number; readonly seen: Record<string, unknown> }> => {
+    const dir = await mkdtemp(join(tmpdir(), "cx-clean-runtime-"));
+    try {
+      const entry = join(dir, "entry.ts");
+      await writeFile(
+        entry,
+        `import ${JSON.stringify(new URL("../src/config/clean-runtime.ts", import.meta.url).pathname)};\n` +
+          "const stdin = await Bun.stdin.text();\n" +
+          "console.log(JSON.stringify({ execArgv: process.execArgv, args: process.argv.slice(2), stdin, " +
+          "bunConfig: process.env.BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD ?? null, nodeOptions: process.env.NODE_OPTIONS ?? null }));\n" +
+          "process.exit(3);\n",
+        "utf8",
+      );
+      const child = Bun.spawn({
+        cmd: [process.execPath, entry, "first", "second"],
+        env: { PATH: process.env["PATH"] ?? "/usr/bin:/bin", HOME: dir, ...env },
+        stdin: new TextEncoder().encode("the payload"),
+        stdout: "pipe",
+        stderr: "ignore",
+      });
+      const stdout = await new Response(child.stdout).text();
+      return { exitCode: await child.exited, seen: JSON.parse(stdout.trim()) as Record<string, unknown> };
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  };
+
+  test("a bun startup variable restarts the entry once: isolated, without it, same args, stdin and exit code", async () => {
+    // Act
+    const run = await runEntry({ BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD: "1" });
+
+    // Assert
+    expect(run.exitCode).toBe(3);
+    expect(run.seen).toEqual({
+      execArgv: [...RUNTIME_ISOLATION_FLAGS],
+      args: ["first", "second"],
+      stdin: "the payload",
+      bunConfig: null,
+      nodeOptions: null,
+    });
+  });
+
+  test("NODE_OPTIONS alone costs no restart: it is dropped for the children", async () => {
+    // Act
+    const run = await runEntry({ NODE_OPTIONS: "--max-old-space-size=64" });
+
+    // Assert — started plain, so no restart means no flags
+    expect(run.exitCode).toBe(3);
+    expect(run.seen).toEqual({ execArgv: [], args: ["first", "second"], stdin: "the payload", bunConfig: null, nodeOptions: null });
+  });
+
+  test("is stripped by the npm shim with the same set", async () => {
+    // Arrange — the shim cannot import TypeScript, so it carries its own copy
+    const shim = await Bun.file(new URL("../../../packaging/bin/crosscheck.cjs", import.meta.url).pathname).text();
+    const literal = /const RUNTIME_INJECTION_KEY = \/(.+)\/;/.exec(shim)?.[1] ?? "";
+
+    // Act
+    const shimKey = new RegExp(literal);
+
+    // Assert
+    expect(literal.length).toBeGreaterThan(0);
+    expect([...INJECTION, ...ORDINARY].filter((name) => shimKey.test(name))).toEqual(INJECTION);
+    expect(shim).toContain('{ stdio: "inherit", env: withoutRuntimeInjection(process.env) }');
   });
 });
 

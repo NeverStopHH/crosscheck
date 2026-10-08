@@ -26,7 +26,8 @@
  * in the process holding the api key) and its .env files (which steer the hub
  * url, the key, a proxy). Path 2 therefore starts bun with `--no-env-file`
  * and `--config=` naming crosscheck's own empty bunfig inside this package —
- * the same relative layout in a checkout, a global install and an npx cache,
+ * the same relative layout in a global install and an npx cache (a checkout
+ * has no packages/ beside packaging/bin, so this shim refuses to start there),
  * which is why it is resolved from __dirname and checked before the spawn: a
  * missing file must fail loudly, never fall back to reading the repo's.
  * Path 1 cannot be isolated from in here: the bun running this file has
@@ -59,6 +60,28 @@ const ISOLATED_BUNFIG = path.join(
 
 /* BSD sysexits EX_SOFTWARE: an internal failure that is not the child's. */
 const EXIT_INTERNAL = 70;
+
+/*
+ * ENVIRONMENT THAT CONFIGURES A RUNTIME (connector-core config/runtime-isolation.ts
+ * `isRuntimeInjectionKey`, the same set): bun reads BUN_OPTIONS (a preload),
+ * BUN_CONFIG_* (BUN_CONFIG_VERBOSE_FETCH prints the bearer) and BUN_INSPECT*
+ * before the first line of crosscheck, and a host can supply them — a committed
+ * .mcp.json entry's `env` block reaches this process. Bun is started without
+ * them. NODE_OPTIONS goes too, but for THIS node process it has already acted
+ * before this line ran; nothing of crosscheck's is loaded here, and nothing
+ * here reads a config or a key.
+ */
+const RUNTIME_INJECTION_KEY = /^(BUN_OPTIONS|BUN_CONFIG_[A-Z0-9_]+|BUN_INSPECT[A-Z0-9_]*|NODE_OPTIONS)$/;
+
+const withoutRuntimeInjection = function (env) {
+  const kept = {};
+  for (const name of Object.keys(env)) {
+    if (!RUNTIME_INJECTION_KEY.test(name) && env[name] !== undefined) {
+      kept[name] = env[name];
+    }
+  }
+  return kept;
+};
 
 if (process.versions.bun !== undefined) {
   import(ENTRY).catch(function (error) {
@@ -116,7 +139,7 @@ if (process.versions.bun !== undefined) {
     const current = spawn(
       CANDIDATES[index],
       ["--no-env-file", "--config=" + ISOLATED_BUNFIG, ENTRY].concat(process.argv.slice(2)),
-      { stdio: "inherit" },
+      { stdio: "inherit", env: withoutRuntimeInjection(process.env) },
     );
     child = current;
     let retried = false;

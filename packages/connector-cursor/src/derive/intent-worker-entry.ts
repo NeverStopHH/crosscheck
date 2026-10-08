@@ -10,6 +10,7 @@
  * that reached across into another package's tree would break the moment that
  * package moved — the Stop hook's rule, new host.
  */
+import "@crosscheck/connector-core/config/clean-runtime.ts";
 import { runIntentWorker } from "@crosscheck/connector-core/derive/intent/worker.ts";
 
 process.exit(await runIntentWorker(process.argv.slice(2), process.env));

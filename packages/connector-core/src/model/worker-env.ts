@@ -29,6 +29,7 @@ import {
   summarizerCwdPath,
 } from "../config/paths.ts";
 import type { Env } from "../config/paths.ts";
+import { isRuntimeInjectionKey } from "../config/runtime-isolation.ts";
 
 /**
  * The neutral directory the nested claude runs FROM (core paths.ts
@@ -97,7 +98,9 @@ export const summarizerWorkerEnv = (
 ): Record<string, string> => ({
   ...Object.fromEntries(
     Object.entries(env).flatMap(([name, value]) =>
-      value === undefined || PARENT_SESSION_MARKER_PATTERN.test(name)
+      // Nor the variables that configure the runtime itself
+      // (config/runtime-isolation.ts): a worker is a crosscheck process too.
+      value === undefined || PARENT_SESSION_MARKER_PATTERN.test(name) || isRuntimeInjectionKey(name)
         ? []
         : [[name, value]],
     ),
