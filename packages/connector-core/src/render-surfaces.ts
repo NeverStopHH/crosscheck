@@ -521,6 +521,8 @@ const tripwireSessionWith = (payload: string): TripwireSession => ({
   workContextId: "wc_cc_11111111-2222-4333-8444-555555555555",
   workContextTitle: payload,
   workContextIntent: intentWith(payload),
+  // The ask's qualifier sits right after the payload-carrying branch and file.
+  largeChangeFiles: 180,
 });
 
 /**

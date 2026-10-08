@@ -294,6 +294,23 @@ describe("the hint surface is hardened like the briefing and the MCP tools", () 
 });
 
 describe("tripwire reason (ask-mode, never deny)", () => {
+  test("a large change through the file is qualified on the overlap line, never left out", () => {
+    // Arrange: the hub ranks a large change after the focused rows and says
+    // how large it is (server services/hints.ts listTargetSessions).
+    const large = tripwireSession({ largeChangeFiles: 300 });
+
+    // Act
+    const reason = renderTripwireReason(large, "src/auth/refresh.ts", NOW);
+    const focused = renderTripwireReason(tripwireSession({ largeChangeFiles: null }), "src/auth/refresh.ts", NOW);
+
+    // Assert: the size beside what it qualifies; the focused row unchanged.
+    expect(reason).toContain(
+      "whose work context targeted src/auth/refresh.ts, part of a large change touching 300 files.",
+    );
+    expect(focused).toContain("whose work context targeted src/auth/refresh.ts.");
+    expect(focused).not.toContain("large change");
+  });
+
   test("states the overlap as facts: who, branch, heartbeat age, context", () => {
     const reason = renderTripwireReason(
       tripwireSession(),

@@ -67,6 +67,7 @@ import { claimValidityWord } from "../briefing/render.ts";
 import { quoted, quotedBody, safeId } from "../mcp/render.ts";
 import type { CommitDrift } from "../git/commit-drift.ts";
 import { formatLandedNoticeEntry } from "../briefing/landed-notices.ts";
+import { largeChangeClause, largeChangeOf } from "../briefing/ghost.ts";
 import type { RenderedLandedNotice } from "../briefing/landed-notices.ts";
 import type {
   AnsweredQuestion,
@@ -531,10 +532,15 @@ const liveTripwireLines = (
   coverage: CoverageRecord,
 ): readonly string[] => {
   const who = authorLabel(session.developerName);
+  // A large change is named as one, beside the file it qualifies (the ghost
+  // line's own clause, briefing/ghost.ts largeChangeClause): a rename through
+  // this file is still in the reader's way, just weaker evidence of a plan.
+  const size = largeChangeOf(session.largeChangeFiles);
   const overlapLine =
     `crosscheck: ${who} has an active session on branch ${bare(session.branch)} ` +
     `(status ${bare(session.status)}, heartbeat ${ageLabel(session.lastHeartbeatAt, now)}) ` +
-    `whose work context targeted ${bare(repoRelativeFile, MAX_WORK_CONTEXT_TITLE_CHARS)}.`;
+    `whose work context targeted ${bare(repoRelativeFile, MAX_WORK_CONTEXT_TITLE_CHARS)}` +
+    `${size === null ? "" : `, ${largeChangeClause(size)}`}.`;
   const contextLine = `Their work context ${quoted(session.workContextTitle, MAX_WORK_CONTEXT_TITLE_CHARS)} is readable with get_diagnosis ${safeId(session.workContextId)}.`;
   const note = coverageNote(coverage, now);
   return [

@@ -23770,8 +23770,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a size the connector cannot read fails the whole ghost row",
     file: `${CORE}/src/http/hub.ts`,
-    from: "  largeChangeFiles: z.number().int().min(0).nullable().optional().catch(undefined),",
-    to: "  largeChangeFiles: z.number().int().min(0).nullable().optional(),",
+    from: "  largeChangeFiles: z.number().int().min(0).nullable().optional().catch(undefined),\n});\n\nexport type GhostCheckEntry",
+    to: "  largeChangeFiles: z.number().int().min(0).nullable().optional(),\n});\n\nexport type GhostCheckEntry",
     test: `${CORE}/test/ghost-render.test.ts`,
     because: "a newer hub's size field hides the collision it qualifies",
   },
@@ -23913,6 +23913,56 @@ export const MUTATIONS: readonly Mutation[
     to: "",
     test: `${CORE}/test/briefing-omissions.test.ts`,
     because: "a hub that never answers grows a file in the home on every session start",
+  },
+  // The tripwire takes the large-change rule too (release gate, 2026-10-08):
+  // the ask names the hub's first row, so the order is the decision.
+  {
+    label: "the tripwire ranks by heartbeat only",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  Number(left.largeChangeFiles !== null) - Number(right.largeChangeFiles !== null) ||\n  Date.parse(right.lastHeartbeatAt)",
+    to: "  Date.parse(right.lastHeartbeatAt)",
+    test: `${SERVER}/test/tripwire-large-change.test.ts`,
+    because: "a fresher 300-file sweep through the file is the one teammate the ask names, ahead of the plan in it",
+  },
+  {
+    label: "the tripwire forgets which session is freshest",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  Date.parse(right.lastHeartbeatAt) - Date.parse(left.lastHeartbeatAt) ||\n",
+    to: "",
+    test: `${SERVER}/test/tripwire-large-change.test.ts`,
+    because: "the ask names a teammate who stopped a minute ago over the one editing the file now",
+  },
+  {
+    label: "the tripwire ranks only the five freshest candidates",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    .limit(TRIPWIRE_MAX_CANDIDATES);",
+    to: "    .limit(TRIPWIRE_MAX_SESSIONS);",
+    test: `${SERVER}/test/tripwire-large-change.test.ts`,
+    because: "five fresher renames through the file push the focused plan out of the answer before it is ranked",
+  },
+  {
+    label: "the tripwire row forgets how large the change is",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "      largeChangeFiles: large.get(row.workContextId) ?? null,",
+    to: "      largeChangeFiles: null,",
+    test: `${SERVER}/test/tripwire-large-change.test.ts`,
+    because: "the ask shows a rename's touch of the file as if it were a focused plan's",
+  },
+  {
+    label: "the tripwire counts a long-lived session's old touches as a large change",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    new Date(deps.now().getTime() - GHOST_ACTIVE_WINDOW_DAYS * MS_PER_DAY),",
+    to: "    new Date(0),",
+    test: `${SERVER}/test/tripwire-large-change.test.ts`,
+    because: "the pilot owner's long-lived worktree is ranked and worded as a rename on every ask",
+  },
+  {
+    label: "the tripwire ask drops the large-change qualifier",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "    `${size === null ? \"\" : `, ${largeChangeClause(size)}`}.`;",
+    to: "    `.`;",
+    test: `${CORE}/test/hint-render.test.ts`,
+    because: "the hub says the teammate in the file is a rename and the ask never tells the agent",
   },
   // A base already on the default branch, however it got there.
   {
@@ -24410,7 +24460,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 4
  * PRINTS: packages/connector-core/test/hint-intent-fallback.test.ts 4
- * PRINTS: packages/connector-core/test/hint-render.test.ts 4
+ * PRINTS: packages/connector-core/test/hint-render.test.ts 5
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
  * PRINTS: packages/connector-core/test/hint-substance-flow.test.ts 2
  * PRINTS: packages/connector-core/test/hint-substance-render.test.ts 1
@@ -24614,6 +24664,7 @@ interface Outcome {
  * PRINTS: packages/server/test/suspect.test.ts 9
  * PRINTS: packages/server/test/target-last-seen.test.ts 1
  * PRINTS: packages/server/test/team-settings.test.ts 9
+ * PRINTS: packages/server/test/tripwire-large-change.test.ts 5
  * PRINTS: packages/server/test/ui-feed.test.ts 3
  * PRINTS: packages/server/test/ui-passkeys.test.ts 9
  * PRINTS: packages/server/test/ui-work-context.test.ts 2
