@@ -68,6 +68,8 @@ export const prepareMcp = async (env: Env, cwd: string): Promise<McpSetup> => {
       repoId: identity.repoId,
       foreignHub: resolved.foreignHub,
       surface: "mcp",
+      // One MCP server process serves one agent session: count it once.
+      sessionKey: `mcp-${String(process.pid)}`,
       now: new Date(),
     });
     return { ok: false, message: foreignHubAgentLine(resolved.foreignHub) };

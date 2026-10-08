@@ -229,6 +229,8 @@ export type HookPreparation =
       readonly kind: "foreign_hub";
       readonly home: string;
       readonly repoId: string;
+      /** The host session, so a refused session is counted once, not per hook. */
+      readonly sessionId: string;
       readonly foreignHub: ForeignHub;
     }
   | { readonly kind: "silent" };
@@ -256,6 +258,7 @@ export const prepareHookFor = async (
       kind: "foreign_hub",
       home: resolved.home,
       repoId: resolved.identity.repoId,
+      sessionId: payload.session_id,
       foreignHub: resolved.foreignHub,
     };
   }
@@ -312,6 +315,7 @@ const refuseForeignHub = async (
     repoId: prepared.repoId,
     foreignHub: prepared.foreignHub,
     surface: name,
+    sessionKey: prepared.sessionId,
     now: new Date(),
   });
   const output = BRIEFING_OUTPUTS[name];

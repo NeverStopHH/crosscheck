@@ -499,6 +499,7 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
         repoId: identity.repoId,
         foreignHub: resolved.foreignHub,
         surface: "acp",
+        sessionKey: acpHostSessionKey(agentName ?? "", acpSessionId),
         now: now(),
       });
       sessions.set(acpSessionId, disabledSession(acpSessionId, cwd));

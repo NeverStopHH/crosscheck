@@ -344,6 +344,7 @@ export const prepareCursorHook = async (
       repoId: resolved.identity.repoId,
       foreignHub: resolved.foreignHub,
       surface: event,
+      sessionKey: cursorHostSessionKey(conversationId),
       now: new Date(),
     });
     return null;

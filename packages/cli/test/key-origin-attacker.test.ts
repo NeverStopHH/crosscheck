@@ -191,24 +191,12 @@ describe("a bait repo naming an attacker hub", () => {
     for (const text of [sessionStart, statusline, mcp, ...Object.values(commands)]) {
       expect(text).not.toContain(STORED_KEY);
     }
-    // Counted, never silent: one line per refused hook event and tool call.
+    // Counted, never silent: one line per refused SESSION — the Claude
+    // session, the Cursor conversation, the MCP server — whatever number of
+    // its hooks and calls were refused.
     const ledger = await readFile(join(w.home, "state", "foreign-hub.jsonl"), "utf8");
     const surfaces = ledger.trim().split("\n").map((line) => (JSON.parse(line) as { surface: string }).surface);
-    expect(new Set(surfaces)).toEqual(
-      new Set([
-        "session-start",
-        "user-prompt-submit",
-        "pre-tool-use",
-        "post-tool-use",
-        "post-tool-use-failure",
-        "stop",
-        "session-end",
-        "sessionStart",
-        "beforeSubmitPrompt",
-        "afterFileEdit",
-        "mcp",
-      ]),
-    );
+    expect(surfaces.toSorted()).toEqual(["mcp", "session-start", "sessionStart"]);
     expect(ledger).not.toContain(STORED_KEY);
   });
 

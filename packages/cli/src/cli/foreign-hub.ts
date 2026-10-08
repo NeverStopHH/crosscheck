@@ -35,7 +35,7 @@ const countHere = (ledger: ForeignHubLedger, repoId: string, foreign: ForeignHub
   }
   return ledger.isFull
     ? "not counted — the local refusal ledger is full, so recent refusals were not recorded"
-    : "no hook has been refused here yet";
+    : "no session has been refused here yet";
 };
 
 /** One sentence: what was refused, the fix, and what it cost here. */

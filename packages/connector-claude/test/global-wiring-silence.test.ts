@@ -218,16 +218,17 @@ describe("global wiring in an unconnected repo (DESIGN.md §2.1)", () => {
     const after = JSON.parse(await readFile(join(home, "config.json"), "utf8")) as Record<string, unknown>;
     expect(after).toEqual({ ...before, keyOrigin: real.url });
     // Not silent: SessionStart says so in the session — naming neither hub
-    // the repo chose nor the key — and both refusals are counted for doctor.
+    // the repo chose nor the key — and the refused SESSION is counted for
+    // doctor once, however many of its hooks were refused.
     expect(startOut).toContain("crosscheck is not reporting from here");
     expect(startOut).not.toContain(attacker.url);
     expect(startOut).not.toContain("stored-key");
     const ledger = await readFile(join(home, "state", "foreign-hub.jsonl"), "utf8");
     expect(ledger.trim().split("\n").map((line) => (JSON.parse(line) as { surface: string }).surface)).toEqual([
       "session-start",
-      "post-tool-use",
     ]);
     expect(ledger).not.toContain("stored-key");
+    expect(ledger).not.toContain("planted-uuid");
   });
 
   test("CROSSCHECK_HUB_URL naming another hub than the login's is refused, not obeyed", async () => {
