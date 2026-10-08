@@ -36,8 +36,16 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     name: "claude-subagent-collision-relay",
     delivery: "unsolicited",
     module: "src/hooks/collision-relay.ts",
-    note: "returns renderSubagentCollisionRelay output verbatim as the main thread's copy (core's collision-subagent-relay surface) and renderCollisionNotices output verbatim as the person's systemMessage (core's collision-notice surface) — one render for the drained groups and any ghost groups the same prompt tells; the groups it renders are the session state's own records of rows the tripwire already projected, held to presence by core relayedCollisions (named, or unnamed)",
+    note: "returns renderSubagentCollisionRelay output verbatim as the main thread's copy (core's collision-subagent-relay surface) and renderCollisionNotices output verbatim as the person's systemMessage (core's collision-notice surface) — one render for the drained groups and any ghost groups the same prompt tells; the groups it renders are the session state's own records of rows the tripwire already projected, held to presence by core relayedCollisions (named, named in the past tense with no location, or unnamed)",
     corpusCoveredBy: ["test/collision-notice-hook.test.ts"],
+  },
+  {
+    // Round 3, F-M2: the sync Stop hook's re-check of resting files.
+    kind: "composite",
+    name: "claude-turn-end-recheck",
+    delivery: "unsolicited",
+    module: "src/hooks/turn-end.ts",
+    note: "returns renderCollisionNotices output verbatim as the person's systemMessage (core's collision-notice surface) for the groups a resting file's fresh tripwire answer names and the session has not told the person of — groups core tripwireCollision builds from rows the hub already projected, exactly as the PreToolUse tripwire builds them; it composes no text of its own",
   },
   {
     kind: "composite",
