@@ -168,7 +168,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 3462
+    # PRINTS: 3464
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -563,7 +563,7 @@ jobs:
     # PRINTS: packages/server/src/services/hint-deliveries.ts 6
     # PRINTS: packages/server/src/services/hint-outcome-view.ts 16
     # PRINTS: packages/server/src/services/hint-outcomes.ts 23
-    # PRINTS: packages/server/src/services/hints.ts 74
+    # PRINTS: packages/server/src/services/hints.ts 75
     # PRINTS: packages/server/src/services/hub-install.ts 2
     # PRINTS: packages/server/src/services/intent-ledger.ts 12
     # PRINTS: packages/server/src/services/landed-context.ts 22
@@ -594,7 +594,7 @@ jobs:
     # PRINTS: packages/server/src/services/retention-registry.ts 11
     # PRINTS: packages/server/src/services/retention.ts 24
     # PRINTS: packages/server/src/services/search-tokens.ts 4
-    # PRINTS: packages/server/src/services/search.ts 26
+    # PRINTS: packages/server/src/services/search.ts 27
     # PRINTS: packages/server/src/services/session-events.ts 9
     # PRINTS: packages/server/src/services/session-order.ts 9
     # PRINTS: packages/server/src/services/session-window.ts 1
@@ -761,7 +761,7 @@ jobs:
     # PRINTS: hint-outcome.ts 1
     # PRINTS: hint-outcomes.ts 29
     # PRINTS: hint.ts 43
-    # PRINTS: hints.ts 79
+    # PRINTS: hints.ts 80
     # PRINTS: hook-budget.ts 2
     # PRINTS: hub-install.ts 2
     # PRINTS: hub-status.ts 3
@@ -900,7 +900,7 @@ jobs:
     # PRINTS: schemas.ts 1
     # PRINTS: search-related-work.ts 1
     # PRINTS: search-tokens.ts 4
-    # PRINTS: search.ts 27
+    # PRINTS: search.ts 28
     # PRINTS: secret-scan.ts 1
     # PRINTS: select.ts 44
     # PRINTS: seq-cost.ts 8

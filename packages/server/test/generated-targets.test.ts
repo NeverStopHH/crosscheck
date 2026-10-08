@@ -427,3 +427,31 @@ describe("tripwire: a teammate on a generated file is nobody to stop for", () =>
     expect(await tripwireSessions(fx.harness, fx.me, "apps/practice/package-lock.json")).toEqual([]);
   });
 });
+
+/** A task prompt that names one file and shares no word with a `Work <id>` title. */
+const promptNaming = (file: string): string => `why does ${file} throw a 500 after the key rotation`;
+
+const hintedContexts = async (fx: Setup, file: string): Promise<readonly string[]> =>
+  (
+    await get<{ candidates: readonly { workContext: { id: string } }[] }>(
+      fx.harness,
+      fx.me.apiKey,
+      `/api/hints/candidates?repo=${encodeURIComponent(REPO)}&query=${encodeURIComponent(promptNaming(file))}`,
+    )
+  ).candidates.map((candidate) => candidate.workContext.id);
+
+describe("prompt hints: a generated file the prompt names is no fact about a teammate's work", () => {
+  test("CONTROL: their ordinary file, named, is a hint on the name alone", async () => {
+    const fx = await setup();
+    await seed(fx.harness, fx.them, contextRecords(THEIR_CONTEXT, THEIR_SESSION, files(PLAN)));
+
+    expect(await hintedContexts(fx, PLAN[0] as string)).toEqual([THEIR_CONTEXT]);
+  });
+
+  test.each(GENERATED.map((target) => [target.value]))("their %s, named, is no hint", async (value) => {
+    const fx = await setup();
+    await seed(fx.harness, fx.them, contextRecords(THEIR_CONTEXT, THEIR_SESSION, GENERATED));
+
+    expect(await hintedContexts(fx, value)).toEqual([]);
+  });
+});

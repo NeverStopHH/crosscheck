@@ -28925,6 +28925,23 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/tripwire-rows.test.ts`,
     because: "which teammate the ask names and the order the person reads them in depend on insertion order, and the bound can drop the freshest",
   },
+  // ── hint-substance merge: hint scoring reads ordinary targets only ────
+  {
+    label: "a prompt hint finds a teammate's tree by a generated file the prompt named",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "      excludeGeneratedTargets: true,\n",
+    to: "",
+    test: `${SERVER}/test/generated-targets.test.ts`,
+    because: "a prompt naming a lockfile or a generated client clears the floor on the name alone and points at whoever regenerated it",
+  },
+  {
+    label: "the search's exact tier ranks generated targets for a pushed caller",
+    file: `${SERVER}/src/services/search.ts`,
+    from: "or(...tokenConditions), excludeGenerated ? ordinaryTargetCondition() : undefined))",
+    to: "or(...tokenConditions)))",
+    test: `${SERVER}/test/generated-targets.test.ts`,
+    because: "the hints service asks for ordinary targets and the exact tier ranks its tree on the generated file anyway",
+  },
   // ── Review of feat/collision-visible, L3: told only when it can be said ──
   {
     label: "the tripwire marks a group told with no time left to say it",
@@ -34226,7 +34243,7 @@ interface Outcome {
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/fence-waivers.test.ts 1
  * PRINTS: packages/server/test/forwarded-trust.test.ts 11
- * PRINTS: packages/server/test/generated-targets.test.ts 12
+ * PRINTS: packages/server/test/generated-targets.test.ts 14
  * PRINTS: packages/server/test/ghost-overlap.test.ts 13
  * PRINTS: packages/server/test/hint-candidate-floor.test.ts 11
  * PRINTS: packages/server/test/hint-closed-stems.test.ts 2

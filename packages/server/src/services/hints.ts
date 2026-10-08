@@ -969,6 +969,9 @@ const matchCandidates = async (
       // A pushed surface: no tree is found by an unreviewed draft's words
       // (services/search.ts; review round 4, M3).
       excludeDerivedClaims: true,
+      // Nor by a generated file the prompt named: the exact tier clears the
+      // floor on the name alone (services/generated-targets.ts).
+      excludeGeneratedTargets: true,
       limit: SEARCH_POOL_LIMIT,
       viewerDeveloperId: callerDeveloperId,
       hidden,

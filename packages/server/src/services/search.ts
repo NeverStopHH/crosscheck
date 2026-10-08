@@ -46,6 +46,7 @@ import {
 } from "../db/schema.ts";
 import { DECLARED_PROVENANCE } from "./similarity-gate.ts";
 import { isAssertableCause, loadClaimValidities } from "./claim-validity.ts";
+import { ordinaryTargetCondition } from "./generated-targets.ts";
 import {
   activitySeenBy,
   locationHiddenFrom,
@@ -333,6 +334,16 @@ export interface SearchQuery {
    */
   readonly excludeDerivedClaims?: boolean | undefined;
   /**
+   * Rank the exact tier on ORDINARY targets only, inside its own WHERE
+   * (services/generated-targets.ts `ordinaryTargetCondition`): a pushed
+   * surface never finds a tree by a lockfile or a generated client the
+   * prompt named — the exact tier clears the hint floor on the name alone,
+   * and an exact tree is the strongest. Omitted on the search route: a
+   * teammate who searches for a generated file asked, and finds who touched
+   * it. services/hints.ts passes it on every hint search.
+   */
+  readonly excludeGeneratedTargets?: boolean | undefined;
+  /**
    * Who is reading. Required, never defaulted: an opted-out developer's
    * fallback title — their branch — is withheld from every viewer but them
    * (services/live-location.ts), and a search that did not know its reader
@@ -497,6 +508,7 @@ const listExactTier = async (
   db: Db,
   tokens: readonly string[],
   scope: SearchScope,
+  excludeGenerated: boolean,
 ): Promise<readonly TierRow[]> => {
   if (tokens.length === 0) {
     return [];
@@ -517,7 +529,7 @@ const listExactTier = async (
       eq(workContextTargets.workContextId, workContexts.id),
     )
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
-    .where(and(scopeCondition(scope), or(...tokenConditions)))
+    .where(and(scopeCondition(scope), or(...tokenConditions), excludeGenerated ? ordinaryTargetCondition() : undefined))
     .groupBy(workContexts.id, workContexts.createdAt, workContexts.updatedAt, agentSessions.developerId)
     .orderBy(sql`count(*) DESC`, activityDesc(scope))
     .limit(TIER_CANDIDATES);
@@ -984,7 +996,7 @@ export const searchWorkContexts = async (
   }
 
   const [exactRows, ftsRows, vector] = await Promise.all([
-    listExactTier(deps.db, pathTokens, scope),
+    listExactTier(deps.db, pathTokens, scope, input.excludeGeneratedTargets === true),
     // A caller that ranks its own tier (hints, rankFtsTier) owns its claim
     // filter too: it is handed the same exclusion through the scope it reads
     // (services/hints.ts).
