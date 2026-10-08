@@ -12,9 +12,13 @@
  * Now a note lives while its host session still has records or a debt on
  * disk, and never less than twice the age bound; and the expiry clock of a
  * released spool starts at its release, not at its last write.
+ *
+ * The dead host's silence is a clock too (L7): a successor's flush that wrote
+ * the hub's acknowledgement of the dead host's work context into the dead
+ * host's state revived it, and its backlog was held from every successor.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 
 import { createDb, createServer } from "@crosscheck/server";
 import type { Db } from "@crosscheck/server";
@@ -56,8 +60,25 @@ const HOOK_DRAIN_MS = 500;
 /** The probe's backlog (review H2): a laptop that coded offline for a while, then died. */
 const BACKLOG = 3000;
 const APPEND_CHUNK = 200;
-/** Enough hooks for the successor to drain the backlog, a few batches each. */
+/** A bound on the successor's drains after its SessionStarts: each sends up to MAX_FLUSH_BATCHES_PER_HOOK batches, so two or three empty the backlog. */
 const MAX_HOOKS = 200;
+/**
+ * A request and a drain no load cuts short. A hook-sized one (HOOK_DRAIN_MS,
+ * HTTP_TIMEOUT_MS) gives up on a batch a loaded machine's hub answers late,
+ * though the hub took it, and whatever came of that batch is then decided by
+ * the machine's speed: its re-send is answered `duplicate`, never an
+ * acknowledgement, and a drain made of such batches sends nothing at all. A
+ * probe whose assertion follows from an answered batch drains with this.
+ */
+const PATIENT_MS = 60_000;
+/** More than one batch: the rest goes only while the dead host still reads as abandoned. */
+const ACK_BACKLOG = 150;
+/**
+ * Booting the in-process hub (PGlite) outlasted bun's 5 s hook default on a
+ * loaded machine, and the mutation proof read the file as red unmutated; the
+ * boot is not what this file measures (claim-revalidation-pull.test.ts).
+ */
+const HUB_BOOT_TIMEOUT_MS = 60_000;
 
 let db: Db;
 let server: ReturnType<typeof Bun.serve>;
@@ -135,7 +156,7 @@ beforeAll(async () => {
   const body = (await response.json()) as { data: { developer: { id: string }; apiKey: string } };
   apiKey = body.data.apiKey;
   developerId = body.data.developer.id;
-});
+}, HUB_BOOT_TIMEOUT_MS);
 
 afterAll(async () => {
   server.stop(true);
@@ -256,7 +277,12 @@ describe("the expiry clock of a released spool (H2)", () => {
     }
     await diedAgo(fx, host, ABANDONED_MS);
 
-    // Act: D's SessionStart (drain, reap, reap of stale states), another, then its hooks until nothing is left
+    // Act: D's SessionStart (drain, reap, reap of stale states), another, then
+    // its later drains until nothing is left. The SessionStarts are hook-sized,
+    // the probe's own: whatever their drains manage, one drain sends at most
+    // MAX_FLUSH_BATCHES_PER_HOOK batches, so a backlog is still on disk when the
+    // first reap runs. The drains after them reap nothing and are patient: on a
+    // loaded machine a hook-sized drain sends nothing at all (PATIENT_MS).
     const successor = "acp-release--successor";
     const d = await register(fx, successor);
     const input = { sessionId: d.crosscheckSessionId, developerId };
@@ -267,12 +293,39 @@ describe("the expiry clock of a released spool (H2)", () => {
     };
     await sessionStart();
     await sessionStart();
+    const patient = { ...fx.hub, timeoutMs: PATIENT_MS };
     for (let hook = 0; hook < MAX_HOOKS && (await readSessionSpool(fx.home, fx.key, sessionSlug(host))).lines.length > 0; hook += 1) {
-      await flushSpool(fx.hub, input, HOOK_DRAIN_MS);
+      await flushSpool(patient, input, PATIENT_MS);
     }
 
     // Assert: every record delivered, none expired
     expect((await readDropDetail(fx.home, fx.key)).byReason["expired"] ?? 0).toBe(0);
     expect(await targetsOf(c.workContextId)).toBe(BACKLOG);
   }, 120_000);
+});
+
+describe("the silence of a dead host (L7)", () => {
+  test("a successor's flush the hub acknowledges the dead host's work context for writes nothing into the dead host's state, and drains its backlog", async () => {
+    // Arrange: a dead host session's work context and backlog, its state silent a week and an hour
+    const fx = await fixture("ack-elsewhere");
+    const host = "acp-release--acked-corpse";
+    const life = await register(fx, host);
+    await appendRecords(fx.home, fx.key, host, edits(life, "backlog", ACK_BACKLOG), new Date());
+    await diedAgo(fx, host, ABANDONED_MS);
+    const statePath = sessionStatePath(fx.home, host);
+    const silentSinceMs = (await stat(statePath)).mtimeMs;
+    const successor = await register(fx, "acp-release--ack-successor");
+    // Every batch is answered: the hub's acceptance of the dead host's work
+    // context always reaches the flush, whatever the machine's speed.
+    const patient = { ...fx.hub, timeoutMs: PATIENT_MS };
+
+    // Act: one drain, the dead host's work context at the head of its first batch
+    await flushSpool(patient, { sessionId: successor.crosscheckSessionId, developerId }, PATIENT_MS);
+
+    // Assert: the whole backlog went in that drain; the dead host's state was never written — its silence is its abandonment
+    expect(await targetsOf(life.workContextId)).toBe(ACK_BACKLOG);
+    const state = JSON.parse(await readFile(statePath, "utf8")) as { workContextAcked?: unknown };
+    expect(state.workContextAcked).toBeUndefined();
+    expect((await stat(statePath)).mtimeMs).toBe(silentSinceMs);
+  }, 2 * PATIENT_MS);
 });

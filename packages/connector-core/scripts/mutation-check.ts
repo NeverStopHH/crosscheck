@@ -19025,6 +19025,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review-2 round 8, L7: SessionEnd has no acknowledged status to compare the state's with, and sends none",
   },
+  // CAUGHT ONLY SOMETIMES, until its own test (CI Mutation proof, PR #75):
+  // release-clock.test.ts's backlog probe meets this write only when the
+  // successor's first SessionStart drain has its first batch answered inside
+  // HTTP_TIMEOUT_MS. On a loaded runner the flush gives up on a batch the hub
+  // took, session-reap deletes the dead host's state, the re-send is answered
+  // `duplicate` — and the mutated write never runs. "the silence of a dead host
+  // (L7)", in the same file, cuts no request short: the acknowledgement always
+  // reaches the flush while the dead host's state is there.
   {
     label: "a flush writes its acknowledgement into another conversation's state",
     file: `${CORE}/src/spool/work-context-ack.ts`,
