@@ -33,7 +33,8 @@ import { recordHookTimeout } from "@crosscheck/connector-core/state/loss-ledger.
 import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { briefingSkippedLine } from "@crosscheck/connector-core/briefing/omission.ts";
 import { recordBriefingOmission } from "@crosscheck/connector-core/state/briefing-omissions.ts";
-import { extractFilePaths, parseHookPayload } from "../capture/tool-events.ts";
+import { bookLandedProbeCut } from "@crosscheck/connector-core/state/landed-probe-cuts.ts";
+import { extractFilePaths, isEditTool, parseHookPayload } from "../capture/tool-events.ts";
 import type { HookPayload } from "../capture/tool-events.ts";
 import { sessionStartContext } from "./session-start-output.ts";
 
@@ -335,6 +336,38 @@ const skippedBriefing = async (
 };
 
 /**
+ * A PRE-EDIT HOOK THE BUDGET CUT TOOK ITS LANDED-CHANGE CHECK WITH IT
+ * (2026-10-08). Under load the steps before the probe — the state read, the
+ * tool window's lock, the edited file's root — can spend most of the race,
+ * and then the race abandons the handler before its probe comes back or
+ * before it books what came back: no stop, and, unbooked, no trace either.
+ * The edit tool's cut is booked here, after the race, with reason `budget`,
+ * through the once-per-call door the handler uses (state/landed-probe-cuts.ts
+ * bookLandedProbeCut), so a handler that booked just before the race
+ * resolved is not booked twice. Owned like a capture loss (`unresolvedOwner`);
+ * a tool that edits nothing had no check to lose. Fail open: the answer was
+ * already "" and stays it.
+ */
+const bookCutEditCheck = async (resolvedOwner: LossOwner | null, stdin: string, env: Env): Promise<void> => {
+  const payload = parseHookPayload(stdin);
+  if (payload === null || !isEditTool(payload.tool_name)) {
+    return;
+  }
+  const owner = resolvedOwner ?? (await unresolvedOwner(stdin, env));
+  if (owner === null) {
+    return;
+  }
+  await bookLandedProbeCut({
+    home: owner.home,
+    sessionId: payload.session_id,
+    toolUseId: payload.tool_use_id ?? null,
+    key: owner.key,
+    reason: "budget",
+    now: new Date(),
+  }).catch(() => undefined);
+};
+
+/**
  * The one place hooks are allowed to fail: everything is caught, nothing is
  * written to stderr, and the caller always exits 0 (spec §E). The budget covers
  * preparation too — resolving repo identity spawns several git processes, and a
@@ -400,6 +433,9 @@ export const runHookWith = async (
       if (owner !== null) {
         await recordHookTimeout(owner.home, name, owner.key, new Date());
       }
+    }
+    if (outcome.timedOut && name === "pre-tool-use") {
+      await bookCutEditCheck(resolved.value, stdin, env);
     }
     // AFTER the race, on purpose (trial finding M2, and the one budget risk
     // this row carries). Inside the raced promise this write would compete

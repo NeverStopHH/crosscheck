@@ -16,8 +16,12 @@ import {
 } from "../src/constants.ts";
 import {
   SessionStateSchema,
+  hasUntoldProbeCuts,
   withBriefingSolvedRefs,
+  withCarriedCapture,
   withKnownWorktreeRoot,
+  withLandedProbeCut,
+  withLandedProbeCutsTold,
   withProbedFingerprint,
 } from "../src/state/session-state.ts";
 import type { SessionState } from "../src/state/session-state.ts";
@@ -123,6 +127,40 @@ describe("the derive fire ring is read entry by entry (review round 3, MEDIUM-5)
 
     expect(parsed.success).toBe(true);
     expect(parsed.data?.deriveFires).toEqual([]);
+  });
+});
+
+describe("the session's cut landed-change checks (2026-10-08)", () => {
+  test("each cut counts, and the line is owed until it is told, once", () => {
+    // Arrange: a state an earlier connector wrote — no counter at all.
+    const before = SessionStateSchema.parse(baseState());
+
+    // Act
+    const twice = withLandedProbeCut(withLandedProbeCut(before));
+    const told = withLandedProbeCutsTold(twice);
+    const afterTold = withLandedProbeCut(told);
+
+    // Assert
+    expect(hasUntoldProbeCuts(before)).toBe(false);
+    expect(twice.landedProbeCuts).toBe(2);
+    expect(hasUntoldProbeCuts(twice)).toBe(true);
+    expect(hasUntoldProbeCuts(told)).toBe(false);
+    // Told is once per session: a later cut is counted, never told again.
+    expect(afterTold.landedProbeCuts).toBe(3);
+    expect(hasUntoldProbeCuts(afterTold)).toBe(false);
+  });
+
+  test("a re-register of the same binding keeps both the count and the told mark", () => {
+    // Arrange
+    const previous = withLandedProbeCutsTold(withLandedProbeCut(baseState()));
+    const refired = { ...baseState(), landedProbeCuts: 0, landedProbeCutsTold: false };
+
+    // Act
+    const carried = withCarriedCapture(refired, previous);
+
+    // Assert
+    expect(carried.landedProbeCuts).toBe(1);
+    expect(carried.landedProbeCutsTold).toBe(true);
   });
 });
 

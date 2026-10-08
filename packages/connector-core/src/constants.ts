@@ -853,17 +853,28 @@ export const MAX_LANDING_BRANCHES = 8;
  */
 export const WELL_KNOWN_LANDING_BRANCHES: readonly string[] = ["staging", "develop"];
 /**
- * The whole landed-change probe's deadline inside PreToolUse, and never more
- * than one hub call: the hook also clamps it to the configured hub timeout.
- * It runs beside the live tripwire's hub call, and the state-lock allowance
- * (TRIPWIRE lock retries) assumes the longest step before the marker claim
- * is ONE request — so a slow repo costs the landed warning, never the live
- * one and never the edit. Measured at 40–60 ms on a 10k-commit monorepo.
+ * The whole landed-change probe's deadline when a caller names none — ONE hub
+ * request, exactly. PreToolUse passes its own configured per-request timeout
+ * (hooks/pre-tool-use.ts), so the probe has the very window the live
+ * tripwire's hub call beside it already holds: it starts with that call and
+ * ends no later than it, so the hook's longest step is still ONE request —
+ * what the state-lock allowance (TRIPWIRE lock retries) assumes — and never
+ * more than half of PRE_TOOL_USE_BUDGET_RATIO's budget.
  *
- * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.LANDED_PROBE_BUDGET_MS <= c.HTTP_TIMEOUT_MS)'
- * PRINTS: true
+ * It was 300 ms below the request's 400, and under load (a load average near
+ * 100, 2026-10-08) 24 of 24 diagnostic probes ran into it (cut at 300–475 ms);
+ * those cut before a landing branch answered stopped nothing, and the reader
+ * edited a teammate's landed change unwarned while the hook was still waiting
+ * on the hub for 100 ms more. The last 100 ms cost the hook nothing; cutting
+ * them cost the warning. Measured at 40–60 ms on a 10k-commit monorepo when
+ * the machine is idle.
+ *
+ * A probe cut short anyway is booked, never silent (state/landed-probe-cuts.ts).
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.LANDED_PROBE_BUDGET_MS === c.HTTP_TIMEOUT_MS, c.LANDED_PROBE_BUDGET_MS * 2 <= c.PRE_TOOL_USE_BUDGET_RATIO * c.HTTP_TIMEOUT_MS)'
+ * PRINTS: true true
  */
-export const LANDED_PROBE_BUDGET_MS = 300;
+export const LANDED_PROBE_BUDGET_MS = HTTP_TIMEOUT_MS;
 /**
  * The background fetch of the landing branches (step 2): at most one per
  * clone per interval, however many hooks ask. A fetch is one or two network

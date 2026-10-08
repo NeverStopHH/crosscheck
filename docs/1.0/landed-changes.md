@@ -128,8 +128,21 @@ answers them without trusting anyone (`connector-core/src/landed-changes/`).
   patch identity, since that would need the network.
 - Every git call the probe makes is bounded, non-interactive and never
   fetches (fetching is a separate background process, below), at most
-  eight at once; the whole probe has a deadline no longer than one hub call.
-  A slow or broken probe means no warning, never a blocked edit.
+  eight at once; the whole probe has a deadline of exactly one hub call —
+  the window the live tripwire's own hub call beside it already holds, so it
+  starts with that call and ends no later (it was 300 ms below the 400 ms
+  request, and under load, 2026-10-08, every diagnostic probe ran into it).
+  A slow or broken probe means no warning, never a blocked edit — and never
+  silence either: a probe the deadline ended, one that finished with a
+  landing branch git did not answer for, and an edit hook the budget race
+  abandoned before its probe could answer (the steps before the probe can
+  spend most of the race on a loaded machine) are each BOOKED, once per
+  edit, one count in the session's state and one line in
+  `state/landed-probe-cuts.jsonl`. The edit itself prints
+  nothing for it (a line per edit would be the noise the once-per-file rule
+  exists to prevent); the session's next prompt says once how many were cut
+  ("crosscheck: 3 landed-change checks were cut short this session …"), and
+  `doctor` and `status` count them over seven days.
 - Only an answer that is COMPLETE and found NOTHING is cached — keyed on the file, HEAD,
   the merge or cherry-pick in progress (by its commits), every landing
   branch's tip, your identity and `.mailmap`, and your calendar day — so a

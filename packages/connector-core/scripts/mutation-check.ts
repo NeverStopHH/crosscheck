@@ -10656,8 +10656,8 @@ export const MUTATIONS: readonly Mutation[
     // Landed changes. The clone, not the hub, is the authority.
     label: "a dead hub silences the landed-change stop",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "    landed: worthStopping(probed),",
-    to: "    landed: result?.ok === true ? worthStopping(probed) : null,",
+    from: "    landed: worthStopping(probed.landed),",
+    to: "    landed: result?.ok === true ? worthStopping(probed.landed) : null,",
     test: `${CONNECTOR}/test/landed-change-hook.test.ts`,
     because:
       "a hub outage switches off a warning that needs nothing from the hub",
@@ -10666,7 +10666,7 @@ export const MUTATIONS: readonly Mutation[
     // Landed changes. The pre-edit stop asks the clone.
     label: "the pre-edit stop never looks at landed changes",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "    landed: worthStopping(probed),",
+    from: "    landed: worthStopping(probed.landed),",
     to: "    landed: worthStopping(null),",
     test: `${CONNECTOR}/test/landed-change-hook.test.ts`,
     because:
@@ -17909,8 +17909,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "UserPromptSubmit never carries the draft nudge",
     file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
-    from: "  return nudge.length === 0 ? \"\" : envelope(nudge);",
-    to: "  return \"\";",
+    from: "  return nudge;\n};",
+    to: "  return \"\";\n};",
     test: `${CONNECTOR}/test/draft-nudge-hook.test.ts`,
     because: "Claude Code sessions spend the slot and the agent is never asked to settle its drafts",
   },
@@ -23892,15 +23892,15 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "a briefing lost last month still warns",
-    file: `${CORE}/src/state/briefing-omissions.ts`,
-    from: "  const since = now.getTime() - BRIEFING_OMISSION_WINDOW_DAYS * MS_PER_DAY;",
-    to: "  const since = 0;",
+    file: `${CORE}/src/state/omission-ledger.ts`,
+    from: "    const since = now.getTime() - BRIEFING_OMISSION_WINDOW_DAYS * MS_PER_DAY;",
+    to: "    const since = 0;",
     test: `${CORE}/test/briefing-omissions.test.ts`,
     because: "a slow week a month ago is today's WARN for ever",
   },
   {
     label: "another repo's lost briefing is charged to this one",
-    file: `${CORE}/src/state/briefing-omissions.ts`,
+    file: `${CORE}/src/state/omission-ledger.ts`,
     from: "(entry.key === null || entry.key === key)",
     to: "true",
     test: `${CORE}/test/briefing-omissions.test.ts`,
@@ -23908,8 +23908,8 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "the briefing-omission ledger grows for ever",
-    file: `${CORE}/src/state/briefing-omissions.ts`,
-    from: "    if (size >= MAX_BRIEFING_OMISSION_LEDGER_BYTES) {\n      return;\n    }\n",
+    file: `${CORE}/src/state/omission-ledger.ts`,
+    from: "      if (size >= MAX_BRIEFING_OMISSION_LEDGER_BYTES) {\n        return;\n      }\n",
     to: "",
     test: `${CORE}/test/briefing-omissions.test.ts`,
     because: "a hub that never answers grows a file in the home on every session start",
@@ -24219,6 +24219,177 @@ export const MUTATIONS: readonly Mutation[
     test: `${CONNECTOR}/test/solved-hook.test.ts`,
     because: "the detached SessionStart pays the probe's wall clock on the path that carries the briefing",
   },
+  // A landed-change check cut short leaves an honest trace (flake hunt,
+  // 2026-10-08): the probe says it was cut, the hook books it, the next
+  // prompt tells it once, doctor and status count it.
+  {
+    label: "a probe its deadline ended reads as finished",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "      return { landed: progress.snapshot?.() ?? null, cutShort: \"deadline\" };",
+    to: "      return { landed: progress.snapshot?.() ?? null, cutShort: null };",
+    test: `${CORE}/test/landed-probe-cuts.test.ts`,
+    because: "an edit the probe had no time to check reads exactly like one with nothing landed",
+  },
+  {
+    label: "a landing branch git did not answer for reads as answered",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "    return { landed: outcome, cutShort: outcome !== null && outcome.unchecked.length > 0 ? \"unanswered\" : null };",
+    to: "    return { landed: outcome, cutShort: null };",
+    test: `${CORE}/test/landed-probe-cuts.test.ts`,
+    because: "a branch whose git timed out is a check nobody hears was skipped",
+  },
+  {
+    label: "the landed probe is cut before the request beside it ends",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "        budgetMs: ctx.config.timeoutMs,",
+    to: "        budgetMs: Math.min(300, ctx.config.timeoutMs),",
+    test: `${CONNECTOR}/test/landed-probe-cut-hook.test.ts`,
+    because: "under load every probe runs into a deadline 100 ms short of the hub call it waits beside, and the stop is lost",
+  },
+  {
+    label: "a cut landed-change check is booked nowhere",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "  if (found.probeCut !== null) {\n    await bookProbeCut(ctx, found.probeCut);\n  }\n",
+    to: "",
+    test: `${CONNECTOR}/test/landed-probe-cut-hook.test.ts`,
+    because: "the hook stops nothing, records nothing, and nothing ever says a check did not finish",
+  },
+  {
+    label: "the pre-edit hook forgets why the probe was cut",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "    probeCut: probed.cutShort,",
+    to: "    probeCut: null,",
+    test: `${CONNECTOR}/test/landed-probe-cut-hook.test.ts`,
+    because: "the probe says it was cut and the hook drops the word on the floor",
+  },
+  {
+    label: "a cut check never reaches the session's count",
+    file: `${CORE}/src/state/landed-probe-cuts.ts`,
+    from: "  await updateSessionState(booking.home, booking.sessionId, withLandedProbeCut);\n",
+    to: "",
+    test: `${CORE}/test/landed-probe-cuts.test.ts`,
+    because: "the ledger counts the cut and the session it happened in is never told",
+  },
+  {
+    label: "a cut check never reaches the ledger doctor counts",
+    file: `${CORE}/src/state/landed-probe-cuts.ts`,
+    from: "  await recordLandedProbeCut(booking.home, { key: booking.key, reason: booking.reason, now: booking.now });\n",
+    to: "",
+    test: `${CORE}/test/landed-probe-cuts.test.ts`,
+    because: "the session hears it once and the pattern across a slow week is nowhere",
+  },
+  {
+    label: "one cut is booked twice when the handler and the runner both see it",
+    file: `${CORE}/src/state/landed-probe-cuts.ts`,
+    from: "  if (booked.has(id)) {\n    return;\n  }\n",
+    to: "",
+    test: `${CORE}/test/landed-probe-cuts.test.ts`,
+    because: "a handler that booked just before the race resolved is counted again by the runner, and the line overstates",
+  },
+  {
+    label: "a pre-edit hook the budget abandoned books no cut",
+    file: `${CONNECTOR}/src/hooks/runner.ts`,
+    from: "    if (outcome.timedOut && name === \"pre-tool-use\") {\n      await bookCutEditCheck(resolved.value, stdin, env);\n    }\n",
+    to: "",
+    test: `${CONNECTOR}/test/landed-probe-cut-hook.test.ts`,
+    because: "under load the race abandons the whole hook before its probe answers, and the edit goes ahead with no trace at all",
+  },
+  {
+    label: "a tool that edits nothing books a cut when its hook is abandoned",
+    file: `${CONNECTOR}/src/hooks/runner.ts`,
+    from: "  if (payload === null || !isEditTool(payload.tool_name)) {",
+    to: "  if (payload === null) {",
+    test: `${CONNECTOR}/test/landed-probe-cut-hook.test.ts`,
+    because: "a slow Bash call is told as an edit that went ahead unchecked",
+  },
+  {
+    label: "doctor never names the edit hook's budget as a cause",
+    file: `${CLI}/src/cli/landed-probe-cuts.ts`,
+    from: "    byReason.budget > 0 ? `${String(byReason.budget)} ended with the edit hook's budget` : null,",
+    to: "    null,",
+    test: `${CLI}/test/landed-probe-cuts.test.ts`,
+    because: "a week of abandoned edit hooks is a count with no reason beside it",
+  },
+  {
+    label: "the cut-checks line is never said",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    from: "  const note = await claimProbeCutsNote(ctx).catch(() => \"\");",
+    to: "  const note = \"\";",
+    test: `${CONNECTOR}/test/landed-probe-cut-hook.test.ts`,
+    because: "a session whose checks were cut reads exactly like one whose checks all ran",
+  },
+  {
+    label: "the cut-checks line repeats on every prompt",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    from: "    return withLandedProbeCutsTold(fresh);",
+    to: "    return fresh;",
+    test: `${CONNECTOR}/test/landed-probe-cut-hook.test.ts`,
+    because: "a slow repo adds the same line to every prompt for the rest of the session",
+  },
+  {
+    label: "a headless run spends the cut-checks line",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    from: "  if (!aPersonReads(ctx.env)) {\n    return \"\";\n  }\n",
+    to: "",
+    test: `${CONNECTOR}/test/landed-probe-cut-hook.test.ts`,
+    because: "the line goes to a run nobody reads and is marked told",
+  },
+  {
+    label: "a session with no cut check owes the line",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  (state.landedProbeCuts ?? 0) > 0 && state.landedProbeCutsTold !== true;",
+    to: "  state.landedProbeCutsTold !== true;",
+    test: `${CORE}/test/session-state-transforms.test.ts`,
+    because: "every session pays a lock round on its first prompt to tell nothing",
+  },
+  {
+    label: "the session counts one cut check however many there were",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  landedProbeCuts: (state.landedProbeCuts ?? 0) + 1,",
+    to: "  landedProbeCuts: 1,",
+    test: `${CORE}/test/session-state-transforms.test.ts`,
+    because: "ten edits that went ahead unchecked are told as one",
+  },
+  {
+    label: "a re-register forgets the session's cut checks",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "        landedProbeCuts: previous.landedProbeCuts,\n        landedProbeCutsTold: previous.landedProbeCutsTold,\n",
+    to: "",
+    test: `${CORE}/test/session-state-transforms.test.ts`,
+    because: "an auto-compact erases the count before the next prompt can tell it, or tells it twice",
+  },
+  {
+    label: "doctor passes a machine whose landed-change checks were cut",
+    file: `${CLI}/src/cli/landed-probe-cuts.ts`,
+    from: "  counts.total === 0\n    ? { level: \"PASS\", name: NAME",
+    to: "  true\n    ? { level: \"PASS\", name: NAME",
+    test: `${CLI}/test/landed-probe-cuts.test.ts`,
+    because: "a week of edits that went ahead unchecked reads as PASS",
+  },
+  {
+    label: "doctor never prints the landed-change checks line",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    landedProbeCutsCheck(await readLandedProbeCuts(config.home, key, now)),\n",
+    to: "",
+    test: `${CLI}/test/landed-probe-cuts.test.ts`,
+    because: "the cuts are counted and no surface shows the count",
+  },
+  {
+    label: "status never prints the cut landed-change checks",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "      ...probeCutLines,\n",
+    to: "",
+    test: `${CLI}/test/landed-probe-cuts.test.ts`,
+    because: "the surface a person runs by hand says nothing about edits that went ahead unchecked",
+  },
+  {
+    label: "status prints a count of no cut checks",
+    file: `${CLI}/src/cli/landed-probe-cuts.ts`,
+    from: "  counts.total === 0 ? [] : [`${NAME}: ${cutSummary(counts)}`];",
+    to: "  [`${NAME}: ${cutSummary(counts)}`];",
+    test: `${CLI}/test/landed-probe-cuts.test.ts`,
+    because: "every healthy machine's status carries a line about a problem it does not have",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -24309,6 +24480,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/key-rotate.test.ts 6
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 9
  * PRINTS: packages/cli/test/landed-doctor.test.ts 3
+ * PRINTS: packages/cli/test/landed-probe-cuts.test.ts 5
  * PRINTS: packages/cli/test/landing-fetch-doctor.test.ts 8
  * PRINTS: packages/cli/test/outcome-cli.test.ts 35
  * PRINTS: packages/cli/test/passkey-status.test.ts 4
@@ -24394,6 +24566,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/landed-change-hook.test.ts 4
  * PRINTS: packages/connector-claude/test/landed-notice-author-hook.test.ts 1
  * PRINTS: packages/connector-claude/test/landed-notice-hook.test.ts 6
+ * PRINTS: packages/connector-claude/test/landed-probe-cut-hook.test.ts 8
  * PRINTS: packages/connector-claude/test/landed-why-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/landing-fetch-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/recovery-losses.test.ts 1
@@ -24475,6 +24648,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/landed-changes-edges.test.ts 19
  * PRINTS: packages/connector-core/test/landed-changes.test.ts 7
  * PRINTS: packages/connector-core/test/landed-notice.test.ts 21
+ * PRINTS: packages/connector-core/test/landed-probe-cuts.test.ts 5
  * PRINTS: packages/connector-core/test/landed-render.test.ts 4
  * PRINTS: packages/connector-core/test/landed-why-render.test.ts 7
  * PRINTS: packages/connector-core/test/landed-worth-stopping.test.ts 1
@@ -24516,7 +24690,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
- * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 3
+ * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 6
  * PRINTS: packages/connector-core/test/set-intent.test.ts 4
  * PRINTS: packages/connector-core/test/sharing.test.ts 30
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4

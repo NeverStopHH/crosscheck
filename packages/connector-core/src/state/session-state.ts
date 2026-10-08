@@ -199,6 +199,17 @@ const SessionStateObjectSchema = z.looseObject({
    */
   landedCleanKeys: z.array(z.string().min(1)).default([]),
   /**
+   * Landed-change checks this session's edits had CUT SHORT — the probe's
+   * deadline ended it, or a landing branch git could not answer for
+   * (state/landed-probe-cuts.ts). Counted per edit, told once: the next
+   * prompt says how many (`landedProbeCutsTold`), so a slow repo never adds
+   * a line per edit and never stays silent either. Optional, absent meaning
+   * none yet: the state every earlier connector wrote is a state with no cut.
+   */
+  landedProbeCuts: z.number().int().min(0).optional(),
+  /** True once this session was told about its cut checks — once per session. */
+  landedProbeCutsTold: z.boolean().optional(),
+  /**
    * Work contexts the SessionStart briefing already pointed at as "solved
    * before" (VISION.md §1). A SEPARATE list from deliveredHintRefs on
    * purpose: the prompt path folds these into its seen-set so the same tree
@@ -870,6 +881,10 @@ export const withCarriedCapture = (
         foreignRepoDrops: previous.foreignRepoDrops,
         outsideRootDrops: previous.outsideRootDrops,
         hintCandidatesSeen: previous.hintCandidatesSeen,
+        // The session's cut landed-change checks, and whether it was told:
+        // a re-register neither forgets them nor tells them twice.
+        landedProbeCuts: previous.landedProbeCuts,
+        landedProbeCutsTold: previous.landedProbeCutsTold,
         // The #17 root cache is the session's, not the fire's: dropping it
         // makes the next tool call pay git again for a root already judged.
         knownWorktreeRoots: previous.knownWorktreeRoots,
@@ -1359,6 +1374,22 @@ export const withLandedClean = (
   };
 };
 
+/** Counts one landed-change check this session's edit had cut short. */
+export const withLandedProbeCut = (state: SessionState): SessionState => ({
+  ...state,
+  landedProbeCuts: (state.landedProbeCuts ?? 0) + 1,
+});
+
+/** Marks this session told about its cut checks — the once-per-session line. */
+export const withLandedProbeCutsTold = (state: SessionState): SessionState => ({
+  ...state,
+  landedProbeCutsTold: true,
+});
+
+/** Cut checks this session has not been told about: the line is still owed. */
+export const hasUntoldProbeCuts = (state: SessionState): boolean =>
+  (state.landedProbeCuts ?? 0) > 0 && state.landedProbeCutsTold !== true;
+
 /** Remembers a landed-change stop on `file`, same FIFO cap as the live one. */
 export const withLandedAsked = (
   state: SessionState,
@@ -1544,6 +1575,8 @@ export const deriveSessionState = (
     tripwireAskedFiles: [],
     landedAskedFiles: [],
     landedCleanKeys: [],
+    landedProbeCuts: 0,
+    landedProbeCutsTold: false,
     briefingSolvedRefs: [],
     shownLandedNoticeIds: [],
     probedFingerprints: [],
