@@ -958,6 +958,11 @@ const matchCandidates = async (
       // AND RANKED ON PUSHABLE TEXT ONLY (hold-out review, M3): what a hint
       // would never show cannot rank a tree into the pool either.
       rankFtsTier: rankOnPushableText(deps.db, callerDeveloperId),
+      // The same rule for the search's own claim pass, which ranks in the
+      // ranker's place on a search handed none: a pushed surface finds no
+      // tree by an unreviewed draft's words (services/search.ts; review
+      // round 4, M3).
+      excludeDerivedClaims: true,
       repo: query.repo,
       // In the search's own WHERE, before its bounds — a busy caller's own
       // contexts must not crowd teammates out of the pool (SEARCH_POOL_LIMIT).
@@ -966,9 +971,6 @@ const matchCandidates = async (
       // the UserPromptSubmit injection path, a muted developer's contexts
       // must neither surface nor crowd (services/visibility.ts).
       excludeMutedForDeveloperId: callerDeveloperId,
-      // A pushed surface: no tree is found by an unreviewed draft's words
-      // (services/search.ts; review round 4, M3).
-      excludeDerivedClaims: true,
       // Nor by a generated file the prompt named: the exact tier clears the
       // floor on the name alone (services/generated-targets.ts).
       excludeGeneratedTargets: true,

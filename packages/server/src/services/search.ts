@@ -998,8 +998,9 @@ export const searchWorkContexts = async (
   const [exactRows, ftsRows, vector] = await Promise.all([
     listExactTier(deps.db, pathTokens, scope, input.excludeGeneratedTargets === true),
     // A caller that ranks its own tier (hints, rankFtsTier) owns its claim
-    // filter too: it is handed the same exclusion through the scope it reads
-    // (services/hints.ts).
+    // filter too: the hints ranker reads pushable claims only, declared by
+    // definition (services/hints.ts rankOnPushableText), so
+    // `excludeDerivedClaims` governs this default tier alone.
     input.rankFtsTier === undefined
       ? listFtsTier(deps.db, wordTokens, scope, input.excludeDerivedClaims === true)
       : listRankedFtsTier(input.rankFtsTier, wordTokens, scope),

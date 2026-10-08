@@ -25484,8 +25484,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a context's creation reads as her newest claim's",
     file: `${SERVER}/src/services/hints.ts`,
+    // RETARGETED (hint-substance merge): a context's claims are a window now.
     from: "        createdAt: row.createdAt,\n",
-    to: "        createdAt: (claimsByContext.get(row.id) ?? [])[0]?.createdAt ?? row.createdAt,\n",
+    to: "        createdAt: (claimsByContext.get(row.id)?.claims ?? [])[0]?.createdAt ?? row.createdAt,\n",
     test: `${SERVER}/test/live-location-differential.test.ts`,
     because:
       "her action's instant rides a row that existed before it under a " +
@@ -25560,9 +25561,18 @@ export const MUTATIONS: readonly Mutation[
   {
     // Review round 4, M3: the drafts branch's search option, wired into the
     // hint branch's search call when both met in the batch.
+    // RETARGETED (hint-substance merge): the pushable ranker now keeps drafts
+    // out on its own, so the flag alone was an equivalent mutant; the flag is
+    // the rule for the search's own claim pass, which ranks in the ranker's place.
     label: "a prompt hint is pushed on an unreviewed draft's words",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "      excludeDerivedClaims: true,\n",
+    from:
+      "      rankFtsTier: rankOnPushableText(deps.db, callerDeveloperId),\n" +
+      "      // The same rule for the search's own claim pass, which ranks in the\n" +
+      "      // ranker's place on a search handed none: a pushed surface finds no\n" +
+      "      // tree by an unreviewed draft's words (services/search.ts; review\n" +
+      "      // round 4, M3).\n" +
+      "      excludeDerivedClaims: true,\n",
     to: "      excludeDerivedClaims: false,\n",
     test: `${SERVER}/test/draft-visibility.test.ts`,
     because:

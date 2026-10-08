@@ -375,4 +375,28 @@ describe("an opted-out teammate's branch title counts toward no floor", () => {
     // Assert — lisbon, relocation on the title; token, rotation on the description
     expect(guessed).toEqual([[ROBIN_CONTEXT, 4]]);
   });
+
+  test("her branch's words are not counted on her title even where another teammate's title makes them known", async () => {
+    // Arrange: Ken's own title says her branch's words, so the floor knows
+    // them — only her withheld title keeps them off her statement
+    const { harness, nick } = await teamWithRobin(true);
+    const ken = await addTestDeveloperWithSession(harness, "Ken", "ken@example.com", { id: "ses_ken" });
+    const posted = await postRecords(harness, ken, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody({ id: "wc_ken_lisbon", sessionId: "ses_ken", title: "Lisbon relocation checklist" }), {
+          sessionId: "ses_ken",
+        }),
+      ],
+    });
+    expect(posted.data?.rejected).toBe(0);
+    const hers = async (query: string) => (await counted(harness, nick, query)).filter(([id]) => id === ROBIN_CONTEXT);
+
+    // Act
+    const guessed = await hers("lisbon relocation token rotation");
+    const elsewhere = await hers("porto migration token rotation");
+
+    // Assert — the same count her work earns on what it is about
+    expect(elsewhere).toEqual([[ROBIN_CONTEXT, 2]]);
+    expect(guessed).toEqual(elsewhere);
+  });
 });
