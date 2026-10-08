@@ -204,6 +204,9 @@ const GET_ROUTES: Readonly<Record<string, RouteSpec>> = {
       { path: "/api/hints/candidates", query: { repo: REPO, query: "rotation window refresh key id" } },
       { path: "/api/hints/candidates", query: { repo: LOCAL_REPO, query: "rotation window refresh scratch detached" } },
       { path: "/api/hints/candidates", query: { repo: REPO, query: "rotation", days: "30" } },
+      // Her host-titled context, the one her claim, intent and status actions
+      // write to: since the round-5 floor, no rotation word reaches it.
+      { path: "/api/hints/candidates", query: { repo: REPO, query: "why does POST /login return a 500" } },
       // A prompt that carries nothing task-bearing: the session's intent is
       // matched in its place (services/hints.ts, the content floor).
       { path: "/api/hints/candidates", query: { repo: REPO, query: "mache weiter", intent: "rotation window refresh key id" } },

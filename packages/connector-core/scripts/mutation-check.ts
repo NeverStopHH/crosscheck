@@ -25558,27 +25558,16 @@ export const MUTATIONS: readonly Mutation[
       "a prompt naming her branch's words counts them on her context's statement, " +
       "confirming the branch the index rebuild took out of search",
   },
-  {
-    // Review round 4, M3: the drafts branch's search option, wired into the
-    // hint branch's search call when both met in the batch.
-    // RETARGETED (hint-substance merge): the pushable ranker now keeps drafts
-    // out on its own, so the flag alone was an equivalent mutant; the flag is
-    // the rule for the search's own claim pass, which ranks in the ranker's place.
-    label: "a prompt hint is pushed on an unreviewed draft's words",
-    file: `${SERVER}/src/services/hints.ts`,
-    from:
-      "      rankFtsTier: rankOnPushableText(deps.db, callerDeveloperId),\n" +
-      "      // The same rule for the search's own claim pass, which ranks in the\n" +
-      "      // ranker's place on a search handed none: a pushed surface finds no\n" +
-      "      // tree by an unreviewed draft's words (services/search.ts; review\n" +
-      "      // round 4, M3).\n" +
-      "      excludeDerivedClaims: true,\n",
-    to: "      excludeDerivedClaims: false,\n",
-    test: `${SERVER}/test/draft-visibility.test.ts`,
-    because:
-      "a teammate's tree found only by a machine guess nobody vouched for is pushed " +
-      "into a colleague's prompt, its draft counted toward the content floor",
-  },
+  // RETIRED (hint-substance merge): "a prompt hint is pushed on an unreviewed
+  // draft's words" flipped the hints call's `excludeDerivedClaims`. Since the
+  // hint-substance merge three layers keep a draft out of the hint path on
+  // their own — the pushable ranker ("a draft or a refuted claim ranks a tree
+  // into the hint pool"), the floor's claim maxima ("A draft's words never
+  // qualify its tree") and its known-word read — so flipping the flag, even
+  // with the ranker dropped beside it, is an equivalent mutant the strict
+  // prover cannot catch. The flag stays as the rule for the search's own claim
+  // pass; its own effect is "excludeDerivedClaims still lets a draft's words
+  // find a tree", and draft-visibility.test.ts still pins the hint outcome.
   // ── Pilot finding 2026-10-05: false landed stamps hid a collision ─────
   {
     label: "a teammate's report stamps a detached session's context landed",
@@ -34494,7 +34483,7 @@ interface Outcome {
  * PRINTS: packages/server/test/doc-upgrade-window.test.ts 6
  * PRINTS: packages/server/test/doc-upgrade.test.ts 6
  * PRINTS: packages/server/test/draft-link-cleanup.test.ts 18
- * PRINTS: packages/server/test/draft-visibility.test.ts 9
+ * PRINTS: packages/server/test/draft-visibility.test.ts 8
  * PRINTS: packages/server/test/drafts.test.ts 4
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/fence-waivers.test.ts 1
