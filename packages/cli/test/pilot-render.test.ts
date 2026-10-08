@@ -219,6 +219,30 @@ describe("renderPilot", () => {
     expect(out).not.toContain("none could be recorded");
   });
 
+  test("review M6: words confirmed late are printed in the month they were confirmed, apart, never in the rates", () => {
+    // Arrange — August shown; two of its words were confirmed late about July's hints
+    const outcomes = {
+      ...JULY,
+      recordableSinceIso: "2026-06-03T09:00:00.000Z",
+      countedFromIso: JULY.periodStartIso,
+      pausedInPeriod: false,
+      withheld: null,
+      figures: {
+        interventions: 20, followed: 10, overrode: 2, notRelevantNow: 2, noise: 2, unmarked: 4,
+        confirmedLate: { followed: 2, overrode: 0, notRelevantNow: 0, noise: 1 },
+      },
+    };
+
+    // Act
+    const out = renderPilot(view({ outcomes }));
+
+    // Assert
+    expect(out).toContain(
+      "confirmed late in July 2026, about hints of earlier months (counted here, never there): followed 2 · overrode 0 · not relevant now 0 · noise 1",
+    );
+    expect(out).toContain("followed 50.0");
+  });
+
   test("every channel prints, the empty ones and `unknown` included (PIL-1)", () => {
     // Arrange & Act
     const out = renderPilot(view());

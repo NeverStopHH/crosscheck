@@ -57,6 +57,18 @@ describe("renderMyOutcomes' header", () => {
   });
 });
 
+describe("renderMyOutcomes' source credit, with follows confirmed late (review M6)", () => {
+  test("follows confirmed this month about earlier months' hints are counted here, said to be late", () => {
+    // Act
+    const line = creditLine({ ...JULY, followed: 3, followedLate: 1, withheld: null });
+
+    // Assert
+    expect(line).toBe(
+      "your own work, in teammates' hints, July 2026: followed 3 times (and 1 confirmed late, about earlier months' hints) — shown once, leaving out any one person, at least 3 people followed it",
+    );
+  });
+});
+
 describe("renderMyOutcomes' source credit (review #10)", () => {
   test("a count names its closed month and the minimum it passed", () => {
     // Act
