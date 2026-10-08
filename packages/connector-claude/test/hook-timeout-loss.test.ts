@@ -120,8 +120,17 @@ const editPayload = (repo: string): string =>
 
 const neverSettles = (): Promise<string> => new Promise<string>(() => {});
 
+/**
+ * The ledger's lines — none when nothing was ever booked, so a loss that went
+ * unbooked fails the assertion on what is missing instead of the read that
+ * expected a file.
+ */
 const ledgerLines = async (home: string): Promise<readonly Record<string, unknown>[]> => {
-  const raw = await Bun.file(lossLedgerPath(home)).text();
+  const ledger = Bun.file(lossLedgerPath(home));
+  if (!(await ledger.exists())) {
+    return [];
+  }
+  const raw = await ledger.text();
   return raw
     .split("\n")
     .filter((line) => line.length > 0)
