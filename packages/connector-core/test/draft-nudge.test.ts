@@ -889,16 +889,40 @@ describe("the nudge slot survives the session that spent it", () => {
     });
   });
 
+  /**
+   * A FULL LEDGER, SEEDED IN ITS OWN ON-DISK SHAPE — not built by
+   * DRAFT_NUDGE_SPENT_MAX_SESSIONS locked read-sort-rewrites in a row. Those
+   * 500 rewrites cost 0.44 s alone and ran out bun's 5 s per-test budget when
+   * the machine was saturated (5000 ms, both cases below). The first entry
+   * still goes through the store, so the file and its directory are the
+   * store's own; the writes that cross the cap are the store's too.
+   */
+  const seedFullLedger = async (home: string, prefix: string, fromIso: string): Promise<void> => {
+    await recordNudgeSpent(home, `${prefix}-0`, "delivered", new Date(fromIso));
+    const sessions = Object.fromEntries(
+      Array.from({ length: DRAFT_NUDGE_SPENT_MAX_SESSIONS }, (_, i) => [
+        `${prefix}-${String(i)}`,
+        { outcome: "delivered", at: new Date(Date.parse(fromIso) + i * 1000).toISOString() },
+      ]),
+    );
+    await Bun.write(draftNudgeSpentPath(home), JSON.stringify({ sessions }));
+  };
+
   test("the record of spent slots stays bounded", async () => {
     const home = await makeHome("nudge-spent-bound");
     cleanups.push(home);
+    const fromIso = "2026-10-01T00:00:00.000Z";
+    await seedFullLedger(home, "bound", fromIso);
     const total = DRAFT_NUDGE_SPENT_MAX_SESSIONS + 5;
-    for (let i = 0; i < total; i += 1) {
-      await recordNudgeSpent(home, `bound-${String(i)}`, "delivered", new Date(Date.parse("2026-10-01T00:00:00.000Z") + i * 1000));
+    for (let i = DRAFT_NUDGE_SPENT_MAX_SESSIONS; i < total; i += 1) {
+      await recordNudgeSpent(home, `bound-${String(i)}`, "delivered", new Date(Date.parse(fromIso) + i * 1000));
     }
 
     expect(await readNudgeSpent(home, `bound-${String(total - 1)}`)).toBe("delivered");
     expect(await readNudgeSpent(home, "bound-0")).toBeNull();
+    expect(await readNudgeSpent(home, "bound-5")).toBe("delivered");
+    const ledger = (await Bun.file(draftNudgeSpentPath(home)).json()) as { sessions: Record<string, unknown> };
+    expect(Object.keys(ledger.sessions)).toHaveLength(DRAFT_NUDGE_SPENT_MAX_SESSIONS);
   });
 
   test("an entry whose instant is empty or not a date is dropped, never sorted against fresh ones (review round 3, O13)", async () => {
@@ -906,9 +930,7 @@ describe("the nudge slot survives the session that spent it", () => {
     // order — sorted by Date.parse they compare as NaN
     const home = await makeHome("nudge-spent-bad-at");
     cleanups.push(home);
-    for (let i = 0; i < DRAFT_NUDGE_SPENT_MAX_SESSIONS; i += 1) {
-      await recordNudgeSpent(home, `old-${String(i)}`, "delivered", new Date(Date.parse("2026-09-01T00:00:00.000Z") + i * 1000));
-    }
+    await seedFullLedger(home, "old", "2026-09-01T00:00:00.000Z");
     const ledger = (await Bun.file(draftNudgeSpentPath(home)).json()) as { sessions: Record<string, unknown> };
     await Bun.write(
       draftNudgeSpentPath(home),
