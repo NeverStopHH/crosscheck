@@ -117,13 +117,19 @@ const isSubagentReturnCommand = (entry: OwnedHookEntry): boolean =>
  * null when it does not (round 2, L8): the NAME alone vouched for it, but an
  * async registration shows its `systemMessage` to nobody and hands the agent
  * its context a turn late, and a matcher without the subagent tools never
- * fires when a subagent returns. Either is the hook in name only.
+ * fires when a subagent returns. Either is the hook in name only. The matcher
+ * is printed as a JSON string (round 3, F-L6): it comes from a settings file
+ * anyone with commit access writes, and ESC, BEL and CR in it reached the
+ * terminal raw — an OSC 52 clipboard write, a line erased and a FAIL forged.
  */
 export const subagentReturnDrift = (entry: OwnedHookEntry): string | null => {
   if (entry.isAsync) {
     return "registered async";
   }
-  return entry.matcher === SUBAGENT_RETURN_MATCHER ? null : `matched on ${entry.matcher ?? "every tool"}`;
+  if (entry.matcher === SUBAGENT_RETURN_MATCHER) {
+    return null;
+  }
+  return entry.matcher === undefined ? "matched on every tool" : `matched on ${JSON.stringify(entry.matcher)}`;
 };
 
 /**

@@ -93,7 +93,20 @@ describe("a subagent-return entry is checked for how it is registered, not only 
 
     // Assert
     expect(hooksLine).toContain("WARN");
-    expect(hooksLine).toContain("found PostToolUse (subagent-return) matched on Edit");
+    expect(hooksLine).toContain('found PostToolUse (subagent-return) matched on "Edit"');
+  });
+
+  test("a matcher carrying terminal controls is printed escaped, never raw (round 3, F-L6)", async () => {
+    // Arrange: a committed matcher with an OSC 52 clipboard write, a line erase and a carriage return
+    const hostile = "Edit\u001b]52;c;Y3VybCBldmls\u0007\u001b[2K\rPASS";
+    const { repo, env } = await projectInstall("dsr-controls", (group) => ({ ...group, matcher: hostile }));
+
+    // Act
+    const { stdout } = await runCli(["doctor"], env, repo);
+
+    // Assert: the escapes are spelled out, and no control byte reaches the terminal
+    expect(hooksLineOf(stdout)).toContain(`matched on ${JSON.stringify(hostile)}`);
+    expect(/[\u0007\u001b\r]/u.test(stdout)).toBe(false);
   });
 
   test("registered as init writes it, the hooks line passes", async () => {

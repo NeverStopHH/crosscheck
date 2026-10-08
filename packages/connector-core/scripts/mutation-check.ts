@@ -24443,8 +24443,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "doctor counts a subagent-return entry on any matcher as installed",
     file: `${CLI}/src/cli/doctor-global.ts`,
-    from: "  return entry.matcher === SUBAGENT_RETURN_MATCHER ? null : `matched on ${entry.matcher ?? \"every tool\"}`;",
-    to: "  return null;",
+    from: "  if (entry.matcher === SUBAGENT_RETURN_MATCHER) {",
+    to: "  if (true) {",
     test: `${CLI}/test/doctor-subagent-return.test.ts`,
     because: "a hook that never fires when a subagent returns passes as installed",
   },
@@ -24625,6 +24625,15 @@ export const MUTATIONS: readonly Mutation[
     to: "withCarriedCapture(state, unlocked)",
     test: `${CORE}/test/collision-publish-busy-lock.test.ts`,
     because: "a position read beside a lock holder that is advancing it is handed out twice",
+  },
+  // ── Review of feat/collision-visible, round 3, F-L6: doctor's printed matcher ──
+  {
+    label: "doctor prints a committed matcher's control characters raw",
+    file: `${CLI}/src/cli/doctor-global.ts`,
+    from: "`matched on ${JSON.stringify(entry.matcher)}`",
+    to: "`matched on ${entry.matcher}`",
+    test: `${CLI}/test/doctor-subagent-return.test.ts`,
+    because: "a settings file anyone can commit writes OSC 52, line erases and a forged PASS straight to the reader's terminal",
   },
 ];
 
