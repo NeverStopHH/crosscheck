@@ -180,8 +180,24 @@ const repeatedText = (shown: string, recorded: RecordedOutcome): string => {
   );
 };
 
+/**
+ * A HUB SINCE HUMAN PROVENANCE ONLY DRAFTS THE AGENT'S WORD (0.11 §5): it is
+ * the person's only once they confirm it with their passkey, so the answer
+ * tells the agent exactly that — never "recorded", never "it counts" — and
+ * how the person gets there.
+ */
+const draftedText = (shown: string, recorded: RecordedOutcome): string =>
+  recorded.repeated
+    ? `Already drafted: the hint at ${shown} was drafted as ${safeId(recorded.outcome)} before. Nothing was written a second time.`
+    : `Drafted: the hint at ${shown} (delivery ${safeId(recorded.deliveryId)}) as ${safeId(recorded.outcome)}. ` +
+      "It is a draft, not the person's judgement: it counts for nothing until the person confirms it with their passkey " +
+      "on the hub's confirm page (they run crosscheck confirm). Do not tell them it was recorded as theirs.";
+
 const recordedText = (ref: string, recorded: RecordedOutcome): string => {
   const shown = safeId(ref);
+  if (recorded.draft === true) {
+    return draftedText(shown, recorded);
+  }
   if (recorded.repeated) {
     return repeatedText(shown, recorded);
   }

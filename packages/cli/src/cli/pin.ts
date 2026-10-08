@@ -56,7 +56,8 @@ import { hubSaid, noSuchPinLine, renderPinList, renderWaiverRequested } from "./
 import { deniedPinPaths, pinDenylistRefusal, sweepDenylistLines } from "./pin-observability.ts";
 import type { DeniedMove } from "./pin-observability.ts";
 import type { PinPathOutcome } from "@crosscheck/connector-core/git/pin-sweep.ts";
-import { markFailureLine, markRecordedLine } from "./pilot-mark.ts";
+import { PROTECTS_NOTHING_YET } from "./draft-lines.ts";
+import { markAnswerLine, markFailureLine } from "./pilot-mark.ts";
 import { agentHostRefusalLine, personGate } from "./agent-host.ts";
 import type { PersonGate } from "./agent-host.ts";
 import type { CliResult } from "./login.ts";
@@ -543,6 +544,17 @@ const create = async (
     return failureResult(created);
   }
   const speaking = parsed.data.files.length <= MAX_SPEAKING_PIN_FILES;
+  if (created.data.draft === true) {
+    // A DRAFT PIN (human provenance §7): nothing watches the surface yet.
+    return {
+      stdout: [
+        `drafted pin ${created.data.id}: ${String(parsed.data.files.length)} file(s) at ${parsed.data.verifiedAtCommit}`,
+        `${PROTECTS_NOTHING_YET}.`,
+        "",
+      ].join("\n"),
+      exitCode: EXIT_OK,
+    };
+  }
   return {
     stdout: [
       `pinned ${created.data.id}: ${String(parsed.data.files.length)} file(s) at ${parsed.data.verifiedAtCommit}`,
@@ -585,7 +597,7 @@ const confirmPin = async (resolved: Resolved, pinId: string, gate: PersonGate): 
     };
   }
   return {
-    stdout: markRecordedLine("pin", pinId, result.data.repeated),
+    stdout: markAnswerLine("pin", pinId, result.data),
     exitCode: EXIT_OK,
   };
 };
@@ -631,6 +643,16 @@ export const runPin = async (
     );
     if (!broken.ok) {
       return failureResult(broken);
+    }
+    if (broken.data.draft === true) {
+      // A DRAFTED BREAK (human provenance §7): suspect names nobody on it until it is confirmed.
+      return {
+        stdout: [
+          `drafted the retraction of ${broken.data.id}: checked and failing — nothing names anyone on it until you confirm it with your passkey — crosscheck confirm opens the page`,
+          "",
+        ].join("\n"),
+        exitCode: EXIT_OK,
+      };
     }
     return {
       stdout: [

@@ -26,6 +26,7 @@ import { MAX_HUB_MESSAGE_CHARS } from "@crosscheck/connector-core/constants.ts";
 import type { MarkCandidate } from "@crosscheck/connector-core/http/pilot.ts";
 import type { PilotMarkRefKind } from "@crosscheck/schema";
 
+import { ALREADY_DRAFTED, NOT_YOURS_YET } from "./draft-lines.ts";
 import { outcomeWord } from "./outcome-render.ts";
 
 const INDENT = "  ";
@@ -65,6 +66,37 @@ export const markRecordedLine = (
     ? `already recorded: you had labelled ${shown} — a label counts once, and a second one changes nothing\n`
     : `recorded: ${shown} is ${word}. It counts once toward this repo's pilot figures, and it names nobody\n`;
 };
+
+/**
+ * THE SAME GESTURES, ON A HUB THAT ONLY DRAFTS THEM (human provenance §5): a
+ * label or a passed check typed with the key is a draft until the person
+ * confirms it with their passkey — the line says so, and never "recorded".
+ */
+export const markDraftedLine = (
+  refKind: PilotMarkRefKind,
+  id: string,
+  repeated: boolean,
+  word: ShortcutCommand = "noise",
+): string => {
+  const shown = safeId(id);
+  if (repeated) {
+    return `already drafted: you had said that of ${shown} — ${ALREADY_DRAFTED}\n`;
+  }
+  return refKind === "pin"
+    ? `drafted: you ran ${shown}'s check and watched it pass — ${NOT_YOURS_YET}\n`
+    : `drafted: ${shown} is ${word} — ${NOT_YOURS_YET}; once it is, it counts once toward this repo's pilot figures, and it names nobody\n`;
+};
+
+/** The hub's answer to a label, as its line: drafted (a hub since 0.11) or recorded (one before). */
+export const markAnswerLine = (
+  refKind: PilotMarkRefKind,
+  id: string,
+  answer: { readonly repeated: boolean; readonly draft?: boolean | undefined },
+  word: ShortcutCommand = "noise",
+): string =>
+  answer.draft === true
+    ? markDraftedLine(refKind, id, answer.repeated, word)
+    : markRecordedLine(refKind, id, answer.repeated, word);
 
 /**
  * WHAT NOW STANDS (07 §13.11, review H2): a noise label said over an outcome —

@@ -20,6 +20,7 @@ import {
   putPresenceOptOut,
 } from "@crosscheck/connector-core/http/hub.ts";
 import type { HubContext } from "@crosscheck/connector-core/http/hub.ts";
+import { UNCHANGED_UNTIL_CONFIRMED } from "./draft-lines.ts";
 import type { CliResult } from "./login.ts";
 
 export const PRESENCE_USAGE = [
@@ -135,6 +136,13 @@ const setPresence = async (
       exitCode: EXIT_OK,
     };
   }
+  if (result.data.draft === true) {
+    // LESS PRIVATE WAITS FOR THE PERSON (human provenance §8): still hidden.
+    return {
+      stdout: `${presenceStateLine(true)}\npresence on is drafted — ${UNCHANGED_UNTIL_CONFIRMED}\n`,
+      exitCode: EXIT_OK,
+    };
+  }
   return { stdout: `${presenceStateLine(false)}\n`, exitCode: EXIT_OK };
 };
 
@@ -197,6 +205,10 @@ export const runMute = async (
     return failureResult(result);
   }
   const name = result.data.muted.name;
+  if (result.data.draft === true) {
+    // ANY MUTE IS THE PERSON'S SETTING (human provenance §8): a key only drafts it.
+    return { stdout: `drafted: mute ${name} — ${UNCHANGED_UNTIL_CONFIRMED}\n`, exitCode: EXIT_OK };
+  }
   const headline = result.data.alreadyMuted
     ? `${name} was already muted`
     : `muted ${name}`;
@@ -221,6 +233,9 @@ export const runUnmute = async (
     return failureResult(result);
   }
   const name = result.data.unmuted.name;
+  if (result.data.draft === true) {
+    return { stdout: `drafted: unmute ${name} — ${UNCHANGED_UNTIL_CONFIRMED}\n`, exitCode: EXIT_OK };
+  }
   return {
     stdout: result.data.wasMuted
       ? `unmuted ${name}\n`

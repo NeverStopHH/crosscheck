@@ -62,11 +62,13 @@ import { MAX_HINT_OUTCOME_REASON_CHARS, SAFE_ID_PATTERN, reasonLength } from "@c
 import type { HintOutcome, HintOutcomeChannel } from "@crosscheck/schema";
 
 import {
+  AGENT_DRAFT_LINE,
   AGENT_WORD_LINE,
   OUTCOMES_NOT_SERVED_LINE,
   PERSON_DOOR_NOT_SERVED_LINE,
   REASON_REQUIRED_LINE,
   REASON_SECRET_LINE,
+  agentHostDraftLine,
   agentHostLine,
   heldLine,
   outcomeRecordedLine,
@@ -166,6 +168,8 @@ interface Target {
   readonly via: HintOutcomeChannel;
   /** Said after an agent's word — why it is the agent's; empty after the person's. */
   readonly agentLine: string;
+  /** The same, after a hub that only drafted it (human provenance §5): no shell makes it yours, only the passkey. */
+  readonly agentDraftLine: string;
   /** The caller's developer key, whose held deliveries alone are theirs (LOW-9); null when the config predates it. */
   readonly developerId: string | null;
 }
@@ -218,7 +222,9 @@ const record = async (
       ? { stdout: PERSON_DOOR_NOT_SERVED_LINE, exitCode: EXIT_FAIL }
       : failed(answer.result);
   }
-  return { stdout: `${outcomeRecordedLine(ref, answer.result.data)}${target.agentLine}`, exitCode: EXIT_OK };
+  const recorded = answer.result.data;
+  const agentLine = recorded.draft === true ? target.agentDraftLine : target.agentLine;
+  return { stdout: `${outcomeRecordedLine(ref, recorded)}${agentLine}`, exitCode: EXIT_OK };
 };
 
 /**
@@ -266,12 +272,14 @@ const recordRecent = async (target: Target, command: OutcomeCommand, reason: str
  * never opens the person's door — it can only take it away. Then the probe (§13.13 HIGH-1). Asked
  * through the one person gate every person-only gesture takes (`personGate`).
  */
-const channelOf = (env: Env, isInteractive: InteractiveProbe): Pick<Target, "via" | "agentLine"> => {
+const channelOf = (env: Env, isInteractive: InteractiveProbe): Pick<Target, "via" | "agentLine" | "agentDraftLine"> => {
   const gate = personGate(env, isInteractive);
   if (gate.isPerson) {
-    return { via: "person", agentLine: "" };
+    return { via: "person", agentLine: "", agentDraftLine: "" };
   }
-  return { via: "agent", agentLine: gate.marker === null ? AGENT_WORD_LINE : agentHostLine(gate.marker) };
+  return gate.marker === null
+    ? { via: "agent", agentLine: AGENT_WORD_LINE, agentDraftLine: AGENT_DRAFT_LINE }
+    : { via: "agent", agentLine: agentHostLine(gate.marker), agentDraftLine: agentHostDraftLine(gate.marker) };
 };
 
 const runOutcome = async (
