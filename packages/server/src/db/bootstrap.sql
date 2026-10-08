@@ -1849,6 +1849,15 @@ ALTER TABLE pins ADD COLUMN IF NOT EXISTS provenance text NOT NULL DEFAULT 'unkn
 ALTER TABLE pins ADD COLUMN IF NOT EXISTS confirmation_id text;
 ALTER TABLE pins ADD COLUMN IF NOT EXISTS broke_provenance text;
 ALTER TABLE pins ADD COLUMN IF NOT EXISTS broke_confirmation_id text;
+-- Review M5/P9: a confirmed row names the ITEM that signed it — the confirmation
+-- and the item's position in it — so a client checks each row against what was
+-- signed, and a row upgraded by naming a confirmation alone is refused.
+ALTER TABLE pilot_marks ADD COLUMN IF NOT EXISTS confirmation_position integer;
+ALTER TABLE noise_reassertions ADD COLUMN IF NOT EXISTS confirmation_position integer;
+ALTER TABLE hint_outcomes ADD COLUMN IF NOT EXISTS confirmation_position integer;
+ALTER TABLE developer_mutes ADD COLUMN IF NOT EXISTS confirmation_position integer;
+ALTER TABLE pins ADD COLUMN IF NOT EXISTS confirmation_position integer;
+ALTER TABLE pins ADD COLUMN IF NOT EXISTS broke_confirmation_position integer;
 -- A break from before 0.11 is a legacy break. Touches nothing once done: every
 -- later break is written with its provenance (the CHECK below holds it).
 UPDATE pins SET broke_provenance = 'unknown_legacy'
@@ -1869,7 +1878,8 @@ BEGIN
     ) THEN
       EXECUTE format(
         'ALTER TABLE %I ADD CONSTRAINT %I CHECK ('
-          || '(provenance = %L AND confirmation_id IS NULL) OR (provenance = %L AND confirmation_id IS NOT NULL))',
+          || '(provenance = %L AND confirmation_id IS NULL AND confirmation_position IS NULL) '
+          || 'OR (provenance = %L AND confirmation_id IS NOT NULL AND confirmation_position IS NOT NULL))',
         target, target || '_provenance_check', 'unknown_legacy', 'human_passkey_confirmed');
     END IF;
     IF NOT EXISTS (
@@ -1877,7 +1887,8 @@ BEGIN
       WHERE conname = target || '_confirmation_fk' AND conrelid = target::regclass
     ) THEN
       EXECUTE format(
-        'ALTER TABLE %I ADD CONSTRAINT %I FOREIGN KEY (confirmation_id) REFERENCES human_confirmations(id)',
+        'ALTER TABLE %I ADD CONSTRAINT %I FOREIGN KEY (confirmation_id, confirmation_position) '
+          || 'REFERENCES human_confirmation_items(confirmation_id, position)',
         target, target || '_confirmation_fk');
     END IF;
   END LOOP;
@@ -1888,16 +1899,19 @@ BEGIN
     -- COALESCE: a CHECK that evaluates to NULL passes, so a break with no
     -- provenance must compare as '' and fail every clause, never as NULL.
     ALTER TABLE pins ADD CONSTRAINT pins_broke_provenance_check CHECK (
-      (broke_at IS NULL AND broke_provenance IS NULL AND broke_confirmation_id IS NULL)
-      OR (broke_at IS NOT NULL AND COALESCE(broke_provenance, '') = 'unknown_legacy' AND broke_confirmation_id IS NULL)
-      OR (broke_at IS NOT NULL AND COALESCE(broke_provenance, '') = 'human_passkey_confirmed' AND broke_confirmation_id IS NOT NULL));
+      (broke_at IS NULL AND broke_provenance IS NULL AND broke_confirmation_id IS NULL AND broke_confirmation_position IS NULL)
+      OR (broke_at IS NOT NULL AND COALESCE(broke_provenance, '') = 'unknown_legacy'
+          AND broke_confirmation_id IS NULL AND broke_confirmation_position IS NULL)
+      OR (broke_at IS NOT NULL AND COALESCE(broke_provenance, '') = 'human_passkey_confirmed'
+          AND broke_confirmation_id IS NOT NULL AND broke_confirmation_position IS NOT NULL));
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint
     WHERE conname = 'pins_broke_confirmation_fk' AND conrelid = 'pins'::regclass
   ) THEN
     ALTER TABLE pins ADD CONSTRAINT pins_broke_confirmation_fk
-      FOREIGN KEY (broke_confirmation_id) REFERENCES human_confirmations(id);
+      FOREIGN KEY (broke_confirmation_id, broke_confirmation_position)
+      REFERENCES human_confirmation_items(confirmation_id, position);
   END IF;
 END
 $$;

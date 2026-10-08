@@ -10,6 +10,7 @@ import {
   check,
   customType,
   doublePrecision,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -100,9 +101,21 @@ const sqlList = (values: readonly string[]): SQL => sql.raw(values.map((value) =
  * nothing else (human provenance §4): a draft class never reaches it, a human
  * row always names the confirmation that wrote it, and a legacy row none.
  */
-const storedProvenanceCheck = (provenance: AnyPgColumn, confirmationId: AnyPgColumn): SQL =>
-  sql`(${provenance} = '${sql.raw(LEGACY_PROVENANCE)}' AND ${confirmationId} IS NULL)
-   OR (${provenance} = '${sql.raw(HUMAN_PROVENANCE)}' AND ${confirmationId} IS NOT NULL)`;
+const storedProvenanceCheck = (provenance: AnyPgColumn, confirmationId: AnyPgColumn, position: AnyPgColumn): SQL =>
+  sql`(${provenance} = '${sql.raw(LEGACY_PROVENANCE)}' AND ${confirmationId} IS NULL AND ${position} IS NULL)
+   OR (${provenance} = '${sql.raw(HUMAN_PROVENANCE)}' AND ${confirmationId} IS NOT NULL AND ${position} IS NOT NULL)`;
+
+/**
+ * THE ITEM THAT SIGNED A ROW (review M5/P9): the confirmation and the item's
+ * position in it, so a client checks each row against what was signed and a
+ * row cannot be made human by naming a confirmation alone.
+ */
+const signedByItem = (name: string, confirmationId: AnyPgColumn, position: AnyPgColumn) =>
+  foreignKey({
+    name,
+    columns: [confirmationId, position],
+    foreignColumns: [humanConfirmationItems.confirmationId, humanConfirmationItems.position],
+  });
 
 /**
  * Vectors from different models are not comparable, so every embedding carries
@@ -201,11 +214,16 @@ export const developerMutes = pgTable(
      * before 0.11, which keep working. No drizzle default: see `pilotMarks`.
      */
     provenance: text("provenance", { enum: STORED_JUDGEMENT_PROVENANCES }).notNull(),
-    confirmationId: text("confirmation_id").references(() => humanConfirmations.id),
+    confirmationId: text("confirmation_id"),
+    confirmationPosition: integer("confirmation_position"),
   },
   (table) => [
     primaryKey({ columns: [table.readerDeveloperId, table.mutedDeveloperId] }),
-    check("developer_mutes_provenance_check", storedProvenanceCheck(table.provenance, table.confirmationId)),
+    check(
+      "developer_mutes_provenance_check",
+      storedProvenanceCheck(table.provenance, table.confirmationId, table.confirmationPosition),
+    ),
+    signedByItem("developer_mutes_confirmation_fk", table.confirmationId, table.confirmationPosition),
   ],
 );
 
@@ -1033,21 +1051,25 @@ export const pins = pgTable(
      * scored as a human's). No drizzle default: see `pilotMarks`.
      */
     provenance: text("provenance", { enum: STORED_JUDGEMENT_PROVENANCES }).notNull(),
-    confirmationId: text("confirmation_id").references(() => humanConfirmations.id),
+    confirmationId: text("confirmation_id"),
+    confirmationPosition: integer("confirmation_position"),
     /** The same for the retraction: null while unbroken; legacy for a break from before 0.11. */
     brokeProvenance: text("broke_provenance", { enum: STORED_JUDGEMENT_PROVENANCES }),
-    brokeConfirmationId: text("broke_confirmation_id").references(() => humanConfirmations.id),
+    brokeConfirmationId: text("broke_confirmation_id"),
+    brokeConfirmationPosition: integer("broke_confirmation_position"),
   },
   (table) => [
-    check("pins_provenance_check", storedProvenanceCheck(table.provenance, table.confirmationId)),
+    check("pins_provenance_check", storedProvenanceCheck(table.provenance, table.confirmationId, table.confirmationPosition)),
+    signedByItem("pins_confirmation_fk", table.confirmationId, table.confirmationPosition),
     check(
       "pins_broke_provenance_check",
       // COALESCE: a CHECK that evaluates to NULL passes, so a break with no
       // provenance compares as '' and fails every clause.
-      sql`(${table.brokeAt} IS NULL AND ${table.brokeProvenance} IS NULL AND ${table.brokeConfirmationId} IS NULL)
-   OR (${table.brokeAt} IS NOT NULL AND COALESCE(${table.brokeProvenance}, '') = '${sql.raw(LEGACY_PROVENANCE)}' AND ${table.brokeConfirmationId} IS NULL)
-   OR (${table.brokeAt} IS NOT NULL AND COALESCE(${table.brokeProvenance}, '') = '${sql.raw(HUMAN_PROVENANCE)}' AND ${table.brokeConfirmationId} IS NOT NULL)`,
+      sql`(${table.brokeAt} IS NULL AND ${table.brokeProvenance} IS NULL AND ${table.brokeConfirmationId} IS NULL AND ${table.brokeConfirmationPosition} IS NULL)
+   OR (${table.brokeAt} IS NOT NULL AND COALESCE(${table.brokeProvenance}, '') = '${sql.raw(LEGACY_PROVENANCE)}' AND ${table.brokeConfirmationId} IS NULL AND ${table.brokeConfirmationPosition} IS NULL)
+   OR (${table.brokeAt} IS NOT NULL AND COALESCE(${table.brokeProvenance}, '') = '${sql.raw(HUMAN_PROVENANCE)}' AND ${table.brokeConfirmationId} IS NOT NULL AND ${table.brokeConfirmationPosition} IS NOT NULL)`,
     ),
+    signedByItem("pins_broke_confirmation_fk", table.brokeConfirmationId, table.brokeConfirmationPosition),
     check(
       "pins_surface_length_check",
       sql`char_length(${table.surface}) <= ${sql.raw(String(MAX_PIN_SURFACE_CHARS))}`,
@@ -1410,14 +1432,16 @@ export const pilotMarks = pgTable(
      * database DEFAULT 'unknown_legacy' only labels the rows already there.
      */
     provenance: text("provenance", { enum: STORED_JUDGEMENT_PROVENANCES }).notNull(),
-    confirmationId: text("confirmation_id").references(() => humanConfirmations.id),
+    confirmationId: text("confirmation_id"),
+    confirmationPosition: integer("confirmation_position"),
   },
   (table) => [
     check(
       "pilot_marks_reason_length_check",
       sql`${table.reason} IS NULL OR char_length(${table.reason}) <= ${sql.raw(String(MAX_PILOT_LABEL_REASON_CHARS))}`,
     ),
-    check("pilot_marks_provenance_check", storedProvenanceCheck(table.provenance, table.confirmationId)),
+    check("pilot_marks_provenance_check", storedProvenanceCheck(table.provenance, table.confirmationId, table.confirmationPosition)),
+    signedByItem("pilot_marks_confirmation_fk", table.confirmationId, table.confirmationPosition),
     // One label per person per delivery PER PROVENANCE: a confirmed label never
     // collides with the legacy one a 0.10 hub already holds.
     uniqueIndex("pilot_marks_ref_marker_provenance_idx").on(
@@ -1473,11 +1497,13 @@ export const hintOutcomes = pgTable(
      * default: see `pilotMarks`.
      */
     provenance: text("provenance", { enum: STORED_JUDGEMENT_PROVENANCES }).notNull(),
-    confirmationId: text("confirmation_id").references(() => humanConfirmations.id),
+    confirmationId: text("confirmation_id"),
+    confirmationPosition: integer("confirmation_position"),
   },
   (table) => [
     check("hint_outcomes_recorded_via_check", sql`${table.recordedVia} IS NULL OR ${table.recordedVia} IN ('agent', 'person')`),
-    check("hint_outcomes_provenance_check", storedProvenanceCheck(table.provenance, table.confirmationId)),
+    check("hint_outcomes_provenance_check", storedProvenanceCheck(table.provenance, table.confirmationId, table.confirmationPosition)),
+    signedByItem("hint_outcomes_confirmation_fk", table.confirmationId, table.confirmationPosition),
     check(
       "hint_outcomes_reason_length_check",
       sql`${table.reason} IS NULL OR char_length(${table.reason}) <= ${sql.raw(String(MAX_HINT_OUTCOME_REASON_CHARS))}`,
@@ -1513,10 +1539,15 @@ export const noiseReassertions = pgTable(
     createdAt: timestamptz("created_at").notNull(),
     /** As on `pilot_marks`: confirmed, or from before 0.11. */
     provenance: text("provenance", { enum: STORED_JUDGEMENT_PROVENANCES }).notNull(),
-    confirmationId: text("confirmation_id").references(() => humanConfirmations.id),
+    confirmationId: text("confirmation_id"),
+    confirmationPosition: integer("confirmation_position"),
   },
   (table) => [
-    check("noise_reassertions_provenance_check", storedProvenanceCheck(table.provenance, table.confirmationId)),
+    check(
+      "noise_reassertions_provenance_check",
+      storedProvenanceCheck(table.provenance, table.confirmationId, table.confirmationPosition),
+    ),
+    signedByItem("noise_reassertions_confirmation_fk", table.confirmationId, table.confirmationPosition),
     check(
       "noise_reassertions_reason_length_check",
       sql`${table.reason} IS NULL OR char_length(${table.reason}) <= ${sql.raw(String(MAX_PILOT_LABEL_REASON_CHARS))}`,

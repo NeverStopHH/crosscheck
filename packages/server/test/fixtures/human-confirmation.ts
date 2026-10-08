@@ -6,7 +6,7 @@
  */
 import { randomUUID } from "node:crypto";
 
-import { humanConfirmations } from "../../src/db/schema.ts";
+import { humanConfirmationItems, humanConfirmations, humanDrafts } from "../../src/db/schema.ts";
 import { humanStamp } from "../../src/services/human-provenance.ts";
 import type { HumanStamp } from "../../src/services/human-provenance.ts";
 import type { DbExecutor } from "../../src/db/client.ts";
@@ -14,10 +14,26 @@ import { seedPasskey } from "./passkeys.ts";
 
 const AT = new Date("2026-07-24T09:00:00.000Z");
 
-/** A confirmation by `developerId`'s own (seeded) passkey, and the stamp a writer takes from it. */
+/**
+ * A confirmation by `developerId`'s own (seeded) passkey, past its cool-off,
+ * with the one item it signed (a row names its item: review M5/P9), and the
+ * stamp a writer takes from it. Several rows may share one stamp.
+ */
 export const seedHumanStamp = async (db: DbExecutor, developerId: string): Promise<HumanStamp> => {
   const { credentialId } = await seedPasskey(db, developerId);
   const id = `hc_seed_${randomUUID()}`;
+  const draftId = `dr_seed_${randomUUID()}`;
+  await db.insert(humanDrafts).values({
+    id: draftId,
+    developerId,
+    repo: null,
+    kind: "outcome",
+    subjectKey: `seeded:${draftId}`,
+    version: 1,
+    payload: {},
+    provenance: "agent_asserted",
+    createdAt: AT,
+  });
   await db.insert(humanConfirmations).values({
     id,
     developerId,
@@ -25,7 +41,7 @@ export const seedHumanStamp = async (db: DbExecutor, developerId: string): Promi
     rpId: "localhost",
     digest: "seeded",
     pendingFingerprint: "seeded",
-    itemCount: 0,
+    itemCount: 1,
     formedAt: AT,
     confirmedAt: AT,
     // No real assertion: this row stands in for one where the ceremony is not under test.
@@ -34,5 +50,14 @@ export const seedHumanStamp = async (db: DbExecutor, developerId: string): Promi
     signature: "seeded",
     userHandle: null,
   });
-  return humanStamp(id);
+  await db.insert(humanConfirmationItems).values({
+    confirmationId: id,
+    position: 0,
+    draftId,
+    draftVersion: 1,
+    draftDigest: "seeded",
+    decision: "confirm",
+    content: {},
+  });
+  return humanStamp(id, 0);
 };

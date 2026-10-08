@@ -280,6 +280,7 @@ export const createPin = async (
         createdAt: now,
         provenance: stamp.provenance,
         confirmationId: stamp.confirmationId,
+        confirmationPosition: stamp.confirmationPosition,
       })
       .onConflictDoNothing({ target: pins.id })
       .returning({ id: pins.id });
@@ -341,6 +342,7 @@ export const markPinBroke = async (
       brokeAtCommit,
       brokeProvenance: stamp.provenance,
       brokeConfirmationId: stamp.confirmationId,
+      brokeConfirmationPosition: stamp.confirmationPosition,
     })
     .where(and(eq(pins.id, pinId), eq(pins.repo, repo), isNull(pins.brokeAt)))
     .returning({ id: pins.id });

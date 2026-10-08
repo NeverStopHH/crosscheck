@@ -344,6 +344,7 @@ const appendOutcome = async (
     // human provenance §4: the confirmation that made this the person's word.
     provenance: input.stamp.provenance,
     confirmationId: input.stamp.confirmationId,
+    confirmationPosition: input.stamp.confirmationPosition,
   });
   return id;
 };

@@ -574,7 +574,10 @@ describe("proof 3 — attribution accuracy", () => {
       // Proof 3 scores a break and a repair only when a passkey confirmed both.
       ...(await confirmedBy(world)),
       brokeProvenance: "human_passkey_confirmed",
-      brokeConfirmationId: (await confirmedBy(world)).confirmationId,
+      ...(await confirmedBy(world).then((stamp) => ({
+        brokeConfirmationId: stamp.confirmationId,
+        brokeConfirmationPosition: stamp.confirmationPosition,
+      }))),
     });
     await world.harness.db.insert(pinFiles).values({
       pinId: id,

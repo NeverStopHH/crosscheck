@@ -25,7 +25,9 @@ const dataOf = async <T>(response: Response): Promise<T> => ((await response.jso
 const post = async (harness: TestHarness, developer: TestDeveloper, path: string, body: unknown): Promise<Response> =>
   await harness.app.request(path, jsonRequest("POST", developer.apiKey, body));
 
-const draftsOf = (harness: TestHarness) => harness.db.select().from(humanDrafts);
+/** The drafts the doors wrote — not the stand-in a seeded confirmation carries (fixtures/human-confirmation.ts). */
+const draftsOf = async (harness: TestHarness) =>
+  (await harness.db.select().from(humanDrafts)).filter((draft) => !draft.subjectKey.startsWith("seeded:"));
 
 const pinBody = (id: string): Record<string, unknown> => ({
   id,

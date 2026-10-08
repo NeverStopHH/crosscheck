@@ -637,6 +637,7 @@ const markRow = (input: WriteMarkInput, id: string, createdAt: Date): MarkRow =>
   // human provenance §4: the confirmation that made this a person's label.
   provenance: input.stamp.provenance,
   confirmationId: input.stamp.confirmationId,
+  confirmationPosition: input.stamp.confirmationPosition,
 });
 
 /**

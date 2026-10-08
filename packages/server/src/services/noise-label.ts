@@ -81,6 +81,7 @@ export const writeNoiseOnPointer = (
       // The same confirmation as the label it re-asserts (human provenance §4).
       provenance: label.provenance,
       confirmationId: label.confirmationId ?? null,
+      confirmationPosition: label.confirmationPosition ?? null,
     });
     return { id, repeated: false, stands: "noise", replaced: before };
   });

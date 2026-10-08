@@ -12,15 +12,21 @@ import { sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import { HUMAN_PROVENANCE } from "@crosscheck/schema";
 
-/** What a confirmation writes on every row it applies: the human class and itself. */
+/**
+ * What a confirmation writes on every row it applies: the human class, itself,
+ * and the position of the ITEM that signed this row (review M5/P9) — the
+ * database holds the row to that item by a composite foreign key.
+ */
 export interface HumanStamp {
   readonly provenance: typeof HUMAN_PROVENANCE;
   readonly confirmationId: string;
+  readonly confirmationPosition: number;
 }
 
-export const humanStamp = (confirmationId: string): HumanStamp => ({
+export const humanStamp = (confirmationId: string, confirmationPosition: number): HumanStamp => ({
   provenance: HUMAN_PROVENANCE,
   confirmationId,
+  confirmationPosition,
 });
 
 /**

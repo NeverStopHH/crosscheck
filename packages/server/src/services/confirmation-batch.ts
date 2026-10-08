@@ -277,10 +277,14 @@ export type ConfirmRefused = {
 
 /** Every confirmed item, applied by its kind's registered writer with the batch's stamp. */
 const applyConfirmed = async (deps: { readonly db: DbTransaction; readonly now: Clock }, batch: FrozenBatch): Promise<Applied> => {
-  const stamp = humanStamp(batch.id);
   let presenceOn = false;
   const effects = new Map<string, unknown>();
-  for (const item of batch.items.filter((each) => each.decision === "confirm")) {
+  for (const [position, item] of batch.items.entries()) {
+    if (item.decision !== "confirm") {
+      continue;
+    }
+    // Each row names the item that signed it (review M5/P9): the position recordConfirmation gave it.
+    const stamp = humanStamp(batch.id, position);
     const applied = await DRAFT_KIND_REGISTRY[item.draft.kind].apply(deps, item.draft, item.content, stamp);
     if ("refusal" in applied) {
       throw new BatchRefused("item_refused", item.draft.id, applied.refusal);

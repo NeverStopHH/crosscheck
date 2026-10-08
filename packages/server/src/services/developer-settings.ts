@@ -549,6 +549,7 @@ export const addMute = async (
       createdAt: deps.now(),
       provenance: stamp.provenance,
       confirmationId: stamp.confirmationId,
+      confirmationPosition: stamp.confirmationPosition,
     })
     .onConflictDoNothing()
     .returning({ id: developerMutes.mutedDeveloperId });
