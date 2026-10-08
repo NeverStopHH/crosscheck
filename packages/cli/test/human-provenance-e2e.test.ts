@@ -18,6 +18,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
 import { createDb, createServer } from "@crosscheck/server";
+import { PASSKEY_COOLOFF_HOURS } from "../../server/src/constants.ts";
 import { hintDeliveryId } from "@crosscheck/connector-core/capture/records.ts";
 import { postHintOutcome } from "@crosscheck/connector-core/http/hint-outcomes.ts";
 import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
@@ -32,6 +33,9 @@ import {
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
 const ADMIN_TOKEN = "provenance-e2e-admin";
+const MS_PER_HOUR = 3_600_000;
+/** How far ahead of the wall clock the hub's own clock runs: moved past the cool-off once the person signed. */
+let hubAheadMs = 0;
 /** The origin the person's browser shows; the socket is 127.0.0.1, a loopback peer. */
 const ORIGIN = "http://localhost:7100";
 const RP_ID = "localhost";
@@ -140,7 +144,8 @@ beforeAll(async () => {
   server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
-    fetch: createServer({ db, adminToken: ADMIN_TOKEN, webauthnOrigins: [ORIGIN] }).fetch,
+    // The hub's own clock, which the test moves past the passkey's cool-off (review H1).
+    fetch: createServer({ db, adminToken: ADMIN_TOKEN, webauthnOrigins: [ORIGIN], now: () => new Date(Date.now() + hubAheadMs) }).fetch,
   });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
   repo = await makeRepo("provenance-e2e", { remote: "git@github.com:acme/api.git" });
@@ -240,6 +245,9 @@ describe("an agent drafts three ratings; the person confirms two and discards on
       response: softAuthenticationResponse({ credential, challenge: options.publicKey.challenge, origin: ORIGIN, rpId: RP_ID, signCount: 1 }),
     });
     const afterConfirming = await mine();
+    // a day on the hub's clock: the passkey enrolled for this is past its announced cool-off
+    hubAheadMs = (PASSKEY_COOLOFF_HOURS + 1) * MS_PER_HOUR;
+    const afterCoolOff = await mine();
 
     // Assert — before: nothing human, three of the agent's waiting
     expect(beforeConfirming).toContain("hints that reached you unasked: 3 — as you confirmed them with your passkey: followed 0 · overrode 0 · not relevant now 0 · noise 0 · unmarked 3");
@@ -250,9 +258,13 @@ describe("an agent drafts three ratings; the person confirms two and discards on
     expect(items).toHaveLength(3);
     expect([batch.confirm, batch.discard]).toEqual([2, 1]);
     expect(signed.status).toBe(200);
-    // after: the two the person signed, and nothing of the agent's counted
-    expect(afterConfirming).toContain("hints that reached you unasked: 3 — as you confirmed them with your passkey: followed 2 · overrode 0 · not relevant now 0 · noise 0 · unmarked 1");
-    expect(afterConfirming).toContain("not confirmed by you, so not counted above: 0 rated by your agent · 0 typed at a terminal · 0 recorded before provenance existed");
-    expect(afterConfirming).not.toContain("kept the header logic on the client");
+    // after: the two the person signed wait out their passkey's cool-off (H1), said so with when
+    expect(afterConfirming).toContain("as you confirmed them with your passkey: followed 0 · overrode 0 · not relevant now 0 · noise 0 · unmarked 3");
+    expect(afterConfirming).toMatch(/ {2}2 confirmed, counting from \d{4}-\d{2}-\d{2}T[\d:.]+Z — the passkey that confirmed them is still in its cool-off/);
+    // a day later: the two the person signed count, and nothing of the agent's ever does
+    expect(afterCoolOff).toContain("hints that reached you unasked: 3 — as you confirmed them with your passkey: followed 2 · overrode 0 · not relevant now 0 · noise 0 · unmarked 1");
+    expect(afterCoolOff).toContain("not confirmed by you, so not counted above: 0 rated by your agent · 0 typed at a terminal · 0 recorded before provenance existed");
+    expect(afterCoolOff).not.toContain("counting from");
+    expect(afterCoolOff).not.toContain("kept the header logic on the client");
   });
 });

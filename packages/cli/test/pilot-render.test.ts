@@ -388,6 +388,26 @@ describe("renderPilot", () => {
     expect(out).toContain("3 repaired break(s) recorded no commit at the break");
   });
 
+  test("review H1: proof 4 shows labels confirmed with a passkey still cooling off, from when they count, and the retracted ones", () => {
+    // Arrange
+    const base = report();
+    const out = renderPilot(
+      view({
+        precision: {
+          ...base.precision,
+          notHuman: { atTerminal: 0, byAgent: 0, legacy: 0, coolingOff: 2, countingFrom: "2026-08-02T10:00:00.000Z", retracted: 1 },
+        },
+      }),
+    );
+
+    // Assert — beside the figures, never in them
+    const proof4 = out.slice(out.indexOf("4. proactive precision"), out.indexOf("5. coverage"));
+    expect(proof4).toContain(
+      "2 confirmed, counting from 2026-08-02T10:00:00.000Z — the passkey that confirmed them is still in its cool-off, and revoking it first retracts them",
+    );
+    expect(proof4).toContain("1 retracted — the passkey that confirmed them was revoked, so they count nowhere");
+  });
+
   test("proof 4 says plainly what makes a label a person's: their passkey, never the key", () => {
     // Arrange & Act — the second review's "Can an agent label?": the key is a
     // file on disk and a pty passes the terminal check. Since human

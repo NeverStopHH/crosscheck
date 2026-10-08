@@ -15,7 +15,17 @@
 import { describe, expect, test } from "bun:test";
 import { Glob } from "bun";
 
-import { hintOutcomes, noiseReassertions, pilotAttributions, pilotMarks, pilotSessions, pinFiles, pins } from "../src/db/schema.ts";
+import { PASSKEY_COOLOFF_HOURS } from "../src/constants.ts";
+import {
+  hintOutcomes,
+  noiseReassertions,
+  passkeys,
+  pilotAttributions,
+  pilotMarks,
+  pilotSessions,
+  pinFiles,
+  pins,
+} from "../src/db/schema.ts";
 import { confirmPending, prepareConfirmer } from "./fixtures/confirm-driver.ts";
 import type { Confirmer } from "./fixtures/confirm-driver.ts";
 import {
@@ -29,8 +39,9 @@ import {
 } from "./fixtures/hint-outcome-world.ts";
 import type { OutcomeWorld } from "./fixtures/hint-outcome-world.ts";
 import { HUMAN_JUDGEMENT_PRODUCERS, JUDGEMENT_READERS_EXEMPT } from "./human-judgement-producers.ts";
-import { jsonRequest } from "./helpers.ts";
+import { TEST_ADMIN_TOKEN, jsonRequest } from "./helpers.ts";
 
+const SECONDS_PER_HOUR = 3600;
 const SURFACE = "Export keeps the header";
 const LEGACY_SURFACE = "Import keeps the order";
 const SRC_ROOT = new URL("../", import.meta.url).pathname;
@@ -149,8 +160,77 @@ describe("only human_passkey_confirmed counts as a person's judgement", () => {
 
   test("confirmed through the batch ceremony, each producer counts exactly what was confirmed — and the legacy rows stay out", async () => {
     // Arrange
+    const { world } = await confirmedWorld({ pastCoolOff: true });
+
+    // Act
+    const counts = await readAll(world);
+
+    // Assert
+    expect(counts).toEqual(EXACTLY_CONFIRMED);
+  });
+
+  test("H1: confirmed with a passkey still cooling off, no producer counts it until the cool-off ends — then each counts exactly", async () => {
+    // Arrange — Q19: a passkey enrolled moments ago confirms at once
+    const { world } = await confirmedWorld({ pastCoolOff: false });
+
+    // Act
+    const whileCooling = await readAll(world);
+    world.harness.clock.advanceSeconds(PASSKEY_COOLOFF_HOURS * SECONDS_PER_HOUR);
+    const afterCoolOff = await readAll(world);
+
+    // Assert
+    expect(whileCooling).toEqual(zeroesOf(EXACTLY_CONFIRMED));
+    expect(afterCoolOff).toEqual(EXACTLY_CONFIRMED);
+  });
+
+  test("H1: revoking the passkey that confirmed retracts every producer's count to zero", async () => {
+    // Arrange
+    const { world, confirmer } = await confirmedWorld({ pastCoolOff: true });
+
+    // Act — the admin revokes the passkey that signed every round (04a §4.5)
+    const [passkey] = await world.harness.db.select({ id: passkeys.id }).from(passkeys);
+    const revoked = await world.harness.app.request(
+      `/api/developers/${world.nick.developerId}/passkeys/${String(passkey?.id)}/revoke`,
+      jsonRequest("POST", TEST_ADMIN_TOKEN, {}),
+    );
+    const counts = await readAll(world);
+
+    // Assert
+    expect(revoked.status).toBe(200);
+    expect(confirmer.viewer.developer.developerId).toBe(world.nick.developerId);
+    expect(counts).toEqual(zeroesOf(EXACTLY_CONFIRMED));
+  });
+});
+
+/** What every producer reads once the four rounds below are confirmed. */
+const EXACTLY_CONFIRMED: Readonly<Record<string, Readonly<Record<string, number>>>> = {
+  "proof 4: the labelled figures (precision, benefit, coverage)": { helpful: 1, noise: 1, unclear: 0 },
+  "proof 4: the reasons people typed beside a label": { reasons: 1 },
+  "proof 4: the cohorts, side by side": { labelled: 2 },
+  "proof 4: the noisy-sessions floor": { noisy: 1 },
+  "proof 4: surface-ok marks (pin --ok)": { surfaceOk: 1 },
+  "proof 3: attributions scored against a repair": { scored: 1 },
+  "--mine: what the caller's hints led to": { followed: 1, overrode: 1, notRelevantNow: 0, noise: 1, helpful: 1, reasons: 2 },
+  "the team line and the source credit (one closed period's aggregate)": {
+    followed: 1, overrode: 1, notRelevantNow: 0, noise: 1, recorders: 1,
+  },
+};
+
+const zeroesOf = (
+  counts: Readonly<Record<string, Readonly<Record<string, number>>>>,
+): Readonly<Record<string, Readonly<Record<string, number>>>> =>
+  Object.fromEntries(
+    Object.entries(counts).map(([name, values]) => [name, Object.fromEntries(Object.keys(values).map((key) => [key, 0]))]),
+  );
+
+/**
+ * The non-human world, then every draft confirmed through the real ceremony in
+ * four rounds: both outcomes, both labels and the pin; the pin still works; it
+ * broke (suspect answered); its repair.
+ */
+const confirmedWorld = async (options: { readonly pastCoolOff: boolean }): Promise<{ world: OutcomeWorld; confirmer: Confirmer }> => {
     const world = await nonHumanWorld();
-    const confirmer = await prepareConfirmer(world.harness, world.nick);
+    const confirmer = await prepareConfirmer(world.harness, world.nick, { pastCoolOff: options.pastCoolOff });
     // Round 1: both outcomes, both labels, the pin.
     await confirmAll(world, confirmer);
     // Round 2: the pin still works.
@@ -166,25 +246,10 @@ describe("only human_passkey_confirmed counts as a person's judgement", () => {
     world.harness.clock.advanceSeconds(60);
     await ok(post(world, "/api/pins", { ...pinBody("pin_human_repair"), verifiedAtCommit: "d4e5f6a" }), "repair pin");
     await confirmAll(world, confirmer);
+    return { world, confirmer };
+};
 
-    // Act
-    const counts = await readAll(world);
-
-    // Assert
-    expect(counts).toEqual({
-      "proof 4: the labelled figures (precision, benefit, coverage)": { helpful: 1, noise: 1, unclear: 0 },
-      "proof 4: the reasons people typed beside a label": { reasons: 1 },
-      "proof 4: the cohorts, side by side": { labelled: 2 },
-      "proof 4: the noisy-sessions floor": { noisy: 1 },
-      "proof 4: surface-ok marks (pin --ok)": { surfaceOk: 1 },
-      "proof 3: attributions scored against a repair": { scored: 1 },
-      "--mine: what the caller's hints led to": { followed: 1, overrode: 1, notRelevantNow: 0, noise: 1, helpful: 1, reasons: 2 },
-      "the team line and the source credit (one closed period's aggregate)": {
-        followed: 1, overrode: 1, notRelevantNow: 0, noise: 1, recorders: 1,
-      },
-    });
-  });
-
+describe("the producer registry", () => {
   test("every source that reads a judgement table is a registered producer or exempt with its reason", async () => {
     // Arrange
     const reads =
