@@ -202,7 +202,9 @@ const L7_LAST_WORD: readonly CorpusSeed[] = [
  * marker to carry, on a fresh mint. The heal carried that epoch into the next
  * life, which the hub had filed under the old one. And a set_intent refused
  * as ended whose hook died before it wrote the refusal down (`sleep` seed
- * 31110, found by the 2000-seed sweep around 30495).
+ * 31110, found by the 2000-seed sweep around 30495). And a heal's retirement
+ * of a life, an end sent without writing the life down (`sleep` seed 52221,
+ * found by the 3000-seed sweep of every generator from 50001).
  */
 const PR75_REVIEW: readonly CorpusSeed[] = [
   {
@@ -223,6 +225,29 @@ const PR75_REVIEW: readonly CorpusSeed[] = [
     events: [start(1), hubEnd(1), crash(3, "after"), intent(1, "done"), abandon(1)],
   },
   { seed: 31110, generator: "sleep", invariant: "I2", fix: "1c4130f5", bug: "the generated scenario", events: scenarioOf(31110, GENERATORS.sleep) },
+  {
+    seed: 52221,
+    generator: "sleep",
+    invariant: "I2",
+    fix: "c693f3d1",
+    bug: "a heal retired the life a re-fire beside SessionEnd had moved to, without writing it down, and a successor filed its work context into it (some interleavings only)",
+    events: [
+      start(0),
+      fault("recordsLate", 1, 0),
+      edit(0),
+      flush(0),
+      intent(0, "reviewing"),
+      edit(0),
+      fault("registersDown", 1, 2),
+      end(0),
+      edit(0),
+      edit(0),
+      recover(0),
+      hubEnd(0),
+      par(end(0), start(0)),
+    ],
+  },
+  { seed: 52221, generator: "sleep", invariant: "I2", fix: "c693f3d1", bug: "the generated scenario", events: scenarioOf(52221, GENERATORS.sleep) },
 ];
 
 export const SEED_CORPUS: readonly CorpusSeed[] = [
