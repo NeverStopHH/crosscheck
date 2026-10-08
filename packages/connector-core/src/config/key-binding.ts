@@ -61,12 +61,14 @@ export interface ForeignHub {
 
 /**
  * The stored login's binding: the recorded origin, else — a login written
- * before bindings existed — the origin of the hub it was logged in to.
+ * before bindings existed — the origin of the hub it was logged in to. A
+ * RECORDED value that is not an origin binds the key to nothing (review L3):
+ * falling back to `hubUrl` would let one edit of that field move the key,
+ * which is exactly what recording the binding exists to stop. Doctor then
+ * says to log in again.
  */
-export const storedKeyOrigin = (stored: StoredLogin): string | null => {
-  const recorded = stored.keyOrigin === undefined ? null : hubOrigin(stored.keyOrigin);
-  return recorded ?? hubOrigin(stored.hubUrl);
-};
+export const storedKeyOrigin = (stored: StoredLogin): string | null =>
+  stored.keyOrigin === undefined ? hubOrigin(stored.hubUrl) : hubOrigin(stored.keyOrigin);
 
 /** The key this process would use, and the one origin it is bound to. */
 export const resolveKeyBinding = (env: Env, stored: StoredLogin | null): KeyBinding | null => {

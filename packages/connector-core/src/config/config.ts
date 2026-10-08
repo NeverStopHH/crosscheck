@@ -39,6 +39,9 @@ const DenylistSchema = z.object({
  */
 export const MEASURED_TIMEOUT_SOURCE = "measured";
 
+/** What a non-string `keyOrigin` parses to: present, and no origin (binds nothing). */
+const INVALID_KEY_ORIGIN = "invalid";
+
 export const ConfigSchema = z.looseObject({
   version: z.literal(1),
   hubUrl: z.string().min(1),
@@ -51,10 +54,12 @@ export const ConfigSchema = z.looseObject({
   /**
    * The origin `apiKey` was issued for (config/key-binding.ts), written by
    * login. Absent on a login older than the binding, which is bound at its
-   * first read (`readBoundStoredConfig`); a junk value degrades to absent, so
-   * one bad hand edit falls back to the login's own hub rather than to null.
+   * first read (`readBoundStoredConfig`). A value that is present but junk —
+   * not a string, or not an origin — binds the key to NO hub rather than
+   * falling back to `hubUrl`, so an edit of one field can never move it; the
+   * parse itself still succeeds, so the rest of the login survives.
    */
-  keyOrigin: z.string().optional().catch(undefined),
+  keyOrigin: z.string().optional().catch(INVALID_KEY_ORIGIN),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

@@ -115,6 +115,37 @@ describe("which origin a key is bound to", () => {
     expect(binding).toEqual({ apiKey: STORED_KEY, keyOrigin: PILOT_HUB, keySource: "login" });
   });
 
+  test("a recorded origin that is junk binds the key to nothing, never to hubUrl", async () => {
+    // Arrange — a hand edit left a keyOrigin that is no origin, and another
+    // that is no string at all
+    const home = await makeHome("junk-key-origin");
+    cleanups.push(home);
+    await writeFile(
+      join(home, "config.json"),
+      `${JSON.stringify({ version: 1, hubUrl: PILOT_HUB, apiKey: STORED_KEY, keyOrigin: "x" })}\n`,
+      "utf8",
+    );
+    const repo = await repoNaming("junk-key-origin", PILOT_HUB);
+
+    // Act
+    const resolved = await resolveReportableConfig({ env: { CROSSCHECK_HOME: home }, repoRoot: repo });
+    await writeFile(
+      join(home, "config.json"),
+      `${JSON.stringify({ version: 1, hubUrl: PILOT_HUB, apiKey: STORED_KEY, keyOrigin: 7100 })}\n`,
+      "utf8",
+    );
+    const numeric = await loadConfig({ env: { CROSSCHECK_HOME: home }, repoRoot: repo });
+
+    // Assert — refused, and doctor's sentence says why
+    expect(resolved.kind).toBe("foreign_hub");
+    if (resolved.kind === "foreign_hub") {
+      expect(resolved.foreignHub.keyOrigin).toBeNull();
+      expect(foreignHubWhy(resolved.foreignHub)).toContain("your login's recorded keyOrigin is not a hub address");
+    }
+    expect(numeric?.keyOrigin).toBeNull();
+    expect(numeric?.apiKey).toBe(STORED_KEY);
+  });
+
   test("a legacy stored key, with no recorded origin, is bound to its login's hub", () => {
     // Act
     const binding = resolveKeyBinding({}, { hubUrl: `${PILOT_HUB}/`, apiKey: STORED_KEY });
