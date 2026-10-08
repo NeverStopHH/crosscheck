@@ -217,7 +217,12 @@ const GET_ROUTES: Readonly<Record<string, RouteSpec>> = {
     self: { none: OWN },
   },
   "GET /api/hints/tripwire": {
-    variants: [{ path: "/api/hints/tripwire", query: { repo: REPO, value: FILE } }],
+    variants: [
+      { path: "/api/hints/tripwire", query: { repo: REPO, value: FILE } },
+      // The repo declared the edited generated file authoritative: the same
+      // sessions, so the same projection must hold.
+      { path: "/api/hints/tripwire", query: { repo: REPO, value: FILE, authoritative: "1" } },
+    ],
     colleague: PRESENCE("surface 2"),
     self: "located",
   },

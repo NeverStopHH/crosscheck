@@ -58,8 +58,14 @@
  * of the same repo trips the wire; before, it resolved to null against the
  * session's checkout and the wire stayed silent.
  */
-import { isDenied, resolveDenylist } from "@crosscheck/connector-core/capture/denylist.ts";
+import { isDeniedUnlessAuthoritative, resolveDenylist } from "@crosscheck/connector-core/capture/denylist.ts";
 import { classifyGenerated, wireGeneratedSignal } from "@crosscheck/connector-core/capture/generated.ts";
+import type { GeneratedClassification } from "@crosscheck/connector-core/capture/generated.ts";
+import {
+  isAuthoritative,
+  readAuthoritativeGenerated,
+} from "@crosscheck/connector-core/capture/authoritative-generated.ts";
+import type { AuthoritativeGenerated } from "@crosscheck/connector-core/capture/authoritative-generated.ts";
 import { extractFilePaths, isEditTool } from "../capture/tool-events.ts";
 import { getTripwireSessions } from "@crosscheck/connector-core/http/hub.ts";
 import type { TripwireSession } from "@crosscheck/connector-core/http/hub.ts";
@@ -115,6 +121,12 @@ interface EditedFile {
   readonly file: string;
   /** The root of the worktree the file lives in — where git is asked. */
   readonly root: string;
+  /**
+   * A generated file the repo's own rule keeps as evidence (declared in
+   * `authoritativeGenerated`, or a contract or migration): the hub is told,
+   * so its path signal does not answer "nobody" for it.
+   */
+  readonly authoritative?: boolean;
 }
 
 const resolveEditedFile = async (
@@ -154,11 +166,15 @@ const resolveEditedFile = async (
   return root === undefined || file === null ? null : { file, root };
 };
 
-/** Did the generated-target rule fire on the edited file — path, attribute or header? */
-const isGeneratedFile = async (home: string, edited: EditedFile): Promise<boolean> => {
-  const classified = await classifyGenerated({ home, root: edited.root, paths: [edited.file] });
-  return wireGeneratedSignal(classified.get(edited.file)) !== undefined;
-};
+/** The edited file as the generated-target rule classifies it — the rule capture applies. */
+const classifyEditedFile = async (
+  home: string,
+  edited: EditedFile,
+  declared: AuthoritativeGenerated,
+): Promise<GeneratedClassification> =>
+  (await classifyGenerated({ home, root: edited.root, paths: [edited.file], authoritative: declared })).get(
+    edited.file,
+  ) ?? "unknown";
 
 const askBeforeEdit = async (ctx: HookContext, budget: HookBudget): Promise<string> => {
   const state = await readSessionState(ctx.config.home, ctx.payload.session_id);
@@ -201,9 +217,13 @@ const askBeforeEdit = async (ctx: HookContext, budget: HookBudget): Promise<stri
     return "";
   }
   const { file } = edited;
-  // Hot files drown real overlap signal — the same denylist capture applies.
+  // Hot files drown real overlap signal — the same denylist capture applies,
+  // with the same exception: an authoritative file (declared by the repo, or a
+  // contract or migration) passes the generated-output entries
+  // (capture/denylist.ts).
+  const declared = await readAuthoritativeGenerated(edited.root);
   const patterns = resolveDenylist(ctx.config.denylist ?? undefined);
-  if (isDenied(file, patterns)) {
+  if (isDeniedUnlessAuthoritative(file, patterns, isAuthoritative(file, declared))) {
     return "";
   }
   // One stop per file per session FOR EACH REASON: noise budget (§10 risk
@@ -217,15 +237,23 @@ const askBeforeEdit = async (ctx: HookContext, budget: HookBudget): Promise<stri
   if (asked.live && asked.landed) {
     return "";
   }
-  // A generated file is skipped exactly as a denied one: a lockfile or a
-  // regenerated client is not anybody's plan (capture/generated.ts). Asked
-  // the way capture asks, so the attribute answer this pays for is the cached
-  // one this edit's PostToolUse reads — one `check-attr` per path, not two.
-  // An UNKNOWN answer is not generated: the wire is asked as before.
-  if (await isGeneratedFile(ctx.config.home, edited)) {
+  // A mechanically generated, non-authoritative file is skipped exactly as a
+  // denied one: a lockfile or a regenerated client is not anybody's plan
+  // (capture/generated.ts). Asked the way capture asks, so the attribute
+  // answer this pays for is the cached one this edit's PostToolUse reads —
+  // one `check-attr` per path, not two. An UNKNOWN answer is not generated,
+  // and an AUTHORITATIVE one stays evidence: the wire is asked as before.
+  const classification = await classifyEditedFile(ctx.config.home, edited, declared);
+  if (wireGeneratedSignal(classification) !== undefined) {
     return "";
   }
-  const found = await findReasons(ctx, budget, edited, asked, state.landedCleanKeys);
+  const found = await findReasons(
+    ctx,
+    budget,
+    { ...edited, authoritative: classification === "authoritative" },
+    asked,
+    state.landedCleanKeys,
+  );
   if (found.cleanKey !== null && !state.landedCleanKeys.includes(found.cleanKey)) {
     await rememberClean(ctx, found.cleanKey);
   }
@@ -333,7 +361,9 @@ const findReasons = async (
         budgetMs: Math.min(LANDED_PROBE_BUDGET_MS, ctx.config.timeoutMs),
         knownCleanKeys,
       });
-  const live = asked.live ? null : getTripwireSessions(ctx.hub, ctx.identity.repoId, edited.file);
+  const live = asked.live
+    ? null
+    : getTripwireSessions(ctx.hub, ctx.identity.repoId, edited.file, edited.authoritative === true);
   const why = probing
     .then((probed) => {
       const landed = worthStopping(probed);

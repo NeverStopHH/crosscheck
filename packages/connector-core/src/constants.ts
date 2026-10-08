@@ -2517,6 +2517,31 @@ export const GENERATED_HEADER_BYTES = 512;
 export const MAX_GENERATED_ATTRIBUTE_CACHE_ENTRIES = 4096;
 
 /**
+ * The protobuf binding check's deadline: ONE `git ls-files -- *.proto` per
+ * capture that holds a binding (`*_pb.ts`, `*.pb.go`, …), and none for any
+ * other — bindings are rare among edits. Same bound as the attribute call, and
+ * the same failure direction: no answer, no suppression.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.PROTOBUF_SOURCES_TIMEOUT_MS === c.GENERATED_ATTR_TIMEOUT_MS)'
+ * PRINTS: true
+ */
+export const PROTOBUF_SOURCES_TIMEOUT_MS = 250;
+
+/**
+ * `authoritativeGenerated` in a committed `.crosscheck.json`
+ * (capture/authoritative-generated.ts) is read on every capture, from a file
+ * anyone with push access writes, so it is BOUNDED: at most this many globs
+ * (the rest are ignored, and doctor says how many), each at most
+ * MAX_AUTHORITATIVE_GLOB_CHARS long with at most MAX_AUTHORITATIVE_GLOB_WILDCARDS
+ * `*` or `?`. A team names its schemas, migrations and client directories in a
+ * handful of globs; thirty-two leaves room and keeps a capture's matching
+ * cost a fixed number of anchored regexes over one short path.
+ */
+export const MAX_AUTHORITATIVE_GENERATED_GLOBS = 32;
+export const MAX_AUTHORITATIVE_GLOB_CHARS = 200;
+export const MAX_AUTHORITATIVE_GLOB_WILDCARDS = 8;
+
+/**
  * ── Coverage integrity (docs/1.0/03-coverage-integrity.md §5.3) ─────────────
  *
  * The coverage line's hard bound. One line, first in the briefing, and NEVER

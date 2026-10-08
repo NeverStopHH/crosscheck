@@ -506,8 +506,10 @@ const SessionStateObjectSchema = z.looseObject({
   gitLaneRan: z.number().int().min(0).default(0),
   /**
    * The generated-target rule's counters (capture/generated.ts): how many of
-   * this session's spooled targets each signal kept out of overlap, and how
-   * many could not be classified and stayed ordinary. `doctor` prints them.
+   * this session's spooled targets each signal kept out of overlap as
+   * mechanically generated and non-authoritative, how many a signal fired on
+   * but counted anyway as authoritative, and how many could not be classified
+   * and stayed ordinary. `doctor` prints them.
    * OPTIONAL, NOT DEFAULTED: a state file written before the counters existed
    * says nothing about them, and a zero it never measured would read as "no
    * generated file was ever touched here". Every session published since
@@ -518,6 +520,9 @@ const SessionStateObjectSchema = z.looseObject({
       path: z.number().int().min(0),
       attribute: z.number().int().min(0),
       header: z.number().int().min(0),
+      // Added after the other four: a state file that predates it counted no
+      // authoritative file because the rule had none, so 0 is what it measured.
+      authoritative: z.number().int().min(0).default(0),
       unknown: z.number().int().min(0),
     })
     .optional(),

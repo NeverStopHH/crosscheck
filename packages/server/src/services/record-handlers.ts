@@ -643,9 +643,10 @@ export const ingestTarget = async (
   const value = body.kind === "file" ? canonicalFileValue(body.value) : body.value;
   // THE GENERATED-TARGET LABEL (services/generated-targets.ts): the
   // connector's, or the path signal applied here to a target that carries
-  // none — so an older connector's nested lockfile is labelled all the same.
-  // Stored, never a reason to refuse or drop: the touch is kept either way.
-  const generated = hubGeneratedSignal(body.kind, value, body.generated);
+  // none — so an older connector's nested lockfile is labelled all the same —
+  // and never one for a target the connector marked authoritative. Stored,
+  // never a reason to refuse or drop: the touch is kept either way.
+  const generated = hubGeneratedSignal(body.kind, value, body.generated, body.authoritative);
   const eventKind = TARGET_EVENT_KINDS[body.kind as keyof typeof TARGET_EVENT_KINDS];
   /**
    * PROJECTED ON BOTH BRANCHES, accepted AND duplicate. The git lane's

@@ -1,14 +1,19 @@
 /**
  * The doctor line for the generated-target rule: how many captured targets
- * each signal labelled generated — kept out of overlap — and how many could
- * not be classified and stayed ordinary. Driven through `runDoctor`, so the
+ * each signal kept out of overlap as mechanically generated and
+ * non-authoritative, how many counted anyway as authoritative, how many could
+ * not be classified and stayed ordinary — and the repo's own
+ * `authoritativeGenerated` declaration. Driven through `runDoctor`, so the
  * line is proven WIRED and fed by the same session scan as `capture`.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { rm } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import { runDoctor } from "../src/cli/doctor.ts";
 import { generatedTargetsCheck } from "../src/cli/doctor-generated.ts";
+import { NO_AUTHORITATIVE_GENERATED } from "@crosscheck/connector-core/capture/authoritative-generated.ts";
+import { MAX_AUTHORITATIVE_GENERATED_GLOBS } from "@crosscheck/connector-core/constants.ts";
 import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import type { CaptureHealth } from "@crosscheck/connector-core/state/capture-health.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
@@ -73,23 +78,26 @@ const doctorLine = async (seed: (home: string, repo: string, hubUrl: string) => 
   return result.stdout.split("\n").find((line) => line.includes("generated targets")) ?? "";
 };
 
-describe("doctor: generated targets kept out of overlap, by signal", () => {
-  test("the counts of every open session here, by signal, with the unknowns named", async () => {
+describe("doctor: mechanically generated, non-authoritative targets kept out of overlap, by signal", () => {
+  test("the counts of every open session here, by signal, with the authoritative and the unknowns named", async () => {
     // Act
     const line = await doctorLine(async (home, repo, hubUrl) => {
       await seedSession(home, repo, hubUrl, "gen-1", {
-        generatedTargets: { path: 3, attribute: 1, header: 0, unknown: 2 },
+        generatedTargets: { path: 3, attribute: 1, header: 0, authoritative: 2, unknown: 2 },
       });
       await seedSession(home, repo, hubUrl, "gen-2", {
+        // Written before the authoritative count existed: it reads as 0.
         generatedTargets: { path: 1, attribute: 0, header: 1, unknown: 0 },
       });
     });
 
     // Assert
     expect(line).toContain("PASS");
-    expect(line).toContain("6 targets labelled generated and kept out of overlap");
+    expect(line).toContain("6 mechanically generated, non-authoritative targets kept out of overlap");
     expect(line).toContain("path 4 · attribute 1 · header 1");
+    expect(line).toContain("2 counted anyway as authoritative (declared in authoritativeGenerated, or a schema or migration)");
     expect(line).toContain("2 could not be classified (git or the file did not answer) and count as ordinary");
+    expect(line).toContain("this repo declares no authoritativeGenerated globs");
   });
 
   test("a state file written before the counters existed is NOT measured, never a zero", async () => {
@@ -100,7 +108,28 @@ describe("doctor: generated targets kept out of overlap, by signal", () => {
 
     // Assert
     expect(line).toContain("not measured (1 open session here started before this count existed)");
-    expect(line).not.toContain("0 targets labelled generated");
+    expect(line).not.toContain("0 mechanically generated");
+  });
+
+  test("a declaration the connector cannot fully honour is a WARN that names the first refusal and the cap", async () => {
+    // Arrange: one absolute entry, and more valid globs than the cap allows.
+    const many = Array.from({ length: MAX_AUTHORITATIVE_GENERATED_GLOBS + 3 }, (_unused, index) => `clients/c${String(index)}/**`);
+    const line = await doctorLine(async (home, repo, hubUrl) => {
+      await writeFile(
+        join(repo, ".crosscheck.json"),
+        `${JSON.stringify({ hubUrl, authoritativeGenerated: ["/etc/openapi.json", ...many] })}\n`,
+        "utf8",
+      );
+      await seedSession(home, repo, hubUrl, "gen-declared", {
+        generatedTargets: { path: 0, attribute: 0, header: 0, authoritative: 1, unknown: 0 },
+      });
+    });
+
+    // Assert
+    expect(line).toContain("WARN");
+    expect(line).toContain(`authoritativeGenerated: ${String(MAX_AUTHORITATIVE_GENERATED_GLOBS)} globs honoured`);
+    expect(line).toContain("1 entry refused («/etc/openapi.json»: absolute — globs are repo-relative)");
+    expect(line).toContain(`3 globs past the cap of ${String(MAX_AUTHORITATIVE_GENERATED_GLOBS)} ignored`);
   });
 
   test("no open session of this repo says so", () => {
@@ -121,7 +150,7 @@ describe("doctor: generated targets kept out of overlap, by signal", () => {
     };
 
     // Act
-    const check = generatedTargetsCheck(health);
+    const check = generatedTargetsCheck(health, NO_AUTHORITATIVE_GENERATED);
 
     // Assert
     expect(check.level).toBe("PASS");

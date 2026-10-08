@@ -331,6 +331,8 @@ const ghostCheckWith = (payload: string): GhostCheckEntry => ({
   // The qualifier sits beside the payload-carrying share clause, so the
   // corpus proves it cannot become a seam a payload mints a field through.
   largeChangeFiles: 180,
+  // And so does the generated qualifier, for the same reason.
+  generatedSharedCount: 3,
 });
 
 /**
@@ -411,6 +413,7 @@ const conferenceCorpusWith = (payload: string): ConferenceCorpus => ({
       sharedTargetCount: 4,
       // Beside the payload-carrying owner name the qualifier is printed with.
       largeChangeFilesA: 180,
+      generatedSharedCount: 3,
     },
   ],
   questions: [

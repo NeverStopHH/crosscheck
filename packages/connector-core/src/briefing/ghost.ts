@@ -93,6 +93,21 @@ export const largeChangeOf = (files: number | null | undefined): number | null =
   files === null || files === undefined || files <= 0 ? null : files;
 
 /**
+ * THE GENERATED QUALIFIER, in the one spelling the ghost line and the
+ * conference page print: files both sides touched that the rule kept out of
+ * overlap as mechanically generated and non-authoritative. A qualifier, never
+ * a reason — printed only beside overlap that already stands on its own, so
+ * "2 of your files" is never read as all the two of you touched, and a pair
+ * whose ONLY common ground is generated stays exactly as silent as before.
+ */
+export const generatedSharedClause = (files: number): string =>
+  `also both touched ${String(files)} generated file${files === 1 ? "" : "s"}`;
+
+/** The hub's generated shared count, or null when there are none or the hub sent none. */
+export const generatedSharedOf = (files: number | undefined): number | null =>
+  files === undefined || files <= 0 ? null : files;
+
+/**
  * The overlap clauses, strongest first — a shared failure, then the shared
  * values by name and, beside them, how large a change they sit in, then how
  * many words of the reader's own intent matched. Empty means this row has no
@@ -134,7 +149,14 @@ const overlapClauses = (entry: GhostCheckEntry): readonly string[] => {
   const size = largeChangeOf(entry.largeChangeFiles);
   const large =
     size === null || failure.length + values.length === 0 ? [] : [largeChangeClause(size)];
-  return [...failure, ...values, ...large, ...words];
+  // Beside the evidence it qualifies, and only beside evidence: a row with no
+  // other clause is dropped, generated files or not.
+  const generatedFiles = generatedSharedOf(entry.generatedSharedCount);
+  const generated =
+    generatedFiles === null || failure.length + values.length + words.length === 0
+      ? []
+      : [generatedSharedClause(generatedFiles)];
+  return [...failure, ...values, ...large, ...generated, ...words];
 };
 
 /**

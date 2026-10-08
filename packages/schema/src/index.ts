@@ -101,7 +101,10 @@ export {
   GENERATED_LOCKFILE_NAMES,
   GENERATED_SIGNALS,
   GeneratedSignalSchema,
+  isContractLike,
   isGeneratedPath,
+  matchesGeneratedName,
+  protobufSourceOf,
 } from "./generated-target.ts";
 export type { GeneratedSignal } from "./generated-target.ts";
 

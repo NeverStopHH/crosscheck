@@ -56,7 +56,12 @@ import {
   MAX_TITLE_CHARS,
 } from "../constants.ts";
 import { QUOTED_DATA_NOTICE, formatAge } from "../briefing/render.ts";
-import { largeChangeClause, largeChangeOf } from "../briefing/ghost.ts";
+import {
+  generatedSharedClause,
+  generatedSharedOf,
+  largeChangeClause,
+  largeChangeOf,
+} from "../briefing/ghost.ts";
 import {
   LOCATION_WITHHELD,
   NO_AXES_FROM_HUB,
@@ -390,8 +395,12 @@ const overlapSection = (input: ConferenceReportInput): readonly string[] => {
       ].flatMap((side) =>
         side.files === null ? [] : [`${nameOf(side.name)}'s side is ${largeChangeClause(side.files)}`],
       );
+      // The files the rule kept out of the pair as mechanically generated:
+      // never its reason (the clauses above are), stated beside it.
+      const generatedFiles = generatedSharedOf(overlap.generatedSharedCount);
+      const alsoGenerated = generatedFiles === null ? [] : [generatedSharedClause(generatedFiles)];
       return [
-        `- ${nameOf(left.developerName)} and ${nameOf(right.developerName)} ${[clauses.join(", "), ...qualifiers].join("; ")}`,
+        `- ${nameOf(left.developerName)} and ${nameOf(right.developerName)} ${[clauses.join(", "), ...qualifiers, ...alsoGenerated].join("; ")}`,
         leftLine,
         rightLine,
       ];

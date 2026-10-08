@@ -338,6 +338,41 @@ describe("the conference report", () => {
     );
     expect(reportWith(null)).toContain("- Nick and Ken both changed src/auth/session.ts, src/auth/token.ts\n");
   });
+
+  test("a pair with real overlap says how many generated files it also shares", () => {
+    // Arrange
+    const nick = contextWith(CONTEXT_A, "Nick", "Token refresh rework", "A finding");
+    const ken = contextWith(CONTEXT_B, "Ken", "Session store", "Another finding");
+    const reportWith = (generatedSharedCount: number | undefined): string =>
+      renderConferenceReport({
+        repoId: "github.com/acme/api",
+        corpus: corpusWith({
+          contexts: [nick, ken],
+          overlaps: [
+            {
+              workContextIdA: CONTEXT_A,
+              workContextIdB: CONTEXT_B,
+              sharedTargets: [
+                { kind: "file", value: "src/auth/session.ts" },
+                { kind: "file", value: "src/auth/token.ts" },
+              ],
+              sharedTargetCount: 2,
+              ...(generatedSharedCount === undefined ? {} : { generatedSharedCount }),
+            },
+          ],
+        }),
+        findings: [],
+        modelOutcome: { kind: "none" },
+        now: NOW,
+      });
+
+    // Act + Assert: the qualifier beside the evidence; none without a count.
+    expect(reportWith(4)).toContain(
+      "- Nick and Ken both changed src/auth/session.ts, src/auth/token.ts; also both touched 4 generated files\n",
+    );
+    expect(reportWith(0)).toContain("- Nick and Ken both changed src/auth/session.ts, src/auth/token.ts\n");
+    expect(reportWith(undefined)).toContain("- Nick and Ken both changed src/auth/session.ts, src/auth/token.ts\n");
+  });
 });
 
 /**
