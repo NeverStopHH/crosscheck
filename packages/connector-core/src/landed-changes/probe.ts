@@ -471,12 +471,32 @@ const run = async (
 };
 
 /**
- * The landed changes to `file` this checkout is missing, and the recent ones
- * it has. Past the deadline: the missing half from every landing branch that
- * answered in time, the rest named unchecked, and no key (an answer cut short
- * is never cached) — or null when not even the landing branches were known.
+ * Why a probe could not say all it would have: its deadline ended it, or it
+ * finished with a landing branch git could not answer for. Either way an
+ * edit may have gone ahead without a teammate's landed change being checked
+ * — the case the hook books (state/landed-probe-cuts.ts) instead of letting
+ * it pass as silence.
  */
-export const findLandedChanges = async (input: LandedProbeInput): Promise<LandedChanges | null> => {
+export type LandedProbeCutShort = "deadline" | "unanswered";
+
+export interface LandedProbe {
+  readonly landed: LandedChanges | null;
+  /** Null when the probe answered for every landing branch it knew in time. */
+  readonly cutShort: LandedProbeCutShort | null;
+}
+
+/**
+ * The landed changes to `file` this checkout is missing, and the recent ones
+ * it has — and whether the answer was cut short. Past the deadline: the
+ * missing half from every landing branch that answered in time, the rest
+ * named unchecked, and no key (an answer cut short is never cached) — or null
+ * when not even the landing branches were known.
+ *
+ * A null that did NOT come from the deadline — a shallow clone, no landing
+ * branch at all — is a property of the clone, not a cut: the probe answered,
+ * and the answer is "nothing can be known here".
+ */
+export const probeLandedChanges = async (input: LandedProbeInput): Promise<LandedProbe> => {
   let isPastDeadline = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const progress: Progress = { snapshot: null };
@@ -488,8 +508,15 @@ export const findLandedChanges = async (input: LandedProbeInput): Promise<Landed
   });
   try {
     const outcome = await Promise.race([run(input, () => isPastDeadline, progress).catch(() => null), deadline]);
-    return outcome === "deadline" ? (progress.snapshot?.() ?? null) : outcome;
+    if (outcome === "deadline") {
+      return { landed: progress.snapshot?.() ?? null, cutShort: "deadline" };
+    }
+    return { landed: outcome, cutShort: outcome !== null && outcome.unchecked.length > 0 ? "unanswered" : null };
   } finally {
     clearTimeout(timer);
   }
 };
+
+/** The answer alone, for callers with nothing to book (probeLandedChanges). */
+export const findLandedChanges = async (input: LandedProbeInput): Promise<LandedChanges | null> =>
+  (await probeLandedChanges(input)).landed;

@@ -87,10 +87,15 @@ import { toolWindowKey } from "@crosscheck/connector-core/state/tool-window-key.
 import { resolveTouchedRoots } from "@crosscheck/connector-core/capture/touched-root.ts";
 import { toRepoRelative } from "@crosscheck/connector-core/capture/target-paths.ts";
 import { aPersonReads, resolveTripwireMode } from "@crosscheck/connector-core/config/tripwire.ts";
-import { findLandedChanges, worthStopping } from "@crosscheck/connector-core/landed-changes/probe.ts";
-import type { LandedChanges } from "@crosscheck/connector-core/landed-changes/probe.ts";
+import { probeLandedChanges, worthStopping } from "@crosscheck/connector-core/landed-changes/probe.ts";
+import type {
+  LandedChanges,
+  LandedProbe,
+  LandedProbeCutShort,
+} from "@crosscheck/connector-core/landed-changes/probe.ts";
+import { bookLandedProbeCut } from "@crosscheck/connector-core/state/landed-probe-cuts.ts";
 import { resolveTimeZone } from "@crosscheck/connector-core/landed-changes/working-days.ts";
-import { LANDED_PROBE_BUDGET_MS, TRIPWIRE_MODE_NOTICE } from "@crosscheck/connector-core/constants.ts";
+import { TRIPWIRE_MODE_NOTICE } from "@crosscheck/connector-core/constants.ts";
 import type { LandedContextAnswer, LandedToldAuthor } from "@crosscheck/connector-core/http/hub.ts";
 import { cutWellFormed } from "@crosscheck/connector-core/briefing/cut.ts";
 import { namedLandedCommits } from "@crosscheck/connector-core/landed-changes/named-commits.ts";
@@ -229,6 +234,24 @@ const askBeforeEdit = async (ctx: HookContext, budget: HookBudget): Promise<stri
   if (found.cleanKey !== null && !state.landedCleanKeys.includes(found.cleanKey)) {
     await rememberClean(ctx, found.cleanKey);
   }
+  const output = await stopFor(ctx, state, file, found);
+  // A cut check is booked once the stop is decided and claimed, never before
+  // it: the claim stays the step right after the one request (the lock
+  // allowance), and what is left of the budget after the why still holds the
+  // reserve, an order of magnitude over one lock round and one append.
+  if (found.probeCut !== null) {
+    await bookProbeCut(ctx, found.probeCut);
+  }
+  return output;
+};
+
+/** The stop the found reasons make, claimed and recorded — "" when none. */
+const stopFor = async (
+  ctx: HookContext,
+  state: SessionState,
+  file: string,
+  found: FoundReasons,
+): Promise<string> => {
   if (found.teammate === null && found.landed === null) {
     return "";
   }
@@ -296,6 +319,8 @@ interface FoundReasons extends Reasons {
   readonly recordsOutcomes: boolean;
   /** The probe answered "nothing" under this key (landed-changes/probe.ts). */
   readonly cleanKey: string | null;
+  /** Why the probe could not say all it would have, or null (bookProbeCut). */
+  readonly probeCut: LandedProbeCutShort | null;
   /**
    * The hub's why for the landed half, asked the moment GIT answered — not
    * after the live tripwire's hub call too, which is what leaves it room on
@@ -323,20 +348,22 @@ const findReasons = async (
   asked: { readonly live: boolean; readonly landed: boolean },
   knownCleanKeys: readonly string[],
 ): Promise<FoundReasons> => {
+  // ONE REQUEST, the very window the live call beside it already holds
+  // (LANDED_PROBE_BUDGET_MS says why): started with it, ended no later.
   const probing = asked.landed
-    ? Promise.resolve(null)
-    : findLandedChanges({
+    ? Promise.resolve(NOT_PROBED)
+    : probeLandedChanges({
         root: edited.root,
         file: edited.file,
         now: ctx.now(),
         timeZone: resolveTimeZone(ctx.env),
-        budgetMs: Math.min(LANDED_PROBE_BUDGET_MS, ctx.config.timeoutMs),
+        budgetMs: ctx.config.timeoutMs,
         knownCleanKeys,
       });
   const live = asked.live ? null : getTripwireSessions(ctx.hub, ctx.identity.repoId, edited.file);
   const why = probing
     .then((probed) => {
-      const landed = worthStopping(probed);
+      const landed = worthStopping(probed.landed);
       return landed === null ? NO_LANDED_ANSWER : landedWhyFor(ctx, budget, edited.file, landed);
     })
     .catch((): LandedContextAnswer => NO_LANDED_ANSWER);
@@ -344,12 +371,37 @@ const findReasons = async (
   const hub = result?.ok === true ? result.data : null;
   return {
     teammate: hub?.sessions[0] ?? null,
-    landed: worthStopping(probed),
-    cleanKey: probed?.cleanKey ?? null,
+    landed: worthStopping(probed.landed),
+    cleanKey: probed.landed?.cleanKey ?? null,
+    probeCut: probed.cutShort,
     ...(hub === null ? {} : { coverage: hub.coverage }),
     recordsOutcomes: hub?.recordsOutcomes ?? false,
     why,
   };
+};
+
+/** A file this session was already stopped on for a landed change: not asked again. */
+const NOT_PROBED: LandedProbe = { landed: null, cutShort: null };
+
+/**
+ * A LANDED-CHANGE CHECK CUT SHORT IS BOOKED, NEVER SILENT (2026-10-08): one
+ * count in this session's state, which its next prompt tells once
+ * (hooks/user-prompt-submit.ts), and one line in the local ledger doctor and
+ * status count (state/landed-probe-cuts.ts). The edit itself prints nothing
+ * for it — a line per edit is the noise the stop's once-per-file rule exists
+ * to prevent. Only on a cut: one lock round and one append. A hook the
+ * budget abandoned before it got here is booked by the runner instead
+ * (hooks/runner.ts bookCutEditCheck), through the same once-per-call door.
+ */
+const bookProbeCut = async (ctx: HookContext, cut: LandedProbeCutShort): Promise<void> => {
+  await bookLandedProbeCut({
+    home: ctx.config.home,
+    sessionId: ctx.payload.session_id,
+    toolUseId: ctx.payload.tool_use_id ?? null,
+    key: ctx.repoKey,
+    reason: cut,
+    now: ctx.now(),
+  });
 };
 
 /**

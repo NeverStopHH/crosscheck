@@ -177,6 +177,8 @@ import { checkSkeletonRetention } from "./doctor-retention.ts";
 import { coverageReportingCheck, lossChecks } from "./doctor-losses.ts";
 import { briefingOmissionsCheck } from "./doctor-briefings.ts";
 import { readBriefingOmissions } from "@crosscheck/connector-core/state/briefing-omissions.ts";
+import { landedProbeCutsCheck } from "./landed-probe-cuts.ts";
+import { readLandedProbeCuts } from "@crosscheck/connector-core/state/landed-probe-cuts.ts";
 import { readSharingInput, sharingChecks } from "./doctor-sharing.ts";
 import { checkLandedChanges } from "./doctor-landed.ts";
 import { checkLandingFetch } from "./doctor-landing-fetch.ts";
@@ -4139,6 +4141,9 @@ export const runDoctor = async (
     // How many briefings did not arrive whole this week, and why — each one
     // said so in its own session; this is the pattern (doctor-briefings.ts).
     briefingOmissionsCheck(await readBriefingOmissions(config.home, key, now)),
+    // How many pre-edit landed-change checks were cut short this week — each
+    // session was told once at its next prompt (landed-probe-cuts.ts).
+    landedProbeCutsCheck(await readLandedProbeCuts(config.home, key, now)),
     ...hubChecks,
     skewCheck,
     bunfigCheck,

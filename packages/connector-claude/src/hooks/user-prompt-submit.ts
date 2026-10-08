@@ -43,6 +43,12 @@
  * which cannot reach a Claude-specific worker) or the intent worker itself
  * (already detached, and its job is the intent).
  *
+ * AND ONE LINE THAT RIDES UNDER WHATEVER ELSE IS SAID (2026-10-08): how many
+ * of this session's landed-change checks were cut short, once per session
+ * (claimProbeCutsNote below). Not a fourth delivery competing for the slot —
+ * a line about the connector's own reach, in the shape of the briefing's
+ * "this briefing is incomplete" line, and it never displaces team knowledge.
+ *
  * This hook is the Claude-specific shell: payload fields in,
  * `hookSpecificOutput` envelope out.
  */
@@ -60,9 +66,12 @@ import { deliverDeferredBriefing } from "@crosscheck/connector-core/flows/briefi
 import { deliverDraftNudge } from "@crosscheck/connector-core/flows/draft-nudge.ts";
 import { selectAndRenderHint } from "@crosscheck/connector-core/flows/hint.ts";
 import {
+  hasUntoldProbeCuts,
   readSessionState,
   updateSessionState,
+  withLandedProbeCutsTold,
 } from "@crosscheck/connector-core/state/session-state.ts";
+import { landedProbeCutsLine } from "@crosscheck/connector-core/briefing/omission.ts";
 import { hasGhostAllowance, withGhostClaimed } from "@crosscheck/connector-core/derive/ghost/gate.ts";
 import { isSubstantivePrompt, withIntentFire } from "@crosscheck/connector-core/derive/intent/gate.ts";
 import { resolveSummarizerTimeoutMs } from "@crosscheck/connector-core/model/runner.ts";
@@ -202,7 +211,61 @@ const maybeSpawnGhostWorker = async (ctx: HookContext): Promise<void> => {
   }
 };
 
+/**
+ * THE ONCE-PER-SESSION LINE ABOUT CUT LANDED-CHANGE CHECKS (2026-10-08). An
+ * edit whose landed-change check was cut short prints nothing itself — the
+ * stop it could not finish is about one file, and a line on every edit of a
+ * slow repo is the noise the once-per-file rule exists to prevent — so
+ * hooks/pre-tool-use.ts only BOOKS the cut (the session counter and
+ * state/landed-probe-cuts.ts). This prompt is the session's next moment a
+ * person reads, and it says how many, once.
+ *
+ * Here and not at SessionStart: the counter belongs to one session, and a
+ * session's start comes before every edit that could fill it.
+ *
+ * Claimed under the state lock like every once-only marker, so two racing
+ * prompts say it once; a plain read first, so a session with nothing to tell
+ * pays no lock round; never in a headless run, where nobody reads it and the
+ * claim would only spend it (`crosscheck doctor` counts the cuts either way).
+ * Claimed BEFORE the rest of the prompt's work, while the whole budget is
+ * still ahead: claimed after it, a hint that spent the budget would have the
+ * race resolve with the claim still in flight, marking it told unsaid. The
+ * one way it is still lost is a prompt whose own work then overruns the
+ * whole race — that prompt loses everything it would have said, this line
+ * with it, and the ledger doctor and status count still holds every cut.
+ */
+const claimProbeCutsNote = async (ctx: HookContext): Promise<string> => {
+  if (!aPersonReads(ctx.env)) {
+    return "";
+  }
+  const state = await readSessionState(ctx.config.home, ctx.payload.session_id);
+  if (state === null || !hasUntoldProbeCuts(state)) {
+    return "";
+  }
+  // A holder rather than a plain `let`, so the assignment inside the
+  // callback is visible after it.
+  const told: { cuts: number } = { cuts: 0 };
+  const isWritten = await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => {
+    if (!hasUntoldProbeCuts(fresh)) {
+      return null;
+    }
+    told.cuts = fresh.landedProbeCuts ?? 0;
+    return withLandedProbeCutsTold(fresh);
+  });
+  return isWritten && told.cuts > 0 ? landedProbeCutsLine(told.cuts) : "";
+};
+
+/** What this prompt says: its own text, the cut-checks line under it. */
 const deliverPromptContext = async (ctx: HookContext, budget: HookBudget): Promise<string> => {
+  // Fail open, like the two fires: a state file that cannot be read or
+  // locked costs this line, never the prompt's own text.
+  const note = await claimProbeCutsNote(ctx).catch(() => "");
+  const text = await promptText(ctx, budget);
+  const whole = [text, note].filter((part) => part.length > 0).join("\n");
+  return whole.length === 0 ? "" : envelope(whole);
+};
+
+const promptText = async (ctx: HookContext, budget: HookBudget): Promise<string> => {
   // The derived-intent fire delivers nothing and runs first, so it happens
   // on the first substantive prompt whatever else this hook goes on to emit.
   await maybeSpawnIntentWorker(ctx);
@@ -224,7 +287,7 @@ const deliverPromptContext = async (ctx: HookContext, budget: HookBudget): Promi
     tellsNotices: aPersonReads(ctx.env),
   });
   if (briefing.length > 0) {
-    return envelope(briefing);
+    return briefing;
   }
   const text = await selectAndRenderHint({
     home: ctx.config.home,
@@ -242,7 +305,7 @@ const deliverPromptContext = async (ctx: HookContext, budget: HookBudget): Promi
     spareMs: () => budget.spareMs(),
   });
   if (text.length > 0) {
-    return envelope(text);
+    return text;
   }
   // THIRD, and only on a prompt nothing else spoke on: the once-per-session
   // draft review nudge (flows/draft-nudge.ts says why a prompt and never Stop).
@@ -255,7 +318,7 @@ const deliverPromptContext = async (ctx: HookContext, budget: HookBudget): Promi
     personReads: aPersonReads(ctx.env),
     spareMs: budget.spareMs,
   });
-  return nudge.length === 0 ? "" : envelope(nudge);
+  return nudge;
 };
 
 export const handleUserPromptSubmit = async (

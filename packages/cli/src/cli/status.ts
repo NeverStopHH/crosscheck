@@ -74,6 +74,8 @@ import { spoolDepth } from "@crosscheck/connector-core/spool/files.ts";
 import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
 import { readLiveSessionStates } from "@crosscheck/connector-core/state/session-state.ts";
 import { readSharingInput, sharingStatusLine } from "./doctor-sharing.ts";
+import { landedProbeCutsStatusLines } from "./landed-probe-cuts.ts";
+import { readLandedProbeCuts } from "@crosscheck/connector-core/state/landed-probe-cuts.ts";
 import {
   formatConferenceCost,
   readConferenceCost,
@@ -384,6 +386,12 @@ export const runStatus = async (
     foreignDrops.drops === 0
       ? []
       : [`foreign-repo drops: ${formatForeignDropLine(foreignDrops)}`];
+  // Pre-edit landed-change checks cut short this week, beside the tripwire
+  // line they belong to; zero prints nothing, doctor says the same sentence
+  // (landed-probe-cuts.ts).
+  const probeCutLines = landedProbeCutsStatusLines(
+    await readLandedProbeCuts(config.home, key, now),
+  );
   // repoKey "" so this command's own three reads do not stamp the sync record
   // it is about to print (trial finding H5): with the real key, `status` wrote
   // `lastOkAt` and then reported it, so the age it showed was always its own.
@@ -577,6 +585,7 @@ export const runStatus = async (
       targetsLine(captureHealth, now),
       hintsLine(captureHealth, hintStats),
       tripwireLine(env),
+      ...probeCutLines,
       `summarizer: ${formatSummarizerCost(summarizerCost)}`,
       `intent: ${formatIntentCost(intentCost)}`,
       `ghost checks: ${formatGhostCost(ghostCost)}`,
