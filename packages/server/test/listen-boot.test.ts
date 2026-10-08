@@ -153,6 +153,7 @@ describe("where a booted hub listens", () => {
       expect(result.stdout).toContain(`${BANNER} :${String(port)} (127.0.0.1`);
       expect(result.stdout).not.toContain("every interface");
       expect(result.stderr).not.toContain("WARN listening on EVERY");
+      expect(result.stderr).not.toContain("WARN listening on loopback only");
     },
     BOOT_TIMEOUT_MS + SHUTDOWN_TIMEOUT_MS * 3,
   );
@@ -178,6 +179,29 @@ describe("where a booted hub listens", () => {
       expect(result.stderr).toContain(`WARN listening on EVERY network interface (:${String(port)})`);
       expect(result.stderr).toContain("CROSSCHECK_LISTEN=127.0.0.1,<this machine's tailnet IP>");
       expect(transport).toMatchObject({ listensOnEveryInterface: true });
+    },
+    BOOT_TIMEOUT_MS + SHUTDOWN_TIMEOUT_MS * 3,
+  );
+
+  test(
+    "a fresh data dir holding members from before it (a restore) listens on loopback and warns (review L5)",
+    async () => {
+      // Arrange — created by this release, then filled from an older hub's dump
+      const dataDir = await freshDir();
+      const seeded = await createDb({ dataDir });
+      await seeded.execute(sql`
+        INSERT INTO developers (id, name, email, api_key_hash, created_at)
+        VALUES ('dev_old','Old','old@example.com','h1', now() - interval '90 days')`);
+      await closeDb(seeded);
+      const port = randomPort();
+
+      // Act
+      const result = await boot(hubEnv(port, dataDir));
+
+      // Assert
+      expect(result.stdout).toContain(`${BANNER} :${String(port)} (127.0.0.1`);
+      expect(result.stderr).toContain("WARN listening on loopback only, because this data dir was created by this release");
+      expect(result.stderr).toContain("CROSSCHECK_LISTEN=127.0.0.1,<this machine's tailnet IP>");
     },
     BOOT_TIMEOUT_MS + SHUTDOWN_TIMEOUT_MS * 3,
   );

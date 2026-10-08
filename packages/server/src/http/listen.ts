@@ -229,6 +229,18 @@ export const serveOnPlan = (plan: ListenPlan, port: number, fetch: ServeFetch): 
 export const describeListening = (plan: ListenPlan, servers: readonly BunServer[]): string =>
   plan.addresses === null ? "every interface" : servers.map((server) => server.hostname).join(", ");
 
+/**
+ * The boot's WARN for a data dir this release created that holds members from
+ * before it (services/hub-install.ts holdsMembersFromBeforeInstall): a
+ * restore or migration, now on loopback only (review of the hub hardening, L5).
+ */
+export const restoredOnLoopbackWarning = (port: number): string =>
+  "[crosscheck] WARN listening on loopback only, because this data dir was created by this release, but " +
+  "it holds members created before it: a restore or a migration from an older hub? Teammates who reached " +
+  `that hub at its tailnet IP now get "connection refused". Set ${LISTEN_ENV}=127.0.0.1,<this machine's ` +
+  `tailnet IP> (\`tailscale ip -4\`), or keep loopback behind \`tailscale serve --bg ${String(port)}\`, ` +
+  "and restart the hub.";
+
 /** The boot's WARN for a hub that kept 0.10's every-interface listen. */
 export const legacyListenWarning = (port: number): string =>
   `[crosscheck] WARN listening on EVERY network interface (:${String(port)}). ${LISTEN_ENV} is unset and ` +

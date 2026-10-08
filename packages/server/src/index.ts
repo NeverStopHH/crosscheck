@@ -13,13 +13,14 @@ import {
   parseListenAddresses,
   probeAddressesFor,
   resolveListenPlan,
+  restoredOnLoopbackWarning,
   serveOnPlan,
 } from "./http/listen.ts";
 import { NO_TRUSTED_PROXIES, TRUSTED_PROXIES_ENV, parseTrustedProxies } from "./http/forwarded.ts";
 import type { TrustedProxies } from "./http/forwarded.ts";
 import type { ListenKind } from "./http/listen.ts";
 import { bunPeerAddress } from "./http/peer.ts";
-import { readListenDefault } from "./services/hub-install.ts";
+import { holdsMembersFromBeforeInstall, readListenDefault } from "./services/hub-install.ts";
 import { generateApiKey } from "./auth/keys.ts";
 import { DEFAULT_PORT, SESSION_REAP_INTERVAL_MS } from "./constants.ts";
 import { createDb } from "./db/client.ts";
@@ -334,6 +335,9 @@ export const startServer = async (): Promise<void> => {
   const listeningPort = servers[0]?.port ?? port;
   if (listenPlan.kind === "legacy_all_interfaces") {
     console.warn(legacyListenWarning(listeningPort));
+  }
+  if (listenPlan.kind === "loopback_default" && (await holdsMembersFromBeforeInstall(db))) {
+    console.warn(restoredOnLoopbackWarning(listeningPort));
   }
   // THE SKELETON'S IDENTITY FOR ROWS THAT PREDATE ITS COLUMNS (01a §4.1).
   // After serving, not before: until it has run, a missing identity reads as

@@ -23,8 +23,10 @@ CREATE EXTENSION IF NOT EXISTS vector;
 --   - `developers` already there: a hub from before the setting, which
 --     listened on every interface. It keeps doing so, so that an upgrade
 --     cuts off no teammate, and the boot and `crosscheck doctor` warn.
--- A start that dies after the INSERT and before the tables leaves
--- 'loopback', which is the safe direction.
+-- PGlite's exec runs this whole script as one implicit transaction, so a
+-- start that dies part-way leaves nothing behind, and the next start decides
+-- afresh. A dump/restore into a fresh data dir is recorded 'loopback' before
+-- its rows arrive; the boot warns about that case (services/hub-install.ts).
 CREATE TABLE IF NOT EXISTS hub_install (
   singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
   listen_default text NOT NULL

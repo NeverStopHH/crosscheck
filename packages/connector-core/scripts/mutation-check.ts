@@ -24440,6 +24440,31 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/forwarded-trust.test.ts`,
     because: "an entry that reads as IPv6 trusts every IPv4 peer, because BlockList matches the mapped block against them",
   },
+  // Review of the hub hardening, X11 and L5: what the install record says.
+  {
+    label: "a missing hub_install row reads as loopback",
+    file: `${SERVER}/src/services/hub-install.ts`,
+    from: '  return rows[0]?.listenDefault ?? "all_interfaces";',
+    to: '  return rows[0]?.listenDefault ?? "loopback";',
+    test: `${SERVER}/test/listen.test.ts`,
+    because: "an emptied record moves an old hub to loopback with no warning, and its teammates meet connection refused",
+  },
+  {
+    label: "a restore is told from a fresh hub by nothing",
+    file: `${SERVER}/src/services/hub-install.ts`,
+    from: "      WHERE developers.created_at < hub_install.recorded_at",
+    to: "      WHERE false",
+    test: `${SERVER}/test/listen.test.ts`,
+    because: "an old hub restored into a fresh dir goes quiet on loopback and nobody learns why the tailnet IP refuses",
+  },
+  {
+    label: "a restored hub on loopback boots without a warning",
+    file: `${SERVER}/src/index.ts`,
+    from: '  if (listenPlan.kind === "loopback_default" && (await holdsMembersFromBeforeInstall(db))) {',
+    to: "  if (false) {",
+    test: `${SERVER}/test/listen-boot.test.ts`,
+    because: "the operator of a restored hub reads a healthy banner while every teammate is refused",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -24831,8 +24856,8 @@ interface Outcome {
  * PRINTS: packages/server/test/landed-notices.test.ts 34
  * PRINTS: packages/server/test/landed-repair.test.ts 20
  * PRINTS: packages/server/test/landed.test.ts 15
- * PRINTS: packages/server/test/listen-boot.test.ts 7
- * PRINTS: packages/server/test/listen.test.ts 14
+ * PRINTS: packages/server/test/listen-boot.test.ts 8
+ * PRINTS: packages/server/test/listen.test.ts 16
  * PRINTS: packages/server/test/live-location-cost.test.ts 3
  * PRINTS: packages/server/test/live-location-differential.test.ts 5
  * PRINTS: packages/server/test/live-location-privacy.test.ts 27

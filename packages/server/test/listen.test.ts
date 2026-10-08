@@ -22,7 +22,7 @@ import {
   resolveListenPlan,
   serveOnPlan,
 } from "../src/http/listen.ts";
-import { readListenDefault } from "../src/services/hub-install.ts";
+import { holdsMembersFromBeforeInstall, readListenDefault } from "../src/services/hub-install.ts";
 import { BOOTSTRAP_SQL_URL } from "./fixtures/bootstrap-sql.ts";
 
 /** TEST-NET-1 (RFC 5737): never assigned to any interface. */
@@ -149,6 +149,34 @@ describe("where the port probe knocks (review L4)", () => {
 
   test(":: (dual-stack): both loopbacks and every interface address", () => {
     expect(probeAddressesFor(["::"], LOOPBACKS, INTERFACES)).toEqual([...LOOPBACKS, ...INTERFACES]);
+  });
+});
+
+describe("what the install record says beyond the default (review X11 and L5)", () => {
+  test("an emptied hub_install reads as every interface, the warned-about older behaviour", async () => {
+    // Arrange — the table is there and empty, as a hand-run DELETE would leave it
+    const db = await createDb();
+    await db.execute(sql`DELETE FROM hub_install`);
+
+    // Act + Assert
+    expect(await readListenDefault(db)).toBe("all_interfaces");
+  });
+
+  test("members created before the install record are a restore; members created after are not", async () => {
+    // Arrange
+    const db = await createDb();
+    await db.execute(sql`INSERT INTO developers (id, name, email, api_key_hash) VALUES ('dev_new','New','new@example.com','h1')`);
+    const freshHub = await holdsMembersFromBeforeInstall(db);
+
+    // Act — a row as a dump of an older hub carries it
+    await db.execute(sql`
+      INSERT INTO developers (id, name, email, api_key_hash, created_at)
+      VALUES ('dev_old','Old','old@example.com','h2', now() - interval '90 days')`);
+    const restored = await holdsMembersFromBeforeInstall(db);
+
+    // Assert
+    expect(freshHub).toBe(false);
+    expect(restored).toBe(true);
   });
 });
 
