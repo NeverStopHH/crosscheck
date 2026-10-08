@@ -16,6 +16,7 @@ import { prepareHook } from "../src/hooks/runner.ts";
 import { handleSubagentReturn } from "../src/hooks/subagent-return.ts";
 import {
   COLLISION_RELAY_SENTENCE,
+  COUNT_ONLY_RELAY_SENTENCE,
   SUBAGENT_RELAY_HEADER,
   collisionKey,
   tripwireCollision,
@@ -180,8 +181,10 @@ describe("a foreground subagent's return", () => {
     // Act
     const output = parsed(await runHook("subagent-return", agentReturned(fix.repo), fix.env));
 
-    // Assert
-    expect(output.systemMessage).toBe("crosscheck: +1 more teammate overlap not shown");
+    // Assert: a count with nothing named above it says what it is (round 3, F-L2)
+    expect(output.systemMessage).toBe(
+      "crosscheck: a subagent ran into 1 teammate overlap whose details were not kept — talk to your team before you merge",
+    );
   });
 
   test("a drop tally with an empty queue is still owned up to (round 2, L6)", async () => {
@@ -192,8 +195,13 @@ describe("a foreground subagent's return", () => {
     // Act
     const output = parsed(await runHook("subagent-return", agentReturned(fix.repo), fix.env));
 
-    // Assert: a count names nobody, so presence is not asked
-    expect(output.systemMessage).toBe("crosscheck: +2 more teammate overlaps not shown");
+    // Assert: a count names nobody, so presence is not asked — and both copies say what a count can (round 3, F-L2)
+    const counted =
+      "crosscheck: a subagent ran into 2 teammate overlaps whose details were not kept — talk to your team before you merge";
+    expect(output.systemMessage).toBe(counted);
+    expect(output.hookSpecificOutput?.additionalContext).toBe(
+      [SUBAGENT_RELAY_HEADER, counted, COUNT_ONLY_RELAY_SENTENCE].join("\n"),
+    );
     expect(fix.hub.calls.presence).toBe(0);
   });
 

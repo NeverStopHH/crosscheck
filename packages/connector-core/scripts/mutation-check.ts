@@ -24516,6 +24516,23 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/collision-relay-presence.test.ts`,
     because: "a subagent that ran for two hours relays 'Mike is working on' from a row as old as its run",
   },
+  // ── Review of feat/collision-visible, round 3, F-L2: a relay that can only count ──
+  {
+    label: "a count-only relay tells the person '+N more' of nothing",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  if (groups.length === 0) {\n    return hidden > 0 ? countOnlyLine(hidden) : \"\";\n  }\n",
+    to: "",
+    test: `${CORE}/test/collision-count-only.test.ts`,
+    because: "the person reads '+3 more teammate overlaps not shown' with nothing shown and no idea what happened",
+  },
+  {
+    label: "a count-only relay asks the agent to mention an overlap it was never shown",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "    return hidden > 0 ? [SUBAGENT_RELAY_HEADER, countOnlyLine(hidden), COUNT_ONLY_RELAY_SENTENCE].join(\"\\n\") : \"\";",
+    to: "    return hidden > 0 ? [SUBAGENT_RELAY_HEADER, ...moreTail(hidden), COLLISION_RELAY_SENTENCE].join(\"\\n\") : \"\";",
+    test: `${CORE}/test/collision-count-only.test.ts`,
+    because: "the main thread is told to mention 'this overlap' and 'the teammate' with no fact about either in its context",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {

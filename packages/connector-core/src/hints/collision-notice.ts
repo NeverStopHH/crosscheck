@@ -82,6 +82,14 @@ export const SUBAGENT_RELAY_HEADER =
   "crosscheck: a subagent of this session ran into a teammate's work while editing.";
 
 /**
+ * The relay's request when it can only COUNT what a subagent ran into (round
+ * 3, F-L2): with no group named there is no "this overlap" or "the teammate"
+ * to mention, and a request that named them would point at nothing.
+ */
+export const COUNT_ONLY_RELAY_SENTENCE =
+  "crosscheck asks that your next reply tell the person you work for about these overlaps, so they can check with their team first.";
+
+/**
  * COV-9 ON A PERSON-FACING LINE ("fails if a person has to run doctor to
  * learn that an answer was based on partial observation"). A tripwire hit is
  * a POSITIVE answer — a gap cannot make Mike's session less real — so the
@@ -507,6 +515,16 @@ const moreLine = (count: number): string =>
 const moreTail = (count: number): readonly string[] => (count > 0 ? [moreLine(count)] : []);
 
 /**
+ * The ONE line for a relay that names nobody (round 3, F-L2): only groups the
+ * record had to let go of are left, and "+3 more … not shown" with nothing
+ * shown above it told the person nothing. What is known is said: a subagent
+ * ran into this many overlaps, and the details are gone.
+ */
+const countOnlyLine = (count: number): string =>
+  `crosscheck: a subagent ran into ${countOf(count, "teammate overlap")} whose details were not kept — ` +
+  "talk to your team before you merge";
+
+/**
  * The person's lines that fit: at most COLLISION_NOTICE_MAX_LINES, and each
  * candidate keeps room for the tail line ITS OWN rest would need — the count
  * of lines left out plus `hidden` (groups the record could not keep) — so the
@@ -529,6 +547,9 @@ const fittedLines = (lines: readonly string[], hidden: number): readonly string[
  * queue the record had to cut; state/session-state.ts) into the same tail.
  */
 export const renderCollisionNotices = (groups: readonly RenderableCollision[], now: Date, hidden = 0): string => {
+  if (groups.length === 0) {
+    return hidden > 0 ? countOnlyLine(hidden) : "";
+  }
   const lines = groups.map((group) => renderCollisionNotice(group, now));
   const kept = fittedLines(lines, hidden);
   return [...kept, ...moreTail(lines.length - kept.length + hidden)].join("\n");
@@ -548,15 +569,17 @@ export const renderSubagentCollisionRelay = (
   groups: readonly RenderableCollision[],
   now: Date,
   hidden = 0,
-): string =>
-  groups.length === 0 && hidden === 0
-    ? ""
-    : [
-        SUBAGENT_RELAY_HEADER,
-        ...groups.map((group) => renderCollisionNotice(group, now)),
-        ...moreTail(hidden),
-        COLLISION_RELAY_SENTENCE,
-      ].join("\n");
+): string => {
+  if (groups.length === 0) {
+    return hidden > 0 ? [SUBAGENT_RELAY_HEADER, countOnlyLine(hidden), COUNT_ONLY_RELAY_SENTENCE].join("\n") : "";
+  }
+  return [
+    SUBAGENT_RELAY_HEADER,
+    ...groups.map((group) => renderCollisionNotice(group, now)),
+    ...moreTail(hidden),
+    COLLISION_RELAY_SENTENCE,
+  ].join("\n");
+};
 
 interface OverlapPerson {
   readonly developerId: string;
