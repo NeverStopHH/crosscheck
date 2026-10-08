@@ -79,24 +79,6 @@ const presenceAnswer = async (ctx: HookContext, budget: HookBudget): Promise<rea
   return result.ok ? result.data : null;
 };
 
-/**
- * The drained groups held to presence AS IT IS NOW (core
- * `relayedCollisions`): named where the answer lists the teammate, unnamed
- * only where it omits them, and named as the tripwire's own answer named
- * them when there is no answer. No groups, no presence call: a drain that
- * only owns up to dropped groups asks the hub nothing.
- */
-const asPresentNow = async (
-  ctx: HookContext,
-  groups: readonly CollisionNotice[],
-  budget: HookBudget,
-): Promise<readonly RenderableCollision[]> => {
-  if (groups.length === 0) {
-    return [];
-  }
-  return relayedCollisions(groups, await presenceAnswer(ctx, budget), ctx.now());
-};
-
 /** What a drain took: the queued groups still remembered, and how many it could only count. */
 interface TakenRelay {
   readonly groups: readonly CollisionNotice[];
@@ -120,13 +102,31 @@ const takenFrom = (state: SessionState): TakenRelay => {
 };
 
 /**
+ * The presence answer the drained groups will be held to, asked BEFORE the
+ * queue is emptied (round 3, F-M1): drained first, a refresh that threw or a
+ * hook abandoned while it waited on the hub — up to RELAY_PRESENCE_REFRESH_MS
+ * — lost groups already recorded as told. Asked from the unlocked read: the
+ * answer is the repo's, so a group a racing sibling queues before the drain
+ * is held to it too. No queued group still remembered, no presence call: a
+ * drain that only owns up to dropped groups asks the hub nothing.
+ */
+const answerBeforeDrain = async (
+  ctx: HookContext,
+  state: SessionState,
+  budget: HookBudget,
+): Promise<readonly PresenceEntry[] | null> =>
+  takenFrom(state).groups.length === 0 ? null : presenceAnswer(ctx, budget);
+
+/**
  * The queue taken and emptied in ONE locked transform, so a racing sibling
  * finds it empty, and only groups still remembered are said — the rest are
  * counted into the `+N more` line. A hook inside a subagent (its payload
  * carries `agent_id`) leaves the queue for the main thread. Drained only
  * while the spare budget lasts (review L3): a queue left alone waits for the
- * next hook, a queue drained into an abandoned hook is lost. Fail open: a
- * busy lock relays later, never twice.
+ * next hook. Everything slow comes BEFORE the drain and nothing after it can
+ * throw — the groups are held to presence by a pure function — so only the
+ * output's own last step stands between an emptied queue and the person.
+ * Fail open: a busy lock relays later, never twice.
  */
 export const drainCollisionRelay = async (ctx: HookContext, budget: HookBudget): Promise<RelayDrain> => {
   try {
@@ -137,6 +137,7 @@ export const drainCollisionRelay = async (ctx: HookContext, budget: HookBudget):
     if (state === null || !hasPendingRelay(state)) {
       return NO_DRAIN;
     }
+    const answer = await answerBeforeDrain(ctx, state, budget);
     const taken: { value: TakenRelay } = { value: NOTHING_TAKEN };
     const drained = await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => {
       if (!hasPendingRelay(fresh)) {
@@ -145,7 +146,9 @@ export const drainCollisionRelay = async (ctx: HookContext, budget: HookBudget):
       taken.value = takenFrom(fresh);
       return withDrainedCollisionRelays(fresh);
     });
-    return drained ? { groups: await asPresentNow(ctx, taken.value.groups, budget), hidden: taken.value.hidden } : NO_DRAIN;
+    return drained
+      ? { groups: relayedCollisions(taken.value.groups, answer, ctx.now()), hidden: taken.value.hidden }
+      : NO_DRAIN;
   } catch {
     // Fail open: the hosting hook's own job is untouched.
     return NO_DRAIN;

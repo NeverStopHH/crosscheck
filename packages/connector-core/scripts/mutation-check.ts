@@ -24327,15 +24327,15 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a drain that only owns up to dropped groups asks presence anyway",
     file: `${CONNECTOR}/src/hooks/collision-relay.ts`,
-    from: "  if (groups.length === 0) {\n    return [];\n  }\n  return relayedCollisions",
-    to: "  return relayedCollisions",
+    from: "  takenFrom(state).groups.length === 0 ? null : presenceAnswer(ctx, budget);",
+    to: "  presenceAnswer(ctx, budget);",
     test: `${CONNECTOR}/test/subagent-return-hook.test.ts`,
     because: "a count that names nobody costs a hub call on the main thread",
   },
   {
     label: "a presence refresh leaves the cache stale",
     file: `${CONNECTOR}/src/hooks/presence-refresh.ts`,
-    from: "    await writePresenceCache(ctx.config.home, ctx.repoKey, result.data, ctx.now(), previous?.lastSeen ?? []);\n",
+    from: "      await writePresenceCache(ctx.config.home, ctx.repoKey, result.data, ctx.now(), previous?.lastSeen ?? []);\n",
     to: "",
     test: `${CONNECTOR}/test/collision-relay-unconfirmed.test.ts`,
     because: "the statusline and every later relay ask the hub again for an answer the hook already had",
@@ -24471,6 +24471,33 @@ export const MUTATIONS: readonly Mutation[
     to: "  \"WARN\";",
     test: `${CLI}/test/doctor-subagent-return.test.ts`,
     because: "an install that captures no error fingerprints is reported as merely untidy",
+  },
+  // ── Review of feat/collision-visible, round 3, F-M1: a drained relay always leaves the hook ──
+  {
+    label: "a presence cache that cannot be written loses the drained relay",
+    file: `${CONNECTOR}/src/hooks/presence-refresh.ts`,
+    from: "    try {\n      await writePresenceCache(ctx.config.home, ctx.repoKey, result.data, ctx.now(), previous?.lastSeen ?? []);\n    } catch {\n      // Fail open: the next caller finds no fresh cache and asks the hub again.\n    }\n",
+    to: "    await writePresenceCache(ctx.config.home, ctx.repoKey, result.data, ctx.now(), previous?.lastSeen ?? []);\n",
+    test: `${CONNECTOR}/test/collision-relay-durable.test.ts`,
+    because: "a cache path nobody can write empties the queue, marks the groups told and tells nobody",
+  },
+  {
+    label: "the relay empties its queue before the presence answer is in hand",
+    file: `${CONNECTOR}/src/hooks/collision-relay.ts`,
+    from:
+      "    const answer = await answerBeforeDrain(ctx, state, budget);\n" +
+      "    const taken: { value: TakenRelay } = { value: NOTHING_TAKEN };\n" +
+      "    const drained = await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => {\n" +
+      "      if (!hasPendingRelay(fresh)) {\n        return null;\n      }\n" +
+      "      taken.value = takenFrom(fresh);\n      return withDrainedCollisionRelays(fresh);\n    });\n",
+    to:
+      "    const taken: { value: TakenRelay } = { value: NOTHING_TAKEN };\n" +
+      "    const drained = await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => {\n" +
+      "      if (!hasPendingRelay(fresh)) {\n        return null;\n      }\n" +
+      "      taken.value = takenFrom(fresh);\n      return withDrainedCollisionRelays(fresh);\n    });\n" +
+      "    const answer = await answerBeforeDrain(ctx, state, budget);\n",
+    test: `${CONNECTOR}/test/collision-relay-durable.test.ts`,
+    because: "a hook that throws or is abandoned while it waits on presence has already emptied the queue, and the groups are never said",
   },
 ];
 

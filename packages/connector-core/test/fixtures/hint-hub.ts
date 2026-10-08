@@ -46,6 +46,11 @@ export interface HintHub {
    * body the client cannot read, which is what this hub always did.
    */
   readonly setPresence: (sessions: readonly unknown[] | null) => void;
+  /**
+   * Run while a GET /api/presence is in flight, before it is answered: what a
+   * test sees of the caller's own state at the moment it waits on presence.
+   */
+  readonly setPresenceProbe: (probe: (() => Promise<void>) | null) => void;
   /** Rows GET /api/solved-matches answers with. */
   readonly setSolvedMatches: (matches: readonly unknown[]) => void;
   /** The `?fingerprint=` of the last solved-match probe, or null. */
@@ -245,6 +250,7 @@ export const startHintHub = (
     other: 0,
   };
   let presence: readonly unknown[] | null = null;
+  let presenceProbe: (() => Promise<void>) | null = null;
   let candidates: readonly unknown[] = [rejectedApproachCandidate()];
   /** Absent unless a test sets it — what every hub before 07 §13 sends. */
   let recordsOutcomes: boolean | undefined;
@@ -304,6 +310,7 @@ export const startHintHub = (
       }
       if (pathname === "/api/presence") {
         calls.presence += 1;
+        await presenceProbe?.();
         await sleep(latency.presence ?? 0);
         if (presence !== null) {
           return Response.json({ ok: true, data: { sessions: presence } });
@@ -339,6 +346,9 @@ export const startHintHub = (
     },
     setPresence: (next) => {
       presence = next;
+    },
+    setPresenceProbe: (next) => {
+      presenceProbe = next;
     },
     setSolvedMatches: (next) => {
       solvedMatches = next;
