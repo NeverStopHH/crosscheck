@@ -42,6 +42,7 @@ import {
   lifeRungOf,
   lifeSessionId,
   readEndedLifeEpoch,
+  readEndedLifePosition,
   readEndedLifeRung,
 } from "../state/session-lineage.ts";
 import {
@@ -310,6 +311,10 @@ const MarkedLifeSchema = z.looseObject({
  * its counter handed out — written by session-reap when it took the state
  * over, or by a SessionEnd whose end has not landed (review-2 round 9, M1 +
  * M2). Null when no marker speaks for the life, or speaks without a position.
+ *
+ * ...OR THE LINEAGE, ONCE THE HUB TOOK THE END (all seed 30495): an end that
+ * landed removes its marker, and the last end written down keeps the same
+ * position (state/session-lineage.ts readEndedLifePosition).
  */
 const readMarkedPosition = async (input: RegisterSessionFlowInput, sessionId: string): Promise<SeqStamp | null> => {
   const rung = lifeRungOf(crosscheckSessionIdFor(input.hostSessionKey), sessionId);
@@ -321,7 +326,7 @@ const readMarkedPosition = async (input: RegisterSessionFlowInput, sessionId: st
   );
   return parsed.success && parsed.data.crosscheckSessionId === sessionId && isSeqStamp(parsed.data.seq)
     ? parsed.data.seq
-    : null;
+    : await readEndedLifePosition(input.home, input.hostSessionKey, sessionId);
 };
 
 /** The life a state-less register's walk starts on: past the last end written down, else the base id. */

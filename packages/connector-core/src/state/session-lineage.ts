@@ -56,6 +56,8 @@ const RUNG_PATTERN = /^[1-9][0-9]{0,8}$/;
 const LineageSchema = z.looseObject({
   crosscheckSessionId: z.string().min(1),
   epoch: z.string().min(1).optional(),
+  /** The position the end took under `epoch`, past everything the life's counter handed out. */
+  n: z.number().int().min(0).optional(),
 });
 
 /** The crosscheck session id of a host session's `rung`-th life. */
@@ -148,6 +150,34 @@ export const readEndedLifeEpoch = async (home: string, hostSessionKey: string): 
   return parsed.success ? (parsed.data.epoch ?? null) : null;
 };
 
+/** An end's position: the epoch and the position it took. */
+export interface EndedLifePosition {
+  readonly epoch: string;
+  readonly n: number;
+}
+
+/**
+ * THE POSITION THE LAST END WRITTEN DOWN TOOK, when it closed `sessionId`
+ * (all seed 30495) — what the life's end marker keeps until the hub takes the
+ * end, and nothing keeps after. A SessionStart re-fire that read the state
+ * before a SessionEnd beside it deleted the file, and settled back on the same
+ * life, found neither the state nor the marker, and started the life on a
+ * fresh mint: the heal that followed carried that epoch into the next life,
+ * which an unheard heal had opened under the old one.
+ */
+export const readEndedLifePosition = async (
+  home: string,
+  hostSessionKey: string,
+  sessionId: string,
+): Promise<EndedLifePosition | null> => {
+  const parsed = LineageSchema.safeParse(await readJsonOrNull(lineagePath(home, hostSessionKey)));
+  if (!parsed.success || parsed.data.crosscheckSessionId !== sessionId) {
+    return null;
+  }
+  const { epoch, n } = parsed.data;
+  return epoch === undefined || n === undefined ? null : { epoch, n };
+};
+
 /**
  * Written at the END of a life, never at its start: a life that is still
  * running is named by its state file, and a lineage file exists only for host
@@ -160,11 +190,12 @@ export const recordEndedLife = async (
   crosscheckSessionId: string,
   now: Date,
   epoch: string | null = null,
+  n: number | null = null,
 ): Promise<void> => {
   try {
     await writePrivateFile(
       lineagePath(home, hostSessionKey),
-      `${JSON.stringify({ crosscheckSessionId, ...(epoch === null ? {} : { epoch }), at: now.toISOString() })}\n`,
+      `${JSON.stringify({ crosscheckSessionId, ...(epoch === null ? {} : { epoch, ...(n === null ? {} : { n }) }), at: now.toISOString() })}\n`,
     );
   } catch {
     // The ladder still finds the next life without it.

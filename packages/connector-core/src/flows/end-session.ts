@@ -100,13 +100,16 @@ const writeDownEnd = async (input: EndSessionFlowInput, end: LifeEnd, standing: 
   // the same id must start its next life one rung up, not on this one — an
   // end reported here is final on the hub (state/session-lineage.ts). With
   // the epoch the life was on, which the next life keeps (review-2 round 8,
-  // L2): a heal may have registered it under that epoch already.
+  // L2): a heal may have registered it under that epoch already. And with
+  // the end's position, which outlives the marker (all seed 30495): a
+  // re-fire beside this end that settles back on the life goes on from it.
   await recordEndedLife(
     input.home,
     input.hostSessionKey,
     end.sessionId,
     input.now(),
     isSeqStamp(end.seq) ? end.seq.epoch : null,
+    isSeqStamp(end.seq) ? end.seq.n : null,
   );
 };
 

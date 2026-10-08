@@ -17285,7 +17285,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an end no longer writes down the life it closed",
     file: `${CORE}/src/flows/end-session.ts`,
-    from: "  await recordEndedLife(\n    input.home,\n    input.hostSessionKey,\n    end.sessionId,\n    input.now(),\n    isSeqStamp(end.seq) ? end.seq.epoch : null,\n  );\n",
+    from: "  await recordEndedLife(\n    input.home,\n    input.hostSessionKey,\n    end.sessionId,\n    input.now(),\n    isSeqStamp(end.seq) ? end.seq.epoch : null,\n    isSeqStamp(end.seq) ? end.seq.n : null,\n  );\n",
     to: "",
     test: `${CONNECTOR}/test/resumed-session.test.ts`,
     because: "every resume walks every ended life again from the base id, one register call each, on the hook whose latency the developer feels",
@@ -18471,7 +18471,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the lineage drops the epoch it was handed",
     file: `${CORE}/src/state/session-lineage.ts`,
-    from: "      `${JSON.stringify({ crosscheckSessionId, ...(epoch === null ? {} : { epoch }), at: now.toISOString() })}\\n`,",
+    from: "      `${JSON.stringify({ crosscheckSessionId, ...(epoch === null ? {} : { epoch, ...(n === null ? {} : { n }) }), at: now.toISOString() })}\\n`,",
     to: "      `${JSON.stringify({ crosscheckSessionId, at: now.toISOString() })}\\n`,",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review-2 round 8, L2 (seed 11974): the epoch written at the end never reaches the resume",
@@ -19168,6 +19168,24 @@ export const MUTATIONS: readonly Mutation[
     to: "  const restored = null as SeqStamp | null;",
     test: `${CORE}/test/spool-simulation.test.ts`,
     because: "review-2 round 9, M1+M2 (probes E2, E4): a PostToolUse recovery after a week issues the life's positions twice",
+  },
+  // All seed 30495: an end that LANDED removes its marker, so the position a
+  // re-fire beside it goes on from is the lineage's.
+  {
+    label: "an end writes down the life it closed without its position (all 30495)",
+    file: `${CORE}/src/flows/end-session.ts`,
+    from: "    isSeqStamp(end.seq) ? end.seq.n : null,\n",
+    to: "    null,\n",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "a re-fire beside a SessionEnd whose end landed starts the life on a fresh mint, and the heal after it splits the next life's order",
+  },
+  {
+    label: "a publish that finds the state and the marker gone ignores the lineage's position (all 30495)",
+    file: `${CORE}/src/state/session-lineage.ts`,
+    from: "  return epoch === undefined || n === undefined ? null : { epoch, n };",
+    to: "  return null;",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "a re-fire beside a SessionEnd whose end landed starts the life on a fresh mint, and the heal after it splits the next life's order",
   },
   {
     label: "a publish that finds the state gone ignores the life's end marker (L4)",
@@ -19878,7 +19896,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
  * PRINTS: packages/connector-core/test/session-heal.test.ts 32
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 4
- * PRINTS: packages/connector-core/test/session-lives.test.ts 64
+ * PRINTS: packages/connector-core/test/session-lives.test.ts 66
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
