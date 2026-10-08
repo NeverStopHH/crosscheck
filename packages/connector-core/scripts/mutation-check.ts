@@ -18517,6 +18517,14 @@ export const MUTATIONS: readonly Mutation[
     because: "review-2 round 7, simulation seed 1033 (I2): a successor files the ended life's records into it",
   },
   {
+    label: "set_intent puts the status back before it writes the refusal down (sleep 31110)",
+    file: `${CORE}/src/mcp/tools/intent-write.ts`,
+    from: "  if (result?.status === \"rejected\") {\n    if (rejectCauseOf(issuesOf(result)) === \"session_ended\") {\n",
+    to: "  if (result?.status === \"rejected\") {\n    await keepOldStatus();\n    if (rejectCauseOf(issuesOf(result)) === \"session_ended\") {\n",
+    test: `${CORE}/test/spool-simulation.test.ts`,
+    because: "a hook killed as it puts the status back leaves the refusal unwritten, and session-reap sends the dead host's last word into the ended life (I2)",
+  },
+  {
     label: "a spooled work context goes with the status it was spooled with",
     file: `${CORE}/src/spool/flush.ts`,
     from: "  const spooled = sendable.map((line) => withLifeState(line.record, lifeState));",
@@ -19906,7 +19914,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/spool-ignored.test.ts 2
  * PRINTS: packages/connector-core/test/spool-lock.test.ts 2
  * PRINTS: packages/connector-core/test/spool-ownership.test.ts 12
- * PRINTS: packages/connector-core/test/spool-simulation.test.ts 9
+ * PRINTS: packages/connector-core/test/spool-simulation.test.ts 10
  * PRINTS: packages/connector-core/test/staleness-axis.test.ts 1
  * PRINTS: packages/connector-core/test/target-paths.test.ts 1
  * PRINTS: packages/connector-core/test/tool-window-pairing.test.ts 6

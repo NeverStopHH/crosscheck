@@ -56,8 +56,10 @@ import type { GeneratorName, Run, SimEvent } from "./simulation/sim-world.ts";
 import { corpusName, SEED_CORPUS } from "./simulation/seed-corpus.ts";
 import type { CorpusSeed, ResidualClass } from "./simulation/seed-corpus.ts";
 import {
+  abandon,
   age,
   beat,
+  crash,
   edit,
   end,
   fault,
@@ -406,6 +408,20 @@ const ROUND_7_PROBES: readonly Probe[] = [
   },
 ];
 
+/**
+ * THE PR #75 REVIEW'S SEEDS, AS FIXED SCENARIOS (the seeds themselves are in
+ * the corpus, simulation/seed-corpus.ts).
+ */
+const PR75_PROBES: readonly Probe[] = [
+  {
+    // set_intent's hooked writes: the new status (1), its position (2), the
+    // post's sync stamp (3), then the old status put back (4).
+    name: "probe K1 (I2, sleep 31110): set_intent refused as ended, killed as it puts the status back, then a week: the dead host's last word is withheld",
+    events: [start(0), hubEnd(0), crash(4, "before"), intent(0, "blocked"), abandon(0)],
+    shows: (run) => run.drops.some((drop) => drop.reason === "withheld" && (drop.kinds["work_context"] ?? 0) > 0),
+  },
+];
+
 /** Conversation 1 starting and ending `count` times: each SessionEnd writes its life into the refused-lives note (M1). */
 const manyEnds = (count: number): readonly SimEvent[] => Array.from({ length: count }, () => [start(1), end(1)]).flat();
 const noDrops = (run: Run): boolean => run.drops.length === 0;
@@ -508,8 +524,8 @@ describe("every kind of drop names its records (per-record I1)", () => {
   }
 });
 
-describe("the round-7 and round-8 reviews' probes, as fixed scenarios", () => {
-  for (const probe of [...ROUND_7_PROBES, ...ROUND_8_PROBES]) {
+describe("the round-7 and round-8 reviews' probes, and the PR #75 review's, as fixed scenarios", () => {
+  for (const probe of [...ROUND_7_PROBES, ...ROUND_8_PROBES, ...PR75_PROBES]) {
     test(
       probe.name,
       async () => {

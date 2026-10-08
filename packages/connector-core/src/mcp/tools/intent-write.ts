@@ -141,13 +141,16 @@ export const writeIntent = async (
     return { outcome: "ignored", result };
   }
   if (result?.status === "rejected") {
-    await keepOldStatus();
     if (rejectCauseOf(issuesOf(result)) === "session_ended") {
       // The hub says this life is over: its records still on disk are
       // withheld from every later flush (spool/refused-lives.ts, review-2
-      // round 7, found by the spool simulation).
+      // round 7, found by the spool simulation). FIRST, before the status
+      // goes back (sleep seed 31110): a hook killed at that write left the
+      // refusal unwritten and the refused status in the state, and
+      // session-reap sent it as the dead host's last word into the ended life.
       await recordRefusedLife(deps.home, deps.repoKey, own.crosscheckSessionId, deps.now());
     }
+    await keepOldStatus();
     return { outcome: "rejected", result };
   }
   // The state write carries FOUR facts at once, and one lock round is the
