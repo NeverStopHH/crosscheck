@@ -18,6 +18,7 @@ import {
   assertListenable,
   canListenAt,
   parseListenAddresses,
+  probeAddressesFor,
   resolveListenPlan,
   serveOnPlan,
 } from "../src/http/listen.ts";
@@ -60,6 +61,12 @@ describe("CROSSCHECK_LISTEN", () => {
   test("every interface stands alone: 0.0.0.0 beside a specific address is refused", () => {
     expect(() => parseListenAddresses("0.0.0.0,127.0.0.1")).toThrow(/already mean every interface/);
     expect(parseListenAddresses("0.0.0.0")).toEqual(["0.0.0.0"]);
+  });
+
+  test("every interface is judged by address, not by spelling (review L2)", () => {
+    expect(() => parseListenAddresses("0:0:0:0:0:0:0:0,127.0.0.1")).toThrow(/already mean every interface/);
+    expect(() => parseListenAddresses("::ffff:0.0.0.0,127.0.0.1")).toThrow(/already mean every interface/);
+    expect(parseListenAddresses("0:0:0:0:0:0:0:1,[::1],FD7A::1")).toEqual(["::1", "fd7a::1"]);
   });
 
   test("an address no interface here has is refused by name", () => {
@@ -124,6 +131,27 @@ describe("which data dir is which (db/bootstrap.sql hub_install)", () => {
   });
 });
 
+describe("where the port probe knocks (review L4)", () => {
+  const LOOPBACKS = ["127.0.0.1", "::1"];
+  const INTERFACES = ["192.168.1.20", "100.101.4.7", "fd7a:115c:a1e0::7"];
+
+  test("unset: the loopbacks, which the hub listens at either way", () => {
+    expect(probeAddressesFor(null, LOOPBACKS, INTERFACES)).toEqual(LOOPBACKS);
+  });
+
+  test("a specific address: that address", () => {
+    expect(probeAddressesFor(["100.101.4.7"], LOOPBACKS, INTERFACES)).toEqual(["100.101.4.7"]);
+  });
+
+  test("0.0.0.0: IPv4 loopback and every IPv4 interface address", () => {
+    expect(probeAddressesFor(["0.0.0.0"], LOOPBACKS, INTERFACES)).toEqual(["127.0.0.1", "192.168.1.20", "100.101.4.7"]);
+  });
+
+  test(":: (dual-stack): both loopbacks and every interface address", () => {
+    expect(probeAddressesFor(["::"], LOOPBACKS, INTERFACES)).toEqual([...LOOPBACKS, ...INTERFACES]);
+  });
+});
+
 describe("serving the plan", () => {
   test("each address gets its own server, every one on the port the first was given", async () => {
     // Arrange
@@ -145,6 +173,28 @@ describe("serving the plan", () => {
         server.stop(true);
       }
     }
+  });
+
+  test("a second address that fails after the first bound stops the first: no half-bound hub (review X8)", async () => {
+    // Arrange — the same address twice: the first binds, the second meets EADDRINUSE
+    let message = "";
+
+    // Act
+    try {
+      serveOnPlan({ kind: "configured", addresses: ["127.0.0.1", "127.0.0.1"] }, 0, okFetch);
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    const port = Number(/on port (\d+)/.exec(message)?.[1] ?? "0");
+    const answered = await fetch(`http://127.0.0.1:${String(port)}/`).then(
+      () => true,
+      () => false,
+    );
+
+    // Assert — the error names the port that was bound, and nothing answers on it
+    expect(message).toContain("could not listen at 127.0.0.1");
+    expect(port).toBeGreaterThan(0);
+    expect(answered).toBe(false);
   });
 
   test("an address that cannot be bound stops the servers already started and names it", () => {

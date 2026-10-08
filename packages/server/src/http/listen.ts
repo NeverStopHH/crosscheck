@@ -25,6 +25,7 @@
  * any second address beside them would collide with them.
  */
 import { isIP } from "node:net";
+import { networkInterfaces } from "node:os";
 
 import type { HubListenDefault } from "../db/schema.ts";
 
@@ -32,7 +33,6 @@ export const LISTEN_ENV = "CROSSCHECK_LISTEN";
 
 export const IPV4_LOOPBACK = "127.0.0.1";
 export const IPV6_LOOPBACK = "::1";
-const WILDCARD_ADDRESSES: ReadonlySet<string> = new Set(["0.0.0.0", "::"]);
 
 /** How the hub decided where to listen. Only `legacy_all_interfaces` is warned about. */
 export type ListenKind = "configured" | "loopback_default" | "legacy_all_interfaces";
@@ -49,6 +49,67 @@ type ServeFetch = (request: Request, server: BunServer) => Response | Promise<Re
 /** `[::1]` is how people write an IPv6 address next to a port; the socket wants `::1`. */
 const unbracketed = (entry: string): string =>
   entry.startsWith("[") && entry.endsWith("]") ? entry.slice(1, -1) : entry;
+
+/**
+ * ONE SPELLING PER ADDRESS (review of the hub hardening, L2). `0:0:0:0:0:0:0:0`
+ * is `::`, `::ffff:0.0.0.0` is `::ffff:0:0`, `FD7A::1` is `fd7a::1`: the URL
+ * parser's IPv6 serialisation (RFC 5952) decides, so "every interface stands
+ * alone" and the dedupe judge the address, not how it was typed. A zone
+ * (`%en0`) names an interface and is kept as written. IPv4 needs nothing:
+ * `isIP` refuses every spelling but the dotted one.
+ */
+export const canonicalAddress = (address: string): string => {
+  if (isIP(address) !== 6) {
+    return address;
+  }
+  const zoneAt = address.indexOf("%");
+  const bare = zoneAt === -1 ? address : address.slice(0, zoneAt);
+  const zone = zoneAt === -1 ? "" : address.slice(zoneAt);
+  return `${new URL(`http://[${bare}]`).hostname.slice(1, -1)}${zone}`;
+};
+
+/** Every interface: IPv4's, IPv6's, and the IPv4-mapped spelling of IPv4's. Canonical input only. */
+export const isWildcardAddress = (canonical: string): boolean =>
+  canonical === "0.0.0.0" || canonical === "::" || canonical === "::ffff:0:0";
+
+/**
+ * This machine's own interface addresses, loopback and link-local left out
+ * (a link-local address needs a zone to connect to). What "every interface"
+ * means for the port probe (review of the hub hardening, L4).
+ */
+export const interfaceAddresses = (): readonly string[] =>
+  Object.values(networkInterfaces()).flatMap((entries) =>
+    (entries ?? [])
+      .filter((entry) => !entry.internal && !entry.address.toLowerCase().startsWith("fe80:"))
+      .map((entry) => entry.address),
+  );
+
+/**
+ * WHERE THE PORT PROBE KNOCKS for a listen list (review of the hub
+ * hardening, L4): each specific address as itself; `0.0.0.0` as 127.0.0.1 and
+ * every IPv4 interface address; `::` (dual-stack) as both loopbacks and every
+ * interface address. Bun on macOS binds over a FOREIGN listener on a specific
+ * address that a wildcard also covers (index.ts assertPortFree), so the
+ * wildcard has to be knocked where such a listener would sit. Unset (null):
+ * the loopbacks, which the hub listens at either way; the boot knocks the
+ * interfaces too once its plan turns out to be every interface.
+ */
+export const probeAddressesFor = (
+  configured: readonly string[] | null,
+  loopbacks: readonly string[],
+  interfaces: readonly string[],
+): readonly string[] => {
+  if (configured === null) {
+    return loopbacks;
+  }
+  const expanded = configured.flatMap((address) => {
+    if (address === "0.0.0.0") {
+      return [IPV4_LOOPBACK, ...interfaces.filter((candidate) => isIP(candidate) === 4)];
+    }
+    return isWildcardAddress(address) ? [...loopbacks, ...interfaces] : [address];
+  });
+  return [...new Set(expanded)];
+};
 
 /**
  * `CROSSCHECK_LISTEN`, read once at startup. Unset → null (the data dir's
@@ -78,11 +139,11 @@ export const parseListenAddresses = (raw: string | undefined): readonly string[]
               "127.0.0.1,100.101.4.7: a hostname would make where the hub listens depend on a DNS lookup",
           );
         }
-        return address;
+        return canonicalAddress(address);
       }),
     ),
   ];
-  if (addresses.length > 1 && addresses.some((address) => WILDCARD_ADDRESSES.has(address))) {
+  if (addresses.length > 1 && addresses.some(isWildcardAddress)) {
     throw new Error(
       `${LISTEN_ENV}: 0.0.0.0 and :: already mean every interface. List one of them alone, or only specific addresses`,
     );
@@ -148,12 +209,14 @@ export const serveOnPlan = (plan: ListenPlan, port: number, fetch: ServeFetch): 
     try {
       servers.push(Bun.serve({ hostname, port: servers[0]?.port ?? port, fetch }));
     } catch (error) {
+      // Read before the stops: a stopped server reports port 0.
+      const triedPort = servers[0]?.port ?? port;
       for (const server of servers) {
         server.stop(true);
       }
       const code = (error as { readonly code?: unknown }).code;
       throw new Error(
-        `could not listen at ${hostname} on port ${String(servers[0]?.port ?? port)}` +
+        `could not listen at ${hostname} on port ${String(triedPort)}` +
           `${typeof code === "string" ? ` (${code})` : ""}: another process may hold that address and port`,
         { cause: error },
       );

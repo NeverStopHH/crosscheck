@@ -16,6 +16,10 @@ import { join, resolve } from "node:path";
 import { sql } from "drizzle-orm";
 
 import { closeDb, createDb } from "../src/db/client.ts";
+import { canListenAt, interfaceAddresses } from "../src/http/listen.ts";
+
+/** An IPv4 address of this machine's own LAN or tailnet interface, if it has one. */
+const LAN_ADDRESS = interfaceAddresses().find((address) => /^\d+\.\d+\.\d+\.\d+$/.test(address) && canListenAt(address));
 
 const SERVER_ENTRY = resolve(import.meta.dir, "..", "src", "index.ts");
 /** Cold PGlite boot of a data dir, with slack for a loaded machine. */
@@ -216,6 +220,55 @@ describe("where a booted hub listens", () => {
       expect(result.stdout).toContain(BANNER);
       expect(result.stderr).toContain("WARN CROSSCHECK_WEBAUTHN_ORIGINS lists a localhost origin beside an https one");
       expect(result.stderr).toContain("Drop it: CROSSCHECK_WEBAUTHN_ORIGINS=https://hub.example.ts.net,");
+    },
+    BOOT_TIMEOUT_MS + SHUTDOWN_TIMEOUT_MS * 3,
+  );
+
+  test.skipIf(!canListenAt("::1"))(
+    "a foreign listener on [::1] at the port stops the boot before the data dir is touched (review X9)",
+    async () => {
+      // Arrange — browsers try ::1 first for localhost; this would answer them
+      const dataDir = await freshDir();
+      const port = randomPort();
+      const foreign = Bun.listen({ hostname: "::1", port, socket: { data: () => {} } });
+      try {
+        // Act
+        const result = await boot(hubEnv(port, dataDir));
+
+        // Assert
+        expect(result.exit).not.toBe(0);
+        expect(result.exit).not.toBe("killed");
+        expect(result.stderr).toContain(`port ${String(port)} is already in use`);
+        expect(await readdir(dataDir)).toEqual([]);
+      } finally {
+        foreign.stop(true);
+      }
+    },
+    BOOT_TIMEOUT_MS + SHUTDOWN_TIMEOUT_MS * 3,
+  );
+
+  test.skipIf(LAN_ADDRESS === undefined)(
+    "on every interface, a foreign listener on the machine's own address stops the boot (review L4)",
+    async () => {
+      // Arrange — an old data dir, and something already on this machine's LAN address at the port
+      const dataDir = await freshDir();
+      const seeded = await createDb({ dataDir });
+      await seeded.execute(sql`DROP TABLE hub_install`);
+      await closeDb(seeded);
+      const port = randomPort();
+      const foreign = Bun.listen({ hostname: LAN_ADDRESS ?? "", port, socket: { data: () => {} } });
+      try {
+        // Act
+        const result = await boot(hubEnv(port, dataDir));
+
+        // Assert — refused, not split with the foreign listener
+        expect(result.exit).not.toBe(0);
+        expect(result.exit).not.toBe("killed");
+        expect(result.stderr).toContain(`port ${String(port)} is already in use`);
+        expect(result.stdout).not.toContain(BANNER);
+      } finally {
+        foreign.stop(true);
+      }
     },
     BOOT_TIMEOUT_MS + SHUTDOWN_TIMEOUT_MS * 3,
   );

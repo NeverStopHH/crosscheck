@@ -23970,7 +23970,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "every interface is accepted beside a specific address",
     file: `${SERVER}/src/http/listen.ts`,
-    from: "  if (addresses.length > 1 && addresses.some((address) => WILDCARD_ADDRESSES.has(address))) {",
+    // Repaired by the review's L2: the wildcard test is by canonical address now.
+    from: "  if (addresses.length > 1 && addresses.some(isWildcardAddress)) {",
     to: "  if (false) {",
     test: `${SERVER}/test/listen.test.ts`,
     because: "the list reads as restricted while 0.0.0.0 in it still listens everywhere",
@@ -24356,6 +24357,71 @@ export const MUTATIONS: readonly Mutation[
     to: "    undefined,",
     test: `${SERVER}/test/ui-approvals.test.ts`,
     because: "the UPDATE's digest check exists and the ceremony never asks for it",
+  },
+  // Review of the hub hardening, L2, L4, X8 and X9: the listen addresses and the port probe.
+  {
+    label: "a listen wildcard is judged by its spelling",
+    file: `${SERVER}/src/http/listen.ts`,
+    from: "        return canonicalAddress(address);",
+    to: "        return address;",
+    test: `${SERVER}/test/listen.test.ts`,
+    because: "0:0:0:0:0:0:0:0 beside 127.0.0.1 passes as a restricted list and binds every interface",
+  },
+  {
+    label: "the IPv4-mapped wildcard stands beside an address",
+    file: `${SERVER}/src/http/listen.ts`,
+    from: ' || canonical === "::ffff:0:0";',
+    to: ";",
+    test: `${SERVER}/test/listen.test.ts`,
+    because: "::ffff:0.0.0.0 beside 127.0.0.1 is every IPv4 interface in a list that reads as two addresses",
+  },
+  {
+    label: "the port probe knocks 0.0.0.0 at loopback only",
+    file: `${SERVER}/src/http/listen.ts`,
+    from: "      return [IPV4_LOOPBACK, ...interfaces.filter((candidate) => isIP(candidate) === 4)];",
+    to: "      return [IPV4_LOOPBACK];",
+    test: `${SERVER}/test/listen.test.ts`,
+    because: "a foreign listener on the LAN address keeps answering there after the hub binds over it",
+  },
+  {
+    label: "the port probe knocks :: at IPv4 loopback only",
+    file: `${SERVER}/src/http/listen.ts`,
+    from: "    return isWildcardAddress(address) ? [...loopbacks, ...interfaces] : [address];",
+    to: "    return isWildcardAddress(address) ? [IPV4_LOOPBACK] : [address];",
+    test: `${SERVER}/test/listen.test.ts`,
+    because: "a foreign listener on [::1] answers every browser that tries IPv6 first, under a hub that started anyway",
+  },
+  {
+    label: "a failed bind leaves the servers already started",
+    file: `${SERVER}/src/http/listen.ts`,
+    from: "      for (const server of servers) {\n        server.stop(true);\n      }\n",
+    to: "",
+    test: `${SERVER}/test/listen.test.ts`,
+    because: "the boot fails and the first address still answers: a half-bound hub nobody started",
+  },
+  {
+    label: "a failed bind names port 0",
+    file: `${SERVER}/src/http/listen.ts`,
+    from: "      const triedPort = servers[0]?.port ?? port;",
+    to: "      const triedPort = port;",
+    test: `${SERVER}/test/listen.test.ts`,
+    because: "with PORT=0 the error names a port nothing could ever have held",
+  },
+  {
+    label: "the port probe never knocks ::1",
+    file: `${SERVER}/src/index.ts`,
+    from: "  canListenAt(IPV6_LOOPBACK) ? [IPV4_LOOPBACK, IPV6_LOOPBACK] : [IPV4_LOOPBACK];",
+    to: "  [IPV4_LOOPBACK];",
+    test: `${SERVER}/test/listen-boot.test.ts`,
+    because: "a foreign [::1] listener is found only by Bun's bind error after the database booted, or not at all",
+  },
+  {
+    label: "an every-interface hub never knocks the machine's own addresses",
+    file: `${SERVER}/src/index.ts`,
+    from: "    await assertPortFree(port, interfaceAddresses());",
+    to: "    void interfaceAddresses;",
+    test: `${SERVER}/test/listen-boot.test.ts`,
+    because: "the upgraded pilot hub shares 100.x:7100 with whatever already listened there",
   },
 ];
 
@@ -24748,8 +24814,8 @@ interface Outcome {
  * PRINTS: packages/server/test/landed-notices.test.ts 34
  * PRINTS: packages/server/test/landed-repair.test.ts 20
  * PRINTS: packages/server/test/landed.test.ts 15
- * PRINTS: packages/server/test/listen-boot.test.ts 5
- * PRINTS: packages/server/test/listen.test.ts 8
+ * PRINTS: packages/server/test/listen-boot.test.ts 7
+ * PRINTS: packages/server/test/listen.test.ts 14
  * PRINTS: packages/server/test/live-location-cost.test.ts 3
  * PRINTS: packages/server/test/live-location-differential.test.ts 5
  * PRINTS: packages/server/test/live-location-privacy.test.ts 27

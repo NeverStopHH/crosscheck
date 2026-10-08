@@ -8,8 +8,10 @@ import {
   assertListenable,
   canListenAt,
   describeListening,
+  interfaceAddresses,
   legacyListenWarning,
   parseListenAddresses,
+  probeAddressesFor,
   resolveListenPlan,
   serveOnPlan,
 } from "./http/listen.ts";
@@ -222,18 +224,13 @@ const parsePort = (raw: string | undefined): number => {
 const PORT_PROBE_TIMEOUT_MS = 500;
 
 /**
- * Where the port probe knocks: each address the hub will listen at, with
- * "every interface" knocked at loopback. Unset, the hub listens at loopback
- * either way (alone on a new data dir, as part of every interface on an old
- * one), so both loopbacks are knocked: a foreign listener on `[::1]:<port>`
- * would otherwise answer every browser that tries IPv6 first.
+ * The loopbacks the hub listens at when nobody says otherwise, and the probe
+ * knocks at for a wildcard: both, where the machine has `::1`. A foreign
+ * listener on `[::1]:<port>` would otherwise answer every browser that tries
+ * IPv6 first (review of the hub hardening, X9).
  */
-const probeAddressesFor = (configured: readonly string[] | null): readonly string[] => {
-  if (configured === null) {
-    return canListenAt(IPV6_LOOPBACK) ? [IPV4_LOOPBACK, IPV6_LOOPBACK] : [IPV4_LOOPBACK];
-  }
-  return configured.map((address) => (address === "0.0.0.0" || address === "::" ? IPV4_LOOPBACK : address));
-};
+const loopbackAddresses = (): readonly string[] =>
+  canListenAt(IPV6_LOOPBACK) ? [IPV4_LOOPBACK, IPV6_LOOPBACK] : [IPV4_LOOPBACK];
 
 /**
  * "Address already in use" is the commonest first-run error, and Bun.serve on
@@ -291,7 +288,7 @@ export const startServer = async (): Promise<void> => {
   if (configuredListen !== null) {
     assertListenable(configuredListen);
   }
-  await assertPortFree(port, probeAddressesFor(configuredListen));
+  await assertPortFree(port, probeAddressesFor(configuredListen, loopbackAddresses(), interfaceAddresses()));
   const dataDir = process.env["CROSSCHECK_DATA_DIR"];
   const db = await createDb(dataDir === undefined ? {} : { dataDir });
   const listenPlan = resolveListenPlan({
@@ -299,6 +296,12 @@ export const startServer = async (): Promise<void> => {
     listenDefault: await readListenDefault(db),
     hasIpv6Loopback: canListenAt(IPV6_LOOPBACK),
   });
+  // Every interface, decided only now that the data dir has spoken: knock the
+  // machine's own addresses too, where a foreign listener would share the
+  // port with the hub (review of the hub hardening, L4).
+  if (listenPlan.kind === "legacy_all_interfaces") {
+    await assertPortFree(port, interfaceAddresses());
+  }
   // Throws on explicit misconfiguration (e.g. openai chosen, no key) — a hub
   // that silently dropped its vector tier would be DESIGN.md §10 "silent death".
   const embedder = createEmbedderFromEnv(process.env);
