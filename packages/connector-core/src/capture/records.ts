@@ -194,15 +194,28 @@ export const targetRecord = (
   now: Date,
   source: TargetSource = "tool_edit",
   /**
-   * The generated-target signal that fired (capture/generated.ts), or absent
-   * for an ordinary target AND for one whose classification could not run —
-   * the wire carries only positive evidence, so an unknown stays ordinary.
+   * The generated-target signal that fired (capture/generated.ts) on a file
+   * that is mechanically generated and non-authoritative, or absent for an
+   * ordinary target AND for one whose classification could not run — the
+   * wire carries only positive evidence, so an unknown stays ordinary.
    */
   generated?: GeneratedSignal,
+  /**
+   * True for a generated file that is AUTHORITATIVE (declared, or a contract
+   * or migration): it stays evidence, and the hub must not label it either.
+   */
+  authoritative = false,
 ): Envelope =>
   buildEnvelope(
     "target",
-    { workContextId, kind, value, source, ...(generated === undefined ? {} : { generated }) },
+    {
+      workContextId,
+      kind,
+      value,
+      source,
+      ...(generated === undefined ? {} : { generated }),
+      ...(authoritative ? { authoritative: true } : {}),
+    },
     producer,
     now,
   );

@@ -31,18 +31,23 @@ import { git, makeHome, makeRepo, writeRepoFile } from "../../connector-core/tes
 
 const ADMIN_TOKEN = "pin-denylist-admin";
 const PLAIN = "src/workbench/usePlayback.ts";
-/** Excluded by the shipped `**\/generated/**`. */
-const GENERATED = "src/generated/client.ts";
-const GENERATED_RULE = "**/generated/**";
+/**
+ * Excluded by the shipped `**\/dist/**` — build output. (It was the shipped
+ * `generated/` rule until that one left the denylist: a hand-maintained
+ * `generated/` directory is a real file, and the generated-target rule now
+ * decides those.)
+ */
+const GENERATED = "src/dist/client.ts";
+const GENERATED_RULE = "**/dist/**";
 /** Excluded by the shipped `package-lock.json`. */
 const LOCKFILE = "package-lock.json";
 /** Excluded only by the developer's own `extend` line below. */
 const LEGACY = "src/legacy/old.ts";
 const LEGACY_RULE = "**/legacy/**";
 const MOVED_FROM = "src/core/engine.ts";
-const MOVED_TO = "src/generated/engine.ts";
+const MOVED_TO = "src/dist/engine.ts";
 const SECOND_FROM = "src/core/renderer.ts";
-const SECOND_TO = "src/generated/renderer.ts";
+const SECOND_TO = "src/dist/renderer.ts";
 /** The reason for a file this machine AND every machine on the shipped list skip. */
 const WHY = "no session here, nor on any machine that keeps the shipped denylist, records touching them";
 /** The reason for a file only this machine's own rule skips. */
@@ -200,7 +205,7 @@ describe("the pin door refuses a file no capture can observe (loss-accounting §
   });
 
   test("a config that replaces the shipped denylist still cannot pin a file the shipped list excludes", async () => {
-    // Arrange: capture HERE records every touch of the generated client, but
+    // Arrange: capture HERE records every touch of the built client, but
     // the denylist is per-machine config — every teammate who kept the
     // shipped list never records one, so the pin would be blind on their side
     const home = await homeWith("replace", { mode: "replace", patterns: [] });
@@ -281,7 +286,7 @@ describe("the pin door refuses a file no capture can observe (loss-accounting §
 
 describe("a sweep never moves a pin onto a path no capture observes", () => {
   test("a rename into an excluded path is recorded as missing and named with its rule", async () => {
-    // Arrange: a live pin, then the rename into generated output
+    // Arrange: a live pin, then the rename into build output
     const home = await homeWith("sweep");
     const created = await pin(home, [MOVED_FROM]);
     expect(created.stdout).toContain("pinned pin_");

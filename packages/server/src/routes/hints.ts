@@ -47,6 +47,8 @@ const CandidatesQuerySchema = z.object({
 const TripwireQuerySchema = z.object({
   repo: z.string().min(1),
   value: z.string().min(1).max(SEARCH_MAX_QUERY_CHARS),
+  /** "1" = the repo declared this generated file authoritative (services/hints.ts). */
+  authoritative: z.literal("1").optional().catch(undefined),
 });
 
 /** `days` above the cap is clamped by the service, never honoured. */
@@ -117,6 +119,7 @@ export const hintsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     const parsed = TripwireQuerySchema.safeParse({
       repo: c.req.query("repo"),
       value: c.req.query("value"),
+      authoritative: c.req.query("authoritative"),
     });
     if (!parsed.success) {
       return fail(c, 400, "validation_failed", formatIssues(parsed.error));
@@ -128,6 +131,7 @@ export const hintsRoutes = (deps: AppDeps): Hono<AppEnv> => {
       c.get("developer").id,
       parsed.data.repo,
       parsed.data.value,
+      parsed.data.authoritative === "1",
     );
     // SCOPED TO THE FILE the tripwire is about (§3.2a): the question is
     // "was anybody watching THIS path", not "was anybody watching this

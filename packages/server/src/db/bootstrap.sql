@@ -758,9 +758,11 @@ ALTER TABLE work_context_targets
   ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'tool_edit';
 
 -- WHICH generated-target signal fired on a file target (release gate N2,
--- @crosscheck/schema generated-target.ts): 'path', 'attribute' or 'header',
--- or NULL for an ordinary file. The connector sends it; for a target that
--- carries none the hub applies the path signal itself at ingest. A labelled
+-- @crosscheck/schema generated-target.ts): 'path', 'attribute' or 'header'
+-- for a file that is mechanically generated and non-authoritative, or NULL
+-- for an ordinary file and for an authoritative generated one. The connector
+-- sends it; for a target that carries none the hub applies the path signal
+-- itself at ingest, unless the target says it is authoritative. A labelled
 -- row is KEPT — suspect and coverage still read it — and every overlap read
 -- (ghost pairs, conference pairs, the tripwire, the hot count, a context's
 -- size) asks for `generated IS NULL`. Nullable with no default, so a row

@@ -34,7 +34,9 @@
  *     the two together are also the fan-out bound — a PRODUCT, not a
  *     sentence about one value — so the N² crowding the solved surface had
  *     to measure at 1.2 s cannot arise here;
- *   - a GENERATED file is no evidence either (services/generated-targets.ts):
+ *   - a MECHANICALLY GENERATED, NON-AUTHORITATIVE file is no evidence either
+ *     (services/generated-targets.ts) — an authoritative one, a schema or a
+ *     migration or what the repo declares, stays evidence:
  *     the hot rule needs twenty contexts to fire, so two people who had only
  *     run `npm install` and a codegen were warned about each other. A
  *     labelled row is kept, every read here asks for `generated IS NULL`, and
@@ -174,7 +176,8 @@ export interface GhostOverlapView {
   /** Distinct shared values in total — the line says "2 of your files". */
   readonly sharedTargetCount: number;
   /**
-   * Files both sides carry that are labelled GENERATED on at least one side
+   * Files both sides carry that are labelled MECHANICALLY GENERATED AND
+   * NON-AUTHORITATIVE on at least one side
    * (services/generated-targets.ts): never in the count above, never a
    * reason for this row, and stated so "2 of your files" is not read as
    * everything the two of you touched. 0 when there are none.

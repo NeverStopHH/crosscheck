@@ -439,7 +439,8 @@ export const workContextTargets = pgTable(
     lastSeenAt: timestamptz("last_seen_at"),
     /**
      * WHICH generated-target signal fired on this file (release gate N2,
-     * @crosscheck/schema generated-target.ts), or null for an ordinary one.
+     * @crosscheck/schema generated-target.ts) — it is mechanically generated
+     * and non-authoritative — or null for an ordinary or authoritative one.
      * Sent by the connector; applied by ingest itself (the path signal) to a
      * target that carries none. The row is KEPT — `suspect` and coverage read
      * it — and every overlap read asks for null (services/generated-targets.ts

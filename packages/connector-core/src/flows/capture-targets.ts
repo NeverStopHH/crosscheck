@@ -22,8 +22,10 @@
  */
 import { MAX_TARGETS_PER_INVOCATION } from "../constants.ts";
 import { sessionSlug } from "../config/paths.ts";
-import { isDenied, resolveDenylist } from "../capture/denylist.ts";
+import { isDenied, isDeniedUnlessAuthoritative, resolveDenylist } from "../capture/denylist.ts";
 import type { DenylistConfig } from "../capture/denylist.ts";
+import { isAuthoritative, readAuthoritativeGenerated } from "../capture/authoritative-generated.ts";
+import type { AuthoritativeGenerated } from "../capture/authoritative-generated.ts";
 import { fingerprint } from "../capture/fingerprint.ts";
 import {
   NO_GENERATED,
@@ -149,28 +151,67 @@ interface Collected {
 }
 
 /**
+ * Each root's `authoritativeGenerated`, read once per call (capture/
+ * authoritative-generated.ts): the denylist bypass below and the
+ * classification both need it, and a path's declaration is the one committed
+ * at the root of the worktree it lives in.
+ */
+const declarationsByRoot = (): ((root: string) => Promise<AuthoritativeGenerated>) => {
+  const read = new Map<string, Promise<AuthoritativeGenerated>>();
+  return (root) => {
+    const known = read.get(root);
+    if (known !== undefined) {
+      return known;
+    }
+    const pending = readAuthoritativeGenerated(root);
+    read.set(root, pending);
+    return pending;
+  };
+};
+
+/**
  * THE GENERATED-TARGET RULE, applied to the paths this call is about to
  * spool and to no other: they are NEW to the session (the seen-set ran
  * first), so a file is classified once per session however often it is
  * edited, and the attribute cache carries the answer across sessions. Grouped
  * by root, because a path's attributes are those of the worktree it lives in.
  *
- * A generated target is KEPT and labelled, never dropped: `suspect` and
- * coverage still see the touch, and only the hub's overlap reads leave it out.
+ * A mechanically generated, non-authoritative target is KEPT and labelled,
+ * never dropped: `suspect` and coverage still see the touch, and only the
+ * hub's overlap reads leave it out.
  */
 const classifyCollected = async (
   home: string,
   collected: readonly Collected[],
+  declaredAt: (root: string) => Promise<AuthoritativeGenerated>,
 ): Promise<ReadonlyMap<string, GeneratedClassification>> => {
   const byRoot = new Map<string, string[]>();
   for (const entry of collected) {
     byRoot.set(entry.root, [...(byRoot.get(entry.root) ?? []), entry.value]);
   }
   const answers = await Promise.all(
-    [...byRoot].map(async ([root, paths]) => classifyGenerated({ home, root, paths })),
+    [...byRoot].map(async ([root, paths]) =>
+      classifyGenerated({ home, root, paths, authoritative: await declaredAt(root) }),
+    ),
   );
   return new Map(answers.flatMap((answer) => [...answer]));
 };
+
+/**
+ * Dropped by the denylist — unless the file is authoritative (declared by the
+ * repo, or a contract or migration) and only generated-output entries drop it
+ * (capture/denylist.ts isDeniedUnlessAuthoritative). The declaration is read
+ * only for a path the denylist would drop, so an ordinary edit costs no extra
+ * read.
+ */
+const isDropped = async (
+  relativePath: string,
+  patterns: readonly string[],
+  root: string,
+  declaredAt: (root: string) => Promise<AuthoritativeGenerated>,
+): Promise<boolean> =>
+  isDenied(relativePath, patterns) &&
+  isDeniedUnlessAuthoritative(relativePath, patterns, isAuthoritative(relativePath, await declaredAt(root)));
 
 /**
  * Filters, classifies, spools, and returns the repo-relative paths captured —
@@ -181,6 +222,7 @@ export const captureFileTargets = async (
   input: CaptureFileTargetsInput,
 ): Promise<CapturedFileTargets> => {
   const patterns = resolveDenylist(input.denylist ?? undefined);
+  const declaredAt = declarationsByRoot();
   const seen = new Set(input.seenTargets);
   const collected: Collected[] = [];
   let secretPaths = 0;
@@ -203,7 +245,7 @@ export const captureFileTargets = async (
       continue;
     }
     const relativePath = await toRepoRelative(root, input.cwd, path);
-    if (relativePath === null || isDenied(relativePath, patterns)) {
+    if (relativePath === null || (await isDropped(relativePath, patterns, root, declaredAt))) {
       continue;
     }
     if (containsSecret(relativePath)) {
@@ -223,7 +265,7 @@ export const captureFileTargets = async (
   if (collected.length === 0) {
     return { captured: [], generated: NO_GENERATED };
   }
-  const classified = await classifyCollected(input.home, collected);
+  const classified = await classifyCollected(input.home, collected, declaredAt);
   await appendRecords(
     input.home,
     input.repoKey,
@@ -238,6 +280,7 @@ export const captureFileTargets = async (
           input.now,
           input.source ?? "tool_edit",
           wireGeneratedSignal(classified.get(value)),
+          classified.get(value) === "authoritative",
         ),
         seqAt(input.seq, index),
       ),

@@ -367,6 +367,31 @@ describe("the tripwire stays silent everywhere else", () => {
     expect(hub.calls.tripwire).toBe(0);
   });
 
+  test("a generated file the repo declares AUTHORITATIVE is asked about, and the hub is told so", async () => {
+    // Arrange: client bindings the repo's committed .crosscheck.json says count —
+    // one the denylist's *.generated.* entry would drop, one a header marks.
+    const { repo, hub, env } = await fixture("generated-authoritative");
+    await writeRepoFile(
+      repo,
+      ".crosscheck.json",
+      `${JSON.stringify({ hubUrl: hub.url, authoritativeGenerated: ["clients/**"] })}\n`,
+    );
+    await writeRepoFile(repo, "clients/api.generated.ts", "export {};\n");
+    await writeRepoFile(repo, "clients/sdk.ts", "// @generated\nexport {};\n");
+
+    // Act
+    const dropped = await runHook("pre-tool-use", editPayload(repo, "clients/api.generated.ts"), env);
+    const droppedQuery = hub.lastTripwireQuery();
+    const header = await runHook("pre-tool-use", editPayload(repo, "clients/sdk.ts"), env);
+
+    // Assert: both asked — the teammate is named — with the authoritative flag on the wire.
+    expect(hub.calls.tripwire).toBe(2);
+    expect(decisionOf(dropped)?.permissionDecision).toBe("ask");
+    expect(decisionOf(header)?.permissionDecision).toBe("ask");
+    expect(droppedQuery?.get("authoritative")).toBe("1");
+    expect(hub.lastTripwireQuery()?.get("authoritative")).toBe("1");
+  });
+
   test("a file whose classification cannot run still asks — unknown fails toward the warning", async () => {
     // Arrange: a header the rule cannot read, and no attribute that says generated.
     const { repo, hub, env } = await fixture("generated-unknown");

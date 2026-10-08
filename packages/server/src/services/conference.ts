@@ -153,7 +153,8 @@ export interface ConferenceOverlapView {
   readonly sharedTargets: readonly { readonly kind: string; readonly value: string }[];
   readonly sharedTargetCount: number;
   /**
-   * Files both contexts carry that at least one side labelled GENERATED
+   * Files both contexts carry that at least one side labelled MECHANICALLY
+   * GENERATED AND NON-AUTHORITATIVE
    * (services/generated-targets.ts) — never in the count above, never a
    * reason for the pair, stated beside it. 0 when there are none.
    */

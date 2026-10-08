@@ -964,6 +964,15 @@ export const GhostCheckEntrySchema = z.looseObject({
    * build cannot read costs the qualifier, not the row.
    */
   largeChangeFiles: z.number().int().min(0).nullable().optional().catch(undefined),
+  /**
+   * Files both sides touched that the rule kept out of overlap as
+   * mechanically generated and non-authoritative (server
+   * services/generated-targets.ts) — never a reason for the row, printed as
+   * its qualifier ("also both touched 4 generated files"). Optional and
+   * tolerant: an older hub sends none, and the line simply carries no
+   * qualifier.
+   */
+  generatedSharedCount: z.number().int().min(0).optional().catch(undefined),
 });
 
 export type GhostCheckEntry = z.infer<typeof GhostCheckEntrySchema>;
@@ -2471,8 +2480,14 @@ export const getTripwireSessions = (
   ctx: HubContext,
   repo: string,
   value: string,
+  /**
+   * The repo declared this generated file authoritative (capture/
+   * authoritative-generated.ts): the hub must not answer "nobody" from its own
+   * path signal, which cannot read the repo's config.
+   */
+  authoritative = false,
 ): Promise<HubResult<TripwireOutcome>> => {
-  const params = new URLSearchParams({ repo, value });
+  const params = new URLSearchParams({ repo, value, ...(authoritative ? { authoritative: "1" } : {}) });
   return hubRequest(ctx, {
     method: "GET",
     path: `/api/hints/tripwire?${params.toString()}`,
@@ -2624,6 +2639,8 @@ export const ConferenceOverlapSchema = z.looseObject({
    */
   largeChangeFilesA: z.number().int().min(0).nullable().optional().catch(undefined),
   largeChangeFilesB: z.number().int().min(0).nullable().optional().catch(undefined),
+  /** The pair's generated qualifier, as on the ghost line (GhostCheckEntrySchema). */
+  generatedSharedCount: z.number().int().min(0).optional().catch(undefined),
 });
 
 export type ConferenceOverlap = z.infer<typeof ConferenceOverlapSchema>;

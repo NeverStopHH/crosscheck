@@ -1293,11 +1293,19 @@ export const listTargetSessions = async (
   callerDeveloperId: string,
   repo: string,
   value: string,
+  /**
+   * The asking connector says the repo declared this generated file
+   * authoritative (`authoritativeGenerated`): the name check below must not
+   * answer for a repo whose config the hub cannot read. Stored labels still
+   * filter — a teammate whose own connector labelled the file is the either-
+   * side rule the ghost check applies too.
+   */
+  authoritative = false,
 ): Promise<readonly TargetSessionView[]> => {
-  // A well-known generated name is nobody's plan, whoever asks: an older
-  // connector's tripwire, which knows no generated-target rule, asks about a
-  // nested lockfile all the same (services/generated-targets.ts).
-  if (isGeneratedPath(value)) {
+  // A well-known mechanically generated name is nobody's plan, whoever asks:
+  // an older connector's tripwire, which knows no generated-target rule, asks
+  // about a nested lockfile all the same (services/generated-targets.ts).
+  if (!authoritative && isGeneratedPath(value)) {
     return [];
   }
   const cutoff = presenceCutoff(deps.now());

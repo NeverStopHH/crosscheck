@@ -25921,8 +25921,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the ghost line drops the large-change qualifier",
     file: `${CORE}/src/briefing/ghost.ts`,
-    from: "  return [...failure, ...values, ...large, ...words];",
-    to: "  return [...failure, ...values, ...words];",
+    from: "  return [...failure, ...values, ...large, ...generated, ...words];",
+    to: "  return [...failure, ...values, ...generated, ...words];",
     test: `${CORE}/test/ghost-render.test.ts`,
     because: "the hub says the overlap is a rename's and the reader is never told",
   },
@@ -25937,16 +25937,17 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a size the connector cannot read fails the whole ghost row",
     file: `${CORE}/src/http/hub.ts`,
-    from: "  largeChangeFiles: z.number().int().min(0).nullable().optional().catch(undefined),\n});\n\nexport type GhostCheckEntry",
-    to: "  largeChangeFiles: z.number().int().min(0).nullable().optional(),\n});\n\nexport type GhostCheckEntry",
+    // RETARGETED (generated-targets merge): the generated count follows the size.
+    from: "  largeChangeFiles: z.number().int().min(0).nullable().optional().catch(undefined),\n  /**\n   * Files both sides touched that the rule kept out of overlap",
+    to: "  largeChangeFiles: z.number().int().min(0).nullable().optional(),\n  /**\n   * Files both sides touched that the rule kept out of overlap",
     test: `${CORE}/test/ghost-render.test.ts`,
     because: "a newer hub's size field hides the collision it qualifies",
   },
   {
     label: "the conference page drops which side is a large change",
     file: `${CORE}/src/conference/report.ts`,
-    from: "${[clauses.join(\", \"), ...qualifiers].join(\"; \")}`,",
-    to: "${clauses.join(\", \")}`,",
+    from: "${[clauses.join(\", \"), ...qualifiers, ...alsoGenerated].join(\"; \")}`,",
+    to: "${[clauses.join(\", \"), ...alsoGenerated].join(\"; \")}`,",
     test: `${CORE}/test/conference-report.test.ts`,
     because: "the hub says one side is a rename and the report reads it as two people's plan",
   },
@@ -26475,16 +26476,16 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an unclassifiable target is silenced",
     file: `${CORE}/src/capture/generated.ts`,
-    from: "  return attribute === null || header === null ? \"unknown\" : \"ordinary\";",
-    to: "  return attribute === null || header === null ? \"attribute\" : \"ordinary\";",
+    from: "  return attribute === null || header === null || proto === null ? \"unknown\" : \"ordinary\";",
+    to: "  return attribute === null || header === null || proto === null ? \"attribute\" : \"ordinary\";",
     test: `${CORE}/test/generated-targets.test.ts`,
     because: "a missing git or an unreadable file becomes a reason for silence — fail toward silence, the one forbidden direction",
   },
   {
     label: "an unclassifiable edit skips the tripwire",
     file: `${CORE}/src/capture/generated.ts`,
-    from: "  return attribute === null || header === null ? \"unknown\" : \"ordinary\";",
-    to: "  return attribute === null || header === null ? \"attribute\" : \"ordinary\";",
+    from: "  return attribute === null || header === null || proto === null ? \"unknown\" : \"ordinary\";",
+    to: "  return attribute === null || header === null || proto === null ? \"attribute\" : \"ordinary\";",
     test: `${CONNECTOR}/test/tripwire-hook.test.ts`,
     because: "an edit whose classification could not run is never asked about, whoever else is in the file",
   },
@@ -26507,8 +26508,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a generated target is dropped instead of kept",
     file: `${CORE}/src/capture/denylist.ts`,
-    from: "  \"package-lock.json\",",
-    to: "  \"**/package-lock.json\",",
+    from: "export const DEFAULT_DENYLIST: readonly string[] = [\n  \"**/*.lock\",\n  \"package-lock.json\",",
+    to: "export const DEFAULT_DENYLIST: readonly string[] = [\n  \"**/*.lock\",\n  \"**/package-lock.json\",",
     test: `${CORE}/test/generated-targets.test.ts`,
     because: "the touch never reaches the hub, so `suspect` and coverage cannot see who changed the lockfile",
   },
@@ -26531,7 +26532,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the tripwire asks about a generated file",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "  if (await isGeneratedFile(ctx.config.home, edited)) {",
+    from: "  if (wireGeneratedSignal(classification) !== undefined) {",
     to: "  if (false) {",
     test: `${CONNECTOR}/test/tripwire-hook.test.ts`,
     because: "a hand edit of a regenerated client stops on a teammate who only ran the generator",
@@ -26539,7 +26540,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "doctor prints no generated-target line",
     file: `${CLI}/src/cli/doctor.ts`,
-    from: "    generatedTargetsCheck(captureHealth),\n",
+    from: "    generatedTargetsCheck(captureHealth, await readAuthoritativeGenerated(identity.root)),\n",
     to: "",
     test: `${CLI}/test/doctor-generated.test.ts`,
     because: "files kept out of overlap and classifications that could not run are a silence nobody can read",
@@ -26643,7 +26644,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an older connector's tripwire is answered about a nested lockfile",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "  if (isGeneratedPath(value)) {",
+    from: "  if (!authoritative && isGeneratedPath(value)) {",
     to: "  if (false) {",
     test: `${SERVER}/test/generated-targets.test.ts`,
     because: "a connector with no rule asks about every lockfile, and a row stored before the column answers it",
@@ -33765,6 +33766,249 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/hint-dotted-names.test.ts`,
     because: "the known-word prefilter reads every context of the repo by a scan, once per term (round 5, L2)",
   },
+  // "MECHANICALLY GENERATED, NON-AUTHORITATIVE" (owner review of N2): the
+  // authoritative half, the repo's own override, and the tightened defaults.
+  {
+    label: "a file the repo declares authoritativeGenerated is still suppressed",
+    file: `${CORE}/src/capture/authoritative-generated.ts`,
+    from: "  isContractLike(path) || isDeclaredAuthoritative(path, declared);",
+    to: "  isContractLike(path);",
+    test: `${CORE}/test/generated-targets.test.ts`,
+    because: "the team's checked-in API schema and client bindings go silent although the team said they count",
+  },
+  {
+    label: "a migration a tool wrote is suppressed like any generated file",
+    file: `${CORE}/src/capture/authoritative-generated.ts`,
+    from: "  isContractLike(path) || isDeclaredAuthoritative(path, declared);",
+    to: "  isDeclaredAuthoritative(path, declared);",
+    test: `${CORE}/test/generated-targets.test.ts`,
+    because: "two people's database changes meet in one generated migration and neither is told",
+  },
+  {
+    label: "the hub's path signal suppresses a generated schema",
+    file: `${SCHEMA}/src/generated-target.ts`,
+    from: "  matchesGeneratedName(path) && !isContractLike(path);",
+    to: "  matchesGeneratedName(path);",
+    test: `${SCHEMA}/test/generated-target.test.ts`,
+    because: "an older connector's regenerated GraphQL schema stops being the shared surface it is",
+  },
+  {
+    label: "a hand-kept generated/ directory is suppressed by name again",
+    file: `${SCHEMA}/src/generated-target.ts`,
+    from: "export const GENERATED_DIRECTORY_NAMES = [\"__generated__\", \"dist\"] as const;",
+    to: "export const GENERATED_DIRECTORY_NAMES = [\"__generated__\", \"generated\", \"dist\"] as const;",
+    test: `${SCHEMA}/test/generated-target.test.ts`,
+    because: "a directory a team writes by hand reads as machine output because of its name",
+  },
+  {
+    label: "a *.gen.* file is suppressed by name again",
+    file: `${SCHEMA}/src/generated-target.ts`,
+    from: "    name.includes(GENERATED_NAME_INFIX)",
+    to: "    name.includes(GENERATED_NAME_INFIX) || name.includes(\".gen.\")",
+    test: `${SCHEMA}/test/generated-target.test.ts`,
+    because: "a generator's own hand-written input is silenced as its output",
+  },
+  {
+    label: "the denylist drops a hand-kept generated/ directory again",
+    file: `${CORE}/src/capture/denylist.ts`,
+    from: "  \"**/vendor/**\",\n  \"**/*.generated.*\",",
+    to: "  \"**/vendor/**\",\n  \"**/generated/**\",\n  \"**/*.generated.*\",",
+    test: `${CORE}/test/denylist.test.ts`,
+    because: "the touch never exists — the strongest suppression, on the files most often hand-maintained",
+  },
+  {
+    label: "a protobuf binding is suppressed without its .proto in the repo",
+    file: `${CORE}/src/capture/generated.ts`,
+    from: "      const proto = source === null ? false : protoSources === null ? null : protoSources.has(source);",
+    to: "      const proto = source !== null;",
+    test: `${CORE}/test/generated-targets.test.ts`,
+    because: "a vendored client — the only copy of the contract this repo has — is silenced as a mechanical copy",
+  },
+  {
+    label: "a protobuf binding whose .proto git cannot list is suppressed",
+    file: `${CORE}/src/capture/generated.ts`,
+    from: "      const proto = source === null ? false : protoSources === null ? null : protoSources.has(source);",
+    to: "      const proto = source === null ? false : protoSources === null ? true : protoSources.has(source);",
+    test: `${CORE}/test/generated-targets.test.ts`,
+    because: "a git that did not answer becomes a reason for silence",
+  },
+  {
+    label: "the connector never tells the hub a generated file is authoritative",
+    file: `${CORE}/src/flows/capture-targets.ts`,
+    from: "          classified.get(value) === \"authoritative\",",
+    to: "          false,",
+    test: `${CORE}/test/generated-targets.test.ts`,
+    because: "the hub's own path signal re-labels the declared lockfile the repo said counts",
+  },
+  {
+    label: "a target marked authoritative is labelled by the hub anyway",
+    file: `${SERVER}/src/services/generated-targets.ts`,
+    from: "  if (kind !== FILE_KIND || authoritative === true) {",
+    to: "  if (kind !== FILE_KIND) {",
+    test: `${SERVER}/test/generated-targets.test.ts`,
+    because: "the repo's word loses to a name the hub cannot read the repo to judge",
+  },
+  {
+    label: "the hub's name check answers nobody for a file the repo declared",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  if (!authoritative && isGeneratedPath(value)) {",
+    to: "  if (isGeneratedPath(value)) {",
+    test: `${SERVER}/test/generated-targets.test.ts`,
+    because: "a hand edit of declared client bindings stops on no teammate however many are in them",
+  },
+  {
+    label: "a declared file does not pass the denylist's generated-output entries",
+    file: `${CORE}/src/capture/denylist.ts`,
+    from: "  return !(isAuthoritative && dropping.every((pattern) => GENERATED_OUTPUT_PATTERNS.has(pattern)));",
+    to: "  return true;",
+    test: `${CORE}/test/generated-targets.test.ts`,
+    because: "a declared `dist/` contract or `*.generated.*` client is dropped before the declaration is read",
+  },
+  {
+    label: "a declared file passes every denylist entry, dependencies and secrets included",
+    file: `${CORE}/src/capture/denylist.ts`,
+    from: "  return !(isAuthoritative && dropping.every((pattern) => GENERATED_OUTPUT_PATTERNS.has(pattern)));",
+    to: "  return !(isAuthoritative && dropping.some((pattern) => GENERATED_OUTPUT_PATTERNS.has(pattern)));",
+    test: `${CORE}/test/denylist.test.ts`,
+    because: "a committed `clients/**` turns `node_modules` and `.env` files under it into targets",
+  },
+  {
+    label: "the tripwire drops a declared file the denylist names",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "  if (isDeniedUnlessAuthoritative(file, patterns, isAuthoritative(file, declared))) {",
+    to: "  if (isDeniedUnlessAuthoritative(file, patterns, false)) {",
+    test: `${CONNECTOR}/test/tripwire-hook.test.ts`,
+    because: "a hand edit of a declared `*.generated.*` client never asks, while capture records it",
+  },
+  {
+    label: "the tripwire never tells the hub a file is authoritative",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    // RETARGETED (generated-targets merge): the live call is skipped while fresh and unwraps its result.
+    from: "    : getTripwireSessions(ctx.hub, ctx.identity.repoId, edited.file, edited.authoritative === true).then(",
+    to: "    : getTripwireSessions(ctx.hub, ctx.identity.repoId, edited.file, false).then(",
+    test: `${CONNECTOR}/test/tripwire-hook.test.ts`,
+    because: "the hub's name check answers nobody for the declared generated file being edited",
+  },
+  {
+    label: "an absolute authoritativeGenerated glob is honoured",
+    file: `${CORE}/src/capture/authoritative-generated.ts`,
+    from: "  if (entry.startsWith(\"/\")) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/authoritative-generated.test.ts`,
+    because: "a glob that can never match a repo-relative path reads as honoured, and doctor never says why it does nothing",
+  },
+  {
+    label: "an authoritativeGenerated glob that climbs out with .. is honoured",
+    file: `${CORE}/src/capture/authoritative-generated.ts`,
+    from: "  if (entry.split(\"/\").includes(\"..\")) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/authoritative-generated.test.ts`,
+    because: "a committed file names paths outside the repo it governs",
+  },
+  {
+    label: "an authoritativeGenerated glob with unbounded wildcards is honoured",
+    file: `${CORE}/src/capture/authoritative-generated.ts`,
+    from: "  if ((entry.match(WILDCARD) ?? []).length > MAX_AUTHORITATIVE_GLOB_WILDCARDS) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/authoritative-generated.test.ts`,
+    because: "a pushed file buys an arbitrarily slow match on every capture",
+  },
+  {
+    label: "the authoritativeGenerated cap is not enforced",
+    file: `${CORE}/src/capture/authoritative-generated.ts`,
+    from: "    globs: valid.slice(0, MAX_AUTHORITATIVE_GENERATED_GLOBS),",
+    to: "    globs: valid,",
+    test: `${CORE}/test/authoritative-generated.test.ts`,
+    because: "a pushed list of any length is matched on every capture",
+  },
+  {
+    label: "a malformed authoritativeGenerated makes the repo unreportable",
+    file: `${CORE}/src/config/repo-config.ts`,
+    from: "  protocol: z.string().min(1).optional(),",
+    to: "  protocol: z.string().min(1).optional(),\n  authoritativeGenerated: z.array(z.string()),",
+    test: `${CORE}/test/authoritative-generated.test.ts`,
+    because: "one bad glob in a committed file silences every session in the repo",
+  },
+  {
+    label: "the ghost line hides the generated files a real overlap also shares",
+    file: `${CORE}/src/briefing/ghost.ts`,
+    from: "  return [...failure, ...values, ...large, ...generated, ...words];",
+    to: "  return [...failure, ...values, ...large, ...words];",
+    test: `${CORE}/test/ghost-render.test.ts`,
+    because: "\"2 of your files\" reads as everything the two of you touched",
+  },
+  {
+    label: "generated files alone make a ghost row",
+    file: `${CORE}/src/briefing/ghost.ts`,
+    from: "    generatedFiles === null || failure.length + values.length + words.length === 0",
+    to: "    generatedFiles === null",
+    test: `${CORE}/test/ghost-render.test.ts`,
+    because: "a row with no reason a reader can check is printed because of files that are no reason",
+  },
+  {
+    label: "the conference page hides the generated files a pair also shares",
+    file: `${CORE}/src/conference/report.ts`,
+    from: "      const alsoGenerated = generatedFiles === null ? [] : [generatedSharedClause(generatedFiles)];",
+    to: "      const alsoGenerated: string[] = [];",
+    test: `${CORE}/test/conference-report.test.ts`,
+    because: "the report's pair reads as everything both contexts touched",
+  },
+  {
+    label: "a refused authoritativeGenerated entry passes doctor silently",
+    file: `${CLI}/src/cli/doctor-generated.ts`,
+    from: "  level: isDeclarationFaulty(declared) ? \"WARN\" : \"PASS\",",
+    to: "  level: \"PASS\",",
+    test: `${CLI}/test/doctor-generated.test.ts`,
+    because: "the team's explicit word that a schema counts is ignored and no surface says so",
+  },
+  {
+    label: "a state file from before the authoritative count stops parsing",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "      authoritative: z.number().int().min(0).default(0),",
+    to: "      authoritative: z.number().int().min(0),",
+    test: `${CLI}/test/doctor-generated.test.ts`,
+    because: "every session started on the previous build loses its state file on upgrade",
+  },
+  {
+    label: "re-running init deletes the team's fields from .crosscheck.json",
+    file: `${CLI}/src/cli/init-repo-config.ts`,
+    from: "  return renderJsonFile({ ...existing, ...owned });",
+    to: "  return renderJsonFile({ ...owned });",
+    test: `${CLI}/test/init-repo-config.test.ts`,
+    because: "authoritativeGenerated, landingBranches and landingFetch vanish on the next init, silently restoring every default they overrode",
+  },
+  {
+    label: "init moves its own fields in .crosscheck.json to the end",
+    file: `${CLI}/src/cli/init-repo-config.ts`,
+    from: "  return renderJsonFile({ ...existing, ...owned });",
+    to: "  return renderJsonFile({ ...Object.fromEntries(Object.entries(existing).filter(([key]) => !(key in owned))), ...owned });",
+    test: `${CLI}/test/init-repo-config.test.ts`,
+    because: "a hub change reorders the team's committed file, so its diff shows lines nobody changed",
+  },
+  {
+    label: "re-running init rewrites a .crosscheck.json that already says it",
+    file: `${CLI}/src/cli/init-repo-config.ts`,
+    from: "  if (raw !== null && unchanged) {",
+    to: "  if (false) {",
+    test: `${CLI}/test/init-repo-config.test.ts`,
+    because: "every re-run reformats the team's committed file and leaves a diff that changes nothing",
+  },
+  {
+    label: "init rewrites a hub url that names the same hub",
+    file: `${CLI}/src/cli/init-repo-config.ts`,
+    from: "  return { hubUrl: sameHub ? current : hubUrl, protocol: PROTOCOL_VERSION };",
+    to: "  return { hubUrl, protocol: PROTOCOL_VERSION };",
+    test: `${CLI}/test/init-repo-config.test.ts`,
+    because: "a re-run that was not asked for a new hub still edits the committed hub url",
+  },
+  {
+    label: "init writes over a .crosscheck.json it cannot merge onto",
+    file: `${CLI}/src/cli/init.ts`,
+    from: "  const repoConfigRead = await readJsonConfig(repoConfigFile);",
+    to: "  const repoConfigRead = { ok: true as const, value: {}, raw: null };",
+    test: `${CLI}/test/init-repo-config.test.ts`,
+    because: "a merge conflict in the committed file is \"fixed\" by deleting every team field along with it",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -33836,7 +34080,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-ci.test.ts 3
  * PRINTS: packages/cli/test/doctor-claim-binding.test.ts 4
  * PRINTS: packages/cli/test/doctor-evidence-axes.test.ts 1
- * PRINTS: packages/cli/test/doctor-generated.test.ts 2
+ * PRINTS: packages/cli/test/doctor-generated.test.ts 4
  * PRINTS: packages/cli/test/doctor-global.test.ts 5
  * PRINTS: packages/cli/test/doctor-home-repo.test.ts 3
  * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1
@@ -33860,6 +34104,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/init-remove-safety.test.ts 14
  * PRINTS: packages/cli/test/init-remove-verdict.test.ts 7
  * PRINTS: packages/cli/test/init-remove.test.ts 17
+ * PRINTS: packages/cli/test/init-repo-config.test.ts 5
  * PRINTS: packages/cli/test/intent-cost.test.ts 1
  * PRINTS: packages/cli/test/key-rotate.test.ts 6
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 9
@@ -33992,12 +34237,13 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/summarizer-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/topic-git-lane.test.ts 9
  * PRINTS: packages/connector-claude/test/topic-nick-shape.test.ts 19
- * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 10
+ * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 12
  * PRINTS: packages/connector-claude/test/turn-end-hook.test.ts 9
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 4
  * PRINTS: packages/connector-core/test/abandoned-temps.test.ts 24
  * PRINTS: packages/connector-core/test/absence-render.test.ts 7
  * PRINTS: packages/connector-core/test/anchoring-separation.test.ts 1
+ * PRINTS: packages/connector-core/test/authoritative-generated.test.ts 5
  * PRINTS: packages/connector-core/test/body-redaction.test.ts 5
  * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 25
  * PRINTS: packages/connector-core/test/briefing-flow.test.ts 7
@@ -34027,7 +34273,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/collision-state.test.ts 4
  * PRINTS: packages/connector-core/test/commit-evidence.test.ts 1
  * PRINTS: packages/connector-core/test/conference-cost.test.ts 1
- * PRINTS: packages/connector-core/test/conference-report.test.ts 4
+ * PRINTS: packages/connector-core/test/conference-report.test.ts 5
  * PRINTS: packages/connector-core/test/confidence-gates-nothing.test.ts 1
  * PRINTS: packages/connector-core/test/config-parse.test.ts 1
  * PRINTS: packages/connector-core/test/connected-repo.test.ts 3
@@ -34038,7 +34284,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-render.test.ts 22
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 5
  * PRINTS: packages/connector-core/test/crosscheck-home.test.ts 2
- * PRINTS: packages/connector-core/test/denylist.test.ts 2
+ * PRINTS: packages/connector-core/test/denylist.test.ts 4
  * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 2
  * PRINTS: packages/connector-core/test/derive-history.test.ts 7
  * PRINTS: packages/connector-core/test/detached-branch.test.ts 1
@@ -34047,9 +34293,9 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1
  * PRINTS: packages/connector-core/test/fix-diff.test.ts 7
  * PRINTS: packages/connector-core/test/future-stamps.test.ts 5
- * PRINTS: packages/connector-core/test/generated-targets.test.ts 10
+ * PRINTS: packages/connector-core/test/generated-targets.test.ts 16
  * PRINTS: packages/connector-core/test/ghost-declare.test.ts 2
- * PRINTS: packages/connector-core/test/ghost-render.test.ts 5
+ * PRINTS: packages/connector-core/test/ghost-render.test.ts 7
  * PRINTS: packages/connector-core/test/git-lane-cost.test.ts 1
  * PRINTS: packages/connector-core/test/git-lane-sweep.test.ts 1
  * PRINTS: packages/connector-core/test/git-timeout.test.ts 4
@@ -34184,7 +34430,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/exact-token.test.ts 6
  * PRINTS: packages/schema/test/fallback-title.test.ts 3
  * PRINTS: packages/schema/test/file-ref.test.ts 5
- * PRINTS: packages/schema/test/generated-target.test.ts 3
+ * PRINTS: packages/schema/test/generated-target.test.ts 6
  * PRINTS: packages/schema/test/harness-turn.test.ts 28
  * PRINTS: packages/schema/test/hint-outcome.test.ts 2
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
@@ -34243,7 +34489,7 @@ interface Outcome {
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/fence-waivers.test.ts 1
  * PRINTS: packages/server/test/forwarded-trust.test.ts 11
- * PRINTS: packages/server/test/generated-targets.test.ts 14
+ * PRINTS: packages/server/test/generated-targets.test.ts 16
  * PRINTS: packages/server/test/ghost-overlap.test.ts 13
  * PRINTS: packages/server/test/hint-candidate-floor.test.ts 11
  * PRINTS: packages/server/test/hint-closed-stems.test.ts 2

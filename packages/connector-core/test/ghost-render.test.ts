@@ -193,6 +193,30 @@ describe("the ghost-check line", () => {
     expect(formatGhostLine(ghostCheck({ largeChangeFiles: null }), NOW)).not.toContain("large change");
   });
 
+  test("files the rule kept out are a qualifier beside real overlap — never nothing, never a reason", () => {
+    // Act: the same focused row, with four mechanically generated files also shared.
+    const line = formatGhostLine(ghostCheck({ generatedSharedCount: 4 }), NOW);
+
+    // Assert: stated right after the evidence it qualifies.
+    expect(line).toBe(
+      "- Ken · intent: «Move the session store behind an interface» · " +
+        "last active 5m ago · shares src/auth/session.ts, src/auth/token.ts · " +
+        "also both touched 4 generated files · get_diagnosis wc_theirs",
+    );
+    expect(formatGhostLine(ghostCheck({ generatedSharedCount: 1 }), NOW)).toContain("also both touched 1 generated file ·");
+    // The controls: none shared, or a hub too old to send the count, prints no qualifier.
+    expect(formatGhostLine(ghostCheck({ generatedSharedCount: 0 }), NOW)).not.toContain("generated");
+    expect(formatGhostLine(ghostCheck(), NOW)).not.toContain("generated");
+  });
+
+  test("generated files alone make no row: with nothing else shared the line is dropped", () => {
+    // Arrange: a row with only the generated count — which a hub never sends, and a renderer must not trust.
+    const generatedOnly = ghostCheck({ sharedTargets: [], sharedTargetCount: 0, intentTokenHits: 0, generatedSharedCount: 9 });
+
+    // Act + Assert
+    expect(formatGhostLine(generatedOnly, NOW)).toBeNull();
+  });
+
   test("a change's size alone is no reason, and qualifies no intent match", () => {
     // Arrange: no shared value, and then only intent words.
     const sizeOnly = ghostCheck({ sharedTargets: [], sharedTargetCount: 0, intentTokenHits: 0, largeChangeFiles: 180 });
@@ -484,6 +508,17 @@ describe("the ghost-check briefing block", () => {
     const lines = ghostLinesOf(briefingWith(realistic));
     expect(lines.length).toBe(2);
     expect(lines[1]).toContain("part of a large change touching 180 files");
+    expect(lines.join("\n").length).toBeLessThanOrEqual(MAX_BRIEFING_GHOST_CHARS);
+  });
+
+  test("the generated qualifier still lets two ordinary rows through", () => {
+    const realistic = [
+      { ...realisticGhostCheck("wc_cc_0f1e2d3c4b5a6978-8796a5b4c3d2e1f0"), generatedSharedCount: 12 },
+      { ...realisticGhostCheck("wc_cc_1a2b3c4d5e6f7890-0987f6e5d4c3b2a1"), generatedSharedCount: 3 },
+    ];
+    const lines = ghostLinesOf(briefingWith(realistic));
+    expect(lines.length).toBe(2);
+    expect(lines[0]).toContain("also both touched 12 generated files");
     expect(lines.join("\n").length).toBeLessThanOrEqual(MAX_BRIEFING_GHOST_CHARS);
   });
 

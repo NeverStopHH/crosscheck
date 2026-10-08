@@ -460,17 +460,17 @@ describe("the generated-target counters doctor prints", () => {
       toolLabel: "Edit",
       firstPath: "/repos/api/apps/x/package-lock.json",
       now: NOW,
-      generated: { path: 1, attribute: 1, header: 0, unknown: 1 },
+      generated: { path: 1, attribute: 1, header: 0, authoritative: 0, unknown: 1 },
     });
     const afterStop = withGitTouches(edited, {
       captured: ["packages/proto/src/a_pb.ts"],
       skipped: false,
-      generated: { path: 1, attribute: 0, header: 0, unknown: 0 },
+      generated: { path: 1, attribute: 0, header: 0, authoritative: 0, unknown: 0 },
     });
 
     // Assert
-    expect(before.generatedTargets).toEqual({ path: 0, attribute: 0, header: 0, unknown: 0 });
-    expect(afterStop.generatedTargets).toEqual({ path: 2, attribute: 1, header: 0, unknown: 1 });
+    expect(before.generatedTargets).toEqual({ path: 0, attribute: 0, header: 0, authoritative: 0, unknown: 0 });
+    expect(afterStop.generatedTargets).toEqual({ path: 2, attribute: 1, header: 0, authoritative: 0, unknown: 1 });
   });
 
   test("a state that predates the counters starts counting at its first classified capture", () => {
@@ -485,11 +485,11 @@ describe("the generated-target counters doctor prints", () => {
       toolLabel: "Edit",
       firstPath: "/repos/api/src/a.ts",
       now: NOW,
-      generated: { path: 0, attribute: 0, header: 1, unknown: 0 },
+      generated: { path: 0, attribute: 0, header: 1, authoritative: 0, unknown: 0 },
     });
 
     // Assert
     expect(older.generatedTargets).toBeUndefined();
-    expect(after.generatedTargets).toEqual({ path: 0, attribute: 0, header: 1, unknown: 0 });
+    expect(after.generatedTargets).toEqual({ path: 0, attribute: 0, header: 1, authoritative: 0, unknown: 0 });
   });
 });

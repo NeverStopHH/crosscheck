@@ -1,7 +1,11 @@
 /**
  * THE HUB HALF of the generated-target rule (@crosscheck/schema
- * generated-target.ts): a file target labelled generated is KEPT — `suspect`
- * and coverage read every touch — and is NEVER overlap evidence. One predicate,
+ * generated-target.ts): a file target labelled MECHANICALLY GENERATED AND
+ * NON-AUTHORITATIVE is KEPT — `suspect` and coverage read every touch — and is
+ * NEVER overlap evidence. The label is the connector's, which alone can read
+ * the repo: an authoritative generated file (declared in the repo's
+ * `authoritativeGenerated`, or a contract or migration) arrives unlabelled
+ * with `authoritative: true` and stays evidence. One predicate,
  * `ordinaryTargetCondition`, sits in the WHERE of every overlap read:
  *
  *   ghost       the reader's probe, the hot count, the foreign pair rows
@@ -37,21 +41,24 @@ import type { Db } from "../db/client.ts";
 /** The only kind the rule labels: a generated SYMBOL or failure is not a thing. */
 const FILE_KIND = "file";
 
-/** A target row that is overlap evidence: not labelled generated. */
+/** A target row that is overlap evidence: not labelled mechanically generated and non-authoritative. */
 export const ordinaryTargetCondition = (): SQL => isNull(workContextTargets.generated);
 
 /**
  * The label ingest stores. The connector's when it sent one; for a target
  * that carries none — an older connector, or a classification that found
  * nothing — the PATH signal applied here, so the well-known names are covered
- * whoever sent them. Only file targets are ever labelled.
+ * whoever sent them. NEVER for a target the connector marked authoritative:
+ * the repo said it counts, and the hub cannot read the repo to disagree. Only
+ * file targets are ever labelled.
  */
 export const hubGeneratedSignal = (
   kind: string,
   value: string,
   sent: GeneratedSignal | undefined,
+  authoritative: boolean | undefined,
 ): GeneratedSignal | null => {
-  if (kind !== FILE_KIND) {
+  if (kind !== FILE_KIND || authoritative === true) {
     return null;
   }
   return sent ?? (isGeneratedPath(value) ? "path" : null);

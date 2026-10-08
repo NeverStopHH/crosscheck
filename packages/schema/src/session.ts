@@ -240,14 +240,24 @@ export const TargetSchema = z.looseObject({
   source: TargetSourceSchema.optional().default("tool_edit"),
   /**
    * WHICH generated-target signal fired on the connector (generated-target.ts):
-   * absent means ordinary, or that the classification could not run, or a
-   * connector too old to classify — the hub then applies the path signal
-   * itself. ADDITIVE AND OPTIONAL, so an older hub ignores it; and TOLERANT,
-   * so a value a newer connector invents reads as absent instead of refusing
-   * the touch: a target the hub drops is a touch `suspect` never sees, and an
-   * unreadable label must fail toward an ordinary target, never toward none.
+   * the file is mechanically generated and non-authoritative. Absent means
+   * ordinary, or that the classification could not run, or a connector too
+   * old to classify — the hub then applies the path signal itself. ADDITIVE
+   * AND OPTIONAL, so an older hub ignores it; and TOLERANT, so a value a newer
+   * connector invents reads as absent instead of refusing the touch: a target
+   * the hub drops is a touch `suspect` never sees, and an unreadable label
+   * must fail toward an ordinary target, never toward none.
    */
   generated: GeneratedSignalSchema.optional().catch(undefined),
+  /**
+   * TRUE when a generated-target signal fired but the file is AUTHORITATIVE —
+   * the repo's committed `authoritativeGenerated` names it, or it resembles a
+   * contract or a migration (isContractLike) — so it stays overlap evidence.
+   * The hub reads it as "do not apply the path signal either": without it the
+   * hub, which cannot read the repo's config, would re-label the very file the
+   * repo just said counts. Optional and tolerant like `generated`.
+   */
+  authoritative: z.boolean().optional().catch(undefined),
 });
 
 export type AgentSession = z.infer<typeof AgentSessionSchema>;

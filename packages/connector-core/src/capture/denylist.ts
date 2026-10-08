@@ -1,6 +1,15 @@
 /**
- * Hot-file denylist (DESIGN.md §4): lockfiles, build output and generated
- * clients drown real overlap signal, so they never become targets.
+ * Hot-file denylist (DESIGN.md §4): lockfiles, build output, dependencies,
+ * binaries and secrets drown real overlap signal, so they never become
+ * targets.
+ *
+ * NOT `generated/`, `*.gen.*`, `*.pb.go` or `*_pb2.py` any more: each can be
+ * hand-maintained or authoritative (a hand-kept `generated/` directory, a
+ * generator's own `*.gen.*` input, a protobuf binding vendored without its
+ * `.proto`), and a drop here is final — the touch never exists. The
+ * generated-target rule decides those instead (capture/generated.ts), where a
+ * mechanically generated, non-authoritative file is KEPT and labelled and a
+ * repo can say otherwise.
  */
 export const DEFAULT_DENYLIST: readonly string[] = [
   "**/*.lock",
@@ -22,11 +31,7 @@ export const DEFAULT_DENYLIST: readonly string[] = [
   "**/__pycache__/**",
   "**/.venv/**",
   "**/vendor/**",
-  "**/generated/**",
-  "**/*.gen.*",
   "**/*.generated.*",
-  "**/*.pb.go",
-  "**/*_pb2.py",
   "**/*.min.js",
   "**/*.map",
   "**/*.snap",
@@ -147,3 +152,43 @@ export const isDenied = (
   relativePath: string,
   patterns: readonly string[],
 ): boolean => patterns.some((pattern) => matchesGlob(pattern, relativePath));
+
+/**
+ * The shipped entries that drop MECHANICALLY GENERATED OUTPUT a repo may
+ * commit and own — lockfiles, `dist/`, `*.generated.*`: the same files the
+ * generated-target rule names. A path the repo declares authoritative
+ * (`authoritativeGenerated`, capture/authoritative-generated.ts) passes THESE
+ * and nothing else: dependencies, caches, binaries and secret-bearing files
+ * stay dropped whatever a committed file says.
+ */
+export const GENERATED_OUTPUT_PATTERNS: ReadonlySet<string> = new Set([
+  "**/*.lock",
+  "package-lock.json",
+  "pnpm-lock.yaml",
+  "yarn.lock",
+  "go.sum",
+  "Gemfile.lock",
+  "Cargo.lock",
+  "poetry.lock",
+  "composer.lock",
+  "**/dist/**",
+  "**/*.generated.*",
+]);
+
+/**
+ * `isDenied`, except that a path the repo declared authoritative passes when
+ * EVERY pattern that drops it is a generated-output one: `clients/dist/api.js`
+ * declared authoritative is captured, `clients/node_modules/x/dist/y.js` is
+ * not — `node_modules` still drops it.
+ */
+export const isDeniedUnlessAuthoritative = (
+  relativePath: string,
+  patterns: readonly string[],
+  isAuthoritative: boolean,
+): boolean => {
+  const dropping = patterns.filter((pattern) => matchesGlob(pattern, relativePath));
+  if (dropping.length === 0) {
+    return false;
+  }
+  return !(isAuthoritative && dropping.every((pattern) => GENERATED_OUTPUT_PATTERNS.has(pattern)));
+};

@@ -49,6 +49,7 @@ interface Target {
   readonly kind: string;
   readonly value: string;
   readonly generated?: string;
+  readonly authoritative?: boolean;
 }
 
 /** One of each way a file becomes generated: two labels the connector sends, two names the hub knows. */
@@ -126,12 +127,17 @@ const conferencePairs = async (harness: TestHarness, me: TestDeveloper): Promise
   (await get<{ conference: { overlaps: readonly ConferencePair[] } }>(harness, me.apiKey, `/api/conference?repo=${encodeURIComponent(REPO)}`))
     .conference.overlaps;
 
-const tripwireSessions = async (harness: TestHarness, me: TestDeveloper, value: string): Promise<readonly unknown[]> =>
+const tripwireSessions = async (
+  harness: TestHarness,
+  me: TestDeveloper,
+  value: string,
+  authoritative = false,
+): Promise<readonly unknown[]> =>
   (
     await get<{ sessions: readonly unknown[] }>(
       harness,
       me.apiKey,
-      `/api/hints/tripwire?repo=${encodeURIComponent(REPO)}&value=${encodeURIComponent(value)}`,
+      `/api/hints/tripwire?repo=${encodeURIComponent(REPO)}&value=${encodeURIComponent(value)}${authoritative ? "&authoritative=1" : ""}`,
     )
   ).sessions;
 
@@ -182,7 +188,7 @@ describe("ingest: the label is stored, the touch is kept", () => {
   test("two older connectors whose only common ground is generated names are silent", async () => {
     // Arrange: neither side sends a label.
     const fx = await setup();
-    const only = files(["apps/practice/package-lock.json", "packages/api/src/__generated__/schema.ts", "packages/ui/src/routes.gen.ts"]);
+    const only = files(["apps/practice/package-lock.json", "packages/api/src/__generated__/schema.ts", "packages/ui/src/client.generated.ts"]);
     await bothCarry(fx, only);
 
     // Act + Assert
@@ -425,6 +431,60 @@ describe("tripwire: a teammate on a generated file is nobody to stop for", () =>
     expect(await tripwireSessions(fx.harness, fx.me, "packages/proto/src/messages.ts")).toEqual([]);
     expect(await tripwireSessions(fx.harness, fx.me, "src/client/api.ts")).toEqual([]);
     expect(await tripwireSessions(fx.harness, fx.me, "apps/practice/package-lock.json")).toEqual([]);
+  });
+
+  test("a generated name the repo declared authoritative is answered when the connector says so", async () => {
+    // Arrange: their connector sent the file authoritative, so it is stored unlabelled.
+    const fx = await setup();
+    await seed(
+      fx.harness,
+      fx.them,
+      contextRecords(THEIR_CONTEXT, THEIR_SESSION, [
+        { kind: "file", value: "clients/__generated__/api.ts", authoritative: true } as Target,
+      ]),
+    );
+
+    // Act + Assert: without the flag the name check answers nobody; with it, Ken is named.
+    expect(await tripwireSessions(fx.harness, fx.me, "clients/__generated__/api.ts")).toEqual([]);
+    expect(await tripwireSessions(fx.harness, fx.me, "clients/__generated__/api.ts", true)).toHaveLength(1);
+  });
+});
+
+describe("authoritative generated files stay overlap evidence on the hub", () => {
+  test("a target marked authoritative is stored UNLABELLED, though its name is a generated one", async () => {
+    // Arrange
+    const fx = await setup();
+
+    // Act
+    await seed(
+      fx.harness,
+      fx.me,
+      contextRecords(MY_CONTEXT, MY_SESSION, [
+        { kind: "file", value: "clients/web/package-lock.json", authoritative: true } as Target,
+        { kind: "file", value: "clients/__generated__/schema.ts", generated: "path", authoritative: true } as Target,
+      ]),
+    );
+
+    // Assert: the repo's word beats the hub's own path signal and even a stray label.
+    expect(await storedLabel(fx.harness, MY_CONTEXT, "clients/web/package-lock.json")).toBeNull();
+    expect(await storedLabel(fx.harness, MY_CONTEXT, "clients/__generated__/schema.ts")).toBeNull();
+  });
+
+  test("two people sharing two authoritative generated files ARE a ghost row", async () => {
+    // Arrange: the client bindings that connect their two pieces of work.
+    const fx = await setup();
+    const bindings = ["clients/__generated__/orders.ts", "clients/__generated__/payments.ts"].map(
+      (value) => ({ kind: "file", value, authoritative: true }) as Target,
+    );
+    await bothCarry(fx, bindings);
+
+    // Act
+    const rows = await ghostRows(fx.harness, fx.me);
+
+    // Assert
+    expect(rows.map((row) => row.workContextId)).toEqual([THEIR_CONTEXT]);
+    expect(rows[0]?.sharedTargetCount).toBe(2);
+    expect(rows[0]?.generatedSharedCount).toBe(0);
   });
 });
 
