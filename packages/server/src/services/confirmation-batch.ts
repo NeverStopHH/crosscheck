@@ -249,6 +249,13 @@ export interface ConfirmedBatch {
   readonly kept: number;
   /** A presence-on was among them: the caller rebuilds the person's index once this committed. */
   readonly presenceOn: boolean;
+  /** What each confirmed item's writer answered, by draft id (draft-apply.ts `effect`). */
+  readonly effects: ReadonlyMap<string, unknown>;
+}
+
+interface Applied {
+  readonly presenceOn: boolean;
+  readonly effects: ReadonlyMap<string, unknown>;
 }
 
 export type ConfirmRefused = {
@@ -258,17 +265,19 @@ export type ConfirmRefused = {
 };
 
 /** Every confirmed item, applied by its kind's registered writer with the batch's stamp. */
-const applyConfirmed = async (deps: { readonly db: DbTransaction; readonly now: Clock }, batch: FrozenBatch): Promise<boolean> => {
+const applyConfirmed = async (deps: { readonly db: DbTransaction; readonly now: Clock }, batch: FrozenBatch): Promise<Applied> => {
   const stamp = humanStamp(batch.id);
   let presenceOn = false;
+  const effects = new Map<string, unknown>();
   for (const item of batch.items.filter((each) => each.decision === "confirm")) {
     const applied = await DRAFT_KIND_REGISTRY[item.draft.kind].apply(deps, item.draft, item.content, stamp);
     if ("refusal" in applied) {
       throw new BatchRefused("item_refused", item.draft.id, applied.refusal);
     }
     presenceOn ||= applied.presenceOn;
+    effects.set(item.draft.id, applied.effect);
   }
-  return presenceOn;
+  return { presenceOn, effects };
 };
 
 /** The confirmation's own rows: who, which device, what was signed, and the assertion that signed it. */
@@ -400,7 +409,7 @@ export const createBatchStore = (nowMs: () => number) => {
   ): Promise<ConfirmedBatch | ConfirmRefused> => {
     batches.delete(batch.id);
     try {
-      const presenceOn = await deps.db.transaction(async (tx) => {
+      const { presenceOn, effects } = await deps.db.transaction(async (tx) => {
         const scoped = { db: tx, now: deps.now };
         const pending = await readPendingDrafts(scoped, batch.owner.developerId, { lock: true, scope: batch.scope });
         if (!isUnchanged(pending, batch.items)) {
@@ -411,7 +420,7 @@ export const createBatchStore = (nowMs: () => number) => {
       });
       const count = (decision: DraftDecision): number =>
         batch.items.filter((item) => item.decision === decision).length;
-      return { confirmed: count("confirm"), discarded: count("discard"), kept: count("keep"), presenceOn };
+      return { confirmed: count("confirm"), discarded: count("discard"), kept: count("keep"), presenceOn, effects };
     } catch (error) {
       if (error instanceof BatchRefused) {
         return { refusal: error.refusal, draftId: error.draftId, cause: error.itemCause };

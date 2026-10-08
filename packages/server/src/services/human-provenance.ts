@@ -34,6 +34,13 @@ export const isHumanRow = (alias: string): SQL => sql`${sql.raw(alias)}.provenan
 export const isHumanBreak = (alias: string): SQL => sql`${sql.raw(alias)}.broke_provenance = ${HUMAN_PROVENANCE}`;
 
 /**
+ * THE WRITE PATH'S RULE: `<alias>` is a word the person confirmed — what the
+ * writers decide "what stood, what stands now" from (services/pointer-
+ * standing.ts). Not a figure: a figure counts with `isHumanRow`.
+ */
+export const isConfirmedRow = (alias: string): SQL => sql`${sql.raw(alias)}.provenance = ${HUMAN_PROVENANCE}`;
+
+/**
  * WHERE A PERSON CAN CONFIRM ANYTHING ON THIS HUB (human provenance §9). A
  * passkey needs a secure origin: an https one serves every member; a hub with
  * only localhost serves the browser on its own machine; with none, nothing

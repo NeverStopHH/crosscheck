@@ -94,9 +94,17 @@ export interface ResolveHintOutcomeInput {
  * AN OUTCOME THAT COUNTS IS A PERSON'S, PROVEN (human provenance §4): only a
  * passkey confirmation writes one, with its stamp. Both doors draft.
  */
-export interface WriteHintOutcomeInput extends ResolveHintOutcomeInput {
+/**
+ * What a confirmation writes. No channel: a word confirmed with the person's
+ * passkey is the PERSON's whichever door drafted it (J8), so the row is always
+ * `recorded_via = person` and 07 §13.12's agent channel has no writer (M1).
+ */
+export interface WriteHintOutcomeInput extends Omit<ResolveHintOutcomeInput, "recordedVia"> {
   readonly stamp: HumanStamp;
 }
+
+/** The one channel a confirmed word is written in. */
+const CONFIRMED_CHANNEL: HintOutcomeChannel = "person";
 
 
 export type WriteHintOutcomeResult =
@@ -259,38 +267,31 @@ const countableDeliveryOf = async (
 
 type Recorded = Exclude<WriteHintOutcomeResult, { readonly refusal: HintOutcomeRefusal }>;
 
-/** The newest word the same channel said before — the agent's own, or the person's own. */
-const ownWord = (words: PointerWords, input: WriteHintOutcomeInput): LatestOutcome | undefined =>
-  input.recordedVia === "person" ? words.person : words.agent;
-
 /**
- * A REPEAT, by channel (07 §13.12). The agent's word is judged against the
- * agent's own newest, so re-reading the clause writes nothing twice, whatever
- * the person said since. The person's is judged against what the PERSON
- * stands at — their own newest word, noise included — so their same word said
- * after their own noise label is a new word, and it stands. The reason is part
- * of the word: said better, it is a write (survivor R19).
+ * A REPEAT is judged against what the person stands at — their own newest
+ * word, noise included — so their same word said after their own noise label
+ * is a new word, and it stands. The reason is part of the word: said better,
+ * it is a write (survivor R19).
  */
 const isRepeat = (words: PointerWords, input: WriteHintOutcomeInput): boolean => {
-  const own = ownWord(words, input);
+  const own = words.person;
   if (own === undefined || own.outcome !== input.outcome || own.reason !== input.reason) {
     return false;
   }
-  return input.recordedVia === "agent" || personsOutcomeStanding(words) === input.outcome;
+  return personsOutcomeStanding(words) === input.outcome;
 };
 
 /** The same word as before with a different reason — written, and the answer says the reason was revised. */
 const revisesReason = (words: PointerWords, input: WriteHintOutcomeInput): boolean => {
-  const own = ownWord(words, input);
+  const own = words.person;
   return own !== undefined && own.outcome === input.outcome && own.reason !== input.reason;
 };
 
 /**
- * THE WORD, DECIDED AND WRITTEN UNDER THE POINTER'S LOCK (reviews H2, §13.12).
- * What stands is the person's newest word whenever they said one; an agent's
- * word is recorded but never overturns it. A new word is stamped strictly
- * after the pointer's newest word of any kind, so the order of two words never
- * depends on a millisecond.
+ * THE WORD, DECIDED AND WRITTEN UNDER THE POINTER'S LOCK (review H2). What
+ * stands is the person's newest word. A new word is stamped strictly after the
+ * pointer's newest word of any kind, so the order of two words never depends
+ * on a millisecond.
  */
 const recordOnPointer = (deps: Deps, delivery: ResolvedDelivery, input: WriteHintOutcomeInput): Promise<Recorded> =>
   deps.db.transaction(async (tx) => {
@@ -312,7 +313,7 @@ const recordOnPointer = (deps: Deps, delivery: ResolvedDelivery, input: WriteHin
     const createdAt = instantAfter(deps.now(), newestInstant(words));
     const id = await appendOutcome(tx, delivery.id, input, createdAt);
     const said = { outcome: input.outcome, reason: input.reason, createdAt };
-    const after = standingOfWords({ ...words, [input.recordedVia]: said });
+    const after = standingOfWords({ ...words, person: said });
     return {
       ...answer,
       id,
@@ -339,7 +340,7 @@ const appendOutcome = async (
     reason: input.reason,
     recordedBy: input.recordedBy,
     createdAt,
-    recordedVia: input.recordedVia,
+    recordedVia: CONFIRMED_CHANNEL,
     // human provenance §4: the confirmation that made this the person's word.
     provenance: input.stamp.provenance,
     confirmationId: input.stamp.confirmationId,
@@ -391,7 +392,7 @@ export const writeHintOutcome = async (
   deps: Deps,
   input: WriteHintOutcomeInput,
 ): Promise<WriteHintOutcomeResult> => {
-  const resolved = await resolveHintOutcome(deps, input);
+  const resolved = await resolveHintOutcome(deps, { ...input, recordedVia: CONFIRMED_CHANNEL });
   if ("refusal" in resolved) {
     return resolved;
   }

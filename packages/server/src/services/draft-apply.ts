@@ -34,7 +34,16 @@ export interface ApplyDeps {
 export type ApplyRefusal = string;
 
 export type ApplyOutcome =
-  | { readonly applied: true; readonly presenceOn: boolean }
+  | {
+      readonly applied: true;
+      readonly presenceOn: boolean;
+      /**
+       * What the kind's writer answered — what stands now, what it replaced,
+       * whether it was a repeat. The confirmation reports it per item; nothing
+       * decides on it.
+       */
+      readonly effect?: unknown;
+    }
   | { readonly refusal: ApplyRefusal };
 
 export type ApplyKind = (
@@ -65,7 +74,7 @@ export const applyLabel: ApplyKind = async (deps, draft, content, stamp) => {
     reason: isPin ? null : payloadTextOrNull(content, "reason"),
     stamp,
   });
-  return "refusal" in written ? { refusal: written.refusal } : APPLIED;
+  return "refusal" in written ? { refusal: written.refusal } : { ...APPLIED, effect: written };
 };
 
 export const applyOutcome: ApplyKind = async (deps, draft, content, stamp) => {
@@ -75,12 +84,11 @@ export const applyOutcome: ApplyKind = async (deps, draft, content, stamp) => {
     outcome: payloadText(content, "word") as HintOutcome,
     reason: payloadTextOrNull(content, "reason"),
     session: payloadTextOrNull(content, "sessionId"),
+    // A confirmed word is the PERSON's, whichever door drafted it (the writer writes it so, J8).
     recordedBy: draft.developerId,
-    // A confirmed word is the PERSON's, whichever door drafted it.
-    recordedVia: "person",
     stamp,
   });
-  return "refusal" in written ? { refusal: written.refusal } : APPLIED;
+  return "refusal" in written ? { refusal: written.refusal } : { ...APPLIED, effect: written };
 };
 
 export const applyPin: ApplyKind = async (deps, draft, content, stamp) => {

@@ -216,12 +216,12 @@ export const deliveryStates = (repo: string, since: Date, who: SQL, until: Date 
     FROM received r
   ), labelled AS (
     -- 07 §13.14 (round-6 HIGH-1): the person's newest LABEL on the pointer — noise, noise said
-    -- again, or helpful — read on its own axis; and whether they ever called it helpful
+    -- again, or helpful — read on its own axis
     SELECT so.*, lab.word AS label_word, lab.reason AS label_reason, lab.at AS label_at, lab.id AS label_id,
-      lab.reasserted AS label_reasserted, COALESCE(lab.has_helpful, false) AS has_helpful
+      lab.reasserted AS label_reasserted
     FROM sourced so
     LEFT JOIN LATERAL (
-      SELECT l.word, l.reason, l.at, l.id, l.reasserted, bool_or(l.word = 'helpful') OVER () AS has_helpful FROM (
+      SELECT l.word, l.reason, l.at, l.id, l.reasserted FROM (
         -- round-6 LOW-6: each label's own sentence, the person's alone (marked_by = the recipient)
         SELECT 'noise' AS word, m.reason AS reason, m.created_at AS at, m.id, false AS reasserted FROM pilot_marks m
         JOIN hint_deliveries md ON md.id = m.ref_id
@@ -245,15 +245,14 @@ export const deliveryStates = (repo: string, since: Date, who: SQL, until: Date 
       ORDER BY l.at DESC, l.id DESC LIMIT 1
     ) lab ON true
   ), stated AS (
-    SELECT la.id, la.recipient, la.source_id, la.has_helpful, la.label_word, la.label_reason, la.label_at,
-           said.word, said.reason, said.at AS outcome_at, said.reasserted, said.by_person
+    SELECT la.id, la.recipient, la.source_id, la.label_word, la.label_reason, la.label_at,
+           said.word, said.reason, said.at AS outcome_at, said.reasserted
     FROM labelled la
     LEFT JOIN LATERAL (
-      SELECT spoken.word, spoken.reason, spoken.at, spoken.reasserted, spoken.by_person FROM (
-        -- a pre-channel row (NULL) is the agent's, the safer side (round-5 LOW-5); the COALESCE is
-        -- what keeps it so: a bare comparison is NULL, and NULL sorts FIRST under DESC
-        SELECT o.outcome AS word, o.reason, o.created_at AS at, o.id,
-               COALESCE(o.recorded_via = 'person', false) AS by_person, false AS is_label, false AS reasserted
+      SELECT spoken.word, spoken.reason, spoken.at, spoken.reasserted FROM (
+        -- every word counted here is the person's own (human provenance, J8): 07 §13.12's agent
+        -- channel and its ranking are retired (review M1)
+        SELECT o.outcome AS word, o.reason, o.created_at AS at, o.id, false AS is_label, false AS reasserted
         FROM hint_outcomes o
         JOIN hint_deliveries od ON od.id = o.delivery_id
         WHERE od.session_id = la.session_id AND od.ref_id = la.ref_id
@@ -261,18 +260,16 @@ export const deliveryStates = (repo: string, since: Date, who: SQL, until: Date 
         UNION ALL
         -- (a) the person's noise competes only while it is their newest label — a newer helpful cancels
         -- it — and only the newest noise ever could: helpful itself never competes with an outcome
-        SELECT 'noise', la.label_reason, la.label_at, la.label_id, true, true, la.label_reasserted
+        SELECT 'noise', la.label_reason, la.label_at, la.label_id, true, la.label_reasserted
         WHERE la.label_word = 'noise'
       ) spoken
-      -- 07 §13.12: the person's newest word (the label on a tie, D-O7); only when they said none, the agent's
-      ORDER BY spoken.by_person DESC, spoken.at DESC, spoken.is_label DESC, spoken.id DESC LIMIT 1
+      -- the person's newest word, the label on a tie (D-O7)
+      ORDER BY spoken.at DESC, spoken.is_label DESC, spoken.id DESC LIMIT 1
     ) said ON true
   ), states AS (
-    -- (b) the person's helpful vetoes their AGENT's not_relevant_now: unmarked, never that word
-    -- (round-6 HIGH-1); every other agent word stays the outcome under a helpful label
     SELECT id, recipient, source_id, outcome_at,
-      CASE WHEN vetoed THEN 'unmarked' ELSE COALESCE(word, 'unmarked') END AS state,
-      CASE WHEN vetoed THEN NULL ELSE reason END AS reason,
+      COALESCE(word, 'unmarked') AS state,
+      reason,
       COALESCE(reasserted, false) AS reasserted,
       -- the person's newest label is helpful: read by the person's own view alone, beside the
       -- buckets — the team line and the credit never select it (round-6 HIGH-1, the helpful line)
@@ -281,10 +278,7 @@ export const deliveryStates = (repo: string, since: Date, who: SQL, until: Date 
       -- beside the outcome's reason; the person's own view alone reads it, as it reads helpful_label
       CASE WHEN label_word = 'helpful' THEN label_reason END AS helpful_reason,
       CASE WHEN label_word = 'helpful' THEN label_at END AS helpful_at
-    FROM (
-      SELECT st.*, (NOT COALESCE(st.by_person, false) AND st.word = 'not_relevant_now' AND st.has_helpful) AS vetoed
-      FROM stated st
-    ) judged
+    FROM stated
   )`;
 
 /**
