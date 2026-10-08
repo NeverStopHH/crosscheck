@@ -71,9 +71,27 @@ const solvingClaim = (contextId: string, sessionId: string) => ({
   confidence: 0.9,
   captureMode: "agent" as const,
   provenance: "declared" as const,
-  evidenceRefs: ["clm_evidence_row"],
+  evidenceRefs: [`clm_evidence_${contextId}`],
   createdAt: daysAgo(199),
 });
+
+/** The observation a solving claim cites: evidence that RESOLVES (hold-out review, H5 + M2). */
+const evidenceRow = (contextId: string, sessionId: string) => ({
+  id: `clm_evidence_${contextId}`,
+  workContextId: contextId,
+  authorSessionId: sessionId,
+  kind: "observation" as const,
+  status: "proposed" as const,
+  body: "The importer retries with the old key id after every rotation",
+  confidence: 0.8,
+  captureMode: "agent" as const,
+  provenance: "declared" as const,
+  evidenceRefs: [],
+  createdAt: daysAgo(199),
+});
+
+/** A solving claim with the observation it cites. */
+const solvedTree = (contextId: string, sessionId: string) => [evidenceRow(contextId, sessionId), solvingClaim(contextId, sessionId)];
 
 const fingerprintTarget = (workContextId: string, value = FINGERPRINT) => ({
   workContextId,
@@ -96,7 +114,7 @@ describe("the failure-time fingerprint probe", () => {
       .values([context("wc_here", "ses_a", 200), context("wc_other", "ses_a", 200)]);
     await harness.db
       .insert(claims)
-      .values([solvingClaim("wc_here", "ses_a"), solvingClaim("wc_other", "ses_a")]);
+      .values([...solvedTree("wc_here", "ses_a"), ...solvedTree("wc_other", "ses_a")]);
     await harness.db
       .insert(workContextTargets)
       .values([
@@ -139,7 +157,7 @@ describe("the failure-time fingerprint probe", () => {
     ).toEqual([]);
 
     // …and the CONTROL: the same row, once somebody records the cause.
-    await harness.db.insert(claims).values([solvingClaim("wc_here", "ses_a")]);
+    await harness.db.insert(claims).values(solvedTree("wc_here", "ses_a"));
     expect(
       (
         await listSolvedByFingerprint(deps, developer.developerId, FINGERPRINT)
@@ -168,7 +186,7 @@ describe("the failure-time fingerprint probe", () => {
       await harness.db
         .insert(workContexts)
         .values([context("wc_solved", "ses_a", 200), ...crowd]);
-      await harness.db.insert(claims).values([solvingClaim("wc_solved", "ses_a")]);
+      await harness.db.insert(claims).values(solvedTree("wc_solved", "ses_a"));
       await harness.db
         .insert(workContextTargets)
         .values([
@@ -217,6 +235,7 @@ describe("the probe's root cause carries its validity", () => {
       .values([session("ses_a", REPO, developer.developerId)]);
     await harness.db.insert(workContexts).values([context("wc_here", "ses_a", 200)]);
     await harness.db.insert(claims).values([
+      evidenceRow("wc_here", "ses_a"),
       {
         ...solvingClaim("wc_here", "ses_a"),
         observedAtCommit: "abc1234",
@@ -261,6 +280,7 @@ describe("the probe's root cause carries its validity", () => {
       .values([session("ses_a", REPO, developer.developerId)]);
     await harness.db.insert(workContexts).values([context("wc_here", "ses_a", 200)]);
     await harness.db.insert(claims).values([
+      evidenceRow("wc_here", "ses_a"),
       {
         ...solvingClaim("wc_here", "ses_a"),
         observedAtCommit: "abc1234",
@@ -291,7 +311,7 @@ describe("the probe's root cause carries its validity", () => {
     await harness.db.insert(workContexts).values([context("wc_here", "ses_a", 200)]);
     await harness.db
       .insert(claims)
-      .values([solvingClaim("wc_here", "ses_a")]);
+      .values(solvedTree("wc_here", "ses_a"));
     await harness.db.insert(workContextTargets).values([fingerprintTarget("wc_here")]);
 
     // Act

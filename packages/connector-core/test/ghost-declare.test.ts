@@ -268,6 +268,9 @@ describe("set_intent and the ghost check", () => {
     expect(state.workContextIntent).toBe(
       "Rework how verifyToken refetches the JWKS",
     );
+    // Declared by the developer's own agent — the one provenance a prompt
+    // hint may call plainly "this session's intent"
+    expect(state.workContextIntentProvenance).toBe("declared");
     expect(state.ghostPending).toBe(true);
     expect(state.ghostNoticeCount).toBe(0);
   });

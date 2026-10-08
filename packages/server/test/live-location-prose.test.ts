@@ -81,8 +81,9 @@ describe("her prose reaches a colleague as she wrote it, opted out or not", () =
       verdicts.map(({ id, hub: h }) => `${id}: hub ${String(h)}, connector ${String(h)}`),
     );
     expect(hub.has("wc_robin_a")).toBe(true);
-    expect(refsOf("wc_robin_a", "clm_r_root")).toEqual([BISECT_SHA]);
-    expect(refsOf("wc_robin_b", "clm_r_b_root")).toEqual(["clm_r_bisect", CI_RUN]);
+    expect(hub.has("wc_robin_b")).toBe(true);
+    expect(refsOf("wc_robin_a", "clm_r_root")).toEqual([BISECT_SHA, "clm_r_bisect"]);
+    expect(refsOf("wc_robin_b", "clm_r_b_root")).toEqual(["clm_r_b_ev", CI_RUN]);
   });
 
   test.each([[false], [true]] as const)("Robin opted out: %p — a target she worked on matches a colleague's prompt as it is, whatever it looks like (L3)", async (robinOptsOut) => {

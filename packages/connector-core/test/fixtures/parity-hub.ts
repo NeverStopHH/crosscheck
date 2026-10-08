@@ -11,7 +11,7 @@
  * canned answers (the hint-hub/slow-hub fixture pattern, one more member).
  */
 import { serveLoopback } from "./loopback-serve.ts";
-import { rejectedApproachCandidate } from "./hint-hub.ts";
+import { injectableCandidate } from "./hint-hub.ts";
 
 export interface ParityHubCalls {
   candidates: number;
@@ -36,7 +36,7 @@ export const startParityHub = (teammateName: string): ParityHub => {
         calls.candidates += 1;
         return Response.json({
           ok: true,
-          data: { candidates: [rejectedApproachCandidate()] },
+          data: { candidates: [injectableCandidate()] },
         });
       }
       if (pathname === "/api/presence") {

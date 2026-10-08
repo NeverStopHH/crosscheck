@@ -1,0 +1,238 @@
+/**
+ * THE CONTENT FLOOR — ONE RULE, CALLED BY THE HUB AND BY THE CONNECTOR
+ * (DESIGN.md §4; hold-out review round 3, follow-up). "Does this prompt clear
+ * the floor against this text?" used to be answered twice: by the hub in SQL
+ * on PostgreSQL's english lexemes, and by a connector recounting an old hub's
+ * candidates as written. They drifted: against a 0.10.0 hub the recount knew
+ * neither the long-prompt floor nor that "shows" is the conversation word
+ * "show", and a 120-word status report was pointed at the usage dashboard on
+ * "usage", "shows" and "wrong". Both sides now call these functions.
+ *
+ *   - WORDS MATCH ON THEIR ENGLISH LEXEMES (english-stem.ts, the database's
+ *     own algorithm, pinned word for word against it): "timeouts" is
+ *     "timeout", and English stop words say nothing, as in the database.
+ *   - THE FLOOR TERMS of a prompt are its ranked terms that the team's text
+ *     says at all (the KNOWN terms), the first HINT_MAX_COUNTED_TERMS of them
+ *     counted; the TOPICAL ones are those of no closed class, less a closed
+ *     word's inflection (L1); and a prompt of more than
+ *     HINT_LONG_PROMPT_KNOWN_TERMS known words needs
+ *     HINT_LONG_PROMPT_MIN_TOPICAL topical words on one statement (M7).
+ *   - ONE STATEMENT clears the floor with HINT_MIN_SHARED_TERMS shared words
+ *     when enough of them are topical (C1).
+ *
+ * Which statements and which known terms are the caller's: the hub reads its
+ * database, a connector the candidates an old hub put on the wire.
+ */
+import { englishStem } from "./english-stem.ts";
+import type { PromptTerms } from "./prompt-terms.ts";
+import { CLOSED_CLASS_WORDS, exactClassOf, foldWord } from "./session-control.ts";
+import { ENGLISH_STOP_WORDS } from "./stop-words.ts";
+
+/** Shared words one statement needs: two agreeing on the same statement are a topic, one is a stray word. */
+export const HINT_MIN_SHARED_TERMS = 2;
+
+/** How many ranked terms are looked at for being known (M7): each costs the hub one indexed probe. */
+export const HINT_MAX_EXAMINED_TERMS = 256;
+
+/** How many known terms are counted (M7): twice the search's sixteen-token bound. */
+export const HINT_MAX_COUNTED_TERMS = 32;
+
+/** More known words than this make a long prompt (M7). */
+export const HINT_LONG_PROMPT_KNOWN_TERMS = 16;
+
+/** Topical words a long prompt's floor statement must share (M7); a short one needs one. */
+export const HINT_LONG_PROMPT_MIN_TOPICAL = 3;
+
+/**
+ * A word the database's simple dictionary keeps as written: one holding a
+ * digit, or a whole path, host or address (round 4, L1) — "refresh.ts" is
+ * no inflection of "refresh.t".
+ */
+const KEPT_AS_WRITTEN = /[\p{N}./@]/u;
+
+/** A word's lexeme as the hub's database matches it. */
+export const termLexeme = (word: string): string => {
+  const lower = word.toLowerCase();
+  return KEPT_AS_WRITTEN.test(lower) ? lower : englishStem(lower);
+};
+
+/**
+ * The lexemes of the closed-class words — those the database keeps: a closed
+ * word that is an English stop word has none, so nothing is its inflection.
+ */
+const CLOSED_LEXEMES: ReadonlySet<string> = new Set(
+  CLOSED_CLASS_WORDS.filter((word) => !ENGLISH_STOP_WORDS.has(word)).map(termLexeme),
+);
+
+/** The endings an English inflection is written with: shows, stopped, running. */
+const INFLECTION_ENDING = /(?:s|ed|ing)$/u;
+
+/**
+ * A CLOSED-CLASS WORD'S INFLECTION IS NO TOPIC (round 3, L1): the schema
+ * classes a word as written, and the match is on lexemes, so "stopped" — no
+ * class word as written — matched "stops" as the conversation word "stop".
+ * Compared folded, the form the class words are kept in.
+ *
+ * ONLY AN INFLECTED PROMPT WORD (round 4, M1): one with an inflection's
+ * ending, and no class word as written — those are topical in a task now.
+ * "refresh" is a topic though the meta word "refreshed" shares its lexeme;
+ * "shows", "stopped" and "deploys" stay none; and "renewal" is a derivation,
+ * a topic though the stemmer cuts it to "renewed"'s lexeme (round 4, H1: it
+ * was the word that carried K094 to the subscription-renewal tree).
+ */
+export const isClosedInflection = (term: string): boolean => {
+  const folded = foldWord(term);
+  return INFLECTION_ENDING.test(folded) && exactClassOf(folded) === null && CLOSED_LEXEMES.has(termLexeme(folded));
+};
+
+/** A URL as the database's parser reads it: the protocol dropped, the host and its path kept whole (L1). */
+const URL_WORD = /^[a-z][a-z0-9+.-]*:\/\/([^/]+)(\/.*)?$/u;
+
+/**
+ * A WORD THE DATABASE'S PARSER KEEPS WHOLE (round 4, L1): a path
+ * ("Europe/Berlin", "/health", "src/auth/refresh.ts"), a host or dotted name
+ * ("api.example.com", "node.js", "v1.2", "4.5") and an address — ts_debug's
+ * file, host, version, float and email tokens. Its parts are no words of the
+ * text: "europe" never matches "Europe/Berlin" on the hub, so it never does
+ * here, and the hub's known terms and this count agree — but a DOTTED NAME's
+ * parts are, on both sides (round 5, L2; DOTTED_NAME_DOT below).
+ */
+const WHOLE_WORD = /^\/?[\p{L}\p{N}_-]+(?:[./@][\p{L}\p{N}_-]+)+$|^\/[\p{L}\p{N}_-]+$/u;
+
+/** A whitespace-delimited word lower-cased, quotes and sentence marks off its ends — a path's leading slash kept. */
+const trimmedWord = (word: string): string => word.toLowerCase().replace(/^[^\p{L}\p{N}/]+|[^\p{L}\p{N}]+$/gu, "");
+
+/**
+ * THE WHOLE FORMS OF ONE WORD (round 4, L1), as the database's parser keeps
+ * them: a URL's host with its path, its host and its path; a path, a host, a
+ * dotted name or an address as written; a plain word has none. The text's
+ * side (textLexemes) and the prompt's (promptTokens) read a word with this
+ * one function, so "/health" in a prompt meets "/health" in a statement.
+ */
+export const wholeFormsOf = (word: string): readonly string[] => {
+  const trimmed = trimmedWord(word);
+  const url = URL_WORD.exec(trimmed);
+  if (url !== null) {
+    const host = url[1] ?? "";
+    const path = url[2] ?? "";
+    return path.length > 0 ? [`${host}${path}`, host, path] : [host];
+  }
+  return WHOLE_WORD.test(trimmed) ? [trimmed] : [];
+};
+
+/** One whitespace-delimited word's lexemes, as the database's parser and stemmer make them. */
+const wordLexemes = (word: string): readonly string[] => {
+  const whole = wholeFormsOf(word);
+  if (whole.length > 0) {
+    return whole;
+  }
+  return word
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((part) => part.length > 0 && !ENGLISH_STOP_WORDS.has(part))
+    .map(termLexeme);
+};
+
+/** One text's lexemes, word by word, as the database's parser and stemmer make them. */
+const lexemesOf = (text: string): readonly string[] =>
+  text
+    .split(/\s+/u)
+    .map(trimmedWord)
+    .filter((word) => word.length > 0)
+    .flatMap(wordLexemes);
+
+/**
+ * A DOT INSIDE A DOTTED NAME (hold-out review round 5, L2): "products.name",
+ * "node.js", "v1.2" — a dot between two name characters in a word with no
+ * slash and no "@", so a path ("src/auth/refresh.ts"), a URL and an address
+ * keep theirs. The PROMPT'S side always read such a word's parts as well as
+ * the word ("products.name" says products and name); the TEXT'S side read
+ * only the whole, so "SELECT * FROM products WHERE name ILIKE …" never met
+ * the finding "ILIKE on products.name does a sequential scan".
+ *
+ * Spelled twice, once per regex dialect: the hub's database reads the same
+ * dots with DOTTED_NAME_DOT_SQL, whose [[:alnum:]] knows "café" as this
+ * side's \p{L} does, so both sides split the same words (server test
+ * hint-dotted-names.test.ts holds them together).
+ */
+const DOTTED_NAME_DOT = /(?<=(?:^|\s)[^\s/@]*[\p{L}\p{N}_-])\.(?=[\p{L}\p{N}_-][^\s/@]*(?:\s|$))/gu;
+
+/** The same dots in PostgreSQL's regex dialect, for the hub's index and queries (L2). */
+export const DOTTED_NAME_DOT_SQL = "(?<=(?:^|[[:space:]])[^[:space:]/@]*[[:alnum:]_-])[.](?=[[:alnum:]_-][^[:space:]/@]*(?:[[:space:]]|$))";
+
+/** A text with its dotted names split at their dots: "products.name" reads "products name" (L2). */
+export const dottedNamePartsText = (text: string): string => text.replace(DOTTED_NAME_DOT, " ");
+
+/**
+ * The lexemes a text says: its words, lower-cased, less the database's English
+ * stop words — a path, a host or an address whole, as the database keeps it
+ * (L1), quotes and sentence marks off a word's ends — and a dotted name's
+ * parts beside the name whole (round 5, L2), as the prompt's side reads it.
+ */
+export const textLexemes = (text: string): ReadonlySet<string> => {
+  const parts = dottedNamePartsText(text);
+  return new Set(parts === text ? lexemesOf(text) : [...lexemesOf(text), ...lexemesOf(parts)]);
+};
+
+/** Of the ranked terms, those some text says — in order, at most HINT_MAX_EXAMINED_TERMS of them looked at. */
+export const knownTermsIn = (ranked: readonly string[], texts: readonly string[]): readonly string[] => {
+  const said = new Set(texts.flatMap((text) => [...textLexemes(text)]));
+  return ranked.slice(0, HINT_MAX_EXAMINED_TERMS).filter((term) => said.has(termLexeme(term)));
+};
+
+/** The words the floor is counted on. */
+export interface FloorTerms {
+  /** The known terms counted, in ranked order. */
+  readonly all: readonly string[];
+  /** Those of them of no closed class, a closed word's inflection excluded (C1, L1). */
+  readonly topical: readonly string[];
+  /** Topical words a floor statement must share: one, or more for a long prompt (M7). */
+  readonly minTopical: number;
+}
+
+/**
+ * A prompt's floor terms, given its KNOWN terms: the ranked ones some
+ * statement of the team says. A caller that sees only part of the team's text
+ * — a connector reading an old hub's wire — passes `knownCount`, how many
+ * words MAY be known, so a prompt is never taken for short because its reader
+ * saw little: the long test fails closed. The hub sees its whole repo and
+ * passes nothing.
+ */
+export const floorTermsOf = (
+  terms: Pick<PromptTerms, "topical">,
+  known: readonly string[],
+  knownCount: number = known.length,
+): FloorTerms => {
+  const all = known.slice(0, HINT_MAX_COUNTED_TERMS);
+  const topicalWords = new Set(terms.topical);
+  return {
+    all,
+    topical: all.filter((term) => topicalWords.has(term) && !isClosedInflection(term)),
+    minTopical: knownCount > HINT_LONG_PROMPT_KNOWN_TERMS ? HINT_LONG_PROMPT_MIN_TOPICAL : 1,
+  };
+};
+
+/** The distinct lexemes of the terms that are among those a text says. */
+export const sharedLexemes = (terms: readonly string[], said: ReadonlySet<string>): ReadonlySet<string> =>
+  new Set(terms.map(termLexeme).filter((lexeme) => said.has(lexeme)));
+
+/** How many distinct lexemes of the terms are among those a text says. */
+export const sharedTermCount = (terms: readonly string[], said: ReadonlySet<string>): number => sharedLexemes(terms, said).size;
+
+/** What one statement shares with a prompt. */
+export interface StatementMatch {
+  /** Its shared words when enough of them are topical (C1, M7), and 0 otherwise. */
+  readonly floor: number;
+  /** Its shared topical words: the strength of the tree it belongs to (H3 + M6). */
+  readonly topical: number;
+}
+
+/** THE FLOOR OF ONE STATEMENT, the one count the hub and the connector both make. */
+export const statementMatch = (floor: FloorTerms, text: string): StatementMatch => {
+  const said = textLexemes(text);
+  const topical = sharedTermCount(floor.topical, said);
+  return { floor: topical >= floor.minTopical ? sharedTermCount(floor.all, said) : 0, topical };
+};
+
+/** Does this prompt clear the content floor against this text? */
+export const clearsFloorOn = (floor: FloorTerms, text: string): boolean =>
+  statementMatch(floor, text).floor >= HINT_MIN_SHARED_TERMS;

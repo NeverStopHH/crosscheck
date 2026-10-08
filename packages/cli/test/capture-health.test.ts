@@ -169,6 +169,33 @@ describe("readCaptureHealth (the #17/#18/#20 counters' reader)", () => {
     expect(health.hintsDelivered).toBe(1);
     expect(health.hintCandidatesSeen).toBe(4);
   });
+
+  test("sums the turns the prompt path stood down on, apart (review 1006b, M7)", async () => {
+    // Arrange
+    const { repo, home } = await fixture("ch-stood-down");
+    await seedSession(home, repo, "ch-sd-a", { flooredPromptCount: 2, harnessTurnCount: 1 });
+    await seedSession(home, repo, "ch-sd-b", { flooredPromptCount: 1, harnessTurnCount: 0 });
+
+    // Act
+    const health = await readCaptureHealth(home, DEAD_HUB_URL, REPO_ID);
+
+    // Assert
+    expect(health.flooredPrompts).toBe(3);
+    expect(health.harnessTurns).toBe(1);
+  });
+
+  test("sums the hub calls that returned no hint (round 3, L5)", async () => {
+    // Arrange
+    const { repo, home } = await fixture("ch-quiet");
+    await seedSession(home, repo, "ch-q-a", { quietCallCount: 5 });
+    await seedSession(home, repo, "ch-q-b", { quietCallCount: 2 });
+
+    // Act
+    const health = await readCaptureHealth(home, DEAD_HUB_URL, REPO_ID);
+
+    // Assert
+    expect(health.quietCalls).toBe(7);
+  });
 });
 
 describe("the state-file cap is spent newest first (#17/#20)", () => {
@@ -300,6 +327,9 @@ describe("crosscheck status capture and hint lines (#20)", () => {
       lastTargetAt: new Date(Date.now() - 60_000).toISOString(),
       deliveredHintRefs: ["clm_1"],
       hintCandidatesSeen: 4,
+      flooredPromptCount: 2,
+      harnessTurnCount: 1,
+      quietCallCount: 6,
     });
 
     // Act
@@ -311,6 +341,10 @@ describe("crosscheck status capture and hint lines (#20)", () => {
     expect(lineWith(result.stdout, "hints:")).toContain("hints: delivered 1");
     expect(lineWith(result.stdout, "hints:")).toContain("candidates 4");
     expect(lineWith(result.stdout, "hints:")).toContain("not measured");
+    // M7: the turns that never reached the hub, each counted apart
+    expect(lineWith(result.stdout, "hints:")).toContain("stood down on 2 content-free prompts, 1 harness turn");
+    // L5: the calls that DID reach the hub and came back with nothing
+    expect(lineWith(result.stdout, "hints:")).toContain("6 hub calls returned no hint");
   });
 
   test("says when edits fire but nothing lands", async () => {

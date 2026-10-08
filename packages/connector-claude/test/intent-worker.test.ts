@@ -221,6 +221,10 @@ describe("runIntentWorker (end to end, faked binary)", () => {
     expect(state?.intentSetCount).toBe(1);
     expect(state?.intentNoneCount).toBe(0);
     expect(state?.intentFailCount).toBe(0);
+    // …and remembered as the MODEL's sentence, which a prompt hint matched
+    // on it then calls "this session's derived intent"
+    expect(state?.workContextIntent).toBe(SENTENCE);
+    expect(state?.workContextIntentProvenance).toBe("derived");
   });
 
   test("the update re-sends the title's marker from state, so the hub's marker never lapses", async () => {
@@ -433,6 +437,46 @@ describe("runIntentWorker (end to end, faked binary)", () => {
     expect(state?.intentFailCount).toBe(0);
     expect(state?.intentLastDrop).toContain("predates intent support");
     expect(await fileExists(fix.promptFile)).toBe(false);
+  });
+
+  test.each([
+    ["mach weiter, das usage limit ist wieder da, bitte alles wiederaufnehmen"],
+    ["ok, commit and push, then open the PR and run the tests again please"],
+  ])("a parked turn the rule now calls content-free never becomes an intent: %p (hold-out review, H3)", async (parked) => {
+    // Arrange — parked before the rule knew better, by a connector that gated differently
+    const fix = await fixture({}, parked);
+    const dir = await tempDir();
+    const stdinDump = join(dir, "stdin.txt");
+    const fake = await makeFakeModel({ output: SENTENCE, stdinDump });
+
+    // Act
+    await run(fix, fake);
+
+    // Assert — no model call, no intent, the reason booked, the file gone
+    expect(await fileExists(stdinDump)).toBe(false);
+    expect(await spooledIntents(fix)).toHaveLength(0);
+    const state = await readSessionState(fix.home, SESSION_ID);
+    expect(state?.workContextIntent ?? null).toBeNull();
+    expect(state?.intentLastFailure).toContain("carries no task");
+    expect(await fileExists(fix.promptFile)).toBe(false);
+  });
+
+  test.each([
+    ["Continue the session after the usage limit reset."],
+    ["Keep the session going until the weekly quota resets."],
+  ])("a derived intent with no topical word is dropped, never spooled: %p (round 3, H2)", async (answer) => {
+    // Arrange — a real task was parked, and the model answered with machinery
+    const fix = await fixture();
+    const fake = await makeFakeModel({ output: answer });
+
+    // Act
+    await run(fix, fake);
+
+    // Assert — the meta-laden intent magnet is never born
+    expect(await spooledIntents(fix)).toHaveLength(0);
+    const state = await readSessionState(fix.home, SESSION_ID);
+    expect(state?.workContextIntent ?? null).toBeNull();
+    expect(state?.intentLastFailure).toBe("dropped: no topic");
   });
 
   test("an empty prompt file is booked as a drop and removed", async () => {

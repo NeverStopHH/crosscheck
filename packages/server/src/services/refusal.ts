@@ -49,10 +49,11 @@ export const MAX_REFUSAL_CHARS = 200;
  * reader counts, which is the safe side to be wrong on.
  *
  * That the reader's pipeline really starts with that fold is pinned the same
- * way the 200 above is — by grep across the package boundary, not by an import
- * this package is not allowed to have:
+ * way the 200 above is — by grep. The pipeline itself moved into
+ * @crosscheck/schema (untrusted-text.ts, review 1006b M4), where the
+ * connector's `cleanUntrusted` is now defined:
  *
- * VERIFY: grep -c 'normalize("NFKC")' packages/connector-core/src/briefing/sanitize.ts
+ * VERIFY: grep -c 'normalize("NFKC")' packages/schema/src/untrusted-text.ts
  * PRINTS: 1
  *
  * and that the fold GROWS the one character this module inserts itself:

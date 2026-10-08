@@ -2,21 +2,24 @@
  * The hint selector — where the anchoring asymmetry is STRUCTURE, not wording
  * (DESIGN.md §4, normative).
  *
- * Proactively injectable substance is exactly:
- *   (a) a rejected_approach claim WITH evidence — negative knowledge cannot
- *       anchor a wrong theory, only save a dead end;
- *   (b) a likely_root_cause / partially_confirmed claim WITH evidence; and
- *   (c) a stated DECISION or ROOT CAUSE, still proposed, WITH evidence (the
- *       2026-10 pilot: 95 hints, 0 opened — a decision can never reach a
- *       settled status, so it was pointer-only forever, behind a
- *       get_diagnosis no agent made) —
- * and all three ONLY ON A STRONG MATCH: the claim itself shares
- * HINT_MIN_SHARED_TERMS words with what was matched, or the match is an error
- * fingerprint. Trust and relevance are both required to assert something
- * unasked (§4 "Solved before" states the same narrowing for the briefing).
- * Everything else — bare proposed hypotheses above all, and any claim on a
- * weak match — reaches the reader only as a POINTER: context id + title, no
- * body. The pointer variant of the return type carries no claim at all, so a
+ * Proactively injectable substance is exactly (review 1006b, H4):
+ *   (b) a ROOT CAUSE whose status is settled (likely_root_cause,
+ *       partially_confirmed); and
+ *   (c) a stated DECISION, still proposed (the 2026-10 pilot: 95 hints, 0
+ *       opened — a decision can never reach a settled status, so it was
+ *       pointer-only forever, behind a get_diagnosis no agent made) —
+ * both EVIDENCE-BACKED in the hub's sense (a cited ref resolves to another
+ * claim that is not a proposed or rejected hypothesis) and both ONLY ON A
+ * STRONG MATCH: the claim itself shares HINT_MIN_SHARED_TERMS words with what
+ * was matched, or the match is an error fingerprint. Trust and relevance are
+ * both required to assert something unasked (§4 "Solved before" states the
+ * same narrowing for the briefing). The old (a), a rejected approach, is a
+ * pointer now — the owner's decision.
+ * Everything else — rejected approaches, bare proposed hypotheses and
+ * PROPOSED ROOT CAUSES above all (principle 5: an unverified cause pushed
+ * unasked as "a teammate's recorded finding" anchors the wrong theory), any
+ * other kind under a settled status, and any (b)/(c) claim on a weak match —
+ * reaches the reader only as a POINTER: context id + title, no body. The pointer variant of the return type carries no claim at all, so a
  * body cannot leak through it by construction; test/hint-select.test.ts and
  * test/hint-substance-select.test.ts pin every branch and
  * scripts/mutation-check.ts re-breaks the load-bearing ones.
@@ -25,6 +28,26 @@
  * by the return type. Below the precision floor (no proven lexical tier), or
  * past the session cap, or with nothing unseen: SILENCE. No hint is strictly
  * better than a weak one (§10 risk 1).
+ *
+ * FROM THE BEST MATCH ONLY (hold-out review round 3, H3 + M6): the hub's
+ * order is search rank, not relevance, and taking its first trusted claim
+ * pushed a finding from the wrong tree for 12 of 119 hold-out tasks. The
+ * substance comes only from a tree at least as STRONG as any a pointer could
+ * name — an exact target first, then `topicalTerms`, the most topical words
+ * one of its statements (its own, or a claim) shares — the hub's order among
+ * equals, and the claim sharing most topical words within it; a pointer names
+ * the strongest tree, never a weaker one in its place — or nothing, once it
+ * was shown.
+ *
+ * STRICT (hold-out review round 4, C2): the round-4 hold-out still showed 9
+ * of 182 tasks a finding from another tree. Now the strongest tree must be
+ * the ONE strongest — a tie at the top says nothing, finding or pointer — and
+ * a finding of it is shown only when it shares two topical words, one of
+ * which no other candidate says, and the tree's own statement shares one
+ * (`@crosscheck/schema` isStrongSubstanceMatch, strongestTreeIndex: the
+ * hub's withholding calls the same two rules). Otherwise the pointer at it.
+ * What breaks a tie is the schema's order (round 5, M2: the shared words
+ * before the tree's own statement).
  */
 import {
   HINT_MIN_EVIDENCE_REFS,
@@ -32,6 +55,18 @@ import {
   MAX_HINTS_PER_SESSION,
   SUBSTANCE_MATCH_KIND,
 } from "../constants.ts";
+import {
+  HINT_MAX_EXAMINED_TERMS,
+  clearsFloorOn,
+  floorTermsOf,
+  isStrongSubstanceMatch,
+  knownTermsIn,
+  statementMatch,
+  strongestTreeIndex,
+  substanceSentence,
+} from "@crosscheck/schema";
+import type { FloorTerms, TreeStrength } from "@crosscheck/schema";
+
 import { isAssertableValidity } from "../claim-validity.ts";
 import type { HintClaimCandidate, HintContextCandidate } from "../http/hub.ts";
 
@@ -64,8 +99,16 @@ export type HintSelection =
       readonly kind: "claim";
       readonly context: HintContextCandidate;
       readonly claim: HintClaimCandidate;
-      /** The teammate claims the substance leaves behind — the pointer to the rest. */
+      /** The tree's other claims the substance leaves behind — the pointer to the rest. */
       readonly restCount: number;
+      /** The hub's claim window left rows out, so restCount is a lower bound. */
+      readonly isRestLowerBound: boolean;
+      /**
+       * What goes out instead when the finding cannot be shown whole beside
+       * the lines appended after it (flows/hint.ts): the pointer at the same
+       * tree, under the pointer pass's own unseen rule, or silence.
+       */
+      readonly ifUnfit: Extract<HintSelection, { readonly kind: "pointer" | "silence" }>;
     }
   | {
       readonly kind: "pointer";
@@ -90,35 +133,68 @@ export interface SelectHintInput {
   readonly candidates: readonly HintContextCandidate[];
   /** Refs (claim and context ids) already delivered this session. */
   readonly seenRefIds: readonly string[];
+  /**
+   * Of those, the refs a HINT delivered (round 4, decision 11) — the
+   * session's own deliveries, not the briefing's: the same tree is never
+   * hinted twice in a session, finding or pointer. Absent, every seen ref
+   * counts.
+   */
+  readonly hintedRefIds?: readonly string[];
   /** Hints already delivered this session — the 5/session cap counts this. */
   readonly deliveredCount: number;
   /** The reader; their own claims are knowledge, not hints. */
   readonly selfDeveloperId: string | null;
+  /**
+   * The RANKED terms of the query the hub was sent (@crosscheck/schema
+   * promptTerms().ranked: task clauses only, topical words first) — what the
+   * floor is RECOUNTED on, exactly as the hub counts them, when a hub too old
+   * to send `sharedTerms` sends a candidate (hold-out review H4; round 3,
+   * follow-up). Required, so no caller can skip the recount by forgetting it.
+   */
+  readonly promptTerms: readonly string[];
+  /**
+   * Those of the terms that can name a topic (promptTerms().topical: hold-out
+   * review round 3, C1; every class but steering since round 4, M1): the
+   * recount needs one of them on the same statement as the second shared
+   * word. Required for the same reason.
+   */
+  readonly promptTopicalTerms: readonly string[];
 }
 
-const SILENCE: HintSelection = { kind: "silence" };
-
-const hasEvidence = (claim: HintClaimCandidate): boolean =>
-  claim.evidenceRefCount >= HINT_MIN_EVIDENCE_REFS;
-
-const isNegativeKnowledge = (claim: HintClaimCandidate): boolean =>
-  claim.kind === "rejected_approach";
-
-const isSettled = (claim: HintClaimCandidate): boolean =>
-  INJECTABLE_STATUSES.has(claim.status);
-
-/** Kinds that STATE something — what was decided, what caused it — rather than guess. */
-const STATED_KINDS: ReadonlySet<string> = new Set(["decision", "root_cause"]);
+const SILENCE = { kind: "silence" } as const satisfies HintSelection;
 
 /**
- * (c) of the header: a decision or root cause its author stated and nobody
- * has taken back. Positive equality on `proposed`, the status such a claim is
- * born with, so `rejected` — the claim itself turned down — and any status
- * this build does not know stay out (fail closed); the settled statuses are
- * (b)'s already.
+ * EVIDENCE THAT RESOLVES (review 1006b, H4): the hub's verdict that a cited
+ * ref is another existing claim and not a proposed or rejected hypothesis —
+ * a count alone is satisfied by a ref to nothing, to the claim itself or to a
+ * guess. The count stays beside it as the second lock; a hub too old to send
+ * the verdict buys no substance.
  */
-const isStatedFinding = (claim: HintClaimCandidate): boolean =>
-  STATED_KINDS.has(claim.kind) && claim.status === "proposed";
+const hasEvidence = (claim: HintClaimCandidate): boolean =>
+  claim.evidenceRefCount >= HINT_MIN_EVIDENCE_REFS && claim.evidenceBacked === true;
+
+/**
+ * (b) of the header: a ROOT CAUSE whose status is settled — never another
+ * kind under a settled status (an observation "partially_confirmed" is still
+ * an observation; review 1006b, H4).
+ */
+const isSettledRootCause = (claim: HintClaimCandidate): boolean =>
+  claim.kind === "root_cause" && INJECTABLE_STATUSES.has(claim.status);
+
+/**
+ * (c) of the header: a DECISION its author stated and nobody has taken back.
+ * Positive equality on `proposed`, the status a decision is born with and
+ * keeps, so `rejected` — the decision itself turned down — and any status
+ * this build does not know stay out (fail closed).
+ *
+ * A ROOT CAUSE IS NOT HERE, and that is principle 5, decided by Nick on the
+ * batch-1006 review (finding 3): a cause still `proposed` is a theory nobody
+ * confirmed, and pushing it unasked under "a teammate's recorded finding" is
+ * the anchoring §4 exists to prevent. A root cause is substance only once its
+ * status is settled — (b) — and stays a pointer before that.
+ */
+const isStatedDecision = (claim: HintClaimCandidate): boolean =>
+  claim.kind === "decision" && claim.status === "proposed";
 
 /**
  * THE RELEVANCE HALF OF THE GATE, counted by the hub against the query that
@@ -137,33 +213,59 @@ const isStatedFinding = (claim: HintClaimCandidate): boolean =>
  * A shared FILE is none of them: it says two pieces of work are near each
  * other (§4 Solved before). An older hub sends no counts, and a relevance
  * nobody measured fails closed to the pointer.
+ *
+ * ONE RULE ON BOTH SIDES (round 3, H3 + M6): `@crosscheck/schema`
+ * isStrongSubstanceMatch, over the hub's TOPICAL counts — the hub withholds
+ * every body it refuses, so a connector older than this one has nothing
+ * weakly matched to inline.
  */
 const isStrongMatch = (
   claim: HintClaimCandidate,
   context: HintContextCandidate,
-): boolean => {
-  const claimTerms = claim.matchedTerms ?? 0;
-  const treeTerms = context.workContext.matchedTerms ?? 0;
-  return (
-    claimTerms >= HINT_MIN_SHARED_TERMS ||
-    (claimTerms > 0 && treeTerms >= HINT_MIN_SHARED_TERMS) ||
-    context.matchedTargets.some((target) => target.kind === SUBSTANCE_MATCH_KIND)
-  );
-};
+): boolean =>
+  isStrongSubstanceMatch({
+    claimTerms: claim.matchedTerms ?? 0,
+    // STRICT (round 4, C2): one of its words no other candidate says; a hub
+    // that never counted it buys no substance.
+    distinctTerms: claim.distinctTerms ?? 0,
+    treeTerms: context.workContext.matchedTerms ?? 0,
+    isContentIdentity: context.matchedTargets.some((target) => target.kind === SUBSTANCE_MATCH_KIND),
+  });
 
 /**
- * The ONE most relevant claim first: more shared words, then negatives
- * (privileged, §4), then the hub's own claim order — a stable sort over a
- * copy, so the hub's order survives every tie.
+ * A TREE'S STRENGTH (round 3, H3 + M6; `@crosscheck/schema` TreeStrength):
+ * an exact target first — the prompt named something the tree touched, a
+ * fact — then the most TOPICAL query words one of its statements shares (the
+ * hub's `topicalTerms`). A hub too old to send the number is measured here by
+ * the rule the recount floors it with (round 3, follow-up): the most topical
+ * words one of its statements on the wire shares, so an old hub's order no
+ * longer picks the weaker of two trees that both clear the floor.
  */
-const mostRelevantFirst = (
+const strengthOf = (context: HintContextCandidate, selfDeveloperId: string | null, recount: FloorTerms): TreeStrength => ({
+  isExact: context.workContext.tier === "exact",
+  topical:
+    context.topicalTerms ??
+    Math.max(0, ...[wireStatementOf(context), ...recountBodies(context, selfDeveloperId)].map((statement) => statementMatch(recount, statement).topical)),
+  // The tree's own statement breaks a tie on the count (round 4, M1).
+  own: context.workContext.matchedTerms ?? statementMatch(recount, wireStatementOf(context)).topical,
+  // And last, every shared word, a weak one among them (round 4, decision 3).
+  shared:
+    context.sharedTerms ??
+    Math.max(0, ...[wireStatementOf(context), ...recountBodies(context, selfDeveloperId)].map((statement) => statementMatch(recount, statement).floor)),
+});
+
+/**
+ * The order a tree's claims are offered in: most relevant first, more shared
+ * words before fewer, the hub's order on a tie (a stable sort over a copy).
+ */
+const offeringOrder = (
   claims: readonly HintClaimCandidate[],
 ): readonly HintClaimCandidate[] =>
-  [...claims].sort(
-    (left, right) =>
-      (right.matchedTerms ?? 0) - (left.matchedTerms ?? 0) ||
-      Number(isNegativeKnowledge(right)) - Number(isNegativeKnowledge(left)),
-  );
+  [...claims].sort((left, right) => (right.matchedTerms ?? 0) - (left.matchedTerms ?? 0));
+
+/** Whether this claim may be pushed as substance from this tree: trust and relevance, both. */
+const isDeliverable = (claim: HintClaimCandidate, context: HintContextCandidate): boolean =>
+  isInjectable(claim) && isStrongMatch(claim, context);
 
 /**
  * Machine-derived claims are never substance (DESIGN.md §3: Tier-1 drafts
@@ -192,6 +294,17 @@ const isDeclared = (claim: HintClaimCandidate): boolean =>
  */
 const hasBody = (claim: HintClaimCandidate): boolean =>
   claim.body.trim().length > 0;
+
+/**
+ * A body is not yet substance: it must hold a SENTENCE WORTH SHOWING (the
+ * shared cut, @crosscheck/schema substanceSentence — content words, not "1.",
+ * "Yes." or a full stop behind invisible characters). Without one the claim
+ * stays a pointer, so a substance hint never frames nothing and
+ * `prompt_substance` is only ever booked for a finding that was shown
+ * (review of batch 1006, finding 7).
+ */
+const hasSubstanceSentence = (claim: HintClaimCandidate): boolean =>
+  substanceSentence(claim.body).length > 0;
 
 /**
  * THE CODE AXIS OF THE SUBSTANCE GATE (1.0 spec 02 §5, CCB-1/CCB-7).
@@ -223,14 +336,101 @@ const isCodeCurrent = (claim: HintClaimCandidate): boolean =>
 const isInjectable = (claim: HintClaimCandidate): boolean =>
   isDeclared(claim) &&
   hasBody(claim) &&
+  hasSubstanceSentence(claim) &&
   hasEvidence(claim) &&
   claim.status !== "superseded" &&
   isCodeCurrent(claim) &&
-  (isNegativeKnowledge(claim) || isSettled(claim) || isStatedFinding(claim));
+  (isSettledRootCause(claim) || isStatedDecision(claim));
 
-const isEligibleContext = (context: HintContextCandidate): boolean =>
-  context.workContext.tier !== undefined &&
-  HINT_ELIGIBLE_TIERS.has(context.workContext.tier);
+/**
+ * THE CONTENT FLOOR, LOOKED AT AGAIN. The hub keeps only candidates that
+ * share HINT_MIN_SHARED_TERMS words on one of their statements, or hold a
+ * target the query named (server/src/services/hints.ts); this is the second
+ * lock, the shape every rule in this file has. A tree that shares one stray
+ * word is never pointed at — not even after the strong tree beside it was
+ * delivered (the batch-1006 review's probe F).
+ *
+ * A HUB TOO OLD TO REPORT THE NUMBER IS RECOUNTED HERE, BY THE HUB'S OWN RULE
+ * (hold-out review H4; round 3, follow-up): it ranked on its normalized
+ * document, drafts included, and floored nothing. The recount calls the very
+ * function the hub counts with (`@crosscheck/schema` content-floor.ts) —
+ * english lexemes, a closed word's inflection no topic (L1), three topical
+ * words for a long prompt (M7) — on what the wire shows: each context's own
+ * statement (the title and the intent's summary; an old hub sends no
+ * description) and its pushable foreign claim bodies. A tree whose wire
+ * carries no such body earns no hint at all.
+ */
+const clearsContentFloor = (context: HintContextCandidate, input: SelectHintInput, recount: FloorTerms): boolean =>
+  context.workContext.tier === "exact" ||
+  (context.sharedTerms === undefined
+    ? recountsContentFloor(context, input.selfDeveloperId, recount)
+    : context.sharedTerms >= HINT_MIN_SHARED_TERMS);
+
+/** A context's own statement as the wire carries it: its title and its intent's summary. */
+const wireStatementOf = (context: HintContextCandidate): string =>
+  [context.workContext.title, context.workContext.intent?.summary ?? ""].filter((part) => part.length > 0).join(" ");
+
+/**
+ * The claim bodies the recount counts on: PUSHABLE, not merely declared
+ * (round 3, M5: a refuted hypothesis is a declared claim, and its words
+ * qualified a tree a pointer then named on an unrelated observation), and
+ * foreign.
+ */
+const recountBodies = (context: HintContextCandidate, selfDeveloperId: string | null): readonly string[] =>
+  context.claims
+    .filter((claim) => isPushableClaim(claim) && claim.authorDeveloperId !== selfDeveloperId && claim.body.trim().length > 0)
+    .map((claim) => claim.body);
+
+/**
+ * The floor terms against an old hub, under the one rule (`@crosscheck/schema`
+ * floorTermsOf): counted on the prompt's ranked terms that some statement ON
+ * THE WIRE says — a word no wire statement says cannot match one, so that
+ * count is exact — while the long-prompt test takes every ranked word as one
+ * the team may know. An old hub puts three trees on the wire, a fraction of
+ * the repo the tip hub counts known words in; a 120-word status report
+ * looked short through that keyhole and cleared on "usage", "shows" and
+ * "wrong". Failing closed costs a long task its hint against an old hub when
+ * it shares only two topical words with its tree.
+ */
+export const recountFloorTermsOf = (input: SelectHintInput): FloorTerms =>
+  floorTermsOf(
+    { topical: input.promptTopicalTerms },
+    knownTermsIn(
+      input.promptTerms,
+      input.candidates.flatMap((context) => [wireStatementOf(context), ...recountBodies(context, input.selfDeveloperId)]),
+    ),
+    Math.min(input.promptTerms.length, HINT_MAX_EXAMINED_TERMS),
+  );
+
+/** THE RECOUNT'S FLOOR: one of the context's statements on the wire clears it, by the hub's own rule. */
+export const clearsRecountedFloor = (context: HintContextCandidate, selfDeveloperId: string | null, floor: FloorTerms): boolean =>
+  [wireStatementOf(context), ...recountBodies(context, selfDeveloperId)].some((statement) => clearsFloorOn(floor, statement));
+
+const recountsContentFloor = (context: HintContextCandidate, selfDeveloperId: string | null, floor: FloorTerms): boolean =>
+  recountBodies(context, selfDeveloperId).length > 0 && clearsRecountedFloor(context, selfDeveloperId, floor);
+
+const isEligibleContext =
+  (input: SelectHintInput, recount: FloorTerms) =>
+  (context: HintContextCandidate): boolean =>
+    context.workContext.tier !== undefined &&
+    HINT_ELIGIBLE_TIERS.has(context.workContext.tier) &&
+    clearsContentFloor(context, input, recount);
+
+/**
+ * A claim that may drive a PUSHED hint — the hub's own rule, applied again
+ * for a hub that still ships the rows (server services/pushable-claims.ts):
+ * declared, and not refuted — a `rejected_approach` is "rejected" by
+ * definition and stays. A draft, discarded or not, is neither one of the
+ * tree's claims here nor a reason to point at it (draft-nudge review).
+ */
+const isPushableClaim = (claim: HintClaimCandidate): boolean =>
+  isDeclared(claim) && (claim.status !== "rejected" || claim.kind === "rejected_approach");
+
+/** The context with only the claims the push path may see. */
+const withPushableClaims = (context: HintContextCandidate): HintContextCandidate => ({
+  ...context,
+  claims: context.claims.filter(isPushableClaim),
+});
 
 /** Not the reader's own words, however the context they sit in matched. */
 const isForeignClaim = (
@@ -263,6 +463,18 @@ const isForeignIntentOnly = (
   return context.workContext.developerId !== selfDeveloperId;
 };
 
+/**
+ * A context a pointer may still name: neither it nor any of its claims was
+ * already shown. The pointer pass below and the flow's fallback for a
+ * finding too long to show (flows/hint.ts) apply this one rule.
+ */
+export const isUnpointed = (
+  context: HintContextCandidate,
+  seen: ReadonlySet<string>,
+): boolean =>
+  !seen.has(context.workContext.id) &&
+  !context.claims.some((claim) => seen.has(claim.id));
+
 export const selectHint = (input: SelectHintInput): HintSelection => {
   if (input.deliveredCount >= MAX_HINTS_PER_SESSION) {
     return SILENCE;
@@ -277,81 +489,96 @@ export const selectHint = (input: SelectHintInput): HintSelection => {
     return SILENCE;
   }
   const seen = new Set(input.seenRefIds);
-  const eligible = input.candidates.filter(isEligibleContext);
-
-  // Substance pass over ALL eligible contexts first: an evidence-backed claim
-  // in the second-ranked context beats a pointer at the first-ranked one.
-  for (const context of eligible) {
-    // The most relevant claim first; negatives are privileged (§4) on a tie.
-    const foreign = context.claims.filter((claim) =>
-      isForeignClaim(claim, selfDeveloperId),
-    );
-    const injectable = mostRelevantFirst(foreign).find(
-      (claim) =>
-        isInjectable(claim) && isStrongMatch(claim, context) && !seen.has(claim.id),
-    );
-    if (injectable !== undefined) {
-      // The rest are the OTHER teammate claims of the tree — what the hint's
-      // pointer line says is one get_diagnosis away.
-      return { kind: "claim", context, claim: injectable, restCount: foreign.length - 1 };
-    }
+  const recount = recountFloorTermsOf(input);
+  const eligible = input.candidates.filter(isEligibleContext(input, recount)).map(withPushableClaims);
+  // THE ONE STRONGEST TREE A POINTER COULD NAME, shown already or not (round
+  // 3, H3 + M6; round 4, C2): substance comes only from it, a weaker tree is
+  // never pointed at in its place — and a TIE at the top says nothing at all,
+  // since the hub's order between equals is search rank, not relevance.
+  const pointable = eligible.filter((context) => pointerAt(context, selfDeveloperId) !== null);
+  const strongestIndex = strongestTreeIndex(pointable.map((context) => strengthOf(context, selfDeveloperId, recount)));
+  const context = strongestIndex === null ? undefined : pointable[strongestIndex];
+  if (context === undefined) {
+    return SILENCE;
+  }
+  // THE SAME TREE IS NEVER HINTED TWICE IN A SESSION (round 4, decision 11):
+  // a tree a hint pointed at, or showed a finding of, says nothing more — the
+  // round-4 hold-out's scripted sessions showed one tree twice in 24 of them.
+  // A tree only the briefing named still shows its finding.
+  if (!isUnpointed(context, new Set(input.hintedRefIds ?? input.seenRefIds))) {
+    return SILENCE;
   }
 
-  // Pointer pass: the best-ranked unseen context — one with foreign claims,
-  // one the prompt named a file of (#19), or one whose owner stated an intent
-  // (#16, the claimless "same topic, different files" case). "Unseen" covers
-  // the context id AND its claims: once substance from a context was
-  // delivered, re-surfacing the same context as a pointer is noise, not news.
-  for (const context of eligible) {
-    if (seen.has(context.workContext.id)) {
-      continue;
-    }
-    if (context.claims.some((claim) => seen.has(claim.id))) {
-      continue;
-    }
-    const foreignCount = context.claims.filter((claim) =>
-      isForeignClaim(claim, selfDeveloperId),
-    ).length;
-    if (foreignCount > 0) {
-      return { kind: "pointer", context, claimCount: foreignCount };
-    }
-    // #19 targets-only pointer: the EXACT tier is a fact — the prompt named a
-    // file this context targeted — so a body-less pointer at zero claims is
-    // precise, not a guess. FTS-only stays silent: a lexical body match is too
-    // loose to point on without a claim behind it (keep precision, §4).
-    //
-    // Self-exclusion is checked HERE too, not left to the hub. The claim
-    // pointer above gets it free (own claims are never foreign, so
-    // foreignCount stays 0); a targets-only pointer has no claim to derive it
-    // from, and the reader's OWN earlier session is exactly what an exact path
-    // match finds. The hub excludes the caller today, but §4 makes the
-    // selector the second line of defence, and one self-pointer costs a
-    // teammate's slot out of the five a session gets (§10 risk 1).
-    if (
-      context.workContext.tier === "exact" &&
-      context.workContext.developerId !== selfDeveloperId
-    ) {
-      const target = context.matchedTargets.find(
-        (matched) => matched.kind === "file",
-      );
-      if (target !== undefined) {
-        return {
-          kind: "pointer",
-          context,
-          claimCount: 0,
-          matchedTarget: { value: target.value, createdAt: target.createdAt ?? null },
-        };
-      }
-    }
-    // #16 intent-only pointer, AFTER #19: a context can carry both an intent
-    // and a file the prompt named, and the touched-file fact is the more
-    // precise of the two — so the targets tail wins the tail slot and the
-    // intent still rides along on its own line (hints/render.ts intentLines).
-    // This fires where main was silent: any tier, no file target, but an owner
-    // who said what they are doing.
-    if (isForeignIntentOnly(context, selfDeveloperId)) {
-      return { kind: "pointer", context, claimCount: 0 };
+  // Substance from that tree first: an evidence-backed claim beats a pointer
+  // at its own tree — within it the claim sharing most topical words, each
+  // strictly matched (C2).
+  const claim = offeringOrder(context.claims.filter((member) => isForeignClaim(member, selfDeveloperId))).find(
+    (member) => isDeliverable(member, context) && !seen.has(member.id),
+  );
+  if (claim !== undefined) {
+    const foreign = context.claims.filter((member) => isForeignClaim(member, selfDeveloperId));
+    // The rest are the tree's OTHER claims — the reader's own among them,
+    // since get_diagnosis reads those too — what the hint's pointer line
+    // says is one call away.
+    return {
+      kind: "claim",
+      context,
+      claim,
+      restCount: context.claims.length - 1,
+      isRestLowerBound: context.claimsTruncated === true,
+      ifUnfit: isUnpointed(context, seen)
+        ? { kind: "pointer", context, claimCount: foreign.length }
+        : SILENCE,
+    };
+  }
+
+  // Otherwise a pointer at the STRONGEST tree (H3 + M6), only if it is
+  // unseen — never a weaker tree in its place. "Unseen" covers the context id
+  // AND its claims: once substance from a context was delivered, re-surfacing
+  // the same context as a pointer is noise, not news.
+  return isUnpointed(context, seen) ? (pointerAt(context, selfDeveloperId) ?? SILENCE) : SILENCE;
+};
+
+type PointerSelection = Extract<HintSelection, { readonly kind: "pointer" }>;
+
+/**
+ * The pointer one context can carry, seen or not: one with foreign claims,
+ * one the prompt named a file of (#19), or one whose owner stated an intent
+ * (#16, the claimless "same topic, different files" case) — or none.
+ */
+const pointerAt = (context: HintContextCandidate, selfDeveloperId: string): PointerSelection | null => {
+  const foreignCount = context.claims.filter((claim) => isForeignClaim(claim, selfDeveloperId)).length;
+  if (foreignCount > 0) {
+    return { kind: "pointer", context, claimCount: foreignCount };
+  }
+  // #19 targets-only pointer: the EXACT tier is a fact — the prompt named a
+  // file this context targeted — so a body-less pointer at zero claims is
+  // precise, not a guess. FTS-only stays silent: a lexical body match is too
+  // loose to point on without a claim behind it (keep precision, §4).
+  //
+  // Self-exclusion is checked HERE too, not left to the hub. The claim
+  // pointer above gets it free (own claims are never foreign, so
+  // foreignCount stays 0); a targets-only pointer has no claim to derive it
+  // from, and the reader's OWN earlier session is exactly what an exact path
+  // match finds. The hub excludes the caller today, but §4 makes the
+  // selector the second line of defence, and one self-pointer costs a
+  // teammate's slot out of the five a session gets (§10 risk 1).
+  if (context.workContext.tier === "exact" && context.workContext.developerId !== selfDeveloperId) {
+    const target = context.matchedTargets.find((matched) => matched.kind === "file");
+    if (target !== undefined) {
+      return {
+        kind: "pointer",
+        context,
+        claimCount: 0,
+        matchedTarget: { value: target.value, createdAt: target.createdAt ?? null },
+      };
     }
   }
-  return SILENCE;
+  // #16 intent-only pointer, AFTER #19: a context can carry both an intent
+  // and a file the prompt named, and the touched-file fact is the more
+  // precise of the two — so the targets tail wins the tail slot and the
+  // intent still rides along on its own line (hints/render.ts intentLines).
+  // This fires where main was silent: any tier, no file target, but an owner
+  // who said what they are doing.
+  return isForeignIntentOnly(context, selfDeveloperId) ? { kind: "pointer", context, claimCount: 0 } : null;
 };

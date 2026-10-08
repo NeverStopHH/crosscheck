@@ -98,10 +98,15 @@ const robinWork = (h: TestHarness): readonly Record<string, unknown>[] => [
   recordEnvelope("claim", validClaimBody({ id: "clm_r_obs", workContextId: "wc_robin_a", authorSessionId: ROBIN_S, kind: "observation", body: HER_WORDS.logLineClaim, createdAt: now(h) }), { sessionId: ROBIN_S }),
   recordEnvelope("claim", validClaimBody({ id: "clm_r_bisect", workContextId: "wc_robin_a", authorSessionId: ROBIN_S, kind: "evidence", body: `Bisected to ${BISECT_SHA}: the key id is dropped in mapKey()`, createdAt: now(h) }), { sessionId: ROBIN_S }),
   recordEnvelope("claim", validClaimBody({ id: "clm_r_sha", workContextId: "wc_robin_a", authorSessionId: ROBIN_S, kind: "evidence", body: BISECT_SHA, createdAt: now(h) }), { sessionId: ROBIN_S }),
-  // The root cause cites the bisected COMMIT as its evidence (agents do).
-  recordEnvelope("claim", validClaimBody({ id: "clm_r_root", workContextId: "wc_robin_a", authorSessionId: ROBIN_S, kind: "root_cause", status: "likely_root_cause", confidence: 0.9, evidenceRefs: [BISECT_SHA], body: "mapKey() drops the key id on rotation", verificationRef: `error_fingerprint:${FINGERPRINT}`, affectedPaths: ["src/auth/refresh.ts"], createdAt: now(h) }), { sessionId: ROBIN_S }),
-  // A root cause on her host-titled tree citing a claim AND a CI run number.
-  recordEnvelope("claim", validClaimBody({ id: "clm_r_b_root", workContextId: "wc_robin_b", authorSessionId: ROBIN_S, kind: "root_cause", status: "likely_root_cause", confidence: 0.8, evidenceRefs: ["clm_r_bisect", CI_RUN], body: "Stale cache entry survives rotation", createdAt: now(h) }), { sessionId: ROBIN_S }),
+  // The root cause cites the bisected COMMIT as its evidence (agents do),
+  // beside the bisect finding in its own tree: a commit is no claim, so by
+  // the evidence rule (`@crosscheck/schema` evidence-resolution.ts, H5) it
+  // alone solves nothing, on the hub or in the connector.
+  recordEnvelope("claim", validClaimBody({ id: "clm_r_root", workContextId: "wc_robin_a", authorSessionId: ROBIN_S, kind: "root_cause", status: "likely_root_cause", confidence: 0.9, evidenceRefs: [BISECT_SHA, "clm_r_bisect"], body: "mapKey() drops the key id on rotation", verificationRef: `error_fingerprint:${FINGERPRINT}`, affectedPaths: ["src/auth/refresh.ts"], createdAt: now(h) }), { sessionId: ROBIN_S }),
+  // A root cause on her host-titled tree citing a claim AND a CI run number —
+  // a claim in the same tree, the one evidence the connector can judge.
+  recordEnvelope("claim", validClaimBody({ id: "clm_r_b_ev", workContextId: "wc_robin_b", authorSessionId: ROBIN_S, kind: "evidence", body: "The cache entry outlives the key rotation by ten minutes", createdAt: now(h) }), { sessionId: ROBIN_S }),
+  recordEnvelope("claim", validClaimBody({ id: "clm_r_b_root", workContextId: "wc_robin_b", authorSessionId: ROBIN_S, kind: "root_cause", status: "likely_root_cause", confidence: 0.8, evidenceRefs: ["clm_r_b_ev", CI_RUN], body: "Stale cache entry survives rotation", createdAt: now(h) }), { sessionId: ROBIN_S }),
 ];
 
 const askAndAnswer = async (h: TestHarness, nick: TestDeveloper, robin: TestDeveloper): Promise<void> => {

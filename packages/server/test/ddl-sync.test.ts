@@ -518,6 +518,21 @@ describe("bootstrap.sql DDL sync", () => {
     }
   });
 
+  test("M7's two delivery columns reach an EXISTING hub, not only a fresh one (review 1006b)", async () => {
+    // Arrange — the same trap as the channel column: read as text, because
+    // every harness database is fresh and never runs the ALTER
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+
+    // Assert — both halves of each
+    for (const fragment of [
+      "ALTER TABLE hint_deliveries ADD COLUMN IF NOT EXISTS matched_on text;",
+      "ALTER TABLE hint_deliveries ADD COLUMN IF NOT EXISTS intent_provenance text;",
+      "  matched_on text,\n  intent_provenance text,",
+    ]) {
+      expect(bootstrapSql, fragment).toContain(fragment);
+    }
+  });
+
   test("the channel column really exists after a bootstrap", async () => {
     // Arrange — the assertions above read SQL as text. This one asks the
     // database, which is the only authority that settles whether the two

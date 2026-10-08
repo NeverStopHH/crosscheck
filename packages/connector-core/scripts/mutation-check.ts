@@ -325,7 +325,7 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "the sanitizer stops stripping zero-width and format characters",
-    file: `${CORE}/src/briefing/sanitize.ts`,
+    file: `${SCHEMA}/src/untrusted-text.ts`,
     from: '    .replace(ZERO_WIDTH_PATTERN, "")\n',
     to: "",
     test: `${CORE}/test/injection-corpus.test.ts`,
@@ -342,7 +342,7 @@ export const MUTATIONS: readonly Mutation[
     // arrangement honest: narrow the implementation's class and the corpus must
     // notice.
     label: "the sanitizer narrows to control characters only",
-    file: `${CORE}/src/briefing/sanitize.ts`,
+    file: `${SCHEMA}/src/untrusted-text.ts`,
     from: String.raw`\\p{Cc}\\p{Cf}`,
     to: String.raw`\\p{Cc}`,
     test: `${CORE}/test/injection-corpus.test.ts`,
@@ -353,7 +353,7 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "the sanitizer spaces zero-width characters instead of removing them",
-    file: `${CORE}/src/briefing/sanitize.ts`,
+    file: `${SCHEMA}/src/untrusted-text.ts`,
     from: '    .replace(ZERO_WIDTH_PATTERN, "")',
     to: '    .replace(ZERO_WIDTH_PATTERN, " ")',
     test: `${CORE}/test/injection-corpus.test.ts`,
@@ -373,7 +373,7 @@ export const MUTATIONS: readonly Mutation[
     // (`tag-characters-unassigned`), and this mutation is what keeps that
     // payload from being deleted along with the range it guards.
     label: "the sanitizer stops covering the unassigned tag code points",
-    file: `${CORE}/src/briefing/sanitize.ts`,
+    file: `${SCHEMA}/src/untrusted-text.ts`,
     from: String.raw`\\u{E0000}-\\u{E007F}`,
     to: "",
     test: `${CORE}/test/injection-corpus.test.ts`,
@@ -386,7 +386,7 @@ export const MUTATIONS: readonly Mutation[
     // guessing at ranges — scripts/default-ignorable-sweep.ts. Each of these
     // four reproduced the U+034F phrase-filter bypass on its own.
     label: "the sanitizer stops covering the Mongolian free variation selectors",
-    file: `${CORE}/src/briefing/sanitize.ts`,
+    file: `${SCHEMA}/src/untrusted-text.ts`,
     from: String.raw`\\u180B-\\u180D\\u180F`,
     to: "",
     test: `${CORE}/test/injection-corpus.test.ts`,
@@ -762,7 +762,7 @@ export const MUTATIONS: readonly Mutation[
     // sharing the predicate buys. This gives the body reader its own rule.
     label: "the solved body stops obeying the standing-claim rule",
     file: `${SERVER}/src/services/solved.ts`,
-    from: `    .where(solvedClaimCondition(contextIds))
+    from: `    .where(candidateClaimCondition(contextIds))
     .orderBy(desc(claims.createdAt))`,
     to: `    .where(inArray(claims.workContextId, [...contextIds]))
     .orderBy(desc(claims.createdAt))`,
@@ -1058,7 +1058,11 @@ export const MUTATIONS: readonly Mutation[
     file: `${CORE}/src/hints/select.ts`,
     from: '  "likely_root_cause",\n  "partially_confirmed",\n]);',
     to: '  "likely_root_cause",\n  "partially_confirmed",\n  "proposed",\n]);',
-    test: `${CORE}/test/hint-select.test.ts`,
+    // RETARGETED TEST (round 3, follow-up): substance is a root cause or a
+    // decision since review 1006b H4, so a proposed HYPOTHESIS is turned away
+    // by its kind and the status list only decides a proposed ROOT CAUSE —
+    // pinned in hint-substance-select.test.ts (principle 5).
+    test: `${CORE}/test/hint-substance-select.test.ts`,
     because:
       "proposed joins the injectable statuses, so a teammate's guess with a " +
       "couple of self-referential evidence refs is pushed as substance " +
@@ -1201,7 +1205,11 @@ export const MUTATIONS: readonly Mutation[
     file: `${SERVER}/src/services/search.ts`,
     from: "export const SOLVED_DECAY_FLOOR = 0.7;",
     to: "export const SOLVED_DECAY_FLOOR = 0;",
-    test: `${CORE}/test/precision-corpus.test.ts`,
+    // RETARGETED TEST (round 3, follow-up): the hint path's per-candidate
+    // floor now refuses the corpus's noise contexts before their rank counts,
+    // so pr_idx_solved_recall holds whatever the decay; the ranking itself is
+    // where the floor is observable.
+    test: `${SERVER}/test/solved-ranking.test.ts`,
     because:
       "a 70-day solved tree decays below three fresh noise contexts and " +
       "falls out of HINT_MAX_CONTEXTS, so the answer somebody already found " +
@@ -2496,8 +2504,9 @@ export const MUTATIONS: readonly Mutation[
     // pointer. This narrows the pointer pass back to contexts with claims.
     label: "an intent-only context stops earning a pointer",
     file: `${CORE}/src/hints/select.ts`,
-    from: "    if (isForeignIntentOnly(context, selfDeveloperId)) {\n      return { kind: \"pointer\", context, claimCount: 0 };\n    }\n",
-    to: "",
+    // RETARGETED (round 3, H3 + M6): one context's pointer is pointerAt now.
+    from: "  return isForeignIntentOnly(context, selfDeveloperId) ? { kind: \"pointer\", context, claimCount: 0 } : null;",
+    to: "  return null;",
     test: `${CORE}/test/hint-select.test.ts`,
     because:
       "a teammate whose session states exactly what it is doing, but has " +
@@ -3432,31 +3441,26 @@ export const MUTATIONS: readonly Mutation[
       "paths.ts states never happens to a report",
   },
   {
-    // Audit row V2-X4. The client-side declared-only gate stays either way;
-    // this is about the BYTES, which is the only half that holds against a
-    // connector nobody in this repo wrote.
+    // Audit row V2-X4, now held by the window itself (draft-nudge review):
+    // no draft ROW reaches the hint wire, so the body ternary that used to
+    // carry this guard is the second lock and no test can see it alone.
     label: "the hint wire ships an unpromoted draft's body",
     file: `${SERVER}/src/services/hints.ts`,
-    from: 'body: row.claim.provenance === DECLARED_PROVENANCE ? row.claim.body : "",',
-    to: "body: row.claim.body,",
+    from: "        pushableClaimCondition(),\n      ),\n    )\n    .orderBy(desc(claims.createdAt))",
+    to: "      ),\n    )\n    .orderBy(desc(claims.createdAt))",
     test: `${SERVER}/test/hints.test.ts`,
     because:
       "a machine guess nobody reviewed — including a ghost draft a THIRD " +
       "party influenced through a model — lands on every teammate's machine " +
       "in full, one client change away from being rendered as a finding",
   },
-  {
-    // The other half of V2-X4, on the reader's side of the wire.
-    label: "a withheld claim body renders as empty substance",
-    file: `${CORE}/src/hints/select.ts`,
-    from: "  hasBody(claim) &&",
-    to: "",
-    test: `${CORE}/test/hint-select.test.ts`,
-    because:
-      "a hub that withholds a body the selector still accepts produces a " +
-      "fully trust-labelled hint with «» where the finding should be, which " +
-      "reads as «Nick looked and found nothing»",
-  },
+  // EQUIVALENT, NOT ANCHORED (round 3, follow-up) — "a withheld claim body
+  // renders as empty substance", which deleted `hasBody(claim) &&` from
+  // isInjectable in hints/select.ts: the conjunction's next clause,
+  // hasSubstanceSentence, needs a sentence with content words and an empty
+  // or blank body has none, so the line can never decide alone. The other
+  // half of V2-X4 stays guarded by every "is a pointer, never a frame around
+  // nothing" case. Recorded so it is not re-reported as a gap.
   {
     // Audit row M12-rest. The default text-search parser reads a branch name
     // and a path as ONE `file` token, so without the derived word bag the
@@ -3587,7 +3591,7 @@ export const MUTATIONS: readonly Mutation[
     // that does the removing, so the widened path could have stopped
     // redacting anything while all of them stayed green.
     label: "the span redaction removes nothing at all",
-    file: `${CORE}/src/briefing/sanitize.ts`,
+    file: `${SCHEMA}/src/untrusted-text.ts`,
     from: "  const redacted = cleaned.replace(INJECTION_SPAN_PATTERN, REDACTED_SPAN);",
     to: "  const redacted = cleaned;",
     test: `${CORE}/test/body-redaction.test.ts`,
@@ -4504,8 +4508,9 @@ export const MUTATIONS: readonly Mutation[
     // session surfaces. The hub excludes the caller; this is the second line.
     label: "the targets-only pointer points at the reader's own work",
     file: `${CORE}/src/hints/select.ts`,
-    from: "      context.workContext.developerId !== selfDeveloperId",
-    to: "      true",
+    // RETARGETED (round 3, H3 + M6): one context's pointer is pointerAt now.
+    from: "  if (context.workContext.tier === \"exact\" && context.workContext.developerId !== selfDeveloperId) {",
+    to: "  if (context.workContext.tier === \"exact\" && true) {",
     test: `${CORE}/test/hint-select.test.ts`,
     because:
       "a hub that fails to exclude the caller makes the reader's own earlier " +
@@ -4530,8 +4535,9 @@ export const MUTATIONS: readonly Mutation[
     // back the structural death: a hub with 0 claims never hints at all.
     label: "the targets-only pointer is disabled",
     file: `${CORE}/src/hints/select.ts`,
-    from: '      context.workContext.tier === "exact" &&',
-    to: "      false &&",
+    // RETARGETED (round 3, H3 + M6): one context's pointer is pointerAt now.
+    from: "  if (context.workContext.tier === \"exact\" && context.workContext.developerId !== selfDeveloperId) {",
+    to: "  if (false && context.workContext.developerId !== selfDeveloperId) {",
     test: `${CORE}/test/hint-select.test.ts`,
     because:
       "a teammate's context that targeted the very file the prompt names " +
@@ -6644,19 +6650,15 @@ export const MUTATIONS: readonly Mutation[
       "injected in July unqualified — AT-2's whole subject — and a hub " +
       "forging a clean status past the superseding edge is believed",
   },
-  {
-    // The connector-side status check spec 02 §5 asks to DELETE, kept as
-    // defence in depth. Anchored so "it changes nothing" stays testable.
-    label: "the forging-hub lock on a superseded status is deleted",
-    file: `${CORE}/src/hints/select.ts`,
-    from: '  claim.status !== "superseded" &&',
-    to: "",
-    test: `${CORE}/test/claim-substance-gate.test.ts`,
-    because:
-      "a hub asserting `status: superseded` beside a `current` validity is " +
-      "asserting two contradictory things, and the connector believes the " +
-      "half that puts a retracted claim back into the prompt lane",
-  },
+  // EQUIVALENT, NOT ANCHORED (round 3, follow-up) — "the forging-hub lock on a
+  // superseded status is deleted", which removed `claim.status !==
+  // "superseded" &&` from isInjectable in hints/select.ts. Since review 1006b
+  // H4 the conjunction ends in a positive status test — a root cause settled
+  // as likely_root_cause or partially_confirmed, or a decision still
+  // proposed — so a claim a hub reports superseded fails that test whatever
+  // its validity says, and the lock can never decide alone. It stays in the
+  // code as defence in depth, as spec 02 §5's note above it says. Recorded so
+  // it is not re-reported as a gap.
   {
     // 1.0 spec 02 CCB-3. AT-2 requires the downgrade to NAME the commits.
     label: "a downgrade says the code moved and names no commit",
@@ -12085,8 +12087,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the prompt's call carries no notices",
     file: `${SERVER}/src/routes/hints.ts`,
-    from: "    return ok(c, { candidates, answers, coverage, notices, recordsOutcomes: settings.pilotEnrolled });",
-    to: "    return ok(c, { candidates, answers, coverage, recordsOutcomes: settings.pilotEnrolled });",
+    from: "      notices,\n      recordsOutcomes: settings.pilotEnrolled,\n",
+    to: "      recordsOutcomes: settings.pilotEnrolled,\n",
     test: `${SERVER}/test/landed-notices.test.ts`,
     because: "an author in a live session hears nothing until their next session",
   },
@@ -19808,71 +19810,65 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a content-free prompt matches teammate work on one stray word",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "      candidate.workContext.tier === \"exact\" || sharedTerms >= HINT_MIN_SHARED_TERMS,",
-    to: "      true,",
+    from: "  tier === \"exact\" || sharedTerms >= HINT_MIN_SHARED_TERMS;",
+    to: "  true;",
     test: `${SERVER}/test/hint-content-floor.test.ts`,
     because: "\"mache weiter\" and \"limit ist zurückgesetzt\" point the agent at a teammate's tree again, the pilot's 5 of 5",
   },
-  {
-    label: "a content-free prompt ignores the session's intent",
-    file: `${SERVER}/src/services/hints.ts`,
-    from: "  const intent = input.intent?.trim() ?? \"\";",
-    to: "  const intent = \"\";",
-    test: `${SERVER}/test/hint-content-floor.test.ts`,
-    because: "a session that stated what it is doing hears nothing about the teammate work on the same thing whenever it types \"weiter\"",
-  },
+  // SUPERSEDED AND REMOVED, 2026-10-06 — "a content-free prompt ignores the
+  // session's intent", "the session's intent never reaches the hub" and "a
+  // credential-shaped intent is sent to the hub". All three guarded the
+  // intent stand-in, which the owner removed (review 1006b, M6: no hint on a
+  // content-free prompt, the stand-in included). The code they mutated is
+  // gone; what replaces them is the opposite guarantee, pinned by
+  // hint-content-floor.test.ts (an intent an older connector still sends is
+  // not matched) and hint-intent-fallback.test.ts (no intent on the wire).
   {
     label: "two spellings of one word count as two agreeing words",
-    file: `${SERVER}/src/services/hints.ts`,
-    from: "count(DISTINCT term.lexeme::text)::int",
-    to: "count(term.lexeme)::int",
-    test: `${SERVER}/test/hint-content-floor.test.ts`,
+    // RETARGETED (round 3, follow-up): the hub and the connector count by one function,
+    // pinned on a topical word — since C1 the meta words of the old test count for nothing.
+    // RETARGETED (round 4, C2): the count is the size of the shared lexemes, which C2 reads as words.
+    file: `${SCHEMA}/src/content-floor.ts`,
+    from: "export const sharedTermCount = (terms: readonly string[], said: ReadonlySet<string>): number => sharedLexemes(terms, said).size;",
+    to: "export const sharedTermCount = (terms: readonly string[], said: ReadonlySet<string>): number =>\n  terms.map(termLexeme).filter((lexeme) => said.has(lexeme)).length;",
+    test: `${SCHEMA}/test/content-floor.test.ts`,
     because: "\"limit limits limiting\" carries a task and a claim's relevance doubles with every inflection the prompt repeats",
   },
   {
     label: "words from two different claims count as agreeing on one statement",
+    // RETARGETED (round 3, C1): the per-claim count is the topical floor count now.
+    // RETARGETED (round 3, follow-up): counted in TypeScript by the shared rule.
+    // RETARGETED (round 4, C2): one helper counts a context's statements, and the words they say.
     file: `${SERVER}/src/services/hints.ts`,
-    from: "sharedTerms: Math.max(ownTerms, ...contextClaims.map((claim) => claim.matchedTerms)),",
-    to: "sharedTerms: ownTerms + contextClaims.reduce((total, claim) => total + claim.matchedTerms, 0),",
+    from: "    floor: Math.max(0, ...matches.map((match) => match.floor)),",
+    to: "    floor: matches.reduce((total, match) => total + match.floor, 0),",
     test: `${SERVER}/test/hint-content-floor.test.ts`,
     because: "\"weiter\" in a German claim plus \"limit\" in another make a limit note look like a task",
   },
   {
     label: "the tree's own shared words never reach the selector",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "          matchedTerms: ownTerms,",
-    to: "          matchedTerms: 0,",
+    from: "      matchedTerms: ownTerms,",
+    to: "      matchedTerms: 0,",
     test: `${SERVER}/test/hint-content-floor.test.ts`,
     because: "a finding in a tree clearly about the prompt, sharing one word itself, falls back to a pointer nobody opens",
   },
   {
-    label: "the session's intent never reaches the hub",
-    file: `${CORE}/src/flows/hint.ts`,
-    from: "    ...(intent === undefined ? {} : { intent }),",
-    to: "",
-    test: `${CORE}/test/hint-intent-fallback.test.ts`,
-    because: "the hub cannot match the session's work in place of \"ja\", so the fallback is dead code",
-  },
-  {
     label: "a prompt with no searchable word goes on the wire",
     file: `${CORE}/src/flows/hint.ts`,
-    from: "  const promptQuery = hasSearchableWord(input.prompt)\n    ? input.prompt.slice(0, MAX_SEARCH_QUERY_CHARS)\n    : \"\";",
-    to: "  const promptQuery = input.prompt.slice(0, MAX_SEARCH_QUERY_CHARS);",
+    // RETARGETED (round 3, M7): the query is the prompt's window now.
+    // RETARGETED (round 3, L4): the verdict is the hook's one classification.
+    // RETARGETED (round 4, C1): a continuation signal stays home beside it.
+    // RETARGETED (round 5, C1): the query is the prompt's task, or nothing.
+    from: "  const promptQuery = task === null ? \"\" : queryOf(task.text, task.terms.ranked);",
+    to: "  const promptQuery = queryOf(humanText, terms.ranked);",
     test: `${CORE}/test/hint-intent-fallback.test.ts`,
     because: "\"ok ja\" leaves the machine as a search query and costs a hub call it can never use",
   },
   {
-    label: "a credential-shaped intent is sent to the hub",
-    file: `${CORE}/src/flows/hint.ts`,
-    from: "intent === null || !hasSearchableWord(intent) || containsSecret(intent)",
-    to: "intent === null || !hasSearchableWord(intent)",
-    test: `${CORE}/test/hint-intent-fallback.test.ts`,
-    because: "an intent carrying an AKIA key lands in the hub's request path and access logs as a GET string",
-  },
-  {
     label: "an intent-matched hint claims to relate to the prompt",
     file: `${CORE}/src/hints/render.ts`,
-    from: "  const header = input.matchedOn === \"intent\" ? CLAIM_INTENT_HEADER : CLAIM_HEADER;",
+    from: "  const header = claimHeader(input.matchedOn, input.intentProvenance);",
     to: "  const header = CLAIM_HEADER;",
     test: `${CORE}/test/hint-intent-fallback.test.ts`,
     because: "the agent reads a finding as related to \"weiter\" when it was matched on the session's stated intent",
@@ -19880,55 +19876,61 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a weak match delivers a teammate's finding as substance",
     file: `${CORE}/src/hints/select.ts`,
-    from: "        isInjectable(claim) && isStrongMatch(claim, context) && !seen.has(claim.id),",
-    to: "        isInjectable(claim) && !seen.has(claim.id),",
+    from: "  isInjectable(claim) && isStrongMatch(claim, context);",
+    to: "  isInjectable(claim);",
     test: `${CORE}/test/hint-substance-select.test.ts`,
     because: "one shared word puts a teammate's sentence in the agent's context unasked — the single-token path the pilot condemned",
   },
   {
     label: "an evidence-backed decision on a strong match stays a pointer",
     file: `${CORE}/src/hints/select.ts`,
-    from: "  (isNegativeKnowledge(claim) || isSettled(claim) || isStatedFinding(claim));",
-    to: "  (isNegativeKnowledge(claim) || isSettled(claim));",
+    from: "  (isSettledRootCause(claim) || isStatedDecision(claim));",
+    to: "  isSettledRootCause(claim);",
     test: `${CORE}/test/hint-substance-select.test.ts`,
     because: "a decision can never reach a settled status, so it stays behind a get_diagnosis no agent makes",
   },
   {
     label: "a rejected decision is injected as substance",
     file: `${CORE}/src/hints/select.ts`,
-    from: "  STATED_KINDS.has(claim.kind) && claim.status === \"proposed\";",
-    to: "  STATED_KINDS.has(claim.kind);",
+    from: "  claim.kind === \"decision\" && claim.status === \"proposed\";",
+    to: "  claim.kind === \"decision\";",
+    // A REJECTED decision is already off the push path (isPushableClaim), so
+    // the case that shows this line is a status this build does not know —
+    // the positive equality's fail-closed half (round 3, follow-up).
     test: `${CORE}/test/hint-substance-select.test.ts`,
-    because: "a decision its own tree turned down reaches the reader as a recorded finding",
+    because: "a decision under a status nobody here knows — a turned-down or a future one — reaches the reader as a recorded finding",
   },
   {
     label: "a strongly matched tree lends substance to a claim about something else",
-    file: `${CORE}/src/hints/select.ts`,
-    from: "    (claimTerms > 0 && treeTerms >= HINT_MIN_SHARED_TERMS) ||",
-    to: "    (treeTerms >= HINT_MIN_SHARED_TERMS) ||",
+    // RETARGETED (round 3, H3 + M6): the strong-match rule is the shared one in the schema.
+    // RETARGETED (round 4, C2): the claim's own two words are the rule; the tree's may stand in.
+    file: `${SCHEMA}/src/substance-trust.ts`,
+    from: "  (match.claimTerms >= SUBSTANCE_MIN_MATCHED_TERMS &&",
+    to: "  ((match.claimTerms >= SUBSTANCE_MIN_MATCHED_TERMS || match.treeTerms >= SUBSTANCE_MIN_MATCHED_TERMS) &&",
     test: `${CORE}/test/hint-substance-select.test.ts`,
     because: "a backed claim sharing no word of the prompt is injected because its tree's title matched",
   },
   {
     label: "the least relevant claim of a tree is delivered first",
     file: `${CORE}/src/hints/select.ts`,
-    from: "      (right.matchedTerms ?? 0) - (left.matchedTerms ?? 0) ||\n",
-    to: "",
+    from: "  [...claims].sort((left, right) => (right.matchedTerms ?? 0) - (left.matchedTerms ?? 0));",
+    to: "  [...claims];",
     test: `${CORE}/test/hint-substance-select.test.ts`,
     because: "the hint carries the newest backed claim rather than the one the prompt is about",
   },
   {
     label: "a substance hint hides how many claims stay behind",
+    // RETARGETED (round 3, H3 + M6): the selection is built outside the per-tree loop now.
     file: `${CORE}/src/hints/select.ts`,
-    from: "restCount: foreign.length - 1 }",
-    to: "restCount: 0 }",
+    from: "      restCount: context.claims.length - 1,\n",
+    to: "      restCount: 0,\n",
     test: `${CORE}/test/hint-substance-select.test.ts`,
     because: "the pointer to the rest says nothing remains, so nobody reads the tree",
   },
   {
     label: "a substance hint carries the whole body instead of one sentence",
     file: `${CORE}/src/hints/render.ts`,
-    from: "quotedBody(firstSentence(claim.body), HINT_SUBSTANCE_MAX_CHARS)",
+    from: "quotedBody(shown, HINT_SUBSTANCE_MAX_CHARS)",
     to: "quotedBody(claim.body, HINT_SUBSTANCE_MAX_CHARS)",
     test: `${CORE}/test/hint-substance-render.test.ts`,
     because: "a forged second line rides into the unsolicited hint up to the cap",
@@ -19936,7 +19938,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the echo mark misses the sentence the hint showed",
     file: `${CORE}/src/flows/hint.ts`,
-    from: "      bodyHash: hintBodyHash(firstSentence(selection.claim.body)),",
+    from: "      bodyHash: hintBodyHash(shownSubstance(selection.claim.body)),",
     to: "      bodyHash: hintBodyHash(selection.claim.body),",
     test: `${CORE}/test/hint-substance-flow.test.ts`,
     because: "the one sentence an agent was shown comes back as its own observation and is published under the reader's name",
@@ -19944,7 +19946,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a substance hint is booked as a pointer",
     file: `${CORE}/src/flows/hint.ts`,
-    from: "      channel: SUBSTANCE_DELIVERY_CHANNEL,",
+    from: "      channel: scope.substanceChannel,",
     to: "      channel: \"prompt_hint\",",
     test: `${CORE}/test/hint-substance-flow.test.ts`,
     because: "every later read of an inlined finding's tree counts as an opened pointer and inflates the pilot's precision",
@@ -20452,8 +20454,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the hub says it records outcomes on a repo nobody enrolled",
     file: `${SERVER}/src/routes/hints.ts`,
-    from: "    return ok(c, { candidates, answers, coverage, notices, recordsOutcomes: settings.pilotEnrolled });",
-    to: "    return ok(c, { candidates, answers, coverage, notices, recordsOutcomes: true });",
+    // RETARGETED (hint-substance merge): the answer is one field per line.
+    from: "      recordsOutcomes: settings.pilotEnrolled,\n      deliveryChannels: DELIVERY_CHANNELS,\n",
+    to: "      recordsOutcomes: true,\n      deliveryChannels: DELIVERY_CHANNELS,\n",
     test: `${SERVER}/test/hints-records-outcomes.test.ts`,
     because: "every hint on an unenrolled repo invites a call the hub then refuses",
   },
@@ -24222,8 +24225,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "hint candidates carry an opted-out teammate's HEAD as base commit",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "          ...projectRow(\n            hidden,",
-    to: "          ...projectRow(\n            new Set<string>(),",
+    // RETARGETED (hint-substance merge): the candidate list is one function.
+    from: "      ...projectRow(\n        hidden,",
+    to: "      ...projectRow(\n        new Set<string>(),",
     test: `${SERVER}/test/live-location-privacy.test.ts`,
     because:
       "every prompt hint about an opted-out teammate's work names the commit " +
@@ -24252,8 +24256,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "hint candidates carry an opted-out author's HEAD as a claim's commit",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "      projectRow(hidden, { developerId: claim.authorDeveloperId, kind: \"claim\" }, claim),",
-    to: "      claim,",
+    // RETARGETED (hint-substance merge): the claims are the substance gate's survivors.
+    from: ".map((claim) => projectRow(hidden, { developerId: claim.authorDeveloperId, kind: \"claim\" }, claim)),",
+    to: ".map((claim) => claim),",
     test: `${SERVER}/test/live-location-privacy.test.ts`,
     because:
       "the hint the reader's prompt is shown about an opted-out teammate's " +
@@ -25254,9 +25259,11 @@ export const MUTATIONS: readonly Mutation[
     from: "  !REFERENCE_FIELDS.has(key) &&\n  (isWholeInstant(value) || (INSTANT_OR_COMMIT_FIELD.test(key) && isBareHexOrEpoch(value)));",
     to: "  (isWholeInstant(value) || isBareHexOrEpoch(value));",
     test: `${SERVER}/test/live-location-prose.test.ts`,
+    // RETARGETED (hint-substance merge): a commit ref resolves no evidence any
+    // more (H5), so the test now catches the dropped ref itself.
     because:
-      "solvedAtFromTree counts evidence refs: with the bisected sha gone the " +
-      "connector says open while the hub says solved (solved parity)",
+      "her colleagues' copy of her root cause loses the bisected sha she cited; " +
+      "before the evidence rule (H5) the connector also said open where the hub said solved",
   },
   // ── Review round 5, H3: opting out costs colleagues nothing ───────────
   {
@@ -30320,6 +30327,3427 @@ export const MUTATIONS: readonly Mutation[
     test: `${CONNECTOR}/test/rest-recheck-guarantee.test.ts`,
     because: "the lines are written and no read counts them",
   },
+  {
+    label: "a tree sharing one stray word rides along with one that qualifies",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    .filter(({ row, sharedTerms }) => clearsFloor(row.tier, sharedTerms))",
+    to: "    .filter(() => true)",
+    test: `${SERVER}/test/hint-candidate-floor.test.ts`,
+    because: "once the upload tree is delivered, the next \"ok\" points at the rate-limit tree for the word \"limit\" — the pilot's failure, one step later",
+  },
+  {
+    label: "the selector points at a candidate below the content floor",
+    file: `${CORE}/src/hints/select.ts`,
+    // RETARGETED (round 3, follow-up): the recount's floor terms are worked out once per selection.
+    from: "    HINT_ELIGIBLE_TIERS.has(context.workContext.tier) &&\n    clearsContentFloor(context, input, recount);",
+    to: "    HINT_ELIGIBLE_TIERS.has(context.workContext.tier);",
+    test: `${CORE}/test/hint-substance-select.test.ts`,
+    because: "a hub that forgets the per-candidate floor gets its stray-word tree pointed at, with nothing on this side to stop it",
+  },
+  {
+    label: "German function words count as shared task words",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    // RETARGETED (round 3, M7): English function words are english.stop and its supplement.
+    // RETARGETED (round 4, M4): one helper names every language's function words.
+    from: "    ...[GERMAN_FUNCTION_WORDS, SPANISH_FUNCTION_WORDS, FRENCH_FUNCTION_WORDS].filter((words) => readsAs(written, words)),",
+    to: "    ...[SPANISH_FUNCTION_WORDS, FRENCH_FUNCTION_WORDS].filter((words) => readsAs(written, words)),",
+    test: `${SERVER}/test/hint-candidate-floor.test.ts`,
+    because: "\"passt, das ist nicht so wichtig, mach weiter\" agrees with a German team's decision on das/ist/nicht and pushes it as substance",
+  },
+  {
+    label: "a proposed root cause is pushed unasked as a recorded finding",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  claim.kind === \"decision\" && claim.status === \"proposed\";",
+    to: "  (claim.kind === \"decision\" || claim.kind === \"root_cause\") && claim.status === \"proposed\";",
+    test: `${CORE}/test/hint-substance-select.test.ts`,
+    because: "an unverified cause lands in a healthy agent's context as a teammate's finding — the anchoring principle 5 forbids",
+  },
+  // SUPERSEDED AND REMOVED, 2026-10-06 — "a rejected approach needs a strong
+  // match it never needed" and "rejected approaches lose their place at the
+  // front of a tree". A rejected approach is a pointer now (review 1006b, H4,
+  // the owner's decision), so neither its exemption from relevance nor its
+  // place at the front of the offering order exists to break.
+  {
+    label: "a rejected approach is pushed as substance again",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  (isSettledRootCause(claim) || isStatedDecision(claim));",
+    to: "  (claim.kind === \"rejected_approach\" || isSettledRootCause(claim) || isStatedDecision(claim));",
+    test: `${CORE}/test/hint-substance-select.test.ts`,
+    because: "the owner's decision (H4) is undone: a dead end is inlined under a teammate's name",
+  },
+  {
+    label: "a settled status makes any kind substance",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  claim.kind === \"root_cause\" && INJECTABLE_STATUSES.has(claim.status);",
+    to: "  INJECTABLE_STATUSES.has(claim.status);",
+    test: `${CORE}/test/hint-substance-select.test.ts`,
+    because: "an observation marked partially_confirmed, or a hypothesis marked likely_root_cause, is pushed as a recorded finding (H4)",
+  },
+  {
+    label: "an evidence count alone buys substance",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  claim.evidenceRefCount >= HINT_MIN_EVIDENCE_REFS && claim.evidenceBacked === true;",
+    to: "  claim.evidenceRefCount >= HINT_MIN_EVIDENCE_REFS;",
+    test: `${CORE}/test/hint-substance-select.test.ts`,
+    because: "a ref to nothing, to the claim itself or to a guess satisfies the count and the finding is inlined",
+  },
+  {
+    label: "a claim's reference to itself counts as evidence",
+    file: `${SCHEMA}/src/evidence-resolution.ts`,
+    // RETARGETED (round 3, M2): the rule reads the citing claim, its id and its time.
+    from: "  citedId !== citing.id &&\n  head.id !== citing.id &&\n",
+    to: "",
+    test: `${SERVER}/test/hint-evidence-backed.test.ts`,
+    because: "a root cause that cites its own id is evidence-backed and pushed as substance",
+  },
+  {
+    label: "a cited guess counts as evidence",
+    file: `${SCHEMA}/src/evidence-resolution.ts`,
+    from: "export const EVIDENCE_KINDS: ReadonlySet<string> = new Set([\"observation\", \"evidence\"]);",
+    to: "export const EVIDENCE_KINDS: ReadonlySet<string> = new Set([\"observation\", \"evidence\", \"hypothesis\"]);",
+    test: `${SERVER}/test/hint-evidence-backed.test.ts`,
+    because: "a cause backed only by a proposed or rejected hypothesis — a guess on a guess — is inlined as a finding",
+  },
+  {
+    label: "the hub never says a claim's evidence resolves",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    evidenceBacked: (resolvedRefs.get(row.claim.id) ?? 0) > 0,",
+    to: "    evidenceBacked: false,",
+    test: `${SERVER}/test/hint-evidence-backed.test.ts`,
+    because: "no finding is ever substance again — the pilot's 95 pointers and 0 opens",
+  },
+  {
+    label: "a claim with no sentence worth showing is pushed as substance",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  hasSubstanceSentence(claim) &&\n",
+    to: "",
+    test: `${CORE}/test/hint-substance-select.test.ts`,
+    because: "\"Bestätigt.\" is booked as prompt_substance and the hint frames nothing where a finding should be",
+  },
+  {
+    label: "a substance hint frames an empty sentence",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "  if (shown.length === 0) {\n    return \"\";\n  }\n  const factsLine",
+    to: "  const factsLine",
+    test: `${CORE}/test/hint-substance-render.test.ts`,
+    because: "the reader is handed «» under a teammate's name — a finding that reads as \"they looked and found nothing\"",
+  },
+  {
+    label: "an ordinal list marker is shown as the whole substance",
+    file: `${SCHEMA}/src/substance-sentence.ts`,
+    from: "  ORDINAL_MARKER.test(text.trim()) || endsInAbbreviation(text);",
+    to: "  endsInAbbreviation(text);",
+    test: `${SCHEMA}/test/substance-sentence.test.ts`,
+    because: "\"1. The cache key changes…\" loses its first sentence to the marker",
+  },
+  {
+    label: "an abbreviation ends the substance mid-sentence",
+    file: `${SCHEMA}/src/substance-sentence.ts`,
+    from: "    SINGLE_LETTER_ABBREVIATION.test(token) ||\n",
+    to: "",
+    test: `${SCHEMA}/test/substance-sentence.test.ts`,
+    because: "\"Wir nutzen z.\" is all a German decision gets to say",
+  },
+  {
+    label: "a one-word acknowledgement is shown as the substance",
+    file: `${SCHEMA}/src/substance-sentence.ts`,
+    from: "  const index = sentences.findIndex((sentence) => contentWords(sentence) >= SUBSTANCE_MIN_WORDS);",
+    to: "  const index = sentences.findIndex((sentence) => sentence.length > 0);",
+    test: `${SCHEMA}/test/substance-sentence.test.ts`,
+    because: "\"Yes.\" or a full stop behind zero-width spaces is pushed as a teammate's finding",
+  },
+  {
+    label: "a claim's relevance is scored on its whole body again",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "          ? shownSubstance(row.claim.body)",
+    to: "          ? row.claim.body",
+    test: `${SERVER}/test/hint-content-floor.test.ts`,
+    because: "a keyword-stuffed second sentence makes one claim strong substance for every prompt it never speaks to",
+  },
+  {
+    label: "words past the shown length count toward a claim's relevance",
+    file: `${SCHEMA}/src/substance-sentence.ts`,
+    from: "  return sentence.length === 0 ? \"\" : spanRedacted(sentence, SUBSTANCE_MAX_CHARS);",
+    to: "  return sentence.length === 0 ? \"\" : spanRedacted(sentence, Number.MAX_SAFE_INTEGER);",
+    test: `${SERVER}/test/hint-content-floor.test.ts`,
+    because: "the words that made a claim relevant sit behind the ellipsis the reader is shown",
+  },
+  {
+    label: "a derived intent is called the session's own in the hint header",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "  provenance === \"declared\" ? \"intent\" : \"derived intent\";",
+    to: "  \"intent\";",
+    test: `${CORE}/test/hint-intent-fallback.test.ts`,
+    because: "a model's guess at the session's task is presented with the weight of what the developer declared",
+  },
+  {
+    label: "set_intent's sentence is remembered as derived",
+    // RETARGETED (hint-substance merge): set_intent writes through intent-write.
+    file: `${CORE}/src/mcp/tools/intent-write.ts`,
+    from: "    const recorded = withRecordedIntent(fresh, write.summary, \"declared\");",
+    to: "    const recorded = withRecordedIntent(fresh, write.summary, \"derived\");",
+    test: `${CORE}/test/ghost-declare.test.ts`,
+    because: "the developer's own declared plan is labelled a model's guess on every hint matched on it",
+  },
+  {
+    label: "the intent worker's sentence is remembered as declared",
+    file: `${CORE}/src/derive/intent/worker.ts`,
+    from: "    withIntentSet(withRecordedIntent(state, sentence, \"derived\")),",
+    to: "    withIntentSet(withRecordedIntent(state, sentence, \"declared\")),",
+    test: `${CONNECTOR}/test/intent-worker.test.ts`,
+    because: "a model's one-sentence guess is presented as the session's declared intent",
+  },
+  {
+    label: "a substance hint leaves no room for its trailers",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "  const cap = reservedCap(input.reserveChars);\n  const rest = restFragment(",
+    to: "  const cap = MAX_HINT_TEXT_LENGTH;\n  const rest = restFragment(",
+    test: `${CORE}/test/hint-trailer-budget.test.ts`,
+    because: "long labels fill the hint to the wire cap and the coverage note and the outcome clause are dropped without a word",
+  },
+  {
+    label: "a pointer hint leaves no room for its trailers",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "  const reserved = fitHint(lines, reservedCap(reserveChars));",
+    to: "  const reserved = fitHint(lines);",
+    test: `${CORE}/test/hint-trailer-budget.test.ts`,
+    because: "a long-labelled pointer on a repo with a gap loses its coverage note",
+  },
+  {
+    label: "the trailer reserve silences a pointer whose own lines are long",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "  return reserved.length > 0 ? reserved : fitHint(lines);",
+    to: "  return reserved;",
+    test: `${CORE}/test/hint-trailer-budget.test.ts`,
+    because: "a caveat about the archive costs the hint it was meant to qualify — §5.1 says it never does",
+  },
+  {
+    label: "the pointer line keeps its title over the finding",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "  const pointerLine = [true, false]\n",
+    to: "  const pointerLine = [true]\n",
+    test: `${CORE}/test/hint-trailer-budget.test.ts`,
+    because: "a long title costs the reader the teammate's finding when dropping the title would have made room",
+  },
+  {
+    label: "the closing line is not reserved",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "  return (note === null ? 0 : note.length + 1) + HINT_CLOSING_LINE_RESERVE_CHARS;",
+    to: "  return note === null ? 0 : note.length + 1;",
+    test: `${CORE}/test/hint-trailer-budget.test.ts`,
+    because: "the outcome clause is the first casualty on every long hint",
+  },
+  // ── hint-substance merge: the closing line at a topic's id width ──────
+  {
+    label: "the closing line's room is a coverage line's, whatever an id's width",
+    file: `${CORE}/src/constants.ts`,
+    from: "  Math.max(MAX_COVERAGE_LINE_CHARS, OUTCOME_CLAUSE_FRAME_CHARS + MAX_ID_CHARS) + 1;",
+    to: "  MAX_COVERAGE_LINE_CHARS + 1;",
+    test: `${CORE}/test/hint-trailer-budget.test.ts`,
+    because: "a topic's 96-character id makes the outcome clause 20 characters longer than the room a long hint leaves it",
+  },
+  {
+    label: "the prompt flow reserves nothing for the trailers",
+    file: `${CORE}/src/flows/hint.ts`,
+    // RETARGETED (round 3, L5): the hub's answer is its own helper's argument now.
+    from: "  const reserveChars = hintTrailerReserve(answered.coverage, input.now);",
+    to: "  const reserveChars = 0;",
+    test: `${CORE}/test/hint-substance-flow.test.ts`,
+    because: "the renderer budgets for trailers nobody tells it about, and the note is dropped again",
+  },
+  {
+    label: "a prompt that said nothing still costs a hub call",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "  if (promptQuery.length === 0) {\n    await bookStoodDown(input, \"flooredPromptCount\");\n    return \"\";\n  }\n",
+    to: "",
+    test: `${CORE}/test/hint-intent-fallback.test.ts`,
+    because: "\"ja ok\" spends a round trip of the 800 ms budget on a call nothing can answer (M6)",
+  },
+  {
+    label: "a finding too long for its trailers goes silent instead of pointing",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "      return deliveryOf(scope, selection.ifUnfit, drift);",
+    to: "      return null;",
+    test: `${CORE}/test/hint-substance-flow.test.ts`,
+    because: "a strongly matched tree is not mentioned at all because its finding was long",
+  },
+  {
+    label: "the too-long fallback re-points a tree already pointed at",
+    // RETARGETED (round 3, H3 + M6): the selection is built outside the per-tree loop now.
+    file: `${CORE}/src/hints/select.ts`,
+    from: "      ifUnfit: isUnpointed(context, seen)\n",
+    to: "      ifUnfit: true\n",
+    test: `${CORE}/test/hint-substance-flow.test.ts`,
+    because: "a tree the briefing already named is pointed at a second time — the noise the seen-set exists to stop",
+  },
+  {
+    label: "the hub's claim window hides that it left rows out",
+    file: `${SERVER}/src/services/hints.ts`,
+    // RETARGETED (round 4, C2): the window carries each shown sentence's words beside it.
+    from: "  return { claims: windowed, truncated: fetched.length > rows.length, shown: shownTerms };",
+    to: "  return { claims: windowed, truncated: false, shown: shownTerms };",
+    test: `${SERVER}/test/hints.test.ts`,
+    because: "a 50-claim tree is announced as \"beside 29 more claims\", and nobody can tell the count stopped at the window",
+  },
+  {
+    label: "the hub's claim window grows by the row it reads to detect a cut",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  const rows = fetched.slice(0, HINT_MAX_CLAIMS_PER_CONTEXT);",
+    to: "  const rows = fetched;",
+    test: `${SERVER}/test/hints.test.ts`,
+    because: "every outgrown tree ships one claim past the bound the selector and the wire budget were sized for",
+  },
+  {
+    label: "the rest count leaves out the reader's own claims in the tree",
+    // RETARGETED (round 3, H3 + M6): the selection is built outside the per-tree loop now.
+    file: `${CORE}/src/hints/select.ts`,
+    from: "      restCount: context.claims.length - 1,\n",
+    to: "      restCount: foreign.length - 1,\n",
+    test: `${CORE}/test/hint-substance-select.test.ts`,
+    because: "the pointer to the rest undercounts the tree get_diagnosis actually reads",
+  },
+  {
+    label: "a lower-bound rest count is printed as exact",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "` beside ${isLowerBound ? \"at least \" : \"\"}${String(count)}",
+    to: "` beside ${String(count)}",
+    test: `${CORE}/test/hint-substance-render.test.ts`,
+    because: "\"beside 29 more claims\" on a tree whose window was cut reads as its whole size",
+  },
+  {
+    label: "the selector drops the hub's window-cut signal",
+    // RETARGETED (round 3, H3 + M6): the selection is built outside the per-tree loop now.
+    file: `${CORE}/src/hints/select.ts`,
+    from: "      isRestLowerBound: context.claimsTruncated === true,",
+    to: "      isRestLowerBound: false,",
+    test: `${CORE}/test/hint-substance-select.test.ts`,
+    because: "the hub says the count is a lower bound and the hint states it as exact",
+  },
+  {
+    label: "the prompt flow drops the window-cut signal before rendering",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "      isRestLowerBound: selection.isRestLowerBound,\n",
+    to: "",
+    test: `${CORE}/test/hint-substance-flow.test.ts`,
+    because: "every layer knows the count is a lower bound except the sentence the reader sees",
+  },
+  {
+    label: "the hub stops advertising the delivery channels it records",
+    file: `${SERVER}/src/routes/hints.ts`,
+    // RETARGETED (hint-substance merge): the answer is one field per line.
+    from: "      deliveryChannels: DELIVERY_CHANNELS,\n    });",
+    to: "    });",
+    test: `${SERVER}/test/hints.test.ts`,
+    because: "every current connector books a shown finding as a pointer, and the pilot's prompt_substance bucket stays empty",
+  },
+  {
+    label: "an older hub is sent a delivery channel it rejects",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "  advertised.includes(SUBSTANCE_DELIVERY_CHANNEL) ? SUBSTANCE_DELIVERY_CHANNEL : \"prompt_hint\";",
+    to: "  SUBSTANCE_DELIVERY_CHANNEL;",
+    test: `${CORE}/test/hint-substance-flow.test.ts`,
+    because: "the hub refuses the hint_delivery record, and the finding the reader was shown is counted nowhere",
+  },
+  {
+    label: "the connector drops the channels the hub advertises",
+    file: `${CORE}/src/http/hub.ts`,
+    from: "      deliveryChannels: value.deliveryChannels,\n",
+    to: "      deliveryChannels: [],\n",
+    test: `${CORE}/test/hint-substance-flow.test.ts`,
+    because: "a current hub is treated as an old one, and every shown finding is booked as an opened-able pointer",
+  },
+  {
+    label: "a turn headed by the system-notification marker reads as a human prompt",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "  const human = headAt === -1 ? stripped : stripped.slice(0, headAt);",
+    to: "  const human = stripped;",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "a background task's \"Monitor event: checks pass\" points the session at whichever tree shares those words",
+  },
+  {
+    label: "a task notification's words count as the prompt's",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "  element(\"task-notification\", ",
+    to: "  element(\"task-notificationx\", ",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "PR, CI, checks, pass — the live pilot's four pointers at unrelated trees",
+  },
+  {
+    label: "a wrapper cut at the wire bound leaks its words",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    // RETARGETED (round 4, M3): an unclosed wrapper is UNCLOSED, its close looked for past the window.
+    from: "  return at < opening.end ? UNCLOSED : at + close.length;",
+    to: "  return at < opening.end ? opening.end : at + close.length;",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "a notification sliced to the query bound has no closing tag, and all of it is scored",
+  },
+  {
+    label: "stripping a wrapper fuses the words beside it",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    // RETARGETED (round 4, M3): the strip also says which wrapper the text ends inside.
+    from: "  return { kept: kept.join(\" \"), unclosed: null };",
+    to: "  return { kept: kept.join(\"\"), unclosed: null };",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "\"cache\" and \"key\" either side of a notification become \"cachekey\", a word nobody wrote",
+  },
+  {
+    label: "a quoted close ends a leading wrapper early",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "  const at = isLeading ? leadingClose(text, lower, opening, close) : lower.indexOf(close, opening.end);",
+    to: "  const at = lower.indexOf(close, opening.end);",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "a hand-back quoting </agent-message> leaks the rest of its report as the reader's prompt (M1)",
+  },
+  {
+    label: "a head marker after leading blanks or a byte-order mark reads as human text",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: String.raw`(?:^|\\n)[\\p{Zs}\\t\\uFEFF]*(?:`,
+    to: String.raw`(?:^|\\n)(?:`,
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "a notification turn the IDE or a terminal prefixed with a blank or a BOM is scored whole",
+  },
+  {
+    label: "an upper-case wrapper is not recognised",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "join(\"|\")})(?=[\\\\s>])`, \"gi\");",
+    to: "join(\"|\")})(?=[\\\\s>])`, \"g\");",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "<TASK-NOTIFICATION> passes as the reader's own words",
+  },
+  {
+    label: "the head marker is matched in one casing only",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "    .join(\"|\")})`,\n  \"iu\",\n);",
+    to: "    .join(\"|\")})`,\n  \"u\",\n);",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "[System Notification - Not User Input] passes as the reader's own words",
+  },
+  {
+    label: "an opening tag's attributes are scanned without a bound",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "new RegExp(`[^>]{0,${String(MAX_WRAPPER_ATTRIBUTE_CHARS)}}>`, \"y\")",
+    to: "new RegExp(`[^>]*>`, \"y\")",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "a megabyte of unterminated openings turns the scan quadratic inside the 800 ms hook (M2)",
+  },
+  {
+    label: "the whole turn is scanned, however long",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    // RETARGETED (round 4, M3): the trimmed prompt is kept for the look past the window.
+    from: "  const window = trimmed.slice(0, HARNESS_SCAN_MAX_CHARS);",
+    to: "  const window = trimmed;",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "a pasted log of any size is read whole on every prompt",
+  },
+  {
+    label: "the IDE's opened-file context is scored as the prompt",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "  element(\"ide_opened_file\", ",
+    to: "  element(\"ide_opened_filex\", ",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "\"The user opened the file … in the IDE\" rides 4.8% of real prompts into the query",
+  },
+  {
+    label: "a /loop tick is scored as the prompt",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "  head(\"# Autonomous loop tick\", ",
+    to: "  head(\"# Autonomous loop tickx\", ",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "every scheduled tick's instructions point the session at whatever tree shares them",
+  },
+  {
+    label: "a turn that is all harness still asks the hub",
+    file: `${CORE}/src/flows/hint.ts`,
+    // RETARGETED (round 3, L4): the human text comes out of the one classification.
+    from: "  if (isHarnessTurn(input.prompt)) {\n    await bookStoodDown(input, \"harnessTurnCount\");\n    return \"\";\n  }\n",
+    to: "",
+    test: `${CORE}/test/hint-harness-turn.test.ts`,
+    because: "every background notification spends a call and sends the session's intent to fetch a pointer nobody prompted",
+  },
+  {
+    label: "the connector sends the harness's words beside the human's",
+    file: `${CORE}/src/flows/hint.ts`,
+    // RETARGETED (round 3, M7): the query is the prompt's window now.
+    // RETARGETED (round 3, L4): the classification reads the raw turn.
+    from: "  const { human: humanText, terms } = input.classified ?? classifyPrompt(input.prompt);",
+    to: "  const { terms } = input.classified ?? classifyPrompt(input.prompt);\n  const humanText = input.prompt;",
+    test: `${CORE}/test/hint-harness-turn.test.ts`,
+    because: "a notification's task ids and status words go on the wire and top up a human prompt's count",
+  },
+  {
+    // RETARGETED (hold-out review, L2): the hub's own harness check was an
+    // exact equivalent of the content-free verdict on the human text and is
+    // gone; what keeps a harness turn silent on the hub is scoring only that.
+    label: "the hub lets the intent stand in for a harness turn",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  const humanText = humanPromptText(input.query);",
+    to: "  const humanText = input.query;",
+    test: `${SERVER}/test/hint-harness-turn.test.ts`,
+    because: "every installed connector's background notification earns an intent-matched pointer",
+  },
+  {
+    label: "the hub scores the harness's words",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  const humanText = humanPromptText(input.query);",
+    to: "  const humanText = input.query;",
+    test: `${SERVER}/test/hint-harness-turn.test.ts`,
+    because: "a 0.10.0 connector's notification turn points at the automation tree it shares four words with",
+  },
+  // SUPERSEDED AND REMOVED, 2026-10-06 — "one session-steering word silences
+  // a whole task prompt", "a five-letter word one letter off a session
+  // command counts as it" and "the hub scores a prompt of session commands as
+  // a task". The whole-prompt verdict and its edit-distance table were
+  // replaced by per-word steering (review 1006b, decision 2), so the code they
+  // mutated is gone. The hub's own content-free return stays as a
+  // short-circuit only: with no content term, the per-candidate floor already
+  // admits nothing, so deleting it reddens no test — recorded so it is not
+  // re-reported as a gap.
+  {
+    label: "a steering word counts as a term beside a task word",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    // RETARGETED (round 3, M7): the whole prompt and each clause share one term filter.
+    from: "    words.filter((token) => !isFunctionWord(token) && !isSteeringWord(token));",
+    to: "    words.filter((token) => !isFunctionWord(token));",
+    test: `${SERVER}/test/hint-candidate-floor.test.ts`,
+    because: "\"mache bitte weiter mit dem Upload\" reaches the limit tree on mache and bitte beside one shared word (H1)",
+  },
+  {
+    label: "session-meta words are steering in every prompt",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    // RETARGETED (round 3, M7): the whole prompt and each clause share one term filter.
+    from: "    words.filter((token) => !isFunctionWord(token) && !isSteeringWord(token));",
+    to: "    words.filter((token) => !isFunctionWord(token) && !isSteeringWord(token) && wordClassOf(token) !== \"meta\");",
+    test: `${SERVER}/test/hint-candidate-floor.test.ts`,
+    because: "\"why does the usage limit reset\" is floored as a session command and never finds the limit tree (M3)",
+  },
+  {
+    label: "a reset report beside a continuation is scored as a task",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "    tokens.some(isContinuationTrigger) ||\n",
+    to: "",
+    test: `${CORE}/test/prompt-corpus-gate.test.ts`,
+    because: "\"mach weiter, limit zurückgesetzt\" points at the tree that says Limit and zurückgesetzt",
+  },
+  {
+    // SUPERSEDED (hold-out review, decision a): a continuation beside meta
+    // words only IS a session command now, whatever they report — "keep
+    // going on usage limits" is relabelled content-free. The guard that
+    // remains is the other direction: meta words alone stay a question.
+    label: "meta words alone are read as a session command",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "    topical.length === 0 ||\n",
+    to: "    topical.every((wordClass) => wordClass === \"meta\") ||\n",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"why does the usage limit reset\" and \"retry limit\" are floored and never find the limit tree (M3)",
+  },
+  {
+    label: "a typo makes a session command a task again",
+    file: `${SCHEMA}/src/session-control.ts`,
+    from: "  return NEAR_MISSES.has(folded) ? null : (slipTargetOf(folded)?.wordClass ?? null);",
+    to: "  return null;",
+    test: `${SCHEMA}/test/session-control.test.ts`,
+    because: "\"wieter\" and \"wiederuafnhemen\" stop continuing, so \"limit reset\" beside them is scored as a task",
+  },
+  {
+    label: "typo tolerance reaches every steering word",
+    file: `${SCHEMA}/src/session-control.ts`,
+    from: "  ...OTHER_STEERING.map((word): SlipTarget => ({ word, wordClass: \"steering\", isSlip: isSwapSlipOf })),",
+    to: "  ...OTHER_STEERING.map((word): SlipTarget => ({ word, wordClass: \"steering\", isSlip: isTypingSlipOf })),",
+    test: `${SCHEMA}/test/session-control.test.ts`,
+    because: "pass, past, bite, look and tank are swallowed as steering words — real words a typo rule must never take",
+  },
+  {
+    label: "an umlaut or a capital makes a session command a task again",
+    file: `${SCHEMA}/src/session-control.ts`,
+    from: "  word.normalize(\"NFKD\").replace(/\\p{M}/gu, \"\").replace(/ß/g, \"ss\").toLowerCase();",
+    to: "  word;",
+    test: `${SCHEMA}/test/session-control.test.ts`,
+    because: "\"Weiter\", \"BITTE\" and \"nächsten\" stop matching the words they are",
+  },
+  {
+    label: "a swapped pair of letters is not tolerated",
+    file: `${SCHEMA}/src/typing-slip.ts`,
+    // RETARGETED (round 3, L4): cells are read through an accessor.
+    from: "  const swapped = isSwap ? cost(row - 2, column - 2) + 1 : NEVER;",
+    to: "  const swapped = NEVER;",
+    test: `${SCHEMA}/test/typing-slip.test.ts`,
+    because: "\"contineu\" and \"wiederuafnhemen\" — a typist's commonest slip — stop being the words they are",
+  },
+  {
+    label: "only the first sixteen tokens of a prompt are judged",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    // RETARGETED (round 4, L1 follow-up): the tokens are read word by word now; the cut is on the whole prompt's.
+    from: "  text.split(/\\s+/u).flatMap((word) => [...partsOf(word), ...wholeFormsOf(word).filter(isLongEnoughForm)]);",
+    to: "  text.split(/\\s+/u).flatMap((word) => [...partsOf(word), ...wholeFormsOf(word).filter(isLongEnoughForm)]).slice(0, 16);",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "a long prompt whose task word comes late is judged on its preamble and floored",
+  },
+  {
+    label: "the intent fire parks the harness's words",
+    // RETARGETED (round 3, H2): the gate reads the topical floor after the length floor.
+    // RETARGETED (round 3, L4): the gate reads the hook's one classification,
+    // whose human text is the schema's.
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "  const human = humanPromptText(prompt);\n  return { human, terms: promptTerms(human) };",
+    to: "  const human = prompt;\n  return { human, terms: promptTerms(human) };",
+    test: `${CONNECTOR}/test/intent-gate.test.ts`,
+    because: "a background notification as the first long turn spends the one fire and parks \"Monitor event: CI checks pass\" as the session's intent (H2)",
+  },
+  {
+    label: "a content-free prompt spends the session's one intent fire",
+    // RETARGETED (round 3, H2): the topical floor is the content-free rule here.
+    // RETARGETED (round 3, L4): on the hook's one classification.
+    // RETARGETED (round 4, M1): the fire reads the unclassed words.
+    file: `${CORE}/src/derive/intent/gate.ts`,
+    from: "  return classified.terms.unclassed.length >= INTENT_MIN_TOPICAL_WORDS ? human : null;",
+    to: "  return human;",
+    test: `${CONNECTOR}/test/content-free-prompt.test.ts`,
+    because: "\"mache weiter, limit zuruckgesetzt, bitte …\" is long enough to be summarised as the session's task, and the real task after it gets no fire",
+  },
+  {
+    label: "the prompt hook fires the intent worker on the raw turn",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    // RETARGETED (round 3, L4): the hook classifies once and hands it on.
+    from: "    const prompt = intentPromptFrom(classified);",
+    to: "    const prompt = ctx.payload.prompt ?? \"\";",
+    test: `${CONNECTOR}/test/content-free-prompt.test.ts`,
+    because: "every task notification spends the fire the developer's first real prompt was owed",
+  },
+  {
+    label: "a draft's words qualify its tree for a pushed hint",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "        // A draft's words never qualify its tree (review 1006b, L6).\n        pushableClaimCondition(),\n",
+    to: "",
+    test: `${SERVER}/test/hint-draft-visibility.test.ts`,
+    because: "a tree whose title shares nothing with the prompt is pushed at a teammate through a model's unreviewed guess",
+  },
+  {
+    label: "a refuted claim lends its words to the push path",
+    file: `${SERVER}/src/services/pushable-claims.ts`,
+    from: "    or(ne(claims.status, REJECTED_STATUS), eq(claims.kind, REJECTED_APPROACH_KIND)),\n",
+    to: "",
+    test: `${SERVER}/test/hint-draft-visibility.test.ts`,
+    because: "a hypothesis its author rejected, or a discarded draft, still points a teammate at its tree",
+  },
+  {
+    label: "the selector counts a draft among a tree's claims",
+    file: `${CORE}/src/hints/select.ts`,
+    // RETARGETED (round 3, follow-up): the recount's floor terms are worked out once per selection.
+    from: "  const eligible = input.candidates.filter(isEligibleContext(input, recount)).map(withPushableClaims);",
+    to: "  const eligible = input.candidates.filter(isEligibleContext(input, recount));",
+    test: `${CORE}/test/hint-substance-select.test.ts`,
+    because: "\"It carries 1 claim\" — a hub that still ships the draft's row gets it pointed at, discarded or not",
+  },
+  {
+    label: "the selector points at a refuted claim",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  isDeclared(claim) && (claim.status !== \"rejected\" || claim.kind === \"rejected_approach\");",
+    to: "  isDeclared(claim);",
+    test: `${CORE}/test/hint-substance-select.test.ts`,
+    because: "a hypothesis its author rejected is announced to a teammate as notes that may relate to their prompt",
+  },
+  {
+    label: "a rejected approach falls off the push path with the refuted claims",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  isDeclared(claim) && (claim.status !== \"rejected\" || claim.kind === \"rejected_approach\");",
+    to: "  isDeclared(claim) && claim.status !== \"rejected\";",
+    // RETARGETED TEST (round 3, follow-up): hint-flow.test.ts no longer holds a
+    // rejected approach; hint-select.test.ts points at one, and loses the
+    // pointer when the claim falls off the push path.
+    test: `${CORE}/test/hint-select.test.ts`,
+    because: "the dead end a teammate already ruled out — negative knowledge, rejected by definition — is never mentioned again",
+  },
+  {
+    label: "the shown text skips the BODY class the reader sees through",
+    file: `${SCHEMA}/src/substance-sentence.ts`,
+    from: "  return sentence.length === 0 ? \"\" : spanRedacted(sentence, SUBSTANCE_MAX_CHARS);",
+    to: "  return sentence.length === 0 ? \"\" : sentence.slice(0, SUBSTANCE_MAX_CHARS);",
+    test: `${SERVER}/test/hint-content-floor.test.ts`,
+    because: "the hub counts a redacted word and misses a ligature's — scoring a text the reader never sees (M4)",
+  },
+  {
+    label: "a function word counts as content in a shown sentence",
+    // RETARGETED (round 3, M1): content words are a distinct set, filtered first.
+    file: `${SCHEMA}/src/substance-sentence.ts`,
+    from: "    .filter((token) => !ENGLISH_FUNCTION_WORDS.has(token) && !(isGerman && GERMAN_FUNCTION_WORDS.has(token)))",
+    to: "    .filter(() => true)",
+    test: `${SCHEMA}/test/substance-sentence.test.ts`,
+    because: "\"Use Redis here, it is this.\" is pushed as a teammate's finding on two content words (L2)",
+  },
+  {
+    label: "German function words count toward a German shown sentence",
+    // RETARGETED (round 3, M1): content words are a distinct set, filtered first.
+    file: `${SCHEMA}/src/substance-sentence.ts`,
+    from: "!ENGLISH_FUNCTION_WORDS.has(token) && !(isGerman && GERMAN_FUNCTION_WORDS.has(token)))\n",
+    to: "!ENGLISH_FUNCTION_WORDS.has(token))\n",
+    test: `${SCHEMA}/test/substance-sentence.test.ts`,
+    because: "\"Das ist nicht so, wie es war.\" passes for a sentence with content",
+  },
+  {
+    label: "a short qualifier is cut off the finding it qualifies",
+    file: `${SCHEMA}/src/substance-sentence.ts`,
+    from: "(isLeadIn(chosen) || isQualifier(next))",
+    to: "isLeadIn(chosen)",
+    test: `${SCHEMA}/test/substance-sentence.test.ts`,
+    because: "\"Disable the edge cache for uploads.\" arrives without \"U.S. traffic only.\" — the opposite of the finding for everyone else",
+  },
+  {
+    label: "a list's lead-in is shown without the item it introduces",
+    file: `${SCHEMA}/src/substance-sentence.ts`,
+    from: "(isLeadIn(chosen) || isQualifier(next))",
+    to: "isQualifier(next)",
+    test: `${SCHEMA}/test/substance-sentence.test.ts`,
+    because: "\"We ruled out three causes in the pipeline:\" dangles with nothing after the colon",
+  },
+  {
+    label: "the next list item is attached as a qualifier",
+    file: `${SCHEMA}/src/substance-sentence.ts`,
+    from: " && !ORDINAL_START.test(sentence);",
+    to: ";",
+    test: `${SCHEMA}/test/substance-sentence.test.ts`,
+    because: "\"1. … 2. Rest.\" shows two list items as if one were a qualifier of the other",
+  },
+  {
+    label: "the floor counts a retracted claim's words",
+    file: `${SERVER}/src/services/hints.ts`,
+    // RETARGETED (round 5, L2): a claim's words are its dotted names' parts too.
+    from: "        sql`${claimWords} @@ ${anyToken}`,\n        notSuperseded(db),\n",
+    to: "        sql`${claimWords} @@ ${anyToken}`,\n",
+    test: `${SERVER}/test/hint-floor-integrity.test.ts`,
+    because: "a tree is pointed at through words its author took back, in a claim the reader is never shown (M5)",
+  },
+  {
+    label: "the floor counts a muted author's words",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "        notMutedCondition(readerDeveloperId, agentSessions.developerId),\n        // A draft's words never qualify its tree (review 1006b, L6).\n",
+    to: "        // A draft's words never qualify its tree (review 1006b, L6).\n",
+    test: `${SERVER}/test/hint-floor-integrity.test.ts`,
+    because: "the developer a reader muted still decides which teammate tree that reader is pointed at (M5)",
+  },
+  {
+    label: "the pool is cut to the bound before the floor runs",
+    file: `${SERVER}/src/services/hints.ts`,
+    // RETARGETED (round 4, M1): the bound keeps the strongest of those that clear the floor.
+    from: "    .filter(({ row, sharedTerms }) => clearsFloor(row.tier, sharedTerms))\n    .toSorted((left, right) => compareTreeStrength(strengthOfCandidate(left), strengthOfCandidate(right)))\n    .slice(0, HINT_MAX_CONTEXTS);",
+    to: "    .slice(0, HINT_MAX_CONTEXTS)\n    .filter(({ row, sharedTerms }) => clearsFloor(row.tier, sharedTerms))\n    .toSorted((left, right) => compareTreeStrength(strengthOfCandidate(left), strengthOfCandidate(right)));",
+    test: `${SERVER}/test/hint-floor-integrity.test.ts`,
+    because: "three trees that repeat one stray word crowd out the one tree that shares three (M5)",
+  },
+  {
+    label: "the hub judges the raw turn, the wrapper's words included",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  const terms = promptTerms(humanText);",
+    to: "  const terms = promptTerms(input.query);",
+    test: `${SERVER}/test/hint-floor-integrity.test.ts`,
+    because: "an older connector's \"<ide_opened_file>… current task …\" makes \"ok weiter\" a task about the current user (M5)",
+  },
+  {
+    label: "\"mal\" is dropped from the steering words",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "\"scho\", \"mal\", \"los\",",
+    to: "\"scho\", \"los\",",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"mach mal, bitte\" carries a task word nobody wrote (M5)",
+  },
+  {
+    label: "one-letter words count as a shown sentence's content",
+    file: `${SCHEMA}/src/substance-sentence.ts`,
+    from: "    .filter((token) => (token.match(/\\p{L}/gu)?.length ?? 0) >= 2)\n",
+    to: "    .filter((token) => (token.match(/\\p{L}/gu)?.length ?? 0) >= 1)\n",
+    test: `${SCHEMA}/test/substance-sentence.test.ts`,
+    because: "\"Q x z.\" is pushed as a teammate's finding (M5)",
+  },
+  {
+    label: "a two-digit ordinal ends a sentence again",
+    file: `${SCHEMA}/src/substance-sentence.ts`,
+    from: "const ORDINAL_MARKER = /^\\(?\\d{1,3}[.)]$/u;",
+    to: "const ORDINAL_MARKER = /^\\(?\\d[.)]$/u;",
+    test: `${SCHEMA}/test/substance-sentence.test.ts`,
+    because: "item 12 of a list is shown without its number, as if it were the finding's first sentence (M5)",
+  },
+  {
+    label: "a named abbreviation ends the shown sentence",
+    file: `${SCHEMA}/src/substance-sentence.ts`,
+    from: "    (token.endsWith(\".\") && ABBREVIATIONS.has(token.slice(0, -1).toLowerCase()))",
+    to: "    false",
+    test: `${SCHEMA}/test/substance-sentence.test.ts`,
+    because: "\"Wir prüfen den Upload bzw.\" is all a German finding gets to say (M5)",
+  },
+  {
+    label: "the harness scan starts inside the leading whitespace",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    // RETARGETED (round 4, M3): the trimmed prompt is kept for the look past the window.
+    from: "  const trimmed = prompt.trimStart();\n  const window = trimmed.slice(0, HARNESS_SCAN_MAX_CHARS);",
+    to: "  const trimmed = prompt;\n  const window = trimmed.slice(0, HARNESS_SCAN_MAX_CHARS);",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "a megabyte of pasted blanks fills the window and the human text after it is never read (M5)",
+  },
+  {
+    label: "a delivery record drops what it was matched on",
+    file: `${CORE}/src/capture/records.ts`,
+    from: "      ...(matching === undefined\n        ? {}\n        : { matchedOn: matching.matchedOn, intentProvenance: matching.intentProvenance }),\n",
+    to: "",
+    test: `${CORE}/test/hint-substance-flow.test.ts`,
+    because: "the per-person followed/overrode measurement cannot tell a prompt match from an answer or a declared intent from a derived one (M7)",
+  },
+  {
+    label: "the recorder never hands the matching to the record",
+    file: `${CORE}/src/hints/delivery.ts`,
+    from: "    target.now,\n    delivery.matching,\n  );",
+    to: "    target.now,\n  );",
+    test: `${CORE}/test/question-delivery.test.ts`,
+    because: "every delivery reaches the hub saying nothing about what it answered, and the column stays NULL for good (M7)",
+  },
+  {
+    label: "an answer is booked as a prompt match",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "        matching: matchingOf(state, \"answer\"),",
+    to: "        matching: matchingOf(state, \"prompt\"),",
+    test: `${CORE}/test/question-delivery.test.ts`,
+    because: "an answer the developer waited for is counted as a pointer they never asked for, and its follow rate inflates the pointer's (M7)",
+  },
+  {
+    label: "a pointer's delivery forgets whose intent the session held",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "  const matching: DeliveryMatching = { matchedOn, intentProvenance };",
+    to: "  const matching: DeliveryMatching = { matchedOn, intentProvenance: null };",
+    test: `${CORE}/test/hint-substance-flow.test.ts`,
+    because: "a session steered by the intent worker reads like one with no intent, and a derived intent's misses are booked to nobody (M7)",
+  },
+  {
+    label: "an answer's delivery forgets whose intent the session held",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "  matchedOn,\n  intentProvenance: state.workContextIntentProvenance ?? null,\n});",
+    to: "  matchedOn,\n  intentProvenance: null,\n});",
+    test: `${CORE}/test/question-delivery.test.ts`,
+    because: "a declared intent's answers are booked as intent-less, and the declared/derived split loses its solicited half (M7)",
+  },
+  {
+    label: "a harness turn is silent but never counted",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "    await bookStoodDown(input, \"harnessTurnCount\");\n",
+    to: "",
+    test: `${CORE}/test/hint-harness-turn.test.ts`,
+    because: "a session drowned in background notifications reads as a session nothing matched (M7)",
+  },
+  {
+    label: "a floored prompt is silent but never counted",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "    await bookStoodDown(input, \"flooredPromptCount\");\n",
+    to: "",
+    test: `${CORE}/test/hint-harness-turn.test.ts`,
+    because: "\"mache weiter\" all day reads as a session whose tasks matched nothing (M7)",
+  },
+  {
+    label: "a stood-down turn is booked as nothing",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "({ ...fresh, [counter]: fresh[counter] + 1 })",
+    to: "({ ...fresh, [counter]: fresh[counter] })",
+    test: `${CORE}/test/hint-harness-turn.test.ts`,
+    because: "the counters exist and stay at zero, which is the false \"nothing was skipped\" (M7)",
+  },
+  {
+    label: "a compact erases the floored-prompt count",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "        flooredPromptCount: previous.flooredPromptCount,\n",
+    to: "",
+    test: `${CORE}/test/session-state-transforms.test.ts`,
+    because: "every auto-compact resets the count to 0, so a long session reports only its last stretch (M7)",
+  },
+  {
+    label: "a compact erases the harness-turn count",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "        harnessTurnCount: previous.harnessTurnCount,\n",
+    to: "",
+    test: `${CORE}/test/session-state-transforms.test.ts`,
+    because: "every auto-compact resets the count to 0, so a long session reports only its last stretch (M7)",
+  },
+  {
+    label: "the health read sums one session's floored prompts only",
+    file: `${CORE}/src/state/capture-health.ts`,
+    from: "      flooredPrompts: total.flooredPrompts + session.flooredPromptCount,",
+    to: "      flooredPrompts: session.flooredPromptCount,",
+    test: `${CLI}/test/capture-health.test.ts`,
+    because: "status shows the newest session's count as the repo's (M7)",
+  },
+  {
+    label: "the health read never sums the harness turns",
+    file: `${CORE}/src/state/capture-health.ts`,
+    from: "      harnessTurns: total.harnessTurns + session.harnessTurnCount,",
+    to: "      harnessTurns: total.harnessTurns,",
+    test: `${CLI}/test/capture-health.test.ts`,
+    because: "status says no harness turn was skipped however many were (M7)",
+  },
+  {
+    label: "status never says what the prompt path stood down on",
+    file: `${CLI}/src/cli/status.ts`,
+    // RETARGETED (round 3, L5): the quiet calls follow it on the same line.
+    from: "${claims}${stoodDownPart(health)}${quietCallsPart(health)}`;",
+    to: "${claims}${quietCallsPart(health)}`;",
+    test: `${CLI}/test/capture-health.test.ts`,
+    because: "a quiet hints line cannot tell \"nothing was asked\" from \"nothing matched\" (M7)",
+  },
+  {
+    label: "the hub discards what a delivery was matched on",
+    file: `${SERVER}/src/services/hint-deliveries.ts`,
+    from: "      matchedOn: body.matchedOn ?? null,",
+    to: "      matchedOn: null,",
+    test: `${SERVER}/test/hint-deliveries.test.ts`,
+    because: "the connector says it and the column stays NULL, which reads as an older connector (M7)",
+  },
+  {
+    label: "the hub discards whose intent the session held",
+    file: `${SERVER}/src/services/hint-deliveries.ts`,
+    from: "      intentProvenance: body.intentProvenance ?? null,",
+    to: "      intentProvenance: null,",
+    test: `${SERVER}/test/hint-deliveries.test.ts`,
+    because: "the declared/derived split is sent and never stored (M7)",
+  },
+  {
+    label: "the hub stores any word as what a delivery was matched on",
+    file: `${SCHEMA}/src/hint.ts`,
+    from: "  matchedOn: z.enum(HINT_MATCHED_ON_VALUES).optional().catch(undefined),",
+    to: "  matchedOn: z.string().optional(),",
+    test: `${SERVER}/test/hint-deliveries.test.ts`,
+    because: "a value no report knows lands in the measurement as its own silent bucket (M7)",
+  },
+  {
+    label: "an unknown matched-on value refuses the whole delivery",
+    file: `${SCHEMA}/src/hint.ts`,
+    from: "  matchedOn: z.enum(HINT_MATCHED_ON_VALUES).optional().catch(undefined),",
+    to: "  matchedOn: z.enum(HINT_MATCHED_ON_VALUES).optional(),",
+    test: `${SERVER}/test/hint-deliveries.test.ts`,
+    because: "a connector newer than the hub loses every delivery row to one word the hub cannot read (L3)",
+  },
+  {
+    label: "an unknown intent provenance refuses the whole delivery",
+    file: `${SCHEMA}/src/hint.ts`,
+    from: "  intentProvenance: z.enum(INTENT_PROVENANCES).nullable().optional().catch(null),",
+    to: "  intentProvenance: z.enum(INTENT_PROVENANCES).nullable().optional(),",
+    test: `${SERVER}/test/hint-deliveries.test.ts`,
+    because: "a connector newer than the hub loses every delivery row to one word the hub cannot read (L3)",
+  },
+  {
+    label: "the matched-on column reaches only hubs that do not exist yet",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "ALTER TABLE hint_deliveries ADD COLUMN IF NOT EXISTS matched_on text;",
+    to: "-- (migration removed)",
+    test: `${SERVER}/test/ddl-sync.test.ts`,
+    because: "every running hub 42703s on the first delivery that says what it matched, and refuses the row (M7)",
+  },
+  {
+    label: "the intent-provenance column reaches only hubs that do not exist yet",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "ALTER TABLE hint_deliveries ADD COLUMN IF NOT EXISTS intent_provenance text;",
+    to: "-- (migration removed)",
+    test: `${SERVER}/test/ddl-sync.test.ts`,
+    because: "every running hub 42703s on the first delivery that carries a provenance, and refuses the row (M7)",
+  },
+  {
+    label: "an answer leaves no room for its trailers",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "  return fitBesideTrailers([ANSWER_HEADER, answerLine, questionLine, tailLine], reserveChars);",
+    to: "  return fitBesideTrailers([ANSWER_HEADER, answerLine, questionLine, tailLine], undefined);",
+    test: `${CORE}/test/hint-trailer-budget.test.ts`,
+    because: "a long answer fills the wire cap and its coverage note is dropped without a word (L3)",
+  },
+  {
+    label: "the answer path reserves nothing for the trailers",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "    const text = renderAnswerHint(answer, input.now, reserveChars);",
+    to: "    const text = renderAnswerHint(answer, input.now);",
+    test: `${CORE}/test/question-delivery.test.ts`,
+    because: "the renderer can reserve and nobody asks it to, so the answer a developer waited for loses its caveat (L3)",
+  },
+  {
+    label: "a mid-length trigger takes two swapped pairs",
+    file: `${SCHEMA}/src/typing-slip.ts`,
+    from: "const TWO_SLIPS_FROM_LETTERS = 8;",
+    to: "const TWO_SLIPS_FROM_LETTERS = 6;",
+    test: `${SCHEMA}/test/typing-slip.test.ts`,
+    because: "the typo rule widens toward the words it must never take; the old one-edit rule survived exactly this (M5)",
+  },
+  {
+    label: "a four-letter trigger takes a swapped pair",
+    file: `${SCHEMA}/src/typing-slip.ts`,
+    from: "export const SLIP_MIN_TARGET_LETTERS = 5;",
+    to: "export const SLIP_MIN_TARGET_LETTERS = 4;",
+    test: `${SCHEMA}/test/typing-slip.test.ts`,
+    because: "a short trigger's every scramble is steering, and the shorter the word the likelier a real one (M5)",
+  },
+  {
+    label: "a long trigger's two swapped pairs are no longer tolerated",
+    file: `${SCHEMA}/src/typing-slip.ts`,
+    from: "const THREE_SLIPS_FROM_LETTERS = 12;",
+    to: "const THREE_SLIPS_FROM_LETTERS = 16;",
+    test: `${SCHEMA}/test/typing-slip.test.ts`,
+    because: "\"zurukgsetz\" — the reviewer's own spelling — is a task word again (M5, H1 b)",
+  },
+  {
+    label: "two capitals fall below the length floor again",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    // RETARGETED (round 4, L2): a letter and a digit share the line.
+    from: "    .filter((token) => token.length >= PROMPT_MIN_TOKEN_CHARS || isCapitalPair(token) || isLetterDigitPair(token))",
+    to: "    .filter((token) => token.length >= PROMPT_MIN_TOKEN_CHARS || isLetterDigitPair(token))",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"CI rot\", \"DB down\" and \"CI?\" lose the word they are about and are floored as content-free (M6)",
+  },
+  {
+    label: "the hub never counts a two-capital word as shared",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    // RETARGETED (round 4, L2): a letter and a digit share the line.
+    from: "    .filter((token) => token.length >= PROMPT_MIN_TOKEN_CHARS || isCapitalPair(token) || isLetterDigitPair(token))",
+    to: "    .filter((token) => token.length >= PROMPT_MIN_TOKEN_CHARS || isLetterDigitPair(token))",
+    test: `${SERVER}/test/hint-content-terms.test.ts`,
+    because: "\"CI rot auf main\" shares only \"main\" with the CI tree and is never pointed at it (M6)",
+  },
+  {
+    label: "any two letters are a word",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "const isCapitalPair = (token: string): boolean => /^\\p{Lu}{2}$/u.test(token);",
+    to: "const isCapitalPair = (token: string): boolean => token.length === 2;",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"ci\" and \"db\" in running lower-case text become words, and with them \"an\", \"to\" and \"is\" (M6)",
+  },
+  {
+    label: "the German supplement is dropped from the hub's function words",
+    file: `${SCHEMA}/src/stop-words.ts`,
+    from: "export const GERMAN_FUNCTION_WORDS: ReadonlySet<string> = new Set([...GERMAN_STOP_WORDS, ...GERMAN_STOP_SUPPLEMENT]);",
+    to: "export const GERMAN_FUNCTION_WORDS: ReadonlySet<string> = new Set([...GERMAN_STOP_WORDS]);",
+    test: `${SERVER}/test/hint-content-terms.test.ts`,
+    because: "\"ja, das wurde so gemacht, passt\" keeps four words and points at any German tree that says them (M4)",
+  },
+  {
+    label: "a German shown sentence counts the words german.stop lacks",
+    file: `${SCHEMA}/src/stop-words.ts`,
+    from: "export const GERMAN_FUNCTION_WORDS: ReadonlySet<string> = new Set([...GERMAN_STOP_WORDS, ...GERMAN_STOP_SUPPLEMENT]);",
+    to: "export const GERMAN_FUNCTION_WORDS: ReadonlySet<string> = new Set([...GERMAN_STOP_WORDS]);",
+    test: `${SCHEMA}/test/substance-sentence.test.ts`,
+    // Since round 3's M1 a closed-class word ("passt") is no content word
+    // anyway, so the pinning sentence is one of supplement words alone.
+    because: "\"Ich glaube, dass es so gemacht wurde.\" is shown as a teammate's finding (M4)",
+  },
+  {
+    label: "a slash command's name is scored as task words",
+    // RETARGETED (round 3, M7): the scored text feeds the verdict and the clauses alike.
+    // RETARGETED (round 3, L4): and is the capped window of the arguments.
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "  const scored = classifiedWindow(commandArguments(text));",
+    to: "  const scored = classifiedWindow(text);",
+    test: `${SERVER}/test/hint-candidate-floor.test.ts`,
+    because: "\"/code-review\" reaches the review checklist on \"code\" and \"review\" (H1 d)",
+  },
+  {
+    label: "the connector sends a bare slash command to the hub",
+    // RETARGETED (round 3, M7): the scored text feeds the verdict and the clauses alike.
+    // RETARGETED (round 3, L4): the flow reads promptTerms' verdict, once.
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "  const scored = classifiedWindow(commandArguments(text));",
+    to: "  const scored = classifiedWindow(text);",
+    test: `${CORE}/test/hint-intent-fallback.test.ts`,
+    because: "every \"/compact\" and \"/loop 5m /babysit-prs\" spends a call a 0.10.0 hub answers on the command's own words (H1 d)",
+  },
+  {
+    label: "a command passed as an argument is scored",
+    // RETARGETED (round 3, H1): an argument the command owns is a command or a unit number.
+    file: `${SCHEMA}/src/slash-command.ts`,
+    from: "const isCommandOwn = (word: string): boolean => isCommandName(word) || UNIT_NUMBER.test(word);",
+    to: "const isCommandOwn = (word: string): boolean => UNIT_NUMBER.test(word);",
+    test: `${SCHEMA}/test/slash-command.test.ts`,
+    because: "\"/loop 5m /babysit-prs\" is a task about babysitting PRs (H1 d)",
+  },
+  {
+    label: "a path at the start of a prompt is read as a command",
+    file: `${SCHEMA}/src/slash-command.ts`,
+    from: "const COMMAND_NAME = /^\\/[\\p{L}\\p{N}][\\p{L}\\p{N}_.:-]*$/u;",
+    to: "const COMMAND_NAME = /^\\/[\\p{L}\\p{N}][\\p{L}\\p{N}_.:/-]*$/u;",
+    test: `${SCHEMA}/test/slash-command.test.ts`,
+    because: "\"/repo/src/limiter.ts rejects the upload\" loses the file it is about (H1 d)",
+  },
+  {
+    label: "a command anywhere in a sentence is stripped",
+    file: `${SCHEMA}/src/slash-command.ts`,
+    from: "  if (head === undefined || !isCommandName(head)) {\n    return text;\n  }",
+    to: "  if (head === undefined) {\n    return text;\n  }\n  if (!isCommandName(head)) {\n    return text.split(/\\s+/u).filter((word) => !isCommandName(word)).join(\" \");\n  }",
+    test: `${SCHEMA}/test/slash-command.test.ts`,
+    because: "\"why does /health return 503\" loses \"health\", the endpoint it asks about (H1 d)",
+  },
+  {
+    label: "a conversation or operation word makes no session command",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "    topical.some(isCommandClass) ||\n",
+    to: "",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"think again, shorter\", \"commit and push\" and \"Option 2 bitte\" reach the hub and point at whatever tree says them (H1 c)",
+  },
+  {
+    label: "one meta word beside a steering word is a task again",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "    (topical.length === 1 && tokens.some((token) => isSteeringClass(wordClassOf(token))))",
+    to: "    false",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"retry please\" and \"Restart erneut\" are sent as a task about retries (H1 a)",
+  },
+  {
+    label: "a word of no class still lets a prompt pass as a session command",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "  if (classes.includes(null)) {",
+    to: "  if (classes.length < 0) {",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"run the checkout e2e tests\" is floored on \"run\" and \"tests\" and never finds the checkout tree (H1 c)",
+  },
+  {
+    label: "a meta word takes no slip",
+    file: `${SCHEMA}/src/session-control.ts`,
+    from: "  ...META_WORDS.map((word): SlipTarget => ({ word, wordClass: \"meta\", isSlip: isTypingSlipOf })),\n",
+    to: "",
+    test: `${SCHEMA}/test/session-control.test.ts`,
+    because: "\"macxhe weiter, limit ist zurukgsetz\" carries a task word nobody meant (H1 b)",
+  },
+  {
+    label: "a conversation word takes slips too",
+    file: `${SCHEMA}/src/session-control.ts`,
+    from: "  ...META_WORDS.map((word): SlipTarget => ({ word, wordClass: \"meta\", isSlip: isTypingSlipOf })),\n",
+    to: "  ...META_WORDS.map((word): SlipTarget => ({ word, wordClass: \"meta\", isSlip: isTypingSlipOf })),\n  ...CONVERSATION_CONTROL.map((word): SlipTarget => ({ word, wordClass: \"conversation\", isSlip: isTypingSlipOf })),\n",
+    test: `${SCHEMA}/test/session-control.test.ts`,
+    because: "one key from a conversation word is a real word in a task prompt — \"shortr\" today, \"text\" for \"test\" tomorrow (H1 b)",
+  },
+  {
+    label: "a near miss is read as the slip it resembles",
+    file: `${SCHEMA}/src/session-control.ts`,
+    from: "  return NEAR_MISSES.has(folded) ? null : (slipTargetOf(folded)?.wordClass ?? null);",
+    to: "  return slipTargetOf(folded)?.wordClass ?? null;",
+    test: `${SCHEMA}/test/session-control.test.ts`,
+    because: "\"rest\", \"contest\", \"writer\" and \"weitere\" become steering and meta words (H1 b, the collateral guard)",
+  },
+  {
+    label: "a slip may touch the first letter",
+    file: `${SCHEMA}/src/typing-slip.ts`,
+    from: "    typed[0] === target[0] &&\n",
+    to: "",
+    test: `${SCHEMA}/test/typing-slip.test.ts`,
+    because: "\"deep\", \"date\" and \"dontinue\" are read as slips of the words they only resemble (H1 b)",
+  },
+  {
+    label: "any key may stand in for the right one",
+    file: `${SCHEMA}/src/typing-slip.ts`,
+    from: "  const hitNeighbour = areNeighbours(typedLetter, targetLetter) ? diagonal + 1 : NEVER;",
+    to: "  const hitNeighbour = typedLetter !== targetLetter ? diagonal + 1 : NEVER;",
+    test: `${SCHEMA}/test/typing-slip.test.ts`,
+    because: "a slip becomes plain edit distance and the dictionary's rare, rage and race read as \"rate\" (H1 b)",
+  },
+  {
+    label: "a letter left out is no slip",
+    file: `${SCHEMA}/src/typing-slip.ts`,
+    // RETARGETED (round 3, L4): cells are read through an accessor.
+    from: "  const leftOut = cost(row, column - 1) + 1;",
+    to: "  const leftOut = NEVER;",
+    test: `${SCHEMA}/test/typing-slip.test.ts`,
+    because: "\"contnue\", \"goin\" and \"zurukgsetz\" stop being the words they are (H1 b)",
+  },
+  {
+    label: "a doubled letter or a stray key is no slip",
+    file: `${SCHEMA}/src/typing-slip.ts`,
+    // RETARGETED (round 3, L4): cells are read through an accessor.
+    from: "  const strayKey = isStrayKey(typed, row - 1, target[column]) ? cost(row - 1, column) + 1 : NEVER;",
+    to: "  const strayKey = NEVER;",
+    test: `${SCHEMA}/test/typing-slip.test.ts`,
+    because: "\"weiterr\" and \"macxhe\" stop being the words they are (H1 b)",
+  },
+  {
+    label: "\"try\" is no continuation trigger",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "\"ahead\", \"try\", \"weiter\",",
+    to: "\"ahead\", \"weiter\",",
+    test: `${CORE}/test/prompt-corpus-gate.test.ts`,
+    because: "\"try harder\" reaches the hub as a task about trying (hold-out review, L2)",
+  },
+  {
+    label: "\"cleared\" is no meta word",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "\"verfugbar\", \"cleared\", \"lifted\",",
+    to: "\"verfugbar\", \"lifted\",",
+    // RETARGETED (round 5): the corpus row says "carry on", which floors it by itself (C1); the verdict is pinned directly.
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"cleared, thanks\" reaches the hub as a task and points at the limit tree (hold-out review, L2)",
+  },
+  {
+    label: "\"kontingent\" is no meta word",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "\"quota\", \"quotas\", \"kontingent\", \"session\",",
+    to: "\"quota\", \"quotas\", \"session\",",
+    // RETARGETED (round 5): the corpus row says "weiter", which floors it by itself (C1); the verdict is pinned directly.
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"Kontingent, danke\" reaches the hub as a task about the quota (hold-out review, L2)",
+  },
+  {
+    label: "the gate's content-free rows may reach the hub",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "  if (classes.includes(null)) {\n    return false;\n  }",
+    to: "  if (classes.filter((wordClass) => wordClass === null).length > 1) {\n    return false;\n  }",
+    test: `${CORE}/test/prompt-corpus-gate.test.ts`,
+    because: "a prompt with one word of no class beside commands passes as content-free, and a hold-out task like \"CI ist rot wegen lint\" is floored (H2)",
+  },
+  {
+    label: "the intent worker models a parked turn that carries no task",
+    file: `${CORE}/src/derive/intent/worker.ts`,
+    from: "  if (intentPromptOf(prompt) === null) {\n    await bookFailure(home, args.claudeSessionId, DROPPED_CONTENT_FREE);\n    return;\n  }\n",
+    to: "",
+    test: `${CONNECTOR}/test/intent-worker.test.ts`,
+    because: "a turn parked before the rule knew better becomes the session's derived intent, and the floors meet \"mach weiter\" as the session's purpose (H3)",
+  },
+  {
+    label: "an unreviewed draft counts as evidence",
+    file: `${SCHEMA}/src/evidence-resolution.ts`,
+    from: "  head.provenance === DECLARED &&\n",
+    to: "",
+    test: `${SERVER}/test/hint-evidence-backed.test.ts`,
+    because: "a model's guess backs a root cause, and the tree reads solved on a vouch nobody made (H5)",
+  },
+  {
+    label: "a refuted or superseded claim counts as evidence",
+    file: `${SCHEMA}/src/evidence-resolution.ts`,
+    from: "  !NOT_STANDING.has(head.status) &&\n",
+    to: "",
+    test: `${SCHEMA}/test/evidence-resolution.test.ts`,
+    because: "an observation its author refuted still backs the cause that cites it (H5)",
+  },
+  {
+    label: "a root cause counts as evidence for another",
+    file: `${SCHEMA}/src/evidence-resolution.ts`,
+    from: "export const EVIDENCE_KINDS: ReadonlySet<string> = new Set([\"observation\", \"evidence\"]);",
+    to: "export const EVIDENCE_KINDS: ReadonlySet<string> = new Set([\"observation\", \"evidence\", \"root_cause\"]);",
+    test: `${SERVER}/test/hint-evidence-backed.test.ts`,
+    because: "two theories cite each other into a solved tree; the review's root_cause-as-evidence survivor (H5, L2)",
+  },
+  {
+    label: "a decision counts as evidence, and a citing cycle backs itself",
+    file: `${SCHEMA}/src/evidence-resolution.ts`,
+    from: "export const EVIDENCE_KINDS: ReadonlySet<string> = new Set([\"observation\", \"evidence\"]);",
+    to: "export const EVIDENCE_KINDS: ReadonlySet<string> = new Set([\"observation\", \"evidence\", \"decision\"]);",
+    test: `${SERVER}/test/solved-evidence.test.ts`,
+    because: "a root cause and a decision that cite each other read solved (H5)",
+  },
+  {
+    label: "a one-letter observation counts as evidence",
+    file: `${SCHEMA}/src/evidence-resolution.ts`,
+    from: "  contentWordCount(head.body) >= EVIDENCE_MIN_CONTENT_WORDS;",
+    to: "  true;",
+    test: `${SCHEMA}/test/evidence-resolution.test.ts`,
+    because: "\"x\" and \"See above.\" back a root cause (H5)",
+  },
+  {
+    label: "a revised claim is never followed to its revision",
+    // RETARGETED (round 3, M4): the walk goes level by level.
+    file: `${SCHEMA}/src/evidence-resolution.ts`,
+    from: "    const next = [...new Set(frontier.flatMap(successorsOf))];",
+    to: "    const next: readonly string[] = [];",
+    test: `${CORE}/test/mcp-solved-render.test.ts`,
+    because: "a ref to an observation its author revised backs nothing, though the revision stands (H5)",
+  },
+  {
+    label: "the hub never follows a ref to its revision",
+    file: `${SERVER}/src/services/evidence-resolution.ts`,
+    from: "      WHERE chain.depth < ${REVISION_MAX_DEPTH}",
+    to: "      WHERE chain.depth < 0",
+    test: `${SERVER}/test/hint-evidence-backed.test.ts`,
+    because: "a ref to a revised observation backs nothing on the hub while the connector's mirror says it does (H5)",
+  },
+  {
+    label: "the hub resolves evidence across repos",
+    // RETARGETED (round 3, L3): the head's repo is checked beside the original's.
+    file: `${SERVER}/src/services/evidence-resolution.ts`,
+    from: "    WHERE head_session.repo = citing_session.repo\n",
+    to: "    WHERE TRUE\n",
+    test: `${SERVER}/test/hint-evidence-backed.test.ts`,
+    because: "an observation in another repo backs this repo's root cause (H5)",
+  },
+  {
+    label: "the hub counts a revised-away claim as the head",
+    file: `${SERVER}/src/services/evidence-resolution.ts`,
+    // RETARGETED (round 3, L3): the original's repo check sits before the revision probe.
+    from: "      AND cited_session.repo = citing_session.repo\n      AND NOT EXISTS (\n        SELECT 1 FROM claim_edges AS later\n        WHERE later.to_claim_id = head.id AND later.kind = ${SUPERSEDES_EDGE_KIND}\n      )`);",
+    to: "      AND cited_session.repo = citing_session.repo`);",
+    test: `${SERVER}/test/hint-evidence-backed.test.ts`,
+    because: "a retracted observation still backs the cause beside its retraction (H5)",
+  },
+  {
+    label: "the solved label counts stored refs again",
+    file: `${SERVER}/src/services/solved.ts`,
+    from: "  const qualifying = candidates.filter((claim) => (resolved.get(claim.id) ?? 0) >= SOLVED_MIN_EVIDENCE_REFS);",
+    to: "  const qualifying = candidates;",
+    test: `${SERVER}/test/solved-evidence.test.ts`,
+    because: "a self-cite, a draft or a decision that cites it back reads SOLVED and earns the ranking floor (M2)",
+  },
+  {
+    label: "an unbacked rival deadlocks a solved tree",
+    file: `${SERVER}/src/services/solved.ts`,
+    from: "  const deadlocked = await listDeadlocked(db, qualifying);",
+    to: "  const deadlocked = await listDeadlocked(db, candidates);",
+    test: `${SERVER}/test/solved-evidence.test.ts`,
+    because: "a drive-by theory whose evidence resolves to nothing unsolves the tree (M2)",
+  },
+  {
+    label: "the connector's solved mirror counts stored refs",
+    file: `${CORE}/src/mcp/render.ts`,
+    // RETARGETED (round 3, M2 + M4): the mirror reads the tree's evidence, built once.
+    from: "      resolvedRefsInTree(claim, tree) > 0 &&",
+    to: "      claim.evidenceRefs.length > 0 &&",
+    test: `${CORE}/test/mcp-solved-render.test.ts`,
+    because: "get_diagnosis labels a tree solved that the hub does not (M2)",
+  },
+  {
+    label: "the hint's evidenceBacked counts stored refs",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    evidenceBacked: (resolvedRefs.get(row.claim.id) ?? 0) > 0,",
+    to: "    evidenceBacked: row.claim.evidenceRefs.length > 0,",
+    test: `${SERVER}/test/hint-evidence-backed.test.ts`,
+    because: "a self-cite or a ref to nothing buys a pushed finding (H5)",
+  },
+  {
+    label: "the hub ships every declared body again",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "      row.claim.provenance === DECLARED_PROVENANCE &&\n      qualifiesAsSubstance({ ...row.claim, resolvedEvidenceRefs: resolvedRefs.get(row.claim.id) ?? 0 })\n        ? row.claim.body",
+    to: "      row.claim.provenance === DECLARED_PROVENANCE\n        ? row.claim.body",
+    test: `${SERVER}/test/hint-withheld-bodies.test.ts`,
+    because: "a 0.10.0 connector inlines a rejected approach and a proposed root cause the hub never meant to be shown (M1)",
+  },
+  {
+    label: "the wire's evidence count is the stored one",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    evidenceRefCount: resolvedRefs.get(row.claim.id) ?? 0,",
+    to: "    evidenceRefCount: row.claim.evidenceRefs.length,",
+    test: `${SERVER}/test/hint-withheld-bodies.test.ts`,
+    because: "an older connector's count gate reads a draft and a ref to nothing as evidence (M1)",
+  },
+  {
+    label: "a proposed root cause qualifies as substance",
+    file: `${SCHEMA}/src/substance-trust.ts`,
+    from: "export const SUBSTANCE_ROOT_CAUSE_STATUSES: ReadonlySet<string> = new Set([\"likely_root_cause\", \"partially_confirmed\"]);",
+    to: "export const SUBSTANCE_ROOT_CAUSE_STATUSES: ReadonlySet<string> = new Set([\"likely_root_cause\", \"partially_confirmed\", \"proposed\"]);",
+    test: `${SERVER}/test/hint-withheld-bodies.test.ts`,
+    because: "a theory's body rides the wire under a teammate's name for any connector that inlines it (M1, principle 5)",
+  },
+  {
+    label: "an unbacked claim qualifies as substance",
+    file: `${SCHEMA}/src/substance-trust.ts`,
+    from: "  claim.resolvedEvidenceRefs >= SUBSTANCE_MIN_EVIDENCE_REFS &&\n",
+    to: "",
+    test: `${SERVER}/test/hint-withheld-bodies.test.ts`,
+    because: "a root cause whose evidence resolves to nothing carries its body to every connector (M1)",
+  },
+  {
+    label: "a body with no sentence worth showing qualifies as substance",
+    file: `${SCHEMA}/src/substance-trust.ts`,
+    from: "  substanceSentence(claim.body).length > 0;",
+    to: "  true;",
+    test: `${CORE}/test/hint-substance-trust-parity.test.ts`,
+    because: "the hub ships \"1.\" as a finding the selector refuses, and the two rules part ways (M1)",
+  },
+  {
+    label: "the hint pool ranks on the normalized document again",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "      rankFtsTier: rankOnPushableText(deps.db, callerDeveloperId),\n",
+    to: "",
+    test: `${SERVER}/test/hint-pushable-ranking.test.ts`,
+    because: "twelve trees flooded with drafts on the prompt's words fill the pool and the declared answer never reaches the floor (M3)",
+  },
+  {
+    label: "the search never asks the caller's ranker",
+    file: `${SERVER}/src/services/search.ts`,
+    // RETARGETED (hint-substance merge): the default tier takes the derived-claims opt-out.
+    from: "    input.rankFtsTier === undefined\n      ? listFtsTier(deps.db, wordTokens, scope, input.excludeDerivedClaims === true)\n      : listRankedFtsTier(input.rankFtsTier, wordTokens, scope),",
+    to: "    listFtsTier(deps.db, wordTokens, scope, input.excludeDerivedClaims === true),",
+    test: `${SERVER}/test/hint-pushable-ranking.test.ts`,
+    because: "the hints endpoint passes its pushable ranking and the pool is ranked on drafts anyway (M3)",
+  },
+  {
+    label: "a draft or a refuted claim ranks a tree into the hint pool",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "            pushableClaimCondition(),\n            notSuperseded(db),\n            notMutedCondition(readerDeveloperId, claimAuthors.developerId),",
+    to: "            notSuperseded(db),\n            notMutedCondition(readerDeveloperId, claimAuthors.developerId),",
+    test: `${SERVER}/test/hint-pushable-ranking.test.ts`,
+    because: "a flood of drafts or refuted claims crowds the declared tree out of the pool (M3)",
+  },
+  {
+    label: "a revised-away claim ranks a tree into the hint pool",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "            notSuperseded(db),\n            notMutedCondition(readerDeveloperId, claimAuthors.developerId),",
+    to: "            notMutedCondition(readerDeveloperId, claimAuthors.developerId),",
+    test: `${SERVER}/test/hint-pushable-ranking.test.ts`,
+    because: "retracted claims still rank their trees above the one the hint is about (M3)",
+  },
+  {
+    label: "a muted author's claim ranks a tree into the hint pool",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "            notMutedCondition(readerDeveloperId, claimAuthors.developerId),\n          ),\n        )\n        .groupBy(claims.workContextId, workContexts.createdAt, workContexts.updatedAt)",
+    to: "          ),\n        )\n        .groupBy(claims.workContextId, workContexts.createdAt, workContexts.updatedAt)",
+    test: `${SERVER}/test/hint-pushable-ranking.test.ts`,
+    because: "a muted teammate's words still fill the reader's pool and push the answer out (M3)",
+  },
+  {
+    label: "an old hub's candidate keeps its free pass past the floor",
+    file: `${CORE}/src/hints/select.ts`,
+    // RETARGETED (round 3, follow-up): the recount takes the floor terms worked out once.
+    from: "    ? recountsContentFloor(context, input.selfDeveloperId, recount)",
+    to: "    ? true",
+    test: `${CORE}/test/hint-old-hub-floor.test.ts`,
+    because: "a 0.10.0 hub ranked on drafts and floored nothing, and every candidate it sends is pointed at (H4)",
+  },
+  {
+    label: "a tree whose wire carries no body is recounted on its title alone",
+    // RETARGETED (round 3, C1): the recount asks each statement through clearsOn.
+    // RETARGETED (round 3, follow-up): the statements are asked by the shared rule.
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  recountBodies(context, selfDeveloperId).length > 0 && clearsRecountedFloor(context, selfDeveloperId, floor);",
+    to: "  clearsRecountedFloor(context, selfDeveloperId, floor);",
+    test: `${CORE}/test/hint-old-hub-floor.test.ts`,
+    because: "a title that shares the prompt's words points at a tree with nothing vouched for on the wire (H4)",
+  },
+  {
+    label: "a draft's body counts in the old-hub recount",
+    // RETARGETED (round 3, M5): the recount reads pushable claims, a superset rule of declared.
+    // RETARGETED (round 3, follow-up): the bodies are named once, for the floor and its known terms.
+    file: `${CORE}/src/hints/select.ts`,
+    from: "    .filter((claim) => isPushableClaim(claim) && claim.authorDeveloperId !== selfDeveloperId && claim.body.trim().length > 0)",
+    to: "    .filter((claim) => claim.authorDeveloperId !== selfDeveloperId && claim.body.trim().length > 0)",
+    test: `${CORE}/test/hint-old-hub-floor.test.ts`,
+    because: "an unreviewed draft's words qualify a tree an old hub ranked on them (H4, L6)",
+  },
+  {
+    label: "the reader's own body counts in the old-hub recount",
+    // RETARGETED (round 3, M5): the recount reads pushable claims, a superset rule of declared.
+    // RETARGETED (round 3, follow-up): the bodies are named once, for the floor and its known terms.
+    file: `${CORE}/src/hints/select.ts`,
+    from: "    .filter((claim) => isPushableClaim(claim) && claim.authorDeveloperId !== selfDeveloperId && claim.body.trim().length > 0)",
+    to: "    .filter((claim) => isPushableClaim(claim) && claim.body.trim().length > 0)",
+    test: `${CORE}/test/hint-old-hub-floor.test.ts`,
+    because: "the reader's own words point them at a teammate's tree (H4)",
+  },
+  {
+    label: "the flow recounts an old hub's candidates on nothing",
+    file: `${CORE}/src/flows/hint.ts`,
+    // RETARGETED (round 3, L4): the terms come from the hook's one classification.
+    // RETARGETED (round 3, follow-up): the recount counts the ranked terms of the query sent.
+    from: "    promptTerms: terms.ranked,",
+    to: "    promptTerms: [],",
+    test: `${CORE}/test/hint-old-hub-floor.test.ts`,
+    because: "against a 0.10.0 hub no candidate ever clears the recount, and every real task loses its hint (H4)",
+  },
+  {
+    label: "the flow recounts an old hub's candidates on raw words, steering included",
+    file: `${CORE}/src/flows/hint.ts`,
+    // RETARGETED (round 3, L4): the terms come from the hook's one classification.
+    // RETARGETED (round 3, follow-up): the recount counts the ranked terms of the query sent.
+    from: "    promptTerms: terms.ranked,",
+    to: "    promptTerms: input.prompt.toLowerCase().split(/[^\\p{L}\\p{N}]+/u),",
+    test: `${CORE}/test/hint-old-hub-floor.test.ts`,
+    because: "\"please continue\" beside one task word clears an old hub's floor again (H4, H1)",
+  },
+  {
+    label: "a no-break space before a head marker hides it",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: String.raw`[\\p{Zs}\\t\\uFEFF]*`,
+    to: String.raw`[ \\t\\uFEFF]*`,
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "a notification queued after an NBSP or a fullwidth space is scored as the reader's words (L1)",
+  },
+  {
+    label: "two same-tag wrappers are read as one",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "  return beforeNext >= opening.end ? beforeNext : lower.lastIndexOf(close);",
+    to: "  return lower.lastIndexOf(close);",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "the human's sentence between two hand-backs is swallowed with them, and the prompt reads as all harness (L1)",
+  },
+  {
+    label: "every wrapper is matched to its LAST close, not only the leading one",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "  const at = isLeading ? leadingClose(text, lower, opening, close) : lower.indexOf(close, opening.end);",
+    to: "  const at = isLeading ? leadingClose(text, lower, opening, close) : lower.lastIndexOf(close);",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "a human sentence naming the tag after a notification is swallowed up to it (L1, the review's survivor)",
+  },
+  {
+    label: "the wire defaults evidenceBacked to true",
+    file: `${CORE}/src/http/hub.ts`,
+    from: "  evidenceBacked: z.boolean().optional(),",
+    to: "  evidenceBacked: z.boolean().default(true),",
+    test: `${CORE}/test/hint-old-hub-floor.test.ts`,
+    because: "a hub too old to judge evidence buys substance for every settled cause it sends (L2, the review's survivor)",
+  },
+  {
+    label: "the hub searches a content-free prompt anyway",
+    file: `${SERVER}/src/services/hints.ts`,
+    // RETARGETED (round 4, C1): a continuation signal is matched to nothing beside it.
+    // RETARGETED (round 5, C1): the shared rule says what the prompt asks about, or nothing.
+    from: "  const task = promptTaskOf(humanText, terms);\n  if (task === null) {",
+    to: "  const task = promptTaskOf(humanText, terms) ?? { text: humanText, terms };\n  if (task === null) {",
+    test: `${SERVER}/test/hint-candidate-floor.test.ts`,
+    because: "\"weiter\" reaches the exact tier and points at the tree that touched a symbol of that name (L2)",
+  },
+  {
+    label: "the hub sends every content term to SQL, unbounded",
+    // RETARGETED (round 3, C1): the bounded terms are named once, for both halves of the floor.
+    // RETARGETED (round 3, follow-up): in the shared floor-terms rule.
+    file: `${SCHEMA}/src/content-floor.ts`,
+    from: "  const all = known.slice(0, HINT_MAX_COUNTED_TERMS);",
+    to: "  const all = known;",
+    test: `${SERVER}/test/hint-candidate-floor.test.ts`,
+    because: "a pasted wall of text becomes one OR-query of hundreds of terms on the embedded database (L2, the review's survivor)",
+  },
+  {
+    label: "a statement of meta words only clears the floor",
+    // RETARGETED (round 3, follow-up): the floor of one statement is the shared rule's.
+    file: `${SCHEMA}/src/content-floor.ts`,
+    from: "  return { floor: topical >= floor.minTopical ? sharedTermCount(floor.all, said) : 0, topical };",
+    to: "  return { floor: sharedTermCount(floor.all, said), topical };",
+    test: `${SERVER}/test/hint-topical-floor.test.ts`,
+    because: "\"session limit hit earlier, it's back now, continue\" points at the intent-only tree that says session and limit (round 3, C1)",
+  },
+  {
+    label: "a tree's own statement clears the floor on meta words",
+    // RETARGETED (round 3, follow-up): the statement is counted by the shared rule; no topical word needed.
+    file: `${SERVER}/src/services/hints.ts`,
+    // RETARGETED (round 4, C2): one helper counts a context's statements.
+    from: "  return new Map(rows.map((row) => [row.id, contextMatchOf(floor, [row.statement])]));",
+    to: "  return new Map(rows.map((row) => [row.id, contextMatchOf({ ...floor, minTopical: 0 }, [row.statement])]));",
+    test: `${SERVER}/test/hint-topical-floor.test.ts`,
+    because: "an intent made of the session's machinery became the round-3 magnet, taking six of ten content-free hints (C1)",
+  },
+  {
+    label: "a claim clears the floor on meta words",
+    // RETARGETED (round 3, follow-up): each claim is counted by the shared rule; no topical word needed.
+    file: `${SERVER}/src/services/hints.ts`,
+    // RETARGETED (round 4, C2): one helper counts a context's statements.
+    from: "      contextMatchOf(\n        floor,\n        group.map((row) => row.body),\n      ),",
+    to: "      contextMatchOf(\n        { ...floor, minTopical: 0 },\n        group.map((row) => row.body),\n      ),",
+    test: `${SERVER}/test/hint-topical-floor.test.ts`,
+    because: "a claim that says usage, limit, reset and session qualifies its tree for every limit chatter (C1)",
+  },
+  {
+    label: "the hub counts every term as topical",
+    // RETARGETED (round 3, L1): the topical terms pass the closed-stem check first.
+    // RETARGETED (round 3, follow-up): in the shared floor-terms rule.
+    file: `${SCHEMA}/src/content-floor.ts`,
+    from: "    topical: all.filter((term) => topicalWords.has(term) && !isClosedInflection(term)),",
+    to: "    topical: all,",
+    test: `${SERVER}/test/hint-topical-floor.test.ts`,
+    because: "the topical-word rule reads meta words as topics and floors nothing (C1)",
+  },
+  {
+    label: "the topical terms keep closed-class words",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    // RETARGETED (round 4, M1): the round-3 set, words of no closed class, is the intent fire's `unclassed` now.
+    // RETARGETED (round 4, L1 follow-up): the terms are the parts' and their whole forms'.
+    from: "    unclassed: words.terms.filter((_, index) => classes[index] === null),",
+    to: "    unclassed: words.terms,",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"why does the usage limit reset\" carries three topics, and the floor's topical half is the floor's other half again (C1)",
+  },
+  {
+    label: "a restart verb beside meta words is a task",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "    content.some(isRestartVerb) ||\n",
+    to: "",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"rate limit is gone, retry\" reaches the hub and finds the StatsBomb rate-limit root cause (round 3, C1)",
+  },
+  // EQUIVALENT, NOT ANCHORED (round 3, follow-up) — "the old-hub recount
+  // counts meta words as a topic", which handed the recount every ranked term
+  // as topical (`{ topical: input.promptTerms }` in hints/select.ts). The
+  // recount now calls the hub's own rule, which drops every closed-class
+  // word's lexeme from the topical terms as well (`@crosscheck/schema`
+  // isClosedInflection: a word's lexeme is its own), so the classifier's
+  // topical list only matters for a slipped class word repeated, typo and
+  // all, in a teammate's body. Its intent stays guarded on the shared rule:
+  // "the hub counts every term as topical" and "the hub reads an inflected
+  // closed-class word as a topic". Recorded so it is not re-reported as a gap.
+  // EQUIVALENT, NOT ANCHORED (round 3, follow-up) — "the flow hands the
+  // recount every term as topical" (`promptTopicalTerms: terms.content` in
+  // flows/hint.ts), for the reason given at "the old-hub recount counts meta
+  // words as a topic" above: the shared rule drops every closed-class
+  // lexeme from the topical terms itself. Recorded so it is not re-reported.
+  {
+    label: "the hub counts a claim's meta words toward its relevance",
+    file: `${SERVER}/src/services/hints.ts`,
+    // RETARGETED (round 3, follow-up): the query's words are its floor terms.
+    from: "repo: query.repo, tokens: query.floor.topical },",
+    to: "repo: query.repo, tokens: query.floor.all },",
+    test: `${SERVER}/test/hint-strong-match.test.ts`,
+    because: "\"token\" and \"minute\" beside one \"key\" make the rate-limit decision a strong match for a JWT prompt (round 3, H3 + M6)",
+  },
+  {
+    label: "the hub counts a tree's meta words toward its relevance",
+    file: `${SERVER}/src/services/hints.ts`,
+    // RETARGETED (round 3, follow-up): the hub's floor over given contexts; a statement's every shared word is its floor count.
+    from: "        ownTerms: statementTerms.get(id)?.topical ?? 0,",
+    to: "        ownTerms: statementTerms.get(id)?.floor ?? 0,",
+    test: `${SERVER}/test/hint-strong-match.test.ts`,
+    because: "a tree whose title says token lends its strength to every claim that shares one other word (H3 + M6)",
+  },
+  {
+    label: "a tree's strength ignores its claims",
+    file: `${SERVER}/src/services/hints.ts`,
+    // RETARGETED (round 3, follow-up): the hub's floor over given contexts.
+    from: "        topicalTerms: Math.max(statementTerms.get(id)?.topical ?? 0, claimTerms.get(id)?.topical ?? 0),",
+    to: "        topicalTerms: statementTerms.get(id)?.topical ?? 0,",
+    test: `${SERVER}/test/hint-strong-match.test.ts`,
+    because: "a tree titled \"Investigation notes\" whose claim says the whole prompt reads as the weakest tree, and a stray tree outranks it (H3 + M6)",
+  },
+  {
+    label: "the hub ships a weakly matched body",
+    file: `${SERVER}/src/services/hints.ts`,
+    // RETARGETED (round 4, C2): the test reads the strict scope.
+    from: "      isStrongSubstanceMatch({ claimTerms: claim.matchedTerms, distinctTerms, treeTerms: scope.treeTerms, isContentIdentity: scope.isContentIdentity })",
+    to: "      true",
+    test: `${SERVER}/test/hint-strong-match.test.ts`,
+    because: "a 0.10.0 connector inlines the rate-limit decision for \"token refresh fails after key rotation\" (H3 + M6)",
+  },
+  {
+    label: "the hub never reads a fingerprint as content identity",
+    file: `${SERVER}/src/services/hints.ts`,
+    // RETARGETED (round 4, C2): the strict scope names it.
+    from: "      isContentIdentity: (matchedTargets.get(row.id) ?? []).some((target) => target.kind === CONTENT_IDENTITY_TARGET_KIND),",
+    to: "      isContentIdentity: false,",
+    test: `${SERVER}/test/hint-strong-match.test.ts`,
+    because: "the decision of a tree whose very error the prompt carried is withheld, for want of a shared word (H3 + M6)",
+  },
+  {
+    label: "one shared word on each side is a strong match",
+    file: `${SCHEMA}/src/substance-trust.ts`,
+    // RETARGETED (round 4, C2): one claim word beside a tree word is the claim threshold at one.
+    from: "  (match.claimTerms >= SUBSTANCE_MIN_MATCHED_TERMS &&",
+    to: "  (match.claimTerms >= 1 &&",
+    test: `${SCHEMA}/test/substance-match.test.ts`,
+    because: "a claim and a tree that each brush the prompt with one word push the claim as a finding (H3 + M6)",
+  },
+  {
+    label: "substance comes from a weaker tree",
+    file: `${CORE}/src/hints/select.ts`,
+    // RETARGETED (round 4, C2): substance and pointer both come from the one strongest tree.
+    from: "  const context = strongestIndex === null ? undefined : pointable[strongestIndex];",
+    to: "  const context = strongestIndex === null ? undefined : pointable[0];",
+    test: `${CORE}/test/hint-best-match.test.ts`,
+    because: "the hub's first trusted claim wins, and t004 gets the rate-limit decision for a JWT prompt (round 3, H3 + M6)",
+  },
+  {
+    label: "the pointer names the hub's first, not the strongest",
+    file: `${CORE}/src/hints/select.ts`,
+    // RETARGETED (round 4, C2): the pointer names the one strongest tree.
+    from: "  return isUnpointed(context, seen) ? (pointerAt(context, selfDeveloperId) ?? SILENCE) : SILENCE;",
+    to: "  return isUnpointed(context, seen) ? (pointerAt(pointable[0] ?? context, selfDeveloperId) ?? SILENCE) : SILENCE;",
+    test: `${CORE}/test/hint-best-match.test.ts`,
+    because: "\"the usage limit banner shows wrong numbers\" points at the dashboard tree that shares one word (H3 + M6)",
+  },
+  {
+    label: "an exact target counts no more than words",
+    // RETARGETED (round 4, C2): the comparison is the schema's, for the hub and the selector.
+    // RETARGETED (round 4, M1): one comparison, the own statement third.
+    // RETARGETED (round 4, decision 3): the shared words fourth.
+    // RETARGETED (round 5, M2): the shared words third, the own statement fourth.
+    file: `${SCHEMA}/src/substance-trust.ts`,
+    from: "  Number(right.isExact) - Number(left.isExact) || right.topical - left.topical || right.shared - left.shared || right.own - left.own;",
+    to: "  right.topical - left.topical || right.shared - left.shared || right.own - left.own;",
+    test: `${CORE}/test/hint-best-match.test.ts`,
+    because: "a tree that touched the file the prompt named loses to one that merely shares its words (H3 + M6)",
+  },
+  {
+    label: "the strongest tree is judged among unseen ones only",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  const pointable = eligible.filter((context) => pointerAt(context, selfDeveloperId) !== null);",
+    to: "  const pointable = eligible.filter((context) => pointerAt(context, selfDeveloperId) !== null && isUnpointed(context, seen));",
+    test: `${CORE}/test/hint-best-match.test.ts`,
+    because: "once the right tree was shown, the next prompt points at the stray one beside it (H3 + M6)",
+  },
+  {
+    label: "the intent fire is spent on a prompt of machinery",
+    file: `${CORE}/src/derive/intent/gate.ts`,
+    // RETARGETED (round 3, L4): on the hook's one classification.
+    // RETARGETED (round 4, M1): the fire reads the unclassed words.
+    from: "  return classified.terms.unclassed.length >= INTENT_MIN_TOPICAL_WORDS ? human : null;",
+    to: "  return classified.terms.unclassed.length >= 1 ? human : null;",
+    test: `${CONNECTOR}/test/intent-gate.test.ts`,
+    because: "\"fix the session limit reset handling once more please\" parks a sentence the model can only answer with machinery (round 3, H2)",
+  },
+  {
+    label: "a derived intent of machinery is spooled",
+    file: `${CORE}/src/derive/intent/worker.ts`,
+    from: "  if (!hasTopic(sentence)) {\n",
+    to: "  if (false) {\n",
+    test: `${CONNECTOR}/test/intent-worker.test.ts`,
+    because: "\"Continue the session after the usage limit reset\" becomes an intent every limit chatter matches (round 3, H2)",
+  },
+  {
+    label: "a filler word steers nothing in the verdict",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "  wordClass === \"trigger\" || wordClass === \"steering\" || wordClass === \"filler\";",
+    to: "  wordClass === \"trigger\" || wordClass === \"steering\";",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"sorry, limit\" reads as a question about the limit and reaches the hub (round 3, H1)",
+  },
+  {
+    label: "filler words are terms",
+    file: `${SCHEMA}/src/session-control.ts`,
+    from: "  return wordClass === \"trigger\" || wordClass === \"steering\" || wordClass === \"filler\";",
+    to: "  return wordClass === \"trigger\" || wordClass === \"steering\";",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "a dictated \"Komma\" and \"Punkt\" are counted as shared words beside a real one (H1)",
+  },
+  {
+    label: "the filler class loses dictated punctuation",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "  \"ahm\", \"ahh\", \"uhm\", \"umm\", \"uhh\", \"hmm\", \"komma\", \"punkt\",",
+    to: "  \"ahm\", \"ahh\", \"uhm\", \"umm\", \"uhh\", \"hmm\", \"punkt\",",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"okay Komma mach weiter Punkt\" reaches the hub on \"komma\" (H1)",
+  },
+  {
+    label: "a four-letter trigger takes no swapped pair",
+    file: `${SCHEMA}/src/session-control.ts`,
+    from: "  isTypingSlipOf(typed, target) || isShortSwapSlipOf(typed, target);",
+    to: "  isTypingSlipOf(typed, target);",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"mahc weiter\" and \"kepe going\" reach the hub as tasks (round 3, H1)",
+  },
+  {
+    label: "the short swap reaches longer words too",
+    file: `${SCHEMA}/src/typing-slip.ts`,
+    from: "  target.length === SWAP_ONLY_TARGET_LETTERS &&",
+    to: "  target.length >= SWAP_ONLY_TARGET_LETTERS &&",
+    test: `${SCHEMA}/test/typing-slip.test.ts`,
+    because: "every word longer than four letters takes a free swap on top of its budget (H1)",
+  },
+  {
+    label: "a unit-number argument of a slash command is scored",
+    file: `${SCHEMA}/src/slash-command.ts`,
+    from: "const isCommandOwn = (word: string): boolean => isCommandName(word) || UNIT_NUMBER.test(word);",
+    to: "const isCommandOwn = (word: string): boolean => isCommandName(word);",
+    test: `${SCHEMA}/test/slash-command.test.ts`,
+    because: "\"/loop 10m /babysit-prs\" reaches the hub on \"10m\" (round 3, H1)",
+  },
+  {
+    label: "the trigger inflections are words of no class",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "  \"continued\", \"keeps\", \"kept\", \"tried\", \"tries\", \"retrying\", \"resumed\",",
+    to: "  \"kept\", \"tries\", \"resumed\",",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"it keeps going, continue\" and \"tried again, retrying\" reach the hub as tasks (H1)",
+  },
+  {
+    label: "the clock and limit reports the round-3 set found are words of no class",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "  \"earlier\", \"vorher\", \"gleich\", \"uhr\", \"sec\", \"secs\", \"hit\", \"erreicht\",",
+    to: "  \"vorher\", \"gleich\", \"sec\", \"secs\",",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"session limit hit earlier, it's back now, continue\" reaches the hub and points at the session-resume tree (H1)",
+  },
+  {
+    label: "the German forms of conversation and operation words are words of no class",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "  \"committe\", \"pushe\", \"lassen\", \"getestet\", \"tested\", \"compact\",",
+    to: "  \"getestet\", \"tested\", \"compact\",",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"committe und pushe bitte\" and \"tests laufen lassen\" reach the hub as tasks (H1)",
+  },
+  {
+    label: "a command clause lends its terms to the search",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    // RETARGETED (round 4, L1 follow-up): a clause's words are read by wordsOf.
+    from: "        return isSessionCommand(words.tokens, words.content, words.content.map(classOf)) ? [] : words.terms;",
+    to: "        return words.terms;",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"keep it short please\" spends a counted slot on \"short\" in a prompt about redis (round 3, M7)",
+  },
+  {
+    label: "the ranked terms keep the prompt's order",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    // RETARGETED (round 4, decision 3): weak words rank after the topical ones too.
+    from: "  return [...kept.filter(isFirst), ...kept.filter((term) => !isFirst(term))];",
+    to: "  return kept;",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "a long prompt's limit chatter takes the counted slots before its topic (M7)",
+  },
+  {
+    label: "the hub searches on the prompt's own order, command clauses included",
+    file: `${SERVER}/src/services/hints.ts`,
+    // RETARGETED (round 3, follow-up): the hub's floor terms come from one helper.
+    // RETARGETED (round 4, H1): the helper reads the known terms first, the window after.
+    // RETARGETED (round 4, L1): the known terms are the reader's visible statements'.
+    from: "  const known = await listKnownTerms(db, repo, terms.ranked, readerDeveloperId);",
+    to: "  const known = await listKnownTerms(db, repo, terms.content, readerDeveloperId);",
+    test: `${SERVER}/test/hint-long-prompt.test.ts`,
+    because: "\"keep it short please\" lends \"short\" to a tree titled \"Short redis keys\" (M7)",
+  },
+  {
+    label: "the hub counts words nobody on the team wrote",
+    file: `${SERVER}/src/services/hints.ts`,
+    // RETARGETED (round 3, follow-up): the hub's floor terms come from one helper.
+    // RETARGETED (round 4, H1): the helper reads the known terms first, the window after.
+    // RETARGETED (round 4, L1): the known terms are the reader's visible statements'.
+    from: "  const known = await listKnownTerms(db, repo, terms.ranked, readerDeveloperId);",
+    to: "  const known = terms.ranked;",
+    test: `${SERVER}/test/hint-long-prompt.test.ts`,
+    because: "a morning's chatter fills the counted slots and the redis task behind it finds nothing (t066, M7)",
+  },
+  {
+    label: "the hub examines every word of a long prompt",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  const examined = ranked.slice(0, HINT_MAX_EXAMINED_TERMS);",
+    to: "  const examined = ranked;",
+    test: `${SERVER}/test/hint-long-prompt.test.ts`,
+    because: "the existence probes are no longer bounded by anything but the route's character cap (M7)",
+  },
+  {
+    label: "a long prompt's floor is a short one's",
+    // RETARGETED (round 3, follow-up): in the shared floor-terms rule.
+    file: `${SCHEMA}/src/content-floor.ts`,
+    from: "    minTopical: knownCount > HINT_LONG_PROMPT_KNOWN_TERMS ? HINT_LONG_PROMPT_MIN_TOPICAL : 1,",
+    to: "    minTopical: 1,",
+    test: `${SERVER}/test/hint-long-prompt.test.ts`,
+    because: "a long status report agrees with a teammate's root cause on two words from two sentences, and gets it as substance (cf172, M7)",
+  },
+  {
+    label: "the connector sends only a long prompt's head",
+    file: `${CORE}/src/flows/hint.ts`,
+    // RETARGETED (round 4, H1): a long prompt goes as the ranked terms of all of it.
+    from: "    : [...new Set([...pathTokensOf(text), ...ranked])].reduce((query, term) => {",
+    to: "    : text.slice(0, MAX_SEARCH_QUERY_CHARS) || [...new Set([...pathTokensOf(text), ...ranked])].reduce((query, term) => {",
+    test: `${CORE}/test/hint-query-window.test.ts`,
+    because: "\"the daily quota reset cron runs twice\" after two thousand characters of chatter never reaches the hub (t072, M7)",
+  },
+  {
+    label: "the English supplement is not applied",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    // RETARGETED (round 4, M4): one helper names every language's function words.
+    from: "    ENGLISH_FUNCTION_WORDS,\n    ...[GERMAN",
+    to: "    ENGLISH_STOP_WORDS,\n    ...[GERMAN",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"every\" and \"instead\" are topics, and a long status report matches a root cause on them (M7)",
+  },
+  {
+    label: "the hub reads an inflected closed-class word as a topic",
+    // RETARGETED (round 3, follow-up): in the shared floor-terms rule.
+    file: `${SCHEMA}/src/content-floor.ts`,
+    from: "    topical: all.filter((term) => topicalWords.has(term) && !isClosedInflection(term)),",
+    to: "    topical: all.filter((term) => topicalWords.has(term)),",
+    test: `${SERVER}/test/hint-closed-stems.test.ts`,
+    because: "\"weekly limit reset, pick up where you stopped\" reaches the rate-limit tree on the lexeme of \"stop\" (round 3, L1)",
+  },
+  {
+    label: "the closed-stem check compares words as written",
+    // RETARGETED (round 3, follow-up): the shared rule compares lexemes.
+    // RETARGETED (round 4, M1): only for an inflected word that is no class word as written.
+    file: `${SCHEMA}/src/content-floor.ts`,
+    from: "  return INFLECTION_ENDING.test(folded) && exactClassOf(folded) === null && CLOSED_LEXEMES.has(termLexeme(folded));",
+    to: "  return INFLECTION_ENDING.test(folded) && exactClassOf(folded) === null && CLOSED_CLASS_WORDS.includes(folded);",
+    test: `${SERVER}/test/hint-closed-stems.test.ts`,
+    because: "\"shows\" is never \"show\", and the dashboard tree is pointed at for a limit report (L1)",
+  },
+  {
+    label: "the old-hub recount counts a refuted claim's words",
+    file: `${CORE}/src/hints/select.ts`,
+    // RETARGETED (round 3, follow-up): the bodies are named once, for the floor and its known terms.
+    from: "    .filter((claim) => isPushableClaim(claim) && claim.authorDeveloperId !== selfDeveloperId && claim.body.trim().length > 0)",
+    to: "    .filter((claim) => isDeclared(claim) && claim.authorDeveloperId !== selfDeveloperId && claim.body.trim().length > 0)",
+    test: `${CORE}/test/hint-old-hub-floor.test.ts`,
+    because: "against a 0.10.0 hub, a rejected hypothesis that says the prompt's words points at its tree on an unrelated observation (round 3, M5)",
+  },
+  {
+    label: "a repeated word counts as many content words",
+    file: `${SCHEMA}/src/substance-sentence.ts`,
+    from: "  return new Set(words).size;",
+    to: "  return words.length;",
+    test: `${SCHEMA}/test/evidence-resolution.test.ts`,
+    because: "\"asdf asdf asdf\" carries three content words and backs a root cause as evidence (round 3, M1)",
+  },
+  {
+    label: "closed-class words count as content",
+    file: `${SCHEMA}/src/substance-sentence.ts`,
+    from: "    .filter((token) => exactClassOf(token) === null);",
+    to: "    .filter(() => true);",
+    test: `${SCHEMA}/test/evidence-resolution.test.ts`,
+    because: "an observation of \"thanks thanks thanks\" is evidence, and the root cause citing it reads SOLVED (M1)",
+  },
+  {
+    label: "a head written after the citing claim still backs it",
+    file: `${SCHEMA}/src/evidence-resolution.ts`,
+    from: "  isNoNewerThan(head.createdAt, citing.createdAt) &&\n",
+    to: "",
+    test: `${SCHEMA}/test/evidence-resolution.test.ts`,
+    because: "\"Retracted: the 429s came from our own proxy\" is an observation with content and keeps the root cause backed (round 3, M2)",
+  },
+  {
+    label: "a contradicted head still backs",
+    file: `${SCHEMA}/src/evidence-resolution.ts`,
+    from: "  !head.isContradicted &&\n",
+    to: "",
+    test: `${SCHEMA}/test/evidence-resolution.test.ts`,
+    because: "a teammate's \"that is not so\" on the cited observation leaves the tree SOLVED (M2)",
+  },
+  {
+    label: "the hub never reads a contradicts edge on evidence",
+    file: `${SERVER}/src/services/evidence-resolution.ts`,
+    from: "WHERE contra.kind = ${CONTRADICTS_EDGE_KIND} AND contra.to_claim_id IN (chain.cited_id, head.id)",
+    to: "WHERE FALSE",
+    test: `${SERVER}/test/solved-evidence.test.ts`,
+    because: "the solved label stands on an observation a teammate refuted (M2)",
+  },
+  {
+    label: "the hub reads the head as old as the citing claim",
+    file: `${SERVER}/src/services/evidence-resolution.ts`,
+    from: "      to_json(head.created_at) #>> '{}' AS head_created_at,",
+    to: "      to_json(citing.created_at) #>> '{}' AS head_created_at,",
+    test: `${SERVER}/test/solved-evidence.test.ts`,
+    because: "a retraction written after the cause keeps it backed, since its time is never read (M2)",
+  },
+  {
+    label: "the solved mirror never reads a contradicts edge on evidence",
+    file: `${CORE}/src/mcp/render.ts`,
+    // RETARGETED (round 3, M4): the contradictions ride the tree's evidence, built once.
+    from: "isEvidenceFor(claim, ref, { ...head, isContradicted: tree.contradicted.has(ref) || tree.contradicted.has(head.id) })",
+    to: "isEvidenceFor(claim, ref, { ...head, isContradicted: false })",
+    test: `${CORE}/test/mcp-solved-render.test.ts`,
+    because: "get_diagnosis labels a tree solved on an observation a teammate refuted (M2)",
+  },
+  {
+    label: "the solved window is one bound across every tree",
+    file: `${SERVER}/src/services/solved.ts`,
+    from: "  const candidates = (await Promise.all(contextIds.map((contextId) => listCandidatesOf(db, [contextId])))).flat();",
+    to: "  const candidates = await listCandidatesOf(db, contextIds);",
+    test: `${SERVER}/test/solved-evidence.test.ts`,
+    because: "210 newer self-cited causes in one tree fill the window and hide the next tree's solved label (round 3, M3)",
+  },
+  {
+    label: "the recorded causes are cut across trees",
+    file: `${SERVER}/src/services/solved.ts`,
+    from: "  const solving = await listSolvingClaims(db, contextIds);\n  return solving.reduce<ReadonlyMap<string, SolvedRootCause>>(",
+    to: "  const solving = (await listSolvingClaims(db, contextIds)).slice(0, 50);\n  return solving.reduce<ReadonlyMap<string, SolvedRootCause>>(",
+    test: `${SERVER}/test/solved-evidence.test.ts`,
+    because: "a tree of sixty backed causes pushes the next tree's recorded cause out of the briefing (M3)",
+  },
+  {
+    label: "the solved mirror rebuilds the tree's evidence for every claim",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: "  const tree = treeEvidenceOf(diagnosis.claims, supersedes, contradicted);\n  const qualifying = diagnosis.claims.filter(\n    (claim) =>\n      claim.status === SOLVED_CLAIM_STATUS &&\n      claim.provenance === SOLVED_CLAIM_PROVENANCE &&\n      resolvedRefsInTree(claim, tree) > 0 &&",
+    to: "  const qualifying = diagnosis.claims.filter(\n    (claim) =>\n      claim.status === SOLVED_CLAIM_STATUS &&\n      claim.provenance === SOLVED_CLAIM_PROVENANCE &&\n      resolvedRefsInTree(claim, treeEvidenceOf(diagnosis.claims, supersedes, contradicted)) > 0 &&",
+    test: `${CORE}/test/mcp-solved-render.test.ts`,
+    because: "a tree with a thousand causes citing one revised observation resolves the same revisions a thousand times (round 3, M4)",
+  },
+  {
+    label: "the revision walk stops one level short of its bound",
+    file: `${SCHEMA}/src/evidence-resolution.ts`,
+    from: "    if (frontier.length === 0 || depth > REVISION_MAX_DEPTH) {",
+    to: "    if (frontier.length === 0 || depth >= REVISION_MAX_DEPTH) {",
+    test: `${SCHEMA}/test/evidence-resolution.test.ts`,
+    because: "an observation revised sixteen times backs nothing, though the hub's own walk reaches it (M4)",
+  },
+  {
+    label: "the revision walk runs one level past its bound",
+    file: `${SCHEMA}/src/evidence-resolution.ts`,
+    from: "    if (frontier.length === 0 || depth > REVISION_MAX_DEPTH) {",
+    to: "    if (frontier.length === 0 || depth > REVISION_MAX_DEPTH + 1) {",
+    test: `${SCHEMA}/test/evidence-resolution.test.ts`,
+    because: "the connector's mirror reaches a head the hub's walk never does, and the two disagree on solved (M4)",
+  },
+  {
+    label: "refs to one head count as many pieces of evidence",
+    file: `${SERVER}/src/services/evidence-resolution.ts`,
+    from: "new Set([...(byClaim.get(row.citing_id) ?? []), row.head_id])",
+    to: "new Set([...(byClaim.get(row.citing_id) ?? []), row.cited_id])",
+    test: `${SERVER}/test/hint-withheld-bodies.test.ts`,
+    because: "a cause citing one observation by its old id and its revision reports two resolved refs on the wire (round 3, L2)",
+  },
+  {
+    label: "the cited original's repo is never checked",
+    file: `${SERVER}/src/services/evidence-resolution.ts`,
+    from: "      AND cited_session.repo = citing_session.repo",
+    to: "      AND TRUE",
+    test: `${SERVER}/test/hint-evidence-backed.test.ts`,
+    because: "another repo's observation, revised into this one, backs a cause here (round 3, L3)",
+  },
+  {
+    label: "a 100 KB prompt is classified whole",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "  if (text.length <= PROMPT_CLASSIFY_HEAD_CHARS + PROMPT_CLASSIFY_TAIL_CHARS) {\n    return text;\n  }",
+    to: "  if (text.length >= 0) {\n    return text;\n  }",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "a pasted log of near-words takes hundreds of milliseconds of an 800 ms hook to classify (round 3, L4)",
+  },
+  {
+    label: "a capped prompt is judged on its head alone",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "  return `${head}\\n${tail}`;",
+    to: "  return head;",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "a long prompt whose task is written last is floored as content-free (round 3, L4)",
+  },
+  // EQUIVALENT, NOT ANCHORED (round 3, L4) — deleting typing-slip.ts's
+  // `letterDistance(typed, target) <= budget &&` reddens no test, by
+  // construction: it is a LOWER BOUND on the slips, so it only ever turns
+  // away a word the slip table would have turned away too. What it buys is
+  // time, and the 50 ms classification test cannot see it while the 9 000-
+  // character cap holds the same 100 KB prompt under budget on its own (the
+  // cap's own anchor above is behavioural). Recorded so it is not
+  // re-reported as a gap.
+  {
+    label: "the letter bound turns a neighbour key away",
+    file: `${SCHEMA}/src/typing-slip.ts`,
+    from: "  return Math.max(unmatched(typedLetters, targetLetters), unmatched(targetLetters, typedLetters));",
+    to: "  return unmatched(typedLetters, targetLetters) + unmatched(targetLetters, typedLetters);",
+    test: `${SCHEMA}/test/typing-slip.test.ts`,
+    because: "a key's neighbour hit changes one letter on each side, and counting both makes \"weoter\" no slip of weiter (round 3, L4)",
+  },
+  {
+    label: "the flow classifies the prompt a second time",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "  const { human: humanText, terms } = input.classified ?? classifyPrompt(input.prompt);",
+    to: "  const { human: humanText, terms } = classifyPrompt(input.prompt);",
+    test: `${CORE}/test/hint-query-window.test.ts`,
+    because: "every hook classifies each prompt twice against its 800 ms budget (round 3, L4)",
+  },
+  {
+    label: "a call the hub answered with nothing goes uncounted",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "  if (text.length === 0) {\n    await bookStoodDown(input, \"quietCallCount\");\n  }\n",
+    to: "",
+    test: `${CORE}/test/hint-harness-turn.test.ts`,
+    because: "a quiet session cannot say whether it reached the hub and matched nothing (round 3, L5)",
+  },
+  {
+    label: "a call that delivered a hint is counted as quiet",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "  if (text.length === 0) {\n    await bookStoodDown(input, \"quietCallCount\");",
+    to: "  if (text.length >= 0) {\n    await bookStoodDown(input, \"quietCallCount\");",
+    test: `${CORE}/test/hint-harness-turn.test.ts`,
+    because: "the quiet-call count is every call, and says nothing about the ones that matched nothing (L5)",
+  },
+  {
+    label: "a SessionStart re-fire zeroes the quiet calls",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "        quietCallCount: previous.quietCallCount,\n",
+    to: "",
+    test: `${CORE}/test/session-state-transforms.test.ts`,
+    because: "every compact forgets the calls that came back empty (L5)",
+  },
+  {
+    label: "status reads every session's quiet calls as none",
+    file: `${CORE}/src/state/capture-health.ts`,
+    from: "        quietCallCount: state.quietCallCount,",
+    to: "        quietCallCount: 0,",
+    test: `${CLI}/test/capture-health.test.ts`,
+    because: "the counter is booked and never reaches a surface (L5)",
+  },
+  {
+    label: "status sums one session's quiet calls",
+    file: `${CORE}/src/state/capture-health.ts`,
+    from: "      quietCalls: total.quietCalls + session.quietCallCount,",
+    to: "      quietCalls: session.quietCallCount,",
+    test: `${CLI}/test/capture-health.test.ts`,
+    because: "two sessions' empty calls read as the last one's (L5)",
+  },
+  {
+    label: "the hints line hides the quiet calls",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "${stoodDownPart(health)}${quietCallsPart(health)}`;",
+    to: "${stoodDownPart(health)}`;",
+    test: `${CLI}/test/capture-health.test.ts`,
+    because: "`crosscheck status` never says how many prompts reached the hub and came back with nothing (L5)",
+  },
+  {
+    label: "the hub follows a supporting edge as a revision",
+    file: `${SERVER}/src/services/evidence-resolution.ts`,
+    from: " AND revision.kind = ${SUPERSEDES_EDGE_KIND}",
+    to: "",
+    test: `${SERVER}/test/hint-evidence-backed.test.ts`,
+    because: "a root cause citing a bare hypothesis is backed by whatever observation supports that hypothesis (round 3, L6)",
+  },
+  {
+    label: "a supporting edge into a cited observation revises it away",
+    file: `${SERVER}/src/services/evidence-resolution.ts`,
+    from: " AND later.kind = ${SUPERSEDES_EDGE_KIND}",
+    to: "",
+    test: `${SERVER}/test/hint-evidence-backed.test.ts`,
+    because: "a teammate's hypothesis that agrees with an observation takes the backing of every cause citing it (L6)",
+  },
+  {
+    label: "the hub walks every route of a revision graph",
+    file: `${SERVER}/src/services/evidence-resolution.ts`,
+    from: "      UNION\n",
+    to: "      UNION ALL\n",
+    test: `${SERVER}/test/hint-evidence-backed.test.ts`,
+    because: "a dense or cyclic supersedes graph multiplies the walk per route, and one root cause stalls every hint read (L6)",
+  },
+  {
+    label: "\"expired\" is a content word",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "\"voll\", \"expired\", \"expire\",",
+    to: "\"voll\", \"expire\",",
+    test: `${SCHEMA}/test/substance-sentence.test.ts`,
+    because: "\"Usage limit expired, retry.\" counts as a sentence about something and is shown as substance (L6)",
+  },
+  {
+    label: "a doubled first letter is no slip",
+    file: `${SCHEMA}/src/typing-slip.ts`,
+    from: "return stray === previous || stray === next ||",
+    to: "return stray === next ||",
+    test: `${SCHEMA}/test/typing-slip.test.ts`,
+    because: "\"mmache weiter\" stops being steering, though its first letter is right (L6)",
+  },
+  {
+    label: "ß stays ß",
+    file: `${SCHEMA}/src/session-control.ts`,
+    from: ".replace(/ß/g, \"ss\")",
+    to: "",
+    test: `${SCHEMA}/test/session-control.test.ts`,
+    because: "\"paßt scho\" — the old spelling — is a task word and earns a hint (L6)",
+  },
+  {
+    label: "the floor matches words as written again",
+    file: `${SCHEMA}/src/content-floor.ts`,
+    // RETARGETED (round 4, L1 follow-up): a whole path is kept as written too.
+    from: "  return KEPT_AS_WRITTEN.test(lower) ? lower : englishStem(lower);",
+    to: "  return lower;",
+    test: `${CORE}/test/hint-old-hub-floor.test.ts`,
+    because: "against a 0.10.0 hub \"the uploads keep failing at the gateway\" no longer reaches the upload tree the tip hub points at (round 3, follow-up)",
+  },
+  {
+    label: "a word with a digit is stemmed",
+    file: `${SCHEMA}/src/content-floor.ts`,
+    // RETARGETED (round 4, L1 follow-up): a whole path is kept as written too.
+    from: "  return KEPT_AS_WRITTEN.test(lower) ? lower : englishStem(lower);",
+    to: "  return englishStem(lower);",
+    test: `${SCHEMA}/test/content-floor.test.ts`,
+    because: "\"e2es\" is matched as \"e2e\", where the database's simple dictionary keeps it as written (round 3, follow-up)",
+  },
+  {
+    label: "a text's English stop words say their stems",
+    file: `${SCHEMA}/src/content-floor.ts`,
+    // RETARGETED (round 4, L1): a word's parts are filtered, a whole path or host kept.
+    from: "    .filter((part) => part.length > 0 && !ENGLISH_STOP_WORDS.has(part))",
+    to: "    .filter((part) => part.length > 0)",
+    test: `${SCHEMA}/test/content-floor.test.ts`,
+    because: "a statement says words the database drops, and a term that stems like one matches where the hub's index never would (round 3, follow-up)",
+  },
+  {
+    label: "the recount takes a long prompt for short through the wire's keyhole",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "    Math.min(input.promptTerms.length, HINT_MAX_EXAMINED_TERMS),\n",
+    to: "",
+    test: `${CORE}/test/hint-old-hub-floor.test.ts`,
+    because: "a 0.10.0 hub shows three trees, and the 120-word status report cf172 is pointed at the usage dashboard on usage, shows and wrong (round 3, follow-up)",
+  },
+  {
+    label: "the recount counts the whole prompt, not the query sent",
+    file: `${CORE}/src/flows/hint.ts`,
+    // RETARGETED (round 5, C1): the query sent is the prompt's task.
+    from: "  const sent = task !== null && promptQuery === task.text ? task.terms : promptTerms(promptQuery);",
+    to: "  const sent = terms;",
+    test: `${CORE}/test/hint-old-hub-floor.test.ts`,
+    because: "a word the route's cap cut out of a long paste qualifies a tree the hub never saw it for (round 3, follow-up)",
+  },
+  {
+    label: "the recount counts a command clause's words",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "    promptTerms: terms.ranked,",
+    to: "    promptTerms: terms.content,",
+    test: `${CORE}/test/hint-old-hub-floor.test.ts`,
+    because: "\"commit and push. then the zebrafrobnicator\" clears an old hub's floor on commit and push, where the hub counts one word (round 3, follow-up)",
+  },
+  {
+    label: "the recount reads no intent",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  [context.workContext.title, context.workContext.intent?.summary ?? \"\"].filter(",
+    to: "  [context.workContext.title].filter(",
+    test: `${CORE}/test/hint-old-hub-floor.test.ts`,
+    because: "a tree whose intent says the prompt's words is refused against an old hub and pointed at by the tip hub (round 3, follow-up)",
+  },
+  {
+    label: "the recount counts words no statement on the wire says",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "    knownTermsIn(\n      input.promptTerms,\n      input.candidates.flatMap((context) => [wireStatementOf(context), ...recountBodies(context, input.selfDeveloperId)]),\n    ),",
+    to: "    input.promptTerms,",
+    test: `${CORE}/test/hint-old-hub-floor.test.ts`,
+    because: "forty words of chatter fill the counted slots and the task after them clears nothing against an old hub (M7, round 3 follow-up)",
+  },
+  {
+    label: "the stem knows no R1 exceptions",
+    file: `${SCHEMA}/src/english-stem.ts`,
+    from: "const R1_PREFIXES = [\"gener\", \"commun\", \"arsen\"] as const;",
+    to: "const R1_PREFIXES = [\"zzzzz\"] as const;",
+    test: `${SCHEMA}/test/english-stem.test.ts`,
+    because: "\"generous\" stems to \"gener\" where the database keeps \"generous\", and the two sides match different words (round 3, follow-up)",
+  },
+  {
+    label: "the stem adds no e to a short word",
+    file: `${SCHEMA}/src/english-stem.ts`,
+    from: "  return stem.length === regions.r1 && endsWithShortSyllable(stem) ? `${stem}e` : stem;",
+    to: "  return stem;",
+    test: `${SCHEMA}/test/english-stem.test.ts`,
+    because: "\"hoping\" stems to \"hop\" and matches \"hopping\", where the database says \"hope\" (round 3, follow-up)",
+  },
+  {
+    label: "the stem drops a final e in R1 after a short syllable",
+    file: `${SCHEMA}/src/english-stem.ts`,
+    from: "    return start >= regions.r2 || (start >= regions.r1 && !endsWithShortSyllable(stem)) ? stem : word;",
+    to: "    return start >= regions.r1 ? stem : word;",
+    test: `${SCHEMA}/test/english-stem.test.ts`,
+    because: "\"hopefully\" and \"hope\" stem to \"hop\", away from the database's \"hope\" (round 3, follow-up)",
+  },
+  {
+    label: "the stem forgets its whole-word exceptions",
+    file: `${SCHEMA}/src/english-stem.ts`,
+    from: "  const exceptional = EXCEPTIONAL_WORDS.get(word);",
+    to: "  const exceptional = undefined;",
+    test: `${SCHEMA}/test/english-stem.test.ts`,
+    because: "\"skies\" stems to \"ski\" and \"news\" to \"new\", where the database keeps them apart (round 3, follow-up)",
+  },
+  {
+    label: "an old hub's order picks the weaker of two trees again",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "    context.topicalTerms ??\n    Math.max(0, ...[wireStatementOf(context), ...recountBodies(context, selfDeveloperId)].map((statement) => statementMatch(recount, statement).topical)),",
+    to: "    context.topicalTerms ?? 0,",
+    test: `${CORE}/test/hint-old-hub-floor.test.ts`,
+    because: "against a 0.10.0 hub \"CI rot, functional suite timeout\" is pointed at the PGlite tree the hub happened to rank first, where the tip hub names the CI tree (t008, round 3 follow-up)",
+  },
+  {
+    label: "the connector asks a hub about a prompt that carries the session on",
+    file: `${CORE}/src/flows/hint.ts`,
+    // RETARGETED (round 5, C1): the shared rule says what the prompt asks about.
+    from: "  const task = promptTaskOf(humanText, terms);",
+    to: "  const task = terms.isContentFree ? null : { text: humanText, terms };",
+    test: `${CORE}/test/hint-intent-fallback.test.ts`,
+    because: "\"cool, cache fix is merged, next\" reaches a teammate's cache tree on the words of a status report (round 4, C1)",
+  },
+  {
+    label: "the hub matches a prompt that carries the session on",
+    file: `${SERVER}/src/services/hints.ts`,
+    // RETARGETED (round 5, C1): the shared rule says what the prompt asks about.
+    from: "  const task = promptTaskOf(humanText, terms);\n  if (task === null) {",
+    to: "  const task = terms.isContentFree ? null : { text: humanText, terms };\n  if (task === null) {",
+    test: `${SERVER}/test/hint-content-floor.test.ts`,
+    because: "a 0.10.0 connector, which knows no continuation, still gets \"…, next\" matched to the tree its report words share (round 4, C1)",
+  },
+  {
+    label: "the prompt's terms never carry the continuation signal",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "    hasContinuation: hasContinuationSignal(scored),",
+    to: "    hasContinuation: false,",
+    test: `${SCHEMA}/test/continuation.test.ts`,
+    because: "both halves read the flag, so no prompt that says \"carry on\" is ever held back (round 4, C1)",
+  },
+  {
+    label: "a continuation phrase is not read",
+    file: `${SCHEMA}/src/continuation.ts`,
+    // RETARGETED (round 5, C1): a signal is read with its length, for what follows it.
+    from: "  phraseAt(words, index)?.length ?? (isSignalWord(words[index] ?? \"\") ? 1 : 0);",
+    to: "  isSignalWord(words[index] ?? \"\") ? 1 : 0;",
+    test: `${SCHEMA}/test/continuation.test.ts`,
+    because: "\"yes the SSO login works on staging now, carry on\" reaches the SSO tree (round 4, C1)",
+  },
+  {
+    label: "a clause word signals beside the words of a task",
+    file: `${SCHEMA}/src/continuation.ts`,
+    from: "  clause.some(isClauseWord) && clause.every((word) => isClauseWord(word) || isSilentWord(word));",
+    to: "  clause.some(isClauseWord);",
+    test: `${SCHEMA}/test/continuation.test.ts`,
+    because: "\"the roadmap for next quarter\" and Spanish \"los usuarios pierden la sesión\" lose their hint (round 4, C1)",
+  },
+  {
+    label: "a slip of a continuation word is not read",
+    file: `${SCHEMA}/src/continuation.ts`,
+    // RETARGETED (round 5, L1): the slip rule is its own function, the near-miss list's test reads it too.
+    from: "const isSignalWord = (word: string): boolean => SIGNALS.has(word) || (!NEAR_MISSES.has(word) && isSignalSlip(word));",
+    to: "const isSignalWord = (word: string): boolean => SIGNALS.has(word);",
+    test: `${SCHEMA}/test/continuation.test.ts`,
+    because: "\"wieter bitte\" and \"contiune\" carry the session on as surely as the words they slip from (round 4, C1)",
+  },
+  {
+    label: "a word of its own one slip from a continuation word signals",
+    file: `${SCHEMA}/src/continuation.ts`,
+    // RETARGETED (round 5, L1): the slip rule is its own function, the near-miss list's test reads it too.
+    from: "const isSignalWord = (word: string): boolean => SIGNALS.has(word) || (!NEAR_MISSES.has(word) && isSignalSlip(word));",
+    to: "const isSignalWord = (word: string): boolean => SIGNALS.has(word) || isSignalSlip(word);",
+    test: `${SCHEMA}/test/continuation.test.ts`,
+    because: "\"the pdf writer drops the footer\" loses its hint because writer is one key from weiter (round 4, C1)",
+  },
+  {
+    label: "a swapped clause word is not read",
+    file: `${SCHEMA}/src/continuation.ts`,
+    from: "  (!NEAR_MISSES.has(word) && CONTINUATION_CLAUSE_WORDS.some((signal) => isSwapSlipOf(word, signal) || isShortSwapSlipOf(word, signal)));",
+    to: "  false;",
+    test: `${SCHEMA}/test/continuation.test.ts`,
+    because: "\"nxet\" is the hand's \"next\" (round 4, C1)",
+  },
+  {
+    label: "the dot inside a name ends a clause",
+    file: `${SCHEMA}/src/continuation.ts`,
+    from: "const CLAUSE_BOUNDARY = /[.!?;:,]+(?=\\s|$)|[\\n\\r–—]+/u;",
+    to: "const CLAUSE_BOUNDARY = /[.!?;:,\\n\\r–—]+/u;",
+    test: `${SCHEMA}/test/continuation.test.ts`,
+    because: "\"next.js build fails on the edge runtime\" reads \"next\" as a clause of its own and loses its hint (round 4, C1)",
+  },
+  {
+    label: "a continuation word keeps its punctuation",
+    file: `${SCHEMA}/src/continuation.ts`,
+    from: "    .map((word) => foldWord(word.replace(/^[^\\p{L}\\p{N}]+|[^\\p{L}\\p{N}]+$/gu, \"\")))",
+    to: "    .map((word) => foldWord(word))",
+    test: `${SCHEMA}/test/continuation.test.ts`,
+    because: "\"go ahead.\" is not read, since \"ahead.\" is not \"ahead\" (round 4, C1)",
+  },
+  {
+    label: "passt is no continuation",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    // RETARGETED (round 4, C1 follow-up): the restart verbs joined the list.
+    from: "export const CONTINUATION_CLAUSE_WORDS: readonly string[] = [\"next\", \"los\", \"passt\", \"retry\", \"rerun\", \"restart\", \"resume\"];",
+    to: "export const CONTINUATION_CLAUSE_WORDS: readonly string[] = [\"next\", \"los\", \"retry\", \"rerun\", \"restart\", \"resume\"];",
+    test: `${SCHEMA}/test/continuation.test.ts`,
+    because: "\"passt so\" hands the session back as surely as \"weiter\" (round 4, C1)",
+  },
+  {
+    label: "a short word keeps a clause word from signalling",
+    file: `${SCHEMA}/src/continuation.ts`,
+    from: "const MIN_SAYING_CHARS = 3;",
+    to: "const MIN_SAYING_CHARS = 0;",
+    test: `${SCHEMA}/test/continuation.test.ts`,
+    because: "\"na dann mal los\" says nothing but that the session goes on (round 4, C1)",
+  },
+  {
+    label: "a finding on words every candidate says is a strong match",
+    file: `${SCHEMA}/src/substance-trust.ts`,
+    from: "    match.distinctTerms >= SUBSTANCE_MIN_DISTINCT_TERMS &&\n",
+    to: "",
+    test: `${SCHEMA}/test/substance-match.test.ts`,
+    because: "\"invoice pdf timeout\" is shown the labels tree's cause on the two words the timeout tree's title says too (round 4, C2)",
+  },
+  {
+    label: "a tree whose own statement says nothing lends a finding",
+    file: `${SCHEMA}/src/substance-trust.ts`,
+    from: "    match.treeTerms >= SUBSTANCE_MIN_TREE_TERMS) ||",
+    to: "    true) ||",
+    test: `${SCHEMA}/test/substance-match.test.ts`,
+    because: "a tree titled \"Investigation notes\" pushes a finding the prompt only brushed (round 4, C2)",
+  },
+  {
+    label: "a tie at the top counts as the strongest tree",
+    file: `${SCHEMA}/src/substance-trust.ts`,
+    from: "  return top !== undefined && strengths.filter((strength) => isAtLeastAsStrongTree(strength, top)).length === 1 ? best : null;",
+    to: "  return best;",
+    test: `${CORE}/test/hint-best-match.test.ts`,
+    because: "of two trees sharing invoice and pdf, the one search ranked first is shown as the answer (round 4, C2)",
+  },
+  {
+    label: "the first tree is taken for the strongest",
+    file: `${SCHEMA}/src/substance-trust.ts`,
+    from: "      bestIndex === null || !isAtLeastAsStrongTree(strengths[bestIndex] ?? strength, strength) ? index : bestIndex,",
+    to: "      bestIndex === null ? index : bestIndex,",
+    test: `${SCHEMA}/test/substance-match.test.ts`,
+    because: "the hub's order picks the weaker of two trees again, and a stronger one beside it is never named (round 4, C2)",
+  },
+  {
+    label: "the selector reads every shared word as the claim's own",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "    distinctTerms: claim.distinctTerms ?? 0,",
+    to: "    distinctTerms: claim.distinctTerms ?? claim.matchedTerms ?? 0,",
+    test: `${CORE}/test/hint-best-match.test.ts`,
+    because: "a round-4 hub, which never counted what tells its trees apart, buys substance on words every tree says (C2)",
+  },
+  {
+    label: "the selector takes the hub's first tree for the strongest",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  const strongestIndex = strongestTreeIndex(pointable.map((context) => strengthOf(context, selfDeveloperId, recount)));",
+    to: "  const strongestIndex = pointable.length > 0 ? 0 : null;",
+    test: `${CORE}/test/hint-best-match.test.ts`,
+    because: "two trees tied on invoice and pdf get the search's first named, finding and all (round 4, C2)",
+  },
+  {
+    label: "the hub ships a finding from a tree that is not the one strongest",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    return scope.isStrongest &&\n",
+    to: "    return true &&\n",
+    test: `${SERVER}/test/hint-strong-match.test.ts`,
+    because: "a 0.10.0 connector inlines the weaker labels tree's finding, or one of two tied trees' (round 4, C2)",
+  },
+  {
+    label: "the hub counts every shared word as the claim's own",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    const distinctTerms = [...(window.shown.get(claim.id) ?? [])].filter((lexeme) => !scope.saidElsewhere.has(lexeme)).length;",
+    to: "    const distinctTerms = window.shown.get(claim.id)?.size ?? 0;",
+    test: `${SERVER}/test/hint-strong-match.test.ts`,
+    because: "a finding on the words the runner-up says too ships its body to every connector (round 4, C2)",
+  },
+  {
+    label: "the hub tells a finding apart from no other candidate",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "      saidElsewhere: new Set(qualified.filter((_, other) => other !== index).flatMap((other) => [...other.saidTopical])),",
+    to: "      saidElsewhere: new Set(),",
+    test: `${SERVER}/test/hint-strong-match.test.ts`,
+    because: "\"Dutch customers get the invoice from a cached template\" ships although the labels tree says each word (round 4, C2)",
+  },
+  {
+    label: "the hub reads only a tree's own statement for what it says",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "        saidTopical: new Set([...(statementTerms.get(id)?.saidTopical ?? []), ...(claimTerms.get(id)?.saidTopical ?? [])]),",
+    to: "        saidTopical: new Set([...(statementTerms.get(id)?.saidTopical ?? [])]),",
+    test: `${SERVER}/test/hint-strong-match.test.ts`,
+    because: "a word the runner-up says only in a claim tells the trees apart, and a finding on it ships (round 4, C2)",
+  },
+  {
+    label: "a task's meta words are no topic again",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    // RETARGETED (round 4, L1 follow-up): the terms are the parts' and their whole forms'.
+    from: "    topical: words.terms.filter((term, index) => !isSteeringClass(classes[index] ?? null) && !isWeakWord(term)),",
+    to: "    topical: words.terms.filter((term, index) => classes[index] === null && !isWeakWord(term)),",
+    test: `${SERVER}/test/hint-candidate-floor.test.ts`,
+    because: "\"token refresh broken\" and \"rate limit not enforced\" reach no tree, since token, rate and limit count for nothing (round 4, M1)",
+  },
+  {
+    label: "a slip of a steering word is topical",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    // RETARGETED (round 4, L1 follow-up): the terms are the parts' and their whole forms'.
+    from: "    topical: words.terms.filter((term, index) => !isSteeringClass(classes[index] ?? null) && !isWeakWord(term)),",
+    to: "    topical: words.terms.filter((term) => !isWeakWord(term)),",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"contineu\" agrees with a tree that says \"continue\" as if it were a topic (round 4, M1)",
+  },
+  {
+    label: "the intent fire reads a task's meta words as its topic",
+    file: `${CORE}/src/derive/intent/gate.ts`,
+    from: "  return classified.terms.unclassed.length >= INTENT_MIN_TOPICAL_WORDS ? human : null;",
+    to: "  return classified.terms.topical.length >= INTENT_MIN_TOPICAL_WORDS ? human : null;",
+    test: `${CONNECTOR}/test/intent-gate.test.ts`,
+    because: "\"fix the session limit reset handling once more please\" parks a sentence of machinery as the session's intent (round 4, M1)",
+  },
+  {
+    label: "a derived intent of machinery has a topic again",
+    file: `${CORE}/src/derive/intent/gate.ts`,
+    from: "export const hasTopic = (sentence: string): boolean => promptTerms(sentence).unclassed.length > 0;",
+    to: "export const hasTopic = (sentence: string): boolean => promptTerms(sentence).topical.length > 0;",
+    test: `${CONNECTOR}/test/intent-worker.test.ts`,
+    because: "\"Continue the session after the usage limit reset\" becomes the session's intent, the round-3 magnet (round 4, M1)",
+  },
+  {
+    label: "an uninflected word is read as a closed word's inflection",
+    file: `${SCHEMA}/src/content-floor.ts`,
+    // RETARGETED (round 4, H1): an inflection is told by its ending.
+    from: "  return INFLECTION_ENDING.test(folded) && exactClassOf(folded) === null && CLOSED_LEXEMES.has(termLexeme(folded));",
+    to: "  return exactClassOf(folded) === null && CLOSED_LEXEMES.has(termLexeme(folded));",
+    test: `${SCHEMA}/test/content-floor.test.ts`,
+    because: "\"refresh\" and \"renewal\" are no topic because the meta words \"refreshed\" and \"renewed\" stem to them, and K094 misses its tree (round 4, M1, H1)",
+  },
+  {
+    label: "a class word as written is read as its own inflection",
+    file: `${SCHEMA}/src/content-floor.ts`,
+    from: "  return INFLECTION_ENDING.test(folded) && exactClassOf(folded) === null && CLOSED_LEXEMES.has(termLexeme(folded));",
+    to: "  return INFLECTION_ENDING.test(folded) && CLOSED_LEXEMES.has(termLexeme(folded));",
+    test: `${SCHEMA}/test/content-floor.test.ts`,
+    because: "\"usage\" and \"limits\" are no topic in a task, since the stemmer cuts them (round 4, M1)",
+  },
+  {
+    label: "the tree's own statement breaks no tie",
+    file: `${SCHEMA}/src/substance-trust.ts`,
+    // RETARGETED (round 5, M2): the own statement breaks the tie the shared words leave.
+    from: "  Number(right.isExact) - Number(left.isExact) || right.topical - left.topical || right.shared - left.shared || right.own - left.own;",
+    to: "  Number(right.isExact) - Number(left.isExact) || right.topical - left.topical || right.shared - left.shared;",
+    test: `${CORE}/test/hint-best-match.test.ts`,
+    because: "\"Retry-Limit im Checkout erhöhen\" ties four trees and gets nothing, though only one tree's title says checkout (round 4, M1)",
+  },
+  {
+    label: "the selector counts no tree's own statement",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  own: context.workContext.matchedTerms ?? statementMatch(recount, wireStatementOf(context)).topical,",
+    to: "  own: 0,",
+    test: `${CORE}/test/hint-best-match.test.ts`,
+    because: "the checkout-retries tree ties the usage tree on a claim each, and the retry-limit prompt gets nothing (round 4, M1)",
+  },
+  {
+    label: "the hub counts no tree's own statement for its strength",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  own: candidate.ownTerms,",
+    to: "  own: 0,",
+    test: `${SERVER}/test/hint-strong-match.test.ts`,
+    because: "the render tree ties a scratch tree on a claim each, and a 0.10.0 connector gets no finding at all (round 4, M1)",
+  },
+  {
+    label: "the hub's bound keeps the search's first, not the strongest",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    .toSorted((left, right) => compareTreeStrength(strengthOfCandidate(left), strengthOfCandidate(right)))\n",
+    to: "",
+    test: `${SERVER}/test/hint-strong-match.test.ts`,
+    because: "\"limit ist wieder da … session timeout im workbench fixen\" loses the session-timeout tree to three that ranked above it (round 4, M1)",
+  },
+  {
+    label: "a continuation phrase is read on its first two words",
+    file: `${SCHEMA}/src/continuation.ts`,
+    // RETARGETED (round 5, C1): the phrase is found, for its length.
+    from: "  CONTINUATION_PHRASES.find((phrase) => phrase.every((word, offset) => words[index + offset] === word));",
+    to: "  CONTINUATION_PHRASES.find((phrase) => phrase.slice(0, 2).every((word, offset) => words[index + offset] === word));",
+    test: `${SCHEMA}/test/continuation.test.ts`,
+    because: "\"pick up the new signing key from the vault\" loses its hint to \"pick up where you stopped\" (round 4, M1)",
+  },
+  {
+    label: "try again is no continuation",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "  [\"try\", \"again\"], [\"try\", \"it\", \"again\"], ",
+    to: "  ",
+    test: `${SCHEMA}/test/continuation.test.ts`,
+    because: "\"rate limited again lol, try again\" reaches the rate-limit tree now that a task's meta words count (round 4, M1)",
+  },
+  {
+    label: "a weak word is a topic",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    // RETARGETED (round 4, L1 follow-up): the terms are the parts' and their whole forms'.
+    from: "    topical: words.terms.filter((term, index) => !isSteeringClass(classes[index] ?? null) && !isWeakWord(term)),",
+    to: "    topical: words.terms.filter((_, index) => !isSteeringClass(classes[index] ?? null)),",
+    test: `${SCHEMA}/test/weak-words.test.ts`,
+    because: "\"add pagination to the users admin table\" is shown the SSO tree's decision on add and users (round 4, decision 3)",
+  },
+  {
+    label: "a year is a topic",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "export const isWeakWord = (term: string): boolean => WEAK.has(foldWord(term)) || YEAR.test(term);",
+    to: "export const isWeakWord = (term: string): boolean => WEAK.has(foldWord(term));",
+    test: `${SCHEMA}/test/weak-words.test.ts`,
+    because: "a log paste reaches the date-picker tree on \"2026\" (round 4, decision 3)",
+  },
+  {
+    label: "every four-digit number is a year",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "const YEAR = /^(?:19|20)\\d\\d$/u;",
+    to: "const YEAR = /^\\d{4}$/u;",
+    test: `${SCHEMA}/test/weak-words.test.ts`,
+    because: "\"port 3000 refused\" loses the port it is about (round 4, decision 3)",
+  },
+  {
+    label: "a weak word ranks among the topical ones",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "  const isFirst = (term: string): boolean => classOf(term) === null && !isWeakWord(term);",
+    to: "  const isFirst = (term: string): boolean => classOf(term) === null;",
+    test: `${SCHEMA}/test/weak-words.test.ts`,
+    because: "a long prompt's add, new and users take the counted slots before its topic (round 4, decision 3)",
+  },
+  {
+    label: "the reviewer's verbs are topics",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "  \"add\", \"adds\", \"added\", \"adding\", ",
+    to: "  ",
+    test: `${SCHEMA}/test/weak-words.test.ts`,
+    because: "\"add an index on orders\" agrees with every tree that adds something (round 4, decision 3)",
+  },
+  {
+    label: "the shared words break no tie",
+    file: `${SCHEMA}/src/substance-trust.ts`,
+    // RETARGETED (round 5, M2): the shared words third.
+    from: "  Number(right.isExact) - Number(left.isExact) || right.topical - left.topical || right.shared - left.shared || right.own - left.own;",
+    to: "  Number(right.isExact) - Number(left.isExact) || right.topical - left.topical || right.own - left.own;",
+    test: `${CORE}/test/hint-best-match.test.ts`,
+    because: "\"invoice rendering times out under load\" ties the timeout and the labels trees, and gets nothing (round 4, decision 3)",
+  },
+  {
+    label: "the selector counts no shared word for strength",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  shared:\n    context.sharedTerms ??\n",
+    to: "  shared:\n    0 *\n",
+    test: `${CORE}/test/hint-best-match.test.ts`,
+    because: "of two trees equal on every topical count, the one that also says the prompt's weak words is not named (round 4, decision 3)",
+  },
+  {
+    label: "the hub counts no shared word for strength",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  shared: candidate.sharedTerms,",
+    to: "  shared: 0,",
+    test: `${SERVER}/test/hint-strong-match.test.ts`,
+    because: "the tree that says \"new users\" too is cut before the one that does not (round 4, decision 3)",
+  },
+  {
+    label: "a long prompt's paths travel only as split words",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "    : [...new Set([...pathTokensOf(text), ...ranked])].reduce((query, term) => {",
+    to: "    : [...new Set([...ranked])].reduce((query, term) => {",
+    test: `${CORE}/test/hint-query-window.test.ts`,
+    because: "a long prompt naming src/auth/refresh.ts never reaches the exact tier that matches the file the tree touched (round 4, H1)",
+  },
+  {
+    label: "a long prompt's terms overrun the route's cap",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "        return longer.length <= MAX_SEARCH_QUERY_CHARS ? longer : query;",
+    to: "        return longer;",
+    test: `${CORE}/test/hint-query-window.test.ts`,
+    because: "the hub refuses the query with a 400, and a long prompt gets no hint at all (round 4, H1)",
+  },
+  {
+    label: "the hub relaxes the long-prompt floor on a window",
+    file: `${SERVER}/src/services/hints.ts`,
+    // RETARGETED (round 4, L1): the reader rides beside the window.
+    // RETARGETED (round 5, C1): the floor is counted on the prompt's task.
+    // RETARGETED (hint-substance merge): the floor is read beside the hidden set.
+    from: "    hubFloorTermsOf(deps.db, input.repo, task.terms, input.query.length >= HINT_WINDOW_QUERY_MIN_CHARS, callerDeveloperId),",
+    to: "    hubFloorTermsOf(deps.db, input.repo, task.terms, false, callerDeveloperId),",
+    test: `${SERVER}/test/hint-candidate-floor.test.ts`,
+    because: "an older connector's head and tail of a long report count two known words, and two topical ones point (round 4, H1)",
+  },
+  {
+    label: "the hub's window rule counts only what the window knows",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  return floorTermsOf(terms, known, isWindow ? Math.max(known.length, HINT_LONG_PROMPT_KNOWN_TERMS + 1) : known.length);",
+    to: "  return floorTermsOf(terms, known, known.length);",
+    test: `${SERVER}/test/hint-candidate-floor.test.ts`,
+    because: "a window of a long prompt is held to a short prompt's floor (round 4, H1)",
+  },
+  {
+    label: "the intent fire is spent on a prompt that carries the session on",
+    file: `${CORE}/src/derive/intent/gate.ts`,
+    from: "  if (!isSubstantivePrompt(human) || classified.terms.hasContinuation) {",
+    to: "  if (!isSubstantivePrompt(human)) {",
+    test: `${CONNECTOR}/test/intent-gate.test.ts`,
+    because: "\"the checkout tests pass on staging now, carry on with the refund flow\" parks a status report as the session's intent (round 4, H2)",
+  },
+  {
+    label: "a NONE gives no fire back",
+    file: `${CORE}/src/derive/intent/gate.ts`,
+    from: "  state.intentFireCount > Math.min(state.intentNoneCount, INTENT_MAX_NONE_REFUNDS);",
+    to: "  state.intentFireCount > 0;",
+    test: `${CONNECTOR}/test/intent-gate.test.ts`,
+    because: "a first prompt the model could name no task in leaves the whole session without an intent (round 4, H2)",
+  },
+  {
+    label: "every NONE gives a fire back, without bound",
+    file: `${CORE}/src/derive/intent/gate.ts`,
+    from: "  state.intentFireCount > Math.min(state.intentNoneCount, INTENT_MAX_NONE_REFUNDS);",
+    to: "  state.intentFireCount > state.intentNoneCount;",
+    test: `${CONNECTOR}/test/intent-gate.test.ts`,
+    because: "a session of status reports pays a model call on every prompt (round 4, H2)",
+  },
+  {
+    label: "the prompt hook reads a refunded fire as spent before the lock",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    from: "    if (state === null || isIntentFireSpent(state)) {\n      return;\n    }\n    let fired = false;",
+    to: "    if (state === null || state.intentFireCount > 0) {\n      return;\n    }\n    let fired = false;",
+    test: `${CONNECTOR}/test/intent-hook.test.ts`,
+    because: "the fire a NONE gave back is never spent on the session's next task (round 4, H2)",
+  },
+  {
+    label: "the prompt hook reads a refunded fire as spent under the lock",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    // RETARGETED (hint-substance merge): the fire carries its deadline.
+    from: "      if (isIntentFireSpent(fresh)) {\n        return null;\n      }\n      fired = true;\n      return withIntentFire(fresh, ctx.now(), resolveSummarizerTimeoutMs(ctx.env));",
+    to: "      if (fresh.intentFireCount > 0) {\n        return null;\n      }\n      fired = true;\n      return withIntentFire(fresh, ctx.now(), resolveSummarizerTimeoutMs(ctx.env));",
+    test: `${CONNECTOR}/test/intent-hook.test.ts`,
+    because: "the fire a NONE gave back is never spent on the session's next task (round 4, H2)",
+  },
+  {
+    label: "a pasted image's marker stays in the prompt",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    // RETARGETED (round 4, M3): the strip also says which wrapper the text ends inside.
+    // RETARGETED (round 4, L3): a quoted line goes beside the markers.
+    from: "  const stripped = kept.replace(MARKERS, \" \").replace(QUOTED_LINE, \"\");",
+    to: "  const stripped = kept.replace(QUOTED_LINE, \"\");",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "\"[Image #1] [Image #2]\" is a prompt with words, and the session's fire is spent on it (round 4, M2)",
+  },
+  {
+    label: "a marker's number is one digit",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "    .map((shape) => shape.name.replace(/[.*+?^${}()|[\\]\\\\]/g, \"\\\\$&\").replace(\"N\", \"\\\\d+\"))",
+    to: "    .map((shape) => shape.name.replace(/[.*+?^${}()|[\\]\\\\]/g, \"\\\\$&\").replace(\"N\", \"\\\\d\"))",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "the twelfth pasted image stays in the prompt as \"Image\" and \"12\" (round 4, M2)",
+  },
+  {
+    label: "Stop-hook feedback is a prompt",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "  head(\"Stop hook feedback:\", \"Stop hook feedback:\\n- Tests were not run.\"),\n",
+    to: "",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "\"Stop hook feedback: Tests were not run\" points at the flaky-test tree (round 4, M2)",
+  },
+  {
+    label: "a slash command's echo is a prompt",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "  element(\"command-name\", \"<command-name>/review</command-name>\"),\n",
+    to: "",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "\"<command-name>/review</command-name>\" is a prompt about review (round 4, M2)",
+  },
+  {
+    label: "a wrapper the window ends inside wraps the rest, though it closes later",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "    mayLookPast && headAt === -1 && unclosed !== null && window.length < trimmed.length",
+    to: "    false",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "a 37 KB IDE selection swallows \"why does this stripe webhook handler create duplicate charges\" (A17, round 4, M3)",
+  },
+  {
+    label: "the look past the window is taken at every window",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "    return `${human} ${humanTextOf(trimmed.slice(restAt), false)}`.replace(/\\s+/g, \" \").trim();",
+    to: "    return `${human} ${humanTextOf(trimmed.slice(restAt), true)}`.replace(/\\s+/g, \" \").trim();",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "a prompt of many long wrappers re-scans its whole remainder at every window, and the hook's budget goes (round 4, M3)",
+  },
+  {
+    label: "a wrapper's close is looked for in the whole prompt, however long",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "      ? closeAfter(trimmed.slice(0, HARNESS_CLOSE_SEARCH_MAX_CHARS), unclosed)",
+    to: "      ? closeAfter(trimmed, unclosed)",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "a hundred megabytes of paste is lower-cased and searched on every prompt hook (round 4, M3)",
+  },
+  {
+    label: "a Spanish or French prompt keeps its function words",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "    ...[GERMAN_FUNCTION_WORDS, SPANISH_FUNCTION_WORDS, FRENCH_FUNCTION_WORDS].filter((words) => readsAs(written, words)),",
+    to: "    ...[GERMAN_FUNCTION_WORDS].filter((words) => readsAs(written, words)),",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"muchas gracias, eso es todo\" keeps \"eso\" and \"todo\" as task words and reaches the hub (round 4, M4)",
+  },
+  {
+    label: "every language's function words are dropped from every prompt",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "    ...[GERMAN_FUNCTION_WORDS, SPANISH_FUNCTION_WORDS, FRENCH_FUNCTION_WORDS].filter((words) => readsAs(written, words)),",
+    to: "    ...[GERMAN_FUNCTION_WORDS, SPANISH_FUNCTION_WORDS, FRENCH_FUNCTION_WORDS],",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"the con job in the readme\" loses \"con\", and an English task its words (round 4, M4)",
+  },
+  {
+    label: "a Spanish continuation is read as a task",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "  \"sigue\", \"sigamos\", \"seguimos\", \"continua\", \"adelante\", \"reprends\", \"continuez\", \"vas-y\", \"allez-y\",\n",
+    to: "",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"bueno, el login ya funciona, sigue\" reaches the login tree on a status report (round 4, M4)",
+  },
+  {
+    label: "Spanish and French thanks are task words",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "  \"vale\", \"gracias\", \"muchas\", \"favor\", \"perfecto\", \"bueno\", \"listo\", \"claro\", \"genial\", \"dale\",\n",
+    to: "",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"muchas gracias, eso es todo\" reaches the hub as a task (round 4, M4)",
+  },
+  {
+    label: "a Spanish or French request to wait or shorten is a task",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "  \"espera\", \"momento\", \"segunda\", \"segundo\", \"primera\", \"primero\", \"tercera\", \"tercero\", \"opcion\",\n",
+    to: "",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"espera un momento\" and \"la segunda opción\" reach the hub (round 4, M4)",
+  },
+  {
+    label: "a French or Spanish clock word is a topic",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "  \"hoy\", \"aujourd\",\n",
+    to: "",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"merci beaucoup, c'est tout pour aujourd'hui\" reaches the hub as a task about today (round 4, M4)",
+  },
+  {
+    label: "a path's parts are words of the text",
+    file: `${SCHEMA}/src/content-floor.ts`,
+    // RETARGETED (round 4, L1 follow-up): the text's and the prompt's side share wholeFormsOf.
+    from: "  return WHOLE_WORD.test(trimmed) ? [trimmed] : [];",
+    to: "  return [];",
+    test: `${SCHEMA}/test/content-floor.test.ts`,
+    because: "\"europe\" matches \"Europe/Berlin\" in the floor's count while the hub's index never knows it (round 4, L1)",
+  },
+  {
+    label: "a URL's protocol and parts are words of the text",
+    file: `${SCHEMA}/src/content-floor.ts`,
+    // RETARGETED (round 4, L1 follow-up): the text's and the prompt's side share wholeFormsOf.
+    from: "  const url = URL_WORD.exec(trimmed);",
+    to: "  const url = null as RegExpExecArray | null;",
+    test: `${SCHEMA}/test/content-floor.test.ts`,
+    because: "\"https\" and the path's words count, where the database keeps the host and the path whole (round 4, L1)",
+  },
+  {
+    label: "a path keeps the quotes around it",
+    file: `${SCHEMA}/src/content-floor.ts`,
+    // RETARGETED (round 4, L1 follow-up): one trim for the text's and the prompt's side.
+    from: "const trimmedWord = (word: string): string => word.toLowerCase().replace(/^[^\\p{L}\\p{N}/]+|[^\\p{L}\\p{N}]+$/gu, \"\");",
+    to: "const trimmedWord = (word: string): string => word.toLowerCase();",
+    test: `${SCHEMA}/test/content-floor.test.ts`,
+    because: "\"Europe/Berlin\" in quotes is no path, and its parts count again (round 4, L1)",
+  },
+  {
+    label: "the hub knows a word only a status, a kind or a target says",
+    file: `${SERVER}/src/services/hints.ts`,
+    // RETARGETED (round 5, L2): the document's words are its dotted names' parts too.
+    // RETARGETED (hint-substance merge): the statement is read as the reader may read it.
+    from: "        sql`${documentWords} @@ ${lexeme}`,\n        sql`${statementDocument(titleSeenBy(readerDeveloperId))} @@ ${lexeme}`,\n",
+    to: "        sql`${documentWords} @@ ${lexeme}`,\n",
+    test: `${SERVER}/test/hint-long-prompt.test.ts`,
+    because: "\"analyzing\", \"observation\" and a path's parts take counted slots no statement says (round 4, L1)",
+  },
+  {
+    label: "the hub knows a draft's words",
+    file: `${SERVER}/src/services/hints.ts`,
+    // RETARGETED (round 5, L2): a claim's words are its dotted names' parts too.
+    from: "        sql`${claimWords} @@ ${lexeme}`,\n        pushableClaimCondition(),\n",
+    to: "        sql`${claimWords} @@ ${lexeme}`,\n",
+    test: `${SERVER}/test/hint-long-prompt.test.ts`,
+    because: "an unreviewed draft's words make a prompt long on the hub and not on a connector's recount (round 4, L1)",
+  },
+  {
+    label: "the hub knows the reader's own words",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  const visibleOwner = readerDeveloperId === undefined ? [] : [ne(agentSessions.developerId, readerDeveloperId), notMutedCondition(readerDeveloperId, agentSessions.developerId)];",
+    to: "  const visibleOwner = readerDeveloperId === undefined ? [] : [notMutedCondition(readerDeveloperId, agentSessions.developerId)];",
+    test: `${SERVER}/test/hint-long-prompt.test.ts`,
+    because: "the reader's own trees lend known words no candidate can say (round 4, L1)",
+  },
+  {
+    label: "a letter and a digit are no word",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "    .filter((token) => token.length >= PROMPT_MIN_TOKEN_CHARS || isCapitalPair(token) || isLetterDigitPair(token))",
+    to: "    .filter((token) => token.length >= PROMPT_MIN_TOKEN_CHARS || isCapitalPair(token))",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"s3 upload over 5gb fails\" loses the bucket it is about (round 4, L2)",
+  },
+  {
+    label: "any two characters with a digit are a word",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "const isLetterDigitPair = (token: string): boolean => /^(?:\\p{L}\\p{N}|\\p{N}\\p{L})$/u.test(token);",
+    to: "const isLetterDigitPair = (token: string): boolean => /^(?:\\p{L}\\p{N}|\\p{N}\\p{L}|\\p{N}\\p{N})$/u.test(token);",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "a log line's \"10\" and \"06\" agree with every tree that counts ten of something (round 4, L2)",
+  },
+  {
+    label: "a quote of the agent's answer is scored as the human's",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "  const stripped = kept.replace(MARKERS, \" \").replace(QUOTED_LINE, \"\");",
+    to: "  const stripped = kept.replace(MARKERS, \" \");",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "\"> The root cause is that the JWKS cache …\" above an \"ok\" reaches the JWKS tree on the agent's own words (round 4, L3)",
+  },
+  {
+    label: "an indented quote is the human's",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "const QUOTED_LINE = /^[\\p{Zs}\\t]*>.*$/gmu;",
+    to: "const QUOTED_LINE = /^>.*$/gmu;",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "a quote pasted with its reply's indentation is scored as the human's words (round 4, L3)",
+  },
+  {
+    label: "a tree is hinted twice in a session",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  if (!isUnpointed(context, new Set(input.hintedRefIds ?? input.seenRefIds))) {\n    return SILENCE;\n  }\n",
+    to: "",
+    test: `${CORE}/test/hint-select.test.ts`,
+    because: "a tree pointed at on one prompt pushes its finding on the next — 24 of the round-4 hold-out's scripted sessions (decision 11)",
+  },
+  {
+    label: "the briefing's pointers count as the session's hints",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  if (!isUnpointed(context, new Set(input.hintedRefIds ?? input.seenRefIds))) {",
+    to: "  if (!isUnpointed(context, new Set(input.seenRefIds))) {",
+    test: `${CORE}/test/hint-substance-flow.test.ts`,
+    because: "a solved tree the briefing named never shows the finding a prompt later asks for (round 4, decision 11)",
+  },
+  {
+    label: "the flow hands the selector no hinted refs",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "    hintedRefIds: state.deliveredHintRefs,\n",
+    to: "",
+    test: `${CORE}/test/hint-substance-flow.test.ts`,
+    because: "the briefing's solved pointers silence the findings of their trees for the whole session (round 4, decision 11)",
+  },
+  {
+    label: "a prompt names no path whole",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "  text.split(/\\s+/u).flatMap((word) => [...partsOf(word), ...wholeFormsOf(word).filter(isLongEnoughForm)]);",
+    to: "  text.split(/\\s+/u).flatMap((word) => [...partsOf(word)]);",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"404 auf /health\" says \"health\", a word no statement that writes \"/health\" holds on the hub (round 4, L1 follow-up)",
+  },
+  {
+    label: "the hub never hears a path whole",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "  text.split(/\\s+/u).flatMap((word) => [...partsOf(word), ...wholeFormsOf(word).filter(isLongEnoughForm)]);",
+    to: "  text.split(/\\s+/u).flatMap((word) => [...partsOf(word)]);",
+    test: `${SERVER}/test/hint-long-prompt.test.ts`,
+    because: "\"why is /health 404\" floors on one known word against the tree titled \"/health returns 404\" (round 4, L1 follow-up; K043, K085)",
+  },
+  {
+    label: "a two-letter dotted name is a word",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "...wholeFormsOf(word).filter(isLongEnoughForm)]);",
+    to: "...wholeFormsOf(word)]);",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"e.g.\" becomes a term below the length floor every other word is held to (round 4, L1 follow-up)",
+  },
+  {
+    label: "a whole form joins the terms without a topical part",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "    isWholeForm(token) ? partsOf(token).some((part) => unclassedParts.has(part)) : contentParts.has(token),",
+    to: "    isWholeForm(token) ? true : contentParts.has(token),",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"commit/push\" carries a term no closed class names, and the session's commands look like a topic (round 4, L1 follow-up)",
+  },
+  {
+    label: "a whole form decides the verdict",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    // RETARGETED (round 5, M3): the window is read once, for the shell-command verdict too.
+    from: "  const written = promptTokens(windowed).filter((token) => !isWholeForm(token));",
+    to: "  const written = promptTokens(windowed);",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"commit/push\" is a task to the hooks' verdict, though its parts are the session's commands (round 4, L1 follow-up)",
+  },
+  {
+    label: "a sentence mark inside a word ends a clause",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "const CLAUSE_BOUNDARY = /[.!?;:,]+(?=\\s|$)|[\\n\\r–—]+/u;",
+    to: "const CLAUSE_BOUNDARY = /[.!?;:,\\n\\r–—]+/u;",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"src/auth/refresh.ts\" is ranked as \"src/auth/refresh\", a word no statement says (round 4, L1 follow-up)",
+  },
+  {
+    label: "a path's lexeme is stemmed",
+    file: `${SCHEMA}/src/content-floor.ts`,
+    from: "const KEPT_AS_WRITTEN = /[\\p{N}./@]/u;",
+    to: "const KEPT_AS_WRITTEN = /\\p{N}/u;",
+    test: `${SCHEMA}/test/content-floor.test.ts`,
+    because: "\"refresh.ts\" is counted as \"refresh.t\", where the database keeps the host whole (round 4, L1 follow-up)",
+  },
+  {
+    label: "a restart verb hands nothing back",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "export const CONTINUATION_CLAUSE_WORDS: readonly string[] = [\"next\", \"los\", \"passt\", \"retry\", \"rerun\", \"restart\", \"resume\"];",
+    to: "export const CONTINUATION_CLAUSE_WORDS: readonly string[] = [\"next\", \"los\", \"passt\"];",
+    test: `${SCHEMA}/test/continuation.test.ts`,
+    because: "\"API Error: 529 Overloaded. retry\" is pointed at the rate-limit tree on the error it reports (round 4, C1 follow-up; C089)",
+  },
+  {
+    label: "a scripted session hints its opener's tree again",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  if (!isUnpointed(context, new Set(input.hintedRefIds ?? input.seenRefIds))) {\n    return SILENCE;\n  }\n",
+    to: "",
+    test: `${CORE}/test/holdout-round4-gate.test.ts`,
+    because: "the round-4 hold-out's sessions show one tree twice: the opener's pointer, then its finding (round 5, decision 11)",
+  },
+  {
+    label: "the round-4 hold-out's retry reaches the rate-limit tree",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "export const CONTINUATION_CLAUSE_WORDS: readonly string[] = [\"next\", \"los\", \"passt\", \"retry\", \"rerun\", \"restart\", \"resume\"];",
+    to: "export const CONTINUATION_CLAUSE_WORDS: readonly string[] = [\"next\", \"los\", \"passt\"];",
+    test: `${CORE}/test/holdout-round4-gate.test.ts`,
+    because: "C089, \"API Error: 529 Overloaded. retry\", is hinted beside the four named residuals (round 5)",
+  },
+  {
+    label: "the connector asks a hub about a content-free prompt",
+    file: `${CORE}/src/flows/hint.ts`,
+    // RETARGETED (round 3, M7): the query is the prompt's window now.
+    // RETARGETED (round 3, L4): the verdict is the hook's one classification.
+    // RETARGETED (round 4, C1): the continuation signal beside it stays.
+    // RETARGETED (round 5, C1): the shared rule says what the prompt asks about.
+    from: "  const task = promptTaskOf(humanText, terms);",
+    to: "  const task = terms.hasContinuation ? promptTaskOf(humanText, terms) : { text: humanText, terms };",
+    test: `${CORE}/test/hint-intent-fallback.test.ts`,
+    because: "a 0.10.0 hub, which knows no steering word, points \"mache weiter\" at the tree that says mache (L5)",
+  },
+  {
+    label: "the session-command rule judges stop words too",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    // RETARGETED (round 4, M4): one helper names every language's function words.
+    // RETARGETED (round 4, L1 follow-up): the language is read on a word's parts.
+    from: "  const isGerman = isGermanPrompt(parts);\n  const isFunctionWord = functionWordsOf(parts);",
+    to: "  const isGerman = isGermanPrompt(parts);\n  const isFunctionWord = (_token: string): boolean => false;",
+    test: `${SERVER}/test/hint-candidate-floor.test.ts`,
+    because: "\"weiter\" and \"alles\" are not session commands, so no real prompt of them is ever content-free",
+  },
+  {
+    label: "the hint pool is ranked on raw tokens",
+    // RETARGETED (round 3, C1): the query's terms carry their topical half beside them.
+    // RETARGETED (round 3, follow-up): the query's words are its floor terms.
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "      ftsTokens: query.floor.all,\n",
+    to: "",
+    test: `${SERVER}/test/hint-content-terms.test.ts`,
+    because: "a German prompt's das/ist/nicht/die fill the 10-row pool with noise trees and the one tree it is about never reaches the floor (M8)",
+  },
+  {
+    label: "the German stop list strips an English prompt",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    // RETARGETED (round 4, M4): one helper names every language's function words.
+    from: "    ...[GERMAN_FUNCTION_WORDS, SPANISH_FUNCTION_WORDS, FRENCH_FUNCTION_WORDS].filter((words) => readsAs(written, words)),\n  ];",
+    to: "    GERMAN_FUNCTION_WORDS,\n    ...[GERMAN_FUNCTION_WORDS, SPANISH_FUNCTION_WORDS, FRENCH_FUNCTION_WORDS].filter((words) => readsAs(written, words)),\n  ];",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "\"why does the worker die\" loses \"die\" and the worker tree it shares two words with (L1)",
+  },
+  {
+    label: "the language signal reads English as German",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    // RETARGETED (round 4, M4): one comparison reads every language.
+    from: "  countWhere(tokens, (token) => words.has(token) && !ENGLISH_STOP_WORDS.has(token)) >\n",
+    to: "  countWhere(tokens, (token) => words.has(token) && !ENGLISH_STOP_WORDS.has(token)) >=\n",
+    test: `${SCHEMA}/test/prompt-terms.test.ts`,
+    because: "a prompt with no stop word of either language is stripped of German function words it never had",
+  },
+  // ── round 5 fixes (burned hold-out review-hints5) ──
+  {
+    label: "a `!` command's echo is the human's prompt",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "  element(\"bash-input\", \"<bash-input>git status</bash-input>\"),\n",
+    to: "",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "\"<bash-input>git status</bash-input>\" reaches the hub as a task (round 5, H1)",
+  },
+  {
+    label: "a `!` command's output is the human's prompt",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "  element(\"bash-stdout\", \"<bash-stdout>On branch feat/orders-csv-export\\nnothing to commit, working tree clean</bash-stdout>\"),\n",
+    to: "",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "\"On branch feat/orders-csv-export … nothing to commit\" reaches the CSV-export tree on the branch name (round 5, H1; C250)",
+  },
+  {
+    label: "a `!` command's error stream is the human's prompt",
+    file: `${SCHEMA}/src/harness-turn.ts`,
+    from: "  element(\"bash-stderr\", \"<bash-stderr>fatal: not a git repository</bash-stderr>\"),\n",
+    to: "",
+    test: `${SCHEMA}/test/harness-turn.test.ts`,
+    because: "a failing `!` command's stderr reaches the tree its paths name (round 5, H1)",
+  },
+  {
+    label: "a word one slip from proceeding carries the session on",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "  // round 5, L1: the system dictionary's word one slip from the signal word \"proceeding\"\n  \"preceding\",\n",
+    to: "",
+    test: `${SCHEMA}/test/continuation.test.ts`,
+    because: "\"the preceding migration dropped the index\" is floored as a continuation (round 5, L1)",
+  },
+  {
+    label: "a bare shell command is a task to the verdict",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "    isContentFree: isBareShellCommand(scored) || isSessionCommand(words.tokens, words.content, words.content.map(classOf)),",
+    to: "    isContentFree: isSessionCommand(words.tokens, words.content, words.content.map(classOf)),",
+    test: `${SCHEMA}/test/shell-command.test.ts`,
+    because: "\"bun test\" reaches the CI-cache tree on bun and test (round 5, M3; C145)",
+  },
+  {
+    label: "the hub asks about a bare shell command",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "    isContentFree: isBareShellCommand(scored) || isSessionCommand(words.tokens, words.content, words.content.map(classOf)),",
+    to: "    isContentFree: isSessionCommand(words.tokens, words.content, words.content.map(classOf)),",
+    test: `${SERVER}/test/hint-shell-command.test.ts`,
+    because: "an installed connector that sends \"bun test packages/api/src/auth\" gets the auth trees back (round 5, M3; C155)",
+  },
+  {
+    label: "the short verdict reads a bare shell command as a task",
+    file: `${SCHEMA}/src/prompt-terms.ts`,
+    from: "  if (isBareShellCommand(windowed)) {\n    return true;\n  }\n",
+    to: "",
+    test: `${SCHEMA}/test/shell-command.test.ts`,
+    because: "the hooks' short verdict and promptTerms disagree on \"npm run build\" (round 5, M3)",
+  },
+  {
+    label: "bun is no shell binary",
+    file: `${SCHEMA}/src/shell-command.ts`,
+    from: "  \"bun\", \"npm\", \"npx\", \"pnpm\",",
+    to: "  \"npm\", \"npx\", \"pnpm\",",
+    test: `${SCHEMA}/test/shell-command.test.ts`,
+    because: "\"bun test packages/api/src/auth\" reaches the auth trees (round 5, M3; C155)",
+  },
+  {
+    label: "a shell prompt's mark hides the binary",
+    file: `${SCHEMA}/src/shell-command.ts`,
+    from: "const PROMPT_MARK = /^[!$]+\\s*/u;",
+    to: "const PROMPT_MARK = /^$/u;",
+    test: `${SCHEMA}/test/shell-command.test.ts`,
+    because: "\"$ make test\" and \"!bun test --watch\" are read as tasks (round 5, M3)",
+  },
+  {
+    label: "a sentence mark makes a command word a task word",
+    file: `${SCHEMA}/src/shell-command.ts`,
+    from: "  return rest.every((word) => isCommandOwn(word.replace(TRAILING_MARKS, \"\")));",
+    to: "  return rest.every((word) => isCommandOwn(word));",
+    test: `${SCHEMA}/test/shell-command.test.ts`,
+    because: "\"bun test.\" reaches the CI tree its full stop made a task of (round 5, M3)",
+  },
+  {
+    label: "a flag is a task word",
+    file: `${SCHEMA}/src/shell-command.ts`,
+    from: "const FLAG = /^-/u;",
+    to: "const FLAG = /^-\\d/u;",
+    test: `${SCHEMA}/test/shell-command.test.ts`,
+    because: "\"pnpm lint --fix\" and \"cargo test -- --nocapture\" reach the hub as tasks (round 5, M3)",
+  },
+  {
+    label: "a path is a task word after a command",
+    file: `${SCHEMA}/src/shell-command.ts`,
+    from: "const PATH = /[/~]|^\\.[\\p{L}\\p{N}]|[\\p{L}\\p{N}_-]\\.[\\p{L}\\p{N}_-]/u;",
+    to: "const PATH = /^~/u;",
+    test: `${SCHEMA}/test/shell-command.test.ts`,
+    because: "\"bun test packages/api/src/auth\" reaches the auth trees on the path's parts (round 5, M3; C155)",
+  },
+  {
+    label: "an operation word is a task word after a command",
+    file: `${SCHEMA}/src/shell-command.ts`,
+    from: "  word.length === 0 || FLAG.test(word) || PATH.test(word) || wordClassOf(foldWord(word)) === \"operation\";",
+    to: "  word.length === 0 || FLAG.test(word) || PATH.test(word);",
+    test: `${SCHEMA}/test/shell-command.test.ts`,
+    because: "\"bun test\" and \"npm run build\" reach the hub as tasks (round 5, M3; C145, C146)",
+  },
+  {
+    label: "the exact tier reads a trace's path as written",
+    file: `${SERVER}/src/services/search.ts`,
+    from: "      .map(exactTargetToken)\n",
+    to: "",
+    test: `${SERVER}/test/hint-exact-targets.test.ts`,
+    because: "\"(packages/api/src/auth/permissions.ts:27:13)\" matches no target, and the permissions tree is reached on words only (round 5, M1; K163)",
+  },
+  {
+    label: "a long prompt sends a trace's path with its position",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "    .map((word) => exactTargetToken(word).replace(/^[^\\p{L}\\p{N}]+|[^\\p{L}\\p{N}]+$/gu, \"\"))",
+    to: "    .map((word) => word.replace(/^[^\\p{L}\\p{N}]+|[^\\p{L}\\p{N}]+$/gu, \"\"))",
+    test: `${CORE}/test/hint-query-window.test.ts`,
+    because: "a pasted trace past the cap sends no path the hub's exact tier can match (round 5, M1)",
+  },
+  {
+    label: "a trace's line and column stay on its path",
+    file: `${SCHEMA}/src/exact-token.ts`,
+    from: "const LINE_COLUMN = /:\\d+(?::\\d+)?$/u;",
+    to: "const LINE_COLUMN = /$^/u;",
+    test: `${SCHEMA}/test/exact-token.test.ts`,
+    because: "\"permissions.ts:27:13\" names no file a teammate touched (round 5, M1; K163)",
+  },
+  {
+    label: "a link's line anchor stays on its path",
+    file: `${SCHEMA}/src/exact-token.ts`,
+    from: "const LINE_ANCHOR = /#L\\d+(?:-L?\\d+)?$/iu;",
+    to: "const LINE_ANCHOR = /$^/u;",
+    test: `${SCHEMA}/test/exact-token.test.ts`,
+    because: "\"session.ts#L12\" names no file a teammate touched (round 5, M1)",
+  },
+  {
+    label: "a lower-cased line anchor stays on its path",
+    file: `${SCHEMA}/src/exact-token.ts`,
+    from: "const LINE_ANCHOR = /#L\\d+(?:-L?\\d+)?$/iu;",
+    to: "const LINE_ANCHOR = /#L\\d+(?:-L?\\d+)?$/u;",
+    test: `${SERVER}/test/hint-exact-targets.test.ts`,
+    because: "the hub lower-cases before it trims, so \"…/permissions.ts#L27\" keeps its \"#l27\" and matches nothing (round 5, M1)",
+  },
+  {
+    label: "a file URL keeps its scheme",
+    file: `${SCHEMA}/src/exact-token.ts`,
+    from: "const FILE_URL = /^file:\\/\\//iu;",
+    to: "const FILE_URL = /$^/u;",
+    test: `${SCHEMA}/test/exact-token.test.ts`,
+    because: "\"file:///repo/src/auth/session.ts\" names no file a teammate touched (round 5, M1)",
+  },
+  {
+    label: "a trace's opening bracket stays on its path",
+    file: `${SCHEMA}/src/exact-token.ts`,
+    from: "const WRAP_START = /^[(\"'`[{<„“”‘’«]+/u;",
+    to: "const WRAP_START = /$^/u;",
+    test: `${SCHEMA}/test/exact-token.test.ts`,
+    because: "\"(packages/api/src/auth/permissions.ts:27:13)\" keeps its bracket and matches no target (round 5, M1)",
+  },
+  {
+    label: "the marks after a trace's path stay on it",
+    file: `${SCHEMA}/src/exact-token.ts`,
+    from: "const WRAP_END = /[()\"'`\\]}>„“”‘’»,;:.!?]+$/u;",
+    to: "const WRAP_END = /$^/u;",
+    test: `${SCHEMA}/test/exact-token.test.ts`,
+    because: "\"…/permissions.ts:27:13)\" and \"session.ts:27:13,\" keep their closing marks and match no target (round 5, M1)",
+  },
+  {
+    label: "a Dockerfile alone points at the Docker tree",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    .filter(({ row, topicalTerms }) => !isNameOnlyMatch(matchedTargets.get(row.id) ?? [], exactWords) || topicalTerms >= HINT_CONVENTIONAL_NAME_MIN_TOPICAL)\n",
+    to: "",
+    test: `${SERVER}/test/hint-exact-targets.test.ts`,
+    because: "\"bump node to 22 in .nvmrc and the Dockerfile\" is pointed at the Docker tree it shares no word with (round 5, M4; K090)",
+  },
+  {
+    label: "a conventional name counts as a specific path",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  const specific = words.filter((word) => !isConventionalFileName(word));",
+    to: "  const specific = words;",
+    test: `${SERVER}/test/hint-exact-targets.test.ts`,
+    because: "\"Dockerfile\" is read as the fact \"docker/postgres/Dockerfile\" and the Docker tree is pointed at again (round 5, M4; K090)",
+  },
+  {
+    label: "a conventional name needs no topical word",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "export const HINT_CONVENTIONAL_NAME_MIN_TOPICAL = 1;",
+    to: "export const HINT_CONVENTIONAL_NAME_MIN_TOPICAL = 0;",
+    test: `${SERVER}/test/hint-exact-targets.test.ts`,
+    because: "every tree with a Dockerfile is a candidate for every prompt that names one (round 5, M4; K090)",
+  },
+  {
+    label: "a trailing path written for a conventional file is no fact",
+    file: `${SERVER}/src/services/search.ts`,
+    from: "  return lower === token || lower.endsWith(`/${token}`);",
+    to: "  return lower === token;",
+    test: `${SERVER}/test/hint-exact-targets.test.ts`,
+    because: "\"postgres/Dockerfile\" matches the target in SQL but reads as a name alone, and the tree is dropped (round 5, M4)",
+  },
+  {
+    label: "Dockerfile is no conventional file name",
+    file: `${SCHEMA}/src/exact-token.ts`,
+    from: "  \"dockerfile\", \"makefile\",",
+    to: "  \"makefile\",",
+    test: `${SCHEMA}/test/exact-token.test.ts`,
+    because: "\"the Dockerfile\" alone matches the Docker tree's docker/postgres/Dockerfile (round 5, M4; K090)",
+  },
+  {
+    label: "the own statement decides before the shared words",
+    file: `${SCHEMA}/src/substance-trust.ts`,
+    from: "  Number(right.isExact) - Number(left.isExact) || right.topical - left.topical || right.shared - left.shared || right.own - left.own;",
+    to: "  Number(right.isExact) - Number(left.isExact) || right.topical - left.topical || right.own - left.own || right.shared - left.shared;",
+    test: `${CORE}/test/hint-best-match.test.ts`,
+    because: "\"deleted users' uploads are still in S3\" is pointed at the upload tree its title says one more word of, not the deletion tree that shares four (round 5, M2; K028)",
+  },
+  {
+    label: "the ranking order is the old one",
+    file: `${SCHEMA}/src/substance-trust.ts`,
+    from: "  Number(right.isExact) - Number(left.isExact) || right.topical - left.topical || right.shared - left.shared || right.own - left.own;",
+    to: "  Number(right.isExact) - Number(left.isExact) || right.topical - left.topical || right.own - left.own || right.shared - left.shared;",
+    test: `${SCHEMA}/test/substance-match.test.ts`,
+    because: "the hub sorts its bound and withholds its bodies by the own statement before the shared words (round 5, M2)",
+  },
+  {
+    label: "a leading continuation silences the task after it",
+    file: `${SCHEMA}/src/prompt-task.ts`,
+    from: "  return rest === undefined ? null : text.slice(rest.start).trim();",
+    to: "  return null;",
+    test: `${SCHEMA}/test/prompt-task.test.ts`,
+    because: "\"next: add rate limiting to the upload endpoint\" makes no hub call — 25 of the round-5 hold-out's 214 tasks floored (round 5, C1)",
+  },
+  {
+    label: "the hub silences the task after a leading continuation",
+    file: `${SCHEMA}/src/prompt-task.ts`,
+    from: "  return rest === undefined ? null : text.slice(rest.start).trim();",
+    to: "  return null;",
+    test: `${SERVER}/test/hint-continuation-scope.test.ts`,
+    because: "an installed connector that sends \"next: add rate limiting …\" whole gets no candidate (round 5, C1)",
+  },
+  {
+    label: "the corpus's leading continuations reach no tree",
+    file: `${SCHEMA}/src/prompt-task.ts`,
+    from: "  return rest === undefined ? null : text.slice(rest.start).trim();",
+    to: "  return null;",
+    test: `${CORE}/test/prompt-corpus-gate.test.ts`,
+    because: "\"next: the database migration stalls on the orders table lock\" is floored again (round 5, C1)",
+  },
+  {
+    label: "a trailing continuation lets its report be asked about",
+    file: `${SCHEMA}/src/prompt-task.ts`,
+    from: "  return restTerms.isContentFree || restTerms.hasContinuation ? null : { text: rest, terms: restTerms };",
+    to: "  return restTerms.isContentFree ? null : { text: rest, terms: restTerms };",
+    test: `${SCHEMA}/test/prompt-task.test.ts`,
+    because: "\"cool, cache fix is merged, next\" reaches the cache tree on the words of its report (round 4, C1; round 5, C1)",
+  },
+  {
+    label: "the corpus's trailing continuations reach the hub",
+    file: `${SCHEMA}/src/prompt-task.ts`,
+    from: "  return restTerms.isContentFree || restTerms.hasContinuation ? null : { text: rest, terms: restTerms };",
+    to: "  return restTerms.isContentFree ? null : { text: rest, terms: restTerms };",
+    test: `${CORE}/test/prompt-corpus-gate.test.ts`,
+    because: "\"the database migration on the orders table is merged, next\" is sent to the hub (round 5, C1)",
+  },
+  {
+    label: "a status report after a continuation is a task",
+    file: `${SCHEMA}/src/prompt-task.ts`,
+    from: "  if (rest === null || isStatusReport(rest)) {",
+    to: "  if (rest === null) {",
+    test: `${SCHEMA}/test/prompt-task.test.ts`,
+    because: "\"continue: the refresh token fix is deployed\" reaches the refresh-token tree on its own report (round 5, C1)",
+  },
+  {
+    label: "the corpus's status-report probes reach the hub",
+    file: `${SCHEMA}/src/prompt-task.ts`,
+    from: "  if (rest === null || isStatusReport(rest)) {",
+    to: "  if (rest === null) {",
+    test: `${CORE}/test/prompt-corpus-gate.test.ts`,
+    because: "the six status-report probes are sent to the hub (round 5, C1)",
+  },
+  {
+    label: "a negated status is a report",
+    file: `${SCHEMA}/src/prompt-task.ts`,
+    from: "  return reports && !words.some((word) => NEGATIONS.has(word) || CONTRACTED_NEGATION.test(word));",
+    to: "  return reports;",
+    test: `${SCHEMA}/test/prompt-task.test.ts`,
+    because: "\"weiter, der Export klappt nicht mit Umlauten\" is floored as a status report (round 5, C1)",
+  },
+  {
+    label: "a contracted negation is a report",
+    file: `${SCHEMA}/src/prompt-task.ts`,
+    from: "const CONTRACTED_NEGATION = /n['’]t$/u;",
+    to: "const CONTRACTED_NEGATION = /$^/u;",
+    test: `${SCHEMA}/test/prompt-task.test.ts`,
+    because: "\"next: the webhook retry doesn't work on staging\" is floored as a status report (round 5, C1)",
+  },
+  {
+    label: "ist fertig reports nothing",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "export const STATUS_REPORT_PHRASES: readonly (readonly string[])[] = [[\"ist\", \"fertig\"]];",
+    to: "export const STATUS_REPORT_PHRASES: readonly (readonly string[])[] = [];",
+    test: `${SCHEMA}/test/prompt-task.test.ts`,
+    because: "\"mach weiter, der PDF-Export ist fertig\" reaches the PDF-export tree (round 5, C1)",
+  },
+  {
+    label: "deployed reports nothing",
+    file: `${SCHEMA}/src/prompt-vocabulary.ts`,
+    from: "[\"merged\", \"deployed\", \"works\",",
+    to: "[\"merged\", \"works\",",
+    test: `${SCHEMA}/test/prompt-task.test.ts`,
+    because: "\"continue: the refresh token fix is deployed\" reaches the refresh-token tree (round 5, C1)",
+  },
+  {
+    label: "one status clause makes the whole rest a report",
+    file: `${SCHEMA}/src/prompt-task.ts`,
+    from: "  return saying.length > 0 && saying.every((clause) => isStatusClause(clause.text));",
+    to: "  return saying.length > 0 && saying.some((clause) => isStatusClause(clause.text));",
+    test: `${SCHEMA}/test/prompt-task.test.ts`,
+    because: "\"continue: the cache fix is merged, now the invalidation of product prices\" floors the task after the report (round 5, C1)",
+  },
+  {
+    label: "a thanks keeps a report from being one",
+    file: `${SCHEMA}/src/prompt-task.ts`,
+    from: "  const saying = continuationClausesOf(text).filter((clause) => !isContentFreePrompt(clause.text));",
+    to: "  const saying = continuationClausesOf(text);",
+    test: `${SCHEMA}/test/prompt-task.test.ts`,
+    because: "\"next: the cache fix is merged, thanks\" reaches the cache tree because \"thanks\" reports no state (round 5, C1)",
+  },
+  {
+    label: "a content-free leading clause is a task",
+    file: `${SCHEMA}/src/prompt-task.ts`,
+    from: "const isQuietClause = (clause: PromptClause): boolean => isContinuationClause(clause.text) || isContentFreePrompt(clause.text);",
+    to: "const isQuietClause = (clause: PromptClause): boolean => isContinuationClause(clause.text);",
+    test: `${SCHEMA}/test/prompt-task.test.ts`,
+    because: "\"ok cool, next: reverse charge VAT in checkout\" is floored: its \"ok cool\" reads as the task (round 5, C1)",
+  },
+  {
+    label: "the connector sends the whole prompt, not the task after its continuation",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "  const promptQuery = task === null ? \"\" : queryOf(task.text, task.terms.ranked);",
+    to: "  const promptQuery = task === null ? \"\" : queryOf(humanText, terms.ranked);",
+    test: `${CORE}/test/hint-intent-fallback.test.ts`,
+    because: "\"next: …\" goes on the wire whole, and a hub reads its continuation and answers nothing (round 5, C1)",
+  },
+  {
+    label: "the hub matches a leading continuation's words too",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    text: task.text,\n",
+    to: "    text: humanText,\n",
+    test: `${SERVER}/test/hint-continuation-scope.test.ts`,
+    because: "\"continue with packages/gateway/bucket.ts, then …\" points at the gateway tree the session is carrying on with (round 5, C1)",
+  },
+  {
+    label: "a signal word names no thing",
+    file: `${SCHEMA}/src/continuation.ts`,
+    from: "  return length > 0 && (next === undefined || isNamelessWord(next));",
+    to: "  return length > 0;",
+    test: `${SCHEMA}/test/continuation.test.ts`,
+    because: "\"continue button in checkout does nothing\" is floored as a continuation (round 5, L1)",
+  },
+  {
+    label: "a Spanish signal before a Spanish function word names a thing",
+    file: `${SCHEMA}/src/continuation.ts`,
+    from: "  isSilentWord(word) || SPANISH_FUNCTION_WORDS.has(word) || FRENCH_FUNCTION_WORDS.has(word) || CARRIED_ACTIVITY.test(word);",
+    to: "  isSilentWord(word) || CARRIED_ACTIVITY.test(word);",
+    test: `${SCHEMA}/test/continuation.test.ts`,
+    because: "\"sigue con lo siguiente de la lista\" reaches the hub (round 4, M4; round 5, C1)",
+  },
+  {
+    label: "the activity carried on names a thing",
+    file: `${SCHEMA}/src/continuation.ts`,
+    from: "const CARRIED_ACTIVITY = /\\p{L}{2}ing$/u;",
+    to: "const CARRIED_ACTIVITY = /$^/u;",
+    test: `${SCHEMA}/test/prompt-task.test.ts`,
+    because: "\"…, continue debugging\" is no trailing continuation, and its report reaches the hub (round 5, C1)",
+  },
+  {
+    label: "a sequencing word opens no clause",
+    file: `${SCHEMA}/src/continuation.ts`,
+    from: "const SEQUENCE_WORDS = \"and then|und dann|then|danach|dann\";",
+    to: "const SEQUENCE_WORDS = \"then\";",
+    test: `${SCHEMA}/test/prompt-task.test.ts`,
+    because: "\"ok weiter und dann den refresh call nach der key rotation fixen\" is floored, one clause with a continuation (round 5, C1)",
+  },
+  {
+    label: "the task after a boundary keeps the boundary",
+    file: `${SCHEMA}/src/continuation.ts`,
+    from: "    start = match.index + match[0].length;",
+    to: "    start = match.index;",
+    test: `${SCHEMA}/test/prompt-task.test.ts`,
+    because: "\"next: add rate limiting …\" asks about \": add rate limiting …\" (round 5, C1)",
+  },
+  {
+    label: "a teammate's dotted name is read whole only",
+    file: `${SCHEMA}/src/content-floor.ts`,
+    from: "  return new Set(parts === text ? lexemesOf(text) : [...lexemesOf(text), ...lexemesOf(parts)]);",
+    to: "  return new Set(lexemesOf(text));",
+    test: `${SCHEMA}/test/content-floor.test.ts`,
+    because: "\"SELECT * FROM products WHERE name ILIKE $1\" never meets \"ILIKE on products.name\" (round 5, L2; K151)",
+  },
+  {
+    label: "the hub counts a dotted name whole only",
+    file: `${SCHEMA}/src/content-floor.ts`,
+    from: "  return new Set(parts === text ? lexemesOf(text) : [...lexemesOf(text), ...lexemesOf(parts)]);",
+    to: "  return new Set(lexemesOf(text));",
+    test: `${SERVER}/test/hint-dotted-names.test.ts`,
+    because: "the hub's index knows products and name, its count does not, and the two disagree (round 5, L2)",
+  },
+  {
+    label: "every dot splits a word",
+    file: `${SCHEMA}/src/content-floor.ts`,
+    from: "const DOTTED_NAME_DOT = /(?<=(?:^|\\s)[^\\s/@]*[\\p{L}\\p{N}_-])\\.(?=[\\p{L}\\p{N}_-][^\\s/@]*(?:\\s|$))/gu;",
+    to: "const DOTTED_NAME_DOT = /(?<=[\\p{L}\\p{N}_-])\\.(?=[\\p{L}\\p{N}_-])/gu;",
+    test: `${SCHEMA}/test/content-floor.test.ts`,
+    because: "a path's \"src/a.ts\" says \"src/a\" and \"ts\", words the database never keeps (round 5, L2)",
+  },
+  {
+    label: "the two dialects split different dots",
+    file: `${SCHEMA}/src/content-floor.ts`,
+    from: "const DOTTED_NAME_DOT = /(?<=(?:^|\\s)[^\\s/@]*[\\p{L}\\p{N}_-])\\.(?=[\\p{L}\\p{N}_-][^\\s/@]*(?:\\s|$))/gu;",
+    to: "const DOTTED_NAME_DOT = /(?<=(?:^|\\s)[^\\s/@]*[A-Za-z0-9_-])\\.(?=[A-Za-z0-9_-][^\\s/@]*(?:\\s|$))/gu;",
+    test: `${SERVER}/test/hint-dotted-names.test.ts`,
+    because: "\"café.menu\" is split by the database and not by the shared rule, and the hub and a recount drift (round 5, L2)",
+  },
+  {
+    label: "the hub reads a claim's dotted name whole only",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "const claimWords = sql`${claims.wordsTsv}`;",
+    to: "const claimWords = sql`${claims.tsv}`;",
+    test: `${SERVER}/test/hint-dotted-names.test.ts`,
+    because: "\"name\" from \"products.name\" is known to the shared rule and not to the hub (round 5, L2)",
+  },
+  {
+    label: "the hub's prefilter reads a document's dotted name whole only",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "const documentWords = sql`${workContexts.wordsTsv}`;",
+    to: "const documentWords = sql`${workContexts.tsv}`;",
+    test: `${SERVER}/test/hint-dotted-names.test.ts`,
+    because: "\"title\" from a description's \"products.title\" never gets past the prefilter to the statement that says it (round 5, L2)",
+  },
+  {
+    label: "the hub reads a statement's dotted name whole only",
+    file: `${SERVER}/src/services/hints.ts`,
+    // RETARGETED (hint-substance merge): the statement document takes the title the reader may read.
+    from: "  return sql`(to_tsvector('english', ${text}) || ${dottedNameParts(text)})`;",
+    to: "  return sql`(to_tsvector('english', ${text}))`;",
+    test: `${SERVER}/test/hint-dotted-names.test.ts`,
+    because: "a description's \"products.title\" never says \"title\" to the hub (round 5, L2)",
+  },
+  {
+    label: "bootstrap.sql indexes no claim's dotted names",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "CREATE INDEX IF NOT EXISTS claims_words_tsv_idx\n",
+    to: "CREATE INDEX IF NOT EXISTS claims_words_tsv_idx_gone\n",
+    test: `${SERVER}/test/hint-dotted-names.test.ts`,
+    because: "the hint floor's claim words are read by a scan of every claim of the repo (round 5, L2)",
+  },
+  {
+    label: "bootstrap.sql indexes no document's dotted names",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "CREATE INDEX IF NOT EXISTS work_contexts_words_tsv_idx\n",
+    to: "CREATE INDEX IF NOT EXISTS work_contexts_words_tsv_idx_gone\n",
+    test: `${SERVER}/test/hint-dotted-names.test.ts`,
+    because: "the known-word prefilter reads every context of the repo by a scan, once per term (round 5, L2)",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -30372,7 +33800,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/absence-cli.test.ts 11
  * PRINTS: packages/cli/test/agent-host.test.ts 2
  * PRINTS: packages/cli/test/agent-restart.test.ts 3
- * PRINTS: packages/cli/test/capture-health.test.ts 2
+ * PRINTS: packages/cli/test/capture-health.test.ts 8
  * PRINTS: packages/cli/test/ci-report-args.test.ts 2
  * PRINTS: packages/cli/test/ci-report-build.test.ts 3
  * PRINTS: packages/cli/test/ci-report-entry.test.ts 2
@@ -30494,6 +33922,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/collision-visibility-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/conclusion-corpus.test.ts 6
  * PRINTS: packages/connector-claude/test/conference-prompt.test.ts 1
+ * PRINTS: packages/connector-claude/test/content-free-prompt.test.ts 2
  * PRINTS: packages/connector-claude/test/derive-doctor.test.ts 1
  * PRINTS: packages/connector-claude/test/detached-title.test.ts 3
  * PRINTS: packages/connector-claude/test/double-wiring.test.ts 1
@@ -30514,9 +33943,9 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/hook-window-pairing.test.ts 11
  * PRINTS: packages/connector-claude/test/hook-window.test.ts 4
  * PRINTS: packages/connector-claude/test/hooks-fired-marker.test.ts 1
- * PRINTS: packages/connector-claude/test/intent-gate.test.ts 1
- * PRINTS: packages/connector-claude/test/intent-hook.test.ts 1
- * PRINTS: packages/connector-claude/test/intent-worker.test.ts 5
+ * PRINTS: packages/connector-claude/test/intent-gate.test.ts 7
+ * PRINTS: packages/connector-claude/test/intent-hook.test.ts 3
+ * PRINTS: packages/connector-claude/test/intent-worker.test.ts 9
  * PRINTS: packages/connector-claude/test/landed-change-hook.test.ts 4
  * PRINTS: packages/connector-claude/test/landed-notice-author-hook.test.ts 1
  * PRINTS: packages/connector-claude/test/landed-notice-hook.test.ts 6
@@ -30565,7 +33994,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/claim-drift.test.ts 4
  * PRINTS: packages/connector-core/test/claim-revalidation-budget.test.ts 1
  * PRINTS: packages/connector-core/test/claim-revalidation-pull.test.ts 2
- * PRINTS: packages/connector-core/test/claim-substance-gate.test.ts 3
+ * PRINTS: packages/connector-core/test/claim-substance-gate.test.ts 2
  * PRINTS: packages/connector-core/test/claim-surface.test.ts 1
  * PRINTS: packages/connector-core/test/claim-validity-parity.test.ts 2
  * PRINTS: packages/connector-core/test/claim-validity-render.test.ts 2
@@ -30602,7 +34031,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/fix-diff.test.ts 7
  * PRINTS: packages/connector-core/test/future-stamps.test.ts 5
  * PRINTS: packages/connector-core/test/generated-targets.test.ts 10
- * PRINTS: packages/connector-core/test/ghost-declare.test.ts 1
+ * PRINTS: packages/connector-core/test/ghost-declare.test.ts 2
  * PRINTS: packages/connector-core/test/ghost-render.test.ts 5
  * PRINTS: packages/connector-core/test/git-lane-cost.test.ts 1
  * PRINTS: packages/connector-core/test/git-lane-sweep.test.ts 1
@@ -30612,14 +34041,21 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/guarantee-doctor.test.ts 3
  * PRINTS: packages/connector-core/test/head-history.test.ts 3
  * PRINTS: packages/connector-core/test/held-first-outcome.test.ts 6
+ * PRINTS: packages/connector-core/test/hint-best-match.test.ts 12
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 4
- * PRINTS: packages/connector-core/test/hint-intent-fallback.test.ts 4
+ * PRINTS: packages/connector-core/test/hint-harness-turn.test.ts 7
+ * PRINTS: packages/connector-core/test/hint-intent-fallback.test.ts 8
+ * PRINTS: packages/connector-core/test/hint-old-hub-floor.test.ts 15
+ * PRINTS: packages/connector-core/test/hint-query-window.test.ts 5
  * PRINTS: packages/connector-core/test/hint-render.test.ts 5
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
- * PRINTS: packages/connector-core/test/hint-substance-flow.test.ts 2
- * PRINTS: packages/connector-core/test/hint-substance-render.test.ts 1
- * PRINTS: packages/connector-core/test/hint-substance-select.test.ts 6
+ * PRINTS: packages/connector-core/test/hint-substance-flow.test.ts 12
+ * PRINTS: packages/connector-core/test/hint-substance-render.test.ts 3
+ * PRINTS: packages/connector-core/test/hint-substance-select.test.ts 17
+ * PRINTS: packages/connector-core/test/hint-substance-trust-parity.test.ts 1
+ * PRINTS: packages/connector-core/test/hint-trailer-budget.test.ts 7
+ * PRINTS: packages/connector-core/test/holdout-round4-gate.test.ts 2
  * PRINTS: packages/connector-core/test/hub-key-refresh.test.ts 3
  * PRINTS: packages/connector-core/test/injection-corpus.test.ts 8
  * PRINTS: packages/connector-core/test/intent-budget.test.ts 1
@@ -30650,6 +34086,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/mcp-render.test.ts 16
  * PRINTS: packages/connector-core/test/mcp-seq-e2e.test.ts 2
  * PRINTS: packages/connector-core/test/mcp-seq.test.ts 8
+ * PRINTS: packages/connector-core/test/mcp-solved-render.test.ts 4
  * PRINTS: packages/connector-core/test/mcp-tools.test.ts 4
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
@@ -30662,8 +34099,8 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/pin-paths.test.ts 8
  * PRINTS: packages/connector-core/test/pin-sweep.test.ts 2
  * PRINTS: packages/connector-core/test/pointer-round-trip.test.ts 6
- * PRINTS: packages/connector-core/test/precision-corpus.test.ts 1
- * PRINTS: packages/connector-core/test/question-delivery.test.ts 1
+ * PRINTS: packages/connector-core/test/prompt-corpus-gate.test.ts 6
+ * PRINTS: packages/connector-core/test/question-delivery.test.ts 5
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3
  * PRINTS: packages/connector-core/test/read-text.test.ts 1
  * PRINTS: packages/connector-core/test/register-base-on-default.test.ts 1
@@ -30684,7 +34121,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/session-lives.test.ts 64
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
- * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 6
+ * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 9
  * PRINTS: packages/connector-core/test/set-intent.test.ts 15
  * PRINTS: packages/connector-core/test/sharing.test.ts 30
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4
@@ -30722,17 +34159,32 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 9
  * PRINTS: packages/schema/test/causal-guarantees.test.ts 7
  * PRINTS: packages/schema/test/claim.test.ts 1
+ * PRINTS: packages/schema/test/content-floor.test.ts 11
+ * PRINTS: packages/schema/test/continuation.test.ts 16
  * PRINTS: packages/schema/test/default-branch.test.ts 1
+ * PRINTS: packages/schema/test/english-stem.test.ts 4
+ * PRINTS: packages/schema/test/evidence-resolution.test.ts 8
+ * PRINTS: packages/schema/test/exact-token.test.ts 6
  * PRINTS: packages/schema/test/fallback-title.test.ts 3
  * PRINTS: packages/schema/test/file-ref.test.ts 5
  * PRINTS: packages/schema/test/generated-target.test.ts 3
+ * PRINTS: packages/schema/test/harness-turn.test.ts 28
  * PRINTS: packages/schema/test/hint-outcome.test.ts 2
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
  * PRINTS: packages/schema/test/landed-evidence.test.ts 1
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1
+ * PRINTS: packages/schema/test/prompt-task.test.ts 13
+ * PRINTS: packages/schema/test/prompt-terms.test.ts 40
+ * PRINTS: packages/schema/test/session-control.test.ts 7
  * PRINTS: packages/schema/test/session.test.ts 1
+ * PRINTS: packages/schema/test/shell-command.test.ts 8
+ * PRINTS: packages/schema/test/slash-command.test.ts 4
+ * PRINTS: packages/schema/test/substance-match.test.ts 5
+ * PRINTS: packages/schema/test/substance-sentence.test.ts 13
  * PRINTS: packages/schema/test/telemetry-loss.test.ts 4
+ * PRINTS: packages/schema/test/typing-slip.test.ts 11
+ * PRINTS: packages/schema/test/weak-words.test.ts 5
  * PRINTS: packages/server/test/absences.test.ts 7
  * PRINTS: packages/server/test/calibration.test.ts 1
  * PRINTS: packages/server/test/causal-guarantees.test.ts 23
@@ -30756,7 +34208,7 @@ interface Outcome {
  * PRINTS: packages/server/test/ddl-sync-record-receipts.test.ts 2
  * PRINTS: packages/server/test/ddl-sync-waiver-authority.test.ts 5
  * PRINTS: packages/server/test/ddl-sync-work-context-updater.test.ts 1
- * PRINTS: packages/server/test/ddl-sync.test.ts 11
+ * PRINTS: packages/server/test/ddl-sync.test.ts 13
  * PRINTS: packages/server/test/developer-branches.test.ts 5
  * PRINTS: packages/server/test/developer-emails.test.ts 5
  * PRINTS: packages/server/test/developer-listing.test.ts 5
@@ -30776,13 +34228,29 @@ interface Outcome {
  * PRINTS: packages/server/test/forwarded-trust.test.ts 11
  * PRINTS: packages/server/test/generated-targets.test.ts 12
  * PRINTS: packages/server/test/ghost-overlap.test.ts 13
- * PRINTS: packages/server/test/hint-content-floor.test.ts 6
- * PRINTS: packages/server/test/hint-deliveries.test.ts 5
+ * PRINTS: packages/server/test/hint-candidate-floor.test.ts 11
+ * PRINTS: packages/server/test/hint-closed-stems.test.ts 2
+ * PRINTS: packages/server/test/hint-content-floor.test.ts 8
+ * PRINTS: packages/server/test/hint-content-terms.test.ts 3
+ * PRINTS: packages/server/test/hint-continuation-scope.test.ts 2
+ * PRINTS: packages/server/test/hint-deliveries.test.ts 10
+ * PRINTS: packages/server/test/hint-dotted-names.test.ts 7
+ * PRINTS: packages/server/test/hint-draft-visibility.test.ts 2
+ * PRINTS: packages/server/test/hint-evidence-backed.test.ts 13
+ * PRINTS: packages/server/test/hint-exact-targets.test.ts 6
+ * PRINTS: packages/server/test/hint-floor-integrity.test.ts 4
+ * PRINTS: packages/server/test/hint-harness-turn.test.ts 2
+ * PRINTS: packages/server/test/hint-long-prompt.test.ts 8
  * PRINTS: packages/server/test/hint-outcome-retention.test.ts 4
  * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 23
  * PRINTS: packages/server/test/hint-outcomes.test.ts 63
+ * PRINTS: packages/server/test/hint-pushable-ranking.test.ts 5
+ * PRINTS: packages/server/test/hint-shell-command.test.ts 1
+ * PRINTS: packages/server/test/hint-strong-match.test.ts 12
+ * PRINTS: packages/server/test/hint-topical-floor.test.ts 4
+ * PRINTS: packages/server/test/hint-withheld-bodies.test.ts 5
  * PRINTS: packages/server/test/hints-records-outcomes.test.ts 3
- * PRINTS: packages/server/test/hints.test.ts 3
+ * PRINTS: packages/server/test/hints.test.ts 6
  * PRINTS: packages/server/test/hub-status-transport.test.ts 2
  * PRINTS: packages/server/test/in-memory-db.test.ts 2
  * PRINTS: packages/server/test/intent-ladder.test.ts 7
@@ -30849,10 +34317,11 @@ interface Outcome {
  * PRINTS: packages/server/test/skeleton-sweep.test.ts 35
  * PRINTS: packages/server/test/solved-counts.test.ts 1
  * PRINTS: packages/server/test/solved-cross-repo.test.ts 4
+ * PRINTS: packages/server/test/solved-evidence.test.ts 7
  * PRINTS: packages/server/test/solved-fanout.test.ts 2
  * PRINTS: packages/server/test/solved-intent.test.ts 4
  * PRINTS: packages/server/test/solved-probe.test.ts 1
- * PRINTS: packages/server/test/solved-ranking.test.ts 3
+ * PRINTS: packages/server/test/solved-ranking.test.ts 4
  * PRINTS: packages/server/test/startup-boot.test.ts 3
  * PRINTS: packages/server/test/startup-upgrades.test.ts 3
  * PRINTS: packages/server/test/suspect.test.ts 9

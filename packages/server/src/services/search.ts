@@ -34,6 +34,7 @@ import {
   sql,
 } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
+import { exactTargetToken } from "@crosscheck/schema";
 
 import {
   agentSessions,
@@ -250,6 +251,23 @@ export interface SearchDeps {
 
 export interface SearchQuery {
   readonly query: string;
+  /**
+   * The words the FTS tier ranks on, when the caller has already decided
+   * them — the hints endpoint passes a prompt's CONTENT terms, so function
+   * words never rank its pool (services/hints.ts). Absent: the query's own
+   * tokens. The exact tier always reads `query`, where a path is one word.
+   */
+  readonly ftsTokens?: readonly string[] | undefined;
+  /**
+   * Ranks the FTS tier with the CALLER's query instead of the normalized
+   * document and every claim body (hold-out review, M3). The hints endpoint
+   * passes one that reads only what a hint may show — a context's own
+   * statement and its pushable claims (services/hints.ts) — so a flood of
+   * drafts or refuted claims cannot rank trees into its pool, whatever the
+   * document holds. Absent: the pull search's tier, which reads everything a
+   * reader may pull. The exact tier is unchanged either way.
+   */
+  readonly rankFtsTier?: FtsTierRanker | undefined;
   readonly repo?: string | undefined;
   /**
    * Excludes contexts owned by this developer INSIDE every tier query — see
@@ -356,12 +374,18 @@ export const ftsTokens = (query: string): readonly string[] =>
  * hints service can gather the SAME targets the exact tier matched on
  * (services/hints.ts, the #19 targets-only pointer), without a second copy of
  * the tokenizer drifting from this one.
+ *
+ * EACH WORD AS IT NAMES A FILE (hold-out review round 5, M1): a stack trace's
+ * "(packages/api/src/auth/permissions.ts:27:13)" and a link's
+ * "file:///…#L12" lose their wrapping, their position and their scheme by the
+ * one rule the connector applies too (`@crosscheck/schema` exactTargetToken).
  */
 export const exactTokens = (query: string): readonly string[] =>
   boundTokens(
     query
       .toLowerCase()
       .split(/\s+/u)
+      .map(exactTargetToken)
       .filter((token) => token.length >= SEARCH_MIN_TOKEN_CHARS),
   );
 
@@ -382,7 +406,17 @@ export const exactTargetTokenConditions = (tokens: readonly string[]) =>
     sql`lower(${workContextTargets.value}) LIKE ${`%/${escapeLike(token)}`} ESCAPE '\\'`,
   ]);
 
-interface TierRow {
+/**
+ * The same predicate over a target already read: the value verbatim, or a
+ * path whose basename — or trailing path — the token is. For a caller that
+ * must know WHICH word matched (services/hints.ts, round 5 M4).
+ */
+export const targetMatchesToken = (value: string, token: string): boolean => {
+  const lower = value.toLowerCase();
+  return lower === token || lower.endsWith(`/${token}`);
+};
+
+export interface TierRow {
   readonly id: string;
   readonly createdAt: Date;
   readonly updatedAt: Date | null;
@@ -489,7 +523,7 @@ const listExactTier = async (
     .limit(TIER_CANDIDATES);
 };
 
-interface RankedRow extends TierRow {
+export interface RankedRow extends TierRow {
   readonly rank: number;
 }
 
@@ -497,6 +531,22 @@ interface RankedRow extends TierRow {
 const SUPERSEDES_KIND = "supersedes";
 /** A discard's status, and a refuted theory's. */
 const REJECTED_STATUS = "rejected";
+
+/**
+ * An FTS tier a caller ranks itself, over the same scope condition every tier
+ * puts in its own WHERE (`scope`) — see SearchQuery.rankFtsTier.
+ */
+export type FtsTierRanker = (tokens: readonly string[], scope: SQL | undefined) => Promise<readonly RankedRow[]>;
+
+/** A caller's ranker, held to the tier's own contract: no tokens, no rows; best first; bounded. */
+const listRankedFtsTier = async (
+  ranker: FtsTierRanker,
+  tokens: readonly string[],
+  scope: SearchScope,
+): Promise<readonly TierRow[]> =>
+  tokens.length === 0
+    ? []
+    : [...(await ranker(tokens, scopeCondition(scope)))].sort((left, right) => right.rank - left.rank).slice(0, TIER_CANDIDATES);
 
 const listFtsTier = async (
   db: Db,
@@ -896,7 +946,7 @@ export const searchWorkContexts = async (
   // Clamped even though the route already rejects: this service is the layer
   // whose queries can fault the embedded database, so the bound lives here too.
   const query = input.query.slice(0, SEARCH_MAX_QUERY_CHARS);
-  const wordTokens = ftsTokens(query);
+  const wordTokens = input.ftsTokens ?? ftsTokens(query);
   const pathTokens = exactTokens(query);
   const scope: SearchScope = {
     repo: input.repo,
@@ -935,7 +985,12 @@ export const searchWorkContexts = async (
 
   const [exactRows, ftsRows, vector] = await Promise.all([
     listExactTier(deps.db, pathTokens, scope),
-    listFtsTier(deps.db, wordTokens, scope, input.excludeDerivedClaims === true),
+    // A caller that ranks its own tier (hints, rankFtsTier) owns its claim
+    // filter too: it is handed the same exclusion through the scope it reads
+    // (services/hints.ts).
+    input.rankFtsTier === undefined
+      ? listFtsTier(deps.db, wordTokens, scope, input.excludeDerivedClaims === true)
+      : listRankedFtsTier(input.rankFtsTier, wordTokens, scope),
     tryVectorTier(deps, query, scope),
   ]);
 

@@ -252,6 +252,10 @@ CREATE TABLE IF NOT EXISTS hint_deliveries (
   -- cannot be attributed to either, so guessing would manufacture the
   -- measurement the pilot report exists to take.
   channel text NOT NULL DEFAULT 'unknown',
+  -- What the hint was matched on and whose intent the session held (review
+  -- 1006b, M7); NULL when the connector did not say.
+  matched_on text,
+  intent_provenance text,
   delivered_at timestamptz NOT NULL,
   pulled_at timestamptz,
   -- WHEN THE HUB RECEIVED IT (07 13.11, review P5), by the hub's clock: a
@@ -273,6 +277,22 @@ ALTER TABLE claims ADD COLUMN IF NOT EXISTS tsv tsvector
   GENERATED ALWAYS AS (to_tsvector('english', body)) STORED;
 CREATE INDEX IF NOT EXISTS claims_tsv_idx
   ON claims USING gin (tsv);
+
+-- What the hint floor reads (hold-out review round 5, L2; services/hints.ts
+-- claimWords and documentWords): the words AND a dotted name's parts —
+-- "products.name" says products and name — as @crosscheck/schema
+-- textLexemes reads a text and every prompt reads it. GENERATED and STORED
+-- like tsv, so no query computes them per row; the pattern is
+-- DOTTED_NAME_DOT_SQL verbatim (test/hint-dotted-names.test.ts pins the
+-- two equal).
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS words_tsv tsvector
+  GENERATED ALWAYS AS (to_tsvector('english', body) || to_tsvector('english', regexp_replace(body, '(?<=(?:^|[[:space:]])[^[:space:]/@]*[[:alnum:]_-])[.](?=[[:alnum:]_-][^[:space:]/@]*(?:[[:space:]]|$))', ' ', 'g'))) STORED;
+CREATE INDEX IF NOT EXISTS claims_words_tsv_idx
+  ON claims USING gin (words_tsv);
+ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS words_tsv tsvector
+  GENERATED ALWAYS AS (to_tsvector('english', coalesce(normalized_doc, '')) || to_tsvector('english', regexp_replace(coalesce(normalized_doc, ''), '(?<=(?:^|[[:space:]])[^[:space:]/@]*[[:alnum:]_-])[.](?=[[:alnum:]_-][^[:space:]/@]*(?:[[:space:]]|$))', ' ', 'g'))) STORED;
+CREATE INDEX IF NOT EXISTS work_contexts_words_tsv_idx
+  ON work_contexts USING gin (words_tsv);
 
 -- Optional vector tier: null until an embedder is configured AND has embedded
 -- the row. embedding_model records WHICH embedder minted the vector, because
@@ -1318,6 +1338,13 @@ ALTER TABLE hint_deliveries ADD COLUMN IF NOT EXISTS channel text NOT NULL DEFAU
 -- 07 13.11 (review P5): rows from before the column stay NULL and are read by
 -- delivered_at; every new row is stamped by the hub at ingest.
 ALTER TABLE hint_deliveries ADD COLUMN IF NOT EXISTS ingested_at timestamptz;
+
+-- WHAT A DELIVERY WAS MATCHED ON, AND WHOSE INTENT THE SESSION HELD (review
+-- 1006b, M7), for the per-person followed/overrode measurement. NULL on every
+-- existing row and on every row from a connector older than the fields:
+-- nothing is back-filled, and NULL is the honest word for "not said".
+ALTER TABLE hint_deliveries ADD COLUMN IF NOT EXISTS matched_on text;
+ALTER TABLE hint_deliveries ADD COLUMN IF NOT EXISTS intent_provenance text;
 
 -- The same column for a hub that already has the table. 07 3.6 found this
 -- missing: the spec's migration list named four new tables and one pins

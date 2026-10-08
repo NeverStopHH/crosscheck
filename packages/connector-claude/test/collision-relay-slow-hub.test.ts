@@ -25,7 +25,7 @@ import { prepareHook } from "../src/hooks/runner.ts";
 import { handleUserPromptSubmit } from "../src/hooks/user-prompt-submit.ts";
 import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import {
-  CANDIDATE_BODY,
+  CANDIDATE_CONTEXT_ID,
   TEAMMATE_DEVELOPER_ID,
   rejectedApproachCandidate,
 } from "../../connector-core/test/fixtures/hint-hub.ts";
@@ -64,6 +64,12 @@ const ROOMY_TIMEOUT_MS = "1000";
 
 /** The hint's canned prompt: the one the rejected-approach candidate matches. */
 const HINT_PROMPT = "why does src/auth/refresh.ts still 500 after the key rotation";
+
+/**
+ * What the delivered hint says: a rejected approach is pointed at, never
+ * inlined (batch-1006b review, H4), so the hint is its pointer at the tree.
+ */
+const HINT_POINTER = `get_diagnosis ${CANDIDATE_CONTEXT_ID}`;
 
 const hintPrompt = (repo: string): string =>
   JSON.stringify({ session_id: SESSION_ID, cwd: repo, hook_event_name: "UserPromptSubmit", prompt: HINT_PROMPT });
@@ -116,7 +122,7 @@ describe("a queued relay is drained before the prompt's hub calls", () => {
     // never arrived — the call gave up at the spare, inside a 1 s timeout
     expect(output.systemMessage).toBe(NICK_NOTICE);
     expect(fix.hub.calls.candidates).toBe(1);
-    expect(output.hookSpecificOutput?.additionalContext ?? "").not.toContain(CANDIDATE_BODY);
+    expect(output.hookSpecificOutput?.additionalContext ?? "").not.toContain(HINT_POINTER);
   });
 
   test("the same hint, with time to spare, IS delivered — so its absence above is the bound's doing", async () => {
@@ -131,6 +137,6 @@ describe("a queued relay is drained before the prompt's hub calls", () => {
 
     // Assert
     expect(output.systemMessage).toBe(NICK_NOTICE);
-    expect(output.hookSpecificOutput?.additionalContext ?? "").toContain(CANDIDATE_BODY);
+    expect(output.hookSpecificOutput?.additionalContext ?? "").toContain(HINT_POINTER);
   });
 });

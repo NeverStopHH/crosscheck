@@ -7,7 +7,7 @@
  * (capture-harness.ts); injection decisions need control, not realism.
  */
 import { serveLoopback } from "../../../connector-core/test/fixtures/loopback-serve.ts";
-import { rejectedApproachCandidate } from "../../../connector-core/test/fixtures/hint-hub.ts";
+import { injectableCandidate } from "../../../connector-core/test/fixtures/hint-hub.ts";
 
 export interface CannedHubLatency {
   presence: number;
@@ -35,7 +35,7 @@ const sleep = (ms: number): Promise<void> =>
 
 export const startCannedHub = (): CannedHub => {
   const latency: CannedHubLatency = { presence: 0, candidates: 0 };
-  let candidates: readonly unknown[] = [rejectedApproachCandidate()];
+  let candidates: readonly unknown[] = [injectableCandidate()];
   let solvedMatches: readonly unknown[] = [];
   let notices: readonly unknown[] = [];
   const postedKinds: string[] = [];

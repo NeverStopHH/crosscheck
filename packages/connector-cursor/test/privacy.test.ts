@@ -41,7 +41,7 @@ import {
   POST_TOOL_USE_INPUT,
   SESSION_START_INPUT,
 } from "./fixtures/cursor-contract/payloads.ts";
-import { rejectedApproachCandidate } from "../../connector-core/test/fixtures/hint-hub.ts";
+import { injectableCandidate } from "../../connector-core/test/fixtures/hint-hub.ts";
 import {
   makeHome,
   makeRepo,
@@ -207,7 +207,7 @@ describe("wire-level pin: the ephemeral hint query is secret-gated before it lea
           calls.candidates += 1;
           return Response.json({
             ok: true,
-            data: { candidates: [rejectedApproachCandidate()] },
+            data: { candidates: [injectableCandidate()] },
           });
         }
         if (pathname === "/api/records") {
@@ -319,6 +319,9 @@ describe("wire-level pin: the ephemeral hint query is secret-gated before it lea
     lastEditedPath: null,
     lastEditedPathResolvedAgainst: null,
     hintCandidatesSeen: 0,
+    flooredPromptCount: 0,
+    harnessTurnCount: 0,
+    quietCallCount: 0,
   });
 
   test("a failing tool output carrying a credential produces NO request containing it — and no candidates query at all", async () => {

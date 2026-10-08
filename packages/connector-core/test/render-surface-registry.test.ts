@@ -271,6 +271,11 @@ interface PackageRegistration {
  */
 const KNOWN_EXEMPT: Readonly<Record<string, readonly string[]>> = {
   "connector-core": [...RENDER_LAYER_MODULES, ...RENDER_BARREL_MODULES],
+  // The untrusted-text primitives moved into the schema package so the hub
+  // scores a claim on exactly the text a reader is shown (review 1006b, M4):
+  // untrusted-text.ts IS the render layer's sanitizer core, and the barrel
+  // re-exports it. Both render nothing themselves.
+  schema: ["src/render-surfaces.ts", "src/untrusted-text.ts", "src/index.ts"],
 };
 const DEFAULT_EXEMPT: readonly string[] = ["src/render-surfaces.ts"];
 
@@ -302,8 +307,10 @@ describe("§4.4: the corpus runs on every registered surface", () => {
   test.each(CORPUS_SURFACES.map((surface) => [surface.name, surface] as const))(
     "%s renders substance for a benign payload — adapters cannot rot silently",
     (_name, surface) => {
-      // Arrange: ordinary teammate text, nothing for the sanitizer to strip.
-      const output = surface.render("rate limit fix");
+      // Arrange: ordinary teammate text, nothing for the sanitizer to strip —
+      // and three topical words, since "rate limit fix" is all machinery and
+      // no sentence worth showing (round 3, M1).
+      const output = surface.render("the cache key drops on rotation");
 
       // Assert
       expect(output.length, surface.name).toBeGreaterThan(0);

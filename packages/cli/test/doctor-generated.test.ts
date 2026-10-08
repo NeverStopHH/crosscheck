@@ -119,6 +119,9 @@ describe("doctor: generated targets kept out of overlap, by signal", () => {
       lastTargetAt: null,
       hintsDelivered: 0,
       hintCandidatesSeen: 0,
+      flooredPrompts: 0,
+      harnessTurns: 0,
+      quietCalls: 0,
     };
 
     // Act

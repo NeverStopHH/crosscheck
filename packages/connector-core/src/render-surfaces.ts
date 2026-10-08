@@ -1029,7 +1029,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     // THE SUBSTANCE SLOT (DESIGN.md §4, 2026-10): a prompt hint shows only the
     // FIRST SENTENCE of the body, cut before the sanitizer runs
-    // (hints/sentence.ts). The payload is planted twice, back to back, so the
+    // (@crosscheck/schema substance-sentence.ts). The payload is planted twice, so the
     // cut lands inside it, after it, or across the seam — every side of the
     // boundary the corpus can reach — with the rest pointer rendered too.
     kind: "corpus",

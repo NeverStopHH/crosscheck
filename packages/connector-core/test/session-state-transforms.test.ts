@@ -23,6 +23,7 @@ import {
   withLandedProbeCut,
   withLandedProbeCutsTold,
   withProbedFingerprint,
+  withRecordedIntent,
   withRootHead,
 } from "../src/state/session-state.ts";
 import type { SessionState } from "../src/state/session-state.ts";
@@ -111,6 +112,47 @@ const baseState = (): SessionState => ({
   lastEditedPath: null,
   lastEditedPathResolvedAgainst: null,
   hintCandidatesSeen: 0,
+  flooredPromptCount: 0,
+  harnessTurnCount: 0,
+  quietCallCount: 0,
+});
+
+describe("withRecordedIntent remembers who wrote the intent", () => {
+  test.each([["declared"], ["derived"]] as const)(
+    "a %s intent is recorded with its provenance",
+    (provenance) => {
+      // The prompt hint says "derived intent" or "intent" from this field,
+      // the way every intent surface labels the sentence it shows.
+      const next = withRecordedIntent(baseState(), "Fix the refresh 500s", provenance);
+      expect(next.workContextIntent).toBe("Fix the refresh 500s");
+      expect(next.workContextIntentProvenance).toBe(provenance);
+    },
+  );
+});
+
+describe("a SessionStart re-fire keeps the turns the prompt path stood down on (M7)", () => {
+  test("the floored and harness counts survive a compact on the same binding", () => {
+    // Arrange — the session floored three prompts and skipped two harness turns
+    const previous = { ...baseState(), flooredPromptCount: 3, harnessTurnCount: 2 };
+
+    // Act — the re-fire re-creates the state with fresh zeros
+    const next = withCarriedCapture(baseState(), previous);
+
+    // Assert
+    expect(next.flooredPromptCount).toBe(3);
+    expect(next.harnessTurnCount).toBe(2);
+  });
+
+  test("the quiet calls survive it too (round 3, L5)", () => {
+    // Arrange
+    const previous = { ...baseState(), quietCallCount: 4 };
+
+    // Act
+    const next = withCarriedCapture(baseState(), previous);
+
+    // Assert
+    expect(next.quietCallCount).toBe(4);
+  });
 });
 
 describe("the derive fire ring is read entry by entry (review round 3, MEDIUM-5)", () => {

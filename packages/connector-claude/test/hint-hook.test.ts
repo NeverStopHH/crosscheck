@@ -20,7 +20,7 @@ import {
   CANDIDATE_INTENT,
   intentOnlyCandidate,
   proposedOnlyCandidate,
-  rejectedApproachCandidate,
+  injectableCandidate,
   startHintHub,
   targetsOnlyCandidate,
 } from "../../connector-core/test/fixtures/hint-hub.ts";
@@ -137,6 +137,9 @@ const sessionState = (
   lastEditedPath: null,
   lastEditedPathResolvedAgainst: null,
   hintCandidatesSeen: 0,
+  flooredPromptCount: 0,
+  harnessTurnCount: 0,
+  quietCallCount: 0,
   ...overrides,
 });
 
@@ -378,7 +381,7 @@ describe("silence is the default", () => {
     // Arrange — a hostile or buggy hub labels a claim `confidence 1e+30`;
     // every other hub field is validated tightly and this one must be too
     const { repo, hub, env } = await fixture("confidence");
-    const base = rejectedApproachCandidate();
+    const base = injectableCandidate();
     const claims = base["claims"] as readonly Record<string, unknown>[];
     hub.setCandidates([
       { ...base, claims: [{ ...claims[0], confidence: 1e30 }] },

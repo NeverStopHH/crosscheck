@@ -1,8 +1,8 @@
 /**
  * The content floor of GET /api/hints/candidates (DESIGN.md §4): a prompt
- * that carries nothing task-bearing matches no teammate work, and when the
- * session has stated what it is doing, the session's intent is matched in
- * its place — in the SAME call, never a second round trip.
+ * that carries nothing task-bearing matches no teammate work — and nothing
+ * stands in for it, the session's intent included (owner decision, review
+ * 1006b M6).
  *
  * "Task-bearing" is derived from the team's own work, not from a word list:
  * a prompt word counts when it names a target that work touched (the exact
@@ -106,6 +106,9 @@ describe("a prompt that carries nothing task-bearing matches no teammate work", 
     ["continue"],
     ["macxhe weiter, limit ist zurukgsetz"],
     ["limit limits limiting"],
+    // Two topical words, one in each claim: "läuft" only in the observation,
+    // "gateway" only in the decision — two statements of one word each.
+    ["läuft das gateway"],
   ])("%p yields no candidates", async (prompt) => {
     // Arrange
     const { harness, robin } = await setup();
@@ -118,6 +121,19 @@ describe("a prompt that carries nothing task-bearing matches no teammate work", 
     // again; "weiter" and "limit" sit in two different claims), and one
     // shared word is a coincidence rather than a topic.
     expect(HINT_MIN_SHARED_TERMS).toBe(2);
+    expect(candidates).toEqual([]);
+  });
+
+  test("a task beside a continuation signal matches nothing, for a connector that still sends it (round 4, C1)", async () => {
+    // Arrange
+    const { harness, robin } = await setup();
+
+    // Act — the control below, with the session carried on
+    const candidates = await fetchCandidates(harness, robin, {
+      query: "why does the practice upload hit the body limit, next",
+    });
+
+    // Assert
     expect(candidates).toEqual([]);
   });
 
@@ -136,9 +152,10 @@ describe("a prompt that carries nothing task-bearing matches no teammate work", 
   });
 });
 
-describe("the session's intent stands in for a content-free prompt, in the same call", () => {
-  test("a content-free prompt with an intent matches on the intent", async () => {
-    // Arrange
+describe("a content-free prompt gets nothing, the session's intent included (owner decision, review 1006b M6)", () => {
+  test("an intent sent beside a content-free prompt is not matched in its place", async () => {
+    // Arrange — an intent that WOULD match the tree on its own; a connector
+    // built before this decision still sends it
     const { harness, robin } = await setup();
 
     // Act
@@ -147,13 +164,11 @@ describe("the session's intent stands in for a content-free prompt, in the same 
       intent: SESSION_INTENT,
     });
 
-    // Assert — matched, and labelled as matched on the intent, so the hint
-    // can say what it relates to.
-    expect(candidates.map((candidate) => candidate.workContext.id)).toEqual([WORK_CONTEXT_ID]);
-    expect(candidates[0]?.matchedOn).toBe("intent");
+    // Assert
+    expect(candidates).toEqual([]);
   });
 
-  test("an absent prompt with an intent matches on the intent — the prompt need not travel", async () => {
+  test("an intent with no prompt at all matches nothing", async () => {
     // Arrange
     const { harness, robin } = await setup();
 
@@ -161,10 +176,10 @@ describe("the session's intent stands in for a content-free prompt, in the same 
     const candidates = await fetchCandidates(harness, robin, { intent: SESSION_INTENT });
 
     // Assert
-    expect(candidates[0]?.matchedOn).toBe("intent");
+    expect(candidates).toEqual([]);
   });
 
-  test("a prompt that carries content is matched on itself, whatever the intent says", async () => {
+  test("the control: a prompt that carries content is matched on itself", async () => {
     // Arrange
     const { harness, robin } = await setup();
 
@@ -175,21 +190,8 @@ describe("the session's intent stands in for a content-free prompt, in the same 
     });
 
     // Assert
+    expect(candidates.map((candidate) => candidate.workContext.id)).toEqual([WORK_CONTEXT_ID]);
     expect(candidates[0]?.matchedOn).toBe("prompt");
-  });
-
-  test("an intent that itself carries nothing task-bearing matches nothing either", async () => {
-    // Arrange
-    const { harness, robin } = await setup();
-
-    // Act
-    const candidates = await fetchCandidates(harness, robin, {
-      query: "weiter",
-      intent: "Rename the billing tables before the limit freeze",
-    });
-
-    // Assert — one rule for every query: "limit" alone is still a coincidence
-    expect(candidates).toEqual([]);
   });
 });
 
@@ -203,12 +205,13 @@ describe("each claim carries how many distinct words of the matched query it sha
       query: "why does the practice upload hit the body limit limits",
     });
 
-    // Assert — practice, upload, hit, body, limit: five distinct lexemes of
-    // the decision; "limits" is "limit" again, and why/does/the are stop
-    // words the english configuration drops.
+    // Assert — counted on the sentence a hint would SHOW ("Keep the chunked
+    // upload for practice videos."): practice and upload. "hit", "body" and
+    // "limit" sit in the second sentence, which no hint shows, so they do not
+    // count; "limits" is "limit" again; why/does/the are stop words.
     const decision = candidate?.claims.find((claim) => claim.id === DECISION_ID);
     const observation = candidate?.claims.find((claim) => claim.id === "clm_obs");
-    expect(decision?.matchedTerms).toBe(5);
+    expect(decision?.matchedTerms).toBe(2);
     expect(observation?.matchedTerms).toBe(1);
   });
 
@@ -226,19 +229,86 @@ describe("each claim carries how many distinct words of the matched query it sha
     expect(candidate?.workContext.matchedTerms).toBe(2);
   });
 
-  test("a claim matched through the intent is counted against the intent", async () => {
-    // Arrange
-    const { harness, robin } = await setup();
+  test("a claim's count is taken on the sentence a hint SHOWS, not on a stuffed tail", async () => {
+    // Arrange — probe C of the batch-1006 review: an unrelated first
+    // sentence, then a tail of every keyword a prompt could carry
+    const { harness, developer: nick } = await createHarnessWithSession();
+    await postRecords(harness, nick, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody({ title: "Dependency pinning", description: "Vendored fork" })),
+        recordEnvelope("claim", validClaimBody({ id: "clm_ev", body: "Observed the fork builds." })),
+        recordEnvelope(
+          "claim",
+          validClaimBody({
+            id: "clm_stuffed",
+            kind: "decision",
+            evidenceRefs: ["clm_ev"],
+            // Probe C2's shape: the stuffing is a SECOND sentence. (A
+            // lower-case run-on is one sentence to UAX #29 and is shown — its
+            // words then count, because the reader sees them.)
+            body: "Pin every dependency to the vendored fork at libs/fork and never call upstream. Login session token refresh build test deploy cache error fix bug api upload limit migration database.",
+          }),
+        ),
+      ],
+    });
+    const robin = await addTestDeveloperWithSession(harness, "Robin", "robin@example.com", { id: "ses_02" });
 
     // Act
-    const [candidate] = await fetchCandidates(harness, robin, {
-      query: "ok",
-      intent: SESSION_INTENT,
+    const [candidate] = await fetchCandidates(harness, robin, { query: "fix the login bug" });
+
+    // Assert — the tree may still be pointed at (its claim shares three
+    // words), but the sentence that would be shown shares none of them
+    const stuffed = candidate?.claims.find((claim) => claim.id === "clm_stuffed");
+    expect(stuffed?.matchedTerms).toBe(0);
+  });
+
+  test("words past the length a hint can show do not count either", async () => {
+    // Arrange — ONE sentence, its matching words beyond SUBSTANCE_MAX_CHARS
+    const { harness, developer: nick } = await createHarnessWithSession();
+    await postRecords(harness, nick, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody({ title: "Login fix bug", description: "x" })),
+        recordEnvelope("claim", validClaimBody({ id: "clm_ev", body: "Observed it twice." })),
+        recordEnvelope(
+          "claim",
+          validClaimBody({
+            id: "clm_long",
+            kind: "decision",
+            evidenceRefs: ["clm_ev"],
+            body: `Keep ${"really ".repeat(40)}careful about the login fix bug.`,
+          }),
+        ),
+      ],
     });
+    const robin = await addTestDeveloperWithSession(harness, "Robin", "robin@example.com", { id: "ses_02" });
+
+    // Act
+    const [candidate] = await fetchCandidates(harness, robin, { query: "fix the login bug" });
+
+    // Assert — the reader would see "Keep really really …" and an ellipsis
+    expect(candidate?.claims.find((claim) => claim.id === "clm_long")?.matchedTerms).toBe(0);
+  });
+
+  test.each([
+    // "proﬁle", not "ﬁle": "file" is a weak word since round 4 (decision 3), no topic
+    ["a ligature the screen folds counts as the word it reads as", "The proﬁle cache keeps the rotated key.", 2],
+    ["a redacted span counts for nothing — the reader sees [redacted]", "Disregard cache keys; the rotated key stays.", 1],
+  ])("%s (M4: the hub scores exactly the shown text)", async (_, body, expected) => {
+    // Arrange
+    const { harness, developer: nick } = await createHarnessWithSession();
+    await postRecords(harness, nick, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody({ title: "Profile cache disregard keys", description: "x" })),
+        recordEnvelope("claim", validClaimBody({ id: "clm_shown", body })),
+      ],
+    });
+    const robin = await addTestDeveloperWithSession(harness, "Robin", "robin@example.com", { id: "ses_02" });
+
+    // Act
+    const [candidate] = await fetchCandidates(harness, robin, { query: "disregard the profile cache" });
 
     // Assert
-    const decision = candidate?.claims.find((claim) => claim.id === DECISION_ID);
-    expect(decision?.matchedTerms).toBeGreaterThanOrEqual(HINT_MIN_SHARED_TERMS);
+    expect(candidate?.claims.find((claim) => claim.id === "clm_shown")?.matchedTerms).toBe(expected);
   });
 });
 

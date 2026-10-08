@@ -97,6 +97,20 @@ describe("the solved-match listing on a crowded hub", () => {
         },
       ]);
       await harness.db.insert(claims).values([
+        // the observation the cause cites: evidence that resolves (hold-out review, H5 + M2)
+        {
+          id: "clm_evidence_row",
+          workContextId: "wc_solved",
+          authorSessionId: "ses_old",
+          kind: "observation" as const,
+          status: "proposed" as const,
+          body: "The importer retries with the old key id after every rotation",
+          confidence: 0.8,
+          captureMode: "agent" as const,
+          provenance: "declared" as const,
+          evidenceRefs: [],
+          createdAt: daysAgo(199),
+        },
         {
           id: "clm_solved",
           workContextId: "wc_solved",
@@ -252,6 +266,20 @@ describe("the solved-match listing on a crowded hub", () => {
       },
     ]);
     await harness.db.insert(claims).values([
+      // the observation the cause cites: evidence that resolves (hold-out review, H5 + M2)
+      {
+        id: "clm_evidence_row",
+        workContextId: "wc_solved",
+        authorSessionId: "ses_old",
+        kind: "observation" as const,
+        status: "proposed" as const,
+        body: "The importer retries with the old key id after every rotation",
+        confidence: 0.8,
+        captureMode: "agent" as const,
+        provenance: "declared" as const,
+        evidenceRefs: [],
+        createdAt: daysAgo(199),
+      },
       {
         id: "clm_solved",
         workContextId: "wc_solved",

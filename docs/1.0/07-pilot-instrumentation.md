@@ -86,7 +86,19 @@ opened, prior work, converged, opened anyway, opened per 100 sessions (`OPENED_A
 `services/pilot-report.ts`) — because the finding arrived with the hint, so a later read of its tree is
 the agent pulling more, not a pointer being followed. Pointers keep `prompt_hint`. The delivery id is
 unchanged (`hintDeliveryId(session, ref)`); a hub older than the value refuses the record (the channel is
-a closed enum), so upgrade the hub before the connectors.*
+a closed enum), so the hub now lists the channels it records in the candidates answer
+(`deliveryChannels`, additive) and a connector books `prompt_substance` only where it is listed — on an
+older hub the shown finding is booked `prompt_hint`, counted as a pointer rather than not at all
+(batch-1006 review). Upgrading the hub first still keeps the figures clean.*
+
+*Revised 2026-10-06 (batch-1006b review, M7): two nullable columns, `matched_on` (`prompt` | `intent` |
+`answer`) and `intent_provenance` (`declared` | `derived`), say what a prompt-time delivery answered and
+whose intent the receiving session held, so the per-person followed/overrode figures can split a pointer
+nobody asked for from an answer somebody waited for. Additive: optional on the wire, never defaulted,
+NULL from an older connector and on every row written before them. An unknown value of either is stored
+as NULL and the delivery is still accepted (hold-out review, L3): unlike a channel, neither decides what
+the row is, so refusing it would lose the very row the figures count over one word the hub cannot read.
+Other channels leave both NULL.*
 
 ### 3.2 `pilot_marks` — the only human input, and it is never a question
 

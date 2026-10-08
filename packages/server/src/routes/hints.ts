@@ -11,6 +11,7 @@
  */
 import { Hono } from "hono";
 import { z } from "zod";
+import { DELIVERY_CHANNELS } from "@crosscheck/schema";
 
 import { fail, ok } from "../http/envelope.ts";
 import { formatIssues } from "../http/request.ts";
@@ -41,10 +42,6 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const CandidatesQuerySchema = z.object({
   query: z.string().max(SEARCH_MAX_QUERY_CHARS).default(""),
   repo: z.string().min(1),
-  // The session's intent, searched only in place of a prompt that carried
-  // nothing task-bearing (services/hints.ts, the content floor). Capped like
-  // the query, for the same embedded-database reason.
-  intent: z.string().max(SEARCH_MAX_QUERY_CHARS).default(""),
 });
 
 const TripwireQuerySchema = z.object({
@@ -66,7 +63,6 @@ export const hintsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     const parsed = CandidatesQuerySchema.safeParse({
       query: c.req.query("query"),
       repo: c.req.query("repo"),
-      intent: c.req.query("intent"),
     });
     if (!parsed.success) {
       return fail(c, 400, "validation_failed", formatIssues(parsed.error));
@@ -104,7 +100,17 @@ export const hintsRoutes = (deps: AppDeps): Hono<AppEnv> => {
       surface: "api-hints-candidates",
       coverage,
     });
-    return ok(c, { candidates, answers, coverage, notices, recordsOutcomes: settings.pilotEnrolled });
+    // The delivery channels this hub records — the hint_delivery validator's
+    // own list — so a connector newer than the hub books a shown finding on
+    // a channel it can store (review 1006b): additive, one constant.
+    return ok(c, {
+      candidates,
+      answers,
+      coverage,
+      notices,
+      recordsOutcomes: settings.pilotEnrolled,
+      deliveryChannels: DELIVERY_CHANNELS,
+    });
   });
 
   router.get("/tripwire", async (c) => {

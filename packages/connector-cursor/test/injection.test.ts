@@ -76,7 +76,7 @@ import {
   CANDIDATE_CLAIM_ID,
   SOLVED_CONTEXT_ID,
   SOLVED_ROOT_CAUSE,
-  rejectedApproachCandidate,
+  injectableCandidate,
   solvedFingerprintMatch,
   startHintHub,
 } from "../../connector-core/test/fixtures/hint-hub.ts";
@@ -137,7 +137,7 @@ const startCapturingHub = (): CapturingHub => {
         calls.candidates += 1;
         return Response.json({
           ok: true,
-          data: { candidates: [rejectedApproachCandidate()] },
+          data: { candidates: [injectableCandidate()] },
         });
       }
       if (pathname === "/api/solved-matches") {
@@ -289,6 +289,9 @@ const seededState = (
   lastEditedPath: null,
   lastEditedPathResolvedAgainst: null,
   hintCandidatesSeen: 0,
+  flooredPromptCount: 0,
+  harnessTurnCount: 0,
+  quietCallCount: 0,
   ...overrides,
 });
 

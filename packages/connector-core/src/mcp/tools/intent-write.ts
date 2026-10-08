@@ -226,7 +226,9 @@ export const writeIntent = async (
   // run (`ghostPending`), and the acknowledgement below. Best-effort like
   // every state update on this path.
   await updateSessionState(deps.home, own.hostSessionKey, (fresh) => {
-    const recorded = withRecordedIntent(fresh, write.summary);
+    // A set_intent sentence is DECLARED (hint-substance: the provenance the
+    // ghost and hint readers weigh), never a derived guess.
+    const recorded = withRecordedIntent(fresh, write.summary, "declared");
     const moved = write.status === undefined ? recorded : withStatus(recorded, own, status);
     // ...and the status the hub acknowledged, which SessionEnd compares the
     // state's with (spool/work-context-ack.ts, review-2 round 8, L7) — for a

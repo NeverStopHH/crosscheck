@@ -1571,6 +1571,11 @@ export const HintClaimCandidateSchema = z.looseObject({
   provenance: z.string().min(1),
   captureMode: z.string().min(1).optional(),
   evidenceRefCount: z.number().int().min(0).default(0),
+  // The hub's verdict that a cited ref RESOLVES — to another existing claim,
+  // not a proposed or rejected hypothesis (review 1006b, H4). Absent from an
+  // older hub, and then no claim is substance: an unresolved count is not
+  // evidence.
+  evidenceBacked: z.boolean().optional(),
   authorDeveloperId: z.string().min(1),
   authorDeveloperName: z.string().min(1).optional(),
   body: z.string(),
@@ -1603,12 +1608,22 @@ export const HintClaimCandidateSchema = z.looseObject({
    */
   axes: EvidenceAxesSchema.optional(),
   /**
-   * How many distinct words of the matched query THIS claim shares — the
-   * relevance half of the substance gate (hints/select.ts isStrongMatch).
+   * How many distinct TOPICAL words of the matched query THIS claim's SHOWN
+   * SENTENCE shares (the hub counts on the sentence a hint would show, never
+   * on the rest of the body, so a keyword-stuffed tail buys nothing; and
+   * closed-class words never, round 3 H3 + M6) — the relevance half of the
+   * substance gate (hints/select.ts isStrongMatch).
    * OPTIONAL, and absent fails closed: an older hub never measured it, and a
    * claim whose relevance nobody measured is a pointer, not substance.
    */
   matchedTerms: z.number().int().min(0).optional(),
+  /**
+   * Of those words, how many NO OTHER candidate of the response says (round
+   * 4, C2): a finding is shown only on a word that tells its tree from the
+   * runner-up. OPTIONAL, and absent fails closed like `matchedTerms`: a hub
+   * that never counted it buys no substance.
+   */
+  distinctTerms: z.number().int().min(0).optional(),
   createdAt: z.string().min(1),
 });
 
@@ -1638,9 +1653,9 @@ const HintContextSchema = z.looseObject({
   createdAt: z.string().min(1),
   updatedAt: z.string().nullable().optional(),
   /**
-   * How many distinct words of the matched query the context's OWN statement
-   * (title, description, intent) shares — a tree clearly about the query
-   * lends its strength to a claim of it that shares one (hints/select.ts).
+   * How many distinct TOPICAL words of the matched query the context's OWN
+   * statement (title, description, intent) shares — a tree clearly about the
+   * query lends its strength to a claim of it that shares one (hints/select.ts).
    * Optional: absent from an older hub, and then it lends nothing.
    */
   matchedTerms: z.number().int().min(0).optional(),
@@ -1681,6 +1696,17 @@ export const HintContextCandidateSchema = z
     // absent IS "prompt", the one honest reading. An unknown word from a
     // newer hub drops the candidate rather than mislabelling it.
     matchedOn: z.enum(HINT_MATCHED_ON).default("prompt"),
+    // The number the hub's per-candidate content floor was decided on: the
+    // most query words ONE statement of the tree shares. Optional — an older
+    // hub has no floor to report, and then the selector cannot look again.
+    sharedTerms: z.number().int().min(0).optional(),
+    // The tree's STRENGTH (round 3, H3 + M6): the most TOPICAL query words one
+    // of its statements shares. Optional — an older hub never measured it, and
+    // then every tree is equally strong and the hub's order decides.
+    topicalTerms: z.number().int().min(0).optional(),
+    // True when the hub's claim window left visible rows behind, so a count
+    // read off `claims` is a lower bound. Absent from an older hub: no claim.
+    claimsTruncated: z.boolean().optional(),
   })
   .transform((value) => ({
     workContext: value.workContext,
@@ -1688,6 +1714,9 @@ export const HintContextCandidateSchema = z
     claims: parseRows(value.claims, HintClaimCandidateSchema).rows,
     matchedTargets: parseRows(value.matchedTargets, MatchedTargetSchema).rows,
     matchedOn: value.matchedOn,
+    ...(value.sharedTerms === undefined ? {} : { sharedTerms: value.sharedTerms }),
+    ...(value.topicalTerms === undefined ? {} : { topicalTerms: value.topicalTerms }),
+    ...(value.claimsTruncated === undefined ? {} : { claimsTruncated: value.claimsTruncated }),
   }));
 
 export type HintContextCandidate = z.infer<typeof HintContextCandidateSchema>;
@@ -1700,11 +1729,6 @@ export interface HintCandidatesRequest {
   readonly query: string;
   /** Relevance filter, never a boundary (DESIGN.md §2.1). */
   readonly repo: string;
-  /**
-   * The session's own stated intent, for the hub to match IN PLACE OF a
-   * prompt that carries nothing task-bearing — inside this one call.
-   */
-  readonly intent?: string;
 }
 
 /** The UserPromptSubmit fast path's ONE bounded hub call (DESIGN.md §4). */
@@ -1808,6 +1832,12 @@ export interface HintCandidatesResult {
    * invites a call that hub would answer 404.
    */
   readonly recordsOutcomes: boolean;
+  /**
+   * The delivery channels this hub records. Empty from a hub too old to send
+   * the field — and such a hub rejects any channel it does not know, so the
+   * hint flow books a newer channel only when it is listed here.
+   */
+  readonly deliveryChannels: readonly string[];
 }
 
 const HintCandidatesResponseSchema = z
@@ -1817,6 +1847,7 @@ const HintCandidatesResponseSchema = z
     coverage: z.unknown().optional(),
     notices: z.array(z.unknown()).default([]),
     recordsOutcomes: z.boolean().default(false),
+    deliveryChannels: z.array(z.string()).catch([]),
   })
   .transform(
     (value): HintCandidatesResult => ({
@@ -1826,6 +1857,7 @@ const HintCandidatesResponseSchema = z
       coverage: parseCoverage(value.coverage),
       notices: parseRows(value.notices, LandedNoticeSchema).rows,
       recordsOutcomes: value.recordsOutcomes,
+      deliveryChannels: value.deliveryChannels,
     }),
   );
 
@@ -1838,7 +1870,6 @@ export const getHintCandidates = (
   const params = new URLSearchParams({
     ...(request.query.length === 0 ? {} : { query: request.query }),
     repo: request.repo,
-    ...(request.intent === undefined ? {} : { intent: request.intent }),
   });
   return hubRequest(ctx, {
     method: "GET",

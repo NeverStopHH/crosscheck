@@ -65,7 +65,7 @@ import {
 } from "../../connector-claude/test/fixtures/slow-hub.ts";
 import {
   CANDIDATE_BODY,
-  rejectedApproachCandidate,
+  injectableCandidate,
   startHintHub,
 } from "../../connector-core/test/fixtures/hint-hub.ts";
 import {
@@ -202,7 +202,7 @@ describe("fail-open within budget", () => {
         if (pathname === "/api/hints/candidates") {
           return Response.json({
             ok: true,
-            data: { candidates: [rejectedApproachCandidate()] },
+            data: { candidates: [injectableCandidate()] },
           });
         }
         if (pathname.endsWith("/heartbeat")) {
@@ -302,6 +302,9 @@ describe("fail-open within budget", () => {
         lastEditedPath: null,
         lastEditedPathResolvedAgainst: null,
         hintCandidatesSeen: 0,
+        flooredPromptCount: 0,
+        harnessTurnCount: 0,
+        quietCallCount: 0,
       } satisfies SessionState);
       const ctx = await prepareCursorHook(
         "postToolUse",
@@ -351,7 +354,7 @@ describe("fail-open within budget", () => {
         if (pathname === "/api/hints/candidates") {
           return Response.json({
             ok: true,
-            data: { candidates: [rejectedApproachCandidate()] },
+            data: { candidates: [injectableCandidate()] },
           });
         }
         if (pathname.endsWith("/heartbeat")) {
@@ -454,6 +457,9 @@ describe("fail-open within budget", () => {
         lastEditedPath: null,
         lastEditedPathResolvedAgainst: null,
         hintCandidatesSeen: 0,
+        flooredPromptCount: 0,
+        harnessTurnCount: 0,
+        quietCallCount: 0,
       } satisfies SessionState);
       const ctx = await prepareCursorHook(
         "postToolUse",
@@ -663,6 +669,9 @@ describe("fail-open within budget", () => {
         lastEditedPath: null,
         lastEditedPathResolvedAgainst: null,
         hintCandidatesSeen: 0,
+        flooredPromptCount: 0,
+        harnessTurnCount: 0,
+        quietCallCount: 0,
       } satisfies SessionState);
 
       // Act

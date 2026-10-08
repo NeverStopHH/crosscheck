@@ -411,6 +411,24 @@ const SessionStateObjectSchema = z.looseObject({
    */
   hintCandidatesSeen: z.number().int().min(0).default(0),
   /**
+   * The turns the prompt path stood down on before any call (review 1006b,
+   * M7), counted apart: a content-free prompt the floor refused, and a turn
+   * the harness wrote. COUNTS ONLY, never a word of either turn — so the
+   * per-person followed/overrode measurement can tell "nothing was asked"
+   * from "something was asked and nothing matched". Booked in flows/hint.ts;
+   * default 0 keeps every older state file parsing.
+   */
+  flooredPromptCount: z.number().int().min(0).default(0),
+  harnessTurnCount: z.number().int().min(0).default(0),
+  /**
+   * The prompt path's calls the hub ANSWERED that ended in no hint (hold-out
+   * review round 3, L5) — a count only, beside the turns stood down on before
+   * any call, so "reached the hub, nothing matched" reads apart from "never
+   * asked". A call that failed is not one of them. Booked in flows/hint.ts;
+   * default 0 keeps every older state file parsing.
+   */
+  quietCallCount: z.number().int().min(0).default(0),
+  /**
    * True when registration happened OUTSIDE SessionStart — PostToolUse's
    * state-less recovery, the parent-workspace/finding-#9 shape — so this
    * session has never seen its briefing. The next UserPromptSubmit pays the
@@ -609,6 +627,15 @@ const SessionStateObjectSchema = z.looseObject({
    * would see.
    */
   workContextIntent: z.string().min(1).nullable().default(null),
+  /**
+   * WHO WROTE that sentence: `declared` by `set_intent`, `derived` by the
+   * intent worker's model. The prompt hint matched on it says "this
+   * session's intent" or "this session's derived intent" from this field,
+   * by positive equality on `declared` like every intent surface
+   * (briefing/intent.ts) — so absent, as in a state file older than the
+   * field, reads as derived, never as vouched for.
+   */
+  workContextIntentProvenance: z.enum(["declared", "derived"]).nullable().optional(),
   /**
    * A ghost check is OWED (VISION.md §3): an intent was recorded and nothing
    * has compared it against the team's live plans yet. The DEBT shape, not a
@@ -1164,6 +1191,11 @@ export const withCarriedCapture = (
         // a re-register neither forgets them nor tells them twice.
         landedProbeCuts: previous.landedProbeCuts,
         landedProbeCutsTold: previous.landedProbeCutsTold,
+        // ...and the prompt floor's own counters (hint-substance): what the
+        // floor turned away is the session's, not one fire's.
+        flooredPromptCount: previous.flooredPromptCount,
+        harnessTurnCount: previous.harnessTurnCount,
+        quietCallCount: previous.quietCallCount,
         // The #17 root cache is the session's, not the fire's: dropping it
         // makes the next tool call pay git again for a root already judged.
         knownWorktreeRoots: previous.knownWorktreeRoots,
@@ -2236,9 +2268,11 @@ export const withTripwireGroupAsked = (
 export const withRecordedIntent = (
   state: SessionState,
   summary: string,
+  provenance: "declared" | "derived",
 ): SessionState => ({
   ...state,
   workContextIntent: summary,
+  workContextIntentProvenance: provenance,
   ghostPending: true,
 });
 
@@ -2395,6 +2429,9 @@ export const deriveSessionState = (
     lastEditedPath: null,
     lastEditedPathResolvedAgainst: null,
     hintCandidatesSeen: 0,
+    flooredPromptCount: 0,
+    harnessTurnCount: 0,
+    quietCallCount: 0,
     briefingPending: false,
     stopTurnCount: 0,
     summarizerFireCount: 0,
@@ -2426,6 +2463,7 @@ export const deriveSessionState = (
     intentSkippedCount: 0,
     intentLastDrop: null,
     workContextIntent: null,
+    workContextIntentProvenance: null,
     ghostPending: false,
     gitTouchCount: 0,
     gitLaneSkipped: 0,

@@ -17,7 +17,10 @@ import {
   writeSessionState,
 } from "@crosscheck/connector-core/state/session-state.ts";
 import { makeHome, makeRepo, writeRepoFile } from "../../connector-core/test/helpers.ts";
-import { startHintHub } from "../../connector-core/test/fixtures/hint-hub.ts";
+import {
+  injectableCandidate,
+  startHintHub,
+} from "../../connector-core/test/fixtures/hint-hub.ts";
 import type { HintHub } from "../../connector-core/test/fixtures/hint-hub.ts";
 
 const REPO_ID = "github.com/acme/api";
@@ -84,6 +87,8 @@ const fixture = async (label: string): Promise<Fixture> => {
       CROSSCHECK_HUB_URL: hub.url,
       CROSSCHECK_API_KEY: "test-key",
       CROSSCHECK_TIMEOUT_MS: String(HTTP_TIMEOUT_MS),
+      // A fired intent worker must never reach a real model from a test.
+      CROSSCHECK_SUMMARIZER_CMD: "/usr/bin/false",
     },
   };
 };
@@ -148,8 +153,44 @@ const captureCounters = async (f: Fixture): Promise<Record<string, unknown>> => 
   };
 };
 
+/** A background task's notification, delivered by Claude Code as a user turn (live, 0.10.0). */
+const TASK_NOTIFICATION =
+  "<task-notification><task-id>bp1v5vsl4</task-id>" +
+  '<summary>Monitor event: "PR #74 CI checks for 493ffb4f"</summary>' +
+  "<event>Comment claims (macos-latest): pass</event></task-notification>";
+
+/** The turns the live pilot pointed on: content-free human prompts and harness turns. */
+const FLOORED_TURNS = [
+  ["mache weiter"],
+  ["macxhe weiter, limit ist zurukgsetz"],
+  ["mache weiter, limit zuruckgesetzt. bitte alles wiederuafnhemen"],
+  ["ja"],
+  [TASK_NOTIFICATION],
+  [`[SYSTEM NOTIFICATION - NOT USER INPUT]\n${TASK_NOTIFICATION}`],
+  ['<agent-message from="a781e1e961b68f4c2">Report: CI checks pass</agent-message>'],
+  ['<cross-session-message from="ken">PR #74 checks pass</cross-session-message>'],
+] as const;
+
 describe("capture after a content-free prompt is capture as usual", () => {
-  test.each([["mache weiter"], ["macxhe weiter, limit ist zurukgsetz"], ["ja"]])(
+  test("a harness turn gets no hint even with a teammate candidate waiting — and capture is untouched", async () => {
+    // Arrange — this hub would answer with an injectable candidate
+    const prompted = await fixture("cf-harness");
+    const control = await fixture("cf-harness-control");
+    prompted.hub.setCandidates([injectableCandidate()]);
+
+    // Act
+    const hint = await runHook("user-prompt-submit", promptPayload(prompted, TASK_NOTIFICATION), prompted.env);
+    await runHook("post-tool-use", editPayload(prompted), prompted.env);
+    await runHook("post-tool-use", editPayload(control), control.env);
+
+    // Assert — the pointer is what was suppressed, and nothing else
+    expect(hint).toBe("");
+    expect(prompted.hub.calls.candidates).toBe(0);
+    expect(await capturedShape(prompted)).toEqual(await capturedShape(control));
+    expect(await captureCounters(prompted)).toEqual(await captureCounters(control));
+  });
+
+  test.each(FLOORED_TURNS)(
     "an edit after %p is captured exactly as an edit with no prompt before it",
     async (prompt) => {
       // Arrange — two sessions, identical but for the prompt
@@ -173,19 +214,53 @@ describe("capture after a content-free prompt is capture as usual", () => {
   );
 });
 
-describe("the prompt stays on this machine; the session's intent is what travels", () => {
-  test("a prompt with no searchable word reaches the hub as the intent alone", async () => {
+describe("a turn that carries no task never spends the session's one intent fire (H2)", () => {
+  const TASK_PROMPT = "why does the refresh call 500 after the key rotation on staging";
+
+  test.each(FLOORED_TURNS)("%p leaves the fire for the next real prompt", async (turn) => {
     // Arrange
+    const f = await fixture("cf-intent-fire");
+
+    // Act — the floored turn, then a real task
+    await runHook("user-prompt-submit", promptPayload(f, turn), f.env);
+    const afterTurn = (await readSessionState(f.home, f.sessionId))?.intentFireCount;
+    await runHook("user-prompt-submit", promptPayload(f, TASK_PROMPT), f.env);
+    const afterTask = (await readSessionState(f.home, f.sessionId))?.intentFireCount;
+
+    // Assert
+    expect(afterTurn).toBe(0);
+    expect(afterTask).toBe(1);
+  });
+
+  test.each([
+    ["okay so the usage limit was reset a few minutes ago, please just continue with whatever you were doing"],
+    ["mach weiter, das usage limit ist wieder da, bitte alles wiederaufnehmen"],
+    ["the weekly usage limit expired a moment ago, please keep going with everything"],
+    ["ok, commit and push, then open the PR and run the tests again please"],
+  ])("the hold-out review's long session commands spend no fire either: %p (H3)", async (turn) => {
+    // Arrange — each is long enough to state a task, and states none
+    const f = await fixture("cf-intent-holdout");
+
+    // Act
+    await runHook("user-prompt-submit", promptPayload(f, turn), f.env);
+
+    // Assert — floored, counted, and the fire still unspent
+    const state = await readSessionState(f.home, f.sessionId);
+    expect(state?.intentFireCount).toBe(0);
+    expect(state?.flooredPromptCount).toBe(1);
+  });
+});
+
+describe("the prompt stays on this machine, and nothing travels in its place", () => {
+  test("a prompt with no searchable word makes no call — the session's intent does not stand in (M6)", async () => {
+    // Arrange — the session HAS an intent
     const f = await fixture("cf-wire");
 
     // Act
     await runHook("user-prompt-submit", promptPayload(f, "ja ok"), f.env);
 
-    // Assert — one call, the session's own published sentence, no prompt
-    expect(f.hub.calls.candidates).toBe(1);
-    const sent = f.hub.lastCandidatesQuery();
-    expect(sent?.get("intent")).toBe(SESSION_INTENT);
-    expect(sent?.has("query")).toBe(false);
+    // Assert
+    expect(f.hub.calls.candidates).toBe(0);
   });
 
   test("the prompt lands in no file the hooks write", async () => {

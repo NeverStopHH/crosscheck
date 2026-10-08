@@ -95,14 +95,16 @@ export const HINT_MIN_EVIDENCE_REFS = 1;
  * match must be an error fingerprint, which is content identity. A claim
  * that merely sits in a tree the prompt brushed is a pointer, however well
  * evidenced. The hub's content floor counts in the same unit with the same
- * number, across an HTTP boundary no import can reach, so the two literals
- * are pinned rather than assumed:
+ * number — ONE constant since round 3's follow-up: `@crosscheck/schema`
+ * content-floor.ts, which the hub's floor and this connector's recount of an
+ * old hub both import, so the literal is pinned to exist once:
  *
- * VERIFY: grep -c 'MIN_SHARED_TERMS = [2];' packages/server/src/services/hints.ts packages/connector-core/src/constants.ts
- * PRINTS: packages/server/src/services/hints.ts:1
- * PRINTS: packages/connector-core/src/constants.ts:1
+ * VERIFY: grep -c 'MIN_SHARED_TERMS = [2];' packages/schema/src/content-floor.ts packages/server/src/services/hints.ts packages/connector-core/src/constants.ts
+ * PRINTS: packages/schema/src/content-floor.ts:1
+ * PRINTS: packages/server/src/services/hints.ts:0
+ * PRINTS: packages/connector-core/src/constants.ts:0
  */
-export const HINT_MIN_SHARED_TERMS = 2;
+export { HINT_MIN_SHARED_TERMS } from "@crosscheck/schema";
 
 /**
  * THE ONE MATCH KIND THAT MAY CARRY SUBSTANCE, named here rather than
@@ -698,6 +700,25 @@ export const INTENT_MAX_CHARS = 120;
  * PRINTS: 40 true
  */
 export const INTENT_MIN_PROMPT_CHARS = 40;
+/**
+ * TOPICAL words — of no closed class (`@crosscheck/schema` promptTerms) — the
+ * human text must carry before the one intent fire is spent on it (hold-out
+ * review round 3, H2). A prompt of the session's machinery with one stray
+ * word ("fix the session limit reset handling once more please") parks a
+ * sentence the model can only answer with machinery, and an intent that
+ * says "continue after a usage limit reset" became the round-3 magnet:
+ * an intent-only tree took 6 of 10 content-free hints. Two, the content
+ * floor's own number.
+ */
+export const INTENT_MIN_TOPICAL_WORDS = 2;
+/**
+ * How often a NONE gives the session its one intent fire back (hold-out
+ * review round 4, H2). The model answers NONE when the prompt names no task
+ * it can say in a sentence, and the session then had no intent at all,
+ * however clearly its next prompt said what it was doing. Bounded, so a
+ * session of status reports costs at most four model calls.
+ */
+export const INTENT_MAX_NONE_REFUNDS = 3;
 /**
  * How much of the first prompt the worker hands the model — the token bill's
  * bound for the intent call (≈ INTENT_PROMPT_MAX_CHARS / 4 tokens at the
@@ -2358,10 +2379,13 @@ export const UNSOLICITED_CLAIM_BODY_MAX_CHARS = 400;
  * unsolicited body cap, the width the briefing gives a recorded root cause
  * (SOLVED_ROOT_CAUSE_MAX_CHARS) — enough for one sentence that says what the
  * finding IS, with the rest one get_diagnosis away. A longer first sentence
- * is cut with the sanitizer's visible ellipsis, never silently.
+ * is cut with the sanitizer's visible ellipsis, never silently. The hub
+ * scores a claim's relevance on no more than this many characters of the same
+ * sentence (@crosscheck/schema SUBSTANCE_MAX_CHARS), so words past the
+ * ellipsis never make a claim relevant — the two numbers are one:
  *
- * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.HINT_SUBSTANCE_MAX_CHARS === c.SOLVED_ROOT_CAUSE_MAX_CHARS, c.HINT_SUBSTANCE_MAX_CHARS < c.UNSOLICITED_CLAIM_BODY_MAX_CHARS)'
- * PRINTS: true true
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/schema/src/index.ts");console.log(c.HINT_SUBSTANCE_MAX_CHARS === c.SOLVED_ROOT_CAUSE_MAX_CHARS, c.HINT_SUBSTANCE_MAX_CHARS < c.UNSOLICITED_CLAIM_BODY_MAX_CHARS, c.HINT_SUBSTANCE_MAX_CHARS === s.SUBSTANCE_MAX_CHARS)'
+ * PRINTS: true true true
  */
 export const HINT_SUBSTANCE_MAX_CHARS = 200;
 
@@ -2916,3 +2940,29 @@ export const MAX_COVERAGE_LINE_CHARS = 160;
  * minute (COV-1) and the age beside it (COV-11) are never shed.
  */
 export const MAX_COVERAGE_LINES = 2;
+
+/**
+ * The words the outcome clause puts around the ref it names
+ * (hints/outcome-clause.ts `outcomeClause`): the clause is these plus an id
+ * of at most MAX_ID_CHARS.
+ *
+ * VERIFY: bun -e 'const {outcomeClause}=await import("./packages/connector-core/src/hints/outcome-clause.ts");const c=await import("./packages/connector-core/src/constants.ts");console.log(outcomeClause("x").length - 1 === c.OUTCOME_CLAUSE_FRAME_CHARS, c.OUTCOME_CLAUSE_FRAME_CHARS)'
+ * PRINTS: true 84
+ */
+export const OUTCOME_CLAUSE_FRAME_CHARS = 84;
+
+/**
+ * The room a teammate hint leaves for ONE closing line after its coverage
+ * note — the outcome clause the pilot's outcome recording appends, at the
+ * longest id — plus the newline before it. At least the one-line bound of a
+ * coverage line, and WIDER since topics widened MAX_ID_CHARS to 96: the
+ * clause at that id is 180 characters, so a reserve of a coverage line's 161
+ * left a topic's clause 20 short. The note itself is reserved at its actual
+ * length (hints/render.ts `hintTrailerReserve`), so a repo without a gap
+ * spends only this.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.HINT_CLOSING_LINE_RESERVE_CHARS === c.OUTCOME_CLAUSE_FRAME_CHARS + c.MAX_ID_CHARS + 1, c.HINT_CLOSING_LINE_RESERVE_CHARS)'
+ * PRINTS: true 181
+ */
+export const HINT_CLOSING_LINE_RESERVE_CHARS =
+  Math.max(MAX_COVERAGE_LINE_CHARS, OUTCOME_CLAUSE_FRAME_CHARS + MAX_ID_CHARS) + 1;

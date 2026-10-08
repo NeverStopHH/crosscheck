@@ -30,8 +30,9 @@
  * with this note rather than half-built. The lexical fast path (exact targets +
  * FTS) is the one the design names normative for the sync budget.
  */
-import { and, asc, desc, eq, gt, inArray, isNull, ne, notExists, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lte, ne, notExists, or, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 
 import { GHOST_ACTIVE_WINDOW_DAYS, GHOST_HOT_TARGET_MAX_CONTEXTS } from "../constants.ts";
 import { listLargeChanges } from "./ghost-overlap.ts";
@@ -45,22 +46,47 @@ import {
   workContextTargets,
 } from "../db/schema.ts";
 import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
+import { resolvedEvidenceCounts } from "./evidence-resolution.ts";
 import { claimValidity, loadRevalidations } from "./claim-validity.ts";
 import { locationHiddenFrom, projectRow } from "./live-location.ts";
 import type { HiddenLocations } from "./live-location.ts";
 import { presenceCutoff } from "./presence.ts";
 import { contextBaseCommit } from "./topic-base-commit.ts";
 import {
+  SEARCH_MAX_QUERY_CHARS,
+  TIER_CANDIDATES,
   exactTargetTokenConditions,
   exactTokens,
-  ftsTokens,
   searchWorkContexts,
+  targetMatchesToken,
 } from "./search.ts";
+import type { FtsTierRanker, RankedRow } from "./search.ts";
+import { pushableClaimCondition } from "./pushable-claims.ts";
 import { DECLARED_PROVENANCE } from "./similarity-gate.ts";
 import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
 import { ordinaryTargetCondition } from "./generated-targets.ts";
-import { WITHHELD_TITLE, isGeneratedPath } from "@crosscheck/schema";
-import type { ClaimValidity } from "@crosscheck/schema";
+import {
+  WITHHELD_TITLE,
+  isGeneratedPath,
+  DOTTED_NAME_DOT_SQL,
+  HINT_LONG_PROMPT_KNOWN_TERMS,
+  HINT_MAX_EXAMINED_TERMS,
+  HINT_MIN_SHARED_TERMS,
+  compareTreeStrength,
+  floorTermsOf,
+  humanPromptText,
+  isConventionalFileName,
+  isStrongSubstanceMatch,
+  promptTaskOf,
+  promptTerms,
+  qualifiesAsSubstance,
+  sharedLexemes,
+  shownSubstance,
+  statementMatch,
+  strongestTreeIndex,
+  textLexemes,
+} from "@crosscheck/schema";
+import type { ClaimValidity, FloorTerms, PromptTerms, StatementMatch, TreeStrength } from "@crosscheck/schema";
 import type { SearchResultKind, SearchTier } from "./search.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
@@ -122,50 +148,94 @@ const SEARCH_POOL_LIMIT = 10;
  * pr_limits_oneword_debatable found a header bug; two agreeing on the same
  * statement is a topic.
  *
- * COUNTED IN LEXEMES, after the english configuration's own stemming and stop
- * words, so "limit limits limiting" is one word and "the" is none.
+ * COUNTED BY ONE RULE, THE CONNECTOR'S TOO (round 3, follow-up):
+ * `@crosscheck/schema` content-floor.ts — words matched on their english
+ * lexemes, the database's own algorithm, so "limit limits limiting" is one
+ * word, and the prompt's content terms are counted, so "the", "das" and
+ * "nicht" are none. The hub reads the statements and the known terms from
+ * its database; a connector recounting an old hub reads them off the wire;
+ * the count is the same function on both sides, and the two can no longer
+ * drift (connector-core/test/content-floor-parity.test.ts).
  */
-export const HINT_MIN_SHARED_TERMS = 2;
+export {
+  HINT_LONG_PROMPT_KNOWN_TERMS,
+  HINT_LONG_PROMPT_MIN_TOPICAL,
+  HINT_MAX_COUNTED_TERMS,
+  HINT_MAX_EXAMINED_TERMS,
+  HINT_MIN_SHARED_TERMS,
+} from "@crosscheck/schema";
 
 /** What a candidate was matched on: the prompt, or the session's intent in its place. */
 export type HintMatchedOn = "prompt" | "intent";
+
+/**
+ * How many of a context's visible claims the floor reads, those sharing most
+ * of the prompt's words first: the floor needs the claim that shares most,
+ * which ranks first, and a bound keeps the read bounded like every other.
+ */
+export const HINT_FLOOR_MAX_CLAIMS_PER_CONTEXT = 32;
 
 /** Same-author revision edge (DESIGN.md §5); its TARGET is the retracted claim. */
 const SUPERSEDES_EDGE_KIND = "supersedes";
 
 /**
- * How many distinct LEXEMES of `tokens` the document matches — the count
- * HINT_MIN_SHARED_TERMS is stated in. One subquery, bounded by
- * SEARCH_MAX_QUERY_TOKENS; a stop word becomes an empty tsquery and is dropped
- * by `numnode` rather than counted as a free hit on every row.
+ * The context's own statement — what its owner said the work is — as one
+ * text, so its words are counted apart from any one claim's: the title as
+ * THIS READER may read it (below), the description and the intent's summary.
  */
-const sharedTermsSql = (document: SQL, tokens: readonly string[]): SQL<number> =>
-  tokens.length === 0
-    ? sql<number>`0`
-    : sql<number>`(SELECT count(DISTINCT term.lexeme::text)::int
-        FROM (SELECT plainto_tsquery('english', word) AS lexeme
-              FROM unnest(ARRAY[${sql.join(
-                tokens.map((token) => sql`${token}`),
-                sql`, `,
-              )}]::text[]) AS words(word)) AS term
-        WHERE numnode(term.lexeme) > 0 AND ${document} @@ term.lexeme)`;
+const statementTextWith = (title: SQL): SQL<string> =>
+  sql<string>`concat_ws(' ', ${title}, ${workContexts.description}, ${workContexts.intent}->>'summary')`;
 
 /**
- * The context's own statement — what its owner said the work is — as one
- * document, so its words are counted apart from any one claim's.
+ * WITHOUT A TITLE WITHHELD FROM THIS READER: an opted-out owner's fallback
+ * title is her branch (services/live-location.ts), kept off every page and
+ * out of the search index. Counted, a colleague's guess at her branch moved
+ * `matchedTerms` and could decide the content floor — the confirmation the
+ * index rebuild took away; ranked, it pulled her work into the guess's pool.
+ * Two spellings of the one rule, for the two moments it is read:
  *
- * WITHOUT A TITLE WITHHELD FROM THIS READER (`titleWithheld`): an opted-out
- * owner's fallback title is her branch (services/live-location.ts), kept off
- * every page and out of the search index. Counted here, a colleague's guess
- * at her branch moved `matchedTerms` and could decide the content floor —
- * the confirmation the index rebuild took away.
+ *   titleNotIn     after the search: the rows it already projected for this
+ *                  reader (`titleWithheld`, their ids) lose their title;
+ *   titleSeenBy    before any row is projected (the pool's own ranking and
+ *                  the known-word prefilter): a title counts only when its
+ *                  owner's location is visible to this reader, or when the
+ *                  connector marked it the host's or a person's — never a
+ *                  location title (isLocationTitle). An UNMARKED title of a
+ *                  hidden owner is left out: the shape rule needs her
+ *                  branches, and leaving it out is the side that cannot leak.
  */
-const contextStatement = (titleWithheld: readonly string[]): SQL => {
-  const title =
-    titleWithheld.length === 0
-      ? sql`${workContexts.title}`
-      : sql`(CASE WHEN ${inArray(workContexts.id, [...titleWithheld])} THEN NULL ELSE ${workContexts.title} END)`;
-  return sql`to_tsvector('english', concat_ws(' ', ${title}, ${workContexts.description}, ${workContexts.intent}->>'summary'))`;
+const titleNotIn = (titleWithheld: readonly string[]): SQL =>
+  titleWithheld.length === 0
+    ? sql`${workContexts.title}`
+    : sql`(CASE WHEN ${inArray(workContexts.id, [...titleWithheld])} THEN NULL ELSE ${workContexts.title} END)`;
+
+const titleSeenBy = (readerDeveloperId: string | undefined): SQL =>
+  readerDeveloperId === undefined
+    ? sql`${workContexts.title}`
+    : sql`(CASE WHEN ${visiblePresenceCondition(readerDeveloperId, agentSessions.developerId)} OR ${workContexts.titleSource} IN ('host', 'person') THEN ${workContexts.title} ELSE NULL END)`;
+
+/**
+ * A TEXT'S DOTTED NAMES IN THEIR PARTS, as the database reads them (hold-out
+ * review round 5, L2): "products.name" says products and name here too, as
+ * the shared rule (`@crosscheck/schema` textLexemes) and every prompt read it.
+ */
+const dottedNameParts = (text: SQL): SQL =>
+  sql`to_tsvector('english', regexp_replace(${text}, ${sql.raw(`'${DOTTED_NAME_DOT_SQL}'`)}, ' ', 'g'))`;
+
+/** What one claim says to the floor: its words, and its dotted names' parts — stored (L2; claims_words_tsv_idx). */
+const claimWords = sql`${claims.wordsTsv}`;
+
+/**
+ * What a context's document says, to the known-word prefilter — stored (L2;
+ * work_contexts_words_tsv_idx). Generated from normalized_doc, which already
+ * keeps a withheld title out (services/live-location.ts isTitleWithheldFromIndex).
+ */
+const documentWords = sql`${workContexts.wordsTsv}`;
+
+/** The same statement as a document, for the search's own ranking — its dotted names' parts too (L2). */
+const statementDocument = (title: SQL): SQL => {
+  const text = statementTextWith(title);
+  return sql`(to_tsvector('english', ${text}) || ${dottedNameParts(text)})`;
 };
 
 /** Most sessions one tripwire response names — one is enough to ask. */
@@ -180,6 +250,13 @@ export interface HintClaimCandidate {
   readonly provenance: string;
   readonly captureMode: string;
   readonly evidenceRefCount: number;
+  /**
+   * At least one evidence ref RESOLVES — to an existing claim that is not
+   * this one and not a hypothesis still proposed or rejected (review 1006b,
+   * H4). The count above is satisfied by a ref to nothing, to the claim's
+   * own id or to a guess; substance is gated on this.
+   */
+  readonly evidenceBacked: boolean;
   readonly authorDeveloperId: string;
   readonly authorDeveloperName: string;
   readonly body: string;
@@ -194,14 +271,23 @@ export interface HintClaimCandidate {
    */
   readonly validity: ClaimValidity;
   /**
-   * How many distinct words of the matched query THIS claim shares (in
-   * lexemes, HINT_MIN_SHARED_TERMS's unit) — what lets the connector tell a
-   * finding the prompt is about from one that merely sits in a tree the
-   * prompt brushed (DESIGN.md §4: substance needs a strong match). Counted
-   * against the query the candidate was matched on — the session's intent
-   * when that stood in for the prompt.
+   * How many distinct words of the matched query THIS claim's SHOWN SENTENCE
+   * shares (in lexemes, HINT_MIN_SHARED_TERMS's unit) — what lets the
+   * connector tell a finding the prompt is about from one that merely sits in
+   * a tree the prompt brushed (DESIGN.md §4: substance needs a strong match).
+   * Counted on exactly the text a hint would show (@crosscheck/schema
+   * shownSubstance: the sentence, NFKC, redaction and the cut), never on the
+   * rest of the body, and against the prompt's TOPICAL terms — closed-class
+   * words excluded from the strong-match count (round 3, H3 + M6).
    */
   readonly matchedTerms: number;
+  /**
+   * Of those, how many NO OTHER candidate of the response says, on any of
+   * its statements (round 4, C2): a finding is shown only on a word that
+   * tells its tree from the runner-up — "invoice" and "pdf" were said by the
+   * timeout tree and the labels tree alike.
+   */
+  readonly distinctTerms: number;
   readonly createdAt: string;
 }
 
@@ -237,15 +323,21 @@ export interface HintContextCandidate {
     readonly createdAt: string;
     readonly updatedAt: string | null;
     /**
-     * How many distinct words of the matched query the context's OWN
+     * How many distinct TOPICAL words of the matched query the context's OWN
      * statement — title, description, intent — shares: the tree is clearly
      * about the query when this reaches HINT_MIN_SHARED_TERMS, which lets a
      * claim of it that shares a single word count as a strong match
-     * (connector hints/select.ts).
+     * (`@crosscheck/schema` isStrongSubstanceMatch).
      */
     readonly matchedTerms: number;
   };
   readonly claims: readonly HintClaimCandidate[];
+  /**
+   * True when the context holds more visible claims than the window of
+   * HINT_MAX_CLAIMS_PER_CONTEXT carries, so "N more claims" read off
+   * `claims` is a lower bound and the hint says "at least".
+   */
+  readonly claimsTruncated: boolean;
   /**
    * The targets this context carries that the PROMPT lexically named (trial
    * finding #19): the exact-tier predicate's own matches, so a targets-only
@@ -260,6 +352,19 @@ export interface HintContextCandidate {
    * says which of the two it relates to.
    */
   readonly matchedOn: HintMatchedOn;
+  /**
+   * The most distinct query words ONE of its statements shares — its own, or
+   * one visible claim: the number this candidate cleared the content floor
+   * on, shipped so the connector can look again (hints/select.ts).
+   */
+  readonly sharedTerms: number;
+  /**
+   * The most distinct TOPICAL query words ONE of its statements shares — its
+   * own, or one visible claim: the tree's STRENGTH (round 3, H3 + M6). The
+   * selector pushes substance only from a tree at least as strong as the best
+   * pointer, and points at the strongest tree, never at the hub's first.
+   */
+  readonly topicalTerms: number;
 }
 
 /**
@@ -293,23 +398,33 @@ interface ClaimWindowScope {
   readonly now: Date;
   readonly readerDeveloperId: string;
   readonly repo: string;
-  /** The matched query's FTS tokens — what `matchedTerms` counts against. */
+  /** The matched query's TOPICAL terms — what `matchedTerms` counts against (H3 + M6). */
   readonly tokens: readonly string[];
 }
+
+/** A claim of the window before the response is known: what tells it apart is counted against the other candidates (C2). */
+type WindowClaim = Omit<HintClaimCandidate, "distinctTerms">;
+
+/** One context's claim window, and whether visible rows stayed outside it. */
+interface ClaimWindow {
+  readonly claims: readonly WindowClaim[];
+  readonly truncated: boolean;
+  /** The topical lexemes each claim's SHOWN sentence shares with the query (C2). */
+  readonly shown: ReadonlyMap<string, ReadonlySet<string>>;
+}
+
+const EMPTY_WINDOW: ClaimWindow = { claims: [], truncated: false, shown: new Map() };
 
 const listClaimsForContext = async (
   scope: ClaimWindowScope,
   workContextId: string,
-): Promise<readonly HintClaimCandidate[]> => {
+): Promise<ClaimWindow> => {
   const { db, now, readerDeveloperId, repo } = scope;
-  const rows = await db
+  const fetched = await db
     .select({
       claim: claims,
       authorDeveloperId: agentSessions.developerId,
       authorDeveloperName: developers.name,
-      // In the same row read, never a second query: the count rides the
-      // window this one bounded query already selects.
-      matchedTerms: sharedTermsSql(sql`${claims.tsv}`, scope.tokens),
     })
     .from(claims)
     .innerJoin(agentSessions, eq(claims.authorSessionId, agentSessions.id))
@@ -322,21 +437,16 @@ const listClaimsForContext = async (
         // muted author's claims inside an unmuted teammate's tree, and a
         // hint must not carry them to this reader (services/visibility.ts).
         notMutedCondition(readerDeveloperId, agentSessions.developerId),
+        // Only what somebody vouched for (services/pushable-claims.ts): a
+        // draft or a refuted claim is neither one of the tree's claims on
+        // this path nor a row a flood of could evict declared substance.
+        pushableClaimCondition(),
       ),
     )
-    // Window MEMBERSHIP prefers declared rows: the conclusion summarizer's
-    // whole purpose is more derived drafts per context, and the declared-only
-    // injection gate runs client side AFTER this bound — a flood of newer
-    // drafts must not evict the declared substance a reader could have been
-    // handed, or hints degrade to pointers where evidence existed. Membership
-    // only: the returned list is re-sorted newest-first below, so consumers
-    // still see the hub's claim order, and the pointer claimCount still
-    // counts every row in the window whatever its provenance.
-    .orderBy(
-      sql`(${claims.provenance} = ${DECLARED_PROVENANCE}) desc`,
-      desc(claims.createdAt),
-    )
-    .limit(HINT_MAX_CLAIMS_PER_CONTEXT);
+    .orderBy(desc(claims.createdAt))
+    // One row past the window, read only to learn that rows stayed behind.
+    .limit(HINT_MAX_CLAIMS_PER_CONTEXT + 1);
+  const rows = fetched.slice(0, HINT_MAX_CLAIMS_PER_CONTEXT);
   // ONE batched read for the whole page, not one per row. `notSuperseded`
   // above has already filtered retracted claims out of this list, so no edge
   // lookup is needed here — the selector's own superseded guard stays as
@@ -346,6 +456,12 @@ const listClaimsForContext = async (
     now,
     rows.map((row) => row.claim.id),
     readerDeveloperId,
+  );
+  // WHICH REFS RESOLVE, by the one rule the solved label and the connector's
+  // mirror apply too (services/evidence-resolution.ts; hold-out review H5).
+  const resolvedRefs = await resolvedEvidenceCounts(
+    db,
+    rows.map((row) => row.claim.id),
   );
   // WAS ANYTHING ACTUALLY RUN behind each of these (1.0 spec 08 §3.1), in
   // ONE read for the context rather than one per claim. A hint is unsolicited
@@ -357,7 +473,23 @@ const listClaimsForContext = async (
     repo,
     claims: rows.map((row) => row.claim),
   });
-  return [...rows]
+  // THE TEXT A HINT WOULD SHOW is what relevance is scored on — the shared
+  // shown text, the very one the connector frames: NFKC, redaction and cut
+  // included (review 1006b, M4) — so a keyword-stuffed tail, a redacted span
+  // or a word past the ellipsis can never make a claim a strong match for a
+  // prompt its shown sentence says nothing about (review of batch 1006,
+  // finding 6). A body that never crosses the wire scores nothing.
+  const shownTerms = shownSentenceTerms(
+    rows.map((row) => ({
+      id: row.claim.id,
+      sentence:
+        row.claim.provenance === DECLARED_PROVENANCE
+          ? shownSubstance(row.claim.body)
+          : "",
+    })),
+    scope.tokens,
+  );
+  const windowed = [...rows]
     .sort(
       (a, b) => b.claim.createdAt.getTime() - a.claim.createdAt.getTime(),
     )
@@ -369,7 +501,10 @@ const listClaimsForContext = async (
     confidence: row.claim.confidence,
     provenance: row.claim.provenance,
     captureMode: row.claim.captureMode,
-    evidenceRefCount: row.claim.evidenceRefs.length,
+    // THE RESOLVED COUNT, never the stored one (hold-out review, M1): an older
+    // connector's count gate then reads the same verdict as evidenceBacked.
+    evidenceRefCount: resolvedRefs.get(row.claim.id) ?? 0,
+    evidenceBacked: (resolvedRefs.get(row.claim.id) ?? 0) > 0,
     authorDeveloperId: row.authorDeveloperId,
     authorDeveloperName: row.authorDeveloperName,
     // WITHHELD unless somebody vouched for it (audit row V2-X4). A derived,
@@ -382,23 +517,48 @@ const listClaimsForContext = async (
     // influenced through a model, and it rides this wire like any other claim
     // body of its context (DESIGN.md §3).
     //
-    // The ROW still travels: a pointer states how many claims it withholds,
-    // and dropping the row would make that count lie.
+    // Redundant since the window holds only declared rows (the WHERE above):
+    // kept as the second lock, so a widened window can never put a draft's
+    // bytes on the wire.
     //
     // Positive equality on the declared value, the same rule the selector
     // applies, so the wire cannot drift into allowing what the renderer
     // refuses: an unknown provenance is one nobody vouched for, and it fails
     // closed.
-    body: row.claim.provenance === DECLARED_PROVENANCE ? row.claim.body : "",
+    //
+    // AND WITHHELD UNLESS IT CAN BE SUBSTANCE (hold-out review, M1): a body a
+    // hint may not show is a body a connector older than the substance rules
+    // can still inline — 0.10.0 pushed rejected approaches and proposed root
+    // causes — so only a claim that qualifies (`@crosscheck/schema`
+    // substance-trust.ts) carries its body; every other claim of the tree
+    // travels as a pointer's claim.
+    body:
+      row.claim.provenance === DECLARED_PROVENANCE &&
+      qualifiesAsSubstance({ ...row.claim, resolvedEvidenceRefs: resolvedRefs.get(row.claim.id) ?? 0 })
+        ? row.claim.body
+        : "",
     validity: claimValidity(row.claim, revalidations.get(row.claim.id), null),
     // A claim the derivation did not answer for is shipped at the WEAKEST
     // rung, never omitted: an absent field reads as "this hub does not report
     // one", which would send the reader to the wrong remedy.
     axes: axes.get(row.claim.id) ?? UNRESOLVED_AXES,
-    matchedTerms: Number(row.matchedTerms),
+    matchedTerms: shownTerms.get(row.claim.id)?.size ?? 0,
     createdAt: row.claim.createdAt.toISOString(),
   }));
+  return { claims: windowed, truncated: fetched.length > rows.length, shown: shownTerms };
 };
+
+/**
+ * Which distinct query words each SHOWN sentence shares, by the floor's own
+ * count (`@crosscheck/schema` content-floor.ts): english lexemes, the
+ * database's algorithm — the words themselves, so the response can tell
+ * which of them another candidate says too (C2).
+ */
+const shownSentenceTerms = (
+  shown: readonly { readonly id: string; readonly sentence: string }[],
+  tokens: readonly string[],
+): ReadonlyMap<string, ReadonlySet<string>> =>
+  new Map(shown.map((entry) => [entry.id, sharedLexemes(tokens, textLexemes(entry.sentence))]));
 
 /**
  * One bounded query PER CONTEXT — at most HINT_MAX_CONTEXTS of them — so a
@@ -409,34 +569,55 @@ const listClaimsForContext = async (
 const listContextClaims = async (
   scope: ClaimWindowScope,
   workContextIds: readonly string[],
-): Promise<ReadonlyMap<string, readonly HintClaimCandidate[]>> => {
+): Promise<ReadonlyMap<string, ClaimWindow>> => {
   const lists = await Promise.all(
     workContextIds.map((id) => listClaimsForContext(scope, id)),
   );
-  return new Map(workContextIds.map((id, index) => [id, lists[index] ?? []]));
+  return new Map(workContextIds.map((id, index) => [id, lists[index] ?? EMPTY_WINDOW]));
 };
 
 /**
- * How many distinct query words each context's OWN statement shares — the
- * other half of the content floor beside its claims' counts. One bounded
- * query for every candidate id; `titleWithheld` names the ids whose title
- * this reader may not see (contextStatement).
+ * What some statements of one context share with the query: the best of
+ * them by the one rule (`@crosscheck/schema` statementMatch), and every
+ * TOPICAL query word any of them says — what tells this tree from the one
+ * whose finding a hint would show (round 4, C2).
+ */
+interface ContextMatch extends StatementMatch {
+  readonly saidTopical: ReadonlySet<string>;
+}
+
+const contextMatchOf = (floor: FloorTerms, statements: readonly string[]): ContextMatch => {
+  const matches = statements.map((statement) => statementMatch(floor, statement));
+  return {
+    floor: Math.max(0, ...matches.map((match) => match.floor)),
+    topical: Math.max(0, ...matches.map((match) => match.topical)),
+    saidTopical: new Set(statements.flatMap((statement) => [...sharedLexemes(floor.topical, textLexemes(statement))])),
+  };
+};
+
+/**
+ * What each context's OWN statement shares with the query — the other half of
+ * the content floor beside its claims' — by the one rule
+ * (`@crosscheck/schema` statementMatch). One bounded read for every candidate
+ * id: the statement is the title, the description and the intent's summary —
+ * the title only where this reader may read it: `titleWithheld` names the ids
+ * whose title the search already withheld (titleNotIn).
  */
 const listStatementTerms = async (
   db: Db,
   workContextIds: readonly string[],
-  tokens: readonly string[],
+  floor: FloorTerms,
   titleWithheld: readonly string[],
-): Promise<ReadonlyMap<string, number>> => {
-  if (workContextIds.length === 0 || tokens.length === 0) {
+): Promise<ReadonlyMap<string, ContextMatch>> => {
+  if (workContextIds.length === 0 || floor.all.length === 0) {
     return new Map();
   }
   const rows = await db
-    .select({ id: workContexts.id, terms: sharedTermsSql(contextStatement(titleWithheld), tokens) })
+    .select({ id: workContexts.id, statement: statementTextWith(titleNotIn(titleWithheld)) })
     .from(workContexts)
     .where(inArray(workContexts.id, workContextIds))
     .limit(workContextIds.length);
-  return new Map(rows.map((row) => [row.id, Number(row.terms)]));
+  return new Map(rows.map((row) => [row.id, contextMatchOf(floor, [row.statement])]));
 };
 
 /**
@@ -465,6 +646,11 @@ const listBaseCommits = async (
  * candidate ids, using the SAME predicate the exact tier ranked them on
  * (search.ts `exactTargetTokenConditions`). Grouped by context and capped per
  * context so a target-heavy tree cannot unbound the response.
+ *
+ * NEVER A GENERATED TARGET (services/generated-targets.ts): the floor and the
+ * strong-match test score on these, and a lockfile a prompt names is nobody's
+ * plan — it would let any tree that touched one clear the floor on the name.
+ * In the WHERE, before the bound, like every filter here.
  */
 const listMatchedTargets = async (
   db: Db,
@@ -486,6 +672,7 @@ const listMatchedTargets = async (
       and(
         inArray(workContextTargets.workContextId, workContextIds),
         or(...exactTargetTokenConditions(tokens)),
+        ordinaryTargetCondition(),
       ),
     )
     .limit(workContextIds.length * HINT_MAX_MATCHED_TARGETS_PER_CONTEXT);
@@ -508,45 +695,269 @@ const listMatchedTargets = async (
 export interface HintCandidatesQuery {
   readonly query: string;
   readonly repo: string;
-  /**
-   * The session's stated intent (`set_intent`, or the intent worker's
-   * sentence), matched IN PLACE OF a prompt that carries nothing
-   * task-bearing — never beside one that does. Already the session's own
-   * published sentence, so it costs the prompt nothing to send.
-   */
-  readonly intent?: string;
-}
-
-interface MatchedCandidate {
-  readonly candidate: HintContextCandidate;
-  /** Most distinct query words one statement of it shares — the content floor's input. */
-  readonly sharedTerms: number;
 }
 
 /**
- * A query carries a task when something it would surface is backed by a fact
- * or by agreement: an exact target, or HINT_MIN_SHARED_TERMS words on one
- * statement. Anything less is filler, however many single words it matched.
+ * A candidate is backed by a fact or by agreement: an exact target, or
+ * HINT_MIN_SHARED_TERMS words on one of its statements. Anything less is a
+ * stray word, however high the search ranked it.
  */
-const carriesContent = (matched: readonly MatchedCandidate[]): boolean =>
-  matched.some(
-    ({ candidate, sharedTerms }) =>
-      candidate.workContext.tier === "exact" || sharedTerms >= HINT_MIN_SHARED_TERMS,
-  );
+const clearsFloor = (tier: SearchTier, sharedTerms: number): boolean =>
+  tier === "exact" || sharedTerms >= HINT_MIN_SHARED_TERMS;
 
-/** One query's candidates, as the prompt path has always built them, plus their counts. */
+/**
+ * Topical words a tree must share when the prompt named only a CONVENTIONAL
+ * FILE NAME it touched (hold-out review round 5, M4): "Dockerfile",
+ * "package.json" and ".nvmrc" are in every repo, and "bump node to 22 in
+ * .nvmrc and the Dockerfile" was pointed at the Docker tree on the name
+ * alone, sharing no word with it.
+ */
+export const HINT_CONVENTIONAL_NAME_MIN_TOPICAL = 1;
+
+/**
+ * The prompt named this tree's targets only by conventional file names
+ * (`@crosscheck/schema` isConventionalFileName): no target is matched by any
+ * other word of it — "docker/postgres/Dockerfile" written whole is a fact,
+ * "Dockerfile" alone is a name. A tree the exact tier did not match has no
+ * matched target, and this rule leaves it to the floor.
+ */
+const isNameOnlyMatch = (targets: readonly MatchedTargetView[], words: readonly string[]): boolean => {
+  const specific = words.filter((word) => !isConventionalFileName(word));
+  return targets.length > 0 && !targets.some((target) => specific.some((word) => targetMatchesToken(target.value, word)));
+};
+
+/**
+ * The best match of any one VISIBLE claim per context — under the claim
+ * window's own two conditions, retraction and the reader's mutes, so a hidden
+ * author's words can never qualify a tree — by the one rule
+ * (`@crosscheck/schema` statementMatch): the best floor count (C1) and the
+ * most topical words, the tree's strength beside its own statement's (H3 +
+ * M6). Over the whole pool, the GIN prefilter first: the floor is decided
+ * BEFORE the pool is cut to HINT_MAX_CONTEXTS, so three weak trees cannot
+ * crowd out a fourth that qualifies. Each context's claims are read most
+ * matching first, at most HINT_FLOOR_MAX_CLAIMS_PER_CONTEXT of them.
+ */
+const listClaimTermMaxima = async (
+  db: Db,
+  readerDeveloperId: string,
+  workContextIds: readonly string[],
+  floor: FloorTerms,
+): Promise<ReadonlyMap<string, ContextMatch>> => {
+  if (workContextIds.length === 0 || floor.all.length === 0) {
+    return new Map();
+  }
+  const anyToken = sql`websearch_to_tsquery('english', ${floor.all.join(" or ")})`;
+  const ranked = db
+    .select({
+      workContextId: claims.workContextId,
+      body: claims.body,
+      position: sql<number>`row_number() over (partition by ${claims.workContextId} order by ts_rank(${claimWords}, ${anyToken}) desc, ${claims.id})`.as("position"),
+    })
+    .from(claims)
+    .innerJoin(agentSessions, eq(claims.authorSessionId, agentSessions.id))
+    .where(
+      and(
+        inArray(claims.workContextId, workContextIds),
+        sql`${claimWords} @@ ${anyToken}`,
+        notSuperseded(db),
+        notMutedCondition(readerDeveloperId, agentSessions.developerId),
+        // A draft's words never qualify its tree (review 1006b, L6).
+        pushableClaimCondition(),
+      ),
+    )
+    .as("floor_claims");
+  const rows = await db
+    .select({ workContextId: ranked.workContextId, body: ranked.body })
+    .from(ranked)
+    .where(lte(ranked.position, HINT_FLOOR_MAX_CLAIMS_PER_CONTEXT))
+    .limit(workContextIds.length * HINT_FLOOR_MAX_CLAIMS_PER_CONTEXT);
+  return new Map(
+    [...Map.groupBy(rows, (row) => row.workContextId)].map(([id, group]): [string, ContextMatch] => [
+      id,
+      contextMatchOf(
+        floor,
+        group.map((row) => row.body),
+      ),
+    ]),
+  );
+};
+
+/** The claim author's session, beside the context owner's the scope reads. */
+const claimAuthors = alias(agentSessions, "hint_claim_authors");
+
+/**
+ * THE POOL IS RANKED ON PUSHABLE TEXT ONLY (hold-out review, M3): a
+ * context's own statement — title, description, intent — and its pushable
+ * claims: declared, not refuted, not revised away, by an author the reader
+ * has not muted. Never the normalized document, which still summarises every
+ * claim, and never a claim body the hint would not show — so twelve trees
+ * flooded with drafts, refuted or retracted claims on the prompt's words no
+ * longer push the one tree whose declared claim answers it out of the
+ * ten-row pool. The search's own scope (repo, the reader excluded, mutes)
+ * rides in every WHERE.
+ */
+const rankOnPushableText =
+  (db: Db, readerDeveloperId: string): FtsTierRanker =>
+  async (tokens, scope): Promise<readonly RankedRow[]> => {
+    const tsquery = sql`websearch_to_tsquery('english', ${tokens.join(" or ")})`;
+    // The statement as THIS reader may read it: a hidden owner's location
+    // title neither ranks her work nor pulls it into the pool (titleSeenBy).
+    const statement = statementDocument(titleSeenBy(readerDeveloperId));
+    const [statements, pushable] = await Promise.all([
+      db
+        .select({
+          id: workContexts.id,
+          createdAt: workContexts.createdAt,
+          updatedAt: workContexts.updatedAt,
+          rank: sql<number>`ts_rank(${statement}, ${tsquery})`,
+        })
+        .from(workContexts)
+        .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
+        .where(and(scope, sql`${statement} @@ ${tsquery}`))
+        .orderBy(sql`ts_rank(${statement}, ${tsquery}) DESC`)
+        .limit(TIER_CANDIDATES),
+      db
+        .select({
+          id: claims.workContextId,
+          createdAt: workContexts.createdAt,
+          updatedAt: workContexts.updatedAt,
+          rank: sql<number>`max(ts_rank(${claimWords}, ${tsquery}))`,
+        })
+        .from(claims)
+        .innerJoin(workContexts, eq(claims.workContextId, workContexts.id))
+        .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
+        .innerJoin(claimAuthors, eq(claims.authorSessionId, claimAuthors.id))
+        .where(
+          and(
+            scope,
+            sql`${claimWords} @@ ${tsquery}`,
+            pushableClaimCondition(),
+            notSuperseded(db),
+            notMutedCondition(readerDeveloperId, claimAuthors.developerId),
+          ),
+        )
+        .groupBy(claims.workContextId, workContexts.createdAt, workContexts.updatedAt)
+        .orderBy(sql`max(ts_rank(${claimWords}, ${tsquery})) DESC`)
+        .limit(TIER_CANDIDATES),
+    ]);
+    const best = [...statements, ...pushable].reduce<ReadonlyMap<string, RankedRow>>(
+      (byId, row) => ((byId.get(row.id)?.rank ?? -1) >= row.rank ? byId : new Map([...byId, [row.id, row]])),
+      new Map(),
+    );
+    return [...best.values()];
+  };
+
+/** What one search is made of: the text, for its exact tier, and the words the floor counts. */
+interface CandidateQuery {
+  readonly text: string;
+  readonly floor: FloorTerms;
+  readonly repo: string;
+  readonly on: HintMatchedOn;
+}
+
+/** What one candidate shares with the query on its best statement. */
+export interface CandidateFloor {
+  /** The floor count of its best statement — its own, or one visible claim (C1, M7). */
+  readonly sharedTerms: number;
+  /** The most topical words one of its statements shares: the tree's strength (H3 + M6). */
+  readonly topicalTerms: number;
+  /** The topical words its OWN statement shares — what lets one of its claims match strongly. */
+  readonly ownTerms: number;
+  /** Every topical query word one of its statements says, in lexemes: what another tree's finding must not lean on alone (C2). */
+  readonly saidTopical: ReadonlySet<string>;
+}
+
+const NO_FLOOR: CandidateFloor = { sharedTerms: 0, topicalTerms: 0, ownTerms: 0, saidTopical: new Set() };
+
+/**
+ * THE HUB'S CONTENT FLOOR over some contexts: each one's own statement and
+ * its visible claims, counted by the one rule (`@crosscheck/schema`
+ * statementMatch). Exported so the connector's recount of an old hub's
+ * candidates is pinned to it, row for row
+ * (connector-core/test/content-floor-parity.test.ts).
+ */
+export const contentFloorOf = async (
+  db: Db,
+  readerDeveloperId: string,
+  floor: FloorTerms,
+  workContextIds: readonly string[],
+  // The ids whose title this reader may not read (titleNotIn): their
+  // statement counts without it.
+  titleWithheld: readonly string[] = [],
+): Promise<ReadonlyMap<string, CandidateFloor>> => {
+  const [statementTerms, claimTerms] = await Promise.all([
+    listStatementTerms(db, workContextIds, floor, titleWithheld),
+    listClaimTermMaxima(db, readerDeveloperId, workContextIds, floor),
+  ]);
+  return new Map(
+    workContextIds.map((id): [string, CandidateFloor] => [
+      id,
+      {
+        sharedTerms: Math.max(statementTerms.get(id)?.floor ?? 0, claimTerms.get(id)?.floor ?? 0),
+        topicalTerms: Math.max(statementTerms.get(id)?.topical ?? 0, claimTerms.get(id)?.topical ?? 0),
+        // TOPICAL, like every relevance count the selector reads (H3 + M6).
+        ownTerms: statementTerms.get(id)?.topical ?? 0,
+        saidTopical: new Set([...(statementTerms.get(id)?.saidTopical ?? []), ...(claimTerms.get(id)?.saidTopical ?? [])]),
+      },
+    ]),
+  );
+};
+
+/**
+ * A QUERY THAT FILLS THE ROUTE'S CAP IS A WINDOW (round 4, H1): of a prompt
+ * longer than the wire carries — the head and tail an older connector sends,
+ * or this connector's ranked terms cut at the cap — so its known words are a
+ * keyhole onto the prompt's, and the long-prompt floor holds whatever they
+ * count. A prompt a person types to within a tenth of the cap is long anyway.
+ */
+export const HINT_WINDOW_QUERY_MIN_CHARS = Math.floor(SEARCH_MAX_QUERY_CHARS * 0.9);
+
+/**
+ * A prompt's floor terms ON THIS HUB: its ranked terms that some work context
+ * or claim of the repo says at all, by the database's own index (M7), under
+ * the one rule (`@crosscheck/schema` floorTermsOf) — held to the long-prompt
+ * floor when the query is a window (H1), and known only from what a
+ * statement the reader may see says (L1).
+ */
+export const hubFloorTermsOf = async (
+  db: Db,
+  repo: string,
+  terms: PromptTerms,
+  isWindow = false,
+  readerDeveloperId?: string,
+): Promise<FloorTerms> => {
+  const known = await listKnownTerms(db, repo, terms.ranked, readerDeveloperId);
+  return floorTermsOf(terms, known, isWindow ? Math.max(known.length, HINT_LONG_PROMPT_KNOWN_TERMS + 1) : known.length);
+};
+
+/** A candidate's strength by the one rule (`@crosscheck/schema` TreeStrength): exact, best statement, own statement. */
+const strengthOfCandidate = (candidate: { readonly row: { readonly tier: SearchTier } } & CandidateFloor): TreeStrength => ({
+  isExact: candidate.row.tier === "exact",
+  topical: candidate.topicalTerms,
+  own: candidate.ownTerms,
+  shared: candidate.sharedTerms,
+});
+
+/** One query's candidates, each of which clears the floor on its own. */
 const matchCandidates = async (
   deps: Deps,
   callerDeveloperId: string,
   hidden: HiddenLocations,
-  query: { readonly text: string; readonly repo: string; readonly on: HintMatchedOn },
-): Promise<readonly MatchedCandidate[]> => {
+  query: CandidateQuery,
+): Promise<readonly HintContextCandidate[]> => {
   const searched = await searchWorkContexts(
     // Lexical by construction — see the header. The hub's real embedder must
     // not be reachable from this path.
     { db: deps.db, now: deps.now, embedder: null },
     {
       query: query.text,
+      // RANKED ON CONTENT TERMS (review 1006b, M8): the raw tokens let a
+      // German prompt's "das ist nicht die" fill the pool with every tree
+      // that says them, before the floor below ever ran.
+      ftsTokens: query.floor.all,
+      // AND RANKED ON PUSHABLE TEXT ONLY (hold-out review, M3): what a hint
+      // would never show cannot rank a tree into the pool either.
+      rankFtsTier: rankOnPushableText(deps.db, callerDeveloperId),
       repo: query.repo,
       // In the search's own WHERE, before its bounds — a busy caller's own
       // contexts must not crowd teammates out of the pool (SEARCH_POOL_LIMIT).
@@ -563,111 +974,247 @@ const matchCandidates = async (
       hidden,
     },
   );
-  const eligible = searched.results
+  const pool = searched.results
     .filter((row) => HINT_ELIGIBLE_TIERS.includes(row.tier))
     // Defense in depth only — exclusion already happened inside the search.
-    .filter((row) => row.developerId !== callerDeveloperId)
-    .slice(0, HINT_MAX_CONTEXTS);
-  const ids = eligible.map((row) => row.id);
-  const tokens = ftsTokens(query.text);
+    .filter((row) => row.developerId !== callerDeveloperId);
+  // The targets the prompt named, read once for the whole pool: the floor
+  // needs them (M4) and the pointer shows them (#19).
+  const exactWords = exactTokens(query.text);
   // The titles the search withheld from this reader — an opted-out owner's
   // branch, already projected on the row: no statement is counted on them.
-  const titleWithheld = eligible
+  const titleWithheld = pool
     .filter((row) => hidden.has(row.developerId) && row.title === WITHHELD_TITLE)
     .map((row) => row.id);
-  const [claimsByContext, baseCommits, matchedTargets, statementTerms] = await Promise.all([
+  const [floors, matchedTargets] = await Promise.all([
+    contentFloorOf(deps.db, callerDeveloperId, query.floor, pool.map((row) => row.id), titleWithheld),
+    listMatchedTargets(deps.db, pool.map((row) => row.id), exactWords),
+  ]);
+  // THE FLOOR, PER CANDIDATE: every tree a hint may name must itself share
+  // HINT_MIN_SHARED_TERMS words on ONE of its statements — its own, or one
+  // visible claim — one of them TOPICAL (C1), or hold a target the query
+  // named. Decided over the whole pool, then cut to the bound — the
+  // STRONGEST first (round 4, M1), the search's order among equals: since a
+  // task's meta words count, more trees qualify, and the search's first three
+  // left the one strongest out.
+  const qualified = pool
+    .map((row) => ({ row, ...(floors.get(row.id) ?? NO_FLOOR) }))
+    // A MATCH ON A CONVENTIONAL FILE NAME ALONE is no fact about the work (round 5, M4).
+    .filter(({ row, topicalTerms }) => !isNameOnlyMatch(matchedTargets.get(row.id) ?? [], exactWords) || topicalTerms >= HINT_CONVENTIONAL_NAME_MIN_TOPICAL)
+    .filter(({ row, sharedTerms }) => clearsFloor(row.tier, sharedTerms))
+    .toSorted((left, right) => compareTreeStrength(strengthOfCandidate(left), strengthOfCandidate(right)))
+    .slice(0, HINT_MAX_CONTEXTS);
+  const ids = qualified.map(({ row }) => row.id);
+  const [claimsByContext, baseCommits] = await Promise.all([
     listContextClaims(
-      { db: deps.db, now: deps.now(), readerDeveloperId: callerDeveloperId, repo: query.repo, tokens },
+      { db: deps.db, now: deps.now(), readerDeveloperId: callerDeveloperId, repo: query.repo, tokens: query.floor.topical },
       ids,
     ),
     listBaseCommits(deps.db, ids),
-    listMatchedTargets(deps.db, ids, exactTokens(query.text)),
-    listStatementTerms(deps.db, ids, tokens, titleWithheld),
   ]);
-  return eligible.map((row) => {
-    const contextClaims = claimsByContext.get(row.id) ?? [];
-    const ownTerms = statementTerms.get(row.id) ?? 0;
-    return {
-      candidate: {
-        workContext: {
-          title: row.title,
-          ...projectRow(
-            hidden,
-            // No title facts: the title above is the search row's, which the
-            // search already projected for this viewer by its marker and branch;
-            // judged again without them, a host title would be withheld too.
-            { developerId: row.developerId, kind: "work_context" },
-            {
-              id: row.id,
-              status: row.status,
-              intent: row.intent,
-              tier: row.tier,
-              developerId: row.developerId,
-              developerName: row.developerName,
-              baseCommit: baseCommits.get(row.id) ?? "",
-              resultKind: row.resultKind,
-              solvedAt: row.solvedAt,
-              createdAt: row.createdAt,
-              updatedAt: row.updatedAt,
-              matchedTerms: ownTerms,
-            },
-            // "" is this field's own "unknown" on the wire (connector hub.ts: the
-            // drift label skips it), so a hidden owner's HEAD reads exactly as a
-            // context whose base commit the hub never knew.
-            { baseCommit: "empty" },
-          ),
+  // THE ONE STRONGEST CANDIDATE, or none on a tie (round 4, C2): only its
+  // findings may ship a body, by the rule the selector applies too.
+  const strongest = strongestTreeIndex(qualified.map(strengthOfCandidate));
+  return qualified.map(({ row, ownTerms, sharedTerms, topicalTerms }, index) => ({
+    workContext: {
+      title: row.title,
+      ...projectRow(
+        hidden,
+        // No title facts: the title above is the search row's, which the
+        // search already projected for this viewer by its marker and branch;
+        // judged again without them, a host title would be withheld too.
+        { developerId: row.developerId, kind: "work_context" },
+        {
+          id: row.id,
+          status: row.status,
+          intent: row.intent,
+          tier: row.tier,
+          developerId: row.developerId,
+          developerName: row.developerName,
+          baseCommit: baseCommits.get(row.id) ?? "",
+          resultKind: row.resultKind,
+          solvedAt: row.solvedAt,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+          matchedTerms: ownTerms,
         },
-        // Each nested row by its OWN owner: a claim by its author, who may not
-        // be the context's; a matched target by the context's owner, whose
-        // session touched the file — and its `createdAt` is WHEN, so it is not
-        // a creation time the allowlist shows (live-location.ts).
-        claims: contextClaims.map((claim) =>
-          projectRow(hidden, { developerId: claim.authorDeveloperId, kind: "claim" }, claim),
-        ),
-        matchedTargets: (matchedTargets.get(row.id) ?? []).map((target) =>
-          projectRow(hidden, { developerId: row.developerId, kind: "target" }, target, { createdAt: "null" }),
-        ),
-        matchedOn: query.on,
-      },
-      // The claims counted are the ones the window returned — mutes and
-      // retractions already applied in its WHERE — so a hidden author's words
-      // can never decide that a prompt carried a task.
-      sharedTerms: Math.max(ownTerms, ...contextClaims.map((claim) => claim.matchedTerms)),
-    };
-  });
+        // "" is this field's own "unknown" on the wire (connector hub.ts: the
+        // drift label skips it), so a hidden owner's HEAD reads exactly as a
+        // context whose base commit the hub never knew.
+        { baseCommit: "empty" },
+      ),
+    },
+    // Each nested row by its OWN owner: a claim by its author, who may not
+    // be the context's; a matched target by the context's owner, whose
+    // session touched the file — and its `createdAt` is WHEN, so it is not
+    // a creation time the allowlist shows (live-location.ts).
+    claims: withheldUnlessStrong(claimsByContext.get(row.id) ?? EMPTY_WINDOW, {
+      isStrongest: index === strongest,
+      treeTerms: ownTerms,
+      isContentIdentity: (matchedTargets.get(row.id) ?? []).some((target) => target.kind === CONTENT_IDENTITY_TARGET_KIND),
+      // What every OTHER candidate says: a finding must say one word none of them does.
+      saidElsewhere: new Set(qualified.filter((_, other) => other !== index).flatMap((other) => [...other.saidTopical])),
+    }).map((claim) => projectRow(hidden, { developerId: claim.authorDeveloperId, kind: "claim" }, claim)),
+    claimsTruncated: (claimsByContext.get(row.id) ?? EMPTY_WINDOW).truncated,
+    matchedTargets: (matchedTargets.get(row.id) ?? []).map((target) =>
+      projectRow(hidden, { developerId: row.developerId, kind: "target" }, target, { createdAt: "null" }),
+    ),
+    matchedOn: query.on,
+    sharedTerms,
+    topicalTerms,
+  }));
 };
 
+/** The target kind that is content identity: the prompt carried the error itself. */
+const CONTENT_IDENTITY_TARGET_KIND = "error_fingerprint";
+
 /**
- * The prompt first; the session's intent in its place only when the prompt
- * carried nothing task-bearing, held to the same floor — and silence when
- * neither does. At most two lexical searches, both inside the one call.
+ * THE HUB'S OWN STRONG-MATCH TEST ON THE BODY (hold-out review round 3, H3 +
+ * M6): a body ships only when the claim qualifies as substance (the window
+ * already withheld every other) AND is strongly matched by the one rule the
+ * selector applies (`@crosscheck/schema` isStrongSubstanceMatch, topical
+ * counts). A connector older than the selector's best-match rule — 0.10.0
+ * pushes the first trusted claim it is handed — then has no weakly matched,
+ * wrong-tree finding to inline.
+ *
+ * STRICT (round 4, C2): and only in the ONE strongest candidate of the
+ * response (`@crosscheck/schema` strongestTreeIndex — none on a tie), on two
+ * topical words of which one no other candidate says (`distinctTerms`,
+ * shipped so the selector looks again), with its tree's own statement
+ * sharing one.
+ */
+interface StrictScope {
+  readonly isStrongest: boolean;
+  readonly treeTerms: number;
+  readonly isContentIdentity: boolean;
+  /** The topical query lexemes every other candidate of the response says. */
+  readonly saidElsewhere: ReadonlySet<string>;
+}
+
+const withheldUnlessStrong = (window: ClaimWindow, scope: StrictScope): readonly HintClaimCandidate[] =>
+  window.claims.map((claim) => {
+    const distinctTerms = [...(window.shown.get(claim.id) ?? [])].filter((lexeme) => !scope.saidElsewhere.has(lexeme)).length;
+    const counted = { ...claim, distinctTerms };
+    return scope.isStrongest &&
+      isStrongSubstanceMatch({ claimTerms: claim.matchedTerms, distinctTerms, treeTerms: scope.treeTerms, isContentIdentity: scope.isContentIdentity })
+      ? counted
+      : { ...counted, body: "" };
+  });
+
+/**
+ * The prompt's candidates, or silence. NOTHING STANDS IN for a prompt that
+ * carried no task — not the session's intent either (owner decision, review
+ * 1006b M6): a hint on "mache weiter" is noise whatever it is matched on. An
+ * `intent` a connector built before that decision still sends is ignored.
  */
 export const listHintCandidates = async (
   deps: Deps,
   callerDeveloperId: string,
   input: HintCandidatesQuery,
 ): Promise<readonly HintContextCandidate[]> => {
-  // ONCE per request, for both passes: the search projects its rows with it,
-  // and so does this (review round 5, H3 — the hook's budget is 400 ms).
-  const hidden = await locationHiddenFrom(deps.db, callerDeveloperId);
-  const fromPrompt = await matchCandidates(deps, callerDeveloperId, hidden, {
-    text: input.query,
+  // A TURN THE HARNESS WROTE is nobody's prompt: a background task's
+  // notification or another agent's message, which an installed connector
+  // still sends as the query. Only the human text outside the wrappers is
+  // scored — and a turn that is all harness has none, so the content-free
+  // verdict below refuses it (a separate harness check here was an exact
+  // equivalent of that line, removed as the hold-out review's L2 found).
+  const humanText = humanPromptText(input.query);
+  // NOTHING TASK-BEARING, nothing to match: what is left is a command to the
+  // session — steering, a trigger beside meta words, conversation control or
+  // an agent operation (@crosscheck/schema prompt-terms.ts, hold-out review
+  // H1). The content terms are all the pool is ranked and counted on, so a
+  // steering word never counts beside a real one either (review 1006b, H1).
+  const terms = promptTerms(humanText);
+  // And a prompt that carries the session on — "cache fix is merged, next" —
+  // is matched to nothing, and one whose continuation only leads — "next: add
+  // rate limiting to the upload endpoint" — on what follows it, for every
+  // connector that still sends the whole prompt (round 4, C1; round 5, C1;
+  // @crosscheck/schema prompt-task.ts, the connector's own rule).
+  const task = promptTaskOf(humanText, terms);
+  if (task === null) {
+    return [];
+  }
+  // ONCE per request: the search projects its rows with it, and so does the
+  // candidate list (review round 5, H3 — the hook's budget is 400 ms). Read
+  // beside the floor's own known-word read, so it costs no wall clock of its own.
+  const [hidden, floor] = await Promise.all([
+    locationHiddenFrom(deps.db, callerDeveloperId),
+    hubFloorTermsOf(deps.db, input.repo, task.terms, input.query.length >= HINT_WINDOW_QUERY_MIN_CHARS, callerDeveloperId),
+  ]);
+  return matchCandidates(deps, callerDeveloperId, hidden, {
+    text: task.text,
+    floor,
     repo: input.repo,
     on: "prompt",
   });
-  if (carriesContent(fromPrompt)) {
-    return fromPrompt.map((matched) => matched.candidate);
-  }
-  const intent = input.intent?.trim() ?? "";
-  if (intent.length === 0) {
+};
+
+/**
+ * THE TERMS WORTH COUNTING (round 3, M7): of the prompt's ranked terms — task
+ * clauses only, topical words first — those that some work context of this
+ * repo, or one of its claims, says at all, in the ranked order. A word nobody
+ * on the team wrote cannot match on any statement, so leaving it out changes
+ * no count; it only stops taking a slot. One query, one GIN probe per term,
+ * at most HINT_MAX_EXAMINED_TERMS of them.
+ *
+ * ONLY WHAT A FLOOR STATEMENT SAYS (round 4, L1): a context's own statement —
+ * title, description, intent — and its visible pushable claims, never the
+ * reader's own work. The normalized document the GIN index covers also holds
+ * a context's status, its claims' kinds, its target paths' parts and its
+ * drafts: words no statement the floor counts on says, which a connector
+ * recounting an old hub never sees, and which filled counted slots and made a
+ * short prompt long. The index stays the prefilter; the statement decides.
+ */
+const listKnownTerms = async (
+  db: Db,
+  repo: string,
+  ranked: readonly string[],
+  readerDeveloperId?: string,
+): Promise<readonly string[]> => {
+  const examined = ranked.slice(0, HINT_MAX_EXAMINED_TERMS);
+  if (examined.length === 0) {
     return [];
   }
-  const fromIntent = await matchCandidates(deps, callerDeveloperId, hidden, {
-    text: intent,
-    repo: input.repo,
-    on: "intent",
-  });
-  return carriesContent(fromIntent) ? fromIntent.map((matched) => matched.candidate) : [];
+  const lexeme = sql.raw("query.lexeme");
+  const visibleOwner = readerDeveloperId === undefined ? [] : [ne(agentSessions.developerId, readerDeveloperId), notMutedCondition(readerDeveloperId, agentSessions.developerId)];
+  const statementSays = db
+    .select({ one: sql`1` })
+    .from(workContexts)
+    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
+    // The statement as the reader may read it (titleSeenBy): a hidden owner's
+    // location title makes no word of a guess "known".
+    .where(
+      and(
+        eq(agentSessions.repo, repo),
+        sql`${documentWords} @@ ${lexeme}`,
+        sql`${statementDocument(titleSeenBy(readerDeveloperId))} @@ ${lexeme}`,
+        ...visibleOwner,
+      ),
+    );
+  const claimSays = db
+    .select({ one: sql`1` })
+    .from(claims)
+    .innerJoin(workContexts, eq(claims.workContextId, workContexts.id))
+    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
+    .innerJoin(claimAuthors, eq(claims.authorSessionId, claimAuthors.id))
+    .where(
+      and(
+        eq(agentSessions.repo, repo),
+        sql`${claimWords} @@ ${lexeme}`,
+        pushableClaimCondition(),
+        notSuperseded(db),
+        ...visibleOwner,
+        ...(readerDeveloperId === undefined ? [] : [notMutedCondition(readerDeveloperId, claimAuthors.developerId)]),
+      ),
+    );
+  const result = await db.execute<{ word: string }>(sql`
+    SELECT term.word AS word
+    FROM unnest(ARRAY[${sql.join(examined.map((word) => sql`${word}`), sql`, `)}]::text[]) WITH ORDINALITY AS term(word, position)
+    CROSS JOIN LATERAL (SELECT plainto_tsquery('english', term.word) AS lexeme) AS query
+    WHERE numnode(query.lexeme) > 0
+      AND (EXISTS (${statementSays}) OR EXISTS (${claimSays}))
+    ORDER BY term.position`);
+  return result.rows.map((row) => row.word);
 };
 
 export interface TargetSessionView {

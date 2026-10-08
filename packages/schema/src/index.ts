@@ -204,13 +204,15 @@ export {
 export type { Question, QuestionAnswer, QuestionStatus } from "./question.ts";
 
 export {
+  HINT_MATCHED_ON_VALUES,
   HINT_REF_KINDS,
+  INTENT_PROVENANCES,
   HintDeliverySchema,
   HintSchema,
   HintTrustSchema,
   MAX_HINT_TEXT_LENGTH,
 } from "./hint.ts";
-export type { Hint, HintDelivery, HintTrust } from "./hint.ts";
+export type { DeliveryMatchedOn, Hint, HintDelivery, HintTrust, IntentProvenance } from "./hint.ts";
 
 export {
   CLOUD_AGENT_IDENTITIES,
@@ -338,6 +340,116 @@ export {
   repoLabel,
 } from "./fallback-title.ts";
 export type { TitleFacts } from "./fallback-title.ts";
+export {
+  SUBSTANCE_MAX_CHARS,
+  SUBSTANCE_MIN_WORDS,
+  shownSubstance,
+  substanceSentence,
+} from "./substance-sentence.ts";
+export {
+  HARNESS_SCAN_MAX_CHARS,
+  HARNESS_SHAPES,
+  SYSTEM_NOTIFICATION_MARKER,
+  humanPromptText,
+  isHarnessTurn,
+} from "./harness-turn.ts";
+export type { HarnessShape } from "./harness-turn.ts";
+export { SLASH_COMMAND_SHAPES, commandArguments } from "./slash-command.ts";
+export type { SlashCommandShape } from "./slash-command.ts";
+export {
+  CLOSED_CLASS_WORDS,
+  exactClassOf,
+  foldWord,
+  isContinuationTrigger,
+  isSteeringWord,
+  slipTargetOf,
+  wordClassOf,
+} from "./session-control.ts";
+export type { WordClass } from "./session-control.ts";
+export {
+  AGENT_OPERATION,
+  CONTINUATION_TRIGGERS,
+  CONVERSATION_CONTROL,
+  META_WORDS,
+  NEAR_MISS_WORDS,
+  OTHER_STEERING,
+} from "./prompt-vocabulary.ts";
+export { isSwapSlipOf, isTypingSlipOf, slipBudget } from "./typing-slip.ts";
+export {
+  EVIDENCE_KINDS,
+  EVIDENCE_MIN_CONTENT_WORDS,
+  REVISION_MAX_DEPTH,
+  isEvidenceFor,
+  revisionHeads,
+} from "./evidence-resolution.ts";
+export type { CitedHead, CitingClaim } from "./evidence-resolution.ts";
+export {
+  SUBSTANCE_MIN_EVIDENCE_REFS,
+  SUBSTANCE_ROOT_CAUSE_STATUSES,
+  SUBSTANCE_MIN_DISTINCT_TERMS,
+  SUBSTANCE_MIN_MATCHED_TERMS,
+  SUBSTANCE_MIN_TREE_TERMS,
+  compareTreeStrength,
+  isAtLeastAsStrongTree,
+  isStrongSubstanceMatch,
+  isSubstanceShape,
+  qualifiesAsSubstance,
+  strongestTreeIndex,
+} from "./substance-trust.ts";
+export type { SubstanceCandidate, SubstanceMatch, TreeStrength } from "./substance-trust.ts";
+export {
+  ENGLISH_FUNCTION_WORDS,
+  ENGLISH_STOP_SUPPLEMENT,
+  ENGLISH_STOP_WORDS,
+  GERMAN_FUNCTION_WORDS,
+  GERMAN_STOP_SUPPLEMENT,
+  GERMAN_STOP_WORDS,
+} from "./stop-words.ts";
+export {
+  ELLIPSIS,
+  INJECTION_BRANCHES,
+  INJECTION_SPAN_PATTERN,
+  REDACTED_SPAN,
+  cleanUntrusted,
+  cutWellFormed,
+  spanRedacted,
+} from "./untrusted-text.ts";
+export {
+  PROMPT_CLASSIFY_HEAD_CHARS,
+  PROMPT_CLASSIFY_TAIL_CHARS,
+  PROMPT_MIN_TOKEN_CHARS,
+  classifyPrompt,
+  isContentFreePrompt,
+  isGermanPrompt,
+  isWeakWord,
+  promptTerms,
+  promptTokens,
+} from "./prompt-terms.ts";
+export type { ClassifiedPrompt, PromptTerms } from "./prompt-terms.ts";
+export { SHELL_COMMAND_BINARIES, isBareShellCommand } from "./shell-command.ts";
+export { CONVENTIONAL_FILE_NAMES, exactTargetToken, isConventionalFileName } from "./exact-token.ts";
+export { englishStem } from "./english-stem.ts";
+export { hasContinuationSignal } from "./continuation.ts";
+export { promptTaskOf } from "./prompt-task.ts";
+export { DOTTED_NAME_DOT_SQL, dottedNamePartsText } from "./content-floor.ts";
+export type { PromptTask } from "./prompt-task.ts";
+export {
+  HINT_LONG_PROMPT_KNOWN_TERMS,
+  HINT_LONG_PROMPT_MIN_TOPICAL,
+  HINT_MAX_COUNTED_TERMS,
+  HINT_MAX_EXAMINED_TERMS,
+  HINT_MIN_SHARED_TERMS,
+  clearsFloorOn,
+  floorTermsOf,
+  isClosedInflection,
+  knownTermsIn,
+  sharedLexemes,
+  sharedTermCount,
+  statementMatch,
+  termLexeme,
+  textLexemes,
+} from "./content-floor.ts";
+export type { FloorTerms, StatementMatch } from "./content-floor.ts";
 export {
   CI_MAX_TEST_ROWS,
   CI_KNOWN_PROVIDERS,

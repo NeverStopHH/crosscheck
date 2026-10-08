@@ -46,7 +46,8 @@ import {
   withGhostClaimed,
 } from "@crosscheck/connector-core/derive/ghost/gate.ts";
 import {
-  isSubstantivePrompt,
+  intentPromptOf,
+  isIntentFireSpent,
   withIntentFire,
 } from "@crosscheck/connector-core/derive/intent/gate.ts";
 import {
@@ -116,17 +117,17 @@ export const maybeSpawnCursorIntentWorker = async (
   ctx: CursorHookContext,
 ): Promise<void> => {
   try {
-    const prompt = ctx.payload.prompt ?? "";
-    if (!isSubstantivePrompt(prompt)) {
+    const prompt = intentPromptOf(ctx.payload.prompt ?? "");
+    if (prompt === null) {
       return;
     }
     const state = await readSessionState(ctx.config.home, ctx.hostSessionKey);
-    if (state === null || state.intentFireCount > 0) {
+    if (state === null || isIntentFireSpent(state)) {
       return;
     }
     let fired = false;
     await updateSessionState(ctx.config.home, ctx.hostSessionKey, (fresh) => {
-      if (fresh.intentFireCount > 0) {
+      if (isIntentFireSpent(fresh)) {
         return null;
       }
       fired = true;

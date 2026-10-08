@@ -48,7 +48,8 @@ import {
   withGhostClaimed,
 } from "@crosscheck/connector-core/derive/ghost/gate.ts";
 import {
-  isSubstantivePrompt,
+  intentPromptOf,
+  isIntentFireSpent,
   withIntentFire,
 } from "@crosscheck/connector-core/derive/intent/gate.ts";
 import {
@@ -134,16 +135,17 @@ export const maybeSpawnAcpIntentWorker = async (
   prompt: string,
 ): Promise<boolean> => {
   try {
-    if (!isSubstantivePrompt(prompt)) {
+    const human = intentPromptOf(prompt);
+    if (human === null) {
       return false;
     }
     const state = await readSessionState(ctx.home, ctx.hostSessionKey);
-    if (state === null || state.intentFireCount > 0) {
+    if (state === null || isIntentFireSpent(state)) {
       return false;
     }
     let fired = false;
     await updateSessionState(ctx.home, ctx.hostSessionKey, (fresh) => {
-      if (fresh.intentFireCount > 0) {
+      if (isIntentFireSpent(fresh)) {
         return null;
       }
       fired = true;
@@ -158,7 +160,7 @@ export const maybeSpawnAcpIntentWorker = async (
     );
     await writePrivateFile(
       promptFile,
-      cutWellFormed(prompt, INTENT_PROMPT_MAX_CHARS),
+      cutWellFormed(human, INTENT_PROMPT_MAX_CHARS),
     );
     spawn(ctx, [
       process.execPath,

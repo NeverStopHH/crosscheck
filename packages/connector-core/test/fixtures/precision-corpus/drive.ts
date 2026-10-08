@@ -23,7 +23,7 @@ import { join } from "node:path";
 import { createDb, createServer } from "@crosscheck/server";
 
 import { MAX_HINTS_PER_SESSION } from "../../../src/constants.ts";
-import { firstSentence } from "../../../src/hints/sentence.ts";
+import { substanceSentence } from "@crosscheck/schema";
 import { runHook } from "../../../../connector-claude/src/index.ts";
 import type { Env } from "../../../src/index.ts";
 import { writeSessionState } from "../../../src/state/session-state.ts";
@@ -544,6 +544,9 @@ const probeSessionState = (
   lastEditedPath: null,
   lastEditedPathResolvedAgainst: null,
   hintCandidatesSeen: 0,
+  flooredPromptCount: 0,
+  harnessTurnCount: 0,
+  quietCallCount: 0,
 });
 
 interface Observation {
@@ -596,7 +599,7 @@ const claimsById = (corpus: Corpus): ReadonlyMap<string, CorpusClaim> =>
 /**
  * The label checks beyond the outcome class — expected refs, framed body.
  * The body a substance hint frames is the claim's FIRST SENTENCE (DESIGN.md
- * §4, hints/sentence.ts), so that is what is looked for.
+ * §4, @crosscheck/schema substance-sentence.ts), so that is what is looked for.
  */
 const refIssues = (
   probe: CorpusProbe,
@@ -611,7 +614,7 @@ const refIssues = (
     const claim = claims.get(probe.expectClaimId);
     if (claim === undefined) {
       issues.push(`probe names unknown claim ${probe.expectClaimId}`);
-    } else if (!observation.rendered.includes(`«${firstSentence(claim.body)}»`)) {
+    } else if (!observation.rendered.includes(`«${substanceSentence(claim.body)}»`)) {
       issues.push(
         `expected the framed body of ${probe.expectClaimId}, got: ${observation.rendered}`,
       );

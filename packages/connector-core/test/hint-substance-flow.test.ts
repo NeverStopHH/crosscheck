@@ -18,7 +18,7 @@ import { hintBodyHash } from "../src/hints/echo.ts";
 import { readSessionState, writeSessionState } from "../src/state/session-state.ts";
 import {
   SELF_DEVELOPER_ID,
-  rejectedApproachCandidate,
+  injectableCandidate,
   startHintHub,
 } from "./fixtures/hint-hub.ts";
 import type { HintHub } from "./fixtures/hint-hub.ts";
@@ -102,7 +102,7 @@ const flowInput = (f: Fixture) => ({
  * claims of his that are not substance.
  */
 const decisionTree = (matchedTerms: number): Record<string, unknown> => {
-  const base = rejectedApproachCandidate();
+  const base = injectableCandidate();
   const [claim] = base["claims"] as readonly Record<string, unknown>[];
   return {
     ...base,
@@ -134,6 +134,18 @@ describe("a strong, evidence-backed match carries its substance", () => {
     expect(f.hub.calls.candidates).toBe(1);
   });
 
+  test("a tree past the hub's claim window is counted as a lower bound", async () => {
+    // Arrange — the hub says the window cut rows
+    const f = await fixture("sf-truncated");
+    f.hub.setCandidates([{ ...decisionTree(4), claimsTruncated: true }]);
+
+    // Act
+    const text = await selectAndRenderHint(flowInput(f));
+
+    // Assert
+    expect(text).toContain("beside at least 2 more claims");
+  });
+
   test("the echo mark covers the sentence that was shown", async () => {
     // Arrange
     const f = await fixture("sf-echo");
@@ -148,17 +160,21 @@ describe("a strong, evidence-backed match carries its substance", () => {
   });
 });
 
-describe("an inline finding is still counted, on a channel of its own", () => {
-  /** The channel of the one hint_delivery record the flow spooled. */
-  const spooledChannel = async (f: Fixture): Promise<unknown> => {
-    const spool = await readSessionSpool(f.home, f.key, sessionSlug(HOST_KEY));
-    const record = JSON.parse(spool.lines[0] ?? "{}") as {
-      kind?: string;
-      body?: { channel?: unknown };
-    };
-    expect(record.kind).toBe("hint_delivery");
-    return record.body?.channel;
+/** The body of the one hint_delivery record the flow spooled. */
+const spooledDelivery = async (f: Fixture): Promise<Record<string, unknown>> => {
+  const spool = await readSessionSpool(f.home, f.key, sessionSlug(HOST_KEY));
+  const record = JSON.parse(spool.lines[0] ?? "{}") as {
+    kind?: string;
+    body?: Record<string, unknown>;
   };
+  expect(record.kind).toBe("hint_delivery");
+  return record.body ?? {};
+};
+
+/** The channel of the one hint_delivery record the flow spooled. */
+const spooledChannel = async (f: Fixture): Promise<unknown> => (await spooledDelivery(f))["channel"];
+
+describe("an inline finding is still counted, on a channel of its own", () => {
 
   test("substance is booked as prompt_substance, so the pilot never counts it as opened", async () => {
     // Arrange
@@ -170,6 +186,55 @@ describe("an inline finding is still counted, on a channel of its own", () => {
 
     // Assert
     expect(await spooledChannel(f)).toBe(SUBSTANCE_DELIVERY_CHANNEL);
+  });
+
+  test("a hub that does not advertise the channel gets the finding booked as prompt_hint", async () => {
+    // Arrange — a hub older than the channel rejects a record carrying it,
+    // and a rejected delivery is no count at all
+    const f = await fixture("sf-channel-older-hub");
+    f.hub.setCandidates([decisionTree(4)]);
+    f.hub.setDeliveryChannels(undefined);
+
+    // Act
+    const text = await selectAndRenderHint(flowInput(f));
+
+    // Assert — the reader still gets the finding; only the booking changes
+    expect(text).toContain(`«${FIRST}»`);
+    expect(await spooledChannel(f)).toBe("prompt_hint");
+  });
+
+  test("a decision with no sentence worth showing is a pointer, booked as one", async () => {
+    // Arrange — the trust and the match are there; the substance is not
+    const f = await fixture("sf-channel-empty");
+    const tree = decisionTree(4);
+    const [first, ...rest] = tree["claims"] as readonly Record<string, unknown>[];
+    f.hub.setCandidates([{ ...tree, claims: [{ ...first, body: "Bestätigt." }, ...rest] }]);
+
+    // Act
+    const text = await selectAndRenderHint(flowInput(f));
+
+    // Assert — prompt_substance only ever books a finding that was shown
+    expect(text).toContain("crosscheck pointer:");
+    expect(await spooledChannel(f)).toBe("prompt_hint");
+  });
+
+  test("the delivery says what it was matched on and whose intent the session held (M7)", async () => {
+    // Arrange — the session's intent was the intent worker's
+    const f = await fixture("sf-matched-on");
+    const state = await readSessionState(f.home, HOST_KEY);
+    if (state === null) {
+      throw new Error("no session state");
+    }
+    await writeSessionState(f.home, { ...state, workContextIntent: "Make uploads survive the gateway", workContextIntentProvenance: "derived" });
+    f.hub.setCandidates([decisionTree(4)]);
+
+    // Act
+    await selectAndRenderHint(flowInput(f));
+
+    // Assert
+    const delivery = await spooledDelivery(f);
+    expect(delivery["matchedOn"]).toBe("prompt");
+    expect(delivery["intentProvenance"]).toBe("derived");
   });
 
   test("a pointer stays on prompt_hint", async () => {
@@ -201,5 +266,137 @@ describe("a weak match keeps today's pointer-only form", () => {
     // this decision has evidence; what it lacks is a strong match.
     expect(text).toContain("substance is pushed only for a strongly matched, evidence-backed finding");
     expect(text).not.toContain("Keep the chunked upload");
+  });
+});
+
+describe("the same tree is never hinted twice in a session (round 4, decision 11)", () => {
+  /** The session's state with one ref set as delivered, by a hint or by the briefing. */
+  const withRefs = async (f: Fixture, refs: { readonly hinted?: readonly string[]; readonly briefing?: readonly string[] }): Promise<void> => {
+    const state = await readSessionState(f.home, HOST_KEY);
+    if (state === null) {
+      throw new Error("no session state");
+    }
+    await writeSessionState(f.home, { ...state, deliveredHintRefs: [...(refs.hinted ?? [])], briefingSolvedRefs: [...(refs.briefing ?? [])] });
+  };
+
+  test("a tree a hint pointed at earlier shows no finding of it now", async () => {
+    // Arrange — the tree was pointed at on an earlier prompt
+    const f = await fixture("sf-repeat");
+    f.hub.setCandidates([decisionTree(4)]);
+    const tree = decisionTree(4)["workContext"] as { readonly id: string };
+    await withRefs(f, { hinted: [tree.id] });
+
+    // Act
+    const text = await selectAndRenderHint(flowInput(f));
+
+    // Assert
+    expect(text).toBe("");
+  });
+
+  test("a tree only the briefing pointed at still shows its finding", async () => {
+    // Arrange — the briefing named the tree; no hint did
+    const f = await fixture("sf-briefing-only");
+    f.hub.setCandidates([decisionTree(4)]);
+    const tree = decisionTree(4)["workContext"] as { readonly id: string };
+    await withRefs(f, { briefing: [tree.id] });
+
+    // Act
+    const text = await selectAndRenderHint(flowInput(f));
+
+    // Assert
+    expect(text).toContain("crosscheck hint:");
+  });
+});
+
+describe("a finding that cannot fit beside its trailers is pointed at, never cut", () => {
+  /** The longest id a hub sends, so the pointer line is at its widest. */
+  const LONG_ID = `wc_${"a".repeat(61)}`;
+  const AUTHOR = "Konstantin Alexander Weißenberger-Lindqvist von Hohenzollern-Sigmaringen der Jüngere";
+  const LONG_FIRST =
+    "Keep the chunked upload for practice videos, because the gateway rejects a single PUT above " +
+    "two gigabytes and the retry loop then re-sends the whole file from the very first byte again.";
+  const GAP_ISO = "2026-08-10T08:13:00.000Z";
+  /** Both rungs reaped: the coverage note at its two-line length. */
+  const REAPED = {
+    repo: REPO_ID,
+    computedAt: NOW.toISOString(),
+    scope: { sinceIso: GAP_ISO },
+    order: { state: "undeclared", reason: "hub_did_not_report" },
+    sources: [
+      { source: "agent_event", state: "incomplete", reason: "session_reaped", gapSince: GAP_ISO, observedAt: GAP_ISO },
+      { source: "git", state: "incomplete", reason: "commits_reported", gapSince: GAP_ISO, observedAt: GAP_ISO },
+      { source: "ci", state: "unavailable", reason: "no_emitter", gapSince: null, observedAt: null },
+      { source: "runtime", state: "unavailable", reason: "out_of_scope_1_0", gapSince: null, observedAt: null },
+      { source: "human_edit", state: "unavailable", reason: "no_platform_rung", gapSince: null, observedAt: null },
+    ],
+  };
+
+  /** The decision tree with every label at its longest: author, id, solved, a sentence at the cap. */
+  const longLabelledTree = (): Record<string, unknown> => {
+    const tree = decisionTree(4);
+    const [decision, ...rest] = tree["claims"] as readonly Record<string, unknown>[];
+    return {
+      ...tree,
+      workContext: {
+        ...(tree["workContext"] as Record<string, unknown>),
+        id: LONG_ID,
+        developerName: AUTHOR,
+        resultKind: "solved",
+        solvedAt: "2026-08-15T08:00:00.000Z",
+      },
+      claims: [
+        { ...decision, workContextId: LONG_ID, authorDeveloperName: AUTHOR, body: `${LONG_FIRST} Second.` },
+        ...rest.map((claim) => ({ ...claim, workContextId: LONG_ID })),
+      ],
+    };
+  };
+
+  test("on a repo with a gap it arrives as the pointer, booked as one, and the note is kept", async () => {
+    // Arrange
+    const f = await fixture("sf-trailers");
+    f.hub.setCandidates([longLabelledTree()]);
+    f.hub.setCoverage(REAPED);
+
+    // Act
+    const text = await selectAndRenderHint(flowInput(f));
+
+    // Assert — no half finding: the sentence the hub scored is shown whole or not at all
+    expect(text).toContain("crosscheck pointer:");
+    expect(text).toContain(`work context ${LONG_ID}`);
+    expect(text).not.toContain("Keep the chunked upload");
+    expect(text).toContain("Coverage");
+    expect(await spooledChannel(f)).toBe("prompt_hint");
+  });
+
+  test("the same tree on a repo without a gap carries its finding", async () => {
+    // Arrange
+    const f = await fixture("sf-trailers-control");
+    f.hub.setCandidates([longLabelledTree()]);
+
+    // Act
+    const text = await selectAndRenderHint(flowInput(f));
+
+    // Assert
+    expect(text).toContain("crosscheck hint:");
+    expect(text).toContain("Keep the chunked upload");
+    expect(await spooledChannel(f)).toBe(SUBSTANCE_DELIVERY_CHANNEL);
+  });
+
+  test("a tree the briefing already pointed at stays silent rather than pointed at twice", async () => {
+    // Arrange
+    const f = await fixture("sf-trailers-seen");
+    f.hub.setCandidates([longLabelledTree()]);
+    f.hub.setCoverage(REAPED);
+    const state = await readSessionState(f.home, HOST_KEY);
+    if (state === null) {
+      throw new Error("no session state");
+    }
+    await writeSessionState(f.home, { ...state, briefingSolvedRefs: [LONG_ID] });
+
+    // Act
+    const text = await selectAndRenderHint(flowInput(f));
+
+    // Assert
+    expect(text).toBe("");
   });
 });

@@ -51,6 +51,24 @@ Settled, and kept under its old id so the history stays findable:
   the content floor (`server/src/services/hints.ts` `HINT_MIN_SHARED_TERMS`)
   demands two words agreeing on one statement of the work, or an exact
   target.
+- `pr_pool_fresh_wins` (07): the fresh tree's finding USED TO arrive because
+  the 14-day decay ranked it above an equally strong 65-day tree on the same
+  target and the same three title words. Hold-out review round 4 (C2) made a
+  tie at the top say nothing — the hub's order between equals is search
+  rank, not relevance, and the round-4 hold-out showed 9 of 182 tasks a
+  finding from the tree that order put first — so the probe expects SILENCE.
+- `pr_auth_seen` (01): with the tree's negative already delivered, its root
+  cause USED TO arrive on the next prompt. Round 4 (decision 11) made a tree
+  hinted once in a session say nothing more — the round-4 hold-out's scripted
+  sessions showed one tree twice in 24 of them — so the probe expects SILENCE.
+
+Two findings were REWORDED in the same change, not relabelled: since C2 a
+finding is shown only when it shares two topical words with the prompt
+itself, and `clm_fl_root` (05) and `clm_idx_root` (08) shared one each
+("cache"; "index") beside a title that shared many. Their probes test
+presence opt-out and the solved decay floor, not the relevance threshold,
+so each finding now says the prompt's words ("stale flag variants keep
+serving"; "drops the diacritics") and the probes still expect substance.
 
 ## Harness-can-fail proof
 

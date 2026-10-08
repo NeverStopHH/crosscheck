@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import { DOTTED_NAME_DOT_SQL } from "@crosscheck/schema";
 import type { FoldedLossKinds } from "@crosscheck/schema";
 
 import {
@@ -43,8 +44,10 @@ import {
   MAX_QUESTION_BODY_LENGTH,
   MAX_VERIFICATION_REF_CHARS,
   DELIVERY_CHANNELS,
+  HINT_MATCHED_ON_VALUES,
   HINT_OUTCOME_CHANNELS,
   HINT_OUTCOMES,
+  INTENT_PROVENANCES,
   MAX_HINT_OUTCOME_REASON_CHARS,
   MAX_PILOT_LABEL_REASON_CHARS,
   PILOT_LEGACY_COHORT,
@@ -315,6 +318,10 @@ export const workContexts = pgTable("work_contexts", {
   tsv: tsvector("tsv").generatedAlwaysAs(
     sql`to_tsvector('english', coalesce(normalized_doc, ''))`,
   ),
+  /** The document's words AND its dotted names' parts, for the hint floor's known words (round 5, L2). */
+  wordsTsv: tsvector("words_tsv").generatedAlwaysAs(
+    sql`to_tsvector('english', coalesce(normalized_doc, '')) || to_tsvector('english', regexp_replace(coalesce(normalized_doc, ''), ${sql.raw(`'${DOTTED_NAME_DOT_SQL}'`)}, ' ', 'g'))`,
+  ),
   /** Null until an embedder is configured and has embedded the current doc. */
   embedding: vector("embedding", { dimensions: EMBEDDING_DIMENSIONS }),
   embeddingModel: text("embedding_model"),
@@ -506,6 +513,10 @@ export const claims = pgTable(
       .notNull()
       .default(sql`'[]'::jsonb`),
     tsv: tsvector("tsv").generatedAlwaysAs(sql`to_tsvector('english', body)`),
+    /** The body's words AND its dotted names' parts, for the hint floor (round 5, L2). */
+    wordsTsv: tsvector("words_tsv").generatedAlwaysAs(
+      sql`to_tsvector('english', body) || to_tsvector('english', regexp_replace(body, ${sql.raw(`'${DOTTED_NAME_DOT_SQL}'`)}, ' ', 'g'))`,
+    ),
     /** Null until an embedder is configured; written once at ingest (append-only). */
     embedding: vector("embedding", { dimensions: EMBEDDING_DIMENSIONS }),
     embeddingModel: text("embedding_model"),
@@ -730,6 +741,13 @@ export const hintDeliveries = pgTable("hint_deliveries", {
   channel: text("channel", { enum: DELIVERY_CHANNELS })
     .notNull()
     .default("unknown"),
+  /**
+   * What the hint was matched on, and who wrote the receiving session's
+   * intent (review 1006b, M7) — NULL when the connector did not say, never a
+   * guess. Mirrored in db/bootstrap.sql.
+   */
+  matchedOn: text("matched_on", { enum: HINT_MATCHED_ON_VALUES }),
+  intentProvenance: text("intent_provenance", { enum: INTENT_PROVENANCES }),
   deliveredAt: timestamptz("delivered_at").notNull(),
   pulledAt: timestamptz("pulled_at"),
   /**

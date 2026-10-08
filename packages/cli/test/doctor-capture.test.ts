@@ -435,6 +435,9 @@ describe("a truncated read stops claiming what it did not look at", () => {
     lastTargetAt: null,
     hintsDelivered: 0,
     hintCandidatesSeen: 0,
+    flooredPrompts: 0,
+    harnessTurns: 0,
+    quietCalls: 0,
     ...overrides,
   });
 

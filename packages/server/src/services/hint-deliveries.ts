@@ -160,6 +160,10 @@ export const ingestHintDelivery = async (
       // honest word rather than being refused — and the pilot report prints
       // that bucket as itself instead of folding it into a guess.
       channel: body.channel,
+      // What it was matched on and whose intent the session held (M7) —
+      // NULL when an older connector did not say, never a guess.
+      matchedOn: body.matchedOn ?? null,
+      intentProvenance: body.intentProvenance ?? null,
       deliveredAt,
       // 07 §13.11 (review P5): the hub's clock, so a closed month never moves.
       ingestedAt: deps.now(),

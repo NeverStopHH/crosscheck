@@ -32,6 +32,7 @@ import {
 } from "@crosscheck/schema";
 
 import {
+  HINT_CLOSING_LINE_RESERVE_CHARS,
   HINT_SUBSTANCE_MAX_CHARS,
   LANDED_RECENT_WORKING_DAYS,
   MAX_LANDED_COMMITS_SHOWN,
@@ -40,7 +41,7 @@ import {
   SUBSTANCE_MATCH_KIND,
   UNSOLICITED_CLAIM_BODY_MAX_CHARS,
 } from "../constants.ts";
-import { firstSentence } from "./sentence.ts";
+import { shownSubstance } from "@crosscheck/schema";
 import type { LandedChanges, LandedCommit } from "../landed-changes/probe.ts";
 import { namedLandedCommits } from "../landed-changes/named-commits.ts";
 import { renderIntent } from "../briefing/intent.ts";
@@ -88,10 +89,23 @@ const POINTER_HEADER = `crosscheck pointer: a teammate has notes that may relate
  * The same two headers when the hub matched the session's INTENT in place of
  * a prompt that carried nothing task-bearing (DESIGN.md §4). "This prompt"
  * would then be false — the reader typed "weiter" — so the sentence names
- * what was actually matched.
+ * what was actually matched, and labels it the way every intent surface does
+ * (briefing/intent.ts): "intent" only for one `set_intent` declared, "derived
+ * intent" otherwise — positive equality, so an unknown writer is never
+ * presented as vouched for.
  */
-const CLAIM_INTENT_HEADER = `crosscheck hint: a teammate's recorded finding may relate to this session's stated intent. ${QUOTED_DATA_NOTICE}`;
-const POINTER_INTENT_HEADER = `crosscheck pointer: a teammate has notes that may relate to this session's stated intent. ${QUOTED_DATA_NOTICE}`;
+const sessionIntentWord = (provenance: string | null | undefined): string =>
+  provenance === "declared" ? "intent" : "derived intent";
+
+const claimHeader = (matchedOn: HintMatchedOn | undefined, provenance: string | null | undefined): string =>
+  matchedOn === "intent"
+    ? `crosscheck hint: a teammate's recorded finding may relate to this session's ${sessionIntentWord(provenance)}. ${QUOTED_DATA_NOTICE}`
+    : CLAIM_HEADER;
+
+const pointerHeader = (matchedOn: HintMatchedOn | undefined, provenance: string | null | undefined): string =>
+  matchedOn === "intent"
+    ? `crosscheck pointer: a teammate has notes that may relate to this session's ${sessionIntentWord(provenance)}. ${QUOTED_DATA_NOTICE}`
+    : POINTER_HEADER;
 /**
  * The ANSWER header, and the one word in it that matters is "asked": this is
  * the §4 solicited exception, so the sentence states out loud that the
@@ -199,14 +213,40 @@ const intentLines = (
  * trailing lines are the droppable context, not the substance. Empty when not
  * even the first two lines fit — silence beats a broken frame.
  */
-const fitHint = (lines: readonly string[]): string => {
+const fitHint = (lines: readonly string[], cap: number = MAX_HINT_TEXT_LENGTH): string => {
   const kept = lines.reduce<readonly string[]>((accumulated, line) => {
     const candidate = [...accumulated, line];
-    return candidate.join("\n").length <= MAX_HINT_TEXT_LENGTH
+    return candidate.join("\n").length <= cap
       ? candidate
       : accumulated;
   }, []);
   return kept.length < 2 ? "" : kept.join("\n");
+};
+
+/**
+ * What a teammate hint leaves free for the lines the flow appends after it
+ * (review 1006b): the coverage note at its actual length, on its own line,
+ * and one closing line. Long labels used to fill a hint to the wire cap, and
+ * `withCoverageNote` then dropped the note without a word.
+ */
+export const hintTrailerReserve = (coverage: CoverageRecord, now: Date): number => {
+  const note = coverageNote(coverage, now);
+  return (note === null ? 0 : note.length + 1) + HINT_CLOSING_LINE_RESERVE_CHARS;
+};
+
+/** The cap a hint's own lines fit under, beside the trailers reserved for. */
+const reservedCap = (reserveChars: number | undefined): number =>
+  MAX_HINT_TEXT_LENGTH - (reserveChars ?? 0);
+
+/**
+ * Room for what follows first (review 1006b) — but a hint whose own first two
+ * lines leave none still renders under the bare cap: the trailers never cost
+ * the hint (§5.1). The pointer's rule, and the answer's since L3, so a
+ * waited-for answer no longer fills the cap and loses its coverage note.
+ */
+const fitBesideTrailers = (lines: readonly string[], reserveChars: number | undefined): string => {
+  const reserved = fitHint(lines, reservedCap(reserveChars));
+  return reserved.length > 0 ? reserved : fitHint(lines);
 };
 
 /**
@@ -249,20 +289,36 @@ export interface ClaimHintInput {
   readonly now: Date;
   /** What the hub matched it on; absent is the prompt, as it always was. */
   readonly matchedOn?: HintMatchedOn;
-  /** The teammate claims the substance leaves behind; absent counts none. */
+  /** Who wrote the session intent it was matched on (declared / derived). */
+  readonly intentProvenance?: string | null;
+  /** The tree's other claims the substance leaves behind; absent counts none. */
   readonly restCount?: number;
+  /** The hub's window left claims out, so the count is "at least". */
+  readonly isRestLowerBound?: boolean;
+  /** Characters the flow appends after the hint (`hintTrailerReserve`); absent reserves none. */
+  readonly reserveChars?: number;
 }
+
+/**
+ * " beside N more claims", or nothing — "at least N" when the count was read
+ * off a hub window that left claims out (review 1006b): a 50-claim tree must
+ * not read as a 30-claim one.
+ */
+const restFragment = (count: number, isLowerBound: boolean): string =>
+  count > 0
+    ? ` beside ${isLowerBound ? "at least " : ""}${String(count)} more claim${count === 1 ? "" : "s"}`
+    : "";
 
 /**
  * The pointer to the rest (§4): how many claims stay behind, and the id the
  * next call takes — a tool named without its argument sends an agent off to
- * invent one (the answer hint learned that first).
+ * invent one (the answer hint learned that first). The title is the one part
+ * that can go when room is short; the id and the call never do.
  */
-const restLine = (context: HintContext, restCount: number): string => {
-  const rest =
-    restCount > 0 ? ` beside ${String(restCount)} more claim${restCount === 1 ? "" : "s"}` : "";
+const restLine = (context: HintContext, rest: string, withTitle: boolean): string => {
+  const title = withTitle ? ` ${quoted(context.title, MAX_WORK_CONTEXT_TITLE_CHARS)}` : "";
   return (
-    `Recorded on work context ${safeId(context.id)} ${quoted(context.title, MAX_WORK_CONTEXT_TITLE_CHARS)}${rest} — ` +
+    `Recorded on work context ${safeId(context.id)}${title}${rest} — ` +
     `the full tree is readable with get_diagnosis ${safeId(context.id)}.`
   );
 };
@@ -322,16 +378,29 @@ export const renderClaimHint = (input: ClaimHintInput): string => {
     ...validityWordFact(claim),
   ];
   // ONE SENTENCE OF IT, bounded (§4, revised): the hint says what the finding
-  // IS and points at the rest. Cut first, then framed — the BODY class runs
-  // on exactly what is shown (hints/sentence.ts says why that order is safe).
-  const factsLine = `${facts.join(" · ")}${driftLabel(drift)}${solvedLabel(context, now)}: ${quotedBody(firstSentence(claim.body), HINT_SUBSTANCE_MAX_CHARS)}`;
-  const header = input.matchedOn === "intent" ? CLAIM_INTENT_HEADER : CLAIM_HEADER;
-  return fitHint([
-    header,
-    factsLine,
-    restLine(context, input.restCount ?? 0),
-    ...intentLines(context.intent),
-  ]);
+  // IS and points at the rest — the SHOWN TEXT, the one function the hub
+  // scores relevance on too (@crosscheck/schema shownSubstance: the cut, then
+  // the BODY class; review 1006b, M4). Framed through quotedBody, which runs
+  // the same class again and changes nothing in text it already produced. No
+  // sentence with content is no substance: "", never a frame around nothing.
+  const shown = shownSubstance(claim.body);
+  if (shown.length === 0) {
+    return "";
+  }
+  const factsLine = `${facts.join(" · ")}${driftLabel(drift)}${solvedLabel(context, now)}: ${quotedBody(shown, HINT_SUBSTANCE_MAX_CHARS)}`;
+  const header = claimHeader(input.matchedOn, input.intentProvenance);
+  // ROOM FOR WHAT FOLLOWS, and the finding is not what pays for it: the
+  // sentence shown is the one the hub scored, so it is never cut shorter.
+  // The intent line goes first (fitHint drops from the end), then the title
+  // on the pointer line; when even that cannot fit, "" — the flow points.
+  const cap = reservedCap(input.reserveChars);
+  const rest = restFragment(input.restCount ?? 0, input.isRestLowerBound === true);
+  const pointerLine = [true, false]
+    .map((withTitle) => restLine(context, rest, withTitle))
+    .find((line) => [header, factsLine, line].join("\n").length <= cap);
+  return pointerLine === undefined
+    ? ""
+    : fitHint([header, factsLine, pointerLine, ...intentLines(context.intent)], cap);
 };
 
 export interface PointerHintInput {
@@ -354,6 +423,10 @@ export interface PointerHintInput {
   readonly now: Date;
   /** What the hub matched it on; absent is the prompt, as it always was. */
   readonly matchedOn?: HintMatchedOn;
+  /** Who wrote the session intent it was matched on (declared / derived). */
+  readonly intentProvenance?: string | null;
+  /** Characters the flow appends after the hint (`hintTrailerReserve`); absent reserves none. */
+  readonly reserveChars?: number;
 }
 
 /**
@@ -409,8 +482,9 @@ export const renderPointerHint = (input: PointerHintInput): string => {
           `readable with get_diagnosis ${safeId(context.id)}.`;
   // The intent BEFORE the tail: fitHint drops from the end, and of the two
   // the tail is the droppable one — the intent is what says WHAT they do.
-  const header = input.matchedOn === "intent" ? POINTER_INTENT_HEADER : POINTER_HEADER;
-  return fitHint([header, factsLine, ...intentLines(context.intent), tailLine]);
+  const header = pointerHeader(input.matchedOn, input.intentProvenance);
+  const lines = [header, factsLine, ...intentLines(context.intent), tailLine];
+  return fitBesideTrailers(lines, input.reserveChars);
 };
 
 /**
@@ -434,6 +508,8 @@ export const renderPointerHint = (input: PointerHintInput): string => {
 export const renderAnswerHint = (
   answer: AnsweredQuestion,
   now: Date,
+  /** Characters the flow appends after the hint (`hintTrailerReserve`); absent reserves none. */
+  reserveChars?: number,
 ): string => {
   const facts = [
     `- ${authorLabel(answer.answererDeveloperName)}`,
@@ -461,7 +537,7 @@ export const renderAnswerHint = (
   const tailLine =
     `It is recorded as claim ${safeId(answer.claimId)} — name that claim id as evidence ` +
     `when you record what it supports${tree}.`;
-  return fitHint([ANSWER_HEADER, answerLine, questionLine, tailLine]);
+  return fitBesideTrailers([ANSWER_HEADER, answerLine, questionLine, tailLine], reserveChars);
 };
 
 /**
