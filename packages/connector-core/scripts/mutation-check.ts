@@ -729,13 +729,14 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     // DESIGN.md §4 again, the other half: an injected claim states its trust
-    // labels. This drops the confidence check, so an unlabelled body prints.
+    // labels. This drops the confidence label, so the body prints as settled.
+    // (Retargeted by the hub hardening's strict prove: the old mutation
+    // dropped the null-check, and the guard caught only the TypeError the
+    // label line then threw, never the injection the label names.)
     label: "a hedged root cause is injected as a settled answer",
     file: `${CORE}/src/briefing/render.ts`,
-    from: `    entry.rootCauseConfidence === null ||
-    entry.rootCauseConfidence === undefined
-`,
-    to: "    entry.rootCause === undefined\n",
+    from: "  const labels = `confidence ${entry.rootCauseConfidence.toFixed(CONFIDENCE_DECIMALS)} · ${axes} · provenance declared${validityLabel}`;",
+    to: "  const labels = `${axes} · provenance declared${validityLabel}`;",
     test: `${CORE}/test/briefing-solved.test.ts`,
     because:
       "a teammate's 0.05 guess — legal, honest, and what publish_claim's own " +
@@ -7637,10 +7638,15 @@ export const MUTATIONS: readonly Mutation[
   {
     // FOUND ON THE 1.0 INTEGRATION BRANCH. Five specs each added a hub-backed
     // doctor check; sequentially, a hub that never answers cost N timeouts.
+    // Repaired by the hub hardening's strict prove: `sequentially` never
+    // existed, so the old mutation only threw a ReferenceError. The array's
+    // reads start as the literal is built, so no edit here can serialise them;
+    // this re-introduces their COST, nine timeouts before the block resolves,
+    // which is what the runtime bound in the guard measures.
     label: "doctor waits one timeout per check instead of one in total",
     file: `${CLI}/src/cli/doctor.ts`,
     from: "  ] = await Promise.all([",
-    to: "  ] = await sequentially([",
+    to: "  ] = await (async (reads) => { await Bun.sleep(9 * hubCtx.timeoutMs); return Promise.all(reads); })([",
     test: `${CLI}/test/doctor-latency.test.ts`,
     because:
       "the nine hub reads are independent, so awaiting them in turn makes " +
