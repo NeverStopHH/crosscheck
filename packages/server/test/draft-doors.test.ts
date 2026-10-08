@@ -210,6 +210,30 @@ describe("the pin doors draft, and a draft pin protects nothing", () => {
     expect((await draftsOf(harness)).map((draft) => draft.kind)).toEqual(["pin_broke"]);
   });
 
+  test("a draft pin protects nothing: suspect cannot read it, and no fence can be asked to open on it", async () => {
+    // Arrange
+    const { harness, nick } = await pinWorld();
+    await post(harness, nick, "/api/pins", pinBody("pin_draft_effect"));
+
+    // Act
+    const suspect = await harness.app.request(
+      `/api/suspect?repo=${encodeURIComponent(REPO)}&pin=pin_draft_effect`,
+      jsonRequest("GET", nick.apiKey),
+    );
+    const waiver = await post(harness, nick, "/api/waiver-requests", {
+      repo: REPO,
+      pinId: "pin_draft_effect",
+      pinVersion: 1,
+      reason: "ship it",
+      expiresAt: new Date(harness.clock.now().getTime() + 3_600_000).toISOString(),
+    });
+
+    // Assert — no pin row means no falsifier, no PROTECTED_CONFLICT, nothing to waive
+    expect(suspect.status).toBe(404);
+    expect(waiver.status).toBeGreaterThanOrEqual(400);
+    expect(await harness.db.select().from(pins)).toEqual([]);
+  });
+
   test("a break of a pin that does not exist is still 404, and drafts nothing", async () => {
     // Arrange
     const { harness, nick } = await pinWorld();
