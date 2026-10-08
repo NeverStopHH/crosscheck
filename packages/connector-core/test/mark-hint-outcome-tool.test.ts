@@ -19,6 +19,7 @@ import { rm, utimes } from "node:fs/promises";
 
 import { createDb, createServer } from "@crosscheck/server";
 import { PIN_PRESENCE_TERMINAL, hintDeliveryId } from "@crosscheck/schema";
+import { createServerConfirmingAtOnce } from "../../server/test/fixtures/immediate-confirmation.ts";
 
 import { MyHintOutcomesSchema, getMyHintOutcomes } from "../src/http/hint-outcomes.ts";
 import { prepareMcp } from "../src/mcp/context.ts";
@@ -61,6 +62,8 @@ const CORPUS_TIMEOUT_MS = 20_000;
 
 let server: ReturnType<typeof Bun.serve>;
 let oldHub: ReturnType<typeof Bun.serve>;
+/** The same database, served as a hub since human provenance (0.11): a word is only drafted. */
+let draftingHub: ReturnType<typeof Bun.serve>;
 let hostileHub: ReturnType<typeof Bun.serve>;
 /** What the hostile hub answers next; rebound per payload. */
 let hostileAnswer: (request: Request) => Response = () => Response.json({}, { status: 500 });
@@ -221,8 +224,12 @@ const mine = async () => {
 
 beforeAll(async () => {
   const db = await createDb();
-  server = Bun.serve({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
+  // Applies the agent's word at once, as every hub before 0.11 did: these
+  // tests pin how the tool answers a word that took effect.
+  server = Bun.serve({ port: 0, fetch: createServerConfirmingAtOnce({ db, adminToken: ADMIN_TOKEN }).fetch });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
+  // The SAME database behind a hub as it is since human provenance: the word only drafted.
+  draftingHub = Bun.serve({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
   // A hub from before 07 §13: every route it lacks is its own `notFound`
   // envelope (server/src/app.ts), exactly as a real older hub answers.
   oldHub = Bun.serve({
@@ -283,6 +290,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   server.stop(true);
+  draftingHub.stop(true);
   oldHub.stop(true);
   hostileHub.stop(true);
   await Promise.all(cleanups.map((path) => rm(path, { recursive: true, force: true })));
@@ -626,6 +634,23 @@ describe("mark_hint_outcome", () => {
     // Assert
     expect(result.isError).toBe(true);
     expect(result.text).toBe(OUTCOMES_NOT_SERVED);
+  });
+
+  test("human provenance: on a hub that only drafts, the agent is told it is a draft and counts for nothing — the person's view unchanged", async () => {
+    // Arrange
+    const env: Env = { ...nickEnv, CROSSCHECK_HUB_URL: `http://127.0.0.1:${String(draftingHub.port)}` };
+    const before = await mine();
+
+    // Act
+    const result = await call({ ref: KEN_CONTEXT, outcome: "not_relevant_now" }, env);
+
+    // Assert
+    expect(result.isError).toBe(false);
+    expect(result.text).toStartWith(`Drafted: the hint at ${KEN_CONTEXT}`);
+    expect(result.text).toContain("counts for nothing until the person confirms it with their passkey");
+    expect(result.text).toContain("Do not tell them it was recorded as theirs.");
+    expect(result.text).not.toContain("Recorded:");
+    expect(await mine()).toMatchObject({ followed: before.followed, overrode: before.overrode, notRelevantNow: before.notRelevantNow });
   });
 });
 
