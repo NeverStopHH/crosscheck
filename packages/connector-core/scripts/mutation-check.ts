@@ -24098,6 +24098,18 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/connection-error.test.ts`,
     because: "sync state, the statusline and the MCP tools omit the one cause a contended reset produces",
   },
+  // The reap assertion in foreign-model.test.ts used to read the fake's pid
+  // from a dump the fake writes on its first line; a deadline that fired
+  // before that line left no dump (the load-only flake). It now reads the
+  // process table, and this proves that version still sees a leak.
+  {
+    label: "a hung summarizer is left running past its deadline",
+    file: `${CORE}/src/model/runner.ts`,
+    from: "const abandonProcess = (proc: ReturnType<typeof Bun.spawn>): void => {\n  try {",
+    to: "const abandonProcess = (proc: ReturnType<typeof Bun.spawn>): void => {\n  return;\n  try {",
+    test: `${CONNECTOR}/test/foreign-model.test.ts`,
+    because: "every timed-out model run keeps its process and its pipe for the hang's whole life",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -24254,7 +24266,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/draft-nudge-hook.test.ts 2
  * PRINTS: packages/connector-claude/test/failure-hook.test.ts 2
  * PRINTS: packages/connector-claude/test/fingerprint.test.ts 1
- * PRINTS: packages/connector-claude/test/foreign-model.test.ts 1
+ * PRINTS: packages/connector-claude/test/foreign-model.test.ts 2
  * PRINTS: packages/connector-claude/test/ghost-worker.test.ts 5
  * PRINTS: packages/connector-claude/test/global-wiring-silence.test.ts 2
  * PRINTS: packages/connector-claude/test/hint-hook.test.ts 4

@@ -29,7 +29,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { chmod, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { DERIVED_CONFIDENCE_CAP } from "@crosscheck/schema";
 
@@ -63,6 +63,7 @@ import {
   spooledClaims,
 } from "./fixtures/foreign-model-harness.ts";
 import type { ForeignFixture } from "./fixtures/foreign-model-harness.ts";
+import { FOREIGN_MODEL_SCRIPT } from "../../connector-core/test/fixtures/foreign-model/binary.ts";
 
 const cleanups: (() => Promise<void>)[] = [];
 
@@ -126,6 +127,37 @@ interface SpawnEvidence {
 
 const spawnEvidence = async (run: ForeignRun): Promise<SpawnEvidence> =>
   JSON.parse(await Bun.file(run.dump).text()) as SpawnEvidence;
+
+/** `pid ppid stat command`, as `ps -o pid=,ppid=,stat=,command=` prints it. */
+const PS_ROW_PATTERN = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/;
+
+/**
+ * Live (non-zombie) children of THIS test process that are this run's fake:
+ * still the `/bin/sh` wrapper in the run's own temp dir, or already exec'd
+ * into the fake script. The runner spawns in-process, so the fake's parent
+ * is this process whether or not the fake ever ran a line.
+ */
+const liveFakesOf = async (run: ForeignRun): Promise<readonly number[]> => {
+  const ps = Bun.spawn({
+    cmd: ["ps", "-A", "-o", "pid=,ppid=,stat=,command="],
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const [table] = await Promise.all([new Response(ps.stdout).text(), ps.exited]);
+  const markers = [dirname(run.dump), FOREIGN_MODEL_SCRIPT];
+  return table.split("\n").flatMap((line) => {
+    const row = PS_ROW_PATTERN.exec(line);
+    if (row === null) {
+      return [];
+    }
+    const [, pid = "", ppid = "", stat = "", command = ""] = row;
+    const isOurs =
+      Number(ppid) === process.pid &&
+      !stat.includes("Z") &&
+      markers.some((marker) => command.includes(marker));
+    return isOurs ? [Number(pid)] : [];
+  });
+};
 
 const costOf = (fixture: ForeignFixture) =>
   readSummarizerCost(fixture.home, FOREIGN_HUB_URL, FOREIGN_REPO_ID);
@@ -435,20 +467,19 @@ describe("a foreign model that fails, fails SAFELY and VISIBLY", () => {
     expect(await spooledClaims(run.fixture)).toHaveLength(0);
 
     // Assert 3: the escalation actually reaped the process rather than
-    // leaving it holding the pipe. The pid is the fake's own, written to the
-    // dump before it slept.
-    const { pid } = await spawnEvidence(run);
+    // leaving it holding the pipe. Read from the PROCESS TABLE, not from the
+    // fake's own dump: under CPU contention the 400 ms deadline can fire
+    // before the fake has run its first line, so the dump the pid used to
+    // come from was never written (ENOENT, the load-only flake). A child of
+    // this process running this run's wrapper or the fake is found whether
+    // or not it ever got to start.
     const deadline = Date.now() + REAPED_BY_MS;
-    let alive = true;
-    while (alive && Date.now() < deadline) {
-      try {
-        process.kill(pid, 0);
-        await Bun.sleep(REAP_POLL_MS);
-      } catch {
-        alive = false;
-      }
+    let live = await liveFakesOf(run);
+    while (live.length > 0 && Date.now() < deadline) {
+      await Bun.sleep(REAP_POLL_MS);
+      live = await liveFakesOf(run);
     }
-    expect(alive).toBe(false);
+    expect(live).toEqual([]);
   });
 
   test("a wrapper that exits non-zero says so on the cost line", async () => {
