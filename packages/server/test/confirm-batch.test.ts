@@ -9,6 +9,7 @@
  * authenticator, a passkey enrolled moments ago (Q19: no cool-off for this).
  */
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 
 import { hintOutcomes, humanConfirmationItems, humanConfirmations, humanDrafts, pilotMarks } from "../src/db/schema.ts";
 import { dataOf, errorCodeOf } from "./fixtures/ceremony-driver.ts";
@@ -33,6 +34,9 @@ import {
 } from "./fixtures/hint-outcome-world.ts";
 import type { OutcomeWorld } from "./fixtures/hint-outcome-world.ts";
 import { TEST_ADMIN_TOKEN, TEST_WEBAUTHN_ORIGIN, jsonRequest } from "./helpers.ts";
+
+/** The digest half of a challenge: `nonce ‖ SHA-256(purpose, subject, terms)` (services/webauthn.ts). */
+const SHA256_BYTES = 32;
 
 const agentSays = async (world: OutcomeWorld, ref: string, outcome: string, reason?: string): Promise<void> => {
   const response = await recordOutcome(world, world.nick, {
@@ -429,6 +433,53 @@ describe("the batch is frozen: what was reviewed is what is signed", () => {
     expect(discard.digest).not.toBe(confirm.digest);
     expect(sameCeremony.status).toBe(422);
     expect(otherCeremony.status).toBe(422);
+    expect(await outcomesOf(world)).toEqual([]);
+    expect(await world.harness.db.select().from(humanConfirmations)).toEqual([]);
+  });
+
+  test("cross-batch, one layer alone: a signature over the OTHER batch's own terms, sent on this batch's ceremony, is refused", async () => {
+    // Arrange: the ceremony was started for the DISCARD batch; the answer is
+    // signed over exactly what the CONFIRM batch's challenge would be on that
+    // ceremony's nonce — so only the ceremony's own subject still tells the two
+    // apart (the challenge binding is not what refuses it here).
+    const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
+    await agentSays(world, KEN_CONTEXT, "followed");
+    const confirmer = await prepareConfirmer(world.harness, world.nick);
+    const pending = await pendingOf(world.harness, world.nick);
+    const formWith = async (decision: "confirm" | "discard") =>
+      dataOf<FormedBatch>(
+        await formBatch(world.harness, confirmer.viewer, {
+          fingerprint: pending.fingerprint,
+          items: pending.drafts.map((draft) => ({ draftId: draft.id, version: draft.version, decision })),
+        }),
+      );
+    const discard = await formWith("discard");
+    const confirm = await formWith("confirm");
+    const discardOptions = await dataOf<{ ceremonyId: string; publicKey: { challenge: string } }>(
+      await ceremony(world.harness, confirmer.viewer, "options", { action: "confirm_batch", subjectId: discard.batchId }),
+    );
+    const issued = Buffer.from(discardOptions.publicKey.challenge, "base64url");
+    const nonce = issued.subarray(0, issued.length - SHA256_BYTES);
+    const confirmTerms = JSON.stringify([["batchDigest", confirm.digest]]);
+    const confirmDigest = createHash("sha256").update(JSON.stringify(["confirm_batch", confirm.batchId, confirmTerms])).digest();
+    const forged = Buffer.concat([nonce, confirmDigest]).toString("base64url");
+
+    // Act
+    const answered = await ceremony(world.harness, confirmer.viewer, "verify", {
+      action: "confirm_batch",
+      subjectId: confirm.batchId,
+      ceremonyId: discardOptions.ceremonyId,
+      response: softAuthenticationResponse({
+        credential: confirmer.credential,
+        challenge: forged,
+        origin: TEST_WEBAUTHN_ORIGIN,
+        rpId: "localhost",
+        signCount: confirmer.nextCount(),
+      }),
+    });
+
+    // Assert
+    expect(answered.status).toBe(422);
     expect(await outcomesOf(world)).toEqual([]);
     expect(await world.harness.db.select().from(humanConfirmations)).toEqual([]);
   });
