@@ -168,6 +168,23 @@ export {
 } from "./passkey.ts";
 export type { EnrolmentSource, PasskeyRevoker } from "./passkey.ts";
 export {
+  DRAFT_DECISIONS,
+  DRAFT_KINDS,
+  DRAFT_PROVENANCES,
+  HUMAN_PROVENANCE,
+  LEGACY_PROVENANCE,
+  PROVENANCE_CLASSES,
+  STORED_JUDGEMENT_PROVENANCES,
+  isHumanProvenance,
+} from "./provenance.ts";
+export type {
+  DraftDecision,
+  DraftKind,
+  DraftProvenance,
+  ProvenanceClass,
+  StoredProvenance,
+} from "./provenance.ts";
+export {
   MAX_PILOT_LABEL_REASON_CHARS,
   MAX_PILOT_LABEL_REASON_UTF16_UNITS,
   PilotMarkSchema,
