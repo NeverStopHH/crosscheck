@@ -15,9 +15,11 @@
  * the other two. Those run on every pull request.
  *
  * Each guarding test is run UNMUTATED first, and an already-red one aborts the
- * run. Without that, `caught: exitCode !== 0` reports a defect as detected when
- * the guard was simply broken to begin with — see assertGuardIsGreen for the
- * container in which this script did exactly that.
+ * run. Without that, a failing guard reports a defect as detected when the
+ * guard was simply broken to begin with — see assertGuardIsGreen for the
+ * container in which this script did exactly that. And a mutated run counts
+ * as caught only when it failed on an assertion or a thrown error, never on a
+ * timeout or a silent death (failedOnAssertion).
  *
  * Every file is restored in a `finally`, so a run that dies half-way leaves the
  * tree as it found it. If one ever does not, `git checkout -- packages .github`
@@ -19658,21 +19660,59 @@ const readOriginal = async (mutation: Mutation): Promise<string> => {
   return original;
 };
 
-const runTest = async (testPath: string): Promise<number> => {
+/**
+ * The per-test timeout of every run here: the unit-test job's own (ci.yml,
+ * PR #74), so a guard slow on a shared runner is not red for being slow.
+ */
+const TEST_TIMEOUT_MS = 20_000;
+
+interface TestRun {
+  readonly exitCode: number;
+  readonly output: string;
+}
+
+const runTest = async (testPath: string): Promise<TestRun> => {
   const proc = Bun.spawn({
     // process.execPath, not "bun": this has to work from a checkout where the
     // runtime is not on PATH, which is how it is invoked in CI.
-    cmd: [process.execPath, "test", testPath],
+    cmd: [process.execPath, "test", `--timeout=${String(TEST_TIMEOUT_MS)}`, testPath],
     cwd: REPO_ROOT,
-    stdout: "ignore",
-    stderr: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
   });
-  return proc.exited;
+  const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+  return { exitCode: await proc.exited, output: `${stdout}\n${stderr}` };
+};
+
+/**
+ * A CATCH IS AN ASSERTION OR A THROWN ERROR — never a test that only timed
+ * out, nor a process that died saying nothing: on a loaded runner either one
+ * turns a decorative guard into a "caught". Read the way bun lays its report
+ * out: an assertion or a throw prints `error: …` before its `(fail)` line; a
+ * timeout prints `^ this test timed out after …` after it; an error while a
+ * file loads prints `# Unhandled error between tests` and no `(fail)` at all.
+ */
+const failedOnAssertion = (output: string): boolean => {
+  const lines = output.split("\n");
+  let pendingError = false;
+  for (const [index, line] of lines.entries()) {
+    if (line.startsWith("error: ")) {
+      pendingError = true;
+    } else if (line.startsWith("(fail) ")) {
+      if (pendingError && !/^\s*\^ this test timed out after \d+ms\./.test(lines[index + 1] ?? "")) {
+        return true;
+      }
+      pendingError = false;
+    }
+  }
+  return output.includes("# Unhandled error between tests") && lines.some((line) => line.startsWith("error: "));
 };
 
 interface Outcome {
   readonly label: string;
   readonly caught: boolean;
+  /** The mutated run failed, but only by timing out or dying silently. */
+  readonly failedWithoutAssertion: boolean;
 }
 
 /**
@@ -20076,7 +20116,7 @@ const assertGuardIsGreen = async (testPath: string): Promise<void> => {
   if (greenGuards.get(testPath) === true) {
     return;
   }
-  const exitCode = await runTest(testPath);
+  const { exitCode } = await runTest(testPath);
   greenGuards.set(testPath, exitCode === 0);
   if (exitCode !== 0) {
     throw new Error(
@@ -20097,8 +20137,9 @@ const applyAndRun = async (mutation: Mutation): Promise<Outcome> => {
   await assertGuardIsGreen(mutation.test);
   try {
     await Bun.write(path, original.replace(mutation.from, mutation.to));
-    const exitCode = await runTest(mutation.test);
-    return { label: mutation.label, caught: exitCode !== 0 };
+    const run = await runTest(mutation.test);
+    const caught = run.exitCode !== 0 && failedOnAssertion(run.output);
+    return { label: mutation.label, caught, failedWithoutAssertion: run.exitCode !== 0 && !caught };
   } finally {
     await Bun.write(path, original);
   }
@@ -20123,7 +20164,9 @@ const main = async (): Promise<number> => {
     process.stdout.write(
       outcome.caught
         ? `  caught by ${mutation.test}\n`
-        : `::error::NOT CAUGHT by ${mutation.test} — ${mutation.because}\n`,
+        : outcome.failedWithoutAssertion
+          ? `::error::NOT CAUGHT by ${mutation.test} — it failed only by timing out or dying silently, which is no assertion — ${mutation.because}\n`
+          : `::error::NOT CAUGHT by ${mutation.test} — ${mutation.because}\n`,
     );
   }
   const missed = outcomes.filter((outcome) => !outcome.caught);
