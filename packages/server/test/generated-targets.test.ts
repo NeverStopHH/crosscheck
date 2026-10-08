@@ -7,11 +7,11 @@
  * the same shape with ordinary files must speak, or the silence proves
  * nothing.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { and, eq } from "drizzle-orm";
 
 import { GHOST_HOT_TARGET_MAX_CONTEXTS, GHOST_MAX_CONTEXT_TARGETS } from "../src/constants.ts";
-import { workContextTargets } from "../src/db/schema.ts";
+import { workContextTargets, workContexts } from "../src/db/schema.ts";
 import {
   addTestDeveloperWithSession,
   createHarnessWithSession,
@@ -24,6 +24,14 @@ import {
   VALID_SESSION_BODY,
 } from "./helpers.ts";
 import type { TestDeveloper, TestHarness } from "./helpers.ts";
+
+/**
+ * Every case boots its own PGlite hub, and the two hot-count cases seed more
+ * than twenty contexts: on a loaded machine one boot alone was measured at
+ * 5.25 s, past bun's 5 s default, which reads as a red guard that is not one.
+ */
+const CASE_TIMEOUT_MS = 30_000;
+setDefaultTimeout(CASE_TIMEOUT_MS);
 
 const REPO = VALID_SESSION_BODY.repo;
 const MY_SESSION = "ses_mine";
@@ -238,6 +246,17 @@ describe("ghost checks: a generated file is never overlap evidence", () => {
     expect(await ghostRows(fx.harness, fx.me)).toEqual([]);
   });
 
+  test("MY side's label is enough too: my generated file is never probed", async () => {
+    // Arrange: my rows carry the attribute label, theirs are unlabelled.
+    const fx = await setup();
+    const theirs = files(["packages/proto/src/messages.ts", "packages/proto/src/service.ts"]);
+    const mine = theirs.map((target) => ({ ...target, generated: "attribute" }));
+    await bothCarry(fx, mine, theirs);
+
+    // Act + Assert
+    expect(await ghostRows(fx.harness, fx.me)).toEqual([]);
+  });
+
   test("a row that qualified on ordinary files counts the generated ones beside them, and names none", async () => {
     // Arrange
     const fx = await setup();
@@ -331,6 +350,36 @@ describe("conference: a generated file never pairs two contexts", () => {
     expect(paired).toHaveLength(1);
     expect(paired[0]?.sharedTargetCount).toBe(2);
     expect(paired[0]?.generatedSharedCount).toBe(GENERATED.length);
+  });
+
+  test("ONE side's label keeps the pair apart: their generated file is no member of the overlap", async () => {
+    // Arrange: my rows unlabelled, theirs labelled.
+    const fx = await setup();
+    const mine = files(["packages/proto/src/messages.ts", "packages/proto/src/service.ts"]);
+    await bothCarry(fx, mine, mine.map((target) => ({ ...target, generated: "attribute" })));
+
+    // Act + Assert
+    expect(await conferencePairs(fx.harness, fx.me)).toEqual([]);
+  });
+
+  test("the conference's hot count counts evidence only: generated copies never make a shared file hot", async () => {
+    // Arrange: we share two ordinary files; one of them is also carried, as a
+    // labelled generated file, by more contexts than the hot bar allows —
+    // LANDED, so they are off the page and change nothing but the rarity.
+    const fx = await setup();
+    await bothCarry(fx, files(PLAN));
+    const [hotIfCounted] = PLAN;
+    for (let index = 0; index <= GHOST_HOT_TARGET_MAX_CONTEXTS; index += 1) {
+      const id = `wc_filler_${String(index)}`;
+      await seed(fx.harness, fx.me, contextRecords(id, MY_SESSION, [{ kind: "file", value: hotIfCounted as string, generated: "header" }]));
+      await fx.harness.db.update(workContexts).set({ landedAt: new Date() }).where(eq(workContexts.id, id));
+    }
+
+    // Act
+    const pairs = await conferencePairs(fx.harness, fx.me);
+
+    // Assert
+    expect(pairs.map((pair) => pair.sharedTargetCount)).toEqual([2]);
   });
 });
 

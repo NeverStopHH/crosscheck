@@ -706,8 +706,8 @@ export const ingestTarget = async (
       .update(workContextTargets)
       .set({
         lastSeenAt: deps.now(),
-        generated,
         source: sql`case when ${workContextTargets.source} NOT IN (${source}, 'both') then 'both' else ${workContextTargets.source} end`,
+        generated,
       })
       .where(
         and(
