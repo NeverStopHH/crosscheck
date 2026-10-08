@@ -24490,6 +24490,23 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/forwarded-trust.test.ts`,
     because: "a hop between proxies decides how the browser reached the first one",
   },
+  // Review of the hub hardening, X3: loopback as a dual-stack socket spells it.
+  {
+    label: "a mapped IPv6 loopback peer is not loopback",
+    file: `${SERVER}/src/http/peer.ts`,
+    from: '  address === "::1" || /^127\\./.test(address) || /^::ffff:127\\./i.test(address);',
+    to: '  address === "::1" || /^127\\./.test(address);',
+    test: `${SERVER}/test/ui-ceremony-localhost.test.ts`,
+    because: "on a dual-stack socket the hub's own browser and tailscale serve read as remote: no localhost passkey, no Secure cookie",
+  },
+  {
+    label: "a mapped IPv6 loopback peer's forwarded proto is ignored",
+    file: `${SERVER}/src/http/peer.ts`,
+    from: '  address === "::1" || /^127\\./.test(address) || /^::ffff:127\\./i.test(address);',
+    to: '  address === "::1" || /^127\\./.test(address);',
+    test: `${SERVER}/test/forwarded-trust.test.ts`,
+    because: "tailscale serve on a dual-stack socket loses the session cookie's Secure flag",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -24862,7 +24879,7 @@ interface Outcome {
  * PRINTS: packages/server/test/drafts.test.ts 4
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/fence-waivers.test.ts 1
- * PRINTS: packages/server/test/forwarded-trust.test.ts 10
+ * PRINTS: packages/server/test/forwarded-trust.test.ts 11
  * PRINTS: packages/server/test/ghost-overlap.test.ts 7
  * PRINTS: packages/server/test/hint-content-floor.test.ts 6
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
@@ -24941,7 +24958,7 @@ interface Outcome {
  * PRINTS: packages/server/test/target-last-seen.test.ts 1
  * PRINTS: packages/server/test/team-settings.test.ts 9
  * PRINTS: packages/server/test/ui-approvals.test.ts 11
- * PRINTS: packages/server/test/ui-ceremony-localhost.test.ts 5
+ * PRINTS: packages/server/test/ui-ceremony-localhost.test.ts 6
  * PRINTS: packages/server/test/ui-feed.test.ts 3
  * PRINTS: packages/server/test/ui-passkeys.test.ts 9
  * PRINTS: packages/server/test/ui-work-context.test.ts 2

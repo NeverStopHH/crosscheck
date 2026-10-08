@@ -125,6 +125,35 @@ describe("a request through a trusted proxy takes no passkey at localhost", () =
   });
 });
 
+describe("loopback as a dual-stack socket spells it (review X3)", () => {
+  const MAPPED_LOOPBACK = "::ffff:127.0.0.1";
+
+  test("the hub's own browser on a mapped loopback peer still runs a localhost ceremony", async () => {
+    // Arrange
+    const { harness, nick, viewer } = await signedIn({ peerAddress: MAPPED_LOOPBACK });
+    const { code } = await mintEnrolmentCode({
+      db: harness.db,
+      developerId: nick.developerId,
+      source: "admin",
+      now: harness.clock.now(),
+    });
+
+    // Act
+    const response = await ceremony(harness, viewer, "options", { action: "enrol", code, label: "MacBook" });
+
+    // Assert
+    expect(response.status).toBe(200);
+  });
+
+  test("tailscale serve on a mapped loopback peer is a trusted proxy: localhost is off", async () => {
+    const codes = await refusalsAt({ peerAddress: MAPPED_LOOPBACK }, TEST_WEBAUTHN_ORIGIN, {
+      "X-Forwarded-For": TAILNET_CLIENT,
+    });
+
+    expect(codes).toEqual(everyOne("localhost_origin_off"));
+  });
+});
+
 describe("the hub's own browser keeps localhost where nothing else reaches the hub", () => {
   test("no https origin and no proxy: a localhost enrolment ceremony still starts", async () => {
     // Arrange

@@ -87,6 +87,10 @@ describe("the login cookie's Secure flag believes X-Forwarded-Proto only from a 
   test("from a listed proxy, the Docker kit's Caddy, the header counts", async () => {
     expect(await loginCookieVia({ peerAddress: CADDY_PEER, trustedProxies: "172.18.0.0/16" })).toContain("; Secure");
   });
+
+  test("from loopback as a dual-stack socket spells it, ::ffff:127.0.0.1, the header counts (review X3)", async () => {
+    expect(await loginCookieVia({ peerAddress: "::ffff:127.0.0.1" })).toContain("; Secure");
+  });
 });
 
 describe("an RFC 7239-only proxy's Forwarded: proto= counts the same way (review L6)", () => {
