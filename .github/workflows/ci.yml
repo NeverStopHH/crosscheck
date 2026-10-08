@@ -168,7 +168,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 3062
+    # PRINTS: 3064
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -270,7 +270,7 @@ jobs:
     # PRINTS: hooks/post-tool-use.ts 15
     # PRINTS: hooks/pre-tool-use.ts 38
     # PRINTS: hooks/presence-refresh.ts 2
-    # PRINTS: hooks/rest-recheck.ts 11
+    # PRINTS: hooks/rest-recheck.ts 12
     # PRINTS: hooks/runner.ts 15
     # PRINTS: hooks/session-end.ts 1
     # PRINTS: hooks/session-start.ts 11
@@ -427,6 +427,7 @@ jobs:
     # PRINTS: state/loss-refusals.ts 1
     # PRINTS: state/omission-ledger.ts 3
     # PRINTS: state/presence-cache.ts 1
+    # PRINTS: state/rest-omissions.ts 1
     # PRINTS: state/seq-cost.ts 8
     # PRINTS: state/session-lineage.ts 3
     # PRINTS: state/session-reap.ts 11
@@ -856,7 +857,8 @@ jobs:
     # PRINTS: repo-identity.ts 2
     # PRINTS: repo-path.ts 1
     # PRINTS: report.ts 11
-    # PRINTS: rest-recheck.ts 11
+    # PRINTS: rest-omissions.ts 1
+    # PRINTS: rest-recheck.ts 12
     # PRINTS: retention-registry.ts 11
     # PRINTS: retention.ts 24
     # PRINTS: revalidate.ts 2

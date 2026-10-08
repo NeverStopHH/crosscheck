@@ -27356,7 +27356,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "init installs no SubagentStop hook",
     file: `${CONNECTOR}/src/cli/settings-merge.ts`,
-    from: "      SubagentStop: group(`${prefix} hook subagent-stop`, undefined, true),\n",
+    from: "      SubagentStop: [group(`${prefix} hook subagent-stop`, undefined, true)],\n",
     to: "",
     test: `${CONNECTOR}/test/settings-merge.test.ts`,
     because: "doctor demands an event init never writes, and a fresh install fails its own health check",
@@ -30301,6 +30301,25 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/collision-rest-reap.test.ts`,
     because: "every booked rest reads back as a malformed line, and no surface names it",
   },
+  // The merge follow-up: a rest whose recheck never ran is ALSO an omission —
+  // the local "the person was not told" ledger (core state/omission-ledger.ts)
+  // beside the briefings and landed-change checks.
+  {
+    label: "a rest whose recheck never ran is never booked as an omission",
+    file: `${CONNECTOR}/src/hooks/rest-recheck.ts`,
+    from: "  await recordRestOmission(ctx.config.home, { key: ctx.repoKey, reason: \"rest_unchecked\", now: ctx.now() });\n",
+    to: "",
+    test: `${CONNECTOR}/test/rest-recheck-guarantee.test.ts`,
+    because: "the machine's own count of moments its person may not have been told leaves out every collision it never rechecked",
+  },
+  {
+    label: "the rest omission ledger knows no reason, and reads every booking back as nothing",
+    file: `${CORE}/src/state/rest-omissions.ts`,
+    from: "export const REST_OMISSION_REASONS = [\"rest_unchecked\"] as const;",
+    to: "export const REST_OMISSION_REASONS = [] as const;",
+    test: `${CONNECTOR}/test/rest-recheck-guarantee.test.ts`,
+    because: "the lines are written and no read counts them",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -30507,7 +30526,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/recovery-epoch.test.ts 2
  * PRINTS: packages/connector-claude/test/recovery-losses.test.ts 1
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
- * PRINTS: packages/connector-claude/test/rest-recheck-guarantee.test.ts 13
+ * PRINTS: packages/connector-claude/test/rest-recheck-guarantee.test.ts 15
  * PRINTS: packages/connector-claude/test/resumed-session.test.ts 10
  * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
  * PRINTS: packages/connector-claude/test/settings-merge-removal.test.ts 1

@@ -18,6 +18,7 @@ import { COLLISION_RELAY_SENTENCE, collisionKey } from "@crosscheck/connector-co
 import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import { TURN_END_RECHECK_MAX_FILES } from "@crosscheck/connector-core/constants.ts";
 import { readCaptureLosses } from "@crosscheck/connector-core/state/loss-ledger.ts";
+import { readRestOmissions } from "@crosscheck/connector-core/state/rest-omissions.ts";
 import { readSessionState, updateSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { activeTeammateSession } from "../../connector-core/test/fixtures/hint-hub.ts";
 import {
@@ -80,6 +81,10 @@ const restLosses = async (fix: CollisionFixture): Promise<{ readonly total: numb
   return { total: losses.byKind["rest_unchecked"] ?? 0, byDetail };
 };
 
+/** The local omission ledger's `rest_unchecked` lines for this repo: one per booking (core state/rest-omissions.ts). */
+const restOmissions = async (fix: CollisionFixture): Promise<number> =>
+  (await readRestOmissions(fix.home, repoKey(fix.hub.url, REPO_ID), new Date())).byReason.rest_unchecked;
+
 /** A session whose edits settled `files` with Nick on them: each asked about, told, resting, and owed a recheck. */
 const settled = async (label: string, files: readonly string[] = [OVERLAP_FILE]): Promise<CollisionFixture> => {
   const fix = await collisionFixture(label, BEHAVIOUR_TIMING);
@@ -120,6 +125,7 @@ describe("a crash between the edit and the turn's end (round 3, F-M2)", () => {
     expect(fix.hub.calls.tripwire).toBe(before + 1);
     expect(await owedFiles(fix)).toEqual([]);
     expect((await restLosses(fix)).total).toBe(0);
+    expect(await restOmissions(fix)).toBe(0);
   });
 
   test("a prompt that cannot reach the hub books each unpaid rest as rest_unchecked, once per file", async () => {
@@ -132,8 +138,10 @@ describe("a crash between the edit and the turn's end (round 3, F-M2)", () => {
     await runHook("user-prompt-submit", promptPayload(fix.repo), fix.env);
     await runHook("user-prompt-submit", promptPayload(fix.repo), fix.env);
 
-    // Assert
+    // Assert: two files in the capture-loss ledger, one booking in the local
+    // omission ledger (the person was not told, once)
     expect(await restLosses(fix)).toEqual({ total: 2, byDetail: { "user-prompt-submit": 2 } });
+    expect(await restOmissions(fix)).toBe(1);
     expect(await owedFiles(fix)).toEqual([]);
   });
 });
@@ -326,5 +334,6 @@ describe("a session that ends owing rechecks (round 3, F-M2)", () => {
 
     // Assert
     expect(await restLosses(fix)).toEqual({ total: 2, byDetail: { "session-end": 2 } });
+    expect(await restOmissions(fix)).toBe(1);
   });
 });

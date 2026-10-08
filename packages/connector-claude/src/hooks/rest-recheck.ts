@@ -31,6 +31,7 @@ import { getTripwireSessions } from "@crosscheck/connector-core/http/hub.ts";
 import type { CoverageRecord } from "@crosscheck/connector-core/http/coverage.ts";
 import type { TripwireSession } from "@crosscheck/connector-core/http/hub.ts";
 import { recordCaptureLoss } from "@crosscheck/connector-core/state/loss-ledger.ts";
+import { recordRestOmission } from "@crosscheck/connector-core/state/rest-omissions.ts";
 import {
   newCollisionKeys,
   owedRests,
@@ -137,15 +138,26 @@ export const recheckRests = async (
     return passFieldsOf(next) === passFieldsOf(fresh) ? null : next;
   });
   if (isWritten && booked.value > 0) {
-    await recordCaptureLoss(ctx.config.home, {
-      kind: "rest_unchecked",
-      count: booked.value,
-      key: ctx.repoKey,
-      detail: policy.detail,
-      now: ctx.now(),
-    });
+    await bookUncheckedRests(ctx, booked.value, policy.detail);
   }
   return isWritten ? told.value : [];
+};
+
+/**
+ * THE ONE BOOKING PATH for rests whose recheck never ran: the capture-loss
+ * ledger (`rest_unchecked`, per file — it travels to the hub's coverage) and
+ * the local omission ledger (one line per booking — the machine's count of
+ * moments its person may not have been told; core state/rest-omissions.ts).
+ */
+const bookUncheckedRests = async (ctx: HookContext, count: number, detail: string): Promise<void> => {
+  await recordCaptureLoss(ctx.config.home, {
+    kind: "rest_unchecked",
+    count,
+    key: ctx.repoKey,
+    detail,
+    now: ctx.now(),
+  });
+  await recordRestOmission(ctx.config.home, { key: ctx.repoKey, reason: "rest_unchecked", now: ctx.now() });
 };
 
 /**
@@ -203,13 +215,7 @@ export const bookOwedRestsAtEnd = async (ctx: HookContext, detail: string): Prom
       return owed.value === 0 ? null : withRestsDroppedBooked({ ...fresh, tripwireCheckedFiles: [] });
     });
     if (isWritten) {
-      await recordCaptureLoss(ctx.config.home, {
-        kind: "rest_unchecked",
-        count: owed.value,
-        key: ctx.repoKey,
-        detail,
-        now: ctx.now(),
-      });
+      await bookUncheckedRests(ctx, owed.value, detail);
     }
   } catch {
     // Fail open: an unbooked debt stays in the state file, where the reaper books it.
