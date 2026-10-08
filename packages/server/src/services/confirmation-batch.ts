@@ -48,9 +48,20 @@ import type { Db, DbTransaction } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 import type { CeremonyOwner } from "./webauthn.ts";
 
-/** Bounds on what one hub holds: a session keeps its newest few, the hub refuses past its cap. */
-const MAX_BATCHES_PER_SESSION = 4;
-const MAX_BATCHES = 1024;
+/**
+ * BOUNDS ON WHAT ONE HUB HOLDS (review M3), every one met by EVICTION, never
+ * by refusing: a session keeps its newest few; a developer, across all their
+ * sessions, their newest few; at the hub's bound the oldest batch of whoever
+ * holds the most goes. Sessions cost one login with the key, so the
+ * developer's bound is what keeps one member's agent from filling the hub.
+ */
+export interface BatchLimits {
+  readonly perSession: number;
+  readonly perDeveloper: number;
+  readonly total: number;
+}
+
+export const BATCH_LIMITS: BatchLimits = { perSession: 4, perDeveloper: 8, total: 1024 };
 
 const MAX_ID_CHARS = 200;
 const SHA256_HEX = /^[0-9a-f]{64}$/;
@@ -113,7 +124,7 @@ export type BatchRefusal =
   | "reason_too_long"
   | "reason_unstorable"
   | "reason_secret"
-  | "too_many_batches"
+  | "nothing_to_sign"
   | "unknown_batch"
   | "item_refused";
 
@@ -127,7 +138,7 @@ export const BATCH_SENTENCE: Readonly<Record<BatchRefusal, string>> = {
   reason_unstorable: "that reason holds a character the hub cannot store — nothing was confirmed",
   reason_secret:
     "a reason looks like it holds a secret (a key, a token, a password), so nothing was confirmed — say it again without it",
-  too_many_batches: "too many unconfirmed batches on this hub — finish one, or wait five minutes",
+  nothing_to_sign: "these decisions leave everything for later, so there is nothing to sign — choose confirm or discard for at least one",
   unknown_batch: "that batch was already confirmed, expired, or was formed in another browser session — reload the page",
   item_refused: "one of these drafts can no longer be recorded, so nothing was confirmed — reload the page to see which",
 };
@@ -318,7 +329,7 @@ const recordConfirmation = async (
   }
 };
 
-export const createBatchStore = (nowMs: () => number) => {
+export const createBatchStore = (nowMs: () => number, limits: BatchLimits = BATCH_LIMITS) => {
   const batches = new Map<string, FrozenBatch>();
 
   const purgeExpired = (): void => {
@@ -330,12 +341,35 @@ export const createBatchStore = (nowMs: () => number) => {
     }
   };
 
-  /** Make room for one more of the session's batches by dropping its oldest — never another session's. */
-  const makeRoom = (owner: CeremonyOwner): void => {
-    const own = [...batches.values()].filter((batch) => isOwnedBy(batch, owner));
-    if (own.length >= MAX_BATCHES_PER_SESSION && own[0] !== undefined) {
-      batches.delete(own[0].id);
+  /** Drop the oldest batch `matches` selects when it holds `bound` or more (the map keeps forming order). */
+  const evictOldestPast = (matches: (batch: FrozenBatch) => boolean, bound: number): void => {
+    const held = [...batches.values()].filter(matches);
+    if (held.length >= bound && held[0] !== undefined) {
+      batches.delete(held[0].id);
     }
+  };
+
+  /** At the hub's bound, the oldest batch of the developer holding the most goes — never the newcomer's turn. */
+  const evictFromHeaviest = (): void => {
+    if (batches.size < limits.total) {
+      return;
+    }
+    const held = new Map<string, number>();
+    for (const batch of batches.values()) {
+      held.set(batch.owner.developerId, (held.get(batch.owner.developerId) ?? 0) + 1);
+    }
+    const most = Math.max(...held.values());
+    const victim = [...batches.values()].find((batch) => held.get(batch.owner.developerId) === most);
+    if (victim !== undefined) {
+      batches.delete(victim.id);
+    }
+  };
+
+  /** Make room for one more batch of `owner`'s: their session's oldest, their own oldest, then the heaviest holder's. */
+  const makeRoom = (owner: CeremonyOwner): void => {
+    evictOldestPast((batch) => isOwnedBy(batch, owner), limits.perSession);
+    evictOldestPast((batch) => batch.owner.developerId === owner.developerId, limits.perDeveloper);
+    evictFromHeaviest();
   };
 
   /**
@@ -366,11 +400,12 @@ export const createBatchStore = (nowMs: () => number) => {
       }
       items.push({ draft, draftDigest: draftDigest(draft), decision: edit.decision, content: decided.content });
     }
+    // Nothing confirmed and nothing discarded: there is nothing to sign, and nothing to hold (review M3).
+    if (!items.some((item) => item.decision !== "keep")) {
+      return { refusal: "nothing_to_sign" };
+    }
     purgeExpired();
     makeRoom(owner);
-    if (batches.size >= MAX_BATCHES) {
-      return { refusal: "too_many_batches" };
-    }
     const formedAt = deps.now();
     const batch: FrozenBatch = Object.freeze({
       id: `hb_${randomUUID()}`,
