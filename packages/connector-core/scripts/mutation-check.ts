@@ -23541,8 +23541,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a compact tells the person about the same teammate's work again",
     file: `${CORE}/src/state/session-state.ts`,
-    from: "        ...(previous.collisionNotices === undefined ? {} : { collisionNotices: previous.collisionNotices }),",
-    to: "        ...({}),",
+    from: "  ...(previous.collisionNotices === undefined ? {} : { collisionNotices: previous.collisionNotices }),",
+    to: "  ...({}),",
     test: `${CORE}/test/collision-notice.test.ts`,
     because: "every compact and resume re-fires SessionStart inside the same session and repeats the ghost notice",
   },
@@ -24227,7 +24227,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a compact drops the relay's drop tally",
     file: `${CORE}/src/state/session-state.ts`,
-    from: "        ...(previous.collisionRelayDropped === undefined ? {} : { collisionRelayDropped: previous.collisionRelayDropped }),\n",
+    from: "  ...(previous.collisionRelayDropped === undefined ? {} : { collisionRelayDropped: previous.collisionRelayDropped }),\n",
     to: "",
     test: `${CORE}/test/collision-state-eviction.test.ts`,
     because: "groups dropped before a compact are never counted to the main thread after it",
@@ -24598,6 +24598,33 @@ export const MUTATIONS: readonly Mutation[
     to: "  const teammates = groupTeammates(entries, now, personText);",
     test: `${CONNECTOR}/test/statusline-person-strip.test.ts`,
     because: "a teammate whose display name is symbols alone reads as 'no teammates on this repo'",
+  },
+  // ── Review of feat/collision-visible, round 3, F-L5: a compact under a busy lock ──
+  {
+    label: "a compact under a busy state lock drops the relay queue and the told-record",
+    file: `${CORE}/src/state/session-state.ts`,
+    from:
+      "    const unlocked = await readSessionState(home, state.hostSessionKey);\n" +
+      "    await writeSessionState(home, withCarriedCollisions(state, unlocked));\n",
+    to: "    await writeSessionState(home, state);\n",
+    test: `${CORE}/test/collision-publish-busy-lock.test.ts`,
+    because: "a subagent's hit waiting for the main thread is never said, and a ghost row already told is told again",
+  },
+  {
+    label: "a busy-lock compact carries collisions from a state file bound to another repo",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "): SessionStateInput => (!isSameBinding(previous, state) ? state : { ...state, ...collisionFieldsOf(previous) });",
+    to: "): SessionStateInput => (previous === null ? state : { ...state, ...collisionFieldsOf(previous) });",
+    test: `${CORE}/test/collision-publish-busy-lock.test.ts`,
+    because: "another repo's teammates are relayed and counted as this session's",
+  },
+  {
+    label: "a busy-lock compact carries the sequence pair from an unlocked read",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "withCarriedCollisions(state, unlocked)",
+    to: "withCarriedCapture(state, unlocked)",
+    test: `${CORE}/test/collision-publish-busy-lock.test.ts`,
+    because: "a position read beside a lock holder that is advancing it is handed out twice",
   },
 ];
 

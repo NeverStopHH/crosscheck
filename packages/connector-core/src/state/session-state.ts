@@ -1021,15 +1021,34 @@ export const withCarriedCapture = (
         // for a "first" finished turn the session had long ago, and doctor
         // counts a compacted session as a short one.
         stopTurnCount: previous.stopTurnCount,
-        // The person is told about a teammate's file group once per SESSION,
-        // and a compact or resume is the same session: dropped, the re-fire's
-        // briefing would tell them again about the same ghost row. The relay
-        // queue comes with it, or a subagent's hit waiting for the main
-        // thread is lost to a compact.
-        ...(previous.collisionNotices === undefined ? {} : { collisionNotices: previous.collisionNotices }),
-        ...(previous.collisionRelayQueue === undefined ? {} : { collisionRelayQueue: previous.collisionRelayQueue }),
-        ...(previous.collisionRelayDropped === undefined ? {} : { collisionRelayDropped: previous.collisionRelayDropped }),
+        ...collisionFieldsOf(previous),
       };
+
+/**
+ * The person is told about a teammate's file group once per SESSION, and a
+ * compact or resume is the same session: dropped, the re-fire's briefing
+ * would tell them again about the same ghost row. The relay queue and its
+ * drop tally come with it, or a subagent's hit waiting for the main thread is
+ * lost to a compact.
+ */
+const collisionFieldsOf = (previous: SessionState): Partial<SessionStateInput> => ({
+  ...(previous.collisionNotices === undefined ? {} : { collisionNotices: previous.collisionNotices }),
+  ...(previous.collisionRelayQueue === undefined ? {} : { collisionRelayQueue: previous.collisionRelayQueue }),
+  ...(previous.collisionRelayDropped === undefined ? {} : { collisionRelayDropped: previous.collisionRelayDropped }),
+});
+
+/**
+ * The collision fields ALONE carried across a re-fire of the same binding —
+ * what a publication that could not take the lock may still carry (round 3,
+ * F-L5): read without the lock, a queue a sibling is draining may be relayed
+ * twice, which is the safe side of never; the sequence pair and the capture
+ * counters may not be, since a position read beside a lock holder advancing
+ * it would be handed out twice.
+ */
+export const withCarriedCollisions = (
+  state: SessionStateInput,
+  previous: SessionState | null,
+): SessionStateInput => (!isSameBinding(previous, state) ? state : { ...state, ...collisionFieldsOf(previous) });
 
 /**
  * SessionStart's publication: create the state file, or replace one of the
@@ -1040,7 +1059,10 @@ export const withCarriedCapture = (
  * read-then-write outside the lock would drop whatever it recorded. A lock
  * that stays busy falls back to the plain create — publishing state is not
  * optional (spool reap infers "no writer left" from its absence), so the
- * counters lose rather than the file.
+ * counters lose rather than the file. The COLLISION fields are still carried
+ * there, from a best-effort unlocked read (round 3, F-L5): without them a
+ * compact under a busy lock lost every queued relay and the record of who
+ * the person was told about.
  */
 export const publishSessionState = async (
   home: string,
@@ -1056,7 +1078,8 @@ export const publishSessionState = async (
     },
   );
   if (!published) {
-    await writeSessionState(home, state);
+    const unlocked = await readSessionState(home, state.hostSessionKey);
+    await writeSessionState(home, withCarriedCollisions(state, unlocked));
   }
 };
 
