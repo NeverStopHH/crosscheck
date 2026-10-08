@@ -543,7 +543,7 @@ describe("the why's own clamp", () => {
   /** Only what landedWhyFor reads of a hook's context. */
   const contextFor = (hubUrl: string) =>
     ({
-      hub: { hubUrl, apiKey: "k", timeoutMs: 400, home: "/nonexistent", repoKey: "", now: () => new Date() },
+      hub: { hubUrl, apiKey: "k", keyOrigin: hubUrl, timeoutMs: 400, home: "/nonexistent", repoKey: "", now: () => new Date() },
       identity: { repoId: "local/acme/api" },
     }) as unknown as Parameters<typeof landedWhyFor>[0];
 

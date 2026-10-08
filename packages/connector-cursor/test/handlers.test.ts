@@ -104,6 +104,7 @@ const fixture = async (
     hubCtx: {
       hubUrl,
       apiKey: hub.apiKey,
+      keyOrigin: hubUrl,
       timeoutMs: 4000,
       home,
       repoKey: key,
@@ -226,8 +227,11 @@ describe("a Cursor workspace rooted at the PARENT of the repo (trial finding #9)
     await writeRepoFile(repo, "src/panel.ts", "export const p = 1;\n");
     const home = await makeHome("cursor-parent");
     cleanups.push(home);
+    // An operator pair: a CROSSCHECK_API_KEY with no CROSSCHECK_HUB_URL and
+    // no login is bound to no hub (core config/key-binding.ts).
     const env: Env = {
       CROSSCHECK_HOME: home,
+      CROSSCHECK_HUB_URL: hub.hubUrl,
       CROSSCHECK_API_KEY: hub.apiKey,
       CROSSCHECK_TIMEOUT_MS: TIMEOUT_MS,
     };
@@ -253,6 +257,7 @@ describe("a Cursor workspace rooted at the PARENT of the repo (trial finding #9)
     const hubCtx: HubContext = {
       hubUrl: hub.hubUrl,
       apiKey: hub.apiKey,
+      keyOrigin: hub.hubUrl,
       timeoutMs: 4000,
       home,
       repoKey: repoKey(hub.hubUrl, REPO_ID),
@@ -330,6 +335,7 @@ describe("a Cursor workspace rooted at the PARENT of the repo (trial finding #9)
       },
       {
         CROSSCHECK_HOME: home,
+        CROSSCHECK_HUB_URL: raceHubUrl,
         CROSSCHECK_API_KEY: hub.apiKey,
         CROSSCHECK_TIMEOUT_MS: TIMEOUT_MS,
       },

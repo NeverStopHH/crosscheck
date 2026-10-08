@@ -396,6 +396,7 @@ describe("SEQ-5 — a busy lock must mint a new epoch, never restart the old one
         hub: {
           hubUrl: DEAD_HUB_URL,
           apiKey: "k",
+          keyOrigin: DEAD_HUB_URL,
           timeoutMs: 500,
           home,
           repoKey: "k",

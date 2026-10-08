@@ -206,14 +206,61 @@ describe("global wiring in an unconnected repo (DESIGN.md §2.1)", () => {
 
     // Assert: the stored key never leaves for the foreign origin — total
     // silence toward BOTH hubs (the mismatch means there is no hub this
-    // session may honestly report to), nothing on disk, and the stored
-    // identity survives byte-for-byte, unpoisoned.
-    expect(startOut).toBe("");
+    // session may honestly report to), nothing captured on disk, and the
+    // stored identity unpoisoned. The one write is the login's own binding
+    // (core config/key-binding.ts), recorded at this first read.
     expect(postOut).toBe("");
     expect(attacker.requests()).toBe(0);
     expect(real.requests()).toBe(0);
     expect(await entriesOrNone(join(home, "sessions"))).toEqual([]);
     expect(await entriesOrNone(join(home, "spool"))).toEqual([]);
-    expect(await readFile(join(home, "config.json"), "utf8")).toBe(storedBefore);
+    const before = JSON.parse(storedBefore) as Record<string, unknown>;
+    const after = JSON.parse(await readFile(join(home, "config.json"), "utf8")) as Record<string, unknown>;
+    expect(after).toEqual({ ...before, keyOrigin: real.url });
+    // Not silent: SessionStart says so in the session — naming neither hub
+    // the repo chose nor the key — and both refusals are counted for doctor.
+    expect(startOut).toContain("crosscheck is not reporting from here");
+    expect(startOut).not.toContain(attacker.url);
+    expect(startOut).not.toContain("stored-key");
+    const ledger = await readFile(join(home, "state", "foreign-hub.jsonl"), "utf8");
+    expect(ledger.trim().split("\n").map((line) => (JSON.parse(line) as { surface: string }).surface)).toEqual([
+      "session-start",
+      "post-tool-use",
+    ]);
+    expect(ledger).not.toContain("stored-key");
+  });
+
+  test("CROSSCHECK_HUB_URL naming another hub than the login's is refused, not obeyed", async () => {
+    // Arrange: a connected repo naming the developer's own hub, and an
+    // environment override pointing somewhere else — the stored key must
+    // not follow the override (it used to: the env hub bypassed the pin)
+    const repo = await makeRepo("global-env-foreign", {
+      remote: "git@github.com:acme/api.git",
+    });
+    paths.push(repo);
+    await writeRepoFile(repo, "src/app.ts", "export const a = 1;\n");
+    const elsewhere = startCountingHub();
+    const real = startCountingHub();
+    const home = await loggedInHome("global-env-foreign", real.url);
+    await writeFile(
+      join(repo, ".crosscheck.json"),
+      `${JSON.stringify({ hubUrl: real.url }, null, 2)}\n`,
+      "utf8",
+    );
+    const env: Env = {
+      CROSSCHECK_HOME: home,
+      CROSSCHECK_HUB_URL: elsewhere.url,
+      CROSSCHECK_TIMEOUT_MS: TIMEOUT_MS,
+    };
+
+    // Act
+    await runHook("session-start", sessionStartPayload(repo, "env-foreign-uuid"), env);
+    await runHook("post-tool-use", postToolUsePayload(repo, "env-foreign-uuid"), env);
+
+    // Assert
+    expect(elsewhere.requests()).toBe(0);
+    expect(real.requests()).toBe(0);
+    expect(await entriesOrNone(join(home, "sessions"))).toEqual([]);
+    expect(await entriesOrNone(join(home, "spool"))).toEqual([]);
   });
 });

@@ -795,6 +795,7 @@ describe("crosscheck pin --sweep", () => {
     const ctx: HubContext = {
       hubUrl,
       apiKey: nickKey,
+      keyOrigin: hubUrl,
       timeoutMs: 8000,
       home,
       repoKey: REPO_ID,

@@ -80,7 +80,7 @@ const fixture = async (label: string): Promise<Fixture> => {
     repo,
     hub,
     key,
-    ctx: { hubUrl: hub.url, apiKey: "test-key", timeoutMs: 20_000, home, repoKey: key, now: () => NOW },
+    ctx: { hubUrl: hub.url, apiKey: "test-key", keyOrigin: hub.url, timeoutMs: 20_000, home, repoKey: key, now: () => NOW },
   };
 };
 

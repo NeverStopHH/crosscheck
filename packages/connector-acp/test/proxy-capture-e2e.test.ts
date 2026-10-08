@@ -50,6 +50,7 @@ const cleanups: string[] = [];
 const hub = (): HubContext => ({
   hubUrl,
   apiKey,
+  keyOrigin: hubUrl,
   timeoutMs: Number(TIMEOUT_MS),
   home,
   repoKey: repoKey(hubUrl, REPO_ID),

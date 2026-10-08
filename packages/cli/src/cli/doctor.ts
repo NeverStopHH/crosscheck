@@ -171,6 +171,8 @@ import {
 import { checkSkeletonRetention } from "./doctor-retention.ts";
 import { coverageReportingCheck, lossChecks } from "./doctor-losses.ts";
 import { briefingOmissionsCheck } from "./doctor-briefings.ts";
+import { FOREIGN_HUB_MCP_CHECK, keyOriginChecks } from "./foreign-hub.ts";
+import { readForeignHubRefusals } from "@crosscheck/connector-core/state/foreign-hub.ts";
 import { readBriefingOmissions } from "@crosscheck/connector-core/state/briefing-omissions.ts";
 import { readSharingInput, sharingChecks } from "./doctor-sharing.ts";
 import { checkLandedChanges } from "./doctor-landed.ts";
@@ -3632,7 +3634,15 @@ export const runDoctor = async (
   // The scope question the commands ask before touching anything: a repo
   // whose project files ARE the user-level ones has ONE install.
   const oneInstall = identity === null ? null : await readOneInstall(identity.root, env);
-  if (config === null || identity === null) {
+  // A hub the key does not belong to (core config/key-binding.ts): this repo's
+  // .crosscheck.json or CROSSCHECK_HUB_URL names another origin than the
+  // login's. Every check past this branch asks that hub something with the
+  // key, so doctor takes the no-hub branch instead and says why, naming both
+  // origins and the fix. The local ledger counts what it has cost.
+  const foreignHub = config?.foreignHub ?? null;
+  const foreignLedger = await readForeignHubRefusals(home, now);
+  const keyOriginLines = keyOriginChecks(foreignHub, foreignLedger, identity?.repoId ?? null);
+  if (config === null || identity === null || foreignHub !== null) {
     const projectWired =
       identity === null
         ? null
@@ -3655,7 +3665,10 @@ export const runDoctor = async (
           : await projectCopyForRemedy(identity.root, projectWired, globalWiring),
         oneInstall,
       ),
-      check("FAIL", "hub reachable", "no hub configured"),
+      // The mismatch is not "no hub": the key is configured and safe, so it
+      // is the WARN naming both origins, never the FAIL below.
+      ...(foreignHub === null ? [check("FAIL", "hub reachable", "no hub configured")] : []),
+      ...keyOriginLines,
       ...(identity === null
         ? []
         : [
@@ -3666,19 +3679,21 @@ export const runDoctor = async (
               oneInstall,
             }),
           ]),
-      mcpUsableCheck({
-        configured: config !== null,
-        hubUrl: config?.hubUrl ?? null,
-        // No probe ran in this branch: there is no hub to ask, so the line
-        // rests on `configured` alone exactly as it always did here.
-        hub: null,
-        registered:
-          globalWiring.mcpRegistered ||
-          (identity !== null &&
-            (await readRegisteredMcpEntry(identity.root, env)) !== null),
-        userScopeUnknown: userMcpUnknown(globalWiring),
-        probe: { kind: "not-probed", why: "no hub configured" },
-      }),
+      foreignHub !== null
+        ? FOREIGN_HUB_MCP_CHECK
+        : mcpUsableCheck({
+            configured: config !== null,
+            hubUrl: config?.hubUrl ?? null,
+            // No probe ran in this branch: there is no hub to ask, so the line
+            // rests on `configured` alone exactly as it always did here.
+            hub: null,
+            registered:
+              globalWiring.mcpRegistered ||
+              (identity !== null &&
+                (await readRegisteredMcpEntry(identity.root, env)) !== null),
+            userScopeUnknown: userMcpUnknown(globalWiring),
+            probe: { kind: "not-probed", why: "no hub configured" },
+          }),
       bunfigCheck,
     ]);
   }
@@ -3687,6 +3702,7 @@ export const runDoctor = async (
   const hubCtx: HubContext = {
     hubUrl: config.hubUrl,
     apiKey: config.apiKey,
+    keyOrigin: config.keyOrigin,
     timeoutMs: config.timeoutMs,
     home: config.home,
     repoKey: key,
@@ -3976,6 +3992,7 @@ export const runDoctor = async (
     }),
     ...(await checkSpool(config.home, key, now, openOnHub)),
     ...(await foreignDropChecks(config.home)),
+    ...keyOriginLines,
     ...captureChecks(captureHealth, now),
     generatedTargetsCheck(captureHealth),
     await checkHints(hubCtx, identity.repoId, captureHealth),

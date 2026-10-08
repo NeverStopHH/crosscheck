@@ -52,6 +52,16 @@ export type HubFailure = Extract<HubResult<unknown>, { ok: false }>;
  */
 export const hubFailureText = (hubUrl: string, failure: HubFailure): string => {
   const message = quoted(failure.message, MAX_HUB_MESSAGE_CHARS);
+  // Never sent (http/client.ts key-origin check): no hub answered, and the
+  // URL is the one the key does NOT belong to — text a repo chose, so it is
+  // not repeated, and nothing here suggests logging in to it.
+  if (failure.kind === "refused") {
+    return (
+      "crosscheck did not send this request: the hub it was for is not the one the " +
+      "developer's crosscheck key belongs to. Nothing was recorded; `crosscheck doctor` " +
+      "names both hubs and the fix."
+    );
+  }
   if (failure.kind === "network") {
     return quotingText(
       `crosscheck could not reach the hub at ${hubUrl} (${message}).`,

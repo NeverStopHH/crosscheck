@@ -305,6 +305,7 @@ describe("spool under real concurrent processes", () => {
         const ctx = {
           hubUrl: `http://127.0.0.1:${server.port}`,
           apiKey: "key",
+          keyOrigin: `http://127.0.0.1:${server.port}`,
           timeoutMs: 5000,
           home,
           repoKey: KEY,

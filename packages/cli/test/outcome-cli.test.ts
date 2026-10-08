@@ -437,7 +437,7 @@ describe("crosscheck followed / overrode", () => {
 
     // Assert
     expect(result.exitCode).toBe(EXIT_OK);
-    const hub = { hubUrl, apiKey: nick.apiKey, timeoutMs: 4000, home, repoKey: repoKey(hubUrl, REPO_ID), now: () => new Date() };
+    const hub = { hubUrl, apiKey: nick.apiKey, keyOrigin: hubUrl, timeoutMs: 4000, home, repoKey: repoKey(hubUrl, REPO_ID), now: () => new Date() };
     expect(await holdsUnsentDelivery(hub, "wc_ken_unrelated")).toBe(true);
   });
 

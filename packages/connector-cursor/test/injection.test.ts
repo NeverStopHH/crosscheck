@@ -318,6 +318,7 @@ const seedTeammate = async (label: string): Promise<void> => {
     {
       hubUrl: hub.hubUrl,
       apiKey: body.data.apiKey,
+      keyOrigin: hub.hubUrl,
       timeoutMs: 4000,
       home: mateHome,
       repoKey: repoKey(hub.hubUrl, REPO_ID),

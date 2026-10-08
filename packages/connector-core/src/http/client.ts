@@ -6,6 +6,7 @@ import {
   shortConnectionMessage,
 } from "./connection-error.ts";
 import type { ConnectionCause } from "./connection-error.ts";
+import { hubOrigin, isSameOrigin } from "../config/origin.ts";
 import { updateSyncState } from "../state/sync-state.ts";
 
 const OkEnvelopeSchema = z.object({ ok: z.literal(true), data: z.unknown() });
@@ -20,6 +21,15 @@ const HTTP_UNAUTHORIZED = 401;
 export interface HubContext {
   readonly hubUrl: string;
   readonly apiKey: string;
+  /**
+   * The ONE origin `apiKey` may be sent to — the hub it was issued for
+   * (config/key-binding.ts; `ResolvedConfig.keyOrigin`). Every request is
+   * checked against it before anything leaves the machine: a request whose
+   * origin is not this one is refused unsent, whatever `hubUrl` says, so a
+   * caller that paired the key with a repo-named hub still cannot leak it.
+   * Null is a key bound to no hub, which is sent nowhere.
+   */
+  readonly keyOrigin: string | null;
   readonly timeoutMs: number;
   readonly home: string;
   readonly repoKey: string;
@@ -36,7 +46,16 @@ export interface HubContext {
   readonly freshApiKey?: () => Promise<string | null>;
 }
 
-export type HubFailureKind = "network" | "http" | "malformed";
+/**
+ * `refused` is the one failure no hub produced: the request was never sent,
+ * because the key it would carry is bound to another origin
+ * (KEY_ORIGIN_MISMATCH). Not "network" — nothing is unreachable, and the
+ * remedy is a config fix, not a retry.
+ */
+export type HubFailureKind = "network" | "http" | "malformed" | "refused";
+
+/** The code a `refused` failure carries. */
+export const KEY_ORIGIN_MISMATCH = "key_origin_mismatch";
 
 export type HubResult<T> =
   | { readonly ok: true; readonly data: T; readonly dateHeader: string | null }
@@ -203,10 +222,38 @@ export const hubRequest = async <T>(
   return result;
 };
 
+/**
+ * THE KEY-ORIGIN CHECK, on every request this client makes — the retry with a
+ * rotated key included, because it goes through here too. Null when the
+ * request may carry the key; otherwise the refusal, built before any socket
+ * is opened, so a foreign hub learns nothing, not even that a request was due.
+ */
+const keyOriginRefusal = <T>(ctx: HubContext): HubResult<T> | null => {
+  // `typeof`, not `=== null`: a context assembled outside the type system (a
+  // cast, a JS caller) can carry no binding at all, and that is refused like
+  // null rather than thrown — the client never throws (fail-open, §3).
+  const bound = typeof ctx.keyOrigin === "string" ? ctx.keyOrigin : null;
+  if (isSameOrigin(ctx.hubUrl, bound)) {
+    return null;
+  }
+  const boundOrigin = bound === null ? null : hubOrigin(bound);
+  return failure(
+    "refused",
+    0,
+    KEY_ORIGIN_MISMATCH,
+    `not sent: your crosscheck key belongs to ${boundOrigin ?? "no hub"}, and this request was for ` +
+      `${hubOrigin(ctx.hubUrl) ?? "an address that is not a hub url"} — run crosscheck doctor`,
+  );
+};
+
 const performRequest = async <T>(
   ctx: HubContext,
   request: HubRequest<T>,
 ): Promise<HubResult<T>> => {
+  const refusal = keyOriginRefusal<T>(ctx);
+  if (refusal !== null) {
+    return refusal;
+  }
   let response: Response;
   try {
     response = await fetch(`${ctx.hubUrl}${request.path}`, {

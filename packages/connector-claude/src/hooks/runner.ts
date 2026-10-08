@@ -16,9 +16,12 @@ import type { HookBudget } from "@crosscheck/connector-core/config/hook-budget.t
 import {
   isDisabled,
   isSummarizerChild,
-  loadReportableConfig,
+  resolveReportableConfig,
 } from "@crosscheck/connector-core/config/config.ts";
 import type { ResolvedConfig } from "@crosscheck/connector-core/config/config.ts";
+import { foreignHubAgentLine } from "@crosscheck/connector-core/config/key-binding.ts";
+import type { ForeignHub } from "@crosscheck/connector-core/config/key-binding.ts";
+import { recordForeignHubRefusal } from "@crosscheck/connector-core/state/foreign-hub.ts";
 import {
   findConnectedRepoRootForPaths,
   mayBeConnectedRepo,
@@ -91,10 +94,36 @@ const BUDGET_RATIOS: Readonly<Record<HookName, number>> = {
   stop: STOP_BUDGET_RATIO,
 };
 
-interface ResolvedHookRepo {
-  readonly identity: RepoIdentity;
-  readonly config: ResolvedConfig;
-}
+/**
+ * What resolving a hook's repo came to: a repo it reports for, a repo
+ * connected to ANOTHER hub than the developer's key (config/key-binding.ts —
+ * nothing is sent, and the caller counts it), or silence.
+ */
+type RepoResolution =
+  | { readonly kind: "ready"; readonly identity: RepoIdentity; readonly config: ResolvedConfig }
+  | {
+      readonly kind: "foreign_hub";
+      readonly identity: RepoIdentity;
+      readonly home: string;
+      readonly foreignHub: ForeignHub;
+    }
+  | { readonly kind: "silent" };
+
+const SILENT: RepoResolution = { kind: "silent" };
+
+const resolveAt = async (identity: RepoIdentity, env: Env): Promise<RepoResolution> => {
+  const resolved = await resolveReportableConfig({ env, repoRoot: identity.root });
+  if (resolved.kind === "reportable") {
+    return { kind: "ready", identity, config: resolved.config };
+  }
+  return resolved.kind === "foreign_hub"
+    ? { kind: "foreign_hub", identity, home: resolved.home, foreignHub: resolved.foreignHub }
+    : SILENT;
+};
+
+/** No rung reports: the first foreign hub any rung met speaks, else silence. */
+const firstForeign = (rungs: readonly RepoResolution[]): RepoResolution =>
+  rungs.find((rung) => rung.kind === "foreign_hub") ?? SILENT;
 
 /**
  * The repo this hook reports for: cwd first, touched file second, the
@@ -123,32 +152,36 @@ interface ResolvedHookRepo {
 const resolveHookRepo = async (
   payload: HookPayload,
   env: Env,
-): Promise<ResolvedHookRepo | null> => {
+): Promise<RepoResolution> => {
   const identity = await resolveRepoIdentity(payload.cwd);
-  if (identity !== null) {
-    const config = await loadReportableConfig({ env, repoRoot: identity.root });
-    if (config !== null) {
-      return { identity, config };
-    }
+  const cwdRung = identity === null ? SILENT : await resolveAt(identity, env);
+  if (cwdRung.kind === "ready") {
+    return cwdRung;
   }
+  const fileRung = await fileDerivedHookRepo(payload, env);
+  if (fileRung.kind === "ready") {
+    return fileRung;
+  }
+  const stateRung = await stateDerivedHookRepo(payload, env);
+  return stateRung.kind === "ready" ? stateRung : firstForeign([cwdRung, fileRung, stateRung]);
+};
+
+/**
+ * The SECOND rung: the touched file's own repo. The reportable gate, NOT
+ * bare loadConfig — this rung must also honour the finding-#11 gate AND the
+ * key-origin binding, or a planted .crosscheck.json at the touched file's
+ * repo redirects the key exactly where rung 1 refused it.
+ */
+const fileDerivedHookRepo = async (payload: HookPayload, env: Env): Promise<RepoResolution> => {
   const derivedRoot = await findConnectedRepoRootForPaths(
     payload.cwd,
     extractFilePaths(payload.tool_input),
   );
-  if (derivedRoot !== null) {
-    const derived = await resolveRepoIdentity(derivedRoot);
-    if (derived !== null) {
-      // loadReportableConfig, NOT bare loadConfig: this rung must also honour
-      // the finding-#11 gate AND its key-origin pin, or a planted
-      // .crosscheck.json at the touched file's repo redirects the stored key
-      // exactly where rung 1's pin refused it.
-      const config = await loadReportableConfig({ env, repoRoot: derived.root });
-      if (config !== null) {
-        return { identity: derived, config };
-      }
-    }
+  if (derivedRoot === null) {
+    return SILENT;
   }
-  return stateDerivedHookRepo(payload, env);
+  const derived = await resolveRepoIdentity(derivedRoot);
+  return derived === null ? SILENT : resolveAt(derived, env);
 };
 
 /**
@@ -173,57 +206,116 @@ const resolveHookRepo = async (
 const stateDerivedHookRepo = async (
   payload: HookPayload,
   env: Env,
-): Promise<ResolvedHookRepo | null> => {
+): Promise<RepoResolution> => {
   const state = await readSessionState(crosscheckHome(env), payload.session_id);
   if (state === null) {
-    return null;
+    return SILENT;
   }
   const identity = await resolveRepoIdentity(state.repoRoot);
   if (identity === null || identity.repoId !== state.repoId) {
-    return null;
+    return SILENT;
   }
-  const config = await loadReportableConfig({ env, repoRoot: identity.root });
-  return config === null ? null : { identity, config };
+  return resolveAt(identity, env);
 };
 
 /**
- * Resolves everything a hook needs, or null when the connector must stay
- * silent (disabled, not a git repo, no hub configured).
+ * What preparing a hook came to. `foreign_hub` carries no context on
+ * purpose: there is nothing a handler may send, so there is nothing to hand
+ * one — only what the runner needs to count it and the statusline to say so.
  */
-export const prepareHook = async (
+export type HookPreparation =
+  | { readonly kind: "ready"; readonly ctx: HookContext }
+  | {
+      readonly kind: "foreign_hub";
+      readonly home: string;
+      readonly repoId: string;
+      readonly foreignHub: ForeignHub;
+    }
+  | { readonly kind: "silent" };
+
+const SILENT_HOOK: HookPreparation = { kind: "silent" };
+
+/**
+ * Resolves everything a hook needs, or why it must stay out: disabled, not a
+ * git repo, no hub configured (silent), or a repo connected to another hub.
+ */
+export const prepareHookFor = async (
   stdin: string,
   env: Env,
-): Promise<HookContext | null> => {
+): Promise<HookPreparation> => {
   if (isDisabled(env)) {
-    return null;
+    return SILENT_HOOK;
   }
   const payload = parseHookPayload(stdin);
   if (payload === null) {
-    return null;
+    return SILENT_HOOK;
   }
   const resolved = await resolveHookRepo(payload, env);
-  if (resolved === null) {
-    return null;
+  if (resolved.kind === "foreign_hub") {
+    return {
+      kind: "foreign_hub",
+      home: resolved.home,
+      repoId: resolved.identity.repoId,
+      foreignHub: resolved.foreignHub,
+    };
+  }
+  if (resolved.kind === "silent") {
+    return SILENT_HOOK;
   }
   const { identity, config } = resolved;
   const now = (): Date => new Date();
   const key = repoKey(config.hubUrl, identity.repoId);
   return {
-    payload,
-    identity,
-    config,
-    repoKey: key,
-    now,
-    env,
-    hub: {
-      hubUrl: config.hubUrl,
-      apiKey: config.apiKey,
-      timeoutMs: config.timeoutMs,
-      home: config.home,
+    kind: "ready",
+    ctx: {
+      payload,
+      identity,
+      config,
       repoKey: key,
       now,
+      env,
+      hub: {
+        hubUrl: config.hubUrl,
+        apiKey: config.apiKey,
+        keyOrigin: config.keyOrigin,
+        timeoutMs: config.timeoutMs,
+        home: config.home,
+        repoKey: key,
+        now,
+      },
     },
   };
+};
+
+/** `prepareHookFor` for callers that only need a ready context. */
+export const prepareHook = async (
+  stdin: string,
+  env: Env,
+): Promise<HookContext | null> => {
+  const prepared = await prepareHookFor(stdin, env);
+  return prepared.kind === "ready" ? prepared.ctx : null;
+};
+
+/**
+ * A HOOK IN A REPO CONNECTED TO ANOTHER HUB (config/key-binding.ts): nothing
+ * was captured and nothing sent, so the refusal is counted
+ * (state/foreign-hub.ts) — the count `doctor` and `status` print beside the
+ * WARN naming both origins — and SessionStart, the one hook whose answer
+ * reaches the session, says so in one line instead of leaving it looking
+ * quiet. Every other hook stays silent: a line on every tool call is noise.
+ */
+const refuseForeignHub = async (
+  name: HookName,
+  prepared: Extract<HookPreparation, { kind: "foreign_hub" }>,
+): Promise<string> => {
+  await recordForeignHubRefusal(prepared.home, {
+    repoId: prepared.repoId,
+    foreignHub: prepared.foreignHub,
+    surface: name,
+    now: new Date(),
+  });
+  const output = BRIEFING_OUTPUTS[name];
+  return output === undefined ? "" : output(foreignHubAgentLine(prepared.foreignHub));
 };
 
 /**
@@ -235,18 +327,22 @@ export const prepareHook = async (
  * stayed silent by design did not "fire" in any sense a doctor cares about.
  */
 const prepareAndRun = async (
+  name: HookName,
   handler: HookHandler,
   stdin: string,
   env: Env,
   budget: HookBudget,
   onResolved: (ctx: HookContext) => void,
 ): Promise<string> => {
-  const ctx = await prepareHook(stdin, env);
-  if (ctx === null) {
+  const prepared = await prepareHookFor(stdin, env);
+  if (prepared.kind === "foreign_hub") {
+    return refuseForeignHub(name, prepared);
+  }
+  if (prepared.kind === "silent") {
     return "";
   }
-  onResolved(ctx);
-  return handler(ctx, budget);
+  onResolved(prepared.ctx);
+  return handler(prepared.ctx, budget);
 };
 
 /**
@@ -379,6 +475,7 @@ export const runHookWith = async (
     const deadlineMs = Date.now() + budgetMs;
     const outcome = await raceHookBudget(
       prepareAndRun(
+        name,
         handler,
         stdin,
         env,

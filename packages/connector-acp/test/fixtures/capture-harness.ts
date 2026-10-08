@@ -136,6 +136,7 @@ export const createHarness = async (
     hub: {
       hubUrl: hub.hubUrl,
       apiKey: hub.apiKey,
+      keyOrigin: hub.hubUrl,
       timeoutMs: Number(TIMEOUT_MS),
       home,
       repoKey: repoKey(hub.hubUrl, REPO_ID),

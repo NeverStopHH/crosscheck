@@ -131,6 +131,7 @@ afterAll(() => {
 const hubContext = (home: string): HubContext => ({
   hubUrl: hub.url,
   apiKey: "test-key",
+  keyOrigin: hub.url,
   // 20 s, not the product's 2 s: this deadline is the TEST's patience with a
   // fake hub on localhost, never a bound the product ships (the real ones are
   // measured in connector-claude's hook-budget tests). At 2 s the whole-suite
@@ -304,7 +305,7 @@ describe("assembleBriefing (the extracted session-start recipe)", () => {
 
     const assembled = await assembleBriefing({
       // Port 1 refuses instantly: an unreachable hub without the wait.
-      hub: { ...hubContext(home), hubUrl: "http://127.0.0.1:1" },
+      hub: { ...hubContext(home), hubUrl: "http://127.0.0.1:1", keyOrigin: "http://127.0.0.1:1" },
       repoId: REPO_ID,
       repoRoot: repo,
       selfDeveloperId: SELF,

@@ -2113,6 +2113,25 @@ export const BRIEFING_OMISSION_WINDOW_DAYS = 7;
 export const MAX_BRIEFING_OMISSION_LEDGER_BYTES = 65_536;
 
 /**
+ * How far back `doctor` and `status` count the refusals of a repo connected
+ * to another hub (state/foreign-hub.ts): the briefing-omission window, for
+ * the same reason — a week shows the pattern, and a bait repo opened once
+ * last month is not today's warning. A repo that is mismatched NOW is warned
+ * about whatever this window holds: the live check reads the configs.
+ */
+export const FOREIGN_HUB_WINDOW_DAYS = 7;
+
+/**
+ * The foreign-hub ledger's byte cap, the capture-loss ledger's figure: a line
+ * is ~200 bytes, so the cap holds a week of a busy repo refused on every
+ * hook, and past it the count is a floor that the reader says out loud.
+ */
+export const MAX_FOREIGN_HUB_LEDGER_BYTES = 65_536;
+
+/** At most this many refused repos are named in one doctor or status line. */
+export const FOREIGN_HUB_MAX_NAMED = 3;
+
+/**
  * Target rows one diagnosis SHOWS, of however many the hub sent.
  *
  * The section exists so a reader about to edit the same corner sees the

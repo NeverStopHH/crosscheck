@@ -73,7 +73,7 @@ const registerFrom = async (
   const key = repoKey(HUB_URL, REPO_ID);
   const input: RegisterSessionFlowInput = {
     home,
-    hub: { hubUrl: HUB_URL, apiKey: "test-key", timeoutMs: 2000, home, repoKey: key, now: () => new Date() },
+    hub: { hubUrl: HUB_URL, apiKey: "test-key", keyOrigin: HUB_URL, timeoutMs: 2000, home, repoKey: key, now: () => new Date() },
     repoKey: key,
     hostSessionKey: `register-base-${crypto.randomUUID()}`,
     repoId: REPO_ID,

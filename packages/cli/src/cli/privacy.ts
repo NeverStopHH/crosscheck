@@ -20,6 +20,7 @@ import {
   putPresenceOptOut,
 } from "@crosscheck/connector-core/http/hub.ts";
 import type { HubContext } from "@crosscheck/connector-core/http/hub.ts";
+import type { HubFailureKind } from "@crosscheck/connector-core/http/client.ts";
 import type { CliResult } from "./login.ts";
 
 export const PRESENCE_USAGE = [
@@ -87,6 +88,7 @@ const settingsContext = async (
   return {
     hubUrl: config.hubUrl,
     apiKey: config.apiKey,
+    keyOrigin: config.keyOrigin,
     timeoutMs: config.timeoutMs,
     home: config.home,
     repoKey: "",
@@ -95,7 +97,7 @@ const settingsContext = async (
 };
 
 const failureResult = (result: {
-  readonly kind: "network" | "http" | "malformed";
+  readonly kind: HubFailureKind;
   readonly message: string;
 }): CliResult =>
   result.kind === "network"

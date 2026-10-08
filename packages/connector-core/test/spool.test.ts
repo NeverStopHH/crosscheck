@@ -64,6 +64,7 @@ const envelope = (index: number): Record<string, unknown> => ({
 const hubContext = (path: string, hubUrl = HUB_URL) => ({
   hubUrl,
   apiKey: "key",
+  keyOrigin: hubUrl,
   // 20 s, not the product's 2 s: this deadline is the TEST's patience with a
   // fake hub on localhost, never a bound the product ships (the real ones are
   // measured in connector-claude's hook-budget tests). At 2 s the whole-suite

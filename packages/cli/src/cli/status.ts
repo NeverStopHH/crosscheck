@@ -1,6 +1,7 @@
 import {
   EXIT_OK,
   EXIT_UNREACHABLE,
+  EXIT_WARN,
   MAX_TOPICS_PER_TEAMMATE,
   STATUS_MAX_ABSENCE_LINES,
   STATUS_SESSION_IDLE_HOURS,
@@ -91,6 +92,8 @@ import {
   summarizeSummarizerCost,
 } from "@crosscheck/connector-claude";
 import type { CliResult } from "./login.ts";
+import { readForeignHubRefusals } from "@crosscheck/connector-core/state/foreign-hub.ts";
+import { foreignHubLines, otherForeignHubRepos } from "./foreign-hub.ts";
 
 const ageOrNever = (iso: string | null, now: Date): string => {
   if (iso === null) {
@@ -328,6 +331,28 @@ export const runStatus = async (
   }
 
   const now = new Date();
+  // ONE read of the foreign-hub ledger (core state/foreign-hub.ts), for the
+  // WARN below or for the line about other repos on this machine.
+  const foreignLedger = await readForeignHubRefusals(config.home, now);
+  // A HUB THE KEY DOES NOT BELONG TO (core config/key-binding.ts): this repo's
+  // .crosscheck.json, or CROSSCHECK_HUB_URL, names another origin than the
+  // login's. Nothing below may ask it anything — every line would carry the
+  // key there — so the command says what was refused, both origins and the
+  // fix, and stops. The HTTP client would refuse each call regardless.
+  if (config.foreignHub !== null) {
+    return {
+      stdout: [
+        `hub: ${config.hubUrl}`,
+        `repo: ${identity.repoId} (${identity.branch})`,
+        ...foreignHubLines(config.foreignHub, foreignLedger, identity.repoId),
+        "",
+      ].join("\n"),
+      // doctor's WARN code: nothing is broken and the key is safe — what is
+      // missing is a config fix, which the line above names.
+      exitCode: EXIT_WARN,
+    };
+  }
+  const otherForeign = otherForeignHubRepos(foreignLedger, identity.repoId);
   const key = repoKey(config.hubUrl, identity.repoId);
   const sync = await readSyncState(config.home, key);
   const depth = await spoolDepth(config.home, key);
@@ -392,6 +417,7 @@ export const runStatus = async (
   const hubCtx = {
     hubUrl: config.hubUrl,
     apiKey: config.apiKey,
+    keyOrigin: config.keyOrigin,
     timeoutMs: config.timeoutMs,
     home: config.home,
     repoKey: "",
@@ -561,6 +587,7 @@ export const runStatus = async (
       `spool: ${depth} pending, ${drops.records} dropped${unrecorded === null ? "" : " (lower bound — at least one batch its ledger could not take)"}`,
       ...lossLines,
       ...foreignDropLines,
+      ...(otherForeign === null ? [] : [`WARN key origin elsewhere: ${otherForeign}`]),
       ...questionLines,
       ...solvedLines,
       ...pinLines,

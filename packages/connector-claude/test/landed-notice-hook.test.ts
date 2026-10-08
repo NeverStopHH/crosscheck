@@ -200,7 +200,7 @@ describe("a stop at a teammate's landed change, for its author", () => {
       const reason = await nickEdits(w);
       const stops = await spooledStops(w);
       const flushed = await flushSpool(
-        { hubUrl: w.hubUrl, apiKey: w.nick.apiKey, timeoutMs: 5000, home: w.home, repoKey: keyOf(w), now: () => new Date() },
+        { hubUrl: w.hubUrl, apiKey: w.nick.apiKey, keyOrigin: w.hubUrl, timeoutMs: 5000, home: w.home, repoKey: keyOf(w), now: () => new Date() },
         { sessionId: `cc_${SESSION_ID}`, developerId: w.nick.developerId },
         10_000,
       );

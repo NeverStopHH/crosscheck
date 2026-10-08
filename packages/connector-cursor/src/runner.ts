@@ -37,9 +37,11 @@ import type { HookBudget } from "@crosscheck/connector-core/config/hook-budget.t
 import {
   isDisabled,
   isSummarizerChild,
-  loadReportableConfig,
+  resolveReportableConfig,
 } from "@crosscheck/connector-core/config/config.ts";
 import type { ResolvedConfig } from "@crosscheck/connector-core/config/config.ts";
+import type { ForeignHub } from "@crosscheck/connector-core/config/key-binding.ts";
+import { recordForeignHubRefusal } from "@crosscheck/connector-core/state/foreign-hub.ts";
 import {
   findConnectedRepoRootForPaths,
   mayBeConnectedRepo,
@@ -118,10 +120,40 @@ const BUDGET_RATIOS: Readonly<Record<CursorHookEvent, number>> = {
 /** Marker the drift ledger uses for stdin that was not JSON at all. */
 const UNPARSEABLE_MARKER = "(unparseable)";
 
-interface ResolvedCursorRepo {
-  readonly identity: RepoIdentity;
-  readonly config: ResolvedConfig;
-}
+/**
+ * A repo this event reports for, a repo connected to ANOTHER hub than the
+ * key's (config/key-binding.ts — nothing is sent, the refusal is counted), or
+ * silence: the Claude runner's three outcomes on this host.
+ */
+type CursorRepoResolution =
+  | { readonly kind: "ready"; readonly identity: RepoIdentity; readonly config: ResolvedConfig }
+  | {
+      readonly kind: "foreign_hub";
+      readonly identity: RepoIdentity;
+      readonly home: string;
+      readonly foreignHub: ForeignHub;
+    }
+  | { readonly kind: "silent" };
+
+const SILENT: CursorRepoResolution = { kind: "silent" };
+
+const resolveCursorAt = async (
+  identity: RepoIdentity,
+  env: Env,
+  agentKind: string,
+): Promise<CursorRepoResolution> => {
+  const resolved = await resolveReportableConfig({
+    env,
+    repoRoot: identity.root,
+    defaultAgentKind: agentKind,
+  });
+  if (resolved.kind === "reportable") {
+    return { kind: "ready", identity, config: resolved.config };
+  }
+  return resolved.kind === "foreign_hub"
+    ? { kind: "foreign_hub", identity, home: resolved.home, foreignHub: resolved.foreignHub }
+    : SILENT;
+};
 
 /**
  * The repo this hook reports for: workspace root first, touched file second.
@@ -144,42 +176,29 @@ const resolveCursorRepo = async (
   workspaceRoot: string,
   env: Env,
   agentKind: string,
-): Promise<ResolvedCursorRepo | null> => {
+): Promise<CursorRepoResolution> => {
   const identity = await resolveRepoIdentity(workspaceRoot);
-  if (identity !== null) {
-    // The finding-#11 gate: under a user-level hooks.json (~/.cursor/) this
-    // runs in every workspace, so a stored login must not stand in for the
-    // missing committed config (core config.ts `loadReportableConfig`).
-    const config = await loadReportableConfig({
-      env,
-      repoRoot: identity.root,
-      defaultAgentKind: agentKind,
-    });
-    if (config !== null) {
-      return { identity, config };
-    }
+  // The finding-#11 gate: under a user-level hooks.json (~/.cursor/) this
+  // runs in every workspace, so a stored login must not stand in for the
+  // missing committed config (core config.ts `resolveReportableConfig`).
+  const rootRung = identity === null ? SILENT : await resolveCursorAt(identity, env, agentKind);
+  if (rootRung.kind === "ready") {
+    return rootRung;
   }
   const derivedRoot = await findConnectedRepoRootForPaths(
     payload.cwd ?? workspaceRoot,
     payload.file_path === undefined ? [] : [payload.file_path],
   );
-  if (derivedRoot === null) {
-    return null;
+  const derived = derivedRoot === null ? null : await resolveRepoIdentity(derivedRoot);
+  // The reportable gate, NOT bare loadConfig: this rung must also honour the
+  // finding-#11 gate AND the key-origin binding (core config/key-binding.ts),
+  // or a planted .crosscheck.json at the touched file's repo redirects the
+  // key exactly where the workspace-root rung refused it.
+  const fileRung = derived === null ? SILENT : await resolveCursorAt(derived, env, agentKind);
+  if (fileRung.kind !== "silent") {
+    return fileRung;
   }
-  const derived = await resolveRepoIdentity(derivedRoot);
-  if (derived === null) {
-    return null;
-  }
-  // loadReportableConfig, NOT bare loadConfig: this rung must also honour the
-  // finding-#11 gate AND its key-origin pin (core config.ts), or a planted
-  // .crosscheck.json at the touched file's repo redirects the stored key
-  // exactly where the workspace-root rung's pin refused it.
-  const config = await loadReportableConfig({
-    env,
-    repoRoot: derived.root,
-    defaultAgentKind: agentKind,
-  });
-  return config === null ? null : { identity: derived, config };
+  return rootRung;
 };
 
 /**
@@ -318,7 +337,18 @@ export const prepareCursorHook = async (
       ? CURSOR_BACKGROUND_AGENT_KIND
       : CURSOR_AGENT_KIND;
   const resolved = await resolveCursorRepo(payload, workspaceRoot, env, agentKind);
-  if (resolved === null) {
+  if (resolved.kind === "foreign_hub") {
+    // Nothing captured, nothing sent — and counted, so doctor and status
+    // can say how much this repo's mismatch has cost (state/foreign-hub.ts).
+    await recordForeignHubRefusal(resolved.home, {
+      repoId: resolved.identity.repoId,
+      foreignHub: resolved.foreignHub,
+      surface: event,
+      now: new Date(),
+    });
+    return null;
+  }
+  if (resolved.kind === "silent") {
     return null;
   }
   const { identity, config } = resolved;
@@ -336,6 +366,7 @@ export const prepareCursorHook = async (
     hub: {
       hubUrl: config.hubUrl,
       apiKey: config.apiKey,
+      keyOrigin: config.keyOrigin,
       timeoutMs: config.timeoutMs,
       home: config.home,
       repoKey: key,

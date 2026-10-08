@@ -24,6 +24,7 @@ import {
 } from "@crosscheck/connector-core/briefing/sanitize.ts";
 import { MAX_HUB_MESSAGE_CHARS } from "@crosscheck/connector-core/constants.ts";
 import type { MarkCandidate } from "@crosscheck/connector-core/http/pilot.ts";
+import type { HubFailureKind } from "@crosscheck/connector-core/http/client.ts";
 import type { PilotMarkRefKind } from "@crosscheck/schema";
 
 import { outcomeWord } from "./outcome-render.ts";
@@ -115,12 +116,18 @@ export const refNeverReachedLine = (ref: string): string =>
  * and the person needs to know the gesture did not land.
  */
 export const markFailureLine = (
-  kind: "network" | "http" | "malformed",
+  kind: HubFailureKind,
   message: string,
-): string =>
-  kind === "network"
+): string => {
+  // Never sent (http/client.ts key-origin check): the client's own sentence
+  // of two canonical origins, whole — the sanitizer would strip their `:`.
+  if (kind === "refused") {
+    return `${message} — nothing was recorded\n`;
+  }
+  return kind === "network"
     ? `hub unreachable: ${bareUntrusted(message, MAX_HUB_MESSAGE_CHARS)} — nothing was recorded\n`
     : `${hubSentence(message)}\n`;
+};
 
 /**
  * A HUB'S SENTENCE, PRINTED AS THE WHOLE LINE (round-6 LOW-5): the prose class — invisibles,

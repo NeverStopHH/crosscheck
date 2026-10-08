@@ -13,6 +13,7 @@ import {
 } from "@crosscheck/connector-core/constants.ts";
 import {
   envTimeoutMs,
+  hubOrigin,
   normalizeHubUrl,
   readStoredConfig,
   resolveTimeoutMs,
@@ -70,6 +71,9 @@ export const probeCredentials = async (
     {
       hubUrl,
       apiKey,
+      // The binding act itself: the person named this hub with this key, so
+      // it is the one origin the probe may carry the key to.
+      keyOrigin: hubOrigin(hubUrl),
       timeoutMs,
       home: "",
       repoKey: "",
@@ -274,10 +278,14 @@ export const runLogin = async (
   const latencyLine = renderLatencyLine(env, existing, owner, measurement, decision);
 
   await ensureDir(home);
+  // The key is bound HERE, to the hub it was just proven against
+  // (config/key-binding.ts) — written explicitly, so the previous login's
+  // binding never survives the spread of `existing`.
+  const keyOrigin = hubOrigin(hubUrl) ?? undefined;
   await saveConfig(
     home,
     withTimeoutDecision(
-      { ...(existing ?? {}), version: 1, hubUrl, apiKey },
+      { ...(existing ?? {}), version: 1, hubUrl, apiKey, keyOrigin },
       decision,
     ),
   );

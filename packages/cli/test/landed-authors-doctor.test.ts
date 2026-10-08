@@ -82,6 +82,7 @@ const setup = async (label: string): Promise<Setup> => {
 const hubFor = (s: Setup): HubContext => ({
   hubUrl: s.hubUrl,
   apiKey: s.nickKey,
+  keyOrigin: s.hubUrl,
   timeoutMs: 2000,
   home: s.home,
   repoKey: "",
@@ -260,6 +261,7 @@ describe("doctor's landed-change reasons line", () => {
       const line = await checkLandedAuthors(s.repos.reader, {
         ...hubFor(s),
         hubUrl: `http://127.0.0.1:${String(fake.port)}`,
+        keyOrigin: `http://127.0.0.1:${String(fake.port)}`,
       });
 
       expect(line.level).toBe("PASS");

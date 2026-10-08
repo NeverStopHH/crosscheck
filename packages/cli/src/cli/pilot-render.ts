@@ -38,6 +38,7 @@ import {
   COVERAGE_STATES,
 } from "@crosscheck/connector-core/http/coverage.ts";
 import { quoted, safeId } from "@crosscheck/connector-core/mcp/render.ts";
+import type { HubFailureKind } from "@crosscheck/connector-core/http/client.ts";
 import { DELIVERY_CHANNELS, HINT_OUTCOME_DISCLOSURE_MINIMUMS, MAX_PIN_PATH_CHARS } from "@crosscheck/schema";
 import type { PilotUnavailableReason } from "@crosscheck/schema";
 import type { FixDiffOutcome } from "@crosscheck/connector-core/git/fix-diff.ts";
@@ -589,11 +590,15 @@ export const pilotJson = (view: PilotView): string =>
  * printed half-read.
  */
 export const pilotFailureLine = (
-  kind: "network" | "http" | "malformed",
+  kind: HubFailureKind,
   message: string,
 ): string => {
   const said = bareUntrusted(message, MAX_HUB_MESSAGE_CHARS);
   switch (kind) {
+    // Never sent (http/client.ts key-origin check): the client's own
+    // sentence of two canonical origins, whole — the bare class strips `:`.
+    case "refused":
+      return `${message} — the pilot's figures are UNKNOWN, not zero\n`;
     case "network":
       return `hub unreachable: ${said} — the pilot's figures are UNKNOWN, not zero\n`;
     case "malformed":

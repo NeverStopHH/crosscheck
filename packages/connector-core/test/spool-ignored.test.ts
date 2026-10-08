@@ -55,6 +55,7 @@ const envelope = (index: number, kind: string): Record<string, unknown> => ({
 const hubContext = (path: string, hubUrl: string) => ({
   hubUrl,
   apiKey: "key",
+  keyOrigin: hubUrl,
   timeoutMs: 20_000,
   home: path,
   repoKey: KEY,

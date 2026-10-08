@@ -43,6 +43,7 @@ let apiKey: string;
 const ctx = (): HubContext => ({
   hubUrl,
   apiKey,
+  keyOrigin: hubUrl,
   timeoutMs: 4000,
   home,
   repoKey: "pilot-client",

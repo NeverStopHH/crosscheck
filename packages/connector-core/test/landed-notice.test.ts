@@ -139,6 +139,7 @@ const world = async (label: string): Promise<World> => {
     hub: {
       hubUrl,
       apiKey: mike.apiKey,
+      keyOrigin: hubUrl,
       timeoutMs: TEST_TIMEOUT_MS,
       home,
       repoKey: repoKey(hubUrl, REPO_ID),
@@ -483,7 +484,7 @@ describe("on Mike's next prompt", () => {
         home,
         repo,
         hostSessionKey: "notice-answer-uuid",
-        hub: { hubUrl: fake.url, apiKey: "test-key", timeoutMs: TEST_TIMEOUT_MS, home, repoKey: repoKey(fake.url, REPO_ID), now: () => new Date() },
+        hub: { hubUrl: fake.url, apiKey: "test-key", keyOrigin: fake.url, timeoutMs: TEST_TIMEOUT_MS, home, repoKey: repoKey(fake.url, REPO_ID), now: () => new Date() },
       };
 
       const first = await promptIn(where);
@@ -508,7 +509,7 @@ const fakeSession = async (label: string, fake: HintHub) => {
     home,
     repo,
     hostSessionKey,
-    hub: { hubUrl: fake.url, apiKey: "test-key", timeoutMs: TEST_TIMEOUT_MS, home, repoKey: repoKey(fake.url, REPO_ID), now: () => new Date() },
+    hub: { hubUrl: fake.url, apiKey: "test-key", keyOrigin: fake.url, timeoutMs: TEST_TIMEOUT_MS, home, repoKey: repoKey(fake.url, REPO_ID), now: () => new Date() },
   };
 };
 
