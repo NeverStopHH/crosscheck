@@ -65,6 +65,8 @@ import { planTopics } from "./topic-rules.ts";
 
 /** The capture-loss detail a topic overflow is booked under (state/loss-ledger.ts). */
 const TOPIC_OVERFLOW_DETAIL = "topic-cap";
+/** What keeps an event's overflow apart from its own session touches, in one grouping key — no context id contains it. */
+const OVERFLOW_GROUP_SUFFIX = "\u0000overflow";
 
 export interface CaptureTouchedFilesInput
   extends Omit<CaptureFileTargetsInput, "resolveRoot"> {
@@ -152,25 +154,38 @@ const spoolOpenedTopics = async (
   return appended.persisted;
 };
 
-/** Paths grouped by the context they file under, in first-touch order. */
+/** One context's share of an event: its paths, and whether the topic cap is why they file there. */
+interface FilingGroup {
+  readonly filing: Filing;
+  readonly isOverflow: boolean;
+  readonly paths: readonly string[];
+}
+
+/**
+ * Paths grouped by the context they file under, in first-touch order — the
+ * cap's overflow apart from the session's own touches, so what it spooled is
+ * what is counted (review M7).
+ */
 const groupsOf = (
   paths: readonly string[],
-  filingByPath: ReadonlyMap<string, Filing>,
+  plan: Pick<TopicPlan, "filingByPath" | "overflowedPaths">,
   fallback: Filing,
   unopened: ReadonlySet<string>,
-): ReadonlyMap<string, { readonly filing: Filing; readonly paths: readonly string[] }> => {
-  const groups = new Map<string, { readonly filing: Filing; readonly paths: string[] }>();
+): readonly FilingGroup[] => {
+  const groups = new Map<string, { readonly filing: Filing; readonly isOverflow: boolean; readonly paths: string[] }>();
   for (const path of paths) {
-    const planned = filingByPath.get(path);
+    const planned = plan.filingByPath.get(path);
     if (planned === undefined) {
       continue;
     }
     const filing = planned.key !== null && unopened.has(planned.key) ? fallback : planned;
-    const group = groups.get(filing.workContextId) ?? { filing, paths: [] };
+    const isOverflow = plan.overflowedPaths.has(path);
+    const groupKey = `${filing.workContextId}${isOverflow ? OVERFLOW_GROUP_SUFFIX : ""}`;
+    const group = groups.get(groupKey) ?? { filing, isOverflow, paths: [] };
     group.paths.push(path);
-    groups.set(filing.workContextId, group);
+    groups.set(groupKey, group);
   }
-  return groups;
+  return [...groups.values()];
 };
 
 /**
@@ -190,22 +205,25 @@ const captureByTopic = async (
   const session: Filing = { key: null, workContextId: life.sessionWorkContextId };
   const unopened = new Set(isOpened ? [] : plan.opened.map((topic) => topic.key));
   const captured: string[] = [];
-  for (const { filing, paths } of groupsOf(input.paths, plan.filingByPath, session, unopened).values()) {
+  let overflowed = 0;
+  for (const { filing, isOverflow, paths } of groupsOf(input.paths, plan, session, unopened)) {
     const collected = await captureFileTargets({
       ...input,
       paths,
       ...resolveRootFrom(resolution),
       workContextId: filing.workContextId,
-      seenTargets: seenPathsOf(input.seenTargets, filing.key),
+      // What an earlier group of this event spooled under the same context is seen too.
+      seenTargets: seenPathsOf([...input.seenTargets, ...captured], filing.key),
       seq: seqAfter(input.seq, captured.length),
       maxTargets: MAX_TARGETS_PER_INVOCATION - captured.length,
     });
     captured.push(...collected.map((path) => topicSeenKey(filing.key, path)));
+    overflowed += isOverflow ? collected.length : 0;
   }
-  if (plan.overflowed > 0 && input.editFired !== false) {
+  if (overflowed > 0 && input.editFired !== false) {
     await recordCaptureLoss(input.home, {
       kind: "topic_overflow",
-      count: plan.overflowed,
+      count: overflowed,
       key: input.repoKey,
       detail: TOPIC_OVERFLOW_DETAIL,
       now: input.now,
@@ -219,7 +237,7 @@ const captureByTopic = async (
       relabeled: relabelsKept(plan.relabeled, isOpened),
       touched: new Map([...plan.touched].filter(([key]) => !unopened.has(key))),
       sessionTouched: plan.sessionTouched || unopened.size > 0,
-      overflowed: plan.overflowed,
+      overflowed,
       at: input.now.toISOString(),
     },
   };

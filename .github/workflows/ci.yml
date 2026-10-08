@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1890
+    # PRINTS: 1893
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -283,11 +283,11 @@ jobs:
     # PRINTS: flows/briefing.ts 5
     # PRINTS: flows/capture-git-touches.ts 4
     # PRINTS: flows/capture-targets.ts 5
-    # PRINTS: flows/capture-touched-files.ts 6
+    # PRINTS: flows/capture-touched-files.ts 8
     # PRINTS: flows/claim-revalidation.ts 2
     # PRINTS: flows/claim-surface.ts 1
     # PRINTS: flows/end-session.ts 13
-    # PRINTS: flows/git-lane.ts 11
+    # PRINTS: flows/git-lane.ts 12
     # PRINTS: flows/heal-session.ts 22
     # PRINTS: flows/heartbeat.ts 3
     # PRINTS: flows/hint.ts 5
@@ -512,7 +512,7 @@ jobs:
     # PRINTS: capture-health.ts 2
     # PRINTS: capture-latency.test.ts 1
     # PRINTS: capture-targets.ts 5
-    # PRINTS: capture-touched-files.ts 6
+    # PRINTS: capture-touched-files.ts 8
     # PRINTS: causal-guarantees.ts 21
     # PRINTS: check-ignore.ts 1
     # PRINTS: check.ts 17
@@ -588,7 +588,7 @@ jobs:
     # PRINTS: ghost-overlap.ts 4
     # PRINTS: ghost.ts 2
     # PRINTS: git-lane-cost.ts 2
-    # PRINTS: git-lane.ts 14
+    # PRINTS: git-lane.ts 15
     # PRINTS: git-queries.ts 15
     # PRINTS: git.ts 4
     # PRINTS: head-history.ts 5

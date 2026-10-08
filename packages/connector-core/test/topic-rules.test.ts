@@ -121,7 +121,7 @@ const touch = async (
       relabeled: plan.relabeled,
       touched: plan.touched,
       sessionTouched: plan.sessionTouched,
-      overflowed: plan.overflowed,
+      overflowed: plan.overflowedPaths.size,
       at: at(step).toISOString(),
     },
   );

@@ -178,7 +178,7 @@ export const planTopics = async (
   const touched = new Map<string, string>();
   const filingByPath = new Map<string, Filing>();
   let sessionTouched = false;
-  let overflowed = 0;
+  const overflowedPaths = new Set<string>();
   for (const [rootKey, rootPaths] of pathsByRoot(resolution, paths)) {
     const head = resolution.headByRoot.get(rootKey);
     const decision =
@@ -193,7 +193,9 @@ export const planTopics = async (
       }
     } else if (decision.kind === "open" && head !== undefined) {
       if (live.length + opened.length >= MAX_TOPICS_PER_SESSION) {
-        overflowed += rootPaths.length;
+        for (const path of rootPaths) {
+          overflowedPaths.add(path);
+        }
       } else {
         const id = mintTopicId(life.repoId, head.root, decision.branch);
         opened.push({
@@ -223,5 +225,5 @@ export const planTopics = async (
       filingByPath.set(path, filing);
     }
   }
-  return { filingByPath, opened, relabeled, touched, sessionTouched, overflowed };
+  return { filingByPath, opened, relabeled, touched, sessionTouched, overflowedPaths };
 };

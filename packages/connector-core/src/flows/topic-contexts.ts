@@ -178,8 +178,14 @@ export interface TopicPlan {
   readonly touched: ReadonlyMap<string, string>;
   /** True when some path filed under the session's own context. */
   readonly sessionTouched: boolean;
-  /** Touches filed under the session's own context only because the cap was reached. */
-  readonly overflowed: number;
+  /**
+   * The event's paths filed under the session's own context only because the
+   * cap was reached. A set, not a count (review M7): the caller counts those
+   * of them it actually SPOOLED, so a file swept on every Stop, two roots'
+   * copies of one path, or a path the denylist refuses is not one more lost
+   * topic each time.
+   */
+  readonly overflowedPaths: ReadonlySet<string>;
 }
 
 const topicRecord = (topic: TopicContext, producer: Producer, now: Date): Envelope =>
@@ -236,6 +242,7 @@ export interface TopicCapture {
   readonly relabeled: readonly Relabel[];
   readonly touched: ReadonlyMap<string, string>;
   readonly sessionTouched: boolean;
+  /** Files the cap filed under the session's own context that this event newly spooled (review M7). */
   readonly overflowed: number;
   readonly at: string;
 }

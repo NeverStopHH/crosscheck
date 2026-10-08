@@ -22,7 +22,10 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import { MAX_TOPICS_PER_SESSION } from "@crosscheck/connector-core/constants.ts";
+import { readCaptureLosses } from "@crosscheck/connector-core/state/loss-ledger.ts";
+import { readSessionState, updateSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import type { SessionState, TopicContext } from "@crosscheck/connector-core/state/session-state.ts";
 import { readSpoolLines, repoKey, runHook } from "../src/index.ts";
 import type { Env } from "../src/index.ts";
 import { git, makeHome, makeRepo, writeRepoFile } from "../../connector-core/test/helpers.ts";
@@ -109,6 +112,23 @@ const bash = (world: World, command: string): Promise<string> =>
 
 const subagentStop = (world: World): Promise<string> =>
   runHook("subagent-stop", hookPayload(world.main, { hook_event_name: "SubagentStop", stop_hook_active: false }), env(world.home));
+
+/** One of a full life's topics, in a worktree that is none of the test's (`/cx-nick-full/<n>`). */
+const fullTopic = (state: SessionState, index: number): TopicContext => ({
+  key: `full${String(index)}.1`,
+  sessionId: state.crosscheckSessionId,
+  workContextId: `${state.workContextId}~tfull${String(index)}.1`,
+  branch: `feat/full-${String(index)}`,
+  branches: [`feat/full-${String(index)}`],
+  head: null,
+  title: `feat/full-${String(index)} @ api`,
+  status: "implementing",
+  baseCommit: null,
+  root: `/cx-nick-full/${String(index)}`,
+  registeredAt: new Date().toISOString(),
+  lastTouchedAt: new Date(Date.now() - 600_000).toISOString(),
+  ackedStatus: null,
+});
 
 const commitAll = async (root: string, message: string): Promise<void> => {
   await git(root, ["add", "-A"]);
@@ -406,6 +426,36 @@ describe("M5: a dirty file carried across a branch switch stays with the topic t
     const topics = filesByTopic(await spooled(world));
     expect(topics["feat/topic-0"]).toEqual(["src/same.ts:tool_edit"]);
     expect(topics["feat/topic-1"]).toEqual(["src/b-own.ts:tool_edit", "src/same.ts:git_diff"]);
+  });
+});
+
+describe("M7: a topic overflow counts each file once, never each sweep of it", () => {
+  test("a sibling past the topic cap: three dirty files, two Stops — three counted, and a denylisted one not at all", async () => {
+    // Arrange: a life that has already opened every topic it may, and a fourth
+    // dirty file the denylist refuses
+    const world = await nickShape("m7-overflow", 1);
+    const [sibling = ""] = world.siblings;
+    await sessionStart(world);
+    await updateSessionState(world.home, SESSION_ID, (fresh) => ({
+      ...fresh,
+      topicContexts: Array.from({ length: MAX_TOPICS_PER_SESSION }, (_, index) => fullTopic(fresh, index)),
+    }));
+    for (const name of ["o1", "o2", "o3"]) {
+      await writeRepoFile(sibling, `src/${name}.ts`, `export const ${name} = 1;\n`);
+    }
+    await writeRepoFile(sibling, ".env.local", "TOKEN=synthetic\n");
+
+    // Act: the shell marks the sibling, then two turns end
+    await bash(world, `cd ${sibling} && touch src/o1.ts`);
+    await stop(world);
+    await bash(world, `cd ${sibling} && touch src/o1.ts`);
+    await stop(world);
+
+    // Assert: the three files reached the session's own context once each, and three were counted
+    const losses = await readCaptureLosses(world.home, repoKey(DEAD_HUB_URL, REPO_ID));
+    expect(losses.byKind["topic_overflow"]).toBe(3);
+    expect((await readSessionState(world.home, SESSION_ID))?.topicOverflowCount).toBe(3);
+    expect(filesByTopic(await spooled(world))["(session)"]).toEqual(["src/o1.ts:git_diff", "src/o2.ts:git_diff", "src/o3.ts:git_diff"]);
   });
 });
 

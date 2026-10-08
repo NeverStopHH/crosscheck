@@ -19619,12 +19619,38 @@ export const MUTATIONS: readonly Mutation[
       "hub and an entry per file in a state read on every hook",
   },
   {
+    // Re-pointed by review M7, which counts what the overflow spooled.
     label: "a touch past the topic cap is filed under the session with nothing counted",
     file: `${CORE}/src/flows/capture-touched-files.ts`,
-    from: "  if (plan.overflowed > 0 && input.editFired !== false) {",
+    from: "  if (overflowed > 0 && input.editFired !== false) {",
     to: "  if (false) {",
     test: `${CORE}/test/topic-contexts.test.ts`,
     because: "touches lose their topic and no ledger, report or doctor line says so",
+  },
+  {
+    // Review M7 of feat/topic-contexts (probe P9).
+    label: "a topic overflow counts every path of the event, spooled or not",
+    file: `${CORE}/src/flows/capture-touched-files.ts`,
+    from: "    overflowed += isOverflow ? collected.length : 0;",
+    to: "    overflowed += isOverflow ? paths.length : 0;",
+    test: `${CORE}/test/topic-contexts.test.ts`,
+    because: "review M7: a re-edit, a second root's copy of one path and a path the denylist refuses each count one more lost topic, and `topic_overflow` measures edits, not losses",
+  },
+  {
+    label: "an event's overflow and its own session touches are one group",
+    file: `${CORE}/src/flows/capture-touched-files.ts`,
+    from: "    const groupKey = `${filing.workContextId}${isOverflow ? OVERFLOW_GROUP_SUFFIX : \"\"}`;",
+    to: "    const groupKey = filing.workContextId;",
+    test: `${CORE}/test/topic-contexts.test.ts`,
+    because: "whichever path came first decides whether the whole group counts as overflow: the session's own edits are booked lost, or the overflow is not booked at all",
+  },
+  {
+    label: "the git lane counts an overflowed root's paths on every sweep",
+    file: `${CORE}/src/flows/git-lane.ts`,
+    from: "      overflowed: plan.overflowedPaths.size > 0 ? spooled.length : 0,",
+    to: "      overflowed: plan.overflowedPaths.size,",
+    test: `${CONNECTOR}/test/topic-nick-shape.test.ts`,
+    because: "review M7: every Stop that sweeps a root past the cap counts its dirty files again, and the ledger reads turns times files",
   },
   {
     label: "one path in two topics is deduplicated as one touch",
@@ -20452,7 +20478,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/summarizer-worker-env.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/topic-git-lane.test.ts 9
- * PRINTS: packages/connector-claude/test/topic-nick-shape.test.ts 12
+ * PRINTS: packages/connector-claude/test/topic-nick-shape.test.ts 13
  * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 4
  * PRINTS: packages/connector-core/test/absence-render.test.ts 7
@@ -20564,7 +20590,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/staleness-axis.test.ts 1
  * PRINTS: packages/connector-core/test/target-paths.test.ts 1
  * PRINTS: packages/connector-core/test/tool-window-pairing.test.ts 6
- * PRINTS: packages/connector-core/test/topic-contexts.test.ts 17
+ * PRINTS: packages/connector-core/test/topic-contexts.test.ts 19
  * PRINTS: packages/connector-core/test/topic-heads.test.ts 3
  * PRINTS: packages/connector-core/test/topic-rules.test.ts 15
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3

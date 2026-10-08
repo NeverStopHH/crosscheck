@@ -246,6 +246,33 @@ describe("where a touch files", () => {
     expect(losses.byKind["topic_overflow"]).toBe(1);
     expect(withTopicCapture(state, result.topics).topicOverflowCount).toBe(1);
   });
+
+  test("past the cap, a file is counted once: not again when edited again, not for a second root's copy, never when denied (review M7)", async () => {
+    // Arrange: a full life; two roots past the cap that share one relative path, and a credential file
+    const home = await makeHome("topic-cap-once");
+    cleanups.push(home);
+    const full = Array.from({ length: MAX_TOPICS_PER_SESSION }, (_, index) =>
+      topicEntry("cc_topics", "wc_cc_topics", `feat/${String(index)}`),
+    );
+    const state = stateAt({ topicContexts: full });
+    const paths = ["/cx-topics/start/src/own.ts", "/cx-topics/wt8/src/a.ts", "/cx-topics/wt9/src/a.ts", "/cx-topics/wt9/.env.local"];
+    const branchOf = (root: string): string => (root.endsWith("start") ? "detached@0123456789" : "feat/one-too-many");
+
+    // Act: the event, then the same edit again with what the first spooled seen
+    const first = await capture(home, state, paths, branchOf);
+    const folded = { ...withTopicCapture(state, first.topics), seenTargets: [...state.seenTargets, ...first.captured] };
+    const again = await capture(home, folded, paths, branchOf);
+
+    // Assert: the session's own file is no overflow; the two copies are one target and one overflow — once
+    expect((await spooledOf(home)).map((record) => [record.kind, record.body["value"]])).toEqual([
+      ["target", "src/own.ts"],
+      ["target", "src/a.ts"],
+    ]);
+    expect(first.topics?.overflowed).toBe(1);
+    expect(again.topics?.overflowed).toBe(0);
+    expect((await readCaptureLosses(home, repoKey(HUB, REPO_ID))).byKind["topic_overflow"]).toBe(1);
+    expect(withTopicCapture(folded, again.topics).topicOverflowCount).toBe(1);
+  });
 });
 
 describe("the registry is per life", () => {

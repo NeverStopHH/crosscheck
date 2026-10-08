@@ -344,15 +344,19 @@ const spoolRoot = async (
           commits,
           "git_commit",
         );
+  const spooled = [...changed, ...committed];
   return {
-    captured: [...changed, ...committed].map((path) => topicSeenKey(filing.key, path)),
+    captured: spooled.map((path) => topicSeenKey(filing.key, path)),
     topic: {
       sessionId: life.sessionId,
       opened: isOpened ? plan.opened : [],
       relabeled: relabelsKept(plan.relabeled, isOpened),
       touched: filing.key === null ? new Map() : new Map([[filing.key, read.lane.root]]),
       sessionTouched: filing.key === null,
-      overflowed: plan.overflowed,
+      // One root, one decision: past the cap every path of it overflowed, and
+      // what counts is what this sweep newly spooled (review M7) — never the
+      // same dirty files again on every Stop.
+      overflowed: plan.overflowedPaths.size > 0 ? spooled.length : 0,
       at: input.now.toISOString(),
     },
   };
