@@ -18,7 +18,8 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { createDb, createServer } from "@crosscheck/server";
+import { createDb } from "@crosscheck/server";
+import { createServerConfirmingAtOnce } from "../../server/test/fixtures/immediate-confirmation.ts";
 import { sql } from "drizzle-orm";
 import type { Db } from "@crosscheck/server";
 import { EXIT_USAGE } from "@crosscheck/connector-core/constants.ts";
@@ -108,7 +109,8 @@ const pinCount = async (): Promise<number> => {
 
 beforeAll(async () => {
   db = await createDb();
-  server = Bun.serve({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
+  // Applies a pin at once, as every hub before 0.11 did (drafts: drafted-gestures-cli.test.ts).
+  server = Bun.serve({ port: 0, fetch: createServerConfirmingAtOnce({ db, adminToken: ADMIN_TOKEN }).fetch });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
   repo = await makeRepo("pin-denylist", { remote: "git@github.com:acme/api.git" });
   for (const path of [PLAIN, GENERATED, LOCKFILE, LEGACY, MOVED_FROM, SECOND_FROM]) {

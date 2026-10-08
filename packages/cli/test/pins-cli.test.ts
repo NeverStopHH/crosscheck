@@ -19,7 +19,8 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import { createDb, createServer } from "@crosscheck/server";
+import { createDb } from "@crosscheck/server";
+import { createServerConfirmingAtOnce } from "../../server/test/fixtures/immediate-confirmation.ts";
 import { sql } from "drizzle-orm";
 import { runGit } from "@crosscheck/connector-core/git/git.ts";
 import type { Db } from "@crosscheck/server";
@@ -172,7 +173,8 @@ beforeAll(async () => {
   db = await createDb();
   server = Bun.serve({
     port: 0,
-    fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch,
+    // Applies a pin at once, as every hub before 0.11 did (drafts: drafted-gestures-cli.test.ts).
+    fetch: createServerConfirmingAtOnce({ db, adminToken: ADMIN_TOKEN }).fetch,
   });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
   home = await makeHome("pins-cli");

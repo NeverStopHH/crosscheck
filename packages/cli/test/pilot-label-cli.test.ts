@@ -18,7 +18,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
-import { createDb, createServer } from "@crosscheck/server";
+import { createDb } from "@crosscheck/server";
+import { createServerConfirmingAtOnce } from "../../server/test/fixtures/immediate-confirmation.ts";
 import { QUOTED_DATA_NOTICE } from "@crosscheck/connector-core/briefing/render.ts";
 import {
   EXIT_OK,
@@ -214,7 +215,9 @@ const reportOf = async (s: Scenario): Promise<ReportFigures> => {
 
 beforeAll(async () => {
   const db = await createDb();
-  server = Bun.serve({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
+  // A hub that applies the label at once, as every hub before 0.11 did: these
+  // tests pin the walk over labels that took effect. Drafts: drafted-gestures-cli.test.ts.
+  server = Bun.serve({ port: 0, fetch: createServerConfirmingAtOnce({ db, adminToken: ADMIN_TOKEN }).fetch });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
   ken = await createDeveloper("Ken Label");
 });

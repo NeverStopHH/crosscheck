@@ -132,14 +132,15 @@ describe("renderMyOutcomes' source credit (review #10)", () => {
     );
   });
 
-  test("round-6 LOW-1: the footer says which of the commands are yours — typed in your own shell", () => {
+  test("round-6 LOW-1, since human provenance: the footer says only the passkey makes a word yours — a shell no longer does", () => {
     // Act
     const out = renderMyOutcomes(viewSince("2026-08-10T12:00:00.000Z"));
 
-    // Assert
+    // Assert — your own shell is a door any agent on the machine can reach (0.11 §2)
     expect(out).toContain(
-      "recorded with your key — by you (crosscheck followed / overrode, typed in your own shell) or by your agent (mark_hint_outcome, or those commands run by an agent's tool, a pipe or Claude Code's ! prefix); noise is your own label (crosscheck noise)\n",
+      "counted above: only what you confirmed with your passkey (crosscheck confirm); your agent's words (mark_hint_outcome) and words typed at a terminal (crosscheck followed / overrode / noise / helpful) are drafts until then\n",
     );
+    expect(out).not.toContain("typed in your own shell");
   });
 
   test("the footer's promise names both shared totals, their viewer-independent minimums, and the team of three (H1)", () => {

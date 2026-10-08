@@ -20,7 +20,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
-import { createDb, createServer } from "@crosscheck/server";
+import { createDb } from "@crosscheck/server";
 import { hintDeliveryId } from "@crosscheck/connector-core/capture/records.ts";
 import { deliveryIdFor } from "@crosscheck/schema";
 import { QUOTED_DATA_NOTICE } from "@crosscheck/connector-core/briefing/render.ts";
@@ -32,6 +32,7 @@ import { holdsUnsentDelivery } from "@crosscheck/connector-core/spool/held-deliv
 import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 
 import { runCli } from "../src/index.ts";
+import { createServerConfirmingAtOnce } from "../../server/test/fixtures/immediate-confirmation.ts";
 import {
   AGENT_WORD_LINE,
   DELIVERY_HELD_AMBIGUOUS_LINE,
@@ -172,7 +173,9 @@ const cli = (
 
 beforeAll(async () => {
   const db = await createDb();
-  server = Bun.serve({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
+  // A hub that applies the word at once, as every hub before 0.11 did: these
+  // tests pin how the CLI renders a word that took effect. Drafts: drafted-gestures-cli.test.ts.
+  server = Bun.serve({ port: 0, fetch: createServerConfirmingAtOnce({ db, adminToken: ADMIN_TOKEN }).fetch });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
   oldHub = Bun.serve({
     port: 0,
@@ -494,7 +497,9 @@ describe("crosscheck pilot --mine", () => {
     // Assert
     expect(result.exitCode).toBe(EXIT_OK);
     expect(result.stdout).toContain(QUOTED_DATA_NOTICE);
-    expect(result.stdout).toContain("hints that reached you unasked: 5 — followed 3 · overrode 1 · not relevant now 0 · noise 0 · unmarked 1");
+    expect(result.stdout).toContain(
+      "hints that reached you unasked: 5 — as you confirmed them with your passkey: followed 3 · overrode 1 · not relevant now 0 · noise 0 · unmarked 1",
+    );
     expect(result.stdout).toContain("from Ken: 5 — followed 3 · overrode 1");
     expect(result.stdout).toContain(`overrode, from Ken: «${OVERRIDE_REASON}»`);
   });

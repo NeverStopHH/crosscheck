@@ -17,7 +17,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
-import { createDb, createServer } from "@crosscheck/server";
+import { createDb } from "@crosscheck/server";
+import { createServerConfirmingAtOnce } from "../../server/test/fixtures/immediate-confirmation.ts";
 import { hintDeliveryId } from "@crosscheck/connector-core/capture/records.ts";
 import {
   EXIT_OK,
@@ -188,7 +189,8 @@ beforeAll(async () => {
   const db = await createDb();
   server = Bun.serve({
     port: 0,
-    fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch,
+    // Applies a label at once, as every hub before 0.11 did (drafts: drafted-gestures-cli.test.ts).
+    fetch: createServerConfirmingAtOnce({ db, adminToken: ADMIN_TOKEN }).fetch,
   });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
   stuckHub = Bun.serve({

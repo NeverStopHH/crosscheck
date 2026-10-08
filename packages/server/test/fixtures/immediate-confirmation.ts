@@ -28,6 +28,8 @@ import { eq } from "drizzle-orm";
 import type { Hono } from "hono";
 
 import type { AppEnv } from "../../src/types.ts";
+import { createServer } from "../../src/index.ts";
+import type { CreateServerOptions } from "../../src/index.ts";
 import { hashApiKey } from "../../src/auth/keys.ts";
 import { developers, humanConfirmationItems, humanConfirmations } from "../../src/db/schema.ts";
 import type { Db } from "../../src/db/client.ts";
@@ -202,6 +204,20 @@ const isDraftingDoor = (method: string, path: string): boolean =>
   (method === "DELETE" && path.startsWith("/api/settings/mutes/")) ||
   (method === "PUT" && path === "/api/settings/presence");
 
+/**
+ * A HUB THAT APPLIES A KEY'S WORD AT ONCE, for the connector and CLI suites
+ * from before 0.11 that drive a hub over a socket: what they pin is how the
+ * client renders a word that took effect — the answer every hub before human
+ * provenance gave, and the one an older hub still gives. Production
+ * behaviour, the word left a draft, is plain `createServer`.
+ */
+export const createServerConfirmingAtOnce = (options: CreateServerOptions): App =>
+  confirmingAtOnce(createServer(options), {
+    db: options.db,
+    now: options.now ?? (() => new Date()),
+    embedder: options.embedder ?? null,
+  });
+
 /** Wraps an app so every drafted word is confirmed the moment it is written (see the header). */
 export const confirmingAtOnce = (app: App, deps: Deps): App => {
   const request = async (...args: Parameters<App["request"]>): Promise<Response> => {
@@ -227,7 +243,9 @@ export const confirmingAtOnce = (app: App, deps: Deps): App => {
     if (developerId === null) {
       return response;
     }
-    const body = JSON.parse(String(init?.body ?? "{}")) as Body;
+    // A DELETE (an unmute) carries no body.
+    const raw = String(init?.body ?? "");
+    const body = (raw.trim() === "" ? {} : JSON.parse(raw)) as Body;
     if (isOutcome) {
       return outcomeAtOnce(deps, developerId, body, String(data["id"]), path.endsWith("/person") ? "person" : "agent");
     }
@@ -237,10 +255,23 @@ export const confirmingAtOnce = (app: App, deps: Deps): App => {
     await confirmDraftsDirectly(deps, developerId);
     return json(effectAnswer(path, data), 200);
   };
+  // The same, for a hub on a real socket (`Bun.serve({ fetch })`): the
+  // connector and CLI suites from before 0.11 talk to one over HTTP.
+  const fetchAtOnce = async (incoming: Request, env?: Parameters<App["request"]>[2]): Promise<Response> => {
+    const hasBody = incoming.method !== "GET" && incoming.method !== "HEAD";
+    return request(
+      incoming.url,
+      { method: incoming.method, headers: incoming.headers, ...(hasBody ? { body: await incoming.text() } : {}) },
+      env,
+    );
+  };
   return new Proxy(app, {
     get: (target, property, receiver) => {
       if (property === "request") {
         return request;
+      }
+      if (property === "fetch") {
+        return fetchAtOnce;
       }
       const value: unknown = Reflect.get(target, property, receiver);
       return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
