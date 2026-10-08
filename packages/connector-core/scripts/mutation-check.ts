@@ -24110,6 +24110,21 @@ export const MUTATIONS: readonly Mutation[
     test: `${CONNECTOR}/test/foreign-model.test.ts`,
     because: "every timed-out model run keeps its process and its pipe for the hang's whole life",
   },
+  // intent-hook.test.ts "fires once" pinned "the hook never waits on the
+  // model" with a stopwatch (elapsed under the prompt budget) that CPU
+  // contention reddened with no behaviour wrong. It now holds the model and
+  // observes the handler finish first; this proves that version still sees
+  // a hook that blocks on its worker.
+  {
+    label: "the prompt hook waits on the intent model it spawned",
+    file: `${CORE}/src/derive/spawn.ts`,
+    from: "    const proc = Bun.spawn({",
+    to: "    const proc = Bun.spawnSync({",
+    test: `${CONNECTOR}/test/intent-hook.test.ts`,
+    because:
+      "every first substantive prompt stalls on the model, up to SUMMARIZER_TIMEOUT_MS, " +
+      "on the developer's keyboard",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -24279,7 +24294,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/hook-window.test.ts 4
  * PRINTS: packages/connector-claude/test/hooks-fired-marker.test.ts 1
  * PRINTS: packages/connector-claude/test/intent-gate.test.ts 1
- * PRINTS: packages/connector-claude/test/intent-hook.test.ts 1
+ * PRINTS: packages/connector-claude/test/intent-hook.test.ts 2
  * PRINTS: packages/connector-claude/test/intent-worker.test.ts 5
  * PRINTS: packages/connector-claude/test/landed-change-hook.test.ts 4
  * PRINTS: packages/connector-claude/test/landed-notice-author-hook.test.ts 1
