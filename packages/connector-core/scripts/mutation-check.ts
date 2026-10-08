@@ -1310,13 +1310,13 @@ export const MUTATIONS: readonly Mutation[
     label: "identity tests answer to whichever machine runs them",
     file: `${CORE}/src/git/ssh-hostname.ts`,
     from:
-      "  if (process.env[SSH_CANONICALIZE_ENV] === SSH_CANONICALIZE_OFF) {\n" +
-      "    return Promise.resolve(null);\n" +
-      "  }",
+      "    if (env[SSH_CANONICALIZE_ENV] === SSH_CANONICALIZE_OFF) {\n" +
+      "      return Promise.resolve(null);\n" +
+      "    }",
     to:
-      "  if (process.env[SSH_CANONICALIZE_ENV] === `${SSH_CANONICALIZE_OFF}-never`) {\n" +
-      "    return Promise.resolve(null);\n" +
-      "  }",
+      "    if (env[SSH_CANONICALIZE_ENV] === `${SSH_CANONICALIZE_OFF}-never`) {\n" +
+      "      return Promise.resolve(null);\n" +
+      "    }",
     test: `${CORE}/test/repo-ssh-determinism.test.ts`,
     because:
       "the off-switch is the suite's only isolation from the developer's " +
@@ -4895,13 +4895,8 @@ export const MUTATIONS: readonly Mutation[
     // across two emitters, 1 distinct position.
     label: "the allocator hands two emitters the same position",
     file: `${CORE}/src/state/session-state.ts`,
-    from:
-      "      const from = fresh.eventSeq + 1;\n" +
-      "      await writeSessionState(home, { ...fresh, eventSeq: from + count - 1 });\n" +
-      "      return { epoch: fresh.seqEpoch, from, count };",
-    to:
-      "      const from = fresh.eventSeq + 1;\n" +
-      "      return { epoch: fresh.seqEpoch, from, count };",
+    from: "    next: { ...fresh, eventSeq: from + count - 1 },\n",
+    to: "    next: fresh,\n",
     test: `${CORE}/test/session-seq.test.ts`,
     because:
       "every record in the session claims position 1, the hub answers " +
@@ -5256,8 +5251,8 @@ export const MUTATIONS: readonly Mutation[
     // window opens exactly where the block begins and holds nothing.
     label: "a window opens on a position the block then takes anyway",
     file: `${CORE}/src/state/session-state.ts`,
-    from: "        eventSeq: taken,\n        toolWindows: appended.slice(evicted),",
-    to: "        toolWindows: appended.slice(evicted),",
+    from: "      eventSeq: taken,\n      toolWindows: appended.slice(evicted),",
+    to: "      toolWindows: appended.slice(evicted),",
     test: `${CONNECTOR}/test/hook-window.test.ts`,
     because:
       "UNSAFE: the edit's interval collapses onto the first position of its " +
@@ -5271,8 +5266,8 @@ export const MUTATIONS: readonly Mutation[
     // written after the edit.
     label: "a tool whose open was refused takes a parallel tool's floor",
     file: `${CORE}/src/state/session-state.ts`,
-    from: "        windowKey === null ? null : toolWindowFloorFor(fresh, windowKey);",
-    to: "        windowKey === null ? null : (fresh.toolWindows[0]?.floor ?? null);",
+    from: "    windowKey === null ? null : toolWindowFloorFor(fresh, windowKey);",
+    to: "    windowKey === null ? null : (fresh.toolWindows[0]?.floor ?? null);",
     test: `${CONNECTOR}/test/hook-window-pairing.test.ts`,
     because:
       "UNSAFE: a call with no window of its own is bracketed from a moment " +
@@ -5283,7 +5278,7 @@ export const MUTATIONS: readonly Mutation[
     // Spec 01 §3.6: a close must remove what it closed.
     label: "a closed window keeps the floor it opened on",
     file: `${CORE}/src/state/session-state.ts`,
-    from: "        ...(windowKey === null ? {} : closedToolWindow(fresh, windowKey)),\n",
+    from: "      ...(windowKey === null ? {} : closedToolWindow(fresh, windowKey)),\n",
     to: "",
     test: `${CONNECTOR}/test/hook-window.test.ts`,
     because:
@@ -5321,8 +5316,8 @@ export const MUTATIONS: readonly Mutation[
     // shared-oldest floor could not express.
     label: "a window opens on another call's floor",
     file: `${CORE}/src/state/session-state.ts`,
-    from: "      const appended = [...fresh.toolWindows, { key: windowKey, floor: taken }];",
-    to: "      const appended = [...fresh.toolWindows, { key: windowKey, floor: fresh.toolWindows[0]?.floor ?? taken }];",
+    from: "  const appended = [...fresh.toolWindows, { key: windowKey, floor: taken }];",
+    to: "  const appended = [...fresh.toolWindows, { key: windowKey, floor: fresh.toolWindows[0]?.floor ?? taken }];",
     test: `${CONNECTOR}/test/hook-window-pairing.test.ts`,
     because:
       "SAFE BUT LOSSY: every call opened while another runs is bracketed from " +
@@ -5334,8 +5329,8 @@ export const MUTATIONS: readonly Mutation[
     // life of the session.
     label: "the tool-window list grows without bound",
     file: `${CORE}/src/state/session-state.ts`,
-    from: "        toolWindows: appended.slice(evicted),",
-    to: "        toolWindows: appended,",
+    from: "      toolWindows: appended.slice(evicted),",
+    to: "      toolWindows: appended,",
     test: `${CORE}/test/tool-window-pairing.test.ts`,
     because:
       "COSTLY: every call nothing closes stays in the state file forever, and " +
@@ -5345,8 +5340,8 @@ export const MUTATIONS: readonly Mutation[
     // Evictions are counted rather than inferred from a missing bracket.
     label: "a tool-window eviction goes uncounted",
     file: `${CORE}/src/state/session-state.ts`,
-    from: "        toolWindowEvictions: fresh.toolWindowEvictions + evicted,",
-    to: "        toolWindowEvictions: fresh.toolWindowEvictions,",
+    from: "      toolWindowEvictions: fresh.toolWindowEvictions + evicted,",
+    to: "      toolWindowEvictions: fresh.toolWindowEvictions,",
     test: `${CORE}/test/tool-window-pairing.test.ts`,
     because:
       "SILENT: the cap costs brackets and nothing says so — a missing bracket " +
@@ -27733,6 +27728,100 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/live-location-topics.test.ts`,
     because: "a hub that took topics before this release keeps showing an opted-out developer's topic branches",
   },
+  // Found by the load-only flake in repo-ssh-determinism.test.ts: under CPU
+  // contention a process's first `ssh -G` ran out its 500 ms, and the memo
+  // kept that null for the process's life.
+  {
+    label: "one contended ssh -G costs a long-lived process its alias until restart",
+    file: `${CORE}/src/git/ssh-hostname.ts`,
+    from: "      if (strikes < SSH_RESOLVE_DEADLINE_STRIKES) {",
+    to: "      if (false) {",
+    test: `${CORE}/test/ssh-hostname-deadline.test.ts`,
+    because:
+      "every later MCP tool call resolves the repo under the literal alias host, an " +
+      "identity the hub treats as a different repo, so teammates silently never match",
+  },
+  {
+    label: "a config that never fits the ssh deadline is re-billed on every call",
+    file: `${CORE}/src/git/ssh-hostname.ts`,
+    from: "      if (strikes < SSH_RESOLVE_DEADLINE_STRIKES) {",
+    to: "      if (true) {",
+    test: `${CORE}/test/ssh-hostname-deadline.test.ts`,
+    because: "a pathological Match exec costs the MCP server 500 ms on every tool call for its whole life",
+  },
+  // Found by the load-only flake in cli/test/connection-error.test.ts: under
+  // CPU contention Bun reports a connection that was accepted and reset as it
+  // opened as ConnectionRefused, the same shape a dead port throws.
+  {
+    label: "a reset the runtime reports as refused is told as 'nothing accepted the connection'",
+    file: `${CORE}/src/http/connection-error.ts`,
+    from:
+      "        `connection refused: ${hubUrl} — nothing accepted the connection, or ` +\n" +
+      "        \"whatever did closed it at once (the runtime reports both the same \" +\n" +
+      "        \"way); is the hub running there, is the port right, and is no proxy \" +\n" +
+      "        \"or other service holding it?\"",
+    to:
+      "        `connection refused: ${hubUrl} — nothing accepted the connection; ` +\n" +
+      "        \"is the hub running there, and is the port right?\"",
+    test: `${CLI}/test/connection-error.test.ts`,
+    because:
+      "login and doctor tell a developer behind a resetting proxy that nothing is listening, " +
+      "and send them to restart a hub that is running",
+  },
+  {
+    label: "the transport phrase calls an accepted-then-reset connection a refusal",
+    file: `${CORE}/src/http/connection-error.ts`,
+    from: "      return \"could not connect (refused, unresolvable name, wrong tls port, or closed as it opened)\";",
+    to: "      return \"could not connect (refused, unresolvable name, or wrong tls port)\";",
+    test: `${CLI}/test/connection-error.test.ts`,
+    because: "sync state, the statusline and the MCP tools omit the one cause a contended reset produces",
+  },
+  // The reap assertion in foreign-model.test.ts used to read the fake's pid
+  // from a dump the fake writes on its first line; a deadline that fired
+  // before that line left no dump (the load-only flake). It now reads the
+  // process table, and this proves that version still sees a leak.
+  {
+    label: "a hung summarizer is left running past its deadline",
+    file: `${CORE}/src/model/runner.ts`,
+    from: "const abandonProcess = (proc: ReturnType<typeof Bun.spawn>): void => {\n  try {",
+    to: "const abandonProcess = (proc: ReturnType<typeof Bun.spawn>): void => {\n  return;\n  try {",
+    test: `${CONNECTOR}/test/foreign-model.test.ts`,
+    because: "every timed-out model run keeps its process and its pipe for the hang's whole life",
+  },
+  // Every test server binds 127.0.0.1 through fixtures/loopback-serve.ts;
+  // loopback-bind.test.ts scans the test trees so a bare wildcard bind cannot
+  // come back. This re-introduces one in the most shared hub of them all.
+  {
+    label: "a test hub binds the dual-stack wildcard again",
+    file: `${CORE}/test/fixtures/hint-hub.ts`,
+    from: "  const server = serveLoopback({",
+    to: "  const server = Bun.serve({",
+    test: `${CORE}/test/loopback-bind.test.ts`,
+    because:
+      "any other process may bind 127.0.0.1 on that hub's port and answer every hook " +
+      "that hub was handed, so a suite run beside another goes red with no behaviour wrong",
+  },
+  // Found by the load-only flake in cli/test/doctor.test.ts: under CPU
+  // contention the launcher's `--version` probe ran past its 3 s deadline and
+  // doctor named the developer's own install a foreign tool.
+  {
+    label: "a launcher probe the deadline killed reads as a foreign tool",
+    file: `${CORE}/src/config/launcher.ts`,
+    from: "    if (probe.signalCode !== null) {\n      return \"unanswered\";\n    }\n",
+    to: "",
+    test: `${CORE}/test/launcher-identity.test.ts`,
+    because:
+      "doctor tells a developer on a busy machine that a different tool owns `crosscheck` " +
+      "on their PATH and to remove it, about their own working install",
+  },
+  {
+    label: "an unanswered launcher probe passes doctor as healthy",
+    file: `${CORE}/src/config/launcher-check.ts`,
+    from: "    if (identity === \"unanswered\") {",
+    to: "    if (false) {",
+    test: `${CORE}/test/launcher-identity.test.ts`,
+    because: "a launcher that hangs on --version, and so would hang every hook, reads PASS",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -27755,6 +27844,11 @@ const runTest = async (testPath: string): Promise<number> => {
     cwd: REPO_ROOT,
     stdout: "ignore",
     stderr: "ignore",
+    // A guard gated to the Hook budgets lane (connector-core/test/fixtures/
+    // budget-lane.ts) must run when it is the guard: one guard file at a
+    // time is the same isolation that lane gives it. Set here rather than
+    // only in ci.yml so a local run proves the same anchors CI does.
+    env: { ...process.env, CX_BUDGET_LANE: "1" },
   });
   return proc.exited;
 };
@@ -27789,6 +27883,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/ci-report.test.ts 6
  * PRINTS: packages/cli/test/ci-status-render.test.ts 3
  * PRINTS: packages/cli/test/conference-cli.test.ts 12
+ * PRINTS: packages/cli/test/connection-error.test.ts 2
  * PRINTS: packages/cli/test/connector-capture-health.test.ts 3
  * PRINTS: packages/cli/test/coverage-cli.test.ts 6
  * PRINTS: packages/cli/test/cursor-doctor.test.ts 4
@@ -27892,7 +27987,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/draft-nudge-hook.test.ts 2
  * PRINTS: packages/connector-claude/test/failure-hook.test.ts 2
  * PRINTS: packages/connector-claude/test/fingerprint.test.ts 1
- * PRINTS: packages/connector-claude/test/foreign-model.test.ts 1
+ * PRINTS: packages/connector-claude/test/foreign-model.test.ts 2
  * PRINTS: packages/connector-claude/test/ghost-worker.test.ts 5
  * PRINTS: packages/connector-claude/test/global-wiring-silence.test.ts 2
  * PRINTS: packages/connector-claude/test/hint-hook.test.ts 4
@@ -28010,6 +28105,8 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/landing-fetch-trigger.test.ts 13
  * PRINTS: packages/connector-core/test/landing-fetch-worker.test.ts 20
  * PRINTS: packages/connector-core/test/latency.test.ts 3
+ * PRINTS: packages/connector-core/test/launcher-identity.test.ts 2
+ * PRINTS: packages/connector-core/test/loopback-bind.test.ts 1
  * PRINTS: packages/connector-core/test/loss-ledger.test.ts 5
  * PRINTS: packages/connector-core/test/loss-report.test.ts 38
  * PRINTS: packages/connector-core/test/mark-hint-outcome-tool.test.ts 19
@@ -28061,6 +28158,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/spool-lock.test.ts 2
  * PRINTS: packages/connector-core/test/spool-ownership.test.ts 12
  * PRINTS: packages/connector-core/test/spool-simulation.test.ts 9
+ * PRINTS: packages/connector-core/test/ssh-hostname-deadline.test.ts 2
  * PRINTS: packages/connector-core/test/staleness-axis.test.ts 1
  * PRINTS: packages/connector-core/test/target-paths.test.ts 1
  * PRINTS: packages/connector-core/test/tool-window-pairing.test.ts 6

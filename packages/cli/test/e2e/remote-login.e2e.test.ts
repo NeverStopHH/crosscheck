@@ -20,6 +20,7 @@
  * hub's slowness IS what is under test, and every timeout that meets it is
  * the code's own.
  */
+import { serveLoopback } from "../../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -52,7 +53,7 @@ afterEach(async () => {
 
 /** A hub that answers everything correctly — 600 ms later. */
 const farHub = (): ReturnType<typeof Bun.serve> =>
-  Bun.serve({
+  serveLoopback({
     port: 0,
     fetch: async () => {
       await Bun.sleep(HUB_DELAY_MS);

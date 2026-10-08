@@ -12,6 +12,7 @@
  * the hub's "unknown" sends it first; and with no id, a pointer's twins are
  * one candidate.
  */
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -107,7 +108,7 @@ const delivery = (sessionId: string): unknown =>
 
 beforeAll(async () => {
   const db = await createDb();
-  server = Bun.serve({ port: 0, fetch: createServer({ db, adminToken: ADMIN }).fetch });
+  server = serveLoopback({ port: 0, fetch: createServer({ db, adminToken: ADMIN }).fetch });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
   nick = await developer("Nick", "nick-held-first@example.com");
   const ken = await developer("Ken", "ken-held-first@example.com");

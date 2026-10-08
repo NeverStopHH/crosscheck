@@ -7,6 +7,7 @@
  * a session without a registration or with a pre-intent state file gets the
  * remedy, and a hint echo is refused like publish_claim refuses it.
  */
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -148,7 +149,7 @@ const gatewayAnswering = (
   respond: () => number | Response | null,
   onRecords: () => Promise<void> = async () => undefined,
 ) =>
-  Bun.serve({
+  serveLoopback({
     port: 0,
     fetch: async (request) => {
       const { pathname, search } = new URL(request.url);
@@ -220,7 +221,7 @@ const storedChain = async (
 
 beforeAll(async () => {
   db = await createDb();
-  server = Bun.serve({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
+  server = serveLoopback({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
   alice = await setUpDeveloper("si-alice", "Alice", "alice-intent@example.com");
   bob = await setUpDeveloper("si-bob", "Bob", "bob-intent@example.com");

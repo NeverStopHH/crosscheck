@@ -15,6 +15,7 @@
  *   · an agent — no terminal — is refused before anything is listed;
  *   · `crosscheck noise` stays the one-word shortcut for the `n` key.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -214,7 +215,7 @@ const reportOf = async (s: Scenario): Promise<ReportFigures> => {
 
 beforeAll(async () => {
   const db = await createDb();
-  server = Bun.serve({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
+  server = serveLoopback({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
   ken = await createDeveloper("Ken Label");
 });

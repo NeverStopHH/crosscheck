@@ -30,6 +30,7 @@ import { lastWorkContextRecords } from "../src/spool/work-context-ack.ts";
 import { deriveSessionState } from "../src/state/session-state.ts";
 import type { SessionState, TopicContext } from "../src/state/session-state.ts";
 import { git, makeHome, makeRepo, writeRepoFile } from "./helpers.ts";
+import { loopbackUrl, serveLoopback } from "./fixtures/loopback-serve.ts";
 
 const REPO_ID = "github.com/acme/api";
 const HUB = "http://hub.invalid";
@@ -263,8 +264,7 @@ describe("every sender of a topic's record carries the word", () => {
 
   describe("set_intent, which can reach the hub before the spool's copy", () => {
     const posted: Record<string, unknown>[] = [];
-    const gateway = Bun.serve({
-      hostname: "127.0.0.1",
+    const gateway = serveLoopback({
       port: 0,
       fetch: async (request) => {
         const body = (await request.json()) as { records?: Record<string, unknown>[] };
@@ -282,7 +282,7 @@ describe("every sender of a topic's record carries the word", () => {
       cleanups.push(home);
       const state = lifeAt("word-intent");
       const topic = topicOf(state, { baseOnDefault: true });
-      const url = `http://127.0.0.1:${String(gateway.port)}`;
+      const url = loopbackUrl(gateway);
       const own: TitledWorkContext = {
         hostSessionKey: state.hostSessionKey,
         crosscheckSessionId: state.crosscheckSessionId,

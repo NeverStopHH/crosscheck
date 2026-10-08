@@ -27,6 +27,7 @@ import { deriveSessionState, writeSessionState } from "../src/state/session-stat
 import type { SessionState, TopicContext } from "../src/state/session-state.ts";
 import { sessionSlug } from "../src/config/paths.ts";
 import { makeHome } from "./helpers.ts";
+import { loopbackUrl, serveLoopback } from "./fixtures/loopback-serve.ts";
 
 const HOST = "topic-marker-conv";
 const NOW = new Date("2026-10-08T10:00:00.000Z");
@@ -194,8 +195,7 @@ describe("a heal's owed work context", () => {
 
 describe("set_intent on a topic", () => {
   const posted: Record<string, unknown>[] = [];
-  const gateway = Bun.serve({
-    hostname: "127.0.0.1",
+  const gateway = serveLoopback({
     port: 0,
     fetch: async (request) => {
       const body = (await request.json()) as { records?: Record<string, unknown>[] };
@@ -213,7 +213,7 @@ describe("set_intent on a topic", () => {
     cleanups.push(home);
     const state = hostTitled();
     const topic = topicOf(state);
-    const url = `http://127.0.0.1:${String(gateway.port)}`;
+    const url = loopbackUrl(gateway);
     const own: TitledWorkContext = {
       hostSessionKey: HOST,
       crosscheckSessionId: state.crosscheckSessionId,

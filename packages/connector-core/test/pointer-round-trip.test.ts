@@ -37,6 +37,7 @@ import { mintTopicId, topicWorkContextIdFor } from "../src/flows/topic-contexts.
 import { deriveSessionState, writeSessionState } from "../src/state/session-state.ts";
 import { INJECTION_CORPUS } from "./fixtures/injection-corpus.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 
 const ADMIN_TOKEN = "round-trip-admin";
 const REPO_ID = "github.com/acme/api";
@@ -121,7 +122,7 @@ describe("a healed life's work context, pointed at and read back", () => {
 
   beforeAll(async () => {
     db = await createDb();
-    server = Bun.serve({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
+    server = serveLoopback({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
     hubUrl = `http://127.0.0.1:${String(server.port)}`;
   });
 

@@ -23,6 +23,7 @@
  * doctor`, and 404s on an older hub — which reads as "not measured", never as
  * "none broken".
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -66,7 +67,7 @@ const post = async (
 
 beforeAll(async () => {
   const db = await createDb();
-  server = Bun.serve({
+  server = serveLoopback({
     port: 0,
     fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch,
   });
@@ -209,7 +210,7 @@ const doctorOutput = async (
  * given — for the states a real hub in this test cannot be put in cheaply.
  */
 const fakeHubDoctor = async (body: unknown): Promise<string> => {
-  const fake = Bun.serve({
+  const fake = serveLoopback({
     port: 0,
     fetch: (request) =>
       new URL(request.url).pathname === "/api/sessions/order"
@@ -565,7 +566,7 @@ describe("doctor prints the order failures only the hub can see", () => {
       // mode this connector cannot read may be deleting them — printing the
       // withdrawal sentence for either would be a statement nobody made. The
       // unknown mode is not echoed: it is not ours to render.
-      const fake = Bun.serve({
+      const fake = serveLoopback({
         port: 0,
         fetch: (request) =>
           new URL(request.url).pathname === "/api/sessions/order"

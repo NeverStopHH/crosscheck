@@ -26,10 +26,11 @@ import { isAbsolute } from "node:path";
 import type { Env } from "./paths.ts";
 import {
   isEphemeralInstallPath,
-  isOwnCrosscheckBin,
   isVersionManagerPath,
+  probeCrosscheckBin,
   realpathOrSelf,
 } from "./launcher.ts";
+import type { CrosscheckBinIdentity } from "./launcher.ts";
 
 export type LauncherHealthLevel = "PASS" | "WARN" | "FAIL";
 
@@ -55,11 +56,16 @@ export const splitLauncherTokens = (command: string): readonly string[] =>
       : token,
   );
 
-/** Whether the launcher the given hook command names would actually RUN. */
+/**
+ * Whether the launcher the given hook command names would actually RUN.
+ * `probe` is the identity probe (injectable so its three answers are pinned
+ * without a clock — test/launcher-identity.test.ts).
+ */
 export const checkLauncherCommand = async (
   command: string,
   env: Env,
   keywords: readonly string[],
+  probe: (binPath: string) => Promise<CrosscheckBinIdentity> = probeCrosscheckBin,
 ): Promise<LauncherHealth> => {
   const tokens = splitLauncherTokens(command);
   const keyword = tokens.findIndex((token) => keywords.includes(token));
@@ -83,7 +89,17 @@ export const checkLauncherCommand = async (
         'hooks call "crosscheck" but nothing by that name is on PATH — every hook dies silently; npm install -g crosscheck-hub (or bun add -g crosscheck-hub), or rerun crosscheck init',
       );
     }
-    if (!(await isOwnCrosscheckBin(hit))) {
+    const identity = await probe(hit);
+    if (identity === "unanswered") {
+      // Not the foreign-tool FAIL: nothing answered, so nothing is known
+      // about whose binary this is — a busy machine runs a first exec past
+      // the deadline, and "remove it" would be the wrong remedy for that.
+      return health(
+        "WARN",
+        `${hit} did not answer --version before the identity probe's deadline, so whether it is the crosscheck cli is unknown (a busy machine, or a launcher that hangs) — rerun crosscheck doctor; if it never answers, the hooks would hang on it too`,
+      );
+    }
+    if (identity === "foreign") {
       return health(
         "FAIL",
         `${hit} does not identify as the crosscheck cli (--version) — a different tool owns the name on this PATH and would receive the hooks' session json; remove it or rerun crosscheck init --command-prefix with an explicit launcher`,

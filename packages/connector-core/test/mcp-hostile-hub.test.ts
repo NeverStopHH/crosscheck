@@ -26,6 +26,7 @@
  * the same file injection-corpus.test.ts and mcp-injection.test.ts assert
  * against, so narrowing a class here narrows it for all three.
  */
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -184,7 +185,7 @@ const unframed = (text: string): string =>
     .join("\n");
 
 beforeAll(async () => {
-  server = Bun.serve({ port: 0, fetch: (request) => respond(request) });
+  server = serveLoopback({ port: 0, fetch: (request) => respond(request) });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
   home = await makeHome("hostile");
   repo = await makeRepo("hostile", { remote: "git@github.com:acme/api.git" });

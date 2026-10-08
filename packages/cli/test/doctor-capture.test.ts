@@ -48,6 +48,7 @@
  * state file is one of that session's own hooks, so a file written a moment
  * ago belongs to a session that is running whatever its stamps claim.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, rm, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -119,7 +120,7 @@ interface HubOptions {
 
 /** A hub that answers presence, the context listing and the hint stats. */
 const hubWith = (options: HubOptions): string => {
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: (request) => {
       if (options.rejectKey === true) {

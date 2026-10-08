@@ -1,3 +1,4 @@
+import { serveLoopback } from "../../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 import { sql } from "drizzle-orm";
@@ -94,7 +95,7 @@ const sessionStartPayload = (
 beforeAll(async () => {
   db = await createDb();
   app = createServer({ db, adminToken: ADMIN_TOKEN });
-  server = Bun.serve({ port: 0, fetch: app.fetch });
+  server = serveLoopback({ port: 0, fetch: app.fetch });
   hubUrl = `http://127.0.0.1:${server.port}`;
 
   const aliceAccount = await createDeveloper("Alice", "alice@example.com");
@@ -384,7 +385,7 @@ describe("hub down", () => {
     // Arrange: a session that started while the hub was up, so its work context
     // exists, and a hub that then stops answering mid-session
     let isReachable = true;
-    const flaky = Bun.serve({
+    const flaky = serveLoopback({
       port: 0,
       fetch: (request) =>
         isReachable

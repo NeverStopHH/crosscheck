@@ -46,6 +46,7 @@ import type { SessionHealer } from "../src/spool/flush.ts";
 import { readRefusedLives, recordRefusedLife } from "../src/spool/refused-lives.ts";
 import { readSessionState, updateSessionState } from "../src/state/session-state.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 
 const ADMIN_TOKEN = "heal-admin";
 const REPO_ID = "github.com/acme/api";
@@ -209,9 +210,9 @@ const stateId = async (fx: Fixture): Promise<string | undefined> =>
 
 beforeAll(async () => {
   db = await createDb();
-  server = Bun.serve({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
+  server = serveLoopback({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
   hubUrl = `http://127.0.0.1:${server.port}`;
-  proxy = Bun.serve({
+  proxy = serveLoopback({
     port: 0,
     fetch: async (request) => {
       const { pathname, search } = new URL(request.url);

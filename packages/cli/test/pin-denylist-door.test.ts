@@ -14,6 +14,7 @@
  * A REAL hub over PGlite, a REAL git repository, the commands through
  * `runCli`, so the sentences asserted are the ones a person reads.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -108,7 +109,7 @@ const pinCount = async (): Promise<number> => {
 
 beforeAll(async () => {
   db = await createDb();
-  server = Bun.serve({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
+  server = serveLoopback({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
   repo = await makeRepo("pin-denylist", { remote: "git@github.com:acme/api.git" });
   for (const path of [PLAIN, GENERATED, LOCKFILE, LEGACY, MOVED_FROM, SECOND_FROM]) {

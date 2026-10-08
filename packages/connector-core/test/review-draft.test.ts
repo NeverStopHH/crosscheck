@@ -5,6 +5,7 @@
  * draft; discard mints a REJECTED revision the same append-only way. The
  * draft row itself is never mutated — "reviewed" is a graph fact.
  */
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -229,7 +230,7 @@ const fetchDiagnosis = async (): Promise<{
 beforeAll(async () => {
   db = await createDb();
   app = createServer({ db, adminToken: ADMIN_TOKEN });
-  server = Bun.serve({ port: 0, fetch: app.fetch });
+  server = serveLoopback({ port: 0, fetch: app.fetch });
   hubUrl = `http://127.0.0.1:${server.port}`;
   alice = await setUpDeveloper("review-alice", "Alice", "alice@example.com");
 });

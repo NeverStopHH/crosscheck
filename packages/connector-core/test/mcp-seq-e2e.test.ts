@@ -9,6 +9,7 @@
  * `ambiguous_session_assignment`, not the busy-lock reason whose remedy is to
  * wait for something that will never clear.
  */
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -33,7 +34,7 @@ const cleanups: string[] = [];
 beforeAll(async () => {
   db = await createDb();
   const app = createServer({ db, adminToken: ADMIN_TOKEN });
-  server = Bun.serve({ port: 0, fetch: app.fetch });
+  server = serveLoopback({ port: 0, fetch: app.fetch });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
 });
 

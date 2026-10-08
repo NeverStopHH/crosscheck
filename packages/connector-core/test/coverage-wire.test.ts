@@ -7,6 +7,7 @@
  * the rule inverts this tree's usual tolerant parse: nothing claimed is not
  * the honest reading, five `unknown` rows are.
  */
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterAll, describe, expect, test } from "bun:test";
 
 import {
@@ -26,7 +27,7 @@ const REPO = "github.com/acme/api";
 
 let body: unknown = { absences: [] };
 
-const server = Bun.serve({
+const server = serveLoopback({
   port: 0,
   fetch: () => Response.json({ ok: true, data: body }),
 });

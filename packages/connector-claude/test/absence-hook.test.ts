@@ -1,3 +1,4 @@
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -47,7 +48,7 @@ const startHub = (absencesBody?: unknown): FakeHub => {
       ok: true,
       data: { session: { id: "cc_x", developerId: "dev_self" } },
     });
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: async (request) => {
       const { pathname } = new URL(request.url);

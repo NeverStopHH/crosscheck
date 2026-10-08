@@ -6,6 +6,7 @@
  * would make a hint possible, and a `tripwire mode` line for the Q2 knob.
  * Red on main: none of these lines existed.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, rm, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -96,7 +97,7 @@ const startAggregateHub = (
   rows: readonly Record<string, unknown>[],
   stats: Record<string, unknown> | null,
 ): string => {
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: (request) => {
       const { pathname } = new URL(request.url);

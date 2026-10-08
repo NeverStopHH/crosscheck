@@ -8,6 +8,7 @@
  * sessions, and only the hub can show it was kept. The one ordering question
  * — an answer before a notice — uses the fake hint hub, where both can be set.
  */
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -48,7 +49,7 @@ const cleanups: string[] = [];
 const fakeHubs: HintHub[] = [];
 
 beforeAll(async () => {
-  server = Bun.serve({ port: 0, fetch: createServer({ db: await createDb(), adminToken: ADMIN_TOKEN }).fetch });
+  server = serveLoopback({ port: 0, fetch: createServer({ db: await createDb(), adminToken: ADMIN_TOKEN }).fetch });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
 });
 

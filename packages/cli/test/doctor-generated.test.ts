@@ -12,6 +12,7 @@ import { generatedTargetsCheck } from "../src/cli/doctor-generated.ts";
 import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import type { CaptureHealth } from "@crosscheck/connector-core/state/capture-health.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 
 const REPO_ID = "github.com/acme/api";
 
@@ -29,7 +30,7 @@ afterEach(async () => {
 
 /** A hub that answers every route with an empty success. */
 const quietHub = (): string => {
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: () => Response.json({ ok: true, data: { sessions: [], workContexts: [] } }),
   });

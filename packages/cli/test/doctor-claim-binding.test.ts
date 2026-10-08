@@ -21,6 +21,7 @@
  * measured". A hub that could not be REACHED is a WARN, because a green
  * meaning "could not check" is worse than no check at all.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -85,7 +86,7 @@ const summary = (overrides: Partial<Summary> = {}): Summary => ({
 
 /** null = a hub too old to know the route; "unreachable" = a hub that broke. */
 const hubWith = (answer: Summary | null | "unreachable" | "hostile"): string => {
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: (request) => {
       const { pathname } = new URL(request.url);

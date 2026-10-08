@@ -14,6 +14,7 @@
  * a `deeper_cause_of` edge. Alice reads her own tree back and Bob's reasoning is
  * in it, attributed to Bob.
  */
+import { serveLoopback } from "../../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -226,7 +227,7 @@ const setUp = async (
 beforeAll(async () => {
   db = await createDb();
   app = createServer({ db, adminToken: ADMIN_TOKEN });
-  server = Bun.serve({ port: 0, fetch: app.fetch });
+  server = serveLoopback({ port: 0, fetch: app.fetch });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
 
   alice = await setUp(

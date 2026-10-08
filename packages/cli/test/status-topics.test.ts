@@ -6,6 +6,7 @@
  * over PGlite, two teammates: Ken with one session, Nick with six on four
  * branches, heartbeats pinned so the order is the test's and not the clock's.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 import { sql } from "drizzle-orm";
@@ -59,7 +60,7 @@ const NICK_SESSIONS: readonly (readonly [string, string, string, number])[] = [
 
 beforeAll(async () => {
   const db = await createDb();
-  server = Bun.serve({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
+  server = serveLoopback({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
   home = await makeHome("status-topics");
   repo = await makeRepo("status-topics", { remote: "git@github.com:acme/api.git" });

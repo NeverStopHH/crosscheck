@@ -18,6 +18,7 @@ import { createDb, createServer } from "@crosscheck/server";
 import type { Db } from "@crosscheck/server";
 
 import { isDead } from "./sim-hooks.ts";
+import { serveLoopback } from "../fixtures/loopback-serve.ts";
 
 const ADMIN_TOKEN = "simulation-admin";
 const HTTP_UNAVAILABLE = 503;
@@ -153,7 +154,7 @@ export const startSimHub = async (): Promise<SimHub> => {
   ).$client;
   const raw = async <T>(sql: string, params: readonly unknown[] = []): Promise<readonly T[]> =>
     (await client.query(sql, params)).rows as T[];
-  const server = Bun.serve({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
+  const server = serveLoopback({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
   const hubUrl = `http://127.0.0.1:${server.port}`;
   const dials: Dials = {
     slow: quick(),
@@ -287,7 +288,7 @@ export const startSimHub = async (): Promise<SimHub> => {
     return isLate ? unavailable("sim late", HTTP_GATEWAY_TIMEOUT) : answer;
   };
 
-  const proxy = Bun.serve({
+  const proxy = serveLoopback({
     port: 0,
     fetch: async (request) => {
       const { pathname, search } = new URL(request.url);

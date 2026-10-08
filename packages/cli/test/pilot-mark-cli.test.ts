@@ -14,6 +14,7 @@
  *     enough, and so is a delivery id;
  *   · an agent cannot make the gesture: no terminal, no mark.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -184,14 +185,21 @@ const noise = (
     { isInteractive: () => options.interactive ?? true },
   );
 
+/**
+ * Booting the in-process hub (PGlite) and seeding its sessions took longer
+ * than bun's 5 s hook default on a loaded machine (the load run's round 5);
+ * the boot is not what this file measures.
+ */
+const HUB_BOOT_TIMEOUT_MS = 60_000;
+
 beforeAll(async () => {
   const db = await createDb();
-  server = Bun.serve({
+  server = serveLoopback({
     port: 0,
     fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch,
   });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
-  stuckHub = Bun.serve({
+  stuckHub = serveLoopback({
     port: 0,
     fetch: (request) => {
       const path = new URL(request.url).pathname;
@@ -242,7 +250,7 @@ beforeAll(async () => {
     repo: REPO_ID,
     pilotEnrolled: true,
   });
-});
+}, HUB_BOOT_TIMEOUT_MS);
 
 afterAll(async () => {
   server.stop(true);

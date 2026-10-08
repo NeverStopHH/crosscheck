@@ -16,6 +16,7 @@
  * draft filed under Claude is a wrong attribution nobody would ever notice on
  * a hub. Every record assertion below reads the stamp.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import { chmod, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -47,12 +48,11 @@ const PROMPT = `why does the refresh call 500 after the key rotation ${PROMPT_SE
 const INTENT_SENTENCE = "Find why the refresh call 500s after the key rotation";
 
 /**
- * A throwaway hub on a port in the range this task owns (7610-7619), never
- * 7100 and never the real tailnet URL. It answers the ONE route the ghost
- * worker gates on and 404s the rest — the workers under test write to the
- * SPOOL, so nothing else needs a hub at all.
+ * A throwaway hub on an ephemeral loopback port, never 7100 and never the
+ * real tailnet URL. It answers the ONE route the ghost worker gates on and
+ * 404s the rest — the workers under test write to the SPOOL, so nothing else
+ * needs a hub at all.
  */
-const HUB_PORT = 7610;
 
 interface FakeHub {
   readonly url: string;
@@ -66,8 +66,8 @@ const startFakeHub = (): FakeHub => {
     ghostChecks: [] as readonly unknown[],
     ghostCheckCalls: 0,
   };
-  const server = Bun.serve({
-    port: HUB_PORT,
+  const server = serveLoopback({
+    port: 0,
     fetch: (request) => {
       const url = new URL(request.url);
       if (url.pathname === "/api/ghost-checks") {

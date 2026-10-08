@@ -19,6 +19,7 @@
  * each ends with a sentence and an exit code, never with a claim marked
  * current on the strength of a measurement nobody took.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -111,7 +112,7 @@ const diagnosisFor = (tree: Tree): Record<string, unknown> => ({
 });
 
 const hubWith = (options: HubOptions): string => {
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: async (request) => {
       if (options.unreachable === true) {

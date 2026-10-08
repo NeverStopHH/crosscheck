@@ -17,6 +17,7 @@
  *   · an older hub says it does not record outcomes, and `--by-developer` is
  *     still refused by name.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -172,20 +173,20 @@ const cli = (
 
 beforeAll(async () => {
   const db = await createDb();
-  server = Bun.serve({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
+  server = serveLoopback({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
-  oldHub = Bun.serve({
+  oldHub = serveLoopback({
     port: 0,
     fetch: () => Response.json({ ok: false, error: { code: "not_found", message: "route not found" } }, { status: 404 }),
   });
-  personlessHub = Bun.serve({
+  personlessHub = serveLoopback({
     port: 0,
     fetch: (request) =>
       new URL(request.url).pathname === "/api/hint-outcomes/mine"
         ? Response.json({ ok: false, error: { code: "not_enrolled", message: "not in the pilot" } }, { status: 422 })
         : Response.json({ ok: false, error: { code: "not_found", message: "route not found" } }, { status: 404 }),
   });
-  recordlessHub = Bun.serve({
+  recordlessHub = serveLoopback({
     port: 0,
     fetch: async (request) => {
       const url = new URL(request.url);
@@ -196,7 +197,7 @@ beforeAll(async () => {
       return await fetch(`${hubUrl}${url.pathname}${url.search}`, { method: request.method, headers: request.headers, body });
     },
   });
-  stuckHub = Bun.serve({
+  stuckHub = serveLoopback({
     port: 0,
     fetch: (request) => {
       const path = new URL(request.url).pathname;

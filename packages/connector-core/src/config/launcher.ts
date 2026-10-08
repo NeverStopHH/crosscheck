@@ -110,19 +110,42 @@ const IDENTITY_PROBE_TIMEOUT_MS = 3_000;
  * binary would pipe session json into it on every prompt — silently, because
  * hooks never print. Identity is proven by execution, not by name.
  */
-export const isOwnCrosscheckBin = async (binPath: string): Promise<boolean> => {
+export const isOwnCrosscheckBin = async (binPath: string): Promise<boolean> =>
+  (await probeCrosscheckBin(binPath)) === "own";
+
+/**
+ * What one `<bin> --version` said: our banner, somebody else's answer (any
+ * other output, a non-zero exit, a file that cannot be executed), or NO
+ * answer — the probe's own deadline had to kill it. The last is not proof of
+ * a stranger: under CPU contention the first exec of a freshly installed
+ * launcher outlived IDENTITY_PROBE_TIMEOUT_MS, and reading that as "foreign"
+ * had doctor tell a developer to remove their own working install.
+ */
+export type CrosscheckBinIdentity = "own" | "foreign" | "unanswered";
+
+export const probeCrosscheckBin = async (
+  binPath: string,
+  timeoutMs: number = IDENTITY_PROBE_TIMEOUT_MS,
+): Promise<CrosscheckBinIdentity> => {
   try {
     const probe = Bun.spawn({
       cmd: [binPath, "--version"],
       stdin: "ignore",
       stdout: "pipe",
       stderr: "ignore",
-      timeout: IDENTITY_PROBE_TIMEOUT_MS,
+      timeout: timeoutMs,
     });
     const stdout = await new Response(probe.stdout).text();
-    return (await probe.exited) === 0 && OWN_VERSION_PATTERN.test(stdout.trim());
+    const exitCode = await probe.exited;
+    // Killed by a signal — the spawn timeout's SIGTERM — means it never
+    // finished answering: whatever it printed so far is not its answer.
+    if (probe.signalCode !== null) {
+      return "unanswered";
+    }
+    return exitCode === 0 && OWN_VERSION_PATTERN.test(stdout.trim()) ? "own" : "foreign";
   } catch {
-    return false;
+    // Could not be executed at all: it cannot run as a hook either.
+    return "foreign";
   }
 };
 

@@ -48,6 +48,7 @@
  * here is computed from the two constants, so the next change to either is
  * carried into this bound by arithmetic rather than by somebody remembering.
  */
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -332,7 +333,7 @@ const callSetIntent = async (summary: string): Promise<boolean> => {
 beforeAll(async () => {
   db = await createDb();
   const app = createServer({ db, adminToken: ADMIN_TOKEN });
-  server = Bun.serve({
+  server = serveLoopback({
     port: 0,
     fetch: (request, srv) => {
       hubRequests += 1;

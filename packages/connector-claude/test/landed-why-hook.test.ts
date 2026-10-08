@@ -13,6 +13,7 @@
  * author the hub does not know cost the why only; a match for a commit the
  * stop did not name is not printed.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -68,7 +69,7 @@ interface Account {
 /** A real hub whose clock can be set back, so a session can START before a commit. */
 const startRealHub = async (): Promise<{ url: string; setOffset: (ms: number) => void }> => {
   let offsetMs = 0;
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: createServer({
       db: await createDb(),
@@ -285,7 +286,7 @@ interface FakeLanded {
 const startFakeHub = (landed: FakeLanded): FakeHub => {
   let calls = 0;
   const asked: number[] = [];
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: async (request) => {
       const { pathname } = new URL(request.url);

@@ -5,6 +5,7 @@
  * payload shapes. Presence, targets and fingerprints must LAND; every
  * output must be directive-free JSON.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -279,7 +280,7 @@ describe("a Cursor workspace rooted at the PARENT of the repo (trial finding #9)
     const conv = "conv-race-1";
     const hostKey = `cur-${conv}`;
     let raceHubUrl = "";
-    const raceServer = Bun.serve({
+    const raceServer = serveLoopback({
       port: 0,
       fetch: async (request) => {
         const { pathname } = new URL(request.url);

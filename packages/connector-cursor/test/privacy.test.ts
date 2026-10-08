@@ -23,6 +23,7 @@
  *      cannot leak, and a future handler that starts reading
  *      `payload.edits` turns this test red.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { readdir, readFile, rm } from "node:fs/promises";
 import { join, relative } from "node:path";
@@ -193,7 +194,7 @@ describe("wire-level pin: the ephemeral hint query is secret-gated before it lea
   const startWireHub = (): WireHub => {
     const wireLog: string[] = [];
     const calls = { candidates: 0 };
-    const server = Bun.serve({
+    const server = serveLoopback({
       port: 0,
       fetch: async (request) => {
         const body = await request.text();

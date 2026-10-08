@@ -22,6 +22,7 @@
  * these bounds — the race backstop for non-HTTP wedges has its own
  * deterministic pin in connector-claude/test/hook-budget.test.ts.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { describe, expect, test } from "bun:test";
 import { readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -194,7 +195,7 @@ describe("fail-open within budget", () => {
     // state after a slow flush: nothing spare — exactly when an unclamped
     // heartbeat would eat the reserve that carries the hint out of the hook.
     let heartbeats = 0;
-    const server = Bun.serve({
+    const server = serveLoopback({
       port: 0,
       fetch: (request) => {
         const { pathname } = new URL(request.url);
@@ -343,7 +344,7 @@ describe("fail-open within budget", () => {
     const PROMPT_EXIT_BOUND_MS = 1500;
     const REQUEST_TIMEOUT_MS = "3000";
     let heartbeats = 0;
-    const server = Bun.serve({
+    const server = serveLoopback({
       port: 0,
       fetch: async (request) => {
         const { pathname } = new URL(request.url);

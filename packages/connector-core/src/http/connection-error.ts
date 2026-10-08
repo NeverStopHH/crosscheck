@@ -5,10 +5,11 @@
  * Tailscale DERP relay): the honest sentence — "timed out after 400 ms", plus
  * the knob that moves it — was one classification away the whole time.
  *
- * THE SHAPES ARE EMPIRICAL, measured on Bun 1.3.13. Five of the six rows are
+ * THE SHAPES ARE EMPIRICAL, measured on Bun 1.3.13. Six of the seven rows are
  * pinned against the LIVE runtime by test/connection-error.test.ts over
  * loopback sockets — an upgrade that changes them fails a pin instead of
- * silently degrading every message to "unknown". The unresolvable-hostname
+ * silently degrading every message to "unknown" (the racy last row as the
+ * pair it is). The unresolvable-hostname
  * row alone is pinned on shape only: a live pin would need real DNS, and the
  * refinement below covers that row wherever a human is watching:
  *
@@ -18,17 +19,27 @@
  *   https against a plain-http port  Error, code "ConnectionRefused"  (!)
  *   non-http bytes on the port       Error, code "Malformed_HTTP_Response"
  *   connection reset mid-request     Error, code "ECONNRESET"
+ *   accepted, reset as it opened     Error, code "ConnectionRefused"  (!)
+ *                                    (or ECONNRESET — a race, see below)
  *
  * The (!) rows are the catch: Bun collapses refused, DNS failure and a wrong
  * TLS port into ONE code, so "refused" as classified here really means "could
- * not connect". Where a human is watching (login, doctor) it is refined by one
+ * not connect". The last row was found by a load-only flake: a listener that
+ * accepts and resets before any byte throws ECONNRESET when the client saw
+ * its connect first and ConnectionRefused when the reset beat it, and CPU
+ * contention decides which (1 of 48 isolated loopback runs under 8 burners,
+ * more when every suite ran at once). Something DID accept that connection,
+ * so neither refused wording below may claim that nothing did: both name the
+ * closed-at-once case, and the sentence the proxy remedy that fits it.
+ *
+ * Where a human is watching (login, doctor) "refused" is refined by one
  * bounded node:dns lookup — a name that does not resolve is a DNS story with a
  * VPN remedy, a name that resolves against a refusing port is a hub story.
  * Hooks never refine: no extra I/O on a fail-open path. Node-style codes
  * (ECONNREFUSED, ENOTFOUND, EAI_AGAIN, name "DNSException") are matched too,
  * so a runtime that switches to them reclassifies instead of degrading.
  *
- * RE-MEASURED ON BUN 1.4.0 (2026-08-20): both (!) rows un-collapsed. An
+ * RE-MEASURED ON BUN 1.4.0 (2026-08-20): the first two (!) rows un-collapsed. An
  * unresolvable hostname now throws node-style ENOTFOUND and https against a
  * plain-http port throws code "UNKNOWN_CERTIFICATE_VERIFICATION_ERROR" —
  * shapes the node-style branch and the tls vocabulary below already
@@ -96,7 +107,7 @@ export const classifyConnectionError = (error: unknown): ConnectionCause => {
  * The short factual phrase the transport reports (http/client.ts) — it flows
  * into sync-state, the statusline's story and the MCP tools' error text, so
  * it states the fact without a CLI remedy. "refused" stays hedged here
- * because unrefined it genuinely spans three states (the (!) rows above).
+ * because unrefined it genuinely spans four states (the (!) rows above).
  */
 export const shortConnectionMessage = (
   cause: ConnectionCause,
@@ -109,7 +120,7 @@ export const shortConnectionMessage = (
     case "dns":
       return "hostname did not resolve";
     case "refused":
-      return "could not connect (refused, unresolvable name, or wrong tls port)";
+      return "could not connect (refused, unresolvable name, wrong tls port, or closed as it opened)";
     case "reset":
       return "connection closed mid-request";
     case "protocol":
@@ -188,7 +199,8 @@ export interface ConnectionFailureContext {
  * The full CLI sentence: cause first, url named, remedy attached. Each remedy
  * is the one that MOVES that cause — a timeout names both timeout knobs and
  * the fact that login measures; a DNS failure points at the name and the
- * VPN/tailnet serving it; refused asks about the hub process and the port.
+ * VPN/tailnet serving it; refused asks about the hub process, the port, and
+ * a proxy that accepts and closes (the collapsed row above).
  */
 export const describeConnectionFailure = (
   cause: ConnectionCause,
@@ -211,8 +223,10 @@ export const describeConnectionFailure = (
       );
     case "refused":
       return (
-        `connection refused: ${hubUrl} — nothing accepted the connection; ` +
-        "is the hub running there, and is the port right?"
+        `connection refused: ${hubUrl} — nothing accepted the connection, or ` +
+        "whatever did closed it at once (the runtime reports both the same " +
+        "way); is the hub running there, is the port right, and is no proxy " +
+        "or other service holding it?"
       );
     case "reset":
       return (

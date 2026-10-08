@@ -18,6 +18,7 @@
  * number a run wrote down is a measurement, and the difference is the whole
  * rule.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -35,9 +36,9 @@ import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { runCursorHook } from "../src/index.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
-/** A throwaway hub on this task's own port range — instant 404s. */
-const server = Bun.serve({
-  port: 7615,
+/** A throwaway hub on an ephemeral loopback port — instant 404s. */
+const server = serveLoopback({
+  port: 0,
   fetch: () => new Response("not found", { status: 404 }),
 });
 const HUB_URL = `http://127.0.0.1:${String(server.port)}`;

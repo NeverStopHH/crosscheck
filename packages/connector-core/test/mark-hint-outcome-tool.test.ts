@@ -14,6 +14,7 @@
  *     (07 D3, PIL-6);
  *   · a hub that predates outcomes says so instead of failing vaguely.
  */
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm, utimes } from "node:fs/promises";
 
@@ -221,16 +222,16 @@ const mine = async () => {
 
 beforeAll(async () => {
   const db = await createDb();
-  server = Bun.serve({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
+  server = serveLoopback({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
   // A hub from before 07 §13: every route it lacks is its own `notFound`
   // envelope (server/src/app.ts), exactly as a real older hub answers.
-  oldHub = Bun.serve({
+  oldHub = serveLoopback({
     port: 0,
     fetch: () =>
       Response.json({ ok: false, error: { code: "not_found", message: "route not found" } }, { status: 404 }),
   });
-  hostileHub = Bun.serve({
+  hostileHub = serveLoopback({
     port: 0,
     fetch: (request) => {
       hostileCalls.push(new URL(request.url).pathname);

@@ -15,6 +15,7 @@
  * carries everywhere, which is exactly what a global install must not turn
  * into machine-wide reporting.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -41,7 +42,7 @@ afterEach(async () => {
 /** A hub that counts every request it receives, whatever the path. */
 const startCountingHub = (): { readonly url: string; requests: () => number } => {
   let count = 0;
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: () => {
       count += 1;

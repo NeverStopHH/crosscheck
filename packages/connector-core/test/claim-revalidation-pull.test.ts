@@ -14,6 +14,7 @@
  * the write it just accepted, rather than deriving a second opinion locally:
  * one authority, one round trip, no second definition.
  */
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -306,9 +307,9 @@ const HTTP_NOT_FOUND = 404;
 beforeAll(async () => {
   db = await createDb();
   const app = createServer({ db, adminToken: ADMIN_TOKEN, embedder: null });
-  server = Bun.serve({ port: 0, fetch: app.fetch });
+  server = serveLoopback({ port: 0, fetch: app.fetch });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
-  oldHub = Bun.serve({
+  oldHub = serveLoopback({
     port: 0,
     fetch: async (request) => {
       const url = new URL(request.url);

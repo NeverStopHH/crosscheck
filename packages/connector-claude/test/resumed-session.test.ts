@@ -37,6 +37,7 @@ import { readSessionState, updateSessionState } from "@crosscheck/connector-core
 import { repoKey, runHook } from "../src/index.ts";
 import type { Env } from "../src/index.ts";
 import { makeHome, makeRepo, writeRepoFile } from "../../connector-core/test/helpers.ts";
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 
 const ADMIN_TOKEN = "resumed-admin-token";
 const REPO_ID = "github.com/acme/api";
@@ -191,11 +192,11 @@ const rejectedDrops = async (fx: Fixture): Promise<number> =>
 beforeAll(async () => {
   db = await createDb();
   const app = createServer({ db, adminToken: ADMIN_TOKEN });
-  server = Bun.serve({ port: 0, fetch: app.fetch });
+  server = serveLoopback({ port: 0, fetch: app.fetch });
   hubUrl = `http://127.0.0.1:${server.port}`;
   // The same hub behind a counter of register calls: what a resume COSTS is
   // the number of round trips SessionStart spends before its briefing.
-  proxy = Bun.serve({
+  proxy = serveLoopback({
     port: 0,
     fetch: async (request) => {
       const { pathname, search } = new URL(request.url);

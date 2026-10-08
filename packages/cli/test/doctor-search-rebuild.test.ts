@@ -8,6 +8,7 @@
  * left; doctor prints a line while it is not zero, and nothing once it is —
  * or when an older hub has no such endpoint.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -30,7 +31,7 @@ afterEach(async () => {
 
 /** A hub that answers /api/hub-status with `answer` and every other read with an empty page. */
 const hubWith = (answer: () => Response): string => {
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: (request) =>
       new URL(request.url).pathname === "/api/hub-status" ? answer() : Response.json({ ok: true, data: { sessions: [] } }),

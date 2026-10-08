@@ -11,6 +11,7 @@
  * half lives in test/mcp-injection.test.ts, and the wire framing in
  * test/mcp-protocol.test.ts.
  */
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -190,7 +191,7 @@ const call = async (
 beforeAll(async () => {
   db = await createDb();
   app = createServer({ db, adminToken: ADMIN_TOKEN });
-  server = Bun.serve({ port: 0, fetch: app.fetch });
+  server = serveLoopback({ port: 0, fetch: app.fetch });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
 
   alice = await setUpDeveloper(
@@ -1002,7 +1003,7 @@ describe("search_related_work runs on the hub's search block", () => {
       adminToken: ADMIN_TOKEN,
       embedder,
     });
-    const semanticServer = Bun.serve({ port: 0, fetch: semanticApp.fetch });
+    const semanticServer = serveLoopback({ port: 0, fetch: semanticApp.fetch });
     const semanticHubUrl = `http://127.0.0.1:${String(semanticServer.port)}`;
     try {
       const response = await fetch(`${semanticHubUrl}/api/developers`, {

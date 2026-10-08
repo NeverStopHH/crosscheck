@@ -5,6 +5,7 @@
  * reports what git proves, and the session state remembers the pointer so
  * the prompt path cannot repeat it.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -102,7 +103,7 @@ const startHub = (
   const registersSeen: Record<string, unknown>[] = [];
   const now = Date.now();
   const crowd = options.crowd === true;
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: async (request) => {
       const { pathname } = new URL(request.url);

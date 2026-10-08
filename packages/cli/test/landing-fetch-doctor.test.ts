@@ -9,6 +9,7 @@
  * times in a row, with what to do about it. Transient failures (a laptop
  * offline for a train ride) stay a PASS.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -269,7 +270,7 @@ describe("the full doctor", () => {
   let apiKey: string;
 
   beforeAll(async () => {
-    server = Bun.serve({ port: 0, fetch: createServer({ db: await createDb(), adminToken: ADMIN_TOKEN }).fetch });
+    server = serveLoopback({ port: 0, fetch: createServer({ db: await createDb(), adminToken: ADMIN_TOKEN }).fetch });
     hubUrl = `http://127.0.0.1:${String(server.port)}`;
     const response = await fetch(`${hubUrl}/api/developers`, {
       method: "POST",

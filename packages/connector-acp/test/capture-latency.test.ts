@@ -42,6 +42,10 @@ import {
 } from "./fixtures/capture-harness.ts";
 import type { CaptureHub, Harness } from "./fixtures/capture-harness.ts";
 import { git, makeHome, makeRepo, writeRepoFile } from "../../connector-core/test/helpers.ts";
+import {
+  IN_BUDGET_LANE,
+  announceBudgetLaneSkip,
+} from "../../connector-core/test/fixtures/budget-lane.ts";
 
 /** Enough frames to matter, far below the 4 MiB pending cap on purpose. */
 const FLOOD_FRAMES = 200;
@@ -169,7 +173,15 @@ describe("the worktree resolution's cost on the capture chain", () => {
     expect(coldMs).toBeLessThanOrEqual(ACP_CAPTURE_FLUSH_BUDGET_MS);
   });
 
-  test("a flood of worktree edits forwards byte-identically and drops no capture line", async () => {
+  // 200 tool calls through the real pump and engine, about 3 s alone, so its
+  // real judge was bun's per-test clock: beside six other suites it ran past
+  // 5 s with nothing wrong. It runs in the Hook budgets lane only
+  // (fixtures/budget-lane.ts); its assertions are unchanged.
+  announceBudgetLaneSkip(
+    "packages/connector-acp/test/capture-latency.test.ts",
+    "a flood of worktree edits forwards byte-identically and drops no capture line",
+  );
+  test.skipIf(!IN_BUDGET_LANE)("a flood of worktree edits forwards byte-identically and drops no capture line", async () => {
     // Arrange: the REAL pump with the REAL capture engine as its observer —
     // the shape the proxy runs — flooded with tool calls that all resolve
     // through the worktree walk.

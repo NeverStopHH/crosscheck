@@ -9,6 +9,7 @@
  * costs one pure derivation and rides in the cache the statusline already
  * reads: no extra hub call, no extra hook budget.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -40,7 +41,7 @@ afterEach(async () => {
 
 /** Answers presence with an EMPTY list — the `cx 0` state. */
 const emptyPresenceHub = (): string => {
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: () => Response.json({ ok: true, data: { sessions: [] } }),
   });

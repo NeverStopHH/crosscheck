@@ -41,6 +41,7 @@ import {
 } from "./fixtures/capture-harness.ts";
 import type { CaptureHub, Harness } from "./fixtures/capture-harness.ts";
 import { writeRepoFile } from "../../connector-core/test/helpers.ts";
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 
 /** More lives than the old three-rung ladder could give one session. */
 const LIVES = 5;
@@ -187,7 +188,7 @@ describe("an ACP session whose register the hub refused", () => {
   test("is registered by its first flush, work context and all, and its edits land", async () => {
     // Arrange: a front to the hub that refuses the proxy's first register
     let refuseNext = 1;
-    const front = Bun.serve({
+    const front = serveLoopback({
       port: 0,
       fetch: async (request) => {
         const { pathname, search } = new URL(request.url);
@@ -357,7 +358,7 @@ describe("an ACP session whose register the hub keeps refusing", () => {
   /** A front to the hub that refuses registers while asked to, and counts record deliveries. */
   const front = () => {
     const dials = { refuseRegisters: true, recordPosts: 0 };
-    const server = Bun.serve({
+    const server = serveLoopback({
       port: 0,
       fetch: async (request) => {
         const { pathname, search } = new URL(request.url);

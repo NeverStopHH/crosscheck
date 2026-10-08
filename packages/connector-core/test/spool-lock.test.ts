@@ -18,6 +18,7 @@
  * alive to anything that only asks whether the pid exists, and which is what a
  * hook dying under a parent that outlives it leaves behind.
  */
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, rm, utimes, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -140,7 +141,7 @@ const deferred = (): Deferred => {
 
 /** Accepts the batch, but not until the test says so — the flush waits inside the lock. */
 const gatedHub = (arrived: () => void, release: Promise<void>) =>
-  Bun.serve({
+  serveLoopback({
     port: 0,
     fetch: async (request) => {
       const body = (await request.json()) as { records: readonly unknown[] };

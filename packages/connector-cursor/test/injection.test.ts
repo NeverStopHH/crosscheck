@@ -22,6 +22,7 @@
  * The injection ledger records WHICH event delivered: the §6-q4 instrument
  * the dogfood checklist reads.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -88,9 +89,16 @@ const TIMEOUT_MS = "4000";
 let hub: CursorTestHub;
 const cleanups: string[] = [];
 
+/**
+ * Booting the in-process hub (PGlite) took longer than bun's 5 s hook
+ * default on a loaded machine (the load run's round 5); the boot is not what
+ * this file measures.
+ */
+const HUB_BOOT_TIMEOUT_MS = 60_000;
+
 beforeAll(async () => {
   hub = await bootCursorHub("cursor-injection");
-});
+}, HUB_BOOT_TIMEOUT_MS);
 
 afterAll(async () => {
   await hub.close();
@@ -121,7 +129,7 @@ const startCapturingHub = (): CapturingHub => {
   const calls = { candidates: 0, solvedMatches: 0 };
   let solvedMatches: readonly unknown[] = [];
   const postedRecords: unknown[] = [];
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: async (request) => {
       const { pathname } = new URL(request.url);

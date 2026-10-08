@@ -195,14 +195,17 @@ describe("the default resolver is bounded and fail-open", () => {
     return binDir;
   };
 
-  const runProbe = async (pathPrefix: string): Promise<ProbeReport> => {
+  const runProbe = async (
+    pathPrefix: string,
+    args: readonly string[] = [],
+  ): Promise<ProbeReport> => {
     const probe = join(import.meta.dir, "fixtures", "ssh-hostname-probe.ts");
     // The suite preload sets the canonicalization off-switch; this probe
     // exercises the REAL spawn machinery, so it opts back in by dropping the
     // variable (test/preload.ts names this contract).
     const { [SSH_CANONICALIZE_ENV]: _omitted, ...envOptedIn } = process.env;
     const proc = Bun.spawn({
-      cmd: [process.execPath, probe],
+      cmd: [process.execPath, probe, ...args],
       cwd: import.meta.dir,
       stdin: "ignore",
       stdout: "pipe",
@@ -241,8 +244,10 @@ describe("the default resolver is bounded and fail-open", () => {
       '#!/bin/sh\necho "user git"\necho "hostname github.com"\necho "port 22"\nexit 0\n',
     );
 
-    // Act
-    const report = await runProbe(binDir);
+    // Act: awaiting ssh's own answer — the subject is the parse, not the
+    // 500 ms deadline the hang case above pins (racing it, a contended first
+    // spawn answered null in 20 of 36 runs under load)
+    const report = await runProbe(binDir, ["--await-ssh"]);
 
     // Assert
     expect(report.hostname).toBe("github.com");

@@ -6,6 +6,7 @@
  * counted in the `.drops` ledger. Never a fourth outcome, never two at once,
  * never silently neither.
  */
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { readdir, rm, utimes, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -215,7 +216,7 @@ const backdateFinishedSessions = async (home: string): Promise<number> => {
 };
 
 const acceptingHub = (received: string[]) =>
-  Bun.serve({
+  serveLoopback({
     port: 0,
     fetch: async (request) => {
       const body = (await request.json()) as {

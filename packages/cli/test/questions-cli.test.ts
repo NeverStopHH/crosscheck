@@ -8,6 +8,7 @@
  * Driven against a real hub over PGlite, through `runCli`, so the sentences
  * are the ones a human sees rather than the ones a formatter returns.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 import { eq } from "drizzle-orm";
@@ -134,7 +135,7 @@ const questionLineOf = (stdout: string): string =>
 
 beforeAll(async () => {
   db = await createDb();
-  server = Bun.serve({
+  server = serveLoopback({
     port: 0,
     fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch,
   });

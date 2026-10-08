@@ -1,3 +1,4 @@
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -435,7 +436,7 @@ describe("crosscheck cli surface", () => {
 
 describe("crosscheck login without a key in argv", () => {
   const acceptingHub = (): ReturnType<typeof Bun.serve> =>
-    Bun.serve({
+    serveLoopback({
       port: 0,
       fetch: () => Response.json({ ok: true, data: { sessions: [] } }),
     });

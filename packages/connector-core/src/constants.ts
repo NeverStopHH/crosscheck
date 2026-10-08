@@ -162,6 +162,18 @@ export const GIT_TIMEOUT_MS = 1500;
 export const SSH_RESOLVE_TIMEOUT_MS = 500;
 
 /**
+ * How many times one process lets a host run out SSH_RESOLVE_TIMEOUT_MS
+ * before it stops asking (git/ssh-hostname.ts). A deadline is not an answer:
+ * under CPU contention a perfectly ordinary config outlives half a second on
+ * a process's first spawn, and remembering that null cost a long-lived MCP
+ * server its alias — and so its repo identity — until restart. Below this
+ * many strikes the next call asks again; at it, the null is remembered, so a
+ * config that genuinely never fits bills at most this many deadlines per
+ * process instead of one per tool call.
+ */
+export const SSH_RESOLVE_DEADLINE_STRIKES = 3;
+
+/**
  * Environment switch that disables ssh identity canonicalization outright:
  * when the variable holds "off", the default resolver answers null without
  * spawning anything and every remote keeps its LITERAL host — fail-open,

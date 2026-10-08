@@ -42,6 +42,7 @@ import { readCaptureLosses } from "../src/state/loss-ledger.ts";
 import { deriveSessionState, readSessionState, updateSessionState, writeSessionState } from "../src/state/session-state.ts";
 import type { SessionState, TopicContext } from "../src/state/session-state.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 
 const REPO_ID = "github.com/acme/api";
 const ROOT = "/cx-topics/start";
@@ -454,7 +455,7 @@ describe("against a hub", () => {
 
   beforeAll(async () => {
     db = await createDb();
-    server = Bun.serve({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
+    server = serveLoopback({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
     hubUrl = `http://127.0.0.1:${String(server.port)}`;
     const response = await fetch(`${hubUrl}/api/developers`, {
       method: "POST",

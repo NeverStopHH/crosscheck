@@ -18,6 +18,7 @@
  * written in different packages and nothing else notices the day one of them
  * renames a field.
  */
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -158,7 +159,7 @@ function labelFigures(): Record<string, unknown> {
 
 beforeAll(async () => {
   const db = await createDb();
-  server = Bun.serve({
+  server = serveLoopback({
     port: 0,
     fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch,
   });

@@ -9,6 +9,7 @@
  * connector-core/test/pilot-client.test.ts; this file is about what the
  * command does with an answer.)
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -160,7 +161,7 @@ beforeAll(async () => {
   await git(repo, ["add", "-A"]);
   await git(repo, ["commit", "-m", "fix playback"]);
   repairCommit = (await runGit(["rev-parse", "HEAD"], repo)) ?? "";
-  hub = Bun.serve({
+  hub = serveLoopback({
     port: 0,
     fetch: (request) => {
       requested = [...requested, request.url];
@@ -342,7 +343,7 @@ describe("crosscheck pilot", () => {
 
   test("an unreachable hub says UNKNOWN, never zero", async () => {
     // Arrange — a port nothing listens on.
-    const dead = Bun.serve({ port: 0, fetch: () => new Response("") });
+    const dead = serveLoopback({ port: 0, fetch: () => new Response("") });
     const deadUrl = `http://127.0.0.1:${String(dead.port)}`;
     dead.stop(true);
 

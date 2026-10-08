@@ -5,6 +5,7 @@
  * owner filter, the supersedes filter and the listing order are the hub's,
  * never a stub's. Port 0, loopback only; one hub per test file.
  */
+import { serveLoopback } from "./loopback-serve.ts";
 import { createDb, createServer } from "@crosscheck/server";
 
 export interface SeedDraft {
@@ -54,7 +55,7 @@ export const bootDraftHub = async (input: BootDraftHubInput): Promise<DraftHub> 
   const db = await createDb();
   const adminToken = `${input.label}-admin`;
   const app = createServer({ db, adminToken });
-  const server = Bun.serve({ port: 0, fetch: app.fetch });
+  const server = serveLoopback({ port: 0, fetch: app.fetch });
   const hubUrl = `http://127.0.0.1:${String(server.port)}`;
   const created = await postJson(`${hubUrl}/api/developers`, adminToken, {
     name: "Draft Dev",

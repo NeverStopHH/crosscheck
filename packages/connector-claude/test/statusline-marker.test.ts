@@ -9,6 +9,7 @@
  * recorded a render (`grep -rn 'lastRender' packages/*​/src` found nothing),
  * which is why the surface could not tell the two apart.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { chmod, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -40,7 +41,7 @@ afterEach(async () => {
 });
 
 const acceptingHub = (): string => {
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: () => Response.json({ ok: true, data: { sessions: [] } }),
   });

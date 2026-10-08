@@ -17,6 +17,7 @@
  * all is older than this spec and is also *not measured* — saying PASS there
  * would report "verdicts here are legal" about a hub that computes none.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -109,7 +110,7 @@ const suspectBody = (answers: HubAnswers): Record<string, unknown> => ({
 });
 
 const hubWith = (answers: HubAnswers): string => {
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: (request) => {
       const { pathname } = new URL(request.url);
