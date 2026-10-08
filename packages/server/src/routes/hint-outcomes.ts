@@ -27,6 +27,7 @@ import { fail, ok } from "../http/envelope.ts";
 import { formatIssues, readJsonBody } from "../http/request.ts";
 import { developerAuth } from "../middleware/auth.ts";
 import { readMyHintOutcomes } from "../services/hint-outcome-view.ts";
+import { confirmabilityOf } from "../services/human-provenance.ts";
 import { DRAFT_REFUSAL_SENTENCE, draftOutcome } from "../services/draft-doors.ts";
 import type { DraftRefusal } from "../services/draft-doors.ts";
 import type { HintOutcomeRefusal } from "../services/hint-outcomes.ts";
@@ -103,7 +104,8 @@ export const hintOutcomeRoutes = (deps: AppDeps): Hono<AppEnv> => {
     if ("refusal" in view) {
       return fail(c, 422, view.refusal, HINT_OUTCOME_REFUSAL_SENTENCE[view.refusal]);
     }
-    return ok(c, view);
+    // human provenance §9: whether the caller could have confirmed anything here at all.
+    return ok(c, { ...view, humanConfirmation: confirmabilityOf(deps.webauthnOrigins) });
   });
 
   /**

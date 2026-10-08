@@ -37,6 +37,7 @@ import {
   PILOT_REPORT_MAX_LABEL_REASONS,
 } from "../constants.ts";
 import { PER_HUNDRED, measured, unavailable } from "./pilot-figure.ts";
+import { isHumanRow } from "./human-provenance.ts";
 import type { Figure } from "./pilot-figure.ts";
 import type { Db } from "../db/client.ts";
 
@@ -136,9 +137,10 @@ export const readLabelTally = async (deps: Deps, population: SQL): Promise<Label
       WHERE hd.channel <> ${PULLED_DELIVERY_CHANNEL}
     ),
     verdict AS (
+      -- human provenance §5: a label counts only when the person confirmed it with their passkey
       SELECT m.mark FROM pilot_marks m
       JOIN intervention i ON i.id = m.ref_id
-      WHERE m.ref_kind = 'hint_delivery'
+      WHERE m.ref_kind = 'hint_delivery' AND ${isHumanRow("m")}
     )
     SELECT (SELECT count(*)::int FROM population) AS sessions,
            (SELECT count(*)::int FROM intervention) AS interventions,
@@ -206,7 +208,7 @@ export const readReasons = async (
     JOIN hint_deliveries hd ON hd.id = m.ref_id
     JOIN agent_sessions s ON s.id = hd.session_id
     JOIN population p ON p.id = s.id
-    WHERE m.ref_kind = 'hint_delivery' AND m.reason IS NOT NULL
+    WHERE m.ref_kind = 'hint_delivery' AND m.reason IS NOT NULL AND ${isHumanRow("m")}
     ORDER BY m.created_at DESC, m.id ASC
     LIMIT ${PILOT_REPORT_MAX_LABEL_REASONS}`);
   const reasons = rows.rows.map((row) => ({
@@ -243,6 +245,48 @@ const readLegacyNoise = async (
   return rows.rows[0]?.n ?? 0;
 };
 
+/**
+ * THE LABELS THAT ARE NO PERSON'S JUDGEMENT YET (human provenance §5), counted
+ * apart and never blended into a figure: drafts still waiting for a passkey,
+ * by the class of their door, and the 1.0-era words a hub holds from before
+ * provenance existed (the 0.10 `off_target` word is `legacyNoise`, apart again).
+ */
+export interface LabelsNotHuman {
+  /** Drafted at the terminal's door (`interactive_terminal_asserted`), not confirmed. */
+  readonly atTerminal: number;
+  /** Drafted by an agent (`agent_asserted`), not confirmed. No agent door drafts labels today. */
+  readonly byAgent: number;
+  /** helpful / noise / unclear written before 0.11 (`unknown_legacy`). */
+  readonly legacy: number;
+}
+
+export const readLabelsNotHuman = async (deps: Deps, population: SQL): Promise<LabelsNotHuman> => {
+  const rows = await deps.db.execute<{ at_terminal: number; by_agent: number; legacy: number }>(sql`
+    WITH population AS (${population}),
+    drafted AS (
+      SELECT DISTINCT ON (d.developer_id, d.subject_key) d.id, d.provenance, d.payload
+      FROM human_drafts d
+      WHERE d.kind = 'label'
+      ORDER BY d.developer_id, d.subject_key, d.version DESC
+    )
+    SELECT
+      (SELECT count(*)::int FROM drafted dr JOIN population p ON p.id = dr.payload->>'sessionId'
+        WHERE dr.provenance = 'interactive_terminal_asserted'
+          AND NOT EXISTS (SELECT 1 FROM human_confirmation_items i WHERE i.draft_id = dr.id
+                          AND i.decision IN ('confirm', 'discard'))) AS at_terminal,
+      (SELECT count(*)::int FROM drafted dr JOIN population p ON p.id = dr.payload->>'sessionId'
+        WHERE dr.provenance = 'agent_asserted'
+          AND NOT EXISTS (SELECT 1 FROM human_confirmation_items i WHERE i.draft_id = dr.id
+                          AND i.decision IN ('confirm', 'discard'))) AS by_agent,
+      (SELECT count(*)::int FROM pilot_marks m
+        JOIN hint_deliveries hd ON hd.id = m.ref_id
+        JOIN population p ON p.id = hd.session_id
+        WHERE m.ref_kind = 'hint_delivery' AND NOT ${isHumanRow("m")}
+          AND m.mark <> ${PILOT_LEGACY_NOISE_MARK}) AS legacy`);
+  const row = rows.rows[0];
+  return { atTerminal: row?.at_terminal ?? 0, byAgent: row?.by_agent ?? 0, legacy: row?.legacy ?? 0 };
+};
+
 /** The window's labelled figures, from where labels existed, and what sits beside them. */
 export interface LabelledWindow {
   readonly figures: LabelFigures;
@@ -251,6 +295,7 @@ export interface LabelledWindow {
   readonly reasons: readonly LabelReason[];
   readonly reasonsBeyondList: number;
   readonly legacyNoise: number;
+  readonly notHuman: LabelsNotHuman;
 }
 
 /**
@@ -270,10 +315,11 @@ export const readLabelledWindow = async (
 ): Promise<LabelledWindow> => {
   const from = labelsSince.getTime() > window.since.getTime() ? labelsSince : window.since;
   const population = windowPopulation(repo, from, window.until);
-  const [tally, said, legacyNoise] = await Promise.all([
+  const [tally, said, legacyNoise, notHuman] = await Promise.all([
     readLabelTally(deps, population),
     readReasons(deps, population),
     readLegacyNoise(deps, repo, window.since, window.until),
+    readLabelsNotHuman(deps, population),
   ]);
   return {
     figures: labelFigures(tally),
@@ -281,6 +327,7 @@ export const readLabelledWindow = async (
     reasons: said.reasons,
     reasonsBeyondList: said.beyond,
     legacyNoise,
+    notHuman,
   };
 };
 

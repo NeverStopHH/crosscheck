@@ -39,6 +39,7 @@ import {
   withholdingOf,
 } from "./outcome-population.ts";
 import type { DeliveryState, Enrolment, HintOutcomeTally } from "./outcome-population.ts";
+import { isHumanRow } from "./human-provenance.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
@@ -85,7 +86,47 @@ export interface MyHintOutcomes extends HintOutcomeTally {
   readonly reasonsBeyondList: number;
   /** Hints that pointed at the CALLER's work and that the teammate they reached followed. */
   readonly yourWork: YourWork;
+  /**
+   * WHAT IS NOT THE CALLER'S JUDGEMENT YET (human provenance §5), never inside
+   * the tallies above: outcome and label drafts waiting for their passkey, by
+   * the class of the door they came through, and pointers whose only words
+   * were recorded before provenance existed.
+   */
+  readonly notConfirmed: NotConfirmed;
 }
+
+export interface NotConfirmed {
+  /** Drafted by the caller's agent (`mark_hint_outcome`), not confirmed. */
+  readonly byAgent: number;
+  /** Typed at a terminal (`crosscheck followed / overrode / noise / helpful`), not confirmed. */
+  readonly atTerminal: number;
+  /** Pointers whose words date from before 0.11 (`unknown_legacy`). */
+  readonly legacy: number;
+}
+
+const readNotConfirmed = async (deps: Deps, input: ReadMyHintOutcomesInput, since: Date): Promise<NotConfirmed> => {
+  const rows = await deps.db.execute<{ by_agent: number; at_terminal: number; legacy: number }>(sql`
+    WITH drafted AS (
+      SELECT DISTINCT ON (d.subject_key) d.id, d.provenance, d.created_at
+      FROM human_drafts d
+      WHERE d.developer_id = ${input.developerId} AND d.repo = ${input.repo} AND d.kind IN ('outcome', 'label')
+      ORDER BY d.subject_key, d.version DESC
+    ), pending AS (
+      SELECT * FROM drafted dr
+      WHERE dr.created_at >= ${since.toISOString()}::timestamptz
+        AND NOT EXISTS (SELECT 1 FROM human_confirmation_items i
+                        WHERE i.draft_id = dr.id AND i.decision IN ('confirm', 'discard'))
+    )
+    SELECT
+      (SELECT count(*)::int FROM pending WHERE provenance = 'agent_asserted') AS by_agent,
+      (SELECT count(*)::int FROM pending WHERE provenance = 'interactive_terminal_asserted') AS at_terminal,
+      (SELECT count(DISTINCT (hd.session_id, hd.ref_id))::int FROM hint_outcomes o
+        JOIN hint_deliveries hd ON hd.id = o.delivery_id
+        WHERE o.recorded_by = ${input.developerId} AND o.repo = ${input.repo} AND NOT ${isHumanRow("o")}
+          AND o.created_at >= ${since.toISOString()}::timestamptz) AS legacy`);
+  const row = rows.rows[0];
+  return { byAgent: row?.by_agent ?? 0, atTerminal: row?.at_terminal ?? 0, legacy: row?.legacy ?? 0 };
+};
 
 /** The source credit: one closed month's follows of the caller's work, or why there is no number. */
 export interface YourWork {
@@ -233,10 +274,11 @@ export const readMyHintOutcomes = async (
     first.start.toISOString(),
     now,
   );
-  const [tallies, reasons, yourWork] = await Promise.all([
+  const [tallies, reasons, yourWork, notConfirmed] = await Promise.all([
     readTallies(deps, input, since),
     readReasons(deps, input, since),
     readYourWork(deps, input, now, enrolments),
+    readNotConfirmed(deps, input, since),
   ]);
   const { total, sources } = foldTallies(tallies);
   const reasonsTotal = Number(reasons[0]?.total ?? 0);
@@ -258,5 +300,6 @@ export const readMyHintOutcomes = async (
     })),
     reasonsBeyondList: Math.max(0, reasonsTotal - reasons.length),
     yourWork,
+    notConfirmed,
   };
 };

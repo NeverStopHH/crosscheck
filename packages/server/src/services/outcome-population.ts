@@ -9,6 +9,11 @@
  * every figure counts distinct (session, ref), and reads the words and labels
  * of all that pointer's deliveries.
  *
+ * ONLY WHAT A PERSON CONFIRMED (human provenance §5). Every word read below is
+ * `human_passkey_confirmed`: an agent's or a terminal's word is a draft and
+ * never a row here, and a row from before 0.11 is `unknown_legacy` and is
+ * left out — `--mine` counts those apart (hint-outcome-view.ts).
+ *
  * ONE NOISE CONCEPT. Noise is the person's label in `pilot_marks` (and the
  * 0.10 `off_target` spelling); an outcome is the agent's or the person's word.
  * Per intervention the person's newest word stands — their own outcome or
@@ -31,6 +36,7 @@ import { HINT_OUTCOME_DISCLOSURE_MINIMUMS, PULLED_DELIVERY_CHANNEL } from "@cros
 import type { HintOutcome, HintOutcomeWithholding } from "@crosscheck/schema";
 
 import { NOISE_WORDS } from "./pilot-label-figures.ts";
+import { isHumanRow } from "./human-provenance.ts";
 import type { Db } from "../db/client.ts";
 
 /** What one delivery stands at: an outcome, the noise label, or nothing said. */
@@ -220,19 +226,21 @@ export const deliveryStates = (repo: string, since: Date, who: SQL, until: Date 
         SELECT 'noise' AS word, m.reason AS reason, m.created_at AS at, m.id, false AS reasserted FROM pilot_marks m
         JOIN hint_deliveries md ON md.id = m.ref_id
         WHERE m.ref_kind = 'hint_delivery' AND md.session_id = so.session_id AND md.ref_id = so.ref_id
-          AND m.marked_by = so.recipient AND m.mark IN ${NOISE_WORDS} ${before(sql`m.created_at`, until)}
+          AND m.marked_by = so.recipient AND m.mark IN ${NOISE_WORDS} AND ${isHumanRow("m")}
+          ${before(sql`m.created_at`, until)}
         UNION ALL
         -- review H-B: the person saying noise again is a row of its own, read before the month's end too —
         -- with the sentence said with it, which --mine reads (round-5 LOW-6)
         SELECT 'noise', r.reason, r.created_at, r.id, true FROM noise_reassertions r
         JOIN hint_deliveries rd ON rd.id = r.delivery_id
         WHERE rd.session_id = so.session_id AND rd.ref_id = so.ref_id
-          AND r.marked_by = so.recipient ${before(sql`r.created_at`, until)}
+          AND r.marked_by = so.recipient AND ${isHumanRow("r")} ${before(sql`r.created_at`, until)}
         UNION ALL
         SELECT 'helpful', h.reason, h.created_at, h.id, false FROM pilot_marks h
         JOIN hint_deliveries hd2 ON hd2.id = h.ref_id
         WHERE h.ref_kind = 'hint_delivery' AND hd2.session_id = so.session_id AND hd2.ref_id = so.ref_id
-          AND h.marked_by = so.recipient AND h.mark = 'helpful' ${before(sql`h.created_at`, until)}
+          AND h.marked_by = so.recipient AND h.mark = 'helpful' AND ${isHumanRow("h")}
+          ${before(sql`h.created_at`, until)}
       ) l
       ORDER BY l.at DESC, l.id DESC LIMIT 1
     ) lab ON true
@@ -249,7 +257,7 @@ export const deliveryStates = (repo: string, since: Date, who: SQL, until: Date 
         FROM hint_outcomes o
         JOIN hint_deliveries od ON od.id = o.delivery_id
         WHERE od.session_id = la.session_id AND od.ref_id = la.ref_id
-          AND o.recorded_by = la.recipient ${before(sql`o.created_at`, until)}
+          AND o.recorded_by = la.recipient AND ${isHumanRow("o")} ${before(sql`o.created_at`, until)}
         UNION ALL
         -- (a) the person's noise competes only while it is their newest label — a newer helpful cancels
         -- it — and only the newest noise ever could: helpful itself never competes with an outcome

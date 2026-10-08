@@ -27,6 +27,7 @@ import { fail, ok } from "../http/envelope.ts";
 import { formatIssues } from "../http/request.ts";
 import { developerAuth } from "../middleware/auth.ts";
 import { readPilotReport } from "../services/pilot-report.ts";
+import { confirmabilityOf } from "../services/human-provenance.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
 
 const ReportQuerySchema = z.object({
@@ -50,14 +51,15 @@ export const pilotRoutes = (deps: AppDeps): Hono<AppEnv> => {
     if (!parsed.success) {
       return fail(c, 400, "validation_failed", formatIssues(parsed.error));
     }
-    return ok(
-      c,
-      await readPilotReport(deps, {
+    return ok(c, {
+      ...(await readPilotReport(deps, {
         repo: parsed.data.repo,
         days: parsed.data.days,
         viewerDeveloperId: c.get("developer").id,
-      }),
-    );
+      })),
+      // human provenance §9: whether any figure above could hold a person's confirmed word at all.
+      humanConfirmation: confirmabilityOf(deps.webauthnOrigins),
+    });
   });
 
   return router;

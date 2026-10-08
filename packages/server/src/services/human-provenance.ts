@@ -32,3 +32,24 @@ export const isHumanRow = (alias: string): SQL => sql`${sql.raw(alias)}.provenan
 
 /** The same for a pin's retraction, which carries its own provenance column. */
 export const isHumanBreak = (alias: string): SQL => sql`${sql.raw(alias)}.broke_provenance = ${HUMAN_PROVENANCE}`;
+
+/**
+ * WHERE A PERSON CAN CONFIRM ANYTHING ON THIS HUB (human provenance §9). A
+ * passkey needs a secure origin: an https one serves every member; a hub with
+ * only localhost serves the browser on its own machine; with none, nothing
+ * can ever be `human_passkey_confirmed` here — and every report says so
+ * rather than print an empty human figure as if people had judged nothing.
+ */
+export type HumanConfirmability = "https" | "hub_machine_only" | "none";
+
+export const confirmabilityOf = (origins: readonly string[]): HumanConfirmability => {
+  if (origins.length === 0) {
+    return "none";
+  }
+  return origins.some((origin) => origin.startsWith("https:")) ? "https" : "hub_machine_only";
+};
+
+/** The RP ID each configured origin binds a passkey to (04a §7): its hostname. */
+export const rpIdsOf = (origins: readonly string[]): readonly string[] => [
+  ...new Set(origins.map((origin) => new URL(origin).hostname)),
+];

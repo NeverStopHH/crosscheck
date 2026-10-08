@@ -51,11 +51,13 @@
 import { and, asc, eq, gte, inArray, lt, notInArray, sql } from "drizzle-orm";
 import {
   DELIVERY_CHANNELS,
+  HUMAN_PROVENANCE,
   PILOT_COHORTS,
   PULLED_DELIVERY_CHANNEL,
   SUBSTANCE_DELIVERY_CHANNEL,
   TRIPWIRE_ASKING_HOSTS,
 } from "@crosscheck/schema";
+import { isHumanRow } from "./human-provenance.ts";
 import type { DeliveryChannel } from "@crosscheck/schema";
 
 import {
@@ -92,7 +94,7 @@ import {
   readCohorts,
   readLabelledWindow,
 } from "./pilot-label-figures.ts";
-import type { CohortFigures, LabelFigures, LabelReason } from "./pilot-label-figures.ts";
+import type { CohortFigures, LabelFigures, LabelReason, LabelsNotHuman } from "./pilot-label-figures.ts";
 import { readTeamSettings } from "./team-settings.ts";
 import { readEnrolments } from "./outcome-population.ts";
 import { noOutcomeFigures, readOutcomeFigures } from "./pilot-outcome-figures.ts";
@@ -187,6 +189,8 @@ export interface ProofAttribution {
   readonly supersededAnswers: number;
   /** Answers given once the repair already existed — the fix was in hand, so not scored. */
   readonly answersAfterRepair: number;
+  /** Repaired breaks whose break or repair no passkey confirmed (from before 0.11): counted, never scored. */
+  readonly notHumanConfirmed: number;
 }
 
 /** Proof 4: the labelled figures (services/pilot-label-figures.ts) and the two behavioural rates. */
@@ -195,6 +199,8 @@ export interface ProofPrecision extends LabelFigures {
   readonly labelledSinceIso: string | null;
   /** 0.10 `off_target` marks on the window's interventions — counted, and kept outside precision. */
   readonly legacyNoise: number;
+  /** Labels that are no person's judgement yet, by class — never inside any figure above (human provenance §5). */
+  readonly notHuman: LabelsNotHuman;
   /** PILOT_TARGET_INTERVENTION_PRECISION, declared before measuring. */
   readonly precisionTarget: number;
   /** Unsolicited pointers an agent opened, per hundred sessions — a pull, not a verdict. */
@@ -562,18 +568,21 @@ const readAttribution = async (
               repairsPinId: pins.repairsPinId,
               repairCommit: pins.verifiedAtCommit,
               repairedAt: pins.createdAt,
+              provenance: pins.provenance,
             })
             .from(pins)
             .where(and(eq(pins.repo, repo), inArray(pins.repairsPinId, pinIds))),
           deps.db
-            .select({ id: pins.id, brokeAtCommit: pins.brokeAtCommit })
+            .select({ id: pins.id, brokeAtCommit: pins.brokeAtCommit, brokeProvenance: pins.brokeProvenance })
             .from(pins)
             .where(inArray(pins.id, pinIds)),
         ]);
   const brokeAtCommit = new Map(broken.map((row) => [row.id, row.brokeAtCommit]));
+  // human provenance §5: a break and its repair are a person's judgements — scored only when confirmed.
+  const humanBreak = new Set(broken.filter((row) => row.brokeProvenance === HUMAN_PROVENANCE).map((row) => row.id));
   const repairOf = new Map<
     string,
-    { repairPinId: string; repairCommit: string; repairedAt: Date }
+    { repairPinId: string; repairCommit: string; repairedAt: Date; provenance: string }
   >();
   for (const row of repairs) {
     if (row.repairsPinId !== null) {
@@ -588,10 +597,16 @@ const readAttribution = async (
   let supersededAnswers = 0;
   let answersAfterRepair = 0;
   let repairedWithoutBreakCommit = 0;
+  let notHumanConfirmed = 0;
   const chosen: { pinId: string; topSessionId: string }[] = [];
   for (const pinId of pinIds) {
     const repair = repairOf.get(pinId);
     if (repair === undefined) {
+      continue;
+    }
+    // A legacy break or repair is counted apart, never scored as a person's (human provenance §5).
+    if (repair.provenance !== HUMAN_PROVENANCE || !humanBreak.has(pinId)) {
+      notHumanConfirmed += 1;
       continue;
     }
     const onBreak = answers.filter(
@@ -666,6 +681,7 @@ const readAttribution = async (
     repairedWithoutBreakCommit,
     supersededAnswers,
     answersAfterRepair,
+    notHumanConfirmed,
   };
 };
 
@@ -714,7 +730,7 @@ const readPrecision = async (
       FROM pilot_marks m
       JOIN hint_deliveries hd ON hd.id = m.ref_id
       JOIN agent_sessions s ON s.id = hd.session_id
-      WHERE m.ref_kind = 'hint_delivery' AND m.mark IN ${NOISE_WORDS}
+      WHERE m.ref_kind = 'hint_delivery' AND m.mark IN ${NOISE_WORDS} AND ${isHumanRow("m")}
         AND ${windowSessions}`),
     deps.db
       .select({ n: sql<number>`count(*)::int` })
@@ -723,6 +739,8 @@ const readPrecision = async (
         and(
           eq(pilotMarks.repo, repo),
           eq(pilotMarks.mark, "surface_ok"),
+          // human provenance §5: `pin --ok` is a person's word only once confirmed
+          eq(pilotMarks.provenance, HUMAN_PROVENANCE),
           gte(pilotMarks.createdAt, since),
           lt(pilotMarks.createdAt, until),
         ),
@@ -737,6 +755,7 @@ const readPrecision = async (
     ...labelled.figures,
     labelledSinceIso: labelled.labelledSince.toISOString(),
     legacyNoise: labelled.legacyNoise,
+    notHuman: labelled.notHuman,
     precisionTarget: PILOT_TARGET_INTERVENTION_PRECISION,
     openedPer100: per100(opened.rows[0]?.n ?? 0),
     openedTargetPer100: PILOT_TARGET_HELPFUL_PER_100_SESSIONS,
@@ -829,11 +848,13 @@ const notEnrolled = (): Omit<
     repairedWithoutBreakCommit: 0,
     supersededAnswers: 0,
     answersAfterRepair: 0,
+    notHumanConfirmed: 0,
   },
   precision: {
     ...notInstrumentedLabels(),
     labelledSinceIso: null,
     legacyNoise: 0,
+    notHuman: { atTerminal: 0, byAgent: 0, legacy: 0 },
     precisionTarget: PILOT_TARGET_INTERVENTION_PRECISION,
     openedPer100: unavailable("not_instrumented"),
     openedTargetPer100: PILOT_TARGET_HELPFUL_PER_100_SESSIONS,

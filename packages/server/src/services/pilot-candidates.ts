@@ -203,6 +203,13 @@ export const readUnlabeledInterventions = async (
         WHERE m.ref_kind = 'hint_delivery' AND m.ref_id = hd.id
           AND m.marked_by = ${input.developerId}
       )
+      -- human provenance §4: a pointer already labelled at the terminal waits at /ui/confirm,
+      -- whatever was decided about it there; the walk never asks for the same word twice
+      AND NOT EXISTS (
+        SELECT 1 FROM human_drafts dr
+        WHERE dr.developer_id = ${input.developerId}
+          AND dr.subject_key = 'label:' || hd.session_id || ':' || hd.ref_id
+      )
     ORDER BY hd.delivered_at DESC, hd.id ASC
     LIMIT ${PILOT_LABEL_MAX_CANDIDATES + 1}`);
   const hidden = await locationHiddenFrom(deps.db, input.developerId);
