@@ -43,8 +43,8 @@ const REPO_ID = "github.com/acme/api";
 const UUID = "0f8e7d6c-5b4a-4392-8170-6a5b4c3d2e1f";
 
 /** A topic's work context in a life, minted the way the topic rules mint it (flows/topic-rules.ts). */
-const topicIdIn = (lifeWorkContextId: string, ordinal: number): string =>
-  topicWorkContextIdFor(lifeWorkContextId, mintTopicId(REPO_ID, "/repos/api-feature", ordinal));
+const topicIdIn = (lifeWorkContextId: string, branch: string): string =>
+  topicWorkContextIdFor(lifeWorkContextId, mintTopicId(REPO_ID, "/repos/api-feature", branch));
 
 /** Every id shape the connector mints, a healed or resumed life's and a topic's included. */
 export const MINTED_IDS: readonly string[] = [
@@ -57,10 +57,10 @@ export const MINTED_IDS: readonly string[] = [
   "wc_cc_acp-gemini-cli--sess_abc123~r2",
   // DESIGN.md "One session, many topics": a topic's context in a first life,
   // a healed one, and on the longer Cursor and ACP host keys.
-  topicIdIn(`wc_cc_${UUID}`, 1),
-  topicIdIn(`wc_cc_${UUID}~r1`, 12),
-  topicIdIn(`wc_cc_cur-${UUID}~r3`, 2),
-  topicIdIn("wc_cc_acp-gemini-cli--sess_abc123~r2", 24),
+  topicIdIn(`wc_cc_${UUID}`, "feat/importer"),
+  topicIdIn(`wc_cc_${UUID}~r1`, "detached@0123456789"),
+  topicIdIn(`wc_cc_cur-${UUID}~r3`, "fix/a-very-long-branch-name-from-a-ticket-title"),
+  topicIdIn("wc_cc_acp-gemini-cli--sess_abc123~r2", "main"),
 ];
 
 describe("the id grammar", () => {
@@ -282,7 +282,7 @@ describe("a healed life's work context, pointed at and read back", () => {
     // Arrange: Carol, on a healed life, has a topic in a sibling worktree; Bob asks her about it
     const carol = await developerOn("rt-carol", "Carol", "~r1", "detached@0123456789 · start @ api");
     const bob = await developerOn("rt-bob-topic", "Bob Topic", "", "Reviewing the ledger export");
-    const topicId = topicIdIn(carol.workContextId, 1);
+    const topicId = topicIdIn(carol.workContextId, "feat/ledger-rounding");
     const now = new Date().toISOString();
     await post("/api/records", carol.apiKey, {
       cx: "0.1",

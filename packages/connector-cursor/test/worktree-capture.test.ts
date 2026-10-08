@@ -21,6 +21,7 @@ import { join } from "node:path";
 
 import { MAX_WORKTREE_ROOT_RESOLVE_ATTEMPTS } from "@crosscheck/connector-core/constants.ts";
 import { mintTopicId, topicSeenKey } from "@crosscheck/connector-core/flows/topic-contexts.ts";
+import { readHeadFile } from "@crosscheck/connector-core/git/repo-identity.ts";
 import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { realpathBestEffort } from "@crosscheck/connector-core/config/paths.ts";
@@ -146,7 +147,9 @@ describe("a cursor conversation at checkout A editing a file in worktree B", () 
     expect(stdout).toBe("{}");
     expect(await targetsIn(home)).toEqual([EDITED_FILE]);
     const state = await readSessionState(home, HOST_KEY);
-    expect(state?.seenTargets).toEqual([topicSeenKey(mintTopicId(REPO_ID, await realpath(worktree), 1), EDITED_FILE)]);
+    const root = await realpath(worktree);
+    const branch = (await readHeadFile(root))?.branch ?? "";
+    expect(state?.seenTargets).toEqual([topicSeenKey(mintTopicId(REPO_ID, root, branch), EDITED_FILE)]);
     expect(state?.editToolFires).toBe(1);
     expect(state?.targetsCapturedCount).toBe(1);
     expect(state?.lastPostToolUseTool).toBe("afterFileEdit");

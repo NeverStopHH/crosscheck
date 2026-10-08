@@ -19661,20 +19661,28 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     // DESIGN.md "One session, many topics" — the topic rules (flows/topic-rules.ts).
-    label: "a topic's id encodes its branch",
-    file: `${CORE}/src/flows/topic-rules.ts`,
-    from: "        const id = mintTopicId(life.repoId, head.root, ordinal);",
-    to: "        const id = mintTopicId(life.repoId, `${head.root}\\n${decision.branch}`, ordinal);",
-    test: `${CORE}/test/topic-rules.test.ts`,
-    because: "a branch rename re-keys the topic, and its history on the hub splits into two contexts nobody joins",
+    label: "a topic's id is minted from the worktree alone",
+    file: `${CORE}/src/flows/topic-contexts.ts`,
+    from: "  return `${rootKeyOf(repoId, root)}.${String(Number.parseInt(branchKey, 16))}`;",
+    to: "  return `${rootKeyOf(repoId, root)}.1`;",
+    test: `${CORE}/test/topic-contexts.test.ts`,
+    because: "review M1: two hooks opening two branches of one worktree mint one id, and one branch's targets sit in the other's context under a flipped title",
   },
   {
     label: "a worktree's second topic takes its first topic's id",
     file: `${CORE}/src/flows/topic-rules.ts`,
-    from: "        const ordinal = 1 + [...live, ...opened].filter((topic) => topic.root === head.root).length;",
-    to: "        const ordinal = 1;",
+    from: "        const id = mintTopicId(life.repoId, head.root, decision.branch);",
+    to: "        const id = mintTopicId(life.repoId, head.root, \"\");",
     test: `${CORE}/test/topic-rules.test.ts`,
     because: "a new piece of work in the same worktree is spooled under the old topic's context id, and the two merge on the hub",
+  },
+  {
+    label: "the fold registers a topic opened twice twice",
+    file: `${CORE}/src/flows/topic-contexts.ts`,
+    from: "  const added = capture.opened.filter((topic) => !live.some((known) => known.key === topic.key));",
+    to: "  const added = capture.opened;",
+    test: `${CORE}/test/topic-contexts.test.ts`,
+    because: "review mutation #7: two hooks opening one topic from one state leave two registry entries for one id, and every later fold stamps and re-sends both",
   },
   {
     label: "a branch already in a topic's affinity is decided again on every touch",
@@ -20410,9 +20418,9 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/staleness-axis.test.ts 1
  * PRINTS: packages/connector-core/test/target-paths.test.ts 1
  * PRINTS: packages/connector-core/test/tool-window-pairing.test.ts 6
- * PRINTS: packages/connector-core/test/topic-contexts.test.ts 9
+ * PRINTS: packages/connector-core/test/topic-contexts.test.ts 11
  * PRINTS: packages/connector-core/test/topic-heads.test.ts 2
- * PRINTS: packages/connector-core/test/topic-rules.test.ts 14
+ * PRINTS: packages/connector-core/test/topic-rules.test.ts 13
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
  * PRINTS: packages/connector-core/test/verdict-wire.test.ts 2
  * PRINTS: packages/connector-core/test/work-context-ack.test.ts 6

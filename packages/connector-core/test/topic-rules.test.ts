@@ -146,7 +146,7 @@ const countSpawns = async <T>(action: () => Promise<T>): Promise<{ readonly valu
 };
 
 describe("(a) first sight opens a topic", () => {
-  test("a branch first seen in a worktree opens a topic whose id names the worktree, never the branch", async () => {
+  test("a branch first seen in a worktree opens a topic whose id is minted from the worktree and that branch, never spelling it", async () => {
     // Arrange
     const { main, sibling } = await world("rules-a");
     const state = await sessionIn(main);
@@ -156,7 +156,7 @@ describe("(a) first sight opens a topic", () => {
 
     // Assert
     const [opened] = plan.opened;
-    expect(opened?.key).toBe(mintTopicId(REPO_ID, sibling, 1));
+    expect(opened?.key).toBe(mintTopicId(REPO_ID, sibling, "feat/a"));
     expect(opened?.key).not.toContain("feat");
     expect(opened).toMatchObject({ branch: "feat/a", branches: ["feat/a"], head: await headCommit(sibling), root: sibling });
     expect(opened?.title).toBe("feat/a @ api");
@@ -174,7 +174,7 @@ describe("(a) first sight opens a topic", () => {
     // Assert
     expect(plan.opened).toEqual([]);
     expect(plan.relabeled).toEqual([]);
-    expect(keysOf(plan)).toEqual([mintTopicId(REPO_ID, sibling, 1)]);
+    expect(keysOf(plan)).toEqual([mintTopicId(REPO_ID, sibling, "feat/a")]);
   });
 
   test("the session's own checkout on its start branch files under the session's own context", async () => {
@@ -197,7 +197,7 @@ describe("(b) a rename keeps the topic", () => {
     const { plan, state } = await touch(first.state, sibling, ["src/other.ts"], 2);
 
     // Assert
-    const id = mintTopicId(REPO_ID, sibling, 1);
+    const id = mintTopicId(REPO_ID, sibling, "feat/a");
     expect(plan.opened).toEqual([]);
     expect(keysOf(plan)).toEqual([id]);
     expect(plan.relabeled).toEqual([{ id, label: "feat/a-renamed", head: await headCommit(sibling) }]);
@@ -219,7 +219,7 @@ describe("(b) a rename keeps the topic", () => {
     const { plan, state } = await touch(second.state, sibling, ["src/c.ts"], 3);
 
     // Assert
-    const id = mintTopicId(REPO_ID, sibling, 1);
+    const id = mintTopicId(REPO_ID, sibling, "feat/a");
     expect(plan.opened).toEqual([]);
     expect(keysOf(plan)).toEqual([id]);
     expect(state.topicContexts.find((entry) => entry.key === id)?.branches).toEqual(["feat/a", "feat/b", "feat/c"]);
@@ -254,7 +254,7 @@ describe("(c) a move to another branch", () => {
     const { plan, state } = await touch(first.state, sibling, ["src/a.ts"], 2);
 
     // Assert
-    const id = mintTopicId(REPO_ID, sibling, 1);
+    const id = mintTopicId(REPO_ID, sibling, "feat/a");
     expect(plan.opened).toEqual([]);
     expect(keysOf(plan)).toEqual([id]);
     expect(state.topicContexts.find((entry) => entry.key === id)?.branches).toEqual(["feat/a", "feat/a-2"]);
@@ -270,8 +270,9 @@ describe("(c) a move to another branch", () => {
     // Act
     const { plan } = await touch(first.state, sibling, ["src/b.ts"], 2);
 
-    // Assert: a new topic, ordinal 2 in the same worktree
-    expect(plan.opened.map((topic) => [topic.key, topic.branch])).toEqual([[mintTopicId(REPO_ID, sibling, 2), "feat/b"]]);
+    // Assert: a new topic in the same worktree, its id minted from the branch it opened on
+    expect(plan.opened.map((topic) => [topic.key, topic.branch])).toEqual([[mintTopicId(REPO_ID, sibling, "feat/b"), "feat/b"]]);
+    expect(mintTopicId(REPO_ID, sibling, "feat/b")).not.toBe(mintTopicId(REPO_ID, sibling, "feat/a"));
     expect(plan.relabeled).toEqual([]);
   });
 
@@ -303,7 +304,7 @@ describe("(d) a detached HEAD", () => {
     const { plan, state } = await touch(first.state, sibling, ["src/c.ts"], 2);
 
     // Assert
-    const id = mintTopicId(REPO_ID, sibling, 1);
+    const id = mintTopicId(REPO_ID, sibling, "feat/a");
     const label = `detached@${(await headCommit(sibling)).slice(0, DETACHED_LABEL_SHA_CHARS)}`;
     expect(plan.opened).toEqual([]);
     expect(keysOf(plan)).toEqual([id]);
@@ -362,7 +363,7 @@ describe("the bounds", () => {
     // Arrange: a topic whose seen-set already holds 1000 files
     const { main, sibling } = await world("rules-size");
     const state = await sessionIn(main);
-    const id = mintTopicId(REPO_ID, sibling, 1);
+    const id = mintTopicId(REPO_ID, sibling, "feat/a");
     const big = { ...state, seenTargets: Array.from({ length: 1000 }, (_, index) => topicSeenKey(id, `old/${String(index)}.ts`)) };
     const files = Array.from({ length: 300 }, (_, index) => `src/f${String(index)}.ts`);
 

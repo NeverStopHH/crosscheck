@@ -30,6 +30,7 @@ import {
   MAX_WORKTREE_ROOT_RESOLVE_ATTEMPTS,
 } from "@crosscheck/connector-core/constants.ts";
 import { mintTopicId, topicSeenKey } from "@crosscheck/connector-core/flows/topic-contexts.ts";
+import { readHeadFile } from "@crosscheck/connector-core/git/repo-identity.ts";
 import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 
 import {
@@ -90,8 +91,10 @@ const repoWithWorktree = async (
  * topic-contexts.ts): B is checked out on its own HEAD, so the rules open a
  * topic for it, and its seen-set entry carries that topic's id.
  */
-const seenInWorktree = async (repoId: string | undefined, worktree: string, file: string): Promise<string> =>
-  topicSeenKey(mintTopicId(repoId ?? "", await realpath(worktree), 1), file);
+const seenInWorktree = async (repoId: string | undefined, worktree: string, file: string): Promise<string> => {
+  const root = await realpath(worktree);
+  return topicSeenKey(mintTopicId(repoId ?? "", root, (await readHeadFile(root))?.branch ?? ""), file);
+};
 
 const harnessAt = async (label: string, repo: string): Promise<Harness> => {
   const home = await makeHome(label);

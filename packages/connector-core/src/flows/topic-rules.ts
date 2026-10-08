@@ -190,8 +190,7 @@ export const planTopics = async (
       if (live.length + opened.length >= MAX_TOPICS_PER_SESSION) {
         overflowed += rootPaths.length;
       } else {
-        const ordinal = 1 + [...live, ...opened].filter((topic) => topic.root === head.root).length;
-        const id = mintTopicId(life.repoId, head.root, ordinal);
+        const id = mintTopicId(life.repoId, head.root, decision.branch);
         opened.push({
           key: id,
           sessionId: life.sessionId,

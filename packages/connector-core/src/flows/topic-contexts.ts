@@ -67,9 +67,23 @@ export const rootKeyOf = (repoId: string, root: string): string =>
     .digest("hex")
     .slice(0, TOPIC_KEY_HEX_CHARS);
 
-/** A topic's MINTED id: its root's key and its 1-based ordinal among the life's topics in that root. */
-export const mintTopicId = (repoId: string, root: string, ordinal: number): string =>
-  `${rootKeyOf(repoId, root)}.${String(ordinal)}`;
+/** Hex characters of the opening branch's hash a topic id carries, read as one decimal number. */
+const BRANCH_KEY_HEX_CHARS = 8;
+
+/**
+ * A topic's MINTED id: its root's key, and a number derived from the branch
+ * it was OPENED on — the decimal of sha256(branch)'s first 8 hex, so it stays
+ * inside the id grammar's `~t<hex>.<digits>` (schema/src/question.ts). Minted
+ * once, when the topic opens, and never re-derived: a rename joins the
+ * affinity and keeps the id. Deterministic in what was opened (review M1):
+ * two hooks planning from one state open the SAME id for one (root, branch)
+ * and two ids for two branches, where an ordinal counted from that state gave
+ * both branches one id.
+ */
+export const mintTopicId = (repoId: string, root: string, branch: string): string => {
+  const branchKey = new Bun.CryptoHasher("sha256").update(branch).digest("hex").slice(0, BRANCH_KEY_HEX_CHARS);
+  return `${rootKeyOf(repoId, root)}.${String(Number.parseInt(branchKey, 16))}`;
+};
 
 export const topicWorkContextIdFor = (sessionWorkContextId: string, id: string): string =>
   `${sessionWorkContextId}${TOPIC_ID_SEPARATOR}${id}`;

@@ -120,8 +120,10 @@ const capture = async (
 const spooledOf = async (home: string, hubUrl: string = HUB): Promise<readonly { kind: string; body: Record<string, unknown> }[]> =>
   (await readSpoolLines(home, repoKey(hubUrl, REPO_ID))).map((line) => JSON.parse(line) as { kind: string; body: Record<string, unknown> });
 
-/** The id the rules mint for the first topic a life opens in `/cx-topics/<worktree>`. */
-const firstTopicIn = (worktree: string): string => mintTopicId(REPO_ID, `/cx-topics/${worktree}`, 1);
+/** The id the rules mint for a topic opened in `/cx-topics/<worktree>` on `branch` — wt1 is on feat/one, wt2 on feat/two below. */
+const topicIn = (worktree: string, branch: string): string => mintTopicId(REPO_ID, `/cx-topics/${worktree}`, branch);
+const firstTopicIn = (worktree: string): string =>
+  topicIn(worktree, worktree === "wt2" ? "feat/two" : worktree.startsWith("feat/") ? worktree : "feat/one");
 
 const topicEntry = (
   sessionId: string,
@@ -129,9 +131,9 @@ const topicEntry = (
   branch: string,
   at: string = NOW.toISOString(),
 ): TopicContext => ({
-  key: mintTopicId(REPO_ID, `/cx-topics/${branch}`, 1),
+  key: topicIn(branch, branch),
   sessionId,
-  workContextId: topicWorkContextIdFor(sessionWorkContextId, mintTopicId(REPO_ID, `/cx-topics/${branch}`, 1)),
+  workContextId: topicWorkContextIdFor(sessionWorkContextId, topicIn(branch, branch)),
   branch,
   branches: [branch],
   head: "b".repeat(40),
@@ -234,6 +236,43 @@ describe("the registry is per life", () => {
     // Assert
     expect(same.topicContexts.map((entry) => entry.branch)).toEqual(["feat/one"]);
     expect(healedAway.topicContexts).toEqual([]);
+  });
+
+  test("two hooks planning one worktree from one state, on two branches, open two topics (review M1)", async () => {
+    // Arrange: one snapshot; hook A sees wt1 on feat/x, hook B — after a switch — on feat/y
+    const home = await makeHome("topic-race-two");
+    cleanups.push(home);
+    const state = stateAt();
+
+    // Act
+    const a = await capture(home, state, ["/cx-topics/wt1/src/x.ts"], () => "feat/x");
+    const b = await capture(home, state, ["/cx-topics/wt1/src/y.ts"], () => "feat/y");
+    const folded = withTopicCapture(withTopicCapture(state, a.topics), b.topics);
+
+    // Assert: two ids, each spooled once under its own title, each registered
+    const records = (await spooledOf(home)).filter((record) => record.kind === "work_context");
+    expect(new Set(records.map((record) => record.body["id"])).size).toBe(2);
+    expect(folded.topicContexts.map((topic) => [topic.branch, topic.key]).sort()).toEqual([
+      ["feat/x", topicIn("wt1", "feat/x")],
+      ["feat/y", topicIn("wt1", "feat/y")],
+    ]);
+  });
+
+  test("two hooks opening the same branch from one state converge on one topic (review mutation #7)", async () => {
+    // Arrange: both hooks see wt1 on feat/x
+    const home = await makeHome("topic-race-one");
+    cleanups.push(home);
+    const state = stateAt();
+
+    // Act
+    const a = await capture(home, state, ["/cx-topics/wt1/src/x.ts"], () => "feat/x");
+    const b = await capture(home, state, ["/cx-topics/wt1/src/z.ts"], () => "feat/x");
+    const folded = withTopicCapture(withTopicCapture(state, a.topics), b.topics);
+
+    // Assert: one id on the wire, one entry in the registry
+    const ids = (await spooledOf(home)).filter((record) => record.kind === "work_context").map((record) => record.body["id"]);
+    expect(new Set(ids).size).toBe(1);
+    expect(folded.topicContexts.map((topic) => topic.key)).toEqual([topicIn("wt1", "feat/x")]);
   });
 
   test("another life's entries are never a registration: the next life opens its topic again", async () => {
