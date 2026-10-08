@@ -767,4 +767,26 @@ export const prunePilotMeasurements = async (deps: Deps): Promise<void> => {
   await deps.db.delete(hintOutcomes).where(lt(hintOutcomes.createdAt, cutoff));
   // 07 §13.11 (H-B): the person's re-asserted noise stands beside those outcomes, under the same rule.
   await deps.db.delete(noiseReassertions).where(lt(noiseReassertions.createdAt, cutoff));
+  await pruneConfirmationReasons(deps, cutoff);
+};
+
+/**
+ * A WORD'S SENTENCE AGES OUT OF ITS DRAFT AND ITS CONFIRMATION TOO (human
+ * provenance, review M4). The draft and the confirmation item hold the same
+ * reason the outcome row did; past the pilot's window the reason is cleared
+ * in both — the ONE update either table ever takes, and only of that key.
+ * What was decided, the digest and the assertion stay. An item whose reason
+ * was cleared no longer re-verifies against the signed digest item by item:
+ * the confirmation still proves who signed, and when, not that sentence.
+ */
+const pruneConfirmationReasons = async (deps: Deps, cutoff: Date): Promise<void> => {
+  const before = cutoff.toISOString();
+  await deps.db.execute(sql`
+    UPDATE human_drafts SET payload = jsonb_set(payload, '{reason}', 'null'::jsonb)
+    WHERE created_at < ${before}::timestamptz AND payload ? 'reason' AND payload->'reason' <> 'null'::jsonb`);
+  await deps.db.execute(sql`
+    UPDATE human_confirmation_items i SET content = jsonb_set(i.content, '{reason}', 'null'::jsonb)
+    FROM human_confirmations c
+    WHERE c.id = i.confirmation_id AND c.confirmed_at < ${before}::timestamptz
+      AND i.content ? 'reason' AND i.content->'reason' <> 'null'::jsonb`);
 };

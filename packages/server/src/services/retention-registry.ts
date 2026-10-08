@@ -219,6 +219,23 @@ export const RETENTION_REGISTRY: readonly RetentionRelation[] = [
     ownRetentionDays: PILOT_RETENTION_DAYS,
   },
   {
+    // Human provenance (review M4): a draft names the delivery and the session a
+    // label or an outcome is about INSIDE its payload — no foreign key, so
+    // declared here by hand. Rows are kept (what was drafted and decided);
+    // their reason ages out at the pilot's bound (services/pilot.ts).
+    table: "human_drafts",
+    column: "payload",
+    semantics: "non_retaining_edge",
+    reason: "a draft of a person's word about a delivery, naming its session as data; reads no position in that session's order",
+  },
+  {
+    // The same names, in the content a confirmation signed; its reason ages out with the draft's.
+    table: "human_confirmation_items",
+    column: "content",
+    semantics: "non_retaining_edge",
+    reason: "what a person confirmed about a delivery, naming its session as data; reads no position in that session's order",
+  },
+  {
     table: "questions",
     column: "author_session_id",
     semantics: "non_retaining_edge",
