@@ -57,7 +57,8 @@ import {
 } from "./search.ts";
 import { DECLARED_PROVENANCE } from "./similarity-gate.ts";
 import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
-import { WITHHELD_TITLE } from "@crosscheck/schema";
+import { ordinaryTargetCondition } from "./generated-targets.ts";
+import { WITHHELD_TITLE, isGeneratedPath } from "@crosscheck/schema";
 import type { ClaimValidity } from "@crosscheck/schema";
 import type { SearchResultKind, SearchTier } from "./search.ts";
 import type { Db } from "../db/client.ts";
@@ -731,6 +732,12 @@ export const listTargetSessions = async (
   repo: string,
   value: string,
 ): Promise<readonly TargetSessionView[]> => {
+  // A well-known generated name is nobody's plan, whoever asks: an older
+  // connector's tripwire, which knows no generated-target rule, asks about a
+  // nested lockfile all the same (services/generated-targets.ts).
+  if (isGeneratedPath(value)) {
+    return [];
+  }
   const cutoff = presenceCutoff(deps.now());
   const rows = await deps.db
     .select({
@@ -751,6 +758,10 @@ export const listTargetSessions = async (
       and(
         eq(workContextTargets.value, value),
         eq(agentSessions.repo, repo),
+        // A teammate whose connector labelled this file generated is not
+        // working on it in any sense a stop is for — in the WHERE, before the
+        // LIMIT, like every filter here.
+        ordinaryTargetCondition(),
         // In the WHERE, not filtered after the LIMIT: a caller with many own
         // sessions on this file must not crowd teammates out of the bound.
         ne(agentSessions.developerId, callerDeveloperId),

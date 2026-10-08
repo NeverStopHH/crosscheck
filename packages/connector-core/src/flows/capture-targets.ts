@@ -2,8 +2,9 @@
  * `captureFileTargets` + `captureFailure` (DESIGN-agent-agnostic.md §1.3) —
  * the post-tool-use recipes as extracted functions:
  *
- *   - targets: `toRepoRelative` → denylist → seen-set → secret-scan → spool
- *     `target` records, capped at MAX_TARGETS_PER_INVOCATION;
+ *   - targets: `toRepoRelative` → denylist → seen-set → secret-scan →
+ *     generated-target classification → spool `target` records, capped at
+ *     MAX_TARGETS_PER_INVOCATION;
  *   - failure: `fingerprint()` (which refuses secrets and no-signal text) →
  *     spool one `error_fingerprint` target.
  *
@@ -24,6 +25,13 @@ import { sessionSlug } from "../config/paths.ts";
 import { isDenied, resolveDenylist } from "../capture/denylist.ts";
 import type { DenylistConfig } from "../capture/denylist.ts";
 import { fingerprint } from "../capture/fingerprint.ts";
+import {
+  NO_GENERATED,
+  classifyGenerated,
+  tallyGenerated,
+  wireGeneratedSignal,
+} from "../capture/generated.ts";
+import type { GeneratedClassification, GeneratedTally } from "../capture/generated.ts";
 import { targetRecord } from "../capture/records.ts";
 import type { Producer, TargetSource } from "../capture/records.ts";
 import { ALLOCATION_FAILED, seqAt, withSeq } from "../capture/seq.ts";
@@ -120,16 +128,53 @@ const recordCaptureRefusals = async (
   await recordDrop(input.home, input.repoKey, slug, refusals.secretPaths, "secret-path", input.now);
 };
 
+export interface CapturedFileTargets {
+  /** The repo-relative paths spooled — the caller folds them into its seen-set. */
+  readonly captured: readonly string[];
+  /** How each spooled path was classified (capture/generated.ts), counted. */
+  readonly generated: GeneratedTally;
+}
+
+interface Collected {
+  readonly value: string;
+  readonly root: string;
+}
+
 /**
- * Filters, spools, and returns the repo-relative paths captured — the caller
- * folds them into its session state (`withSeenTargets`).
+ * THE GENERATED-TARGET RULE, applied to the paths this call is about to
+ * spool and to no other: they are NEW to the session (the seen-set ran
+ * first), so a file is classified once per session however often it is
+ * edited, and the attribute cache carries the answer across sessions. Grouped
+ * by root, because a path's attributes are those of the worktree it lives in.
+ *
+ * A generated target is KEPT and labelled, never dropped: `suspect` and
+ * coverage still see the touch, and only the hub's overlap reads leave it out.
+ */
+const classifyCollected = async (
+  home: string,
+  collected: readonly Collected[],
+): Promise<ReadonlyMap<string, GeneratedClassification>> => {
+  const byRoot = new Map<string, string[]>();
+  for (const entry of collected) {
+    byRoot.set(entry.root, [...(byRoot.get(entry.root) ?? []), entry.value]);
+  }
+  const answers = await Promise.all(
+    [...byRoot].map(async ([root, paths]) => classifyGenerated({ home, root, paths })),
+  );
+  return new Map(answers.flatMap((answer) => [...answer]));
+};
+
+/**
+ * Filters, classifies, spools, and returns the repo-relative paths captured —
+ * the caller folds them into its session state (`withSeenTargets`) — with the
+ * generated-target counters its state write books (`withCaptureBookkeeping`).
  */
 export const captureFileTargets = async (
   input: CaptureFileTargetsInput,
-): Promise<readonly string[]> => {
+): Promise<CapturedFileTargets> => {
   const patterns = resolveDenylist(input.denylist ?? undefined);
   const seen = new Set(input.seenTargets);
-  const collected: string[] = [];
+  const collected: Collected[] = [];
   let secretPaths = 0;
   let examined = 0;
   for (const path of input.paths) {
@@ -160,34 +205,40 @@ export const captureFileTargets = async (
       continue;
     }
     seen.add(relativePath);
-    collected.push(relativePath);
+    collected.push({ value: relativePath, root });
   }
   await recordCaptureRefusals(input, {
     capped: input.paths.length - examined,
     secretPaths,
   });
-  if (collected.length > 0) {
-    await appendRecords(
-      input.home,
-      input.repoKey,
-      input.hostSessionKey,
-      collected.map((value, index) =>
-        withSeq(
-          targetRecord(
-            input.workContextId,
-            "file",
-            value,
-            input.producer,
-            input.now,
-            input.source ?? "tool_edit",
-          ),
-          seqAt(input.seq, index),
-        ),
-      ),
-      input.now,
-    );
+  if (collected.length === 0) {
+    return { captured: [], generated: NO_GENERATED };
   }
-  return collected;
+  const classified = await classifyCollected(input.home, collected);
+  await appendRecords(
+    input.home,
+    input.repoKey,
+    input.hostSessionKey,
+    collected.map(({ value }, index) =>
+      withSeq(
+        targetRecord(
+          input.workContextId,
+          "file",
+          value,
+          input.producer,
+          input.now,
+          input.source ?? "tool_edit",
+          wireGeneratedSignal(classified.get(value)),
+        ),
+        seqAt(input.seq, index),
+      ),
+    ),
+    input.now,
+  );
+  return {
+    captured: collected.map(({ value }) => value),
+    generated: tallyGenerated(collected.map(({ value }) => classified.get(value) ?? "unknown")),
+  };
 };
 
 export interface CaptureFailureInput {

@@ -259,6 +259,7 @@ import type {
 } from "@crosscheck/connector-core/http/pilot.ts";
 import { PILOT_RUNG_REFUSALS } from "@crosscheck/schema";
 import { unavailableClause } from "./pilot-render.ts";
+import { generatedTargetsCheck } from "./doctor-generated.ts";
 import type { CliResult } from "./login.ts";
 
 export type CheckLevel = "PASS" | "WARN" | "FAIL";
@@ -3976,6 +3977,7 @@ export const runDoctor = async (
     ...(await checkSpool(config.home, key, now, openOnHub)),
     ...(await foreignDropChecks(config.home)),
     ...captureChecks(captureHealth, now),
+    generatedTargetsCheck(captureHealth),
     await checkHints(hubCtx, identity.repoId, captureHealth),
     tripwireModeCheck(env),
     await checkLandedChanges(identity.root),

@@ -91,6 +91,7 @@ import {
   targetValueCondition,
 } from "./ghost-overlap.ts";
 import type { ContextValues, OverlapKind, SharedValue } from "./ghost-overlap.ts";
+import { listGeneratedSharedPairs, ordinaryTargetCondition, pairKey } from "./generated-targets.ts";
 import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
 import { activitySeenBy, locationHiddenFrom, projectRow } from "./live-location.ts";
 import type { HiddenLocations } from "./live-location.ts";
@@ -151,6 +152,12 @@ export interface ConferenceOverlapView {
   readonly workContextIdB: string;
   readonly sharedTargets: readonly { readonly kind: string; readonly value: string }[];
   readonly sharedTargetCount: number;
+  /**
+   * Files both contexts carry that at least one side labelled GENERATED
+   * (services/generated-targets.ts) — never in the count above, never a
+   * reason for the pair, stated beside it. 0 when there are none.
+   */
+  readonly generatedSharedCount: number;
   /**
    * The files each side's change touched in the window when that side is a
    * LARGE CHANGE (over GHOST_MAX_CONTEXT_TARGETS), else null — the qualifier
@@ -418,7 +425,9 @@ const listMembers = async (
       value: workContextTargets.value,
     })
     .from(workContextTargets)
-    .where(and(inArray(workContextTargets.workContextId, [...ids]), condition))
+    // A member holds a value only as EVIDENCE: a generated row of it is no
+    // reason for a pair (services/generated-targets.ts).
+    .where(and(inArray(workContextTargets.workContextId, [...ids]), condition, ordinaryTargetCondition()))
     .orderBy(
       asc(workContextTargets.workContextId),
       asc(workContextTargets.kind),
@@ -465,7 +474,8 @@ const listHotValues = async (
       eq(workContexts.id, workContextTargets.workContextId),
     )
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
-    .where(and(condition, eq(agentSessions.repo, repo)))
+    // Rarity counts evidence only, exactly as the ghost check's hot count.
+    .where(and(condition, eq(agentSessions.repo, repo), ordinaryTargetCondition()))
     .groupBy(workContextTargets.kind, workContextTargets.value);
   return new Set(
     rows
@@ -499,6 +509,7 @@ const pairOverlaps = (
   contexts: readonly Omit<ConferenceContextView, "claims">[],
   members: readonly ContextValues[],
   large: ReadonlyMap<string, number>,
+  generatedShared: ReadonlyMap<string, number>,
 ): readonly ConferenceOverlapView[] => {
   const owner = new Map(contexts.map((context) => [context.id, context.developerId]));
   const held = new Map(members.map((entry) => [entry.workContextId, entry.values]));
@@ -545,6 +556,7 @@ const pairOverlaps = (
             )
             .slice(0, GHOST_MAX_SHARED_SHOWN),
           sharedTargetCount: shared.length,
+          generatedSharedCount: generatedShared.get(pairKey(idA, idB)) ?? 0,
           largeChangeFilesA: large.get(idA) ?? null,
           largeChangeFilesB: large.get(idB) ?? null,
         },
@@ -681,17 +693,21 @@ export const readConference = async (
   // read bounded by the probes, none by the size of any context's change.
   const probed = uniqueValues(probes.flatMap((probe) => probe.values));
   const hotValues = await listHotValues(deps, repo, probed);
-  const members = await listMembers(
-    deps,
-    ids,
-    probed.filter((target) => !hotValues.has(valueKey(target))),
-  );
+  const [members, generatedShared] = await Promise.all([
+    listMembers(
+      deps,
+      ids,
+      probed.filter((target) => !hotValues.has(valueKey(target))),
+    ),
+    // The pair's qualifier, never its reason: bounded by the page.
+    listGeneratedSharedPairs(deps.db, ids),
+  ]);
   return {
     contexts: contexts.map((context, index) => ({
       ...context,
       claims: claimLists[index] ?? [],
     })),
-    overlaps: pairOverlaps(contexts, members, large),
+    overlaps: pairOverlaps(contexts, members, large, generatedShared),
     questions: questionRows,
     contradictions,
     contextsInWindow: window.total,

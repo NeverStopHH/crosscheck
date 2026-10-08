@@ -393,7 +393,7 @@ describe("the conference corpus", () => {
     await seed(harness, me, contextRecords(MY_CONTEXT, MY_SESSION, "Token refresh rework", files(shared)));
     const renamed = [
       ...shared,
-      ...Array.from({ length: GHOST_MAX_CONTEXT_TARGETS }, (_unused, index) => `src/generated/file-${String(index)}.ts`),
+      ...Array.from({ length: GHOST_MAX_CONTEXT_TARGETS }, (_unused, index) => `src/renamed/file-${String(index)}.ts`),
     ];
     await seed(harness, them, contextRecords(THEIR_CONTEXT, THEIR_SESSION, "Rename the whole module", files(renamed)));
     const mike = await addTestDeveloperWithSession(harness, "Mike", "mike@example.com", { id: "ses_mike" });

@@ -5541,8 +5541,8 @@ export const MUTATIONS: readonly Mutation[
     // The same collision one level down: every record of a block on slot 0.
     label: "every target in one invocation takes one position",
     file: `${CORE}/src/flows/capture-targets.ts`,
-    from: "          seqAt(input.seq, index),",
-    to: "          seqAt(input.seq, 0),",
+    from: "        seqAt(input.seq, index),",
+    to: "        seqAt(input.seq, 0),",
     test: `${CONNECTOR}/test/hook-seq.test.ts`,
     because:
       "a tool call touching two files files both at one position, and the " +
@@ -23734,8 +23734,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a conference pair is found only through both sides' probes",
     file: `${SERVER}/src/services/conference.ts`,
-    from: "    overlaps: pairOverlaps(contexts, members, large),",
-    to: "    overlaps: pairOverlaps(contexts, probes, large),",
+    from: "    overlaps: pairOverlaps(contexts, members, large, generatedShared),",
+    to: "    overlaps: pairOverlaps(contexts, probes, large, generatedShared),",
     test: `${SERVER}/test/conference.test.ts`,
     because: "a file a large change touched before its newest two hundred never pairs it with the teammate in it now",
   },
@@ -24259,6 +24259,256 @@ export const MUTATIONS: readonly Mutation[
       "touching a file of her old context again brings that context into a colleague's " +
       "suspect window, which says when she was there",
   },
+  // THE GENERATED-TARGET RULE (release gate N2): every gate, from the signal
+  // that names a file generated to the hub read that keeps it out of overlap.
+  {
+    label: "a nested lockfile is not generated: the path signal reads only a root-level name",
+    file: `${SCHEMA}/src/generated-target.ts`,
+    from: "    LOCKFILE_NAMES.has(name) ||",
+    to: "    LOCKFILE_NAMES.has(path) ||",
+    test: `${SCHEMA}/test/generated-target.test.ts`,
+    because: "an `npm install` in apps/practice is two people's plan again, which is the N2 false alarm",
+  },
+  {
+    label: "a __generated__/ directory below the root holds no machine output",
+    file: `${SCHEMA}/src/generated-target.ts`,
+    from: "    segments.slice(0, -1).some((segment) => DIRECTORY_NAMES.has(segment)) ||",
+    to: "    DIRECTORY_NAMES.has(segments[0] ?? \"\") ||",
+    test: `${SCHEMA}/test/generated-target.test.ts`,
+    because: "a regenerated GraphQL client deep in a package collides like hand-written code",
+  },
+  {
+    label: "a generated label this build does not know refuses the whole touch",
+    file: `${SCHEMA}/src/session.ts`,
+    from: "  generated: GeneratedSignalSchema.optional().catch(undefined),",
+    to: "  generated: GeneratedSignalSchema.optional(),",
+    test: `${SCHEMA}/test/generated-target.test.ts`,
+    because: "a newer connector's label drops the target on an older hub, and `suspect` never sees the file",
+  },
+  {
+    label: "the attribute signal never fires: linguist-generated reads as unset",
+    file: `${CORE}/src/capture/generated-attributes.ts`,
+    from: "const SET_VALUES: ReadonlySet<string> = new Set([\"set\", \"true\"]);",
+    to: "const SET_VALUES: ReadonlySet<string> = new Set<string>();",
+    test: `${CORE}/test/generated-targets.test.ts`,
+    because: "a file .gitattributes marks generated is overlap evidence, and nothing reads .gitattributes again",
+  },
+  {
+    label: "the attribute cache is never read: every capture pays check-attr again",
+    file: `${CORE}/src/capture/generated-attributes.ts`,
+    from: "  const cached = key === null ? new Map<string, boolean>() : await readCache(input.home, input.root, key);",
+    to: "  const cached = new Map<string, boolean>();",
+    test: `${CORE}/test/generated-targets.test.ts`,
+    because: "PreToolUse and PostToolUse each spawn git for the same path, on the hot path, every session",
+  },
+  {
+    label: "a cached attribute answer survives an edited .gitattributes",
+    file: `${CORE}/src/capture/generated-attributes.ts`,
+    from: "  return parsed.success && parsed.data.key === key ? new Map(parsed.data.entries) : new Map();",
+    to: "  return parsed.success ? new Map(parsed.data.entries) : new Map();",
+    test: `${CORE}/test/generated-targets.test.ts`,
+    because: "removing a linguist-generated rule leaves the file silenced on the old answer, toward silence",
+  },
+  {
+    label: "a check-attr that missed its deadline is cached as a plain no",
+    file: `${CORE}/src/capture/generated-attributes.ts`,
+    from: "  return outcome.ok ? parseCheckAttr(outcome.stdout) : null;",
+    to: "  return outcome.ok ? parseCheckAttr(outcome.stdout) : new Map(paths.map((path) => [path, false]));",
+    test: `${CORE}/test/generated-targets.test.ts`,
+    because: "one slow git is remembered as a measured answer: the unknown is never counted and never asked again",
+  },
+  {
+    label: "the header signal never fires",
+    file: `${CORE}/src/capture/generated.ts`,
+    from: "  GENERATED_TOKEN.test(head) || CODE_GENERATED_LINE.test(head);",
+    to: "  head.length < 0;",
+    test: `${CORE}/test/generated-targets.test.ts`,
+    because: "a `Code generated … DO NOT EDIT.` client is overlap evidence again",
+  },
+  {
+    label: "a file that merely mentions @generated in prose is silenced",
+    file: `${CORE}/src/capture/generated.ts`,
+    from: "const GENERATED_TOKEN = new RegExp(`${COMMENT_LEADER}@generated\\\\b`, \"m\");",
+    to: "const GENERATED_TOKEN = /@generated\\b/;",
+    test: `${CORE}/test/generated-targets.test.ts`,
+    because: "hand-written code that documents the marker — the classifier's own tests — is kept out of overlap",
+  },
+  {
+    label: "an unclassifiable target is silenced",
+    file: `${CORE}/src/capture/generated.ts`,
+    from: "  return attribute === null || header === null ? \"unknown\" : \"ordinary\";",
+    to: "  return attribute === null || header === null ? \"attribute\" : \"ordinary\";",
+    test: `${CORE}/test/generated-targets.test.ts`,
+    because: "a missing git or an unreadable file becomes a reason for silence — fail toward silence, the one forbidden direction",
+  },
+  {
+    label: "an unclassifiable edit skips the tripwire",
+    file: `${CORE}/src/capture/generated.ts`,
+    from: "  return attribute === null || header === null ? \"unknown\" : \"ordinary\";",
+    to: "  return attribute === null || header === null ? \"attribute\" : \"ordinary\";",
+    test: `${CONNECTOR}/test/tripwire-hook.test.ts`,
+    because: "an edit whose classification could not run is never asked about, whoever else is in the file",
+  },
+  {
+    label: "an unknown classification is sent as a label",
+    file: `${CORE}/src/capture/generated.ts`,
+    from: "  classification === \"path\" || classification === \"attribute\" || classification === \"header\"",
+    to: "  classification !== \"ordinary\"",
+    test: `${CORE}/test/generated-targets.test.ts`,
+    because: "the wire carries a label that is no evidence, and a hub that read it would silence an unknown",
+  },
+  {
+    label: "the connector classifies but sends no label",
+    file: `${CORE}/src/flows/capture-targets.ts`,
+    from: "          wireGeneratedSignal(classified.get(value)),",
+    to: "          undefined,",
+    test: `${CORE}/test/generated-targets.test.ts`,
+    because: "attribute and header files reach the hub ordinary, and only the hub's path signal is left",
+  },
+  {
+    label: "a generated target is dropped instead of kept",
+    file: `${CORE}/src/capture/denylist.ts`,
+    from: "  \"package-lock.json\",",
+    to: "  \"**/package-lock.json\",",
+    test: `${CORE}/test/generated-targets.test.ts`,
+    because: "the touch never reaches the hub, so `suspect` and coverage cannot see who changed the lockfile",
+  },
+  {
+    label: "a capture's generated-target counts are never booked",
+    file: `${CORE}/src/state/capture-bookkeeping.ts`,
+    from: "    ...withGeneratedTargets(next, input.generated),",
+    to: "    ...next,",
+    test: `${CORE}/test/capture-bookkeeping.test.ts`,
+    because: "doctor's generated line reads zero on every host however many files it kept out of overlap",
+  },
+  {
+    label: "the git lane's generated-target counts are never booked",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  ...withGeneratedTargets(withSeenTargets(state, outcome.captured), outcome.generated),",
+    to: "  ...withSeenTargets(state, outcome.captured),",
+    test: `${CORE}/test/capture-bookkeeping.test.ts`,
+    because: "the lane that sees `bun install` and codegen — where generated files are written — counts none of them",
+  },
+  {
+    label: "the tripwire asks about a generated file",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "  if (await isGeneratedFile(ctx.config.home, edited)) {",
+    to: "  if (false) {",
+    test: `${CONNECTOR}/test/tripwire-hook.test.ts`,
+    because: "a hand edit of a regenerated client stops on a teammate who only ran the generator",
+  },
+  {
+    label: "doctor prints no generated-target line",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    generatedTargetsCheck(captureHealth),\n",
+    to: "",
+    test: `${CLI}/test/doctor-generated.test.ts`,
+    because: "files kept out of overlap and classifications that could not run are a silence nobody can read",
+  },
+  {
+    label: "an unmeasured session reads as zero generated targets",
+    file: `${CLI}/src/cli/doctor-generated.ts`,
+    from: "  if (measured.length === 0) {",
+    to: "  if (false) {",
+    test: `${CLI}/test/doctor-generated.test.ts`,
+    because: "a state file from before the counters reports a measured nothing it never measured",
+  },
+  {
+    label: "an older connector's nested lockfile is ordinary on the hub",
+    file: `${SERVER}/src/services/generated-targets.ts`,
+    from: "  return sent ?? (isGeneratedPath(value) ? \"path\" : null);",
+    to: "  return sent ?? null;",
+    test: `${SERVER}/test/generated-targets.test.ts`,
+    because: "every connector shipped before the rule keeps warning two people about `npm install`",
+  },
+  {
+    label: "a re-touch that could not classify keeps the old silence",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "'both') then 'both' else ${workContextTargets.source} end`,\n        generated,\n",
+    to: "'both') then 'both' else ${workContextTargets.source} end`,\n",
+    test: `${SERVER}/test/generated-targets.test.ts`,
+    because: "a label nobody can repeat silences the file for the life of the context — toward silence",
+  },
+  {
+    label: "a generated target counts as overlap evidence",
+    file: `${SERVER}/src/services/ghost-overlap.ts`,
+    from: "        // the reader's row says (services/generated-targets.ts).\n        ordinaryTargetCondition(),\n",
+    to: "        // the reader's row says (services/generated-targets.ts).\n",
+    test: `${SERVER}/test/generated-targets.test.ts`,
+    because: "their regenerated files pair with mine, and two people who ran a codegen are a ghost row",
+  },
+  {
+    label: "the reader's own generated file is probed",
+    file: `${SERVER}/src/services/ghost-overlap.ts`,
+    from: "        // the probe's slots, and a file that is not evidence is never probed.\n        ordinaryTargetCondition(),\n",
+    to: "        // the probe's slots, and a file that is not evidence is never probed.\n",
+    test: `${SERVER}/test/generated-targets.test.ts`,
+    because: "my regenerated client spends the probe and finds a teammate's hand-edited copy as a collision",
+  },
+  {
+    label: "the hot count counts generated copies of a file",
+    file: `${SERVER}/src/services/ghost-overlap.ts`,
+    from: "        // value only as a generated file adds nothing to its rarity.\n        ordinaryTargetCondition(),\n",
+    to: "        // value only as a generated file adds nothing to its rarity.\n",
+    test: `${SERVER}/test/generated-targets.test.ts`,
+    because: "a crowd's generated copies make a real shared file hot, and a true overlap goes silent",
+  },
+  {
+    label: "a generated target inflates a context's size",
+    file: `${SERVER}/src/services/ghost-overlap.ts`,
+    from: "        // change: a focused plan beside `bun install` stays focused.\n        ordinaryTargetCondition(),\n",
+    to: "        // change: a focused plan beside `bun install` stays focused.\n",
+    test: `${SERVER}/test/generated-targets.test.ts`,
+    because: "a focused plan beside a regenerated tree is qualified as a large change and ranked after the rest",
+  },
+  {
+    label: "a ghost row says nothing of the generated files it shares",
+    file: `${SERVER}/src/services/ghost-overlap.ts`,
+    from: "      generatedSharedCount: generatedShared.get(candidate.id) ?? 0,",
+    to: "      generatedSharedCount: 0,",
+    test: `${SERVER}/test/generated-targets.test.ts`,
+    because: "\"2 of your files\" reads as everything the two of you touched — the coverage stops being honest",
+  },
+  {
+    label: "a generated file is a member of a conference pair",
+    file: `${SERVER}/src/services/conference.ts`,
+    from: "    .where(and(inArray(workContextTargets.workContextId, [...ids]), condition, ordinaryTargetCondition()))",
+    to: "    .where(and(inArray(workContextTargets.workContextId, [...ids]), condition))",
+    test: `${SERVER}/test/generated-targets.test.ts`,
+    because: "the conference reports duplicated work between two people whose common ground is a codegen",
+  },
+  {
+    label: "the conference's hot count counts generated copies of a file",
+    file: `${SERVER}/src/services/conference.ts`,
+    from: "    .where(and(condition, eq(agentSessions.repo, repo), ordinaryTargetCondition()))",
+    to: "    .where(and(condition, eq(agentSessions.repo, repo)))",
+    test: `${SERVER}/test/generated-targets.test.ts`,
+    because: "generated copies across the repo make a real shared file hot, and a duplicated-work pair vanishes",
+  },
+  {
+    label: "a conference pair says nothing of the generated files it shares",
+    file: `${SERVER}/src/services/conference.ts`,
+    from: "          generatedSharedCount: generatedShared.get(pairKey(idA, idB)) ?? 0,",
+    to: "          generatedSharedCount: 0,",
+    test: `${SERVER}/test/generated-targets.test.ts`,
+    because: "the report's pair count reads as everything both contexts touched",
+  },
+  {
+    label: "a teammate's generated file trips the wire",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "        // LIMIT, like every filter here.\n        ordinaryTargetCondition(),\n",
+    to: "        // LIMIT, like every filter here.\n",
+    test: `${SERVER}/test/generated-targets.test.ts`,
+    because: "an older connector's hand edit of a file a teammate's connector labelled generated stops on that teammate",
+  },
+  {
+    label: "an older connector's tripwire is answered about a nested lockfile",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  if (isGeneratedPath(value)) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/generated-targets.test.ts`,
+    because: "a connector with no rule asks about every lockfile, and a row stored before the column answers it",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -24324,6 +24574,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-ci.test.ts 3
  * PRINTS: packages/cli/test/doctor-claim-binding.test.ts 4
  * PRINTS: packages/cli/test/doctor-evidence-axes.test.ts 1
+ * PRINTS: packages/cli/test/doctor-generated.test.ts 2
  * PRINTS: packages/cli/test/doctor-global.test.ts 3
  * PRINTS: packages/cli/test/doctor-home-repo.test.ts 3
  * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1
@@ -24450,7 +24701,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/summarizer-child-guard.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-worker-env.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-worker.test.ts 2
- * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 8
+ * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 10
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 3
  * PRINTS: packages/connector-core/test/abandoned-temps.test.ts 24
  * PRINTS: packages/connector-core/test/absence-render.test.ts 7
@@ -24461,7 +24712,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/briefing-omissions.test.ts 3
  * PRINTS: packages/connector-core/test/briefing-presence-topics.test.ts 6
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 5
- * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 3
+ * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 5
  * PRINTS: packages/connector-core/test/capture-losses.test.ts 7
  * PRINTS: packages/connector-core/test/claim-drift.test.ts 4
  * PRINTS: packages/connector-core/test/claim-revalidation-budget.test.ts 1
@@ -24490,6 +24741,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
  * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1
  * PRINTS: packages/connector-core/test/fix-diff.test.ts 7
+ * PRINTS: packages/connector-core/test/generated-targets.test.ts 10
  * PRINTS: packages/connector-core/test/ghost-declare.test.ts 1
  * PRINTS: packages/connector-core/test/ghost-render.test.ts 5
  * PRINTS: packages/connector-core/test/git-lane-cost.test.ts 1
@@ -24586,6 +24838,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/default-branch.test.ts 1
  * PRINTS: packages/schema/test/fallback-title.test.ts 3
  * PRINTS: packages/schema/test/file-ref.test.ts 5
+ * PRINTS: packages/schema/test/generated-target.test.ts 3
  * PRINTS: packages/schema/test/hint-outcome.test.ts 2
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
  * PRINTS: packages/schema/test/landed-evidence.test.ts 1
@@ -24632,6 +24885,7 @@ interface Outcome {
  * PRINTS: packages/server/test/drafts.test.ts 4
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/fence-waivers.test.ts 1
+ * PRINTS: packages/server/test/generated-targets.test.ts 12
  * PRINTS: packages/server/test/ghost-overlap.test.ts 13
  * PRINTS: packages/server/test/hint-content-floor.test.ts 6
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5

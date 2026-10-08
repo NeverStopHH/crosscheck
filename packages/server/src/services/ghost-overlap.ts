@@ -34,6 +34,12 @@
  *     the two together are also the fan-out bound — a PRODUCT, not a
  *     sentence about one value — so the N² crowding the solved surface had
  *     to measure at 1.2 s cannot arise here;
+ *   - a GENERATED file is no evidence either (services/generated-targets.ts):
+ *     the hot rule needs twenty contexts to fire, so two people who had only
+ *     run `npm install` and a codegen were warned about each other. A
+ *     labelled row is kept, every read here asks for `generated IS NULL`, and
+ *     a row that qualified on ordinary files counts the generated ones it
+ *     also shares as `generatedSharedCount`;
  *   - a LARGE CHANGE is QUALIFIED, never dropped (GHOST_MAX_CONTEXT_TARGETS).
  *     ConE drops a pull request touching more than fifty files, and that
  *     rule, applied here, hid the pilot owner's 180-file worktree context
@@ -98,6 +104,7 @@ import {
   workContexts,
   workContextTargets,
 } from "../db/schema.ts";
+import { listGeneratedSharedWithReader, ordinaryTargetCondition } from "./generated-targets.ts";
 import { targetInWindowSeenBy, targetTouchedAtSeenBy } from "./live-location.ts";
 import { ftsTokens } from "./search.ts";
 import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
@@ -166,6 +173,13 @@ export interface GhostOverlapView {
   readonly sharedTargets: readonly GhostSharedTarget[];
   /** Distinct shared values in total — the line says "2 of your files". */
   readonly sharedTargetCount: number;
+  /**
+   * Files both sides carry that are labelled GENERATED on at least one side
+   * (services/generated-targets.ts): never in the count above, never a
+   * reason for this row, and stated so "2 of your files" is not read as
+   * everything the two of you touched. 0 when there are none.
+   */
+  readonly generatedSharedCount: number;
   /** Distinct words of the READER'S own intent this context's doc matches. */
   readonly intentTokenHits: number;
   /**
@@ -215,6 +229,9 @@ export const listLargeChanges = async (
       and(
         inArray(workContextTargets.workContextId, [...ids]),
         eq(workContextTargets.kind, FILE_KIND),
+        // A regenerated lockfile or client is not the size of anybody's
+        // change: a focused plan beside `bun install` stays focused.
+        ordinaryTargetCondition(),
         targetInWindowSeenBy(viewerDeveloperId, agentSessions.developerId, workContextTargets, cutoff),
       ),
     )
@@ -272,6 +289,9 @@ export const listProbeValues = async (
       and(
         inArray(workContextTargets.workContextId, [...ids]),
         inArray(workContextTargets.kind, [...OVERLAP_TARGET_KINDS]),
+        // Before the rank, not after it: a regenerated client must not spend
+        // the probe's slots, and a file that is not evidence is never probed.
+        ordinaryTargetCondition(),
       ),
     )
     .as("probe");
@@ -453,6 +473,9 @@ const listCoolTargets = async (
         ne(agentSessions.developerId, viewerDeveloperId),
         visiblePresenceCondition(viewerDeveloperId, agentSessions.developerId),
         notMutedCondition(viewerDeveloperId, agentSessions.developerId),
+        // The hot count is a count of EVIDENCE: a context that carries this
+        // value only as a generated file adds nothing to its rarity.
+        ordinaryTargetCondition(),
       ),
     )
     .groupBy(workContextTargets.kind, workContextTargets.value);
@@ -524,6 +547,10 @@ const listPairRows = async (
         // the tripwire (services/hints.ts listTargetSessions).
         visiblePresenceCondition(viewerDeveloperId, agentSessions.developerId),
         notMutedCondition(viewerDeveloperId, agentSessions.developerId),
+        // THEIR side of a shared value must be ordinary too: a file their
+        // connector labelled generated is not evidence of their plan, whatever
+        // the reader's row says (services/generated-targets.ts).
+        ordinaryTargetCondition(),
       ),
     )
     // Kind first, and OVERLAP_TARGET_KINDS says why that is also
@@ -792,7 +819,7 @@ export const listGhostOverlaps = async (
       cutoff,
     ),
   ]);
-  return candidates
+  const shown = candidates
     .flatMap((candidate) => {
       const row = display.get(candidate.id);
       return row === undefined ? [] : [{ candidate, row, largeChangeFiles: large.get(candidate.id) ?? null }];
@@ -802,7 +829,15 @@ export const listGhostOverlaps = async (
     // the ranking has run, so what this drops is one person's WEAKER
     // contexts and never somebody else's only one.
     .filter(withinPerDeveloperCap())
-    .slice(0, GHOST_MAX_FINDINGS)
+    .slice(0, GHOST_MAX_FINDINGS);
+  // A QUALIFIER, read for the rows shown and after they were chosen — it can
+  // never make a row appear, only say what else the two sides share.
+  const generatedShared = await listGeneratedSharedWithReader(
+    deps.db,
+    ownContexts.map((context) => context.id),
+    shown.map(({ candidate }) => candidate.id),
+  );
+  return shown
     .map(({ candidate, row, largeChangeFiles }) => ({
       workContextId: candidate.id,
       title: row.title,
@@ -820,6 +855,7 @@ export const listGhostOverlaps = async (
         )
         .slice(0, GHOST_MAX_SHARED_SHOWN),
       sharedTargetCount: candidate.shared.length,
+      generatedSharedCount: generatedShared.get(candidate.id) ?? 0,
       intentTokenHits: candidate.intentTokenHits,
       largeChangeFiles,
     }));

@@ -2501,6 +2501,37 @@ export const GIT_TOUCHES_TIMEOUT_MS = 250;
 export const MAX_GIT_TOUCH_CANDIDATES = 2000;
 
 /**
+ * ── The generated-target rule (capture/generated.ts) ─────────────────────────
+ *
+ * The attribute signal's deadline: ONE `git check-attr` per capture call, for
+ * the paths of that call no cache entry answers (at most
+ * MAX_TARGETS_PER_INVOCATION of them). The same 250 ms every other git call on
+ * a hook path takes, well under one HTTP_TIMEOUT_MS. A git that misses it
+ * answers nothing, every path it was asked about is UNKNOWN, and an unknown
+ * target stays ordinary — so a slow machine costs precision, never a warning.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.GENERATED_ATTR_TIMEOUT_MS < c.HTTP_TIMEOUT_MS, c.GENERATED_ATTR_TIMEOUT_MS === c.GIT_TOUCHES_TIMEOUT_MS)'
+ * PRINTS: true true
+ */
+export const GENERATED_ATTR_TIMEOUT_MS = 250;
+
+/**
+ * How much of a file the header signal reads: an `@generated` token or a
+ * `Code generated … DO NOT EDIT.` line sits in the first comment block of
+ * every generator that writes one, and 512 bytes is one read of one page.
+ * Read locally and reduced to a yes or no — no byte of it leaves the machine.
+ */
+export const GENERATED_HEADER_BYTES = 512;
+
+/**
+ * Paths one root's attribute cache remembers. A cache entry is one boolean per
+ * path under one `.gitattributes`, so 4096 of them is a file of a few hundred
+ * kilobytes at the worst path lengths — and past the bound the OLDEST entries
+ * go, which only costs a repeat `git check-attr` for them.
+ */
+export const MAX_GENERATED_ATTRIBUTE_CACHE_ENTRIES = 4096;
+
+/**
  * ── Coverage integrity (docs/1.0/03-coverage-integrity.md §5.3) ─────────────
  *
  * The coverage line's hard bound. One line, first in the briefing, and NEVER

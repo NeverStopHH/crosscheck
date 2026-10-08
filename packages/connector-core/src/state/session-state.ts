@@ -25,6 +25,8 @@ import {
   writePrivateFile,
 } from "../config/paths.ts";
 import { withLock } from "../spool/lock.ts";
+import { NO_GENERATED, addGeneratedTally } from "../capture/generated.ts";
+import type { GeneratedTally } from "../capture/generated.ts";
 import {
   listSessionStateFiles,
   sessionSilentForMs,
@@ -503,6 +505,23 @@ const SessionStateObjectSchema = z.looseObject({
   gitLaneSkipped: z.number().int().min(0).default(0),
   gitLaneRan: z.number().int().min(0).default(0),
   /**
+   * The generated-target rule's counters (capture/generated.ts): how many of
+   * this session's spooled targets each signal kept out of overlap, and how
+   * many could not be classified and stayed ordinary. `doctor` prints them.
+   * OPTIONAL, NOT DEFAULTED: a state file written before the counters existed
+   * says nothing about them, and a zero it never measured would read as "no
+   * generated file was ever touched here". Every session published since
+   * begins at zeros (`publishSessionState`, `deriveSessionState`).
+   */
+  generatedTargets: z
+    .object({
+      path: z.number().int().min(0),
+      attribute: z.number().int().min(0),
+      header: z.number().int().min(0),
+      unknown: z.number().int().min(0),
+    })
+    .optional(),
+  /**
    * Deterministic ghost notices this session actually SHOWED the reader (the
    * briefing block plus the `set_intent` answer). The precision half of the
    * counter pair: the model layer's outcomes say what the gated call bought,
@@ -870,6 +889,11 @@ export const withCarriedCapture = (
         foreignRepoDrops: previous.foreignRepoDrops,
         outsideRootDrops: previous.outsideRootDrops,
         hintCandidatesSeen: previous.hintCandidatesSeen,
+        // The generated-target counters describe the session's captures, not
+        // one fire's — and an unmeasured state stays unmeasured.
+        ...(previous.generatedTargets === undefined
+          ? {}
+          : { generatedTargets: previous.generatedTargets }),
         // The #17 root cache is the session's, not the fire's: dropping it
         // makes the next tool call pay git again for a root already judged.
         knownWorktreeRoots: previous.knownWorktreeRoots,
@@ -926,14 +950,24 @@ export const publishSessionState = async (
     false,
     async () => {
       const previous = await readSessionState(home, state.hostSessionKey);
-      await writeSessionState(home, withCarriedCapture(state, previous));
+      await writeSessionState(home, withCarriedCapture(measuredFromStart(state), previous));
       return true;
     },
   );
   if (!published) {
-    await writeSessionState(home, state);
+    await writeSessionState(home, measuredFromStart(state));
   }
 };
+
+/**
+ * A session published from here on is MEASURED from its first capture: its
+ * generated-target counters start at zeros rather than absent — absent is
+ * kept for the state files written before the counters existed.
+ */
+const measuredFromStart = (state: SessionStateInput): SessionStateInput => ({
+  generatedTargets: NO_GENERATED,
+  ...state,
+});
 
 /** A block of positions this caller now owns, and the epoch they belong to. */
 export interface SeqRange {
@@ -1220,13 +1254,33 @@ export const withSeenTargets = (
  */
 export const withGitTouches = (
   state: SessionState,
-  outcome: { readonly captured: readonly string[]; readonly skipped: boolean },
+  outcome: {
+    readonly captured: readonly string[];
+    readonly skipped: boolean;
+    /** How the lane's recorded paths were classified (capture/generated.ts). */
+    readonly generated?: GeneratedTally;
+  },
 ): SessionState => ({
-  ...withSeenTargets(state, outcome.captured),
+  ...withGeneratedTargets(withSeenTargets(state, outcome.captured), outcome.generated),
   gitTouchCount: state.gitTouchCount + outcome.captured.length,
   gitLaneSkipped: state.gitLaneSkipped + (outcome.skipped ? 1 : 0),
   gitLaneRan: state.gitLaneRan + (outcome.skipped ? 0 : 1),
 });
+
+/**
+ * One capture's generated-target counts, added in. Absent leaves the state as
+ * it was; a state whose counters predate the field starts counting here.
+ */
+export const withGeneratedTargets = (
+  state: SessionState,
+  tally: GeneratedTally | undefined,
+): SessionState =>
+  tally === undefined
+    ? state
+    : {
+        ...state,
+        generatedTargets: addGeneratedTally(state.generatedTargets ?? NO_GENERATED, tally),
+      };
 
 /**
  * One delivered hint, remembered forever within the session: the ref for the
@@ -1590,6 +1644,7 @@ export const deriveSessionState = (
     gitTouchCount: 0,
     gitLaneSkipped: 0,
     gitLaneRan: 0,
+    generatedTargets: NO_GENERATED,
     ghostNoticeCount: 0,
     ghostFireCount: 0,
     ghostNoOverlapCount: 0,

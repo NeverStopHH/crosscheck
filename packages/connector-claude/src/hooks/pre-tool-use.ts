@@ -20,9 +20,10 @@
  * silence. There is no code path that could emit a deny, and
  * test/tripwire-hook.test.ts plus a mutation-check entry hold that shut.
  *
- * Everything reused, nothing re-invented: the hot-file denylist and the
- * repo-relative path logic are PostToolUse's own (capture/denylist.ts,
- * hooks/post-tool-use.ts), the self/own-worktree exclusion is the hub's
+ * Everything reused, nothing re-invented: the hot-file denylist, the
+ * generated-target rule and the repo-relative path logic are PostToolUse's
+ * own (capture/denylist.ts, capture/generated.ts, hooks/post-tool-use.ts), the
+ * self/own-worktree exclusion is the hub's
  * developer-id filter on the tripwire endpoint, and "active" is the presence
  * TTL the presence endpoint applies. One bounded hub call, one ask per file
  * per session (state file), fail-open everywhere.
@@ -58,6 +59,7 @@
  * session's checkout and the wire stayed silent.
  */
 import { isDenied, resolveDenylist } from "@crosscheck/connector-core/capture/denylist.ts";
+import { classifyGenerated, wireGeneratedSignal } from "@crosscheck/connector-core/capture/generated.ts";
 import { extractFilePaths, isEditTool } from "../capture/tool-events.ts";
 import { getTripwireSessions } from "@crosscheck/connector-core/http/hub.ts";
 import type { TripwireSession } from "@crosscheck/connector-core/http/hub.ts";
@@ -152,6 +154,12 @@ const resolveEditedFile = async (
   return root === undefined || file === null ? null : { file, root };
 };
 
+/** Did the generated-target rule fire on the edited file — path, attribute or header? */
+const isGeneratedFile = async (home: string, edited: EditedFile): Promise<boolean> => {
+  const classified = await classifyGenerated({ home, root: edited.root, paths: [edited.file] });
+  return wireGeneratedSignal(classified.get(edited.file)) !== undefined;
+};
+
 const askBeforeEdit = async (ctx: HookContext, budget: HookBudget): Promise<string> => {
   const state = await readSessionState(ctx.config.home, ctx.payload.session_id);
   if (state === null) {
@@ -207,6 +215,14 @@ const askBeforeEdit = async (ctx: HookContext, budget: HookBudget): Promise<stri
     landed: state.landedAskedFiles.includes(file),
   };
   if (asked.live && asked.landed) {
+    return "";
+  }
+  // A generated file is skipped exactly as a denied one: a lockfile or a
+  // regenerated client is not anybody's plan (capture/generated.ts). Asked
+  // the way capture asks, so the attribute answer this pays for is the cached
+  // one this edit's PostToolUse reads — one `check-attr` per path, not two.
+  // An UNKNOWN answer is not generated: the wire is asked as before.
+  if (await isGeneratedFile(ctx.config.home, edited)) {
     return "";
   }
   const found = await findReasons(ctx, budget, edited, asked, state.landedCleanKeys);

@@ -96,6 +96,14 @@ export {
   repoRelativePath,
 } from "./repo-path.ts";
 export type { Claim, ClaimEdge } from "./claim.ts";
+export {
+  GENERATED_DIRECTORY_NAMES,
+  GENERATED_LOCKFILE_NAMES,
+  GENERATED_SIGNALS,
+  GeneratedSignalSchema,
+  isGeneratedPath,
+} from "./generated-target.ts";
+export type { GeneratedSignal } from "./generated-target.ts";
 
 export {
   AgentSessionSchema,
