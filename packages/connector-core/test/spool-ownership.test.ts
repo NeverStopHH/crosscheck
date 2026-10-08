@@ -44,6 +44,8 @@ const HOUR_MS = MINUTES_PER_HOUR * MINUTE_MS;
 const LIVE_SILENCES_MS = [0, 61 * MINUTE_MS, 6 * MS_PER_DAY];
 /** Past the bound session-reap deletes a state file on. */
 const ABANDONED_MS = MAX_SPOOL_AGE_DAYS * MS_PER_DAY + HOUR_MS;
+/** The hub's PGlite boot outlasted bun's 5 s hook default under load; the boot is not what this file measures. */
+const HUB_BOOT_TIMEOUT_MS = 60_000;
 
 let db: Db;
 let server: ReturnType<typeof Bun.serve>;
@@ -182,7 +184,7 @@ beforeAll(async () => {
   const body = (await response.json()) as { data: { developer: { id: string }; apiKey: string } };
   apiKey = body.data.apiKey;
   developerId = body.data.developer.id;
-});
+}, HUB_BOOT_TIMEOUT_MS);
 
 afterAll(async () => {
   proxy.stop(true);
