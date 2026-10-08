@@ -142,7 +142,7 @@ export const settingsRoutes = (deps: AppDeps): Hono<AppEnv> => {
       ? ok(c, { presenceOptOut: false })
       : ok(
           c,
-          { presenceOptOut: true, draft: true, waiting: outcome.waiting, provenance: outcome.provenance },
+          { presenceOptOut: true, draft: true, waiting: outcome.waiting, provenance: outcome.provenance, notice: outcome.notice },
           outcome.waiting ? HTTP_ACCEPTED : HTTP_OK,
         );
   });
@@ -169,7 +169,14 @@ export const settingsRoutes = (deps: AppDeps): Hono<AppEnv> => {
       case "drafted":
         return ok(
           c,
-          { muted: result.developer, alreadyMuted: false, draft: true, waiting: result.waiting, provenance: result.provenance },
+          {
+            muted: result.developer,
+            alreadyMuted: false,
+            draft: true,
+            waiting: result.waiting,
+            provenance: result.provenance,
+            notice: result.notice,
+          },
           result.waiting ? HTTP_ACCEPTED : HTTP_OK,
         );
     }
@@ -195,7 +202,14 @@ export const settingsRoutes = (deps: AppDeps): Hono<AppEnv> => {
       case "drafted":
         return ok(
           c,
-          { unmuted: result.developer, wasMuted: true, draft: true, waiting: result.waiting, provenance: result.provenance },
+          {
+            unmuted: result.developer,
+            wasMuted: true,
+            draft: true,
+            waiting: result.waiting,
+            provenance: result.provenance,
+            notice: result.notice,
+          },
           result.waiting ? HTTP_ACCEPTED : HTTP_OK,
         );
     }

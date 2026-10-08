@@ -163,6 +163,7 @@ export const hintOutcomeRoutes = (deps: AppDeps): Hono<AppEnv> => {
         waiting: result.waiting,
         discardedByPerson: result.discardedByPerson,
         provenance: result.provenance,
+        notice: result.notice,
       },
       result.repeated ? HTTP_OK : HTTP_CREATED,
     );

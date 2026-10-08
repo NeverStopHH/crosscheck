@@ -208,7 +208,14 @@ export const pilotMarkRoutes = (deps: AppDeps): Hono<AppEnv> => {
     // a newer one prints.
     return ok(
       c,
-      { id: outcome.draftId, repeated: outcome.repeated, draft: true, waiting: outcome.waiting, provenance: outcome.provenance },
+      {
+        id: outcome.draftId,
+        repeated: outcome.repeated,
+        draft: true,
+        waiting: outcome.waiting,
+        provenance: outcome.provenance,
+        notice: outcome.notice,
+      },
       outcome.repeated ? HTTP_OK : HTTP_CREATED,
     );
   });

@@ -173,7 +173,7 @@ export const pinsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     }
     return ok(
       c,
-      { id: parsed.data.id, draft: true, waiting: outcome.waiting, provenance: outcome.provenance },
+      { id: parsed.data.id, draft: true, waiting: outcome.waiting, provenance: outcome.provenance, notice: outcome.notice },
       outcome.waiting ? HTTP_ACCEPTED : HTTP_OK,
     );
   });
@@ -247,7 +247,7 @@ export const pinsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     }
     return ok(
       c,
-      { id: id.data, draft: true, waiting: outcome.waiting, provenance: outcome.provenance },
+      { id: id.data, draft: true, waiting: outcome.waiting, provenance: outcome.provenance, notice: outcome.notice },
       outcome.waiting ? HTTP_ACCEPTED : HTTP_OK,
     );
   });

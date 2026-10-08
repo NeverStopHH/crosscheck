@@ -42,7 +42,22 @@ export interface Drafted {
   /** The agent re-offered its own word the person discarded: nothing new waits. */
   readonly discardedByPerson: boolean;
   readonly provenance: DraftProvenance;
+  /** What happened, in words, for a client that prints the hub's (`DRAFT_NOTICE`). */
+  readonly notice: string;
 }
+
+/**
+ * THE SENTENCE EVERY DRAFTED ANSWER CARRIES (review, "old clients told
+ * recorded"): a client that prints the hub's words says what is true. A 0.10
+ * CLI prints only its own fixed lines and sends no version, so this cannot
+ * reach its user (spec §10, stated residual).
+ */
+export const DRAFT_NOTICE = {
+  waiting:
+    "drafted: nothing changed yet — it counts only once you confirm it with your passkey on this hub's /ui/confirm page (`crosscheck confirm` opens it)",
+  discardedByPerson:
+    "nothing drafted: you discarded this same word on the confirm page, so offering it again changes nothing",
+} as const;
 
 const drafted = (result: WriteDraftResult, provenance: DraftProvenance): Drafted | { readonly refusal: DraftRefusal } =>
   "refusal" in result
@@ -53,6 +68,7 @@ const drafted = (result: WriteDraftResult, provenance: DraftProvenance): Drafted
         waiting: result.waiting,
         discardedByPerson: result.discardedByPerson,
         provenance,
+        notice: result.discardedByPerson ? DRAFT_NOTICE.discardedByPerson : DRAFT_NOTICE.waiting,
       };
 
 export interface LabelDraftInput {
