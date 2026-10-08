@@ -6,7 +6,9 @@
 import { describe, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 
+import { GHOST_HOT_TARGET_MAX_CONTEXTS } from "../src/constants.ts";
 import { workContexts } from "../src/db/schema.ts";
+import { TRIPWIRE_MAX_SESSIONS } from "../src/services/hints.ts";
 import {
   addTestDeveloperWithSession,
   createHarnessWithSession,
@@ -21,6 +23,9 @@ import type { TestDeveloper, TestHarness } from "./helpers.ts";
 
 const REPO = VALID_SESSION_BODY.repo;
 const TARGET_FILE = "src/practice/PlayerMappingGrid.tsx";
+
+/** Twenty-one teammates seeded one by one: past bun's 5 s default on a loaded machine. */
+const TRIPWIRE_BOUND_CASE_TIMEOUT_MS = 30_000;
 
 interface TripwireRow {
   readonly developerName: string;
@@ -77,6 +82,39 @@ describe("every teammate on the file, in a fixed order", () => {
     // Assert
     expect(rows.map((row) => row.developerName)).toEqual(["Ken", "Nick"]);
   });
+
+  test(
+    `past the ${String(GHOST_HOT_TARGET_MAX_CONTEXTS)} candidates read before the ranking, the freshest teammates are still the ones named`,
+    async () => {
+      // Arrange: Nick plus one teammate per candidate slot — one more than
+      // the hub reads — each registering a second after the last, so the
+      // freshest heartbeat belongs to the row stored LAST
+      const { harness, reader } = await setup();
+      const names = Array.from({ length: GHOST_HOT_TARGET_MAX_CONTEXTS }, (_, index) => `Mate ${String(index + 1).padStart(2, "0")}`);
+      for (const [index, name] of names.entries()) {
+        harness.clock.advanceSeconds(1);
+        const sessionId = `ses_mate_${String(index)}`;
+        const contextId = `wc_mate_${String(index)}`;
+        const mate = await addTestDeveloperWithSession(harness, name, `mate${String(index)}@example.com`, {
+          id: sessionId,
+          branch: `feat/mate-${String(index)}`,
+        });
+        await postRecords(harness, mate, {
+          records: [
+            recordEnvelope("work_context", validWorkContextBody({ id: contextId, sessionId, title: `${name}'s grid` }), { sessionId }),
+            recordEnvelope("target", { workContextId: contextId, kind: "file", value: TARGET_FILE }, { sessionId }),
+          ],
+        });
+      }
+
+      // Act
+      const rows = await fetchTripwire(harness, reader);
+
+      // Assert: the five freshest, freshest first — never the five the scan met first
+      expect(rows.map((row) => row.developerName)).toEqual(names.slice(-TRIPWIRE_MAX_SESSIONS).reverse());
+    },
+    TRIPWIRE_BOUND_CASE_TIMEOUT_MS,
+  );
 });
 
 describe("a tripwire row says whether its work context landed", () => {
