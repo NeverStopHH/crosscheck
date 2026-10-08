@@ -6,6 +6,7 @@
  * its context landed and takes its files out of every collision check
  * (server services/landed.ts). Real git, a fake hub on an ephemeral port.
  */
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterAll, describe, expect, test } from "bun:test";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -22,7 +23,7 @@ const REPO_ID = "github.com/acme/api";
 const bodies: Record<string, unknown>[] = [];
 const cleanups: string[] = [];
 
-const server = Bun.serve({
+const server = serveLoopback({
   port: 0,
   fetch: async (request) => {
     const url = new URL(request.url);

@@ -14,6 +14,7 @@
  * the real binary doing the asking: an HTTP origin that answers 401, a fake
  * `ssh` on PATH, the developer's own ssh command, and a pseudo-terminal.
  */
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -69,7 +70,7 @@ describe("credentials that would need a prompt", () => {
     async () => {
       const made = await repos("lf-http-401");
       let hits = 0;
-      const server = Bun.serve({
+      const server = serveLoopback({
         port: 0,
         fetch: () => {
           hits += 1;
@@ -111,7 +112,7 @@ describe("credential helpers", () => {
     "a helper still runs — a stored token is how a silent fetch signs in — and is told not to prompt",
     async () => {
       const made = await repos("lf-helper");
-      const server = Bun.serve({
+      const server = serveLoopback({
         port: 0,
         fetch: () =>
           new Response("authentication required", {

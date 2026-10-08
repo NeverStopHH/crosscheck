@@ -4,6 +4,7 @@
  * base ancestry (server services/landed.ts). A capturing hub on an ephemeral
  * port reads the register body; real git decides the answer.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -17,7 +18,7 @@ const REMOTE = "git@github.com:acme/api.git";
 const registers: Record<string, unknown>[] = [];
 const cleanups: string[] = [];
 
-const server = Bun.serve({
+const server = serveLoopback({
   port: 0,
   fetch: async (request) => {
     const { pathname } = new URL(request.url);

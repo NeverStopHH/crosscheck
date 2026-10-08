@@ -23,9 +23,10 @@
  * would go red at once rather than passing against something that shrugs at
  * unexpected argv. The second case proves the tripwire itself is live.
  *
- * PORTS: the one throwaway hub in this file binds 7630, inside the range this
- * task owns (7630-7639).
+ * PORTS: every throwaway server in this file binds an ephemeral loopback port
+ * (fixtures/loopback-serve.ts), so two runs of this file cannot share one.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { chmod, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -319,8 +320,8 @@ describe("a derived draft stays derived, whatever the model claims", () => {
       };
     }
     const received: HubRecord[] = [];
-    const server = Bun.serve({
-      port: 7630,
+    const server = serveLoopback({
+      port: 0,
       fetch: async (request) => {
         const body = (await request.json()) as { records: readonly HubRecord[] };
         received.push(...body.records);
@@ -570,7 +571,7 @@ describe("a foreign model that fails, fails SAFELY and VISIBLY", () => {
 /**
  * The wrapper docs/FOREIGN-MODELS.md tells an operator to write, run through
  * the SAME real worker as everything above, against a local stand-in for a
- * provider's endpoint on 7632.
+ * provider's endpoint on an ephemeral loopback port.
  *
  * WHAT THIS PROVES: that the documented lane works — an argument-free shell
  * script that reads stdin, calls an HTTP endpoint, and prints one answer is
@@ -599,8 +600,8 @@ describe("the wrapper the docs tell an operator to write actually works", () => 
         readonly messages: readonly { readonly role: string; readonly content: string }[];
       }
       const seen: { auth: string | null; request: ChatRequest }[] = [];
-      const server = Bun.serve({
-        port: 7632,
+      const server = serveLoopback({
+        port: 0,
         fetch: async (request) => {
           const parsed = (await request.json()) as ChatRequest;
           seen.push({ auth: request.headers.get("authorization"), request: parsed });

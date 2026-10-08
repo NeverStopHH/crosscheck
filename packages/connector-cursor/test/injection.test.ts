@@ -22,6 +22,7 @@
  * The injection ledger records WHICH event delivered: the §6-q4 instrument
  * the dogfood checklist reads.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -121,7 +122,7 @@ const startCapturingHub = (): CapturingHub => {
   const calls = { candidates: 0, solvedMatches: 0 };
   let solvedMatches: readonly unknown[] = [];
   const postedRecords: unknown[] = [];
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: async (request) => {
       const { pathname } = new URL(request.url);

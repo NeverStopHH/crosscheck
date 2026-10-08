@@ -9,6 +9,7 @@
  * "does nothing else" is proven for the network too, and a real git repo so
  * it is proven for the filesystem (init's writes are the incident).
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -54,7 +55,7 @@ const fixture = async (label: string): Promise<Fixture> => {
   const home = await makeHome(label);
   paths.push(repo, home);
   let calls = 0;
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: () => {
       calls += 1;

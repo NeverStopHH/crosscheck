@@ -24120,6 +24120,19 @@ export const MUTATIONS: readonly Mutation[
       "every first substantive prompt stalls on the model, up to SUMMARIZER_TIMEOUT_MS, " +
       "on the developer's keyboard",
   },
+  // Every test server binds 127.0.0.1 through fixtures/loopback-serve.ts;
+  // loopback-bind.test.ts scans the test trees so a bare wildcard bind cannot
+  // come back. This re-introduces one in the most shared hub of them all.
+  {
+    label: "a test hub binds the dual-stack wildcard again",
+    file: `${CORE}/test/fixtures/hint-hub.ts`,
+    from: "  const server = serveLoopback({",
+    to: "  const server = Bun.serve({",
+    test: `${CORE}/test/loopback-bind.test.ts`,
+    because:
+      "any other process may bind 127.0.0.1 on that hub's port and answer every hook " +
+      "that hub was handed, so a suite run beside another goes red with no behaviour wrong",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -24382,6 +24395,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/landing-fetch-trigger.test.ts 13
  * PRINTS: packages/connector-core/test/landing-fetch-worker.test.ts 20
  * PRINTS: packages/connector-core/test/latency.test.ts 3
+ * PRINTS: packages/connector-core/test/loopback-bind.test.ts 1
  * PRINTS: packages/connector-core/test/loss-ledger.test.ts 5
  * PRINTS: packages/connector-core/test/loss-report.test.ts 33
  * PRINTS: packages/connector-core/test/mark-hint-outcome-tool.test.ts 19

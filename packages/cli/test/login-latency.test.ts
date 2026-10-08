@@ -9,6 +9,7 @@
  * 400 ms LAN default, while the escape hatch (CROSSCHECK_TIMEOUT_MS, stored
  * timeoutMs) sat undiscovered.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -32,7 +33,7 @@ afterEach(async () => {
 
 /** A hub that accepts the auth probe; latency itself is injected, never timed. */
 const acceptingHub = (): ReturnType<typeof Bun.serve> =>
-  Bun.serve({
+  serveLoopback({
     port: 0,
     fetch: () => Response.json({ ok: true, data: { sessions: [] } }),
   });

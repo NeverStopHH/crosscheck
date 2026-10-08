@@ -14,6 +14,7 @@
  *     enough, and so is a delivery id;
  *   · an agent cannot make the gesture: no terminal, no mark.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -186,12 +187,12 @@ const noise = (
 
 beforeAll(async () => {
   const db = await createDb();
-  server = Bun.serve({
+  server = serveLoopback({
     port: 0,
     fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch,
   });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
-  stuckHub = Bun.serve({
+  stuckHub = serveLoopback({
     port: 0,
     fetch: (request) => {
       const path = new URL(request.url).pathname;

@@ -21,6 +21,7 @@
  *      rules: declared now, but proposed and evidence-free, so it arrives
  *      as a pointer — never as substance.
  */
+import { serveLoopback } from "../../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { chmod, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -234,7 +235,7 @@ const additionalContext = (stdout: string): string =>
 beforeAll(async () => {
   db = await createDb();
   app = createServer({ db, adminToken: ADMIN_TOKEN });
-  server = Bun.serve({ port: 0, fetch: app.fetch });
+  server = serveLoopback({ port: 0, fetch: app.fetch });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
 
   const setUp = async (label: string, name: string, email: string): Promise<Developer> => {

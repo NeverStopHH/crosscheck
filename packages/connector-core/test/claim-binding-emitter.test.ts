@@ -11,6 +11,7 @@
  * observation — narrowing the revalidation window and making the claim read
  * fresher than it is.
  */
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -171,7 +172,7 @@ const validities = async (
 beforeAll(async () => {
   db = await createDb();
   const app = createServer({ db, adminToken: ADMIN_TOKEN, embedder: null });
-  server = Bun.serve({ port: 0, fetch: app.fetch });
+  server = serveLoopback({ port: 0, fetch: app.fetch });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
 });
 

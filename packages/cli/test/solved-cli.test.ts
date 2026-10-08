@@ -9,6 +9,7 @@
  * asserted are the ones a human reads rather than the ones a formatter
  * returns.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { hintDeliveryId } from "@crosscheck/schema";
 import { rm } from "node:fs/promises";
@@ -170,7 +171,7 @@ const solvedLineOf = (stdout: string): string =>
 
 beforeAll(async () => {
   db = await createDb();
-  server = Bun.serve({
+  server = serveLoopback({
     port: 0,
     fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch,
   });

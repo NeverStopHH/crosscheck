@@ -25,6 +25,7 @@
  * append a duplicate target and this test fail — that mutation is
  * catalogued in connector-core/scripts/mutation-check.ts.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -50,7 +51,7 @@ afterEach(async () => {
 
 const startHub = (): { readonly url: string; registers: () => number } => {
   let registers = 0;
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: (request) => {
       const { pathname } = new URL(request.url);

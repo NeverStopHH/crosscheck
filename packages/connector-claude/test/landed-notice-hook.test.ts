@@ -4,6 +4,7 @@
  * this stop" exactly when it has recorded it for him — through a real hook,
  * a real clone and a real hub, down to the notice waiting for Mike.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { dirname } from "node:path";
@@ -85,7 +86,7 @@ interface World {
 
 /** A real hub, Nick's registered session in his clone, and Mike on the hub. */
 const world = async (label: string): Promise<World> => {
-  const server = Bun.serve({ port: 0, fetch: createServer({ db: await createDb(), adminToken: ADMIN_TOKEN }).fetch });
+  const server = serveLoopback({ port: 0, fetch: createServer({ db: await createDb(), adminToken: ADMIN_TOKEN }).fetch });
   servers.push(server);
   const hubUrl = `http://127.0.0.1:${String(server.port)}`;
   const repos = await makeLandingRepos(label);

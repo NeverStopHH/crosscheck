@@ -22,6 +22,7 @@
  * the fake model and the spool, which is derive.test.ts's job — and mixing
  * the two would cost this file the property that makes it worth having.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, afterAll, describe, expect, test } from "bun:test";
 import { writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -36,10 +37,9 @@ import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { isCursorHookEvent, runCursorHook } from "../src/index.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
-/** A throwaway hub on this task's own port range, never 7100. */
-const HUB_PORT = 7614;
-const server = Bun.serve({
-  port: HUB_PORT,
+/** A throwaway hub on an ephemeral loopback port, never 7100. */
+const server = serveLoopback({
+  port: 0,
   fetch: () => new Response("not found", { status: 404 }),
 });
 const HUB_URL = `http://127.0.0.1:${String(server.port)}`;

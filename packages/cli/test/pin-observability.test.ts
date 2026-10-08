@@ -30,6 +30,7 @@
  *      would answer "no session touched this surface" out of a blind spot
  *      nobody could see.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm, writeFile } from "node:fs/promises";
 
@@ -131,7 +132,7 @@ const pinIdFrom = (stdout: string): string => {
 
 beforeAll(async () => {
   db = await createDb();
-  server = Bun.serve({
+  server = serveLoopback({
     port: 0,
     fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch,
   });

@@ -12,6 +12,7 @@
  * verdict invented here is indistinguishable, downstream, from one the hub
  * computed, and that is how a client's default becomes the hub's authority.
  */
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterAll, describe, expect, test } from "bun:test";
 
 import {
@@ -62,7 +63,7 @@ const A_VERDICT = {
 
 let body: unknown = SUSPECT_BODY;
 
-const server = Bun.serve({
+const server = serveLoopback({
   port: 0,
   fetch: () => Response.json({ ok: true, data: body }),
 });

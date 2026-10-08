@@ -13,6 +13,7 @@
  * next door stays silent forever, stored credentials or not. That last pin
  * is the trust rule (DESIGN.md §2.1) stated as a test.
  */
+import { serveLoopback } from "../../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -73,7 +74,7 @@ const makeWorkspaceRepo = async (
 beforeAll(async () => {
   db = await createDb();
   const app = createServer({ db, adminToken: ADMIN_TOKEN });
-  server = Bun.serve({ port: 0, fetch: app.fetch });
+  server = serveLoopback({ port: 0, fetch: app.fetch });
   hubUrl = `http://127.0.0.1:${server.port}`;
 
   const response = await fetch(`${hubUrl}/api/developers`, {

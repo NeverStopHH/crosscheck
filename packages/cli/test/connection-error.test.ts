@@ -10,6 +10,7 @@
  * the classifier's per-shape pins live beside them with INJECTED error
  * objects, so no test depends on real network timing beyond loopback.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -39,7 +40,7 @@ afterEach(async () => {
 
 /** Never answers: the probe dies of AbortSignal.timeout, the incident shape. */
 const hangingHub = (): ReturnType<typeof Bun.serve> =>
-  Bun.serve({
+  serveLoopback({
     port: 0,
     fetch: () => new Promise<Response>(() => undefined),
   });
@@ -153,7 +154,7 @@ describe("the live runtime still throws the researched shapes", () => {
     // is the one collapsed row a loopback socket CAN pin (the unresolvable-
     // name row would need real DNS) — and the collapse is the entire reason
     // the "refused" message hedges and login/doctor refine via node:dns.
-    const plain = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+    const plain = serveLoopback({ port: 0, fetch: () => new Response("ok") });
 
     // Act
     let caught: unknown;

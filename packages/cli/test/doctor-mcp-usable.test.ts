@@ -10,6 +10,7 @@
  * a hub that rejects the key, because that pairing — a PASS under a FAIL — is
  * the defect itself.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -36,7 +37,7 @@ afterEach(async () => {
 
 /** Answers, but with a denial — the hub is there, the key is not welcome. */
 const rejectingHub = (): string => {
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: () =>
       Response.json(
@@ -49,7 +50,7 @@ const rejectingHub = (): string => {
 };
 
 const acceptingHub = (): string => {
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: () => Response.json({ ok: true, data: { sessions: [] } }),
   });

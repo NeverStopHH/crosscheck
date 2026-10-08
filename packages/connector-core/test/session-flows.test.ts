@@ -12,6 +12,7 @@
  *   - heartbeatMaybe: HEARTBEAT_MIN_INTERVAL_MS throttle;
  *   - endSessionFlow: flush → pending-end marker → state delete → end.
  */
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -130,7 +131,7 @@ const registerInput = (
 beforeAll(async () => {
   const db = await createDb();
   const app = createServer({ db, adminToken: ADMIN_TOKEN });
-  server = Bun.serve({ port: 0, fetch: app.fetch });
+  server = serveLoopback({ port: 0, fetch: app.fetch });
   hubUrl = `http://127.0.0.1:${server.port}`;
   const response = await fetch(`${hubUrl}/api/developers`, {
     method: "POST",
@@ -708,7 +709,7 @@ describe("heartbeatMaybe", () => {
     const home = await makeHome(label);
     cleanups.push(home);
     let count = 0;
-    const counting = Bun.serve({
+    const counting = serveLoopback({
       port: 0,
       fetch: (request) => {
         if (request.url.includes("/heartbeat")) count += 1;

@@ -1,3 +1,4 @@
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { chmod, mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -59,7 +60,7 @@ const startOpenSessionsHub = (
     status: "done",
     lastHeartbeatAt: new Date(Date.now() - MS_PER_DAY).toISOString(),
   }));
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: (request) => {
       const { pathname } = new URL(request.url);

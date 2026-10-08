@@ -8,6 +8,7 @@
  * can only ask: the fence stays closed until a person approves with a passkey
  * at the page the command names.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -54,7 +55,7 @@ const requestsOnHub = async (): Promise<{ status: string; reason: string }[]> =>
 
 beforeAll(async () => {
   db = await createDb();
-  server = Bun.serve({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
+  server = serveLoopback({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
   home = await makeHome("pin-waive");
   repo = await makeRepo("pin-waive", { remote: "git@github.com:acme/api.git" });

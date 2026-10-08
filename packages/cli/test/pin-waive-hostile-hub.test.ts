@@ -6,6 +6,7 @@
  * gets to choose that text; the command must print it bounded, on one line,
  * never as lines of its own.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -21,7 +22,7 @@ let home: string;
 let repo: string;
 
 beforeAll(async () => {
-  server = Bun.serve({
+  server = serveLoopback({
     port: 0,
     fetch: () =>
       Response.json({ ok: false, error: { code: "refused", message: HOSTILE } }, { status: 422 }),

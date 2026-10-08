@@ -8,6 +8,7 @@
  * seems off has to name the branches in effect and every reason the stop
  * cannot see them.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -26,7 +27,7 @@ let apiKey: string;
 const cleanups: string[] = [];
 
 beforeAll(async () => {
-  server = Bun.serve({ port: 0, fetch: createServer({ db: await createDb(), adminToken: ADMIN_TOKEN }).fetch });
+  server = serveLoopback({ port: 0, fetch: createServer({ db: await createDb(), adminToken: ADMIN_TOKEN }).fetch });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
   const response = await fetch(`${hubUrl}/api/developers`, {
     method: "POST",

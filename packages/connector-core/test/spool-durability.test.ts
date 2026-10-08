@@ -6,6 +6,7 @@
  * always the same shape — a record that is neither on disk, nor delivered, nor
  * counted in `.drops`.
  */
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import type { DeferredEnder } from "../src/spool/reap.ts";
 import { open, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
@@ -95,7 +96,7 @@ const hubContext = (path: string, hubUrl: string, now: Date = NOW) => ({
 });
 
 const acceptingHub = (received: string[]) =>
-  Bun.serve({
+  serveLoopback({
     port: 0,
     fetch: async (request) => {
       const body = (await request.json()) as {
@@ -119,7 +120,7 @@ const acceptingHub = (received: string[]) =>
  * produces for a session it believes has ended (server checkProducerSession).
  */
 const rejectingHub = () =>
-  Bun.serve({
+  serveLoopback({
     port: 0,
     fetch: async (request) => {
       const body = (await request.json()) as {

@@ -4,6 +4,7 @@
  * register a current connector makes. An absent block is read by the hub as
  * `undeclared` — safe, but a sentence about a different, older connector.
  */
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -22,7 +23,7 @@ const cleanups: string[] = [];
 /** What the fake hub's order route answers with, per test. */
 let orderReport: Record<string, unknown> = { sessions: [] };
 
-const server = Bun.serve({
+const server = serveLoopback({
   port: 0,
   fetch: async (request) => {
     const url = new URL(request.url);

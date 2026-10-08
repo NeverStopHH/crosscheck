@@ -5,6 +5,7 @@
  * PERSON, through review_draft. Render half pure; the flow half against a
  * REAL in-process hub, so the owner and supersedes filters are the hub's.
  */
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -582,7 +583,7 @@ describe("deliverDraftNudge (real hub)", () => {
       draft({ id: `clm_f${String(i)}`, createdAt: new Date(Date.now() - YOUNG_MS).toISOString() }),
     );
     const oldestCreatedAt = new Date(Date.now() - 40 * MS_PER_DAY).toISOString();
-    return Bun.serve({
+    return serveLoopback({
       port: 0,
       fetch: (request) =>
         new URL(request.url).searchParams.get("order") === "oldest"
@@ -612,7 +613,7 @@ describe("deliverDraftNudge (real hub)", () => {
     // An unresponsive hub used to cost every prompt one more GET (and its
     // timeout); the failure is now remembered for the session.
     let requests = 0;
-    const fake = Bun.serve({
+    const fake = serveLoopback({
       port: 0,
       fetch: () => {
         requests += 1;
@@ -673,7 +674,7 @@ describe("deliverDraftNudge (real hub)", () => {
     const fresh = Array.from({ length: DRAFT_LISTING_CAP }, (_, i) =>
       draft({ id: `clm_f${String(i)}`, createdAt: new Date(Date.now() - YOUNG_MS).toISOString() }),
     );
-    const fake = Bun.serve({
+    const fake = serveLoopback({
       port: 0,
       fetch: () => {
         requests += 1;
@@ -716,7 +717,7 @@ describe("deliverDraftNudge (real hub)", () => {
     // listed costs a prompt a round trip and its timeout for nothing.
     let requests = 0;
     const listed = Array.from({ length: 3 }, (_, i) => draft({ id: `clm_w${String(i)}`, createdAt: daysAgo(2 + i) }));
-    const fake = Bun.serve({
+    const fake = serveLoopback({
       port: 0,
       fetch: () => {
         requests += 1;

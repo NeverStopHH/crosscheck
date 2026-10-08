@@ -9,6 +9,7 @@
  * hub (answering, denying, or hanging) or a refused port, doctor.test.ts's
  * own pattern.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -38,7 +39,7 @@ const fixture = async (): Promise<{ readonly repo: string; readonly home: string
 };
 
 const acceptingHub = (): ReturnType<typeof Bun.serve> =>
-  Bun.serve({
+  serveLoopback({
     port: 0,
     fetch: () => Response.json({ ok: true, data: { sessions: [] } }),
   });
@@ -50,14 +51,14 @@ const acceptingHub = (): ReturnType<typeof Bun.serve> =>
  * always fires.
  */
 const hangingHub = (): ReturnType<typeof Bun.serve> =>
-  Bun.serve({
+  serveLoopback({
     port: 0,
     fetch: () => new Promise<Response>(() => undefined),
   });
 
 /** Answers, but with a denial — the hub is there, the key is not welcome. */
 const denyingHub = (): ReturnType<typeof Bun.serve> =>
-  Bun.serve({
+  serveLoopback({
     port: 0,
     fetch: () =>
       Response.json(

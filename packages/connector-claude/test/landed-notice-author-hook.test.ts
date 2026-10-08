@@ -75,9 +75,13 @@ const startNoticeHub = (): NoticeHub => {
       return Response.json({ ok: true, data: { session: { id: "cc_x", developerId: "dev_self" } } });
     },
   });
+  const { port } = server;
+  if (port === undefined) {
+    throw new Error("the notice hub bound no port");
+  }
   return {
-    url: `http://${HUB_HOST}:${String(server.port)}`,
-    port: server.port,
+    url: `http://${HUB_HOST}:${String(port)}`,
+    port,
     noticeCalls: () => calls,
     postedKinds,
     stop: () => {

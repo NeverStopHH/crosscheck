@@ -8,6 +8,7 @@
  * read `rejected` alone, so a newer connector against an older hub lost
  * whole record kinds while `spool drops` printed "none".
  */
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -74,7 +75,7 @@ const ignoringHub = (
   ignoredKinds: ReadonlySet<string>,
   options: { readonly withResults?: boolean } = {},
 ): string => {
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: async (request) => {
       const body = (await request.json()) as { records: readonly WireRecord[] };

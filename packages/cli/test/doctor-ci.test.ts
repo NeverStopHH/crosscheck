@@ -12,6 +12,7 @@
  * AT-10 calls a rung a platform genuinely cannot serve a DOCUMENTED REFUSAL,
  * never a silent absence, and that is what these lines are.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -46,7 +47,7 @@ interface Coverage {
 
 /** A hub that answers the verdict route with this, and everything else empty. */
 const hubWith = (answer: Coverage | null | "broken"): string => {
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: (request) => {
       const { pathname } = new URL(request.url);

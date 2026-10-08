@@ -5,6 +5,7 @@
  * discards. Bodies render inside the « » quote frame like every other
  * machine- or teammate-authored text, capped and sanitized.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -85,7 +86,7 @@ interface FakeHub {
 }
 
 const startDraftsHub = (): FakeHub => {
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: (request) => {
       const { pathname } = new URL(request.url);

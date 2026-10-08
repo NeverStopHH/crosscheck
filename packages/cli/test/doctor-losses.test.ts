@@ -5,6 +5,7 @@
  * recent local losses beside an `agent_event` rung that still reads
  * complete. Nothing else is a contradiction, and nothing else gets a line.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -114,7 +115,7 @@ afterEach(async () => {
 /** A hub that answers /api/absences with a COMPLETE agent rung and nothing else of note. */
 const startCompleteHub = (): string => {
   const record = coverageWith("complete", "sessions_reported");
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: (request) => {
       const { pathname } = new URL(request.url);

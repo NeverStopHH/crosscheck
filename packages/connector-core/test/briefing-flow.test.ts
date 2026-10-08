@@ -59,6 +59,9 @@ const startBriefingHub = () => {
   };
   const server = Bun.serve({
     port: 0,
+    // The address the URL below names, so no other process can answer it
+    // (connector-claude test/landed-notice-author-hook.test.ts measured why).
+    hostname: "127.0.0.1",
     fetch: (request) => {
       const { pathname } = new URL(request.url);
       if (pathname === "/api/presence") {

@@ -43,6 +43,7 @@
  * developer legitimately works across many repos against one hub. A filter
  * whose value the client chooses can order results; it cannot contain anybody.
  */
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -218,7 +219,7 @@ const call = async (
 beforeAll(async () => {
   db = await createDb();
   app = createServer({ db, adminToken: ADMIN_TOKEN });
-  server = Bun.serve({ port: 0, fetch: app.fetch });
+  server = serveLoopback({ port: 0, fetch: app.fetch });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
 
   alice = await setUpDeveloper(

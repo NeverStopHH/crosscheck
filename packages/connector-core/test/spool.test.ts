@@ -1,3 +1,4 @@
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { appendFile, rm, utimes, writeFile } from "node:fs/promises";
 
@@ -77,7 +78,7 @@ const hubContext = (path: string, hubUrl = HUB_URL) => ({
 });
 
 const acceptingHub = (received: unknown[] = []) =>
-  Bun.serve({
+  serveLoopback({
     port: 0,
     fetch: async (request) => {
       const body = (await request.json()) as { records: readonly unknown[] };
@@ -335,7 +336,7 @@ describe("spool flush", () => {
     // Arrange
     const path = await home();
     await appendRecords(path, KEY, SESSION, [envelope(1)], NOW);
-    const server = Bun.serve({
+    const server = serveLoopback({
       port: 0,
       fetch: () =>
         Response.json({

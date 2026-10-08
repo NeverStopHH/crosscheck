@@ -10,6 +10,7 @@
  * fingerprint then earns: the moment the symptom appears, not at the next
  * SessionStart, which on a long agent turn can be an hour later.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -47,7 +48,7 @@ interface FakeHub {
 const startHub = (matches: readonly unknown[]): FakeHub => {
   const recordsSeen: RecordedEnvelope[] = [];
   const solvedQueries: string[] = [];
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: async (request) => {
       const url = new URL(request.url);

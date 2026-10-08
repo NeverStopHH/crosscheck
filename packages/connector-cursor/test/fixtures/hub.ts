@@ -4,6 +4,7 @@
  * the boot is shared shape). One hub per test file; the label keeps
  * tokens/emails distinct.
  */
+import { serveLoopback } from "../../../connector-core/test/fixtures/loopback-serve.ts";
 import { createDb, createServer } from "@crosscheck/server";
 
 export interface CursorTestHub {
@@ -18,7 +19,7 @@ export const bootCursorHub = async (label: string): Promise<CursorTestHub> => {
   const db = await createDb();
   const adminToken = `${label}-admin`;
   const app = createServer({ db, adminToken });
-  const server = Bun.serve({ port: 0, fetch: app.fetch });
+  const server = serveLoopback({ port: 0, fetch: app.fetch });
   const hubUrl = `http://127.0.0.1:${server.port}`;
   const response = await fetch(`${hubUrl}/api/developers`, {
     method: "POST",

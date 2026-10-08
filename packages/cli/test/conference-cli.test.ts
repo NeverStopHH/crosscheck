@@ -9,6 +9,7 @@
  * assertion here is about that seam, and the ones that can pass for the wrong
  * reason carry the contrast that rules it out.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import {
   afterAll,
   beforeAll,
@@ -341,7 +342,7 @@ const claimsOn = async (
 
 beforeAll(async () => {
   db = await createDb();
-  server = Bun.serve({
+  server = serveLoopback({
     port: 0,
     fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch,
   });
@@ -840,7 +841,7 @@ describe("the conference command", () => {
 
   test("a hub that cannot answer spends nothing and says so", async () => {
     // Arrange: a reachable port with nothing serving the API.
-    const dead = Bun.serve({
+    const dead = serveLoopback({
       port: 0,
       fetch: () => new Response("no", { status: 503 }),
     });
@@ -1161,7 +1162,7 @@ describe("a hub the conference cannot read", () => {
     extraEnv: Record<string, string>,
     run: (url: string) => Promise<void>,
   ): Promise<void> => {
-    const fake = Bun.serve({ port: 0, fetch: handler });
+    const fake = serveLoopback({ port: 0, fetch: handler });
     try {
       await run(`http://127.0.0.1:${String(fake.port)}`);
     } finally {
@@ -1326,7 +1327,7 @@ describe("a hub whose contexts do not fit the input bound", () => {
   });
 
   const corpusHub = (contexts: readonly Record<string, unknown>[]) =>
-    Bun.serve({
+    serveLoopback({
       port: 0,
       fetch: (request) =>
         new URL(request.url).pathname === "/api/conference"
@@ -1673,7 +1674,7 @@ describe("a finding published on somebody else's tree", () => {
     ).length;
     expect(before).toBe(1);
     const model = await makeFakeModel({ output: `A+B: ${TEAM_SENTENCE}` });
-    const proxy = Bun.serve({
+    const proxy = serveLoopback({
       port: 0,
       fetch: async (request) => {
         const url = new URL(request.url);

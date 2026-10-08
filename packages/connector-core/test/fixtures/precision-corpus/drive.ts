@@ -16,6 +16,7 @@
  * No embedder is configured — the corpus pins the keyless default install's
  * lexical behavior (DESIGN.md §6).
  */
+import { serveLoopback } from "../loopback-serve.ts";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -127,7 +128,7 @@ const startHub = async (): Promise<Hub> => {
     adminToken: ADMIN_TOKEN,
     embedder: null,
   });
-  const server = Bun.serve({ port: 0, fetch: app.fetch });
+  const server = serveLoopback({ port: 0, fetch: app.fetch });
   return {
     url: `http://127.0.0.1:${String(server.port)}`,
     stop: () => {

@@ -4,6 +4,7 @@
  * (which predates the hints routes and stays untouched: its callers pin budget
  * incidents that never involved these endpoints).
  */
+import { serveLoopback } from "./loopback-serve.ts";
 
 export interface HintHubCalls {
   candidates: number;
@@ -244,7 +245,7 @@ export const startHintHub = (
   let lastSolvedFingerprint: string | null = null;
   let lastCandidatesQuery: URLSearchParams | null = null;
   const postedRecords: Record<string, unknown>[] = [];
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: async (request) => {
       const { pathname, searchParams } = new URL(request.url);

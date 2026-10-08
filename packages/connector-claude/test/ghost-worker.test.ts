@@ -18,6 +18,7 @@
  *      it has been checked against the very claims it was shown, so a
  *      paraphrase of Ken's finding cannot return as Alice's observation.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -267,7 +268,7 @@ const spooledClaims = async (fix: Fixture): Promise<readonly SpooledClaim[]> => 
 
 beforeAll(async () => {
   db = await createDb();
-  server = Bun.serve({
+  server = serveLoopback({
     port: 0,
     fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch,
   });

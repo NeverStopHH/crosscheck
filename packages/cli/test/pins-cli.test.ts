@@ -15,6 +15,7 @@
  *      developer's name appears nowhere in the output;
  *   5. an unreachable hub says UNKNOWN, never "nobody".
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -170,7 +171,7 @@ const pinIdFrom = (stdout: string): string => {
 
 beforeAll(async () => {
   db = await createDb();
-  server = Bun.serve({
+  server = serveLoopback({
     port: 0,
     fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch,
   });
