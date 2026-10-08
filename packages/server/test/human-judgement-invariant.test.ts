@@ -111,7 +111,7 @@ const seedLegacy = async (world: OutcomeWorld): Promise<void> => {
 
 /** Every non-human class: the agent's door, the terminal's doors, and 0.10 rows. */
 const nonHumanWorld = async (): Promise<OutcomeWorld> => {
-  const world = await createOutcomeWorld();
+  const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
   await ok(recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed", session: NICK_SESSION }), "agent outcome");
   await ok(recordPersonOutcome(world, world.nick, { ref: KEN_CLAIM, outcome: "overrode", reason: "kept the retry on the hub" }), "terminal outcome");
   await ok(label(world, world.delivered.kenContext, "helpful", "saved me an hour"), "terminal helpful");

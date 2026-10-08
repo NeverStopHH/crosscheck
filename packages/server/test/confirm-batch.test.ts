@@ -57,7 +57,7 @@ const outcomesOf = (world: OutcomeWorld) =>
 describe("a confirmation batch", () => {
   test("one assertion makes the agent's drafts the person's: human_passkey_confirmed, naming the confirmation; the drafts untouched", async () => {
     // Arrange
-    const world = await createOutcomeWorld();
+    const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
     await agentSays(world, KEN_CONTEXT, "followed");
     await agentSays(world, KEN_CLAIM, "overrode", "kept the retry on the hub");
     const draftsBefore = await world.harness.db.select().from(humanDrafts);
@@ -83,7 +83,7 @@ describe("a confirmation batch", () => {
 
   test("an edit is stored exactly as signed: the person turns the agent's followed into overrode, with a reason", async () => {
     // Arrange
-    const world = await createOutcomeWorld();
+    const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
     await agentSays(world, KEN_CONTEXT, "followed");
     const confirmer = await prepareConfirmer(world.harness, world.nick);
 
@@ -105,7 +105,7 @@ describe("a confirmation batch", () => {
 
   test("discard writes nothing and resolves the draft; keep leaves it pending", async () => {
     // Arrange
-    const world = await createOutcomeWorld();
+    const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
     await agentSays(world, KEN_CONTEXT, "followed");
     await agentSays(world, MIKE_CONTEXT, "not_relevant_now");
     const confirmer = await prepareConfirmer(world.harness, world.nick);
@@ -124,7 +124,7 @@ describe("a confirmation batch", () => {
 
   test("an edit that could never be stored is refused when the batch is formed: a reason holding a secret", async () => {
     // Arrange
-    const world = await createOutcomeWorld();
+    const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
     await agentSays(world, KEN_CONTEXT, "followed");
     const confirmer = await prepareConfirmer(world.harness, world.nick);
     const pending = await pendingOf(world.harness, world.nick);
@@ -146,7 +146,7 @@ describe("a confirmation batch", () => {
 
   test("a writer's refusal at confirm time rolls the WHOLE batch back and names nothing as confirmed", async () => {
     // Arrange: an outcome and a pin; the team narrows who may pin between the batch and the tap
-    const world = await createOutcomeWorld();
+    const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
     await agentSays(world, KEN_CONTEXT, "followed");
     await world.harness.app.request("/api/pins", jsonRequest("POST", world.nick.apiKey, {
       id: "pin_batch_refused", repo: REPO, surface: "Export keeps the header", files: ["src/never-touched.ts"],
@@ -176,7 +176,7 @@ describe("a confirmation batch", () => {
 
   test("a draft that dies between the snapshot and the tap refuses the whole batch", async () => {
     // Arrange: the repo leaves the pilot, so no outcome there can count any more
-    const world = await createOutcomeWorld();
+    const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
     await agentSays(world, KEN_CONTEXT, "followed");
     const confirmer = await prepareConfirmer(world.harness, world.nick);
     const pending = await pendingOf(world.harness, world.nick);
@@ -200,7 +200,7 @@ describe("a confirmation batch", () => {
 
   test("labels confirm into pilot_marks, and a pin's ok into a surface-ok mark", async () => {
     // Arrange
-    const world = await createOutcomeWorld();
+    const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
     await world.harness.app.request("/api/pilot-marks", jsonRequest("POST", world.nick.apiKey, {
       repo: REPO, refKind: "hint_delivery", refId: world.delivered.kenContext, mark: "helpful", reason: "saved me an hour", presence: "controlling_terminal",
     }));
@@ -221,7 +221,7 @@ describe("a confirmation batch", () => {
 describe("the batch is frozen: what was reviewed is what is signed", () => {
   test("TOCTOU: a draft added between the snapshot and the assertion is in no batch — never confirmed by this one", async () => {
     // Arrange
-    const world = await createOutcomeWorld();
+    const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
     await agentSays(world, KEN_CONTEXT, "followed");
     const confirmer = await prepareConfirmer(world.harness, world.nick);
     const pending = await pendingOf(world.harness, world.nick);
@@ -246,7 +246,7 @@ describe("the batch is frozen: what was reviewed is what is signed", () => {
 
   test("TOCTOU: an item decided by another batch between the snapshot and the assertion refuses the whole batch", async () => {
     // Arrange: two browser sessions of the person, each with a batch over the same draft
-    const world = await createOutcomeWorld();
+    const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
     await agentSays(world, KEN_CONTEXT, "followed");
     const first = await prepareConfirmer(world.harness, world.nick);
     world.harness.clock.advanceSeconds(1);
@@ -273,7 +273,7 @@ describe("the batch is frozen: what was reviewed is what is signed", () => {
 
   test("TOCTOU: a draft edited (a newer version) between the snapshot and the assertion refuses the whole batch", async () => {
     // Arrange
-    const world = await createOutcomeWorld();
+    const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
     await agentSays(world, KEN_CONTEXT, "followed");
     const confirmer = await prepareConfirmer(world.harness, world.nick);
     const pending = await pendingOf(world.harness, world.nick);
@@ -297,7 +297,7 @@ describe("the batch is frozen: what was reviewed is what is signed", () => {
 
   test("TOCTOU: a page older than the pending set cannot even form a batch", async () => {
     // Arrange
-    const world = await createOutcomeWorld();
+    const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
     await agentSays(world, KEN_CONTEXT, "followed");
     const confirmer = await prepareConfirmer(world.harness, world.nick);
     const pending = await pendingOf(world.harness, world.nick);
@@ -316,7 +316,7 @@ describe("the batch is frozen: what was reviewed is what is signed", () => {
 
   test("a batch must decide every pending draft — leaving one out is refused", async () => {
     // Arrange
-    const world = await createOutcomeWorld();
+    const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
     await agentSays(world, KEN_CONTEXT, "followed");
     await agentSays(world, MIKE_CONTEXT, "followed");
     const confirmer = await prepareConfirmer(world.harness, world.nick);
@@ -339,7 +339,7 @@ describe("the batch is frozen: what was reviewed is what is signed", () => {
 
   test("replay: the same signed answer sent again is refused, and the batch is confirmed once", async () => {
     // Arrange
-    const world = await createOutcomeWorld();
+    const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
     await agentSays(world, KEN_CONTEXT, "followed");
     const confirmer = await prepareConfirmer(world.harness, world.nick);
     const pending = await pendingOf(world.harness, world.nick);
@@ -381,7 +381,7 @@ describe("the batch is frozen: what was reviewed is what is signed", () => {
 
   test("cross-batch: an assertion over one batch's challenge cannot confirm another batch", async () => {
     // Arrange: two batches over the same pending set — one confirms, one discards
-    const world = await createOutcomeWorld();
+    const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
     await agentSays(world, KEN_CONTEXT, "followed");
     const confirmer = await prepareConfirmer(world.harness, world.nick);
     const pending = await pendingOf(world.harness, world.nick);
@@ -435,7 +435,7 @@ describe("the batch is frozen: what was reviewed is what is signed", () => {
 
   test("a batch belongs to the session that formed it: another session cannot sign it", async () => {
     // Arrange: the agent forms a batch in its own UI session
-    const world = await createOutcomeWorld();
+    const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
     await agentSays(world, KEN_CONTEXT, "followed");
     const agentsSession = await prepareConfirmer(world.harness, world.nick);
     const pending = await pendingOf(world.harness, world.nick);
@@ -464,7 +464,7 @@ describe("the batch is frozen: what was reviewed is what is signed", () => {
 
   test("the digest covers the decisions: confirming and discarding the same set sign different terms", async () => {
     // Arrange
-    const world = await createOutcomeWorld();
+    const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
     await agentSays(world, KEN_CONTEXT, "followed");
     const confirmer = await prepareConfirmer(world.harness, world.nick);
     const pending = await pendingOf(world.harness, world.nick);

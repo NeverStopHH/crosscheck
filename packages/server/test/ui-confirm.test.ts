@@ -12,7 +12,7 @@ import { loginUi, uiGet } from "./ui-helpers.ts";
 describe("GET /ui/confirm", () => {
   test("lists each pending draft with who drafted it, what it points at, and the set's fingerprint", async () => {
     // Arrange
-    const world = await createOutcomeWorld();
+    const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
     await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed", session: NICK_SESSION });
     const cookie = await loginUi(world.harness, world.nick.apiKey);
 
@@ -35,7 +35,7 @@ describe("GET /ui/confirm", () => {
 
   test("with nothing pending, it says so and offers nothing to sign", async () => {
     // Arrange
-    const world = await createOutcomeWorld();
+    const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
     const cookie = await loginUi(world.harness, world.nick.apiKey);
 
     // Act
@@ -48,7 +48,7 @@ describe("GET /ui/confirm", () => {
 
   test("another person's drafts never reach the page", async () => {
     // Arrange
-    const world = await createOutcomeWorld();
+    const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
     await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed", session: NICK_SESSION });
     const cookie = await loginUi(world.harness, world.ken.apiKey);
 
@@ -61,7 +61,7 @@ describe("GET /ui/confirm", () => {
 
   test("without a session it is the login, never the drafts", async () => {
     // Arrange
-    const world = await createOutcomeWorld();
+    const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
 
     // Act
     const response = await uiGet(world.harness, "/ui/confirm", null);

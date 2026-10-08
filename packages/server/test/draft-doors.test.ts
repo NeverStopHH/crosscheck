@@ -40,7 +40,7 @@ const pinBody = (id: string): Record<string, unknown> => ({
 describe("the label door drafts", () => {
   test("a label at the terminal's door is a draft of that class; no label counts", async () => {
     // Arrange
-    const world = await createOutcomeWorld();
+    const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
 
     // Act
     const response = await post(world.harness, world.nick, "/api/pilot-marks", {
@@ -65,7 +65,7 @@ describe("the label door drafts", () => {
 
   test("the door still refuses what could never count, and drafts nothing", async () => {
     // Arrange
-    const world = await createOutcomeWorld();
+    const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
 
     // Act
     const response = await post(world.harness, world.nick, "/api/pilot-marks", {
@@ -83,7 +83,7 @@ describe("the label door drafts", () => {
 
   test("the same label again is a repeat: 200, nothing new", async () => {
     // Arrange
-    const world = await createOutcomeWorld();
+    const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
     const body = { repo: REPO, refKind: "hint_delivery", refId: world.delivered.kenContext, mark: "noise", presence: "controlling_terminal" };
     await post(world.harness, world.nick, "/api/pilot-marks", body);
 
@@ -100,7 +100,7 @@ describe("the label door drafts", () => {
 describe("the outcome doors draft", () => {
   test("the agent's door drafts agent_asserted; the answer keeps the fields an older connector reads", async () => {
     // Arrange
-    const world = await createOutcomeWorld();
+    const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
 
     // Act
     const response = await post(world.harness, world.nick, "/api/hint-outcomes", {
@@ -127,7 +127,7 @@ describe("the outcome doors draft", () => {
 
   test("the person's door drafts interactive_terminal_asserted — a terminal is never a proven person", async () => {
     // Arrange
-    const world = await createOutcomeWorld();
+    const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
 
     // Act
     const response = await post(world.harness, world.nick, "/api/hint-outcomes/person", {
@@ -146,7 +146,7 @@ describe("the outcome doors draft", () => {
 
   test("an outcome the hub refuses drafts nothing", async () => {
     // Arrange
-    const world = await createOutcomeWorld({ enrolled: false });
+    const world = await createOutcomeWorld({ enrolled: false, drafts: "pending" });
 
     // Act
     const response = await post(world.harness, world.nick, "/api/hint-outcomes", { repo: REPO, ref: KEN_CONTEXT, outcome: "followed" });
@@ -159,7 +159,7 @@ describe("the outcome doors draft", () => {
 
 describe("the pin doors draft, and a draft pin protects nothing", () => {
   const pinWorld = async (): Promise<{ harness: TestHarness; nick: TestDeveloper }> => {
-    const harness = await createTestHarness();
+    const harness = await createTestHarness({ drafts: "pending" });
     const nick = await createTestDeveloper(harness, "Nick", "nick-pin-doors@example.com");
     await registerTestSession(harness, nick.apiKey, { repo: REPO });
     return { harness, nick };
@@ -249,7 +249,7 @@ describe("the pin doors draft, and a draft pin protects nothing", () => {
 
 describe("the settings doors", () => {
   const settingsWorld = async () => {
-    const harness = await createTestHarness();
+    const harness = await createTestHarness({ drafts: "pending" });
     const nick = await createTestDeveloper(harness, "Nick", "nick-settings-doors@example.com");
     const ken = await createTestDeveloper(harness, "Ken", "ken-settings-doors@example.com");
     return { harness, nick, ken };

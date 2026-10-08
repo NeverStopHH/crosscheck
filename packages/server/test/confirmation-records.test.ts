@@ -125,7 +125,7 @@ const confirmationsOf = async (world: OutcomeWorld, developer: TestDeveloper): P
 };
 
 const confirmedWorld = async (): Promise<OutcomeWorld> => {
-  const world = await createOutcomeWorld();
+  const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
   await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed", session: NICK_SESSION });
   await recordOutcome(world, world.nick, { ref: KEN_CLAIM, outcome: "not_relevant_now", session: NICK_SESSION });
   const confirmer = await prepareConfirmer(world.harness, world.nick);

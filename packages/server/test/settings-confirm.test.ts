@@ -17,7 +17,7 @@ const settingsOf = async (harness: TestHarness, developer: TestDeveloper): Promi
   ((await (await harness.app.request("/api/settings", jsonRequest("GET", developer.apiKey))).json()) as { data: Record<string, unknown> }).data;
 
 const world = async () => {
-  const harness = await createTestHarness();
+  const harness = await createTestHarness({ drafts: "pending" });
   const nick = await createTestDeveloper(harness, "Nick", "nick-settings-confirm@example.com");
   const ken = await createTestDeveloper(harness, "Ken", "ken-settings-confirm@example.com");
   return { harness, nick, ken };
