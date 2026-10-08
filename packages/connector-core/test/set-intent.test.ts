@@ -456,7 +456,7 @@ describe("set_intent", () => {
     expect((await readSessionState(gina.home, gina.hostSessionKey))?.workContextStatus).toBe("blocked");
   });
 
-  test("an unanswered post leaves the acknowledgement uncertain, so SessionEnd sends once more (topics seed 416)", async () => {
+  test("an unanswered post leaves the acknowledgement uncertain, so SessionEnd sends once more (L7)", async () => {
     // Arrange: a gateway that forwards the first post, then answers every record post with 500
     let answer: number | null = null;
     const gateway = gatewayAnswering(() => answer);

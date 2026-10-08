@@ -38,12 +38,13 @@ import { appendRecords } from "../src/spool/append.ts";
 import { readDropDetail } from "../src/spool/drops.ts";
 import { readRefusedLives } from "../src/spool/refused-lives.ts";
 import { flushSpool } from "../src/spool/flush.ts";
-import type { SessionRefusal } from "../src/spool/flush-heal.ts";
+import type { SessionHealer, SessionRefusal } from "../src/spool/flush-heal.ts";
 import { reapSpool } from "../src/spool/reap.ts";
 import { readUnclosedSummary } from "../src/spool/unclosed.ts";
 import { reapStaleSessionStates } from "../src/state/session-reap.ts";
 import {
   allocateSeq,
+  closeSessionState,
   readSessionState,
   sessionStateLockPath,
   updateSessionState,
@@ -92,6 +93,8 @@ let refuseRecords = false;
 let refuseEnds = false;
 /** An end the hub commits whose answer never comes back. */
 let endsLate = false;
+/** A records POST the hub commits whose answer never comes back. */
+let recordsLate = false;
 let registerDelayMs = 0;
 /** One answer per register, in arrival order, ahead of the dials above: a race's script. */
 let registerScript: readonly ("slow" | "refused")[] = [];
@@ -254,6 +257,10 @@ beforeAll(async () => {
       }
       if (request.method === "POST" && pathname === "/api/records" && refuseRecords) {
         return Response.json({ ok: false, error: { code: "unavailable", message: "down" } }, { status: 503 });
+      }
+      if (request.method === "POST" && pathname === "/api/records" && recordsLate) {
+        await fetch(`${hubUrl}${pathname}${search}`, { method: request.method, headers: request.headers, body });
+        return Response.json({ ok: false, error: { code: "unavailable", message: "late" } }, { status: 504 });
       }
       if (request.method === "POST" && pathname.endsWith("/end") && refuseEnds) {
         return Response.json({ ok: false, error: { code: "unavailable", message: "down" } }, { status: 503 });
@@ -649,6 +656,56 @@ describe("a heal asked from a hook in another repo (review finding 7)", () => {
     expect(rows).toEqual([{ repo: REPO_ID }]);
     const contexts = await raw<{ id: string }>("select id from work_contexts where session_id = $1", [next]);
     expect(contexts).toEqual([{ id: `wc_${next}` }]);
+  });
+
+  test("writes the ended life down in both repos, so neither repo's successor files its stragglers into it (review-2 round 9)", async () => {
+    // Arrange: a session bound to acme/api, ended by the hub; an edit of it in
+    // acme/web, flushed by a hook there whose heal lands nothing (every
+    // register refused, so no ladder walks past the life either)
+    const fx = await fixture("foreign-refusal");
+    const life = await register(fx);
+    await flushAsHook(fx);
+    await endSession(fx.hub, life.crosscheckSessionId);
+    const foreignRepoId = "github.com/acme/web";
+    const foreignKey = repoKey(hubUrl, foreignRepoId);
+    const edit = (key: string, file: string) =>
+      appendRecords(
+        fx.home,
+        key,
+        fx.hostSessionKey,
+        [targetRecord(life.workContextId, "file", file, producerOf(life.crosscheckSessionId), new Date())],
+        new Date(),
+      );
+    await edit(foreignKey, "web/refused.ts");
+    const healer = sessionHealer({
+      home: fx.home,
+      repoKey: foreignKey,
+      hub: { ...fx.proxied, repoKey: foreignKey },
+      agentKind: "acp:test",
+      hostSessionKey: fx.hostSessionKey,
+      repoId: foreignRepoId,
+      branch: BRANCH,
+      baseCommit: BASE_COMMIT,
+      guarantees: guaranteeDeclarationFor(ACP_CONNECTOR),
+      now: () => new Date(),
+    });
+    refuseRegisters = true;
+    await flushSpool({ ...fx.hub, repoKey: foreignKey }, { sessionId: life.crosscheckSessionId, developerId, heal: healer }, BUDGET_MS);
+    refuseRegisters = false;
+    // ...one more edit of the life in each repo, and the conversation is gone
+    await edit(fx.key, "api/straggler.ts");
+    await edit(foreignKey, "web/straggler.ts");
+    await closeSessionState(fx.home, fx.hostSessionKey, life.crosscheckSessionId);
+
+    // Act: another conversation flushes both repos
+    const other = await register(fx, fx.hub, `${fx.hostSessionKey}-other`);
+    await flushSpool(fx.hub, { sessionId: other.crosscheckSessionId, developerId }, BUDGET_MS);
+    await flushSpool({ ...fx.hub, repoKey: foreignKey }, { sessionId: other.crosscheckSessionId, developerId }, BUDGET_MS);
+
+    // Assert: each repo's straggler withheld, never filed into the ended life
+    expect(await targetsOf(life.workContextId)).toEqual([]);
+    expect((await readDropDetail(fx.home, fx.key)).byReason).toEqual({ withheld: 1 });
+    expect((await readDropDetail(fx.home, foreignKey)).byReason).toEqual({ rejected: 1, withheld: 1 });
   });
 });
 
@@ -1662,6 +1719,41 @@ describe("a life SessionEnd ended (review-2 round 8, M1)", () => {
  * sender of the work context makes the hub agree — but at SessionEnd there is
  * none: the hub kept the status before it for good.
  */
+/**
+ * A BATCH A HEAL LEAVES ON DISK (review-2 round 9, io seed 1993). The hub
+ * answered `duplicate` for a record it held and refused the life's next one
+ * as ended; the heal stayed pending, so the whole batch stayed on disk — and
+ * once the conversation was over, the next flusher withheld both records as
+ * the refused life's and counted the one the hub holds as lost.
+ */
+describe("a batch a heal leaves on disk", () => {
+  const pendingHeal: SessionHealer = () => Promise.resolve({ outcome: "pending" });
+
+  test("keeps what the hub took off every later count, though its life is refused for good (review-2 round 9, io seed 1993)", async () => {
+    // Arrange: an edit the hub took with its answer lost; then the hub ends the life, and a second edit of it
+    const fx = await fixture("heal-pending-taken");
+    const life = await register(fx);
+    await flushAsHook(fx);
+    await captureTarget(fx, "src/held.ts");
+    recordsLate = true;
+    await flushSpool(fx.proxied, { sessionId: life.crosscheckSessionId, developerId }, BUDGET_MS);
+    recordsLate = false;
+    await endSession(fx.hub, life.crosscheckSessionId);
+    await captureTarget(fx, "src/refused.ts");
+
+    // Act: the life's own flush, whose heal stays pending; the conversation
+    // ends; another conversation's flush drains what it left
+    await flushSpool(fx.hub, { sessionId: life.crosscheckSessionId, developerId, heal: pendingHeal }, BUDGET_MS);
+    await closeSessionState(fx.home, fx.hostSessionKey, life.crosscheckSessionId);
+    const other = await register(fx, fx.hub, `${fx.hostSessionKey}-other`);
+    await flushSpool(fx.hub, { sessionId: other.crosscheckSessionId, developerId }, BUDGET_MS);
+
+    // Assert: the edit the hub holds is counted nowhere; the refused one is withheld
+    expect(await targetsOf(life.workContextId)).toEqual(["src/held.ts"]);
+    expect((await readDropDetail(fx.home, fx.key)).byReason).toEqual({ withheld: 1 });
+  });
+});
+
 describe("a SessionEnd whose life's status the hub never acknowledged (review-2 round 8, L7)", () => {
   /** Every work context the conversation's spool ever held, delivered or not. */
   const workContextsSpooled = async (fx: Fixture): Promise<number> =>

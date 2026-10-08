@@ -414,9 +414,10 @@ const SessionStateObjectSchema = z.looseObject({
    * work context was coming to make the two agree.
    *
    * `uncertain`: a set_intent post since then may have landed and was never
-   * answered, so the hub may hold ITS status instead — SessionEnd sends the
-   * work context whatever the state's status is (topics seed 416). The next
-   * acknowledgement clears it.
+   * answered, so the hub may hold ITS status instead — SessionEnd (or, for a
+   * host that died, session-reap) sends the work context whatever the state's
+   * status is (topics seed 416, sleep seed 10478). The next acknowledgement
+   * clears it.
    */
   workContextAcked: z
     .object({ id: z.string().min(1), status: z.string().min(1), uncertain: z.boolean().optional() })

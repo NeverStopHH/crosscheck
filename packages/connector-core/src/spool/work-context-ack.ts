@@ -16,6 +16,9 @@
  * with an older status, or sends nothing for a work context the hub was
  * never seen to take.
  */
+import type { Envelope } from "@crosscheck/schema";
+
+import { UNKNOWN_DEVELOPER_ID, workContextRecord } from "../capture/records.ts";
 import type { RecordResult } from "../http/hub.ts";
 import { updateSessionState } from "../state/session-state.ts";
 import type { SessionState } from "../state/session-state.ts";
@@ -106,13 +109,64 @@ export const topicsBehindState = (state: SessionState): SessionState["topicConte
 /**
  * Whether the hub last accepted ANOTHER status for the state's work context
  * than the state holds — or may hold another since: a set_intent post after
- * that acceptance went unanswered (`uncertain`, topics seed 416), and a later
- * one that failed may have put the state back on the acknowledged status while
- * the hub took the unanswered one. One it never accepted any status for is not
- * behind but unknown to it: its own copies are on their way or counted, and
- * one more would only be refused with them.
+ * that acceptance went unanswered (`uncertain`; topics seed 416, sleep seed
+ * 10478), and a later one that failed may have put the state back on the
+ * acknowledged status while the hub took the unanswered one. One it never
+ * accepted any status for is not behind but unknown to it: its own copies are
+ * on their way or counted, and one more would only be refused with them.
  */
 export const isHubBehindState = (state: SessionState): boolean =>
   state.workContextStatus !== null &&
   state.workContextAcked?.id === state.workContextId &&
   (state.workContextAcked.uncertain === true || state.workContextAcked.status !== state.workContextStatus);
+
+/**
+ * THE LIFE'S LAST WORK CONTEXTS, from its state, where the hub may be behind
+ * it: what SessionEnd spools ahead of its drain (flows/end-session.ts), and
+ * what session-reap spools for a host that died without a SessionEnd
+ * (state/session-reap.ts) — no later sender would come for either. None for a
+ * state from before `agentKind` was written down: it has no producer to send
+ * it under.
+ */
+export const lastWorkContextRecords = (state: SessionState, now: Date): readonly Envelope[] => {
+  if (state.agentKind === null) {
+    return [];
+  }
+  const producer = {
+    developerId: state.developerId ?? UNKNOWN_DEVELOPER_ID,
+    agentKind: state.agentKind,
+    sessionId: state.crosscheckSessionId,
+  };
+  const own =
+    state.workContextTitle === null || state.workContextStatus === null || !isHubBehindState(state)
+      ? []
+      : [
+          workContextRecord(
+            {
+              workContextId: state.workContextId,
+              sessionId: state.crosscheckSessionId,
+              title: state.workContextTitle,
+              status: state.workContextStatus,
+            },
+            producer,
+            now,
+          ),
+        ];
+  // ...and every TOPIC the hub is behind on, by the same rule (DESIGN.md
+  // "One session, many topics"): its status is the topic's own.
+  const topics = topicsBehindState(state).map((topic) =>
+    workContextRecord(
+      {
+        workContextId: topic.workContextId,
+        sessionId: topic.sessionId,
+        title: topic.title,
+        status: topic.status,
+        branch: topic.branch,
+        baseCommit: topic.baseCommit,
+      },
+      producer,
+      now,
+    ),
+  );
+  return [...own, ...topics];
+};

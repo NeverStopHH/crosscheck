@@ -115,3 +115,15 @@ export const WITHHELD_SENTENCE =
 /** The `rejected` records no line said a cause for: ledgers from before the field. */
 export const UNRECORDED_CAUSE_SENTENCE =
   "with no cause recorded — written by a connector before 1.0, whose ledger kept only the count";
+
+/**
+ * Losses a connector before 1.0 left (spool/loss-report.ts legacyLine): reads
+ * after a count, then the parts, then the remedy. It claims no cause the
+ * ledger never kept — a 0.10 refusal was often a late write into a session
+ * the hub had ended, and only the hub's own log says which.
+ */
+export const LEGACY_LOSS_SENTENCE = "lost by a connector before 1.0, whose ledgers kept only counts";
+
+export const LEGACY_LOSS_REMEDY =
+  "the records are no longer on disk to send again; a 0.10 refusal was often a late write into a " +
+  "session the hub had ended, and only the hub's own log says which";

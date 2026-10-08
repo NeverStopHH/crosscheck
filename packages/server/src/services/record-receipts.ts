@@ -17,6 +17,7 @@ import { and, eq, inArray, lte, sql } from "drizzle-orm";
 import { MS_PER_DAY, RECORD_RECEIPT_PRUNE_CHUNK, RECORD_RECEIPT_RETENTION_DAYS } from "../constants.ts";
 import { recordReceipts } from "../db/schema.ts";
 import type { Db } from "../db/client.ts";
+import { yieldToRequests } from "../db/yield-to-requests.ts";
 import type { Clock } from "../types.ts";
 
 interface Deps {
@@ -97,9 +98,6 @@ const deleteChunk = async (deps: Deps, cutoff: Date): Promise<number> => {
     .returning({ id: recordReceipts.id });
   return pruned.length;
 };
-
-/** The next turn of the event loop, where a request that arrived meanwhile is read. */
-const yieldToRequests = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
 /**
  * Receipts past the retention, on the hub's reaper pass and once at boot —

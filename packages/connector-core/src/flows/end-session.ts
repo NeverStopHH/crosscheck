@@ -27,7 +27,6 @@ import {
   sessionSlug,
   spoolPendingEndPath,
 } from "../config/paths.ts";
-import { UNKNOWN_DEVELOPER_ID, workContextRecord } from "../capture/records.ts";
 import { endSession } from "../http/hub.ts";
 import type { HubContext } from "../http/client.ts";
 import { appendRecords } from "../spool/append.ts";
@@ -38,7 +37,7 @@ import { writeEndMarker } from "../spool/end-marker.ts";
 import type { WorkContextStanding } from "../spool/end-marker.ts";
 import { readTelemetryLossReport } from "../spool/loss-report.ts";
 import { recordRefusedLife } from "../spool/refused-lives.ts";
-import { isHubBehindState, topicsBehindState } from "../spool/work-context-ack.ts";
+import { lastWorkContextRecords } from "../spool/work-context-ack.ts";
 import { seqAt } from "../capture/seq.ts";
 import { lifeRungOf, recordEndedLife } from "../state/session-lineage.ts";
 import { allocateSeq, closeSessionState, crosscheckSessionIdFor, readSessionState } from "../state/session-state.ts";
@@ -144,46 +143,12 @@ const endOnHub = async (
  */
 const spoolLastWorkContext = async (input: EndSessionFlowInput): Promise<void> => {
   const state = await readSessionState(input.home, input.hostSessionKey);
-  if (state?.crosscheckSessionId !== input.crosscheckSessionId || state.agentKind === null) {
+  if (state?.crosscheckSessionId !== input.crosscheckSessionId) {
     return;
   }
-  const producer = {
-    developerId: state.developerId ?? UNKNOWN_DEVELOPER_ID,
-    agentKind: state.agentKind,
-    sessionId: state.crosscheckSessionId,
-  };
-  const own =
-    state.workContextTitle === null || state.workContextStatus === null || !isHubBehindState(state)
-      ? []
-      : [
-          workContextRecord(
-            {
-              workContextId: state.workContextId,
-              sessionId: state.crosscheckSessionId,
-              title: state.workContextTitle,
-              status: state.workContextStatus,
-            },
-            producer,
-            input.now(),
-          ),
-        ];
-  // ...and every TOPIC the hub is behind on, by the same rule (DESIGN.md
-  // "One session, many topics"): its status is the topic's own.
-  const topics = topicsBehindState(state).map((topic) =>
-    workContextRecord(
-      {
-        workContextId: topic.workContextId,
-        sessionId: topic.sessionId,
-        title: topic.title,
-        status: topic.status,
-        branch: topic.branch,
-        baseCommit: topic.baseCommit,
-      },
-      producer,
-      input.now(),
-    ),
-  );
-  const records = [...own, ...topics];
+  // The life's own work context and every topic's the hub may be behind on
+  // (spool/work-context-ack.ts lastWorkContextRecords).
+  const records = lastWorkContextRecords(state, input.now());
   if (records.length > 0) {
     await appendRecords(input.home, input.repoKey, input.hostSessionKey, records, input.now());
   }

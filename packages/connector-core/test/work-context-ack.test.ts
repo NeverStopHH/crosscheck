@@ -8,7 +8,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { sessionSlug } from "../src/config/paths.ts";
-import { ackedIn, isHubBehindState, noteWorkContextAcked } from "../src/spool/work-context-ack.ts";
+import { ackedIn, isHubBehindState, lastWorkContextRecords, noteWorkContextAcked } from "../src/spool/work-context-ack.ts";
 import { deriveSessionState, readSessionState, writeSessionState } from "../src/state/session-state.ts";
 import type { SessionState } from "../src/state/session-state.ts";
 import { makeHome } from "./helpers.ts";
@@ -74,7 +74,7 @@ describe("what the hub acknowledged of a work context", () => {
   });
 });
 
-describe("an acknowledgement a set_intent post left uncertain (topics seed 416)", () => {
+describe("an acknowledgement a set_intent post left uncertain (L7, an unanswered post)", () => {
   test("puts the hub behind the state even on the same status", () => {
     // Arrange: blocked acknowledged; a later post went unanswered, and the state is on blocked again
     const own = state().workContextId;
@@ -101,5 +101,41 @@ describe("an acknowledgement a set_intent post left uncertain (topics seed 416)"
     const after = await readSessionState(home, HOST);
     expect(after?.workContextAcked).toEqual({ id: own, status: "blocked" });
     expect(after === null ? null : isHubBehindState(after)).toBe(false);
+  });
+});
+
+describe("the life's last word (SessionEnd's, and session-reap's for a host that died)", () => {
+  test("covers each topic the hub is behind on, with the topic's own status", () => {
+    // Arrange: the session's own context in step, one topic acknowledged at implementing and moved to testing
+    const base = state({ agentKind: "claude-code", workContextTitle: "main @ api", workContextStatus: "implementing" });
+    const topic = {
+      key: "0a1b2c3d4e5f.1",
+      sessionId: base.crosscheckSessionId,
+      workContextId: `${base.workContextId}~t0a1b2c3d4e5f.1`,
+      branch: "feat/x",
+      branches: ["feat/x"],
+      head: null,
+      title: "feat/x @ api",
+      status: "testing",
+      baseCommit: null,
+      root: "/repos/api-x",
+      registeredAt: "2026-10-07T10:00:00.000Z",
+      lastTouchedAt: "2026-10-07T10:00:00.000Z",
+      ackedStatus: "implementing",
+    };
+    const held = {
+      ...base,
+      workContextAcked: { id: base.workContextId, status: "implementing" },
+      topicContexts: [topic],
+    };
+
+    // Act
+    const records = lastWorkContextRecords(held, new Date("2026-10-07T11:00:00.000Z"));
+
+    // Assert: only the topic, as the topic says
+    const bodies = records.map((record) => record.body as { id?: string; status?: string; branch?: string });
+    expect(bodies.map((body) => [body.id, body.status, body.branch])).toEqual([
+      [topic.workContextId, "testing", "feat/x"],
+    ]);
   });
 });

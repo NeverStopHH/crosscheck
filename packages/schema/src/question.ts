@@ -56,8 +56,19 @@ export type QuestionStatus = z.infer<typeof QuestionStatusSchema>;
  * here: a dynamic import of a render-layer module — even inside a comment —
  * is what the §4.4 render-surface registry looks for, and this schema is not
  * a render surface.
+ *
+ * THE ID GRAMMAR, NOT ONLY AN ALPHABET (the release-gate e2e finding). The
+ * connector's own ids carry a `~` in exactly two places: a healed or resumed
+ * life is `cc_<key>~r<n>` and its work context `wc_cc_<key>~r<n>`
+ * (state/session-lineage.ts), and a topic's work context adds `~t<hex>.<n>`
+ * (feat/topic-contexts, flows/topic-contexts.ts). An alphabet without `~`
+ * turned every pointer to such a context into an id that does not exist, and
+ * refused the right one when an agent typed it. So the pattern is the
+ * grammar — the alphabet, then at most one life suffix, then at most one
+ * topic suffix — and a `~` anywhere else, `~~` (markdown's strikethrough)
+ * above all, is no id.
  */
-export const SAFE_ID_PATTERN = /^[A-Za-z0-9_.:-]+$/;
+export const SAFE_ID_PATTERN = /^[A-Za-z0-9_.:-]+(?:~r[0-9]+)?(?:~t[0-9a-f]+\.[0-9]+)?$/;
 
 /** Long enough for `qn_` plus a uuid, short enough to render on one line. */
 export const MAX_RECORD_ID_LENGTH = 64;

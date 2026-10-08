@@ -37,7 +37,7 @@ import { withProducer } from "../capture/records.ts";
 import { postRecords } from "../http/hub.ts";
 import type { IngestSummary, RecordResult } from "../http/hub.ts";
 import type { HubContext } from "../http/client.ts";
-import { bytesOfLines, lineEnds, readCountedLines, writeCursorOffset } from "./cursor.ts";
+import { bytesOfLines, lineEnds, readCountedLines, writeCountedLines, writeCursorOffset } from "./cursor.ts";
 import { batchLosses } from "./batch-losses.ts";
 import type { BatchLine, SpooledLine } from "./batch-losses.ts";
 import { addCount } from "./counts.ts";
@@ -327,6 +327,37 @@ interface BatchOutcome {
 
 const PINNED: BatchOutcome = { sent: 0, heal: null, healAsked: false, isPinned: true };
 
+const HELD: ReadonlySet<string> = new Set(["accepted", "duplicate"]);
+
+/**
+ * WHAT THE HUB TOOK STAYS TAKEN (review-2 round 9, io seed 1993). A batch the
+ * heal leaves on disk is met again by a later flush, and by then its life may
+ * be refused for good: a record the hub answered as held here was withheld
+ * then, and counted lost though the hub holds it. Its line goes on the
+ * cursor's note (spool/cursor.ts readCountedLines), so no later flush sends or
+ * counts it; the cursor write that passes the batch drops the note.
+ */
+const noteTaken = async (
+  spool: SessionSpool,
+  sendable: readonly SpooledLine[],
+  results: readonly RecordResult[] | undefined,
+): Promise<void> => {
+  const taken = (results ?? []).flatMap((result) =>
+    HELD.has(result.status) ? (sendable[result.index] ?? []) : [],
+  );
+  if (taken.length === 0) {
+    return;
+  }
+  const noted = await readCountedLines(spool.cursorPath, spool);
+  await writeCountedLines(
+    spool.dataPath,
+    spool.cursorPath,
+    spool.offset,
+    new Set([...noted, ...taken.map((line) => line.end)]),
+    spool,
+  );
+};
+
 /**
  * Sends one batch and moves that spool's cursor past it. Returns how many
  * records went, or null when the hub refused them and nothing was consumed.
@@ -355,8 +386,8 @@ const flushOneBatch = async (
   const batch = oneLife(spool.lines.slice(0, BATCH_LINES));
   const consumed = spool.offset + bytesOfLines(spool.pending, batch.length);
   const ends = lineEnds(spool.pending, batch.length, spool.offset);
-  // A line an earlier walk already counted is settled: never sent, or
-  // counted, twice (spool/batch-losses.ts).
+  // A line an earlier walk already counted, or saw the hub take, is settled:
+  // never sent, or counted, twice (spool/batch-losses.ts, noteTaken above).
   const earlier = await readCountedLines(spool.cursorPath, spool);
   const lines: readonly BatchLine[] = batch
     .map((line, index) => ({ record: parseLine(line), end: ends[index] ?? consumed }))
@@ -430,6 +461,7 @@ const flushOneBatch = async (
     },
   });
   if (healed === null) {
+    await noteTaken(spool, sendable, first.summary.results);
     return null;
   }
   const summary = healed.summary;

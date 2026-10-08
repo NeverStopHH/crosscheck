@@ -536,6 +536,29 @@ One class is a documented residual, I1u, and the sweep counts it without failing
 write down anywhere: the ledger line and its fallback marker both failed, so nothing on that disk can count it. Each
 `io` seed that found it is a fixed scenario asserting that this, and nothing else, happened.
 
+**The simulation as a standing method** (review-2 round 9). Each review round found its bugs in a few thousand seeds
+across the generators, a few per thousand, so the sweep runs at three widths:
+
+- **Every pull request** runs 300 seeds of `shipped` with the suite, plus every seed any sweep ever found failing.
+  Those seeds live in the historical corpus, `connector-core/test/simulation/seed-corpus.ts`: each with the seed, its
+  generator, the invariant it broke, the bug in one line and the commit that fixed it. Each runs as a fixed scenario
+  with its shrunk events, since a generator's draw for a seed changes as the generator grows. A residual names its class
+  and may fall only in that class; a fixed bug allows none. Moving the fixed scenarios into the corpus cost PR CI 1.7 s
+  (14.1 to 15.8 s for the fixed scenarios), for one seed the round-9 sweep added (focus 270, L1) and the corpus check.
+- **Every night**, `.github/workflows/simulation-nightly.yml` sweeps every generator (`shipped`, `io`, `sleep`, `focus`,
+  `all`, `topics`) at 2000 seeds each, one job per generator. The starting seed moves on with each run, so the nights keep drawing
+  seeds no sweep has seen. A failing seed fails its job and is listed in the run's summary table. The job uploads each
+  generator's report: its failing seeds, the shrunk events and trace of the first three, its residuals and its
+  over-count. 2000 `focus` seeds take about 9 minutes on a laptop; each job is bounded at 150 minutes.
+- **Before a release**, the release-candidate sweep runs 5000 seeds of every generator:
+  `bun run packages/connector-core/scripts/sim-sweep.ts --rc --report sim-report`, or the workflow by hand with `rc`.
+  The same script runs any slice (`--generators io,focus --seeds 500 --base 4001`). One seed replays alone with
+  `SIM_ADD=<generator> SIM_SEED_BASE=<seed> SIM_SEEDS=1 bun test test/spool-simulation.test.ts -t "seeded scenarios"`.
+
+A seed the nightly or the release-candidate sweep finds failing goes into the corpus with the fix, using the shrunk
+events from its report. Until the fix lands it is marked `open` (and `racy`, if it fails on some interleavings only):
+the sweep skips it, and its fixed scenario is marked failing.
+
 **A night's reap is revoked by the first heartbeat** (review-2 round 9, H1; a regression from the mid-life heal). The
 hub reaps a session silent past `SESSION_REAP_STALE_HOURS`, so every laptop that slept loses its session overnight. A
 register or a record from that session revives it, because both prove it alive, but a heartbeat was answered
@@ -612,7 +635,8 @@ timeout. The prune now runs on the hub's own timer pass and once at boot, off th
 rows took 230 ms. It yields a turn of the event loop after every statement, because PGlite answers in microtasks and a
 loop that never yields reads no request until it is done. Against a million receipts past the retention beside 300 000
 live ones, a query issued during the prune waited 12 ms at most (p99 1 ms). Before the yield it was not served until the
-prune ended, five seconds later.
+prune ended, five seconds later. The skeleton backfill a hub runs at boot walks its pages the same way, and now yields
+after every statement too (`db/yield-to-requests.ts`).
 
 **A bad envelope id refuses its own record, never the batch** (review-2 round 9, M5). Ingest read the receipts for the
 raw ids of a whole flush before it parsed a single envelope. A NUL in one id failed that read, and with it the batch: a
@@ -662,6 +686,14 @@ prints it: an I4 on a conversation where a set_intent ran beside another set_int
   refused.
 - The retention comment is corrected. A receipt is read only for a re-send whose producer has ended. A machine off for
   days re-sends under a live producer and reads none.
+
+**What the hub took stays taken when a heal leaves its batch on disk** (review-2 round 9, io seed 1993, found by the
+round's own sweep). A flush whose life the hub had ended sent a batch the hub answered `duplicate` for one record and
+`session_ended` for the next. The heal stayed pending, so the whole batch stayed on disk, the held record with it. Once
+the conversation was over, the next flusher withheld both as the refused life's records and counted the held one lost
+(I1, 8 of 16 replays at round 8's code). The lines the hub answered as held now go on the cursor's note of settled lines
+(`spool/cursor.ts`), which a later flush neither sends nor counts. The seed passes 16 of 16 replays and is a fixed
+scenario.
 
 **Three clocks that were one** (review-2 round 8, H1 and H2). The refused-lives note dropped an entry
 `MAX_SPOOL_AGE_DAYS` after it was written. A flush reads a silent host session as abandoned after the same span. Reap
@@ -1014,6 +1046,29 @@ its drift is measured from the session's commit as before. The git lane's commit
 "git_commit"`, a value an old hub's target schema does not know: it answers `rejected` and the flush counts each
 such target under `hub_rejected` (row 5) — counted, never silent, and the remedy is the hub upgrade. A new hub takes an old connector's records unchanged: no `branch`, no `baseCommit`, every target under
 the session's one context (`server/test/topic-contexts.test.ts`, back-compat).
+
+**What a connector before 1.0 lost is counted, not migrated** (the 1.0 release gate: "the old late-write losses
+migrated or counted"). The code of 0.10.0 says what is left of a record its hub refused:
+
+- The drop ledger keeps a line of `{at, count, reason: "rejected"}`, with no cause, no record kind and no envelope id.
+- The record itself stays in the session's spool file, behind the cursor, only until reap removes the delivered spool.
+- After `MAX_SPOOL_AGE_DAYS`, reap folds the ledger into an archive of the total alone, with no reason.
+- A 0.10.0 connector sent the hub no loss report, so the hub never heard of them.
+
+Nothing can be re-sent. No line says which records were refused, and the spools are mostly gone. Those records also
+name lives the hub had ended: under a healed life they would be filed into the ended session past its end, which is the
+filing the ownership rule and the refused-lives note exist to prevent (I2, I3).
+
+So they are counted as what the ledgers can prove, on a line of their own, `legacy losses`, in `doctor` and on
+`status`'s `losses:` line. It shows the rejections recorded without a cause, and an archive's total from before reasons
+were kept, read under the reason word `legacy` rather than beside an unreadable ledger's floor. It does not call them
+late writes. The pilot's diagnosis from the hub's own log (2026-10-05) put 225 of 433 rejections down to an ended
+session, not all of them, so the line says a refusal then was often a late write, and that only the hub's log says
+which.
+
+The wire is unchanged: they go under the hub's kinds `hub_rejected` and `unattributed`, with their own instants.
+`crosscheck pilot`'s coverage proof reads them only through the hub's window rule (§4.5), so they count against the
+window they happened in and none after it (`server/test/coverage-losses.test.ts`).
 
 ### 4.8 What stays local, with the proof that it cannot affect a judgment
 
