@@ -8,6 +8,7 @@ import {
   PRE_TOOL_USE_MATCHER,
   SUBAGENT_RETURN_HOOK,
   SUBAGENT_RETURN_MATCHER,
+  TURN_END_HOOK,
 } from "@crosscheck/connector-core/constants.ts";
 /**
  * Matches every launcher form `init` resolves on its OWN, and ONLY those —
@@ -338,8 +339,12 @@ export const buildSettingsPlan = (
       PreToolUse: [group(`${prefix} hook pre-tool-use`, PRE_TOOL_USE_MATCHER)],
       // The Tier-1 summarizer gate (DESIGN.md §3 Tier 1): ASYNC, because the
       // hook returns nothing — it gates deterministically and spawns the
-      // detached worker; the model must never wait on it.
-      Stop: [group(`${prefix} hook stop`, undefined, true)],
+      // detached worker; the model must never wait on it. Beside it the one
+      // SYNC Stop entry (round 3, F-M2; constants.ts TURN_END_HOOK): the
+      // turn's end re-asks the tripwire about files the 30 s rest kept from
+      // asking, and its `systemMessage` reaches the person only because it
+      // is sync. A turn with nothing resting costs it one state read.
+      Stop: [group(`${prefix} hook stop`, undefined, true), group(`${prefix} hook ${TURN_END_HOOK}`)],
     },
     statusLine: { type: "command", command: `${prefix} statusline` },
     forceStatusline,

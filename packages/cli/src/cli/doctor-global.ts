@@ -27,6 +27,7 @@ import {
   MCP_SERVER_KEY,
   SUBAGENT_RETURN_HOOK,
   SUBAGENT_RETURN_MATCHER,
+  TURN_END_HOOK,
 } from "@crosscheck/connector-core/constants.ts";
 import { isOwnedMcpEntry } from "@crosscheck/connector-core/config/mcp-config.ts";
 import { readTextOrNull } from "@crosscheck/connector-core/config/paths.ts";
@@ -133,22 +134,44 @@ export const subagentReturnDrift = (entry: OwnedHookEntry): string | null => {
 };
 
 /**
- * What doctor calls an owned entry: its event, or the subagent hook's own
- * key — and a subagent-return entry that drifted from init's registration
- * is keyed apart, with the drift, so it neither satisfies the requirement nor
- * hides why.
+ * The SECOND crosscheck entry on Stop (round 3, F-M2): the sync turn-end
+ * hook, named by event and subcommand for the same reason — the async
+ * capture hook already makes Stop "registered".
+ */
+export const TURN_END_KEY = `Stop (${TURN_END_HOOK})`;
+
+const isTurnEndCommand = (entry: OwnedHookEntry): boolean =>
+  entry.event === "Stop" && entry.command.trimEnd().endsWith(`hook ${TURN_END_HOOK}`);
+
+/**
+ * How a registered turn-end entry differs from what init writes: only its
+ * async flag can — an async one tells the person nothing — since Claude Code
+ * matches no tool on Stop.
+ */
+export const turnEndDrift = (entry: OwnedHookEntry): string | null => (entry.isAsync ? "registered async" : null);
+
+/** `key`, or `key` and the drift that keeps it from counting. */
+const keyedWith = (key: string, drift: string | null): string => (drift === null ? key : `${key} ${drift}`);
+
+/**
+ * What doctor calls an owned entry: its event, or a sync companion hook's own
+ * key — and a companion that drifted from init's registration is keyed
+ * apart, with the drift, so it neither satisfies the requirement nor hides
+ * why.
  */
 export const hookKeyOf = (entry: OwnedHookEntry): string => {
-  if (!isSubagentReturnCommand(entry)) {
-    return entry.event;
+  if (isSubagentReturnCommand(entry)) {
+    return keyedWith(SUBAGENT_RETURN_KEY, subagentReturnDrift(entry));
   }
-  const drift = subagentReturnDrift(entry);
-  return drift === null ? SUBAGENT_RETURN_KEY : `${SUBAGENT_RETURN_KEY} ${drift}`;
+  return isTurnEndCommand(entry) ? keyedWith(TURN_END_KEY, turnEndDrift(entry)) : entry.event;
 };
 
-/** The drifted subagent-return keys among these, as a clause for the hooks line ("" when none). */
-export const subagentReturnDriftClause = (keys: readonly string[]): string => {
-  const drifted = keys.filter((key) => key.startsWith(SUBAGENT_RETURN_KEY) && key !== SUBAGENT_RETURN_KEY);
+/** The sync companions doctor requires by their own key. */
+const COMPANION_KEYS: readonly string[] = [SUBAGENT_RETURN_KEY, TURN_END_KEY];
+
+/** The drifted companion keys among these, as a clause for the hooks line ("" when none). */
+export const companionDriftClause = (keys: readonly string[]): string => {
+  const drifted = keys.filter((key) => COMPANION_KEYS.some((companion) => key.startsWith(companion) && key !== companion));
   return drifted.length === 0 ? "" : ` (found ${drifted.join(", ")})`;
 };
 

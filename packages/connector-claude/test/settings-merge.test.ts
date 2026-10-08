@@ -116,6 +116,37 @@ describe("buildSettingsPlan", () => {
     expect(JSON.stringify(stop)).toContain("crosscheck hook stop");
     expect(stop?.hooks[0]?.async).toBe(true);
   });
+
+  test("Stop carries a second, SYNC group: the turn-end re-check, whose systemMessage only a sync hook can show (round 3, F-M2)", () => {
+    // Act
+    const [capture, turnEnd] = PLAN.hooks["Stop"] ?? [];
+
+    // Assert
+    expect(capture?.hooks[0]?.command).toBe("crosscheck hook stop");
+    expect(turnEnd?.hooks[0]?.command).toBe("crosscheck hook turn-end");
+    expect(turnEnd?.hooks[0]?.async).toBeUndefined();
+    expect(turnEnd?.matcher).toBeUndefined();
+  });
+
+  test("an install from before the turn-end hook gains it on re-init, and keeps a foreign Stop hook", () => {
+    // Arrange: what init wrote before — one crosscheck Stop group — beside a foreign one
+    const before = {
+      hooks: {
+        Stop: [
+          { hooks: [{ type: "command", command: "say done" }] },
+          { hooks: [{ type: "command", command: "crosscheck hook stop", async: true }] },
+        ],
+      },
+    };
+
+    // Act
+    const upgraded = mergeClaudeSettings(before, PLAN);
+
+    // Assert
+    const commands = ((upgraded.settings["hooks"] as Record<string, unknown>)["Stop"] as { hooks: { command: string }[] }[])
+      .flatMap((group) => group.hooks.map((hook) => hook.command));
+    expect(commands).toEqual(["say done", "crosscheck hook stop", "crosscheck hook turn-end"]);
+  });
 });
 
 describe("mergeClaudeSettings", () => {

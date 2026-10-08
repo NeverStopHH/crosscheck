@@ -308,7 +308,7 @@ const statedReason = async (
  * pair twice, two windows on one piece of work, is ONE line for the person
  * (round 2, L7).
  */
-const onePerKey = (groups: readonly CollisionNotice[]): readonly CollisionNotice[] =>
+export const onePerKey = (groups: readonly CollisionNotice[]): readonly CollisionNotice[] =>
   groups.filter((group, index) => groups.findIndex((other) => other.key === group.key) === index);
 
 /** One live answer for one file, as the person's half of the hook takes it. */
@@ -395,7 +395,7 @@ interface FoundReasons {
 const NO_REASONS: Reasons = { teammate: null, landed: null };
 
 /** The live half's once-per key: this file, this teammate's work context. */
-const liveAskKey = (file: string, session: TripwireSession): string =>
+export const liveAskKey = (file: string, session: TripwireSession): string =>
   JSON.stringify([file, session.developerId, session.workContextId]);
 
 /** Which of the two questions this edit already has an answer to. */

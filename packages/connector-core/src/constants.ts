@@ -1928,6 +1928,31 @@ export const SUBAGENT_RETURN_MATCHER = "Agent|Task";
  */
 export const SUBAGENT_RETURN_BUDGET_RATIO = 2;
 /**
+ * The SECOND Stop registration, and the only SYNC one (round 3, F-M2):
+ * `crosscheck hook turn-end`. Within TRIPWIRE_RECHECK_TTL_MS of an answer
+ * this session fully dealt with, an edit of the file asks the hub nothing —
+ * so a teammate who started on it inside that rest was seen by no edit, and
+ * if the turn's edits of the file all fell inside the window, by none to
+ * come. When the turn ends, this hook asks again for the files still
+ * resting and tells the person, before the turn is over, about any teammate
+ * the record has not told them of. The capture Stop hook stays async: an
+ * async hook's `systemMessage` is shown to nobody.
+ */
+export const TURN_END_HOOK = "turn-end";
+/**
+ * The most resting files one turn's end asks about, newest rest first — one
+ * bounded tripwire call each, made side by side. A turn that edited more
+ * files than this inside the window leaves the rest to their next edit.
+ */
+export const TURN_END_RECHECK_MAX_FILES = 3;
+/**
+ * Two request timeouts, like SUBAGENT_RETURN_BUDGET_RATIO: one is the reserve
+ * that carries the output out, the other the room the tripwire calls are
+ * made in — the hook holds the end of a turn the person waits on. A turn
+ * with nothing resting answers before the budget is even resolved.
+ */
+export const TURN_END_BUDGET_RATIO = 2;
+/**
  * The least request timeout a prompt's hub call is given once a relay drained
  * FIRST holds the rest of the budget (connector-claude hooks/user-prompt-
  * submit.ts; round 2, M3): `AbortSignal.timeout` wants a positive delay, and

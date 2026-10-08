@@ -239,12 +239,13 @@ import type { McpServerEntry } from "@crosscheck/connector-core/config/mcp-confi
 import { claudeUserMcpPath, isOwnedCommand } from "@crosscheck/connector-claude";
 import {
   SUBAGENT_RETURN_KEY,
+  TURN_END_KEY,
+  companionDriftClause,
   globalInstallChecks,
   hookKeyOf,
   ownedHookEntries,
   readGlobalWiring,
   readProjectWiring,
-  subagentReturnDriftClause,
   userMcpUnknown,
 } from "./doctor-global.ts";
 import { unreadableClause } from "./init-io.ts";
@@ -406,22 +407,25 @@ const settingsOnly = (checks: readonly Check[]): SettingsInspection => ({
 const REQUIRED_HOOK_EVENTS = REGISTERED_HOOK_EVENT_NAMES;
 
 /**
- * What `hooks registered` requires: every event above, and the sync
- * subagent-return hook beside PostToolUse's capture hook (review H1b), which
- * the event name alone cannot vouch for (doctor-global.ts `hookKeyOf`). The
- * firing line keeps REQUIRED_HOOK_EVENTS: that hook fires only when a
- * subagent returns, and "never" there is no symptom.
+ * What `hooks registered` requires: every event above, and the two sync
+ * companions the event names alone cannot vouch for (doctor-global.ts
+ * `hookKeyOf`) — the subagent-return hook beside PostToolUse's capture hook
+ * (review H1b) and the turn-end hook beside Stop's (round 3, F-M2). The
+ * firing line keeps REQUIRED_HOOK_EVENTS: the one fires only when a subagent
+ * returns, the other answers an empty turn before it marks anything, and
+ * "never" there is no symptom.
  */
-const REQUIRED_HOOK_KEYS: readonly string[] = [...REQUIRED_HOOK_EVENTS, SUBAGENT_RETURN_KEY];
+const REQUIRED_HOOK_KEYS: readonly string[] = [...REQUIRED_HOOK_EVENTS, SUBAGENT_RETURN_KEY, TURN_END_KEY];
 
 /**
  * The required keys whose absence is a WARN, not a FAIL (round 2, L9): every
- * install from before the subagent-return hook lacks it, and capture works
- * without it — what is lost is the moment a foreground subagent's collision
- * is relayed, which then waits for the next prompt. A FAIL there read every
- * pre-round-2 install as broken; the WARN names the command that fixes it.
+ * install from before a companion hook lacks it, and capture works without
+ * it — what is lost is a collision told in the same turn (a foreground
+ * subagent's relay, a teammate who joined a resting file), which then waits
+ * for the next prompt or edit. A FAIL there read every older install as
+ * broken; the WARN names the command that fixes it.
  */
-const WARN_ONLY_HOOK_KEYS: ReadonlySet<string> = new Set([SUBAGENT_RETURN_KEY]);
+const WARN_ONLY_HOOK_KEYS: ReadonlySet<string> = new Set([SUBAGENT_RETURN_KEY, TURN_END_KEY]);
 
 /** FAIL when a capture hook is missing; WARN when only a warn-only key is. */
 const missingHooksLevel = (missing: readonly string[]): Check["level"] =>
@@ -457,7 +461,7 @@ const hooksViaScopes = (wiring: GlobalWiring, projectDetail: string): Check => {
     return check(
       missingHooksLevel(missing),
       "hooks registered",
-      `user-scope hooks in ${wiring.settingsPath} are missing: ${missing.join(", ")}${subagentReturnDriftClause(wiring.hookEvents)} — rerun crosscheck init --global`,
+      `user-scope hooks in ${wiring.settingsPath} are missing: ${missing.join(", ")}${companionDriftClause(wiring.hookEvents)} — rerun crosscheck init --global`,
     );
   }
   // A user settings file nobody could read may hold the very hooks this
@@ -548,7 +552,7 @@ const checkSettings = async (
   // id is a name the reader has never seen with nothing to do about it —
   // which ends either in a hand-edited settings.json that drifts from what
   // init writes, or in the FAIL being ignored while capture stays silent.
-  const drift = subagentReturnDriftClause(ownedCommands.map(hookKeyOf));
+  const drift = companionDriftClause(ownedCommands.map(hookKeyOf));
   const missingHooksDetail = `missing: ${missing.join(", ")}${drift} — rerun crosscheck init to register them`;
   const hooksCheck =
     ownedCommands.length === 0

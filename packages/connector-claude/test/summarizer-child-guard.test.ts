@@ -127,6 +127,7 @@ const payloadFor = (fix: Fixture, name: HookName): string => {
       tool_input: { description: "x", prompt: "y" },
       tool_response: { status: "completed" },
     },
+    "turn-end": { ...base, hook_event_name: "Stop", stop_hook_active: false },
     "post-tool-use-failure": {
       ...base,
       hook_event_name: "PostToolUseFailure",

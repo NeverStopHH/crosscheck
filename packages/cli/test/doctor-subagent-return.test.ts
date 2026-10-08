@@ -134,6 +134,55 @@ describe("a subagent-return entry is checked for how it is registered, not only 
   });
 });
 
+const isTurnEnd = (group: HookGroup): boolean => group.hooks.some((hook) => hook.command.endsWith("hook turn-end"));
+
+/** `init` in a fresh repo, then its Stop groups rewritten by `change`. */
+const projectInstallStops = async (
+  slug: string,
+  change: (groups: readonly HookGroup[]) => readonly HookGroup[],
+): Promise<{ readonly repo: string; readonly env: Record<string, string> }> => {
+  const home = await makeHome(slug);
+  const repo = await makeRepo(slug, { remote: "git@github.com:acme/api.git" });
+  paths.push(home, repo);
+  const env = doctorEnv(home);
+  expect((await runCli(["init", "--command-prefix", "crosscheck"], env, repo)).exitCode).toBe(0);
+  const settingsPath = join(repo, ".claude", "settings.json");
+  const settings = JSON.parse(await readFile(settingsPath, "utf8")) as Settings;
+  const next = { ...settings, hooks: { ...settings.hooks, Stop: change(settings.hooks["Stop"] ?? []) } };
+  await writeFile(settingsPath, JSON.stringify(next, null, 2), "utf8");
+  return { repo, env };
+};
+
+describe("the turn-end hook is required beside Stop's capture hook the same way (round 3, F-M2)", () => {
+  test("an install from before it WARNs with the command that adds it, and never FAILs", async () => {
+    // Arrange
+    const { repo, env } = await projectInstallStops("dte-missing", (groups) => groups.filter((group) => !isTurnEnd(group)));
+
+    // Act
+    const hooksLine = hooksLineOf((await runCli(["doctor"], env, repo)).stdout);
+
+    // Assert
+    expect(hooksLine).toContain("WARN");
+    expect(hooksLine).not.toContain("FAIL");
+    expect(hooksLine).toContain("missing: Stop (turn-end)");
+    expect(hooksLine).toContain("rerun crosscheck init");
+  });
+
+  test("registered async, it tells the person nothing, so it does not count", async () => {
+    // Arrange
+    const { repo, env } = await projectInstallStops("dte-async", (groups) =>
+      groups.map((group) => (isTurnEnd(group) ? { ...group, hooks: group.hooks.map((hook) => ({ ...hook, async: true })) } : group)),
+    );
+
+    // Act
+    const hooksLine = hooksLineOf((await runCli(["doctor"], env, repo)).stdout);
+
+    // Assert
+    expect(hooksLine).toContain("WARN");
+    expect(hooksLine).toContain("found Stop (turn-end) registered async");
+  });
+});
+
 describe("a missing subagent-return hook is a WARN with its fix in user scope too (round 2, L9)", () => {
   test("a global install from before the hook is warned to re-run init --global", async () => {
     // Arrange: a global install, then its subagent-return group dropped

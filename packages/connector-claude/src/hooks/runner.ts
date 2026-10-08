@@ -6,6 +6,7 @@ import {
   SESSION_START_BUDGET_RATIO,
   STOP_BUDGET_RATIO,
   SUBAGENT_RETURN_BUDGET_RATIO,
+  TURN_END_BUDGET_RATIO,
   USER_PROMPT_SUBMIT_BUDGET_RATIO,
 } from "@crosscheck/connector-core/constants.ts";
 import {
@@ -35,6 +36,7 @@ import { readSessionState } from "@crosscheck/connector-core/state/session-state
 import { extractFilePaths, parseHookPayload } from "../capture/tool-events.ts";
 import type { HookPayload } from "../capture/tool-events.ts";
 import { hasNothingToRelay } from "./subagent-return.ts";
+import { hasNothingToRecheck } from "./turn-end.ts";
 
 export type HookName =
   | "session-start"
@@ -44,7 +46,8 @@ export type HookName =
   | "user-prompt-submit"
   | "pre-tool-use"
   | "stop"
-  | "subagent-return";
+  | "subagent-return"
+  | "turn-end";
 
 export interface HookContext {
   readonly payload: HookPayload;
@@ -90,6 +93,7 @@ const BUDGET_RATIOS: Readonly<Record<HookName, number>> = {
   "pre-tool-use": PRE_TOOL_USE_BUDGET_RATIO,
   stop: STOP_BUDGET_RATIO,
   "subagent-return": SUBAGENT_RETURN_BUDGET_RATIO,
+  "turn-end": TURN_END_BUDGET_RATIO,
 };
 
 interface ResolvedHookRepo {
@@ -327,6 +331,12 @@ export const runHookWith = async (
   // identity's git spawns, and without a fired marker (round 2, M2;
   // hooks/subagent-return.ts).
   if (name === "subagent-return" && (await hasNothingToRelay(stdin, env))) {
+    return "";
+  }
+  // The turn-end hook fires at the end of EVERY turn, and nearly every turn
+  // has no file resting: answered the same way (round 3, F-M2;
+  // hooks/turn-end.ts).
+  if (name === "turn-end" && (await hasNothingToRecheck(stdin, env))) {
     return "";
   }
   try {

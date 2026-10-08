@@ -1653,6 +1653,23 @@ export const isTripwireFresh = (state: SessionState, file: string, now: Date): b
   return ageMs >= 0 && ageMs < TRIPWIRE_RECHECK_TTL_MS;
 };
 
+/**
+ * The files RESTING now — their live answer dealt with less than
+ * TRIPWIRE_RECHECK_TTL_MS ago, so an edit of them asks the hub nothing —
+ * newest rest first: what the turn-end hook asks about again (round 3, F-M2).
+ */
+export const restingFiles = (state: SessionState, now: Date): readonly string[] =>
+  [...(state.tripwireCheckedFiles ?? [])]
+    .filter((check) => isTripwireFresh(state, check.file, now))
+    .sort((left, right) => Date.parse(right.at) - Date.parse(left.at))
+    .map((check) => check.file);
+
+/** `file` resting no longer: its next edit asks the hub again (round 3, F-M2). */
+export const withoutTripwireRest = (state: SessionState, file: string): SessionState => ({
+  ...state,
+  tripwireCheckedFiles: (state.tripwireCheckedFiles ?? []).filter((check) => check.file !== file),
+});
+
 /** `file`'s live answer dealt with now — one entry per file, FIFO-capped like the asked files. */
 export const withTripwireChecked = (state: SessionState, file: string, now: Date): SessionState => {
   const merged = [...(state.tripwireCheckedFiles ?? []).filter((check) => check.file !== file), { file, at: now.toISOString() }];

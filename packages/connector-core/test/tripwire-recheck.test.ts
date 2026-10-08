@@ -8,7 +8,13 @@
 import { describe, expect, test } from "bun:test";
 
 import { MAX_TRIPWIRE_ASKED_FILES, TRIPWIRE_RECHECK_TTL_MS } from "../src/constants.ts";
-import { deriveSessionState, isTripwireFresh, withTripwireChecked } from "../src/state/session-state.ts";
+import {
+  deriveSessionState,
+  isTripwireFresh,
+  restingFiles,
+  withTripwireChecked,
+  withoutTripwireRest,
+} from "../src/state/session-state.ts";
 import type { SessionState } from "../src/state/session-state.ts";
 
 const NOW = new Date("2026-10-07T12:00:00.000Z");
@@ -68,5 +74,36 @@ describe("a settled tripwire answer rests its file for the re-check window", () 
     expect(many.tripwireCheckedFiles).toHaveLength(MAX_TRIPWIRE_ASKED_FILES);
     expect(many.tripwireCheckedFiles?.[0]?.file).toBe("src/f3.ts");
     expect(restamped.tripwireCheckedFiles).toEqual([{ file: FILE, at: at(1_000).toISOString() }]);
+  });
+});
+
+describe("the files a turn's end asks about again (round 3, F-M2)", () => {
+  test("only files still resting, the newest rest first", () => {
+    // Arrange: one rest past the window, two inside it, one stamped ahead of the clock
+    const rested = [
+      { file: "src/old.ts", at: at(-TRIPWIRE_RECHECK_TTL_MS - 1) },
+      { file: "src/older-inside.ts", at: at(-20_000) },
+      { file: "src/newer-inside.ts", at: at(-1_000) },
+      { file: "src/ahead.ts", at: at(60_000) },
+    ].reduce((next, check) => withTripwireChecked(next, check.file, check.at), state());
+
+    // Act
+    const files = restingFiles(rested, NOW);
+
+    // Assert
+    expect(files).toEqual(["src/newer-inside.ts", "src/older-inside.ts"]);
+  });
+
+  test("a file let out of its rest is no longer fresh, and the others keep theirs", () => {
+    // Arrange
+    const rested = withTripwireChecked(withTripwireChecked(state(), FILE, NOW), "src/b.ts", NOW);
+
+    // Act
+    const unrested = withoutTripwireRest(rested, FILE);
+
+    // Assert
+    expect(isTripwireFresh(unrested, FILE, at(1))).toBe(false);
+    expect(isTripwireFresh(unrested, "src/b.ts", at(1))).toBe(true);
+    expect(rested.tripwireCheckedFiles).toHaveLength(2);
   });
 });
