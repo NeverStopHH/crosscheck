@@ -164,6 +164,9 @@ export const mikeGhostRow = (sharedTargets: readonly unknown[], sharedTargetCoun
 /** A hub that answers SessionStart's fetch block with the given ghost rows. */
 const startGhostHub = (ghostChecks: readonly unknown[]): { readonly url: string; readonly stop: () => void } => {
   const server = Bun.serve({
+    // Bound to the loopback the URL below names, never the wildcard: no other
+    // process can then answer this hub's port.
+    hostname: "127.0.0.1",
     port: 0,
     fetch: (request) => {
       const { pathname } = new URL(request.url);

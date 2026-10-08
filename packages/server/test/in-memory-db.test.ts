@@ -58,6 +58,7 @@ const measureMbPerDatabase = async (): Promise<number> => {
        console.log((rssMb() - before) / ${String(MEASURED_DATABASES)});
        process.exit();`,
     ],
+    env: { ...process.env },
     cwd: SERVER_DIR,
     stdout: "pipe",
     stderr: "ignore",

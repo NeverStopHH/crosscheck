@@ -3,8 +3,8 @@
  * bunfig.toml that runs tests: the repo root's and each package's own, so
  * both `bun test` invocation cwds get it) and wraps the global `fetch`: a
  * request to the port a real hub listens on (DEFAULT_PORT 7100, on any
- * loopback spelling) or to any tailnet host (`*.ts.net`) is refused before a
- * socket is opened (the rules: test/network-guard-rules.ts).
+ * loopback spelling) or to any tailnet host is refused before a socket is
+ * opened (the rules: test/network-guard-rules.ts).
  *
  * Why it exists: a developer machine runs a REAL hub on 127.0.0.1:7100, and
  * three config-only tests once named exactly that URL. None of them connected,
@@ -17,8 +17,38 @@
  * test/network-guard.test.ts proves both doors and that this very run was
  * wired. A refused request rejects the way a network failure does, so
  * fail-open code paths stay fail-open, and each refusal is counted.
+ *
+ * AND THE CHILDREN (round 3, F-M3). A wrapped `fetch` guards this process
+ * only, and tests spawn hooks, CLIs, servers and workers of their own. So the
+ * run that starts first also:
+ *
+ *   - deletes the hub variables a developer's shell may export
+ *     (HUB_ENV_KEYS) from `process.env`, so no child spawned with
+ *     `{...process.env}` is pointed at the real hub or the real archive;
+ *   - points CROSSCHECK_HOME at a temp directory of its own, so no such child
+ *     reads or writes ~/.crosscheck;
+ *   - exports `BUN_OPTIONS=--preload=<this file>`, so every bun child spawned
+ *     with that env runs this guard before its own entry;
+ *   - marks the env (GUARD_CHILD_ENV), so a child keeps what it was handed —
+ *     its test hub's URL among it — and only wraps its own `fetch`.
+ *
+ * A child spawned with NO `env:` gets the environment this process STARTED
+ * with, not `process.env` (Bun.spawn and node:child_process alike), so none
+ * of the above reaches it: network-guard.test.ts fails on any bun child in a
+ * test tree spawned that way.
  */
-import { BLOCKED_FETCHES_KEY, GUARD_INSTALLED_KEY, isRealHubUrl } from "./network-guard-rules.ts";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import {
+  BLOCKED_FETCHES_KEY,
+  GUARD_CHILD_ENV,
+  GUARD_INSTALLED_KEY,
+  HUB_ENV_KEYS,
+  isRealHubUrl,
+  withGuardPreload,
+} from "./network-guard-rules.ts";
 import type { GuardMarks } from "./network-guard-rules.ts";
 
 type FetchInput = Parameters<typeof fetch>[0];
@@ -48,4 +78,22 @@ const guarded = (input: FetchInput, init?: RequestInit): Promise<Response> => {
 if (marks[GUARD_INSTALLED_KEY] !== true) {
   globalThis.fetch = Object.assign(guarded, { preconnect: unguarded.preconnect }) as typeof fetch;
   marks[GUARD_INSTALLED_KEY] = true;
+}
+
+/** What the first run hands every child it spawns with `{...process.env}`: no hub, a home of its own, this guard. */
+const guardTheChildren = (): void => {
+  for (const key of HUB_ENV_KEYS) {
+    delete process.env[key];
+  }
+  const home = mkdtempSync(join(tmpdir(), "cx-test-home-"));
+  process.env["CROSSCHECK_HOME"] = home;
+  process.on("exit", () => {
+    rmSync(home, { recursive: true, force: true });
+  });
+  process.env["BUN_OPTIONS"] = withGuardPreload(process.env["BUN_OPTIONS"], import.meta.path);
+  process.env[GUARD_CHILD_ENV] = "1";
+};
+
+if (process.env[GUARD_CHILD_ENV] !== "1") {
+  guardTheChildren();
 }

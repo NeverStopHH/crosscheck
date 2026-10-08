@@ -516,6 +516,7 @@ describe("flush lock — a holder that exits inside the section", () => {
            process.exit(0);
          });`,
       ],
+      env: { ...process.env },
       stdout: "pipe",
       stderr: "inherit",
     });
@@ -557,6 +558,7 @@ describe("flush lock — a holder that exits inside the section", () => {
            process.exit(0);
          });`,
       ],
+      env: { ...process.env },
       stdout: "pipe",
       stderr: "inherit",
     });

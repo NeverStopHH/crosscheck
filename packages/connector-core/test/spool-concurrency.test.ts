@@ -93,6 +93,7 @@ const runWorker = async (
       String(PAD_BYTES),
       endSession ? "end" : "keep",
     ],
+    env: { ...process.env },
     stdout: "pipe",
     stderr: "pipe",
     stdin: "ignore",
