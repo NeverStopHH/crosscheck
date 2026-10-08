@@ -185,6 +185,13 @@ const noise = (
     { isInteractive: () => options.interactive ?? true },
   );
 
+/**
+ * Booting the in-process hub (PGlite) and seeding its sessions took longer
+ * than bun's 5 s hook default on a loaded machine (the load run's round 5);
+ * the boot is not what this file measures.
+ */
+const HUB_BOOT_TIMEOUT_MS = 60_000;
+
 beforeAll(async () => {
   const db = await createDb();
   server = serveLoopback({
@@ -243,7 +250,7 @@ beforeAll(async () => {
     repo: REPO_ID,
     pilotEnrolled: true,
   });
-});
+}, HUB_BOOT_TIMEOUT_MS);
 
 afterAll(async () => {
   server.stop(true);

@@ -37,6 +37,13 @@ const PROMPT = "next one please";
 let hub: DraftHub;
 const cleanups: string[] = [];
 
+/**
+ * Booting the in-process hub (PGlite) and seeding its drafts took longer
+ * than bun's 5 s hook default on a loaded machine (the load run's round 5);
+ * the boot is not what this file measures.
+ */
+const HUB_BOOT_TIMEOUT_MS = 60_000;
+
 beforeAll(async () => {
   hub = await bootDraftHub({
     label: "claude-nudge",
@@ -46,7 +53,7 @@ beforeAll(async () => {
   });
   await hub.seedDraft({ kind: "root_cause", body: "The reaper closes a flushing session", ageMs: OLD_MS });
   await hub.seedDraft({ kind: "decision", body: "Keep the spool cap at 1500 lines", ageMs: OLD_MS });
-});
+}, HUB_BOOT_TIMEOUT_MS);
 
 afterAll(async () => {
   await hub.close();

@@ -131,8 +131,17 @@ jobs:
     # job would give a flaky assertion several more chances to redden a pull
     # request for no extra signal. The test file's header carries the measured
     # oversubscription sweep and the triage rule derived from it.
+    #
+    # The two capture-latency files carry one PURE STOPWATCH each (the "one
+    # spool append" p95 < 5 ms, and the ACP flood whose only clock is bun's
+    # per-test timeout). They are gated on CX_BUDGET_LANE
+    # (connector-core/test/fixtures/budget-lane.ts): every ordinary `bun test`
+    # skips them loudly, and only this lane — isolated, same thresholds — runs
+    # them. The rest of each file runs in both places, as before.
     name: Hook budgets
     runs-on: ubuntu-latest
+    env:
+      CX_BUDGET_LANE: "1"
     steps:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
@@ -140,7 +149,9 @@ jobs:
       - run: |
           bun test \
             packages/connector-claude/test/hook-reserve.test.ts \
-            packages/connector-claude/test/hook-time-budget.test.ts
+            packages/connector-claude/test/hook-time-budget.test.ts \
+            packages/connector-claude/test/capture-latency.test.ts \
+            packages/connector-acp/test/capture-latency.test.ts
 
   mutation:
     # A check nobody proved can fail is decoration. This re-introduces the

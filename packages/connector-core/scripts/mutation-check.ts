@@ -24161,6 +24161,11 @@ const runTest = async (testPath: string): Promise<number> => {
     cwd: REPO_ROOT,
     stdout: "ignore",
     stderr: "ignore",
+    // A guard gated to the Hook budgets lane (connector-core/test/fixtures/
+    // budget-lane.ts) must run when it is the guard: one guard file at a
+    // time is the same isolation that lane gives it. Set here rather than
+    // only in ci.yml so a local run proves the same anchors CI does.
+    env: { ...process.env, CX_BUDGET_LANE: "1" },
   });
   return proc.exited;
 };

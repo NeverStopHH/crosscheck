@@ -89,9 +89,16 @@ const TIMEOUT_MS = "4000";
 let hub: CursorTestHub;
 const cleanups: string[] = [];
 
+/**
+ * Booting the in-process hub (PGlite) took longer than bun's 5 s hook
+ * default on a loaded machine (the load run's round 5); the boot is not what
+ * this file measures.
+ */
+const HUB_BOOT_TIMEOUT_MS = 60_000;
+
 beforeAll(async () => {
   hub = await bootCursorHub("cursor-injection");
-});
+}, HUB_BOOT_TIMEOUT_MS);
 
 afterAll(async () => {
   await hub.close();
