@@ -729,13 +729,14 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     // DESIGN.md §4 again, the other half: an injected claim states its trust
-    // labels. This drops the confidence check, so an unlabelled body prints.
+    // labels. This drops the confidence label, so the body prints as settled.
+    // (Retargeted by the hub hardening's strict prove: the old mutation
+    // dropped the null-check, and the guard caught only the TypeError the
+    // label line then threw, never the injection the label names.)
     label: "a hedged root cause is injected as a settled answer",
     file: `${CORE}/src/briefing/render.ts`,
-    from: `    entry.rootCauseConfidence === null ||
-    entry.rootCauseConfidence === undefined
-`,
-    to: "    entry.rootCause === undefined\n",
+    from: "  const labels = `confidence ${entry.rootCauseConfidence.toFixed(CONFIDENCE_DECIMALS)} · ${axes} · provenance declared${validityLabel}`;",
+    to: "  const labels = `${axes} · provenance declared${validityLabel}`;",
     test: `${CORE}/test/briefing-solved.test.ts`,
     because:
       "a teammate's 0.05 guess — legal, honest, and what publish_claim's own " +
@@ -6156,11 +6157,14 @@ export const MUTATIONS: readonly Mutation[
     // is spliced beside the header where the fitter cannot reach it.
     label: "a briefing says what the team knows, not how far it saw",
     file: `${CORE}/src/briefing/render.ts`,
+    // Repaired by the hub hardening's item 6: the presence notice now sits
+    // between the header and this line; the mutation still drops only it.
     from: `  const lines = sections.reduce<readonly string[]>(appendSection, [
     header,
+    ...presenceLines,
     ...coverageLines,
   ]);`,
-    to: "  const lines = sections.reduce<readonly string[]>(appendSection, [header]);",
+    to: "  const lines = sections.reduce<readonly string[]>(appendSection, [header, ...presenceLines]);",
     test: `${CORE}/test/coverage-render.test.ts`,
     because:
       "the one SessionStart line that says how far the rest can be trusted " +
@@ -7624,10 +7628,15 @@ export const MUTATIONS: readonly Mutation[
   {
     // FOUND ON THE 1.0 INTEGRATION BRANCH. Five specs each added a hub-backed
     // doctor check; sequentially, a hub that never answers cost N timeouts.
+    // Repaired by the hub hardening's strict prove: `sequentially` never
+    // existed, so the old mutation only threw a ReferenceError. The array's
+    // reads start as the literal is built, so no edit here can serialise them;
+    // this re-introduces their COST, nine timeouts before the block resolves,
+    // which is what the runtime bound in the guard measures.
     label: "doctor waits one timeout per check instead of one in total",
     file: `${CLI}/src/cli/doctor.ts`,
     from: "  ] = await Promise.all([",
-    to: "  ] = await sequentially([",
+    to: "  ] = await (async (reads) => { await Bun.sleep(9 * hubCtx.timeoutMs); return Promise.all(reads); })([",
     test: `${CLI}/test/doctor-latency.test.ts`,
     because:
       "the nine hub reads are independent, so awaiting them in turn makes " +
@@ -22113,8 +22122,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the hub status reports no search docs pending",
     file: `${SERVER}/src/routes/hub-status.ts`,
-    from: "    ok(c, { searchDocsPending: await countPendingDocs(deps.db) }),\n",
-    to: "    ok(c, { searchDocsPending: 0 }),\n",
+    // Repaired by the hub hardening: the answer grew a transport block.
+    from: "      searchDocsPending: await countPendingDocs(deps.db),\n",
+    to: "      searchDocsPending: 0,\n",
     test: `${SERVER}/test/doc-upgrade-window.test.ts`,
     because: "a teammate whose search comes back thin during the upgrade is never told why",
   },
@@ -27822,6 +27832,604 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/launcher-identity.test.ts`,
     because: "a launcher that hangs on --version, and so would hang every hook, reads PASS",
   },
+  // The hub listened on every interface (hub hardening, review M7).
+  {
+    label: "a new data dir is recorded as listening on every interface",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "SELECT CASE WHEN to_regclass('developers') IS NULL THEN 'loopback'",
+    to: "SELECT CASE WHEN to_regclass('developers') IS NULL THEN 'all_interfaces'",
+    test: `${SERVER}/test/listen.test.ts`,
+    because: "every new hub listens on every network its machine joins, over plain http",
+  },
+  {
+    label: "a data dir from before the setting is recorded as loopback",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "THEN 'loopback' ELSE 'all_interfaces' END",
+    to: "THEN 'loopback' ELSE 'loopback' END",
+    test: `${SERVER}/test/listen.test.ts`,
+    because: "the upgrade quietly stops answering every teammate who reaches the hub over the tailnet",
+  },
+  {
+    label: "the listen plan ignores the data dir's loopback default",
+    file: `${SERVER}/src/http/listen.ts`,
+    from: '  if (input.listenDefault === "loopback") {',
+    to: "  if (false) {",
+    test: `${SERVER}/test/listen.test.ts`,
+    because: "a new hub falls back to every interface although its data dir says loopback",
+  },
+  {
+    label: "CROSSCHECK_LISTEN takes a hostname",
+    file: `${SERVER}/src/http/listen.ts`,
+    from: "        if (isIP(address) === 0) {",
+    to: "        if (false) {",
+    test: `${SERVER}/test/listen.test.ts`,
+    because: "where the hub listens is decided by a DNS answer at boot",
+  },
+  {
+    label: "CROSSCHECK_LISTEN set but empty reads as unset",
+    file: `${SERVER}/src/http/listen.ts`,
+    from: "  if (entries.length === 0) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/listen.test.ts`,
+    because: "an operator who meant to restrict the hub gets a hub listening nowhere, or wherever the default says",
+  },
+  {
+    label: "every interface is accepted beside a specific address",
+    file: `${SERVER}/src/http/listen.ts`,
+    // Repaired by the review's L2: the wildcard test is by canonical address now.
+    from: "  if (addresses.length > 1 && addresses.some(isWildcardAddress)) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/listen.test.ts`,
+    because: "the list reads as restricted while 0.0.0.0 in it still listens everywhere",
+  },
+  {
+    label: "an address no interface has passes the listen check",
+    file: `${SERVER}/src/http/listen.ts`,
+    from: "    if (!canListenAt(address)) {",
+    to: "    if (false) {",
+    test: `${SERVER}/test/listen.test.ts`,
+    because: "a mistyped tailnet IP is found only after the database has booted, with Bun's bare error",
+  },
+  {
+    label: "a listen list binds every interface instead of its addresses",
+    file: `${SERVER}/src/http/listen.ts`,
+    from: "      servers.push(Bun.serve({ hostname, port: servers[0]?.port ?? port, fetch }));",
+    to: "      servers.push(Bun.serve({ port: servers[0]?.port ?? port, fetch }));",
+    test: `${SERVER}/test/listen.test.ts`,
+    because: "CROSSCHECK_LISTEN=127.0.0.1 still answers the café's Wi-Fi",
+  },
+  {
+    label: "the boot checks listen addresses only after the database",
+    file: `${SERVER}/src/index.ts`,
+    from: "    assertListenable(configuredListen);",
+    to: "    void configuredListen;",
+    test: `${SERVER}/test/listen-boot.test.ts`,
+    because: "an address this machine lacks still writes a PGlite cluster before the hub refuses",
+  },
+  {
+    label: "the boot never reads the data dir's listen default",
+    file: `${SERVER}/src/index.ts`,
+    from: "    listenDefault: await readListenDefault(db),",
+    to: '    listenDefault: "all_interfaces",',
+    test: `${SERVER}/test/listen-boot.test.ts`,
+    because: "every hub listens on every interface whatever its data dir recorded",
+  },
+  {
+    label: "a hub on every interface by default boots without a warning",
+    file: `${SERVER}/src/index.ts`,
+    from: "    console.warn(legacyListenWarning(listeningPort));",
+    to: "    void listeningPort;",
+    test: `${SERVER}/test/listen-boot.test.ts`,
+    because: "the upgraded pilot hub keeps answering every network and nobody is told what to set",
+  },
+  // X-Forwarded-* was believed from any peer (hub hardening, review M7).
+  {
+    label: "X-Forwarded-* is believed from any peer",
+    file: `${SERVER}/src/http/forwarded.ts`,
+    from: "  return peer !== null && (isLoopbackAddress(peer) || deps.trustedProxies.includes(peer));",
+    to: "  return true;",
+    test: `${SERVER}/test/forwarded-trust.test.ts`,
+    because: "a LAN peer talking to :7100 directly passes as https by writing one header",
+  },
+  {
+    label: "a trusted-proxy CIDR covers only its network address",
+    file: `${SERVER}/src/http/forwarded.ts`,
+    from: "    list.addSubnet(network, prefix, family);",
+    to: "    list.addAddress(network, family);",
+    test: `${SERVER}/test/forwarded-trust.test.ts`,
+    because: "the Docker kit's Caddy on 172.18.0.5 is listed as 172.18.0.0/16 and still counts as nobody's proxy",
+  },
+  {
+    label: "a trusted proxy may be named by hostname",
+    file: `${SERVER}/src/http/forwarded.ts`,
+    from: "    if (family === null || extra.length > 0) {",
+    to: "    if (extra.length > 0) {",
+    test: `${SERVER}/test/forwarded-trust.test.ts`,
+    because: "the hub starts with Node's argument error instead of saying which entry is not an address",
+  },
+  {
+    label: "a trusted-proxy prefix past the address width is passed to the parser",
+    file: `${SERVER}/src/http/forwarded.ts`,
+    from: "    if (!Number.isInteger(prefix) || prefix > maxPrefix) {",
+    to: "    if (false) {",
+    test: `${SERVER}/test/forwarded-trust.test.ts`,
+    because: "10.0.0.0/33 stops the hub with a RangeError that names no setting",
+  },
+  {
+    label: "the login cookie reads X-Forwarded-Proto from any peer",
+    file: `${SERVER}/src/routes/ui.tsx`,
+    from: "  const forwardedProto = trustedForwardedProto(c, deps);",
+    to: '  const forwardedProto = c.req.header("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();',
+    test: `${SERVER}/test/forwarded-trust.test.ts`,
+    because: "isSecureTransport says https for a header any LAN peer can write, and the name invites reuse as a gate",
+  },
+  // A localhost ceremony was believed behind a proxy (hub hardening, review H6).
+  {
+    label: "a localhost ceremony runs on a hub served over https",
+    file: `${SERVER}/src/routes/ui-ceremony.ts`,
+    from: "  return hasHttpsOrigin(deps.webauthnOrigins) || isTrustedProxied(c, deps);",
+    to: "  return isTrustedProxied(c, deps);",
+    test: `${SERVER}/test/ui-ceremony-localhost.test.ts`,
+    because: "an agent on the person's other Mac gets a signature whose prompt said only localhost",
+  },
+  {
+    label: "a localhost ceremony runs through tailscale serve",
+    file: `${SERVER}/src/routes/ui-ceremony.ts`,
+    from: "  return hasHttpsOrigin(deps.webauthnOrigins) || isTrustedProxied(c, deps);",
+    to: "  return hasHttpsOrigin(deps.webauthnOrigins);",
+    test: `${SERVER}/test/ui-ceremony-localhost.test.ts`,
+    because: "behind serve every remote request has a loopback peer, so the remote localhost ceremony is open again",
+  },
+  {
+    label: "a localhost ceremony is never switched off",
+    file: `${SERVER}/src/routes/ui-ceremony.ts`,
+    from: "  if (isLocalOriginSwitchedOff(c, deps, origin)) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/ui-ceremony-localhost.test.ts`,
+    because: "options and verify both take localhost from anybody tailscale serve forwards",
+  },
+  {
+    label: "a loopback-IP origin is not taken for localhost",
+    file: `${SERVER}/src/services/webauthn.ts`,
+    from: "  return isLocalhostName(hostname) || isLoopbackAddress(unbracketed);",
+    to: "  return isLocalhostName(hostname);",
+    test: `${SERVER}/test/ui-ceremony-localhost.test.ts`,
+    because: "http://127.0.0.1 names this machine as much as localhost does and slips past the switch",
+  },
+  {
+    label: "a proxied request is recognised only by RFC 7239 Forwarded",
+    file: `${SERVER}/src/http/forwarded.ts`,
+    from: "    (name) => name.startsWith(FORWARDED_HEADER_PREFIX) || name === RFC7239_FORWARDED_HEADER,",
+    to: "    (name) => name === RFC7239_FORWARDED_HEADER,",
+    test: `${SERVER}/test/ui-ceremony-localhost.test.ts`,
+    because: "tailscale serve sends X-Forwarded-For, never Forwarded, so its requests read as the hub's own browser",
+  },
+  // An agent's key could release an artifact in the web UI (hub hardening, review M2).
+  {
+    label: "a key-opened web session releases an artifact with a form post",
+    file: `${SERVER}/src/routes/ui-pages.tsx`,
+    from: '  router.post("/artifacts/:id/approve", (c) => refuseFormRelease(c));',
+    to:
+      '  router.post("/artifacts/:id/approve", async (c) => { const { setArtifactApproval } = await import("../services/artifacts.ts"); ' +
+      'await setArtifactApproval(deps.db, c.get("developer").id, c.req.param("id"), true); return c.redirect("/ui/approvals", 303); });',
+    test: `${SERVER}/test/ui-approvals.test.ts`,
+    because: "any agent holding the API key logs in, reads the CSRF token and discloses its person's artifact to the team",
+  },
+  {
+    // Replaced by the review of the hub hardening, M3: withdrawing is the more
+    // private direction and is a plain form again; the defect is now refusing it.
+    label: "the owner cannot withdraw a release without a cooled passkey",
+    file: `${SERVER}/src/routes/ui-pages.tsx`,
+    from: '  router.post("/artifacts/:id/revoke", (c) => withdrawFromForm(c, deps));',
+    to: '  router.post("/artifacts/:id/revoke", (c) => refuseFormRelease(c));',
+    test: `${SERVER}/test/ui-approvals.test.ts`,
+    because: "for the day a re-enrolled passkey cools off, nobody can hide a release an agent made",
+  },
+  {
+    label: "an artifact release signs no content",
+    file: `${SERVER}/src/routes/ui-ceremony-artifacts.ts`,
+    from: "    terms: { contentDigest: digestOf(owned.content) },",
+    to: "    terms: {},",
+    test: `${SERVER}/test/ui-approvals.test.ts`,
+    because: "a signature given for the content on the page releases whatever the row holds by the time it verifies",
+  },
+  {
+    label: "a release ceremony names somebody else's artifact",
+    file: `${SERVER}/src/services/artifacts.ts`,
+    from: "        eq(agentSessions.developerId, ownerDeveloperId),\n      ),\n    )\n    .limit(1);",
+    to: "      ),\n    )\n    .limit(1);",
+    test: `${SERVER}/test/ui-approvals.test.ts`,
+    because: "a teammate's prompt is minted over an artifact that is not theirs, and the id's existence leaks",
+  },
+  {
+    label: "the approvals page loses the CSP its ceremony script needs",
+    file: `${SERVER}/src/routes/ui-pages.tsx`,
+    from: '    c.header("Content-Security-Policy", UI_PASSKEY_CSP);',
+    to: "    void UI_PASSKEY_CSP;",
+    test: `${SERVER}/test/ui-approvals.test.ts`,
+    because: "the browser blocks passkey.js under the strict CSP, so the person cannot release anything at all",
+  },
+  // The presence opt-out hid security events (hub hardening, item 5).
+  {
+    label: "the presence opt-out hides a key rotation from the team",
+    file: `${SERVER}/src/services/events.ts`,
+    from: "  sql`(${inArray(events.kind, [...SECURITY_EVENT_KINDS])} OR NOT EXISTS (",
+    to: "  sql`(false OR NOT EXISTS (",
+    test: `${SERVER}/test/security-events-feed.test.ts`,
+    because: "an agent switches its person's presence off with the API key and its own key rotation vanishes from every feed",
+  },
+  {
+    label: "a work-activity event is exempt from the presence opt-out",
+    file: `${SERVER}/src/constants.ts`,
+    from: "  EVENT_KINDS.PRESENCE_REENABLED,\n];",
+    to: "  EVENT_KINDS.PRESENCE_REENABLED,\n  EVENT_KINDS.SESSION_STARTED,\n];",
+    test: `${SERVER}/test/security-events-feed.test.ts`,
+    because: "an opted-out person's session starts reach every colleague's feed, the activity timeline the opt-out exists to withhold",
+  },
+  // A presence opt-out could be undone silently with the API key (hub hardening, item 6).
+  {
+    label: "a presence re-enable is silent",
+    file: `${SERVER}/src/services/developer-settings.ts`,
+    from: "    if (before[0]?.presenceOptOut === true && !optOut) {",
+    to: "    if (false) {",
+    test: `${SERVER}/test/presence-reenable.test.ts`,
+    because: "an agent holding the key switches a works-council opt-out off and nobody, the person included, is told",
+  },
+  {
+    label: "a presence re-enable is never told to the person",
+    file: `${SERVER}/src/services/developer-settings.ts`,
+    // Repaired by the review's M1: the notice no longer ends at an opt-out.
+    from: "    presenceReenabledAt: await presenceReenableNotice(db, developerId, now),",
+    to: "    presenceReenabledAt: null,",
+    test: `${SERVER}/test/presence-reenable.test.ts`,
+    because: "the event sits in the feed while the one person it concerns hears nothing on briefing, status or doctor",
+  },
+  {
+    label: "a presence re-enable leaves the feed with the next opt-out",
+    file: `${SERVER}/src/constants.ts`,
+    from: "  EVENT_KINDS.PRESENCE_REENABLED,\n];",
+    to: "];",
+    test: `${SERVER}/test/presence-reenable.test.ts`,
+    because: "the agent undoes the opt-out, then restores it, and the record of the undo vanishes from every colleague's feed",
+  },
+  {
+    label: "the briefing never carries the presence notice",
+    file: `${CORE}/src/flows/briefing.ts`,
+    from: "    ...(presenceNotice === null ? {} : { presenceNotice }),\n",
+    to: "",
+    test: `${CORE}/test/briefing-presence-notice.test.ts`,
+    because: "the SessionStart briefing, the one surface every session shows, says nothing of an undone opt-out",
+  },
+  {
+    label: "a briefing with only the presence notice stays silent",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "    presenceLines.length === 0 &&\n",
+    to: "",
+    test: `${CORE}/test/briefing-presence-notice.test.ts`,
+    because: "on a quiet repo, the usual case, the notice is rendered away with the rest of an empty briefing",
+  },
+  {
+    label: "doctor passes a presence opt-out switched back off",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: '  if (reenabled !== null) {\n    return check("WARN", "privacy settings", reenabled);',
+    to: '  if (false) {\n    return check("WARN", "privacy settings", reenabled);',
+    test: `${CLI}/test/presence-reenabled-cli.test.ts`,
+    because: "doctor prints PASS presence visible over an opt-out an agent undid",
+  },
+  {
+    label: "status leaves out a presence opt-out switched back off",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "        ...(reenabledLine === null ? [] : [reenabledLine]),\n",
+    to: "",
+    test: `${CLI}/test/presence-reenabled-cli.test.ts`,
+    because: "status says presence: visible and nothing about who made it so",
+  },
+  // Doctor and the boot say how the hub is reachable (hub hardening, M7 and H6).
+  {
+    label: "the hub status hides a hub on every interface",
+    file: `${SERVER}/src/routes/hub-status.ts`,
+    from: '        listensOnEveryInterface: deps.listen === "legacy_all_interfaces",',
+    to: "        listensOnEveryInterface: false,",
+    test: `${SERVER}/test/hub-status-transport.test.ts`,
+    because: "every member's doctor passes over the upgraded pilot hub that still answers the café's Wi-Fi",
+  },
+  {
+    label: "the hub status hides a localhost origin beside an https one",
+    file: `${SERVER}/src/routes/hub-status.ts`,
+    from: "        localhostBesideHttps: hasLocalhostBesideHttps(deps.webauthnOrigins),",
+    to: "        localhostBesideHttps: false,",
+    test: `${SERVER}/test/hub-status-transport.test.ts`,
+    because: "people keep enrolling passkeys at a localhost origin the hub refuses, and nobody says why",
+  },
+  {
+    label: "the booted hub never tells hub-status how it decided to listen",
+    file: `${SERVER}/src/index.ts`,
+    from: "    listen: listenPlan.kind,\n",
+    to: "",
+    test: `${SERVER}/test/listen-boot.test.ts`,
+    because: "the flag is tested only where nothing listens, and the real hub always answers false",
+  },
+  {
+    label: "a localhost origin beside an https one boots without a warning",
+    file: `${SERVER}/src/index.ts`,
+    from: "  if (hasLocalhostBesideHttps(webauthnOrigins)) {\n    console.warn(",
+    to: "  if (false) {\n    console.warn(",
+    test: `${SERVER}/test/listen-boot.test.ts`,
+    because: "the operator of the README's old origin list learns of the refusal only from a person who could not approve",
+  },
+  {
+    label: "doctor passes a hub on every interface",
+    file: `${CLI}/src/cli/doctor-hub-transport.ts`,
+    from: "    ...(transport.listensOnEveryInterface\n",
+    to: "    ...(false\n",
+    test: `${CLI}/test/doctor-hub-transport.test.ts`,
+    because: "the hub tells doctor it listens everywhere and doctor prints nothing with the fix",
+  },
+  {
+    label: "doctor passes a localhost origin beside an https one",
+    file: `${CLI}/src/cli/doctor-hub-transport.ts`,
+    from: "    ...(transport.localhostBesideHttps\n",
+    to: "    ...(false\n",
+    test: `${CLI}/test/doctor-hub-transport.test.ts`,
+    because: "nobody is told to drop the localhost origin that keeps refusing their passkey",
+  },
+  {
+    label: "doctor never prints the hub transport lines",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    ...hubTransportChecks(hubStatus),\n",
+    to: "",
+    test: `${CLI}/test/doctor-hub-transport.test.ts`,
+    because: "both transport WARNs are built and dropped before the report",
+  },
+  {
+    label: "a malformed transport block costs doctor its search line",
+    file: `${CORE}/src/http/hub.ts`,
+    from: "  transport: HubTransportSchema.optional().catch(undefined),",
+    to: "  transport: HubTransportSchema.optional(),",
+    test: `${CLI}/test/doctor-hub-transport.test.ts`,
+    because: "one wrong flag from a hub makes the whole status unreadable, and the search rebuild line vanishes with it",
+  },
+  // Review of the hub hardening, M1: on, watched, off again.
+  {
+    label: "a later opt-out ends the presence re-enable notice",
+    file: `${SERVER}/src/services/developer-settings.ts`,
+    from: "    presenceReenabledAt: await presenceReenableNotice(db, developerId, now),",
+    to: "    presenceReenabledAt: presenceOptOut ? null : await presenceReenableNotice(db, developerId, now),",
+    test: `${SERVER}/test/presence-reenable.test.ts`,
+    because: "an agent switches presence on, lets the team watch, switches it off, and the person is never told",
+  },
+  {
+    label: "status and doctor say presence is still on after it was switched off again",
+    file: `${CORE}/src/briefing/presence-notice.ts`,
+    from: "  return isOptedOutNow\n    ? `presence was turned back on at ${instant} via an API key, and is off again now; ` +",
+    to: "  return false\n    ? `presence was turned back on at ${instant} via an API key, and is off again now; ` +",
+    test: `${CLI}/test/presence-reenabled-cli.test.ts`,
+    because: "the person reads advice to switch presence off that is already off, and nothing about the exposure in between",
+  },
+  {
+    label: "the briefing says presence is still on after it was switched off again",
+    file: `${CORE}/src/briefing/presence-notice.ts`,
+    from: "  return isOptedOutNow\n    ? `Your presence opt-out was switched off at ${instant} through an API key, which any agent holding the key can do, and is on again now",
+    to: "  return false\n    ? `Your presence opt-out was switched off at ${instant} through an API key, which any agent holding the key can do, and is on again now",
+    test: `${CORE}/test/briefing-presence-notice.test.ts`,
+    because: "the session is told to restore an opt-out that is already restored, and not that teammates watched in between",
+  },
+  // Review of the hub hardening, M3 and X7: withdrawing is frictionless, and owner-scoped.
+  {
+    label: "the withdraw form takes no CSRF token",
+    file: `${SERVER}/src/routes/ui-pages.tsx`,
+    from: '  if (!(await isPostedCsrfValid(c, deps))) {\n    return forbidden(c, "Invalid or missing CSRF token.");\n  }\n  const artifactId = c.req.param("id") ?? "";',
+    to: '  if (false) {\n    return forbidden(c, "Invalid or missing CSRF token.");\n  }\n  const artifactId = c.req.param("id") ?? "";',
+    test: `${SERVER}/test/ui-approvals.test.ts`,
+    because: "any page the person opens can hide their release with a cross-site form",
+  },
+  {
+    label: "the release UPDATE checks no owner",
+    file: `${SERVER}/src/services/artifacts.ts`,
+    from: "            AND owner_session.developer_id = ${viewerDeveloperId}\n",
+    to: "",
+    test: `${SERVER}/test/ui-approvals.test.ts`,
+    because: "a teammate's withdraw form hides somebody else's release, and the release path keeps one owner check instead of two",
+  },
+  {
+    label: "the operator's re-hide withdraws nothing",
+    file: `${SERVER}/src/services/artifacts.ts`,
+    from: "    .where(and(eq(artifacts.id, artifactId), eq(artifacts.sensitivity, NEEDS_APPROVAL_SENSITIVITY)))",
+    to: '    .where(and(eq(artifacts.id, artifactId), eq(artifacts.sensitivity, "team_visible")))',
+    test: `${SERVER}/test/ui-approvals.test.ts`,
+    because: "during an incident the admin token answers but the release stays visible to the team",
+  },
+  {
+    label: "the operator's re-hide takes any key",
+    file: `${SERVER}/src/routes/artifacts.ts`,
+    from: '  router.use("*", requireAdmin(deps.adminToken));',
+    to: '  router.use("*", async (_c, next) => { await next(); });',
+    test: `${SERVER}/test/ui-approvals.test.ts`,
+    because: "every agent holding any member key hides every member's releases",
+  },
+  // Review of the hub hardening, L1: sign A, release B.
+  {
+    label: "a release UPDATE ignores the digest it was signed over",
+    file: `${SERVER}/src/services/artifacts.ts`,
+    from: "          : [sql`encode(sha256(convert_to(${artifacts.content}, 'UTF8')), 'hex') = ${signedContentDigest}`]),",
+    to: "          : []),",
+    test: `${SERVER}/test/ui-approvals.test.ts`,
+    because: "the first feature that edits an artifact turns a signature over one content into the release of another",
+  },
+  {
+    label: "a verified release writes without the digest it signed",
+    file: `${SERVER}/src/routes/ui-ceremony-artifacts.ts`,
+    from: "    isApproving ? String(signedDigest) : undefined,",
+    to: "    undefined,",
+    test: `${SERVER}/test/ui-approvals.test.ts`,
+    because: "the UPDATE's digest check exists and the ceremony never asks for it",
+  },
+  // Review of the hub hardening, L2, L4, X8 and X9: the listen addresses and the port probe.
+  {
+    label: "a listen wildcard is judged by its spelling",
+    file: `${SERVER}/src/http/listen.ts`,
+    from: "        return canonicalAddress(address);",
+    to: "        return address;",
+    test: `${SERVER}/test/listen.test.ts`,
+    because: "0:0:0:0:0:0:0:0 beside 127.0.0.1 passes as a restricted list and binds every interface",
+  },
+  {
+    label: "the IPv4-mapped wildcard stands beside an address",
+    file: `${SERVER}/src/http/listen.ts`,
+    from: ' || canonical === "::ffff:0:0";',
+    to: ";",
+    test: `${SERVER}/test/listen.test.ts`,
+    because: "::ffff:0.0.0.0 beside 127.0.0.1 is every IPv4 interface in a list that reads as two addresses",
+  },
+  {
+    label: "the port probe knocks 0.0.0.0 at loopback only",
+    file: `${SERVER}/src/http/listen.ts`,
+    from: "      return [IPV4_LOOPBACK, ...interfaces.filter((candidate) => isIP(candidate) === 4)];",
+    to: "      return [IPV4_LOOPBACK];",
+    test: `${SERVER}/test/listen.test.ts`,
+    because: "a foreign listener on the LAN address keeps answering there after the hub binds over it",
+  },
+  {
+    label: "the port probe knocks :: at IPv4 loopback only",
+    file: `${SERVER}/src/http/listen.ts`,
+    from: "    return isWildcardAddress(address) ? [...loopbacks, ...interfaces] : [address];",
+    to: "    return isWildcardAddress(address) ? [IPV4_LOOPBACK] : [address];",
+    test: `${SERVER}/test/listen.test.ts`,
+    because: "a foreign listener on [::1] answers every browser that tries IPv6 first, under a hub that started anyway",
+  },
+  {
+    label: "a failed bind leaves the servers already started",
+    file: `${SERVER}/src/http/listen.ts`,
+    from: "      for (const server of servers) {\n        server.stop(true);\n      }\n",
+    to: "",
+    test: `${SERVER}/test/listen.test.ts`,
+    because: "the boot fails and the first address still answers: a half-bound hub nobody started",
+  },
+  {
+    label: "a failed bind names port 0",
+    file: `${SERVER}/src/http/listen.ts`,
+    from: "      const triedPort = servers[0]?.port ?? port;",
+    to: "      const triedPort = port;",
+    test: `${SERVER}/test/listen.test.ts`,
+    because: "with PORT=0 the error names a port nothing could ever have held",
+  },
+  {
+    label: "the port probe never knocks ::1",
+    file: `${SERVER}/src/index.ts`,
+    from: "  canListenAt(IPV6_LOOPBACK) ? [IPV4_LOOPBACK, IPV6_LOOPBACK] : [IPV4_LOOPBACK];",
+    to: "  [IPV4_LOOPBACK];",
+    test: `${SERVER}/test/listen-boot.test.ts`,
+    because: "a foreign [::1] listener is found only by Bun's bind error after the database booted, or not at all",
+  },
+  {
+    label: "an every-interface hub never knocks the machine's own addresses",
+    file: `${SERVER}/src/index.ts`,
+    from: "    await assertPortFree(port, interfaceAddresses());",
+    to: "    void interfaceAddresses;",
+    test: `${SERVER}/test/listen-boot.test.ts`,
+    because: "the upgraded pilot hub shares 100.x:7100 with whatever already listened there",
+  },
+  // Review of the hub hardening, L3: a proxy list that trusts everyone.
+  {
+    label: "a trusted-proxy CIDR may trust every peer",
+    file: `${SERVER}/src/http/forwarded.ts`,
+    from: "    if (isTrustEveryone(network, prefix, family)) {",
+    to: "    if (false) {",
+    test: `${SERVER}/test/forwarded-trust.test.ts`,
+    because: "CROSSCHECK_TRUSTED_PROXIES=0.0.0.0/0 quietly restores 0.10's belief in any peer's forwarded headers",
+  },
+  {
+    label: "an IPv4-mapped CIDR may trust every IPv4 peer",
+    file: `${SERVER}/src/http/forwarded.ts`,
+    from: "  return IPV4_MAPPED_PATTERN.test(canonical) && prefix <= IPV4_MAPPED_PREFIX;",
+    to: "  return false;",
+    test: `${SERVER}/test/forwarded-trust.test.ts`,
+    because: "an entry that reads as IPv6 trusts every IPv4 peer, because BlockList matches the mapped block against them",
+  },
+  // Review of the hub hardening, X11 and L5: what the install record says.
+  {
+    label: "a missing hub_install row reads as loopback",
+    file: `${SERVER}/src/services/hub-install.ts`,
+    from: '  return rows[0]?.listenDefault ?? "all_interfaces";',
+    to: '  return rows[0]?.listenDefault ?? "loopback";',
+    test: `${SERVER}/test/listen.test.ts`,
+    because: "an emptied record moves an old hub to loopback with no warning, and its teammates meet connection refused",
+  },
+  {
+    label: "a restore is told from a fresh hub by nothing",
+    file: `${SERVER}/src/services/hub-install.ts`,
+    from: "      WHERE developers.created_at < hub_install.recorded_at",
+    to: "      WHERE false",
+    test: `${SERVER}/test/listen.test.ts`,
+    because: "an old hub restored into a fresh dir goes quiet on loopback and nobody learns why the tailnet IP refuses",
+  },
+  {
+    label: "a restored hub on loopback boots without a warning",
+    file: `${SERVER}/src/index.ts`,
+    from: '  if (listenPlan.kind === "loopback_default" && (await holdsMembersFromBeforeInstall(db))) {',
+    to: "  if (false) {",
+    test: `${SERVER}/test/listen-boot.test.ts`,
+    because: "the operator of a restored hub reads a healthy banner while every teammate is refused",
+  },
+  // Review of the hub hardening, L6: RFC 7239's proto.
+  {
+    label: "Forwarded: proto=https never marks a request https",
+    file: `${SERVER}/src/http/forwarded.ts`,
+    from: "    ? rfc7239Proto(c.req.header(RFC7239_FORWARDED_HEADER))",
+    to: "    ? null",
+    test: `${SERVER}/test/forwarded-trust.test.ts`,
+    because: "behind an RFC 7239-only proxy the session cookie loses Secure over https",
+  },
+  {
+    label: "a quoted Forwarded proto is read with its quotes",
+    file: `${SERVER}/src/http/forwarded.ts`,
+    from: '      return pair.slice(separator + 1).trim().replace(/^"(.*)"$/, "$1").toLowerCase();',
+    to: "      return pair.slice(separator + 1).trim().toLowerCase();",
+    test: `${SERVER}/test/forwarded-trust.test.ts`,
+    because: 'proto="https", the spelling RFC 7239 allows, reads as plain http',
+  },
+  {
+    label: "the last Forwarded element speaks for the browser",
+    file: `${SERVER}/src/http/forwarded.ts`,
+    from: '  const firstElement = value?.split(",")[0];',
+    to: '  const firstElement = value?.split(",").at(-1);',
+    test: `${SERVER}/test/forwarded-trust.test.ts`,
+    because: "a hop between proxies decides how the browser reached the first one",
+  },
+  // Review of the hub hardening, X3: loopback as a dual-stack socket spells it.
+  {
+    label: "a mapped IPv6 loopback peer is not loopback",
+    file: `${SERVER}/src/http/peer.ts`,
+    from: '  address === "::1" || /^127\\./.test(address) || /^::ffff:127\\./i.test(address);',
+    to: '  address === "::1" || /^127\\./.test(address);',
+    test: `${SERVER}/test/ui-ceremony-localhost.test.ts`,
+    because: "on a dual-stack socket the hub's own browser and tailscale serve read as remote: no localhost passkey, no Secure cookie",
+  },
+  {
+    label: "a mapped IPv6 loopback peer's forwarded proto is ignored",
+    file: `${SERVER}/src/http/peer.ts`,
+    from: '  address === "::1" || /^127\\./.test(address) || /^::ffff:127\\./i.test(address);',
+    to: '  address === "::1" || /^127\\./.test(address);',
+    test: `${SERVER}/test/forwarded-trust.test.ts`,
+    because: "tailscale serve on a dual-stack socket loses the session cookie's Secure flag",
+  },
+  // Review of the hub hardening, L7: a notice outside the surfaces an agent sits on.
+  {
+    label: "the person's own feed never shows their presence re-enable",
+    file: `${SERVER}/src/routes/ui-pages.tsx`,
+    from: '        presenceReenable={await presenceReenableBannerFor(deps, c.get("developer").id)}',
+    to: "        presenceReenable={null}",
+    test: `${SERVER}/test/presence-reenable.test.ts`,
+    because: "the only notices left are the briefing, status and doctor, every one of them a surface the agent drives",
+  },
+  {
+    label: "the feed banner says presence is on after it was switched off again",
+    file: `${SERVER}/src/ui/pages/feed.tsx`,
+    from: '      {banner.isOptedOutNow\n        ? "It is on again now',
+    to: '      {false\n        ? "It is on again now',
+    test: `${SERVER}/test/presence-reenable.test.ts`,
+    because: "the person reads that teammates see them now, about an opt-out an agent already restored",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -27897,6 +28505,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-global.test.ts 3
  * PRINTS: packages/cli/test/doctor-home-repo.test.ts 3
  * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1
+ * PRINTS: packages/cli/test/doctor-hub-transport.test.ts 4
  * PRINTS: packages/cli/test/doctor-last-sync.test.ts 1
  * PRINTS: packages/cli/test/doctor-latency.test.ts 2
  * PRINTS: packages/cli/test/doctor-losses.test.ts 14
@@ -27931,6 +28540,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pin-waive-hostile-hub.test.ts 1
  * PRINTS: packages/cli/test/pins-cli.test.ts 6
+ * PRINTS: packages/cli/test/presence-reenabled-cli.test.ts 3
  * PRINTS: packages/cli/test/publish-workflow.test.ts 2
  * PRINTS: packages/cli/test/release-preflight.test.ts 5
  * PRINTS: packages/cli/test/revalidate-cli.test.ts 1
@@ -28035,6 +28645,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/briefing-flow.test.ts 7
  * PRINTS: packages/connector-core/test/briefing-notice.test.ts 1
  * PRINTS: packages/connector-core/test/briefing-omissions.test.ts 3
+ * PRINTS: packages/connector-core/test/briefing-presence-notice.test.ts 3
  * PRINTS: packages/connector-core/test/briefing-presence-topics.test.ts 6
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 5
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 5
@@ -28237,6 +28848,7 @@ interface Outcome {
  * PRINTS: packages/server/test/drafts.test.ts 4
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/fence-waivers.test.ts 1
+ * PRINTS: packages/server/test/forwarded-trust.test.ts 11
  * PRINTS: packages/server/test/generated-targets.test.ts 12
  * PRINTS: packages/server/test/ghost-overlap.test.ts 13
  * PRINTS: packages/server/test/hint-content-floor.test.ts 6
@@ -28246,6 +28858,7 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-outcomes.test.ts 63
  * PRINTS: packages/server/test/hints-records-outcomes.test.ts 3
  * PRINTS: packages/server/test/hints.test.ts 3
+ * PRINTS: packages/server/test/hub-status-transport.test.ts 2
  * PRINTS: packages/server/test/in-memory-db.test.ts 2
  * PRINTS: packages/server/test/intent-ladder.test.ts 7
  * PRINTS: packages/server/test/intent-ledger-authority.test.ts 2
@@ -28256,6 +28869,8 @@ interface Outcome {
  * PRINTS: packages/server/test/landed-repair.test.ts 20
  * PRINTS: packages/server/test/landed-topics.test.ts 11
  * PRINTS: packages/server/test/landed.test.ts 15
+ * PRINTS: packages/server/test/listen-boot.test.ts 8
+ * PRINTS: packages/server/test/listen.test.ts 16
  * PRINTS: packages/server/test/live-location-cost.test.ts 3
  * PRINTS: packages/server/test/live-location-differential.test.ts 6
  * PRINTS: packages/server/test/live-location-privacy.test.ts 27
@@ -28283,6 +28898,7 @@ interface Outcome {
  * PRINTS: packages/server/test/pilot-substance-channel.test.ts 2
  * PRINTS: packages/server/test/pins.test.ts 4
  * PRINTS: packages/server/test/presence-optout.test.ts 2
+ * PRINTS: packages/server/test/presence-reenable.test.ts 6
  * PRINTS: packages/server/test/presence.test.ts 1
  * PRINTS: packages/server/test/questions.test.ts 8
  * PRINTS: packages/server/test/record-receipts-bloat.test.ts 1
@@ -28293,6 +28909,7 @@ interface Outcome {
  * PRINTS: packages/server/test/search-filters.test.ts 10
  * PRINTS: packages/server/test/search-tokens.test.ts 5
  * PRINTS: packages/server/test/search.test.ts 3
+ * PRINTS: packages/server/test/security-events-feed.test.ts 2
  * PRINTS: packages/server/test/session-event-conflict.test.ts 1
  * PRINTS: packages/server/test/session-event-retention.test.ts 2
  * PRINTS: packages/server/test/session-event-seq-kind.test.ts 3
@@ -28318,6 +28935,8 @@ interface Outcome {
  * PRINTS: packages/server/test/team-settings.test.ts 9
  * PRINTS: packages/server/test/topic-contexts.test.ts 4
  * PRINTS: packages/server/test/tripwire-large-change.test.ts 5
+ * PRINTS: packages/server/test/ui-approvals.test.ts 11
+ * PRINTS: packages/server/test/ui-ceremony-localhost.test.ts 6
  * PRINTS: packages/server/test/ui-feed.test.ts 3
  * PRINTS: packages/server/test/ui-passkeys.test.ts 9
  * PRINTS: packages/server/test/ui-work-context.test.ts 2

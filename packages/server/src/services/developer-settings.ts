@@ -9,12 +9,28 @@
  * machine). Enforcement lives in services/visibility.ts; this module only
  * reads and writes the state.
  *
- * No outbox events are appended here on purpose: broadcasting "X just opted
- * out" would itself be a presence signal about X.
+ * No outbox event is appended for an opt-out, on purpose: broadcasting "X
+ * just opted out" would itself be a presence signal about X. Going more
+ * private stays frictionless.
+ *
+ * SWITCHING AN OPT-OUT BACK OFF IS NEVER SILENT (hub hardening, item 6). The
+ * presence route takes the API key, which every agent on the person's
+ * machine can read, so an agent can quietly undo a works-council opt-out.
+ * The hub cannot tell the person from an agent on a key yet, so the change
+ * is made loud instead: a `presence_reenabled` security event (constants.ts
+ * SECURITY_EVENT_KINDS, kept in the team feed through later opt-outs), and
+ * `presenceReenabledAt` on the person's own settings read, which their
+ * SessionStart briefing, `crosscheck status`, doctor and the person's own
+ * /ui/feed (the one surface an agent does not sit on) print, for
+ * the full window even after a later opt-out (presenceReenableNotice says
+ * why). There is no presence signal to protect at that moment: from then on
+ * the person is visible anyway.
  */
-import { and, asc, eq, isNull, notInArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNull, notInArray, or, sql } from "drizzle-orm";
 
-import { agentSessions, developerEmails, developerMutes, developers, workContexts } from "../db/schema.ts";
+import { EVENT_KINDS, MS_PER_DAY, PRESENCE_REENABLE_NOTICE_DAYS } from "../constants.ts";
+import { agentSessions, developerEmails, developerMutes, developers, events, workContexts } from "../db/schema.ts";
+import { appendEvent } from "./events.ts";
 import { resolvesToDeveloper } from "./cloud-agent-identity.ts";
 import { embedContextDoc, refreshNormalizedDoc } from "./normalized-doc.ts";
 import { listDeveloperEmails } from "./developers.ts";
@@ -44,6 +60,13 @@ export interface DeveloperSettingsView {
    * (routes/developers.ts).
    */
   readonly emails: readonly DeveloperEmailView[];
+  /**
+   * When the caller's presence opt-out was last switched back off, within
+   * PRESENCE_REENABLE_NOTICE_DAYS, whether presence is on now or off again;
+   * null otherwise. Self view only: the person is told, so a silent undo by
+   * an agent holding their key is not silent, nor a brief one.
+   */
+  readonly presenceReenabledAt: string | null;
 }
 
 interface Deps {
@@ -56,15 +79,46 @@ interface IndexDeps extends Deps {
   readonly embedder: Embedder | null;
 }
 
+/** The newest re-enable of `developerId`'s presence since `since`, as ISO, or null. */
+const latestPresenceReenable = async (db: Db, developerId: string, since: Date): Promise<string | null> => {
+  const rows = await db
+    .select({ createdAt: events.createdAt })
+    .from(events)
+    .where(
+      and(
+        eq(events.kind, EVENT_KINDS.PRESENCE_REENABLED),
+        sql`${events.payload}->>'developerId' = ${developerId}`,
+        gte(events.createdAt, since),
+      ),
+    )
+    .orderBy(desc(events.id))
+    .limit(1);
+  return rows[0]?.createdAt.toISOString() ?? null;
+};
+
+/**
+ * The re-enable the person is still to be told about: the newest one within
+ * PRESENCE_REENABLE_NOTICE_DAYS, WHATEVER the setting is now (review of the
+ * hub hardening, M1). An agent holding the key can switch presence on, let the
+ * team watch, and switch it off again. Taking that second PUT as the person's
+ * answer would make the notice vanish exactly when the exposure was meant to
+ * go unseen. Every surface that tells it also says whether presence is still
+ * on, from `presenceOptOut` beside it.
+ */
+export const presenceReenableNotice = (db: Db, developerId: string, now: Date): Promise<string | null> =>
+  latestPresenceReenable(db, developerId, new Date(now.getTime() - PRESENCE_REENABLE_NOTICE_DAYS * MS_PER_DAY));
+
 export const getDeveloperSettings = async (
   db: Db,
   developerId: string,
+  now: Date,
 ): Promise<DeveloperSettingsView> => {
   const own = await db
     .select({ presenceOptOut: developers.presenceOptOut })
     .from(developers)
     .where(eq(developers.id, developerId))
     .limit(1);
+  const presenceOptOut = own[0]?.presenceOptOut ?? false;
   const mutes = await db
     .select({ id: developers.id, name: developers.name })
     .from(developerMutes)
@@ -73,9 +127,11 @@ export const getDeveloperSettings = async (
     .orderBy(asc(developers.name), asc(developers.id))
     .limit(MAX_MUTES_PER_READER);
   return {
-    presenceOptOut: own[0]?.presenceOptOut ?? false,
+    presenceOptOut,
     mutes,
     emails: await listDeveloperEmails(db, developerId),
+    // Told for its full window, opted out again or not (presenceReenableNotice).
+    presenceReenabledAt: await presenceReenableNotice(db, developerId, now),
   };
 };
 
@@ -89,10 +145,23 @@ export const setPresenceOptOut = async (
   developerId: string,
   optOut: boolean,
 ): Promise<void> => {
-  await deps.db
-    .update(developers)
-    .set({ presenceOptOut: optOut, locationIndexBuiltAt: null })
-    .where(eq(developers.id, developerId));
+  await deps.db.transaction(async (tx) => {
+    // FOR UPDATE: two toggles at once must not both read "opted out" and
+    // record one re-enable, or neither.
+    const before = await tx
+      .select({ presenceOptOut: developers.presenceOptOut })
+      .from(developers)
+      .where(eq(developers.id, developerId))
+      .for("update")
+      .limit(1);
+    await tx
+      .update(developers)
+      .set({ presenceOptOut: optOut, locationIndexBuiltAt: null })
+      .where(eq(developers.id, developerId));
+    if (before[0]?.presenceOptOut === true && !optOut) {
+      await appendEvent({ db: tx, now: deps.now }, EVENT_KINDS.PRESENCE_REENABLED, { developerId });
+    }
+  });
   await rebuildLocationIndex(deps, developerId, optOut);
 };
 

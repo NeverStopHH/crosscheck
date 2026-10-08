@@ -40,7 +40,10 @@ ADMIN_TOKEN=<pick-one> npx crosscheck-hub serve     # or: bunx crosscheck-hub se
 ```
 
 The hub listens on `:7100` (`PORT` overrides) and stores everything in
-`CROSSCHECK_DATA_DIR` (in-memory when unset — set it for anything real).
+`CROSSCHECK_DATA_DIR` (in-memory when unset — set it for anything real). A new
+hub listens on loopback only; `CROSSCHECK_LISTEN=127.0.0.1,<tailnet IP>` (a
+comma list of IP addresses) lets teammates in, and behind `tailscale serve`
+loopback is enough.
 
 Issue one API key per developer (keys are never shared — provenance is a core
 feature):

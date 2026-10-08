@@ -1,7 +1,7 @@
-import { and, asc, desc, gt, sql } from "drizzle-orm";
+import { and, asc, desc, gt, inArray, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 
-import { EVENTS_MAX_LIMIT } from "../constants.ts";
+import { EVENTS_MAX_LIMIT, SECURITY_EVENT_KINDS } from "../constants.ts";
 import { events } from "../db/schema.ts";
 import type { Db, DbExecutor } from "../db/client.ts";
 import type { Clock } from "../types.ts";
@@ -52,14 +52,21 @@ export const appendEvent = async (
  * ONE definition, shared by every reader of the outbox — the SSE/API cursor
  * read below and the web feed's newest-first read — so a surface cannot
  * drift out from under the opt-out (ui-feed.test.ts pins the web side).
+ *
+ * SECURITY EVENTS ARE EXEMPT (constants.ts SECURITY_EVENT_KINDS): a key
+ * rotation stays in every member's feed whatever the subject's setting. The
+ * opt-out is a switch an agent holding the person's API key can flip too, so
+ * without the exemption it could hide its own credential changes from the
+ * team. Those rows carry no live-location field; their instant is the
+ * «security» residual (services/visibility.ts).
  */
 const subjectVisibleToViewer = (viewerDeveloperId: string): SQL =>
-  sql`NOT EXISTS (
+  sql`(${inArray(events.kind, [...SECURITY_EVENT_KINDS])} OR NOT EXISTS (
     SELECT 1 FROM developers privacy_subject
     WHERE privacy_subject.id = ${events.payload}->>'developerId'
       AND privacy_subject.presence_opt_out
       AND privacy_subject.id <> ${viewerDeveloperId}
-  )`;
+  ))`;
 
 export const listEventsAfter = async (
   db: Db,

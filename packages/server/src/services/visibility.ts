@@ -53,6 +53,14 @@
  *   «words»     intent, a pin's surface, a status, a revalidation's
  *               finding — the words she writes herself, and the counts and
  *               rankings that follow from them
+ *   «security»  that a security event about her credentials happened, and
+ *               when: a key rotation (constants.ts SECURITY_EVENT_KINDS)
+ *               stays in every member's feed after she opts out. The opt-out
+ *               is a switch anybody holding her API key can flip, her agents
+ *               included, so it must not hide what that key did. The row
+ *               names her id and who acted (`self` or `admin`), never a
+ *               branch, HEAD or heartbeat. A self-rotation's instant is an
+ *               instant she, or something holding her key, was active
  *
  * Every one of them holds at a colleague's POLL interval: a colleague who
  * reads again and again sees when a residual changed — when a claim
@@ -70,7 +78,9 @@
  *                                   reporting IS presence surveillance: it
  *                                   reports when I last ran an agent)
  *   4. GET /api/events(+/stream)  — EVERY row attributed to me via payload
- *                                   developerId, knowledge kinds included:
+ *                                   developerId but the security events
+ *                                   («security» above), knowledge kinds
+ *                                   included:
  *                                   each row carries a server timestamp, so
  *                                   the feed is a live activity timeline
  *                                   (work_context_created fires when I

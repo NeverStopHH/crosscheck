@@ -2,8 +2,9 @@
  * THE TWO CEREMONY ENDPOINTS behind /ui/webauthn (1.0 spec 04a §5–§6):
  * `options` mints a challenge over exactly the submitted fields; `verify`
  * recomputes those terms from the same fields, checks the signature, and only
- * then performs the action. A ceremony is one of six actions, each with its
- * own terms, and the hub — never the browser — builds them.
+ * then performs the action. A ceremony is one of eight actions, each with its
+ * own terms, and the hub — never the browser — builds them: the six of 04a,
+ * and releasing or withdrawing an artifact (routes/ui-ceremony-artifacts.ts).
  *
  * WHAT IS TRUSTED FROM THE REQUEST, AND WHAT IS NOT:
  *   - the session cookie names the developer (ui.tsx's middleware);
@@ -40,11 +41,13 @@ import {
 import { amendWaiver, approveRequest, readPendingRequest } from "../services/waiver-requests.ts";
 import type { WaiverRequestRefusal } from "../services/waiver-requests.ts";
 import { readLiveWaiver, revokeWaiver } from "../services/waivers.ts";
-import { isLocalhostName } from "../services/webauthn.ts";
+import { hasHttpsOrigin, isLocalOrigin, isLocalhostName } from "../services/webauthn.ts";
 import type { CeremonyOwner, CeremonyPurpose, CeremonyTerms, WebAuthn } from "../services/webauthn.ts";
+import { isTrustedProxied } from "../http/forwarded.ts";
 import { isLoopbackAddress } from "../http/peer.ts";
 import { isCsrfValid } from "../ui/session.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
+import { ARTIFACT_SENTENCE, artifactTermsOf, performOnArtifact } from "./ui-ceremony-artifacts.ts";
 import { WAIVER_REQUEST_SENTENCE } from "./waiver-sentences.ts";
 
 const CSRF_HEADER = "x-crosscheck-csrf";
@@ -54,8 +57,10 @@ const MAX_CODE_CHARS = 64;
 const Subject = z.string().min(1).max(MAX_SUBJECT_CHARS);
 const Reason = z.string().trim().min(1).max(MAX_WAIVER_REASON_CHARS);
 
-/** The six actions and the fields each one signs. */
+/** The eight actions and the fields each one signs. */
 const CeremonyFieldsSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("approve_artifact"), subjectId: Subject }),
+  z.object({ action: z.literal("revoke_artifact"), subjectId: Subject }),
   z.object({
     action: z.literal("enrol"),
     code: z.string().min(1).max(MAX_CODE_CHARS),
@@ -82,6 +87,8 @@ const CEREMONY_SENTENCE = {
   missing_origin: "the request carried no Origin — open the page in a browser",
   origin_not_local:
     "a passkey at a localhost address only works from the hub's own machine — from anywhere else, use the hub's https address",
+  localhost_origin_off:
+    "this hub is reached over https or through a proxy, so it takes no passkey at a localhost address: a localhost prompt cannot say which machine asked. Open the hub at its https address",
   origin_not_configured:
     "this hub does not accept passkeys at this address — use one listed in CROSSCHECK_WEBAUTHN_ORIGINS",
   no_passkey_for_origin:
@@ -99,6 +106,7 @@ const CEREMONY_SENTENCE = {
   unknown_passkey: "you have no passkey with that id",
   already_revoked: "that passkey has already been revoked",
   passkey_required: "after its first day a passkey is revoked with a passkey",
+  ...ARTIFACT_SENTENCE,
 } as const;
 
 type CeremonyRefusal = keyof typeof CEREMONY_SENTENCE;
@@ -123,13 +131,24 @@ interface Signed {
   readonly terms: CeremonyTerms;
 }
 
+/** Why no terms could be built: a waiver's own refusal, or one of this file's. */
+type TermsRefusal = { readonly refusal: WaiverRequestRefusal } | { readonly ceremonyRefusal: CeremonyRefusal };
+
+const isRefused = (signed: Signed | TermsRefusal): signed is TermsRefusal => !("purpose" in signed);
+
+const refuseTerms = (c: Context<AppEnv>, refused: TermsRefusal): Response =>
+  "refusal" in refused ? refuseWaiver(c, refused.refusal) : refuse(c, refused.ceremonyRefusal);
+
 /** The terms a ceremony signs, built by the hub from the fields and the stored request. */
 const signedTermsOf = async (
   deps: AppDeps,
   developerId: string,
   fields: AssertionFields,
-): Promise<Signed | { refusal: WaiverRequestRefusal }> => {
+): Promise<Signed | TermsRefusal> => {
   switch (fields.action) {
+    case "approve_artifact":
+    case "revoke_artifact":
+      return artifactTermsOf(deps, developerId, fields);
     case "authorise_enrolment":
       return { purpose: fields.action, subject: developerId, terms: {} };
     case "approve": {
@@ -181,6 +200,32 @@ const isLocalOriginFromElsewhere = (c: Context<AppEnv>, deps: AppDeps, origin: s
   return peer === null || !isLoopbackAddress(peer);
 };
 
+/**
+ * A LOCALHOST CEREMONY IS OFF ON A HUB PEOPLE REACH REMOTELY (review H6).
+ *
+ * The rule above believes a localhost origin from a loopback peer. Behind
+ * `tailscale serve`, or any proxy on the hub's machine, EVERY request has a
+ * loopback peer, the remote ones included. An agent on the person's other
+ * Mac could then ask for a ceremony at RP ID `localhost` through the ts.net
+ * name, serve its own page at that Mac's localhost, and collect a touch on a
+ * prompt that says only "localhost". So a localhost or loopback-IP origin is
+ * refused, options and verify alike, whenever:
+ *
+ *   - any https origin is configured. People reach this hub over https, so
+ *     localhost has no job left there that a stranger could not borrow;
+ *   - or the request came through a trusted proxy (http/forwarded.ts): a
+ *     proxied request is by definition not the hub's own browser.
+ *
+ * What stays is a hub with no https origin and no proxy: the browser on the
+ * hub's own machine, exactly what localhost names there.
+ */
+const isLocalOriginSwitchedOff = (c: Context<AppEnv>, deps: AppDeps, origin: string): boolean => {
+  if (!isLocalOrigin(origin)) {
+    return false;
+  }
+  return hasHttpsOrigin(deps.webauthnOrigins) || isTrustedProxied(c, deps);
+};
+
 /** CSRF, then the fields, then the origin: what both endpoints refuse before any ceremony logic. */
 const readCeremonyRequest = async (
   c: Context<AppEnv>,
@@ -199,6 +244,9 @@ const readCeremonyRequest = async (
   const origin = c.req.header("origin");
   if (origin === undefined) {
     return refuse(c, "missing_origin");
+  }
+  if (isLocalOriginSwitchedOff(c, deps, origin)) {
+    return refuse(c, "localhost_origin_off");
   }
   if (isLocalOriginFromElsewhere(c, deps, origin)) {
     return refuse(c, "origin_not_local");
@@ -244,8 +292,8 @@ export const ceremonyOptions = async (
       : ok(c, { ceremonyId: minted.ceremonyId, publicKey: minted.options });
   }
   const signed = await signedTermsOf(deps, developer.id, fields);
-  if ("refusal" in signed) {
-    return refuseWaiver(c, signed.refusal);
+  if (isRefused(signed)) {
+    return refuseTerms(c, signed);
   }
   const usable = await usableCredentials({ db: deps.db, developerId: developer.id, now: deps.now() });
   const minted = await webauthn.authenticationOptions({
@@ -332,12 +380,17 @@ const performOnWaiver = async (
   });
 };
 
-/** The action a verified assertion authorises — and nothing before the signature held. */
+/**
+ * The action a verified assertion authorises — and nothing before the
+ * signature held. `signed` is what the signature covered, for an action whose
+ * write must still match it (an artifact's content digest).
+ */
 const perform = async (
   c: Context<AppEnv>,
   deps: AppDeps,
   fields: AssertionFields,
   credentialId: string,
+  signed: Signed,
 ): Promise<Response> => {
   const developerId = c.get("developer").id;
   switch (fields.action) {
@@ -372,6 +425,11 @@ const perform = async (
       return "refusal" in outcome
         ? refuse(c, outcome.refusal)
         : ok(c, { message: `Passkey revoked.${closedWithIt(outcome.terminated)}` });
+    }
+    case "approve_artifact":
+    case "revoke_artifact": {
+      const outcome = await performOnArtifact(deps, developerId, fields, signed.terms);
+      return "ceremonyRefusal" in outcome ? refuse(c, outcome.ceremonyRefusal) : ok(c, outcome);
     }
   }
 };
@@ -428,9 +486,9 @@ export const ceremonyVerify = async (
   // a ceremony that survived would be a nonce to try again with another key.
   const spend = (): void => webauthn.discard({ ...owner, ceremonyId: extras.data.ceremonyId });
   const signed = await signedTermsOf(deps, developerId, fields);
-  if ("refusal" in signed) {
+  if (isRefused(signed)) {
     spend();
-    return refuseWaiver(c, signed.refusal);
+    return refuseTerms(c, signed);
   }
   const usable = await usableCredentials({ db: deps.db, developerId, now: deps.now() });
   const match = usable.find((entry) => entry.credential.id === extras.data.response.id);
@@ -449,5 +507,5 @@ export const ceremonyVerify = async (
     return refuse(c, verified.refusal);
   }
   await recordSignCount({ db: deps.db, credentialId: match.credential.id, counter: verified.newCounter });
-  return perform(c, deps, fields, match.credential.id);
+  return perform(c, deps, fields, match.credential.id, signed);
 };

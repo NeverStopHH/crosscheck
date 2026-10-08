@@ -248,12 +248,14 @@ describe("D-PK-1: a fence the hub closed says the passkey that approved it was r
     // Arrange — a closure with no id is unreadable; the pin itself is not
     const raw = { ...pin(), closedWaiver: { closedAt: "2026-09-12T08:00:00.000Z" } };
 
-    // Act
-    const parsed = PinEntrySchema.parse(raw);
+    // Act — safeParse, so a schema that refuses the pin fails an assertion
+    // below rather than throwing past it
+    const parsed = PinEntrySchema.safeParse(raw);
 
     // Assert
-    expect(parsed.id).toBe(pin().id);
-    expect(parsed.closedWaiver ?? null).toBeNull();
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.id).toBe(pin().id);
+    expect(parsed.data?.closedWaiver ?? null).toBeNull();
   });
 });
 

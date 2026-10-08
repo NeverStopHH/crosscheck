@@ -55,6 +55,7 @@ export interface FeedEntry {
 const EVENT_PHRASES: Readonly<Record<string, string>> = {
   [EVENT_KINDS.DEVELOPER_CREATED]: "joined the hub",
   [EVENT_KINDS.DEVELOPER_KEY_ROTATED]: "rotated their API key",
+  [EVENT_KINDS.PRESENCE_REENABLED]: "had their presence opt-out switched off through an API key",
   [EVENT_KINDS.SESSION_STARTED]: "started a session",
   [EVENT_KINDS.SESSION_ENDED]: "ended a session",
   [EVENT_KINDS.WORK_CONTEXT_CREATED]: "opened work context",
@@ -125,14 +126,41 @@ const FeedLine: FC<{ readonly entry: FeedEntry }> = ({ entry }) => (
   </li>
 );
 
+/**
+ * The viewer's own presence re-enable, if any (review of the hub hardening,
+ * L7): the one place the notice reaches the person outside the surfaces an
+ * agent sits on, since the briefing goes into the agent's context and status
+ * and doctor run in a terminal it can drive.
+ */
+export interface PresenceReenableBanner {
+  readonly at: string;
+  readonly isOptedOutNow: boolean;
+}
+
+const PresenceReenabledNotice: FC<{ readonly banner: PresenceReenableBanner }> = ({ banner }) => (
+  <div class="card" role="alert">
+    <p>
+      Your presence opt-out was switched off at {banner.at} through an API key, which any agent holding
+      your key can do.{" "}
+      {banner.isOptedOutNow
+        ? "It is on again now, but teammates could see your live presence in between."
+        : "Teammates can see your live presence now."}{" "}
+      If that was not you, run <code>crosscheck presence off</code> and replace the key with{" "}
+      <code>crosscheck key rotate</code>.
+    </p>
+  </div>
+);
+
 interface FeedPageProps {
   readonly viewer: ViewerChrome;
   readonly entries: readonly FeedEntry[];
+  readonly presenceReenable: PresenceReenableBanner | null;
 }
 
-export const FeedPage: FC<FeedPageProps> = ({ viewer, entries }) => (
+export const FeedPage: FC<FeedPageProps> = ({ viewer, entries, presenceReenable }) => (
   <Layout title="Feed" viewer={viewer} refreshSeconds={UI_FEED_REFRESH_SECONDS}>
     <h1>Recent activity</h1>
+    {presenceReenable === null ? null : <PresenceReenabledNotice banner={presenceReenable} />}
     {entries.length === 0 ? (
       <p class="notice">Nothing yet — activity appears as sessions report.</p>
     ) : (

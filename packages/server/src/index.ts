@@ -1,14 +1,33 @@
 import type { Context, Hono } from "hono";
 
 import { createApp } from "./app.ts";
+import {
+  IPV4_LOOPBACK,
+  IPV6_LOOPBACK,
+  LISTEN_ENV,
+  assertListenable,
+  canListenAt,
+  describeListening,
+  interfaceAddresses,
+  legacyListenWarning,
+  parseListenAddresses,
+  probeAddressesFor,
+  resolveListenPlan,
+  restoredOnLoopbackWarning,
+  serveOnPlan,
+} from "./http/listen.ts";
+import { NO_TRUSTED_PROXIES, TRUSTED_PROXIES_ENV, parseTrustedProxies } from "./http/forwarded.ts";
+import type { TrustedProxies } from "./http/forwarded.ts";
+import type { ListenKind } from "./http/listen.ts";
 import { bunPeerAddress } from "./http/peer.ts";
+import { holdsMembersFromBeforeInstall, readListenDefault } from "./services/hub-install.ts";
 import { generateApiKey } from "./auth/keys.ts";
 import { DEFAULT_PORT, SESSION_REAP_INTERVAL_MS } from "./constants.ts";
 import { createDb } from "./db/client.ts";
 import { createEmbedderFromEnv } from "./services/embedder.ts";
 import { pruneRecordReceipts } from "./services/record-receipts.ts";
 import { reapStaleSessions } from "./services/sessions.ts";
-import { parseWebAuthnOrigins } from "./services/webauthn.ts";
+import { hasLocalhostBesideHttps, localhostBesideHttpsWarning, parseWebAuthnOrigins } from "./services/webauthn.ts";
 import { backfillSkeletonIdentity } from "./services/skeleton-identity.ts";
 import { runStartupUpgrades } from "./services/startup-upgrades.ts";
 import { rebuildOptedOutLocationIndexes } from "./services/developer-settings.ts";
@@ -140,6 +159,14 @@ export interface CreateServerOptions {
   readonly webauthnOrigins?: readonly string[];
   /** Omitted = Bun's own `requestIP` (http/peer.ts); the test harness injects one. */
   readonly peerAddress?: (c: Context<AppEnv>) => string | null;
+  /**
+   * Proxies besides loopback whose X-Forwarded-* headers count, already
+   * parsed (http/forwarded.ts). Omitted = none: `startServer` passes the
+   * parsed `CROSSCHECK_TRUSTED_PROXIES`.
+   */
+  readonly trustedProxies?: TrustedProxies;
+  /** How `startServer` decided where to listen; omitted = no socket of this app's own. */
+  readonly listen?: ListenKind;
 }
 
 /**
@@ -175,6 +202,8 @@ export const createServer = (options: CreateServerOptions): Hono<AppEnv> =>
     uiSessionSecret: resolveUiSessionSecret(options.uiSessionSecret),
     webauthnOrigins: options.webauthnOrigins ?? [],
     peerAddress: options.peerAddress ?? bunPeerAddress,
+    trustedProxies: options.trustedProxies ?? NO_TRUSTED_PROXIES,
+    listen: options.listen ?? null,
   });
 
 const MIN_PORT = 1;
@@ -197,6 +226,15 @@ const parsePort = (raw: string | undefined): number => {
 const PORT_PROBE_TIMEOUT_MS = 500;
 
 /**
+ * The loopbacks the hub listens at when nobody says otherwise, and the probe
+ * knocks at for a wildcard: both, where the machine has `::1`. A foreign
+ * listener on `[::1]:<port>` would otherwise answer every browser that tries
+ * IPv6 first (review of the hub hardening, X9).
+ */
+const loopbackAddresses = (): readonly string[] =>
+  canListenAt(IPV6_LOOPBACK) ? [IPV4_LOOPBACK, IPV6_LOOPBACK] : [IPV4_LOOPBACK];
+
+/**
  * "Address already in use" is the commonest first-run error, and Bun.serve on
  * macOS cannot report it against a FOREIGN listener: it binds over one with
  * reuse semantics, prints the healthy banner, and the kernel splits traffic
@@ -207,10 +245,10 @@ const PORT_PROBE_TIMEOUT_MS = 500;
  * best-effort — an unanswered connect (timeout) proceeds, and the tiny
  * check-to-bind race is accepted.
  */
-const assertPortFree = async (port: number): Promise<void> => {
-  const taken = await Promise.race([
+const isAnswering = (hostname: string, port: number): Promise<boolean> =>
+  Promise.race([
     Bun.connect({
-      hostname: "127.0.0.1",
+      hostname,
       port,
       socket: { data: () => {} },
     }).then(
@@ -224,6 +262,10 @@ const assertPortFree = async (port: number): Promise<void> => {
       setTimeout(() => resolveProbe(false), PORT_PROBE_TIMEOUT_MS);
     }),
   ]);
+
+const assertPortFree = async (port: number, hostnames: readonly string[]): Promise<void> => {
+  const answers = await Promise.all(hostnames.map((hostname) => isAnswering(hostname, port)));
+  const taken = answers.some((answered) => answered);
   if (taken) {
     throw new Error(
       `port ${port} is already in use — something is listening there ` +
@@ -239,25 +281,48 @@ const assertPortFree = async (port: number): Promise<void> => {
  * `npx crosscheck-hub serve`) is this same code path rather than a second copy.
  */
 export const startServer = async (): Promise<void> => {
-  // Port checks come FIRST: a taken port must refuse before PGlite writes a
-  // single byte, not after a full database boot.
+  // Port and address checks come FIRST: a taken port or an address this
+  // machine does not have must refuse before PGlite writes a single byte,
+  // not after a full database boot.
   const port = parsePort(process.env["PORT"]);
-  await assertPortFree(port);
+  const configuredListen = parseListenAddresses(process.env[LISTEN_ENV]);
+  const trustedProxies = parseTrustedProxies(process.env[TRUSTED_PROXIES_ENV]);
+  if (configuredListen !== null) {
+    assertListenable(configuredListen);
+  }
+  await assertPortFree(port, probeAddressesFor(configuredListen, loopbackAddresses(), interfaceAddresses()));
   const dataDir = process.env["CROSSCHECK_DATA_DIR"];
   const db = await createDb(dataDir === undefined ? {} : { dataDir });
+  const listenPlan = resolveListenPlan({
+    configured: configuredListen,
+    listenDefault: await readListenDefault(db),
+    hasIpv6Loopback: canListenAt(IPV6_LOOPBACK),
+  });
+  // Every interface, decided only now that the data dir has spoken: knock the
+  // machine's own addresses too, where a foreign listener would share the
+  // port with the hub (review of the hub hardening, L4).
+  if (listenPlan.kind === "legacy_all_interfaces") {
+    await assertPortFree(port, interfaceAddresses());
+  }
   // Throws on explicit misconfiguration (e.g. openai chosen, no key) — a hub
   // that silently dropped its vector tier would be DESIGN.md §10 "silent death".
   const embedder = createEmbedderFromEnv(process.env);
   const uiSessionSecret = process.env["CROSSCHECK_UI_SECRET"];
+  // Throws on an origin no browser would run a ceremony at — refused here
+  // rather than in front of a person at the approval page (04a §7).
+  const webauthnOrigins = parseWebAuthnOrigins(process.env["CROSSCHECK_WEBAUTHN_ORIGINS"], port);
+  if (hasLocalhostBesideHttps(webauthnOrigins)) {
+    console.warn(localhostBesideHttpsWarning(webauthnOrigins));
+  }
   const app = createServer({
     db,
     adminToken: process.env["ADMIN_TOKEN"] ?? null,
     ciToken: process.env["CROSSCHECK_CI_TOKEN"] ?? null,
     embedder,
     ...(uiSessionSecret === undefined ? {} : { uiSessionSecret }),
-    // Throws on an origin no browser would run a ceremony at — refused here
-    // rather than in front of a person at the approval page (04a §7).
-    webauthnOrigins: parseWebAuthnOrigins(process.env["CROSSCHECK_WEBAUTHN_ORIGINS"], port),
+    webauthnOrigins,
+    trustedProxies,
+    listen: listenPlan.kind,
   });
   // AN OPT-OUT FROM BEFORE THE INDEX FOLLOWED THE SETTING (review round 5,
   // M1): her docs still hold her branch titles, so they are rebuilt BEFORE
@@ -267,7 +332,14 @@ export const startServer = async (): Promise<void> => {
   if (indexesRebuilt > 0) {
     console.log(`[crosscheck] search index: rebuilt for ${String(indexesRebuilt)} opted-out developer(s)`);
   }
-  Bun.serve({ port, fetch: app.fetch });
+  const servers = serveOnPlan(listenPlan, port, app.fetch);
+  const listeningPort = servers[0]?.port ?? port;
+  if (listenPlan.kind === "legacy_all_interfaces") {
+    console.warn(legacyListenWarning(listeningPort));
+  }
+  if (listenPlan.kind === "loopback_default" && (await holdsMembersFromBeforeInstall(db))) {
+    console.warn(restoredOnLoopbackWarning(listeningPort));
+  }
   // THE SKELETON'S IDENTITY FOR ROWS THAT PREDATE ITS COLUMNS (01a §4.1).
   // After serving, not before: until it has run, a missing identity reads as
   // UNRESOLVED and the retention sweep keeps what it cannot resolve, so
@@ -321,7 +393,9 @@ export const startServer = async (): Promise<void> => {
   }, SESSION_REAP_INTERVAL_MS).unref();
   const searchMode =
     embedder === null ? "exact+fts (keyless)" : `exact+fts+vector (${embedder.model})`;
-  console.log(`crosscheck server listening on :${port} · search: ${searchMode}`);
+  console.log(
+    `crosscheck server listening on :${String(listeningPort)} (${describeListening(listenPlan, servers)}) · search: ${searchMode}`,
+  );
 };
 
 if (import.meta.main) {

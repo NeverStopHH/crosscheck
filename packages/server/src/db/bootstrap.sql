@@ -10,6 +10,34 @@
 -- deployment via DATABASE_URL needs the extension installed (DESIGN.md §2).
 CREATE EXTENSION IF NOT EXISTS vector;
 
+-- WHERE THIS HUB LISTENS WHEN NOBODY SAID (CROSSCHECK_LISTEN unset,
+-- http/listen.ts). Recorded ONCE, by the first start of a release that knows
+-- the setting, and never changed after: ON CONFLICT DO NOTHING keeps the
+-- first answer on every later start.
+--
+-- THE ORDER IS THE MARKER. These two statements run before `developers` is
+-- created below, so `to_regclass('developers')` tells the two kinds of
+-- database apart deterministically:
+--   - no `developers` yet: this release is creating the database, so the
+--     hub listens on loopback only;
+--   - `developers` already there: a hub from before the setting, which
+--     listened on every interface. It keeps doing so, so that an upgrade
+--     cuts off no teammate, and the boot and `crosscheck doctor` warn.
+-- PGlite's exec runs this whole script as one implicit transaction, so a
+-- start that dies part-way leaves nothing behind, and the next start decides
+-- afresh. A dump/restore into a fresh data dir is recorded 'loopback' before
+-- its rows arrive; the boot warns about that case (services/hub-install.ts).
+CREATE TABLE IF NOT EXISTS hub_install (
+  singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+  listen_default text NOT NULL
+    CONSTRAINT hub_install_listen_default_check
+    CHECK (listen_default IN ('loopback', 'all_interfaces')),
+  recorded_at timestamptz NOT NULL DEFAULT now()
+);
+INSERT INTO hub_install (listen_default)
+SELECT CASE WHEN to_regclass('developers') IS NULL THEN 'loopback' ELSE 'all_interfaces' END
+ON CONFLICT (singleton) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS developers (
   id text PRIMARY KEY,
   name text NOT NULL,

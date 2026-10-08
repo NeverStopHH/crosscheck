@@ -1,5 +1,7 @@
 import { createDb, createServer } from "../src/index.ts";
 import type { Db, Embedder } from "../src/index.ts";
+import { parseTrustedProxies } from "../src/http/forwarded.ts";
+import type { ListenKind } from "../src/http/listen.ts";
 
 export const TEST_ADMIN_TOKEN = "test-admin-token";
 export const TEST_START_ISO = "2026-07-24T09:00:00.000Z";
@@ -49,6 +51,10 @@ export interface TestHarnessOptions {
    * browser on the hub's own machine; `app.request` has no socket to read.
    */
   readonly peerAddress?: string | null;
+  /** CROSSCHECK_TRUSTED_PROXIES as the hub would read it. Omitted = none beyond loopback. */
+  readonly trustedProxies?: string;
+  /** How a booted hub would have decided where to listen. Omitted = no socket (null). */
+  readonly listen?: ListenKind;
 }
 
 /** The origin the harness accepts passkeys at unless a test says otherwise. */
@@ -75,6 +81,8 @@ export const createTestHarness = async (
       : { embedDeadlineMs: options.embedDeadlineMs }),
     webauthnOrigins: options.webauthnOrigins ?? [TEST_WEBAUTHN_ORIGIN],
     peerAddress: () => (options.peerAddress === undefined ? TEST_LOOPBACK_PEER : options.peerAddress),
+    trustedProxies: parseTrustedProxies(options.trustedProxies),
+    ...(options.listen === undefined ? {} : { listen: options.listen }),
   });
   return { app, clock, db };
 };

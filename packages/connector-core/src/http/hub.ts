@@ -2248,8 +2248,13 @@ export const PrivacySettingsSchema = z
     presenceOptOut: z.boolean(),
     mutes: z.array(z.unknown()).default([]),
     emails: z.array(z.unknown()).default([]),
+    // When the opt-out was last switched back off (hub developer-settings.ts).
+    // An older hub sends nothing, and a value that is not an ISO instant
+    // reads as nothing: tolerant, so it never costs the settings read.
+    presenceReenabledAt: z.iso.datetime().nullable().optional().catch(null),
   })
   .transform((value) => ({
+    presenceReenabledAt: value.presenceReenabledAt ?? null,
     presenceOptOut: value.presenceOptOut,
     mutes: value.mutes
       .map((item) => MutedDeveloperSchema.safeParse(item))
@@ -2265,6 +2270,8 @@ export interface PrivacySettings {
   readonly presenceOptOut: boolean;
   readonly mutes: readonly MutedDeveloper[];
   readonly emails: readonly OwnEmail[];
+  /** ISO instant the opt-out was last switched back off while presence is on, or null. */
+  readonly presenceReenabledAt: string | null;
 }
 
 export const getPrivacySettings = (
@@ -2306,8 +2313,21 @@ export const getIntentPositions = (
  * rebuild. An older hub has no such route — the result is then not ok, and
  * a caller says nothing rather than a zero it was never told.
  */
+/**
+ * How the hub is reachable, as two flags doctor turns into WARNs (server
+ * routes/hub-status.ts). An older hub sends no block, and a malformed one
+ * reads as absent: it must never cost the search line beside it.
+ */
+const HubTransportSchema = z.looseObject({
+  listensOnEveryInterface: z.boolean(),
+  localhostBesideHttps: z.boolean(),
+});
+
+export type HubTransport = z.infer<typeof HubTransportSchema>;
+
 const HubStatusSchema = z.looseObject({
   searchDocsPending: z.number().int().min(0),
+  transport: HubTransportSchema.optional().catch(undefined),
 });
 
 export type HubStatus = z.infer<typeof HubStatusSchema>;
