@@ -32,6 +32,7 @@ import {
 import { ACP_CONNECTOR, guaranteeDeclarationFor } from "../src/guarantees/declarations.ts";
 import { prepareMcp } from "../src/mcp/context.ts";
 import { findTool } from "../src/mcp/tools/index.ts";
+import { AMBIGUOUS_TOPIC_REFUSAL } from "../src/mcp/tools/set-intent.ts";
 import { readSpoolLines } from "../src/spool/files.ts";
 import { flushSpool } from "../src/spool/flush.ts";
 import { withLifeState } from "../src/spool/owed-work-context.ts";
@@ -319,14 +320,61 @@ describe("a spooled topic context goes with its own title and status", () => {
 
 describe("set_intent's topic", () => {
   const one = topicEntry("cc_topics", "wc_cc_topics", "feat/one", "2026-10-07T10:01:00.000Z");
-  const two = topicEntry("cc_topics", "wc_cc_topics", "feat/two", "2026-10-07T10:02:00.000Z");
+  const two = topicEntry("cc_topics", "wc_cc_topics", "feat/two", "2026-10-07T10:05:00.000Z");
 
   test("is the one touched most recently, the session's own when that was its checkout", () => {
     expect(intentTargetOf(stateAt({ topicContexts: [one, two] }))).toMatchObject({ kind: "topic", topic: { branch: "feat/two" } });
-    expect(intentTargetOf(stateAt({ topicContexts: [one, two], sessionTouchedAt: "2026-10-07T10:03:00.000Z" }))).toEqual({
+    expect(intentTargetOf(stateAt({ topicContexts: [one, two], sessionTouchedAt: "2026-10-07T10:07:00.000Z" }))).toEqual({
       kind: "session",
     });
     expect(intentTargetOf(stateAt())).toEqual({ kind: "session" });
+  });
+
+  test("is no default when two were touched within a minute of each other — it names both (review M2)", () => {
+    // Arrange: parallel subagents — feat/a touched, feat/b thirty seconds
+    // later; the session's own checkout twenty seconds after that
+    const a = topicEntry("cc_topics", "wc_cc_topics", "feat/a", "2026-10-07T10:05:00.000Z");
+    const b = topicEntry("cc_topics", "wc_cc_topics", "feat/b", "2026-10-07T10:05:30.000Z");
+    const old = topicEntry("cc_topics", "wc_cc_topics", "feat/old", "2026-10-07T10:01:00.000Z");
+
+    // Act
+    const topics = intentTargetOf(stateAt({ topicContexts: [old, a, b] }));
+    const withSession = intentTargetOf(stateAt({ topicContexts: [old, a, b], sessionTouchedAt: "2026-10-07T10:05:50.000Z" }));
+    const apart = intentTargetOf(stateAt({ topicContexts: [old, b], sessionTouchedAt: "2026-10-07T10:07:00.000Z" }));
+    const named = intentTargetOf(stateAt({ topicContexts: [old, a, b] }), "feat/a");
+
+    // Assert: newest first, the one touched minutes before left out
+    expect(topics).toEqual({ kind: "ambiguous", branches: ["feat/b", "feat/a"] });
+    expect(withSession).toEqual({ kind: "ambiguous", branches: ["detached@0123456789", "feat/b", "feat/a"] });
+    expect(apart).toEqual({ kind: "session" });
+    expect(named).toMatchObject({ kind: "topic", topic: { branch: "feat/a" } });
+  });
+
+  test("names a renamed topic and the session by the branch each is on now", () => {
+    // Arrange: feat/a renamed to feat/a2, the session's checkout moved on too
+    const a = { ...topicEntry("cc_topics", "wc_cc_topics", "feat/a", "2026-10-07T10:05:00.000Z"), branches: ["feat/a", "feat/a2"] };
+    const state = stateAt({ topicContexts: [a], startBranches: ["feat/next"], sessionTouchedAt: "2026-10-07T10:05:10.000Z" });
+
+    // Act
+    const target = intentTargetOf(state);
+
+    // Assert
+    expect(target).toEqual({ kind: "ambiguous", branches: ["feat/next", "feat/a2"] });
+  });
+
+  test("leaves a session whose checkout has no branch out of the contest — it cannot be named", () => {
+    // Arrange: two topics close together, the unnameable session touched last
+    const a = topicEntry("cc_topics", "wc_cc_topics", "feat/a", "2026-10-07T10:05:00.000Z");
+    const b = topicEntry("cc_topics", "wc_cc_topics", "feat/b", "2026-10-07T10:05:05.000Z");
+    const unnamed = { startBranch: null, topicContexts: [a, b] };
+
+    // Act
+    const last = intentTargetOf(stateAt({ ...unnamed, sessionTouchedAt: "2026-10-07T10:05:10.000Z" }));
+    const between = intentTargetOf(stateAt({ startBranch: null, topicContexts: [a], sessionTouchedAt: "2026-10-07T10:04:50.000Z" }));
+
+    // Assert: a refusal it could never answer is no refusal at all
+    expect(last).toEqual({ kind: "session" });
+    expect(between).toMatchObject({ kind: "topic", topic: { branch: "feat/a" } });
   });
 
   test("is the named one; the start branch names the session's own; an unknown name names none", () => {
@@ -447,7 +495,7 @@ describe("against a hub", () => {
     const fx = await registered("intent");
     await fx.flush();
     const one = topicEntry(fx.life.crosscheckSessionId, fx.life.workContextId, "feat/one", "2026-10-07T10:01:00.000Z");
-    const two = topicEntry(fx.life.crosscheckSessionId, fx.life.workContextId, "feat/two", "2026-10-07T10:02:00.000Z");
+    const two = topicEntry(fx.life.crosscheckSessionId, fx.life.workContextId, "feat/two", "2026-10-07T10:05:00.000Z");
     await updateSessionState(fx.home, fx.hostSessionKey, (fresh) => ({ ...fresh, topicContexts: [one, two] }));
     const setup = await prepareMcp({ CROSSCHECK_HOME: fx.home, CROSSCHECK_HUB_URL: hubUrl, CROSSCHECK_API_KEY: apiKey }, fx.repo);
     if (!setup.ok) throw new Error(setup.message);
@@ -477,6 +525,36 @@ describe("against a hub", () => {
     expect(state?.workContextStatus).toBe("analyzing");
     expect(state?.topicContexts.find((topic) => topic.key === two.key)?.status).toBe("testing");
     expect(state?.topicContexts.find((topic) => topic.key === two.key)?.ackedStatus).toBe("testing");
+  });
+
+  test("set_intent with no topic refuses when two topics were touched within a minute, naming both (review M2)", async () => {
+    // Arrange: subagent A on feat/a, subagent B touched feat/b a second later
+    const fx = await registered("intent-race");
+    await fx.flush();
+    const a = topicEntry(fx.life.crosscheckSessionId, fx.life.workContextId, "feat/a", "2026-10-07T10:05:00.000Z");
+    const b = topicEntry(fx.life.crosscheckSessionId, fx.life.workContextId, "feat/b", "2026-10-07T10:05:01.000Z");
+    await updateSessionState(fx.home, fx.hostSessionKey, (fresh) => ({ ...fresh, topicContexts: [a, b] }));
+    const setup = await prepareMcp({ CROSSCHECK_HOME: fx.home, CROSSCHECK_HUB_URL: hubUrl, CROSSCHECK_API_KEY: apiKey }, fx.repo);
+    if (!setup.ok) throw new Error(setup.message);
+    const tool = findTool("set_intent");
+    if (tool === undefined) throw new Error("no set_intent");
+
+    // Act: A's intent, first without and then with its branch
+    const guessed = await tool.run(setup.ctx, { summary: "Teach the importer to skip empty rows." });
+    const named = await tool.run(setup.ctx, { summary: "Teach the importer to skip empty rows.", topic: "feat/a" });
+
+    // Assert: nothing landed on feat/b; the refusal named both branches
+    const text = guessed.content.map((part) => part.text).join("\n");
+    expect(guessed.isError).toBe(true);
+    expect(text).toContain(AMBIGUOUS_TOPIC_REFUSAL);
+    expect(text).toContain("feat/a");
+    expect(text).toContain("feat/b");
+    expect(named.isError === true).toBe(false);
+    const rows = await raw<{ branch: string | null; intent: { summary: string } | null }>(
+      "select branch, intent from work_contexts where id = any($1) order by branch",
+      [[a.workContextId, b.workContextId]],
+    );
+    expect(rows.map((row) => [row.branch, row.intent?.summary])).toEqual([["feat/a", "Teach the importer to skip empty rows."]]);
   });
 });
 

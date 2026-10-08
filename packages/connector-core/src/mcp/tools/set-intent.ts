@@ -120,7 +120,8 @@ export const ArgsSchema = z.object({
   /**
    * WHICH TOPIC (DESIGN.md "One session, many topics"): one session works
    * several branches in several worktrees, and each is its own work context.
-   * Absent, the intent lands on the topic this session touched most recently.
+   * Absent, the intent lands on the topic this session touched most recently —
+   * refused instead when two were touched within a minute (review M2).
    */
   topic: z
     .string()
@@ -129,7 +130,8 @@ export const ArgsSchema = z.object({
     .optional()
     .describe(
       "Optional: the branch this intent is about, when this session works several " +
-        "branches. Omitted, it goes to the branch whose files this session edited last.",
+        "branches. Omitted, it goes to the branch whose files this session edited last; " +
+        "if two branches were edited within a minute of each other, name it.",
     ),
 });
 
@@ -233,16 +235,45 @@ const deliverGhostNotice = async (
 };
 
 
+/** The refusal for a branch this life never touched — naming the ones it did, never guessing. */
+export const UNKNOWN_TOPIC_REFUSAL =
+  "This session has no topic on that branch, so the intent was not recorded. Name one " +
+  "of the branches this session has edited files on.";
+
+/**
+ * The refusal for a default that would be a guess (review M2): two of this
+ * session's branches were edited within a minute of each other — parallel
+ * subagents, most likely — so "the one edited last" may be the other one's.
+ */
+export const AMBIGUOUS_TOPIC_REFUSAL =
+  "This session edited files on more than one branch within a minute, so the intent " +
+  "was not recorded: it could belong to either. Call set_intent again with `topic` set " +
+  "to the branch this intent is about.";
+
+/** What this call writes to — or the refusal, naming the branches it could have meant. */
+type TargetChoice =
+  | { readonly kind: "chosen"; readonly context: TitledWorkContext }
+  | { readonly kind: "refused"; readonly text: string };
+
+const refusalOf = (sentence: string, branches: readonly string[]): TargetChoice => ({
+  kind: "refused",
+  text:
+    branches.length === 0
+      ? sentence
+      : quotingText(sentence, `Its branches: ${branches.map((branch) => quoted(branch, MAX_TOPIC_BRANCH_CHARS)).join(", ")}.`),
+});
+
 /**
  * The context this intent is written to: the session's own (title and status
  * from its state, as always), or one of its topics (flows/topic-contexts.ts
- * `intentTargetOf`). Null when a named branch is no topic of this life.
+ * `intentTargetOf`). Refused when a named branch is no topic of this life, or
+ * when no branch is named and the default would be a guess.
  */
 const targetOf = async (
   ctx: McpContext,
   own: OwnWorkContext & { readonly workContextTitle: string; readonly workContextStatus: string },
   named: string | undefined,
-): Promise<TitledWorkContext | null> => {
+): Promise<TargetChoice> => {
   const state = await readSessionState(ctx.config.home, own.hostSessionKey);
   const isOwnLife = state !== null && state.crosscheckSessionId === own.crosscheckSessionId;
   const target: IntentTarget = isOwnLife
@@ -251,35 +282,26 @@ const targetOf = async (
       ? { kind: "session" }
       : { kind: "unknown", branches: [] };
   if (target.kind === "unknown") {
-    return null;
+    return refusalOf(UNKNOWN_TOPIC_REFUSAL, target.branches);
+  }
+  if (target.kind === "ambiguous") {
+    return refusalOf(AMBIGUOUS_TOPIC_REFUSAL, target.branches);
   }
   if (target.kind === "session") {
-    return { ...own, workContextTitle: own.workContextTitle, workContextStatus: own.workContextStatus };
+    return { kind: "chosen", context: { ...own, workContextTitle: own.workContextTitle, workContextStatus: own.workContextStatus } };
   }
   return {
-    ...own,
-    workContextId: target.topic.workContextId,
-    workContextTitle: target.topic.title,
-    workContextStatus: target.topic.status,
-    topicKey: target.topic.key,
-    branch: target.topic.branch,
-    baseCommit: target.topic.baseCommit,
+    kind: "chosen",
+    context: {
+      ...own,
+      workContextId: target.topic.workContextId,
+      workContextTitle: target.topic.title,
+      workContextStatus: target.topic.status,
+      topicKey: target.topic.key,
+      branch: target.topic.branch,
+      baseCommit: target.topic.baseCommit,
+    },
   };
-};
-
-/** The refusal for a branch this life never touched — naming the ones it did, never guessing. */
-export const UNKNOWN_TOPIC_REFUSAL =
-  "This session has no topic on that branch, so the intent was not recorded. Name one " +
-  "of the branches this session has edited files on, or leave `topic` out to write to " +
-  "the one it edited last.";
-
-const unknownTopicText = async (ctx: McpContext, own: OwnWorkContext, named: string): Promise<string> => {
-  const state = await readSessionState(ctx.config.home, own.hostSessionKey);
-  const target = state === null ? null : intentTargetOf(state, named);
-  const branches = target?.kind === "unknown" ? target.branches : [];
-  return branches.length === 0
-    ? UNKNOWN_TOPIC_REFUSAL
-    : quotingText(UNKNOWN_TOPIC_REFUSAL, `Its branches: ${branches.map((branch) => quoted(branch, MAX_TOPIC_BRANCH_CHARS)).join(", ")}.`);
 };
 
 export const run = async (ctx: McpContext, args: unknown): Promise<ToolResult> => {
@@ -349,19 +371,20 @@ export const run = async (ctx: McpContext, args: unknown): Promise<ToolResult> =
   }
   // WHICH CONTEXT (DESIGN.md "One session, many topics"): the named topic, or
   // the one this life touched last — the session's own when that was its own
-  // checkout. A branch this life never touched is refused with the ones it did.
+  // checkout. A branch this life never touched is refused with the ones it did,
+  // and so is the default when two were touched within a minute (review M2).
   const target = await targetOf(
     ctx,
     { ...own, workContextTitle: own.workContextTitle, workContextStatus: own.workContextStatus },
     parsed.value.topic,
   );
-  if (target === null) {
-    return toolFailure(await unknownTopicText(ctx, own, parsed.value.topic ?? ""));
+  if (target.kind === "refused") {
+    return toolFailure(target.text);
   }
   // The write itself — the status into the state first, the post, what each
   // answer leaves in the state — is mcp/tools/intent-write.ts, which the spool
   // simulation calls too (review-2 round 8, M5).
-  const titled: TitledWorkContext = target;
+  const titled: TitledWorkContext = target.context;
   const written = await writeIntent(
     {
       home: ctx.config.home,

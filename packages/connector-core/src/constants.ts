@@ -277,6 +277,22 @@ export const DETACHED_LABEL_SHA_CHARS = 9;
 export const MAX_TOPICS_PER_SESSION = 24;
 
 /**
+ * HOW CLOSE TWO TOUCHES MAKE `set_intent`'s DEFAULT A GUESS (review M2): with
+ * no `topic` named, an intent lands on the context this life touched last —
+ * unless another one was touched within this long of it. Then the tool
+ * refuses and names the branches, so the agent names its own.
+ *
+ * WHY: most of the owner's edits come from parallel subagents, and "the
+ * topic touched last" is then whichever one the other subagent touched a
+ * second ago — a misfiled intent, matched by the ghost-intent tier and by
+ * search, the very mislabel the pilot failed on. Measured from the newest
+ * touch, not from now, so the race does not expire while both subagents
+ * think; a single agent that left the other worktree minutes before still
+ * gets the default.
+ */
+export const INTENT_TOPIC_AMBIGUITY_MS = 60_000;
+
+/**
  * Hex characters of sha256(repo, worktree root) a topic's minted id leads
  * with — the id is that root key and the topic's ordinal in the root, never
  * the branch (flows/topic-contexts.ts), so a rename cannot change it.

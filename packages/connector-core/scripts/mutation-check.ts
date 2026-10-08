@@ -19644,12 +19644,45 @@ export const MUTATIONS: readonly Mutation[
     because: "every topic is renamed at flush to the start checkout's title, and the topics are one name again",
   },
   {
+    // Re-pointed by review M2, which moved the default into defaultTargetOf.
     label: "set_intent writes to the session's own context whatever topic was touched last",
     file: `${CORE}/src/flows/topic-contexts.ts`,
-    from: "  return newest === null || sessionAt > newest.lastTouchedAt ? { kind: \"session\" } : { kind: \"topic\", topic: newest };",
-    to: "  return { kind: \"session\" };",
+    from: "  return branches.length > 1 && newest.branch !== null ? { kind: \"ambiguous\", branches } : newest.target;",
+    to: "  return branches.length > 1 && newest.branch !== null ? { kind: \"ambiguous\", branches } : { kind: \"session\" };",
     test: `${CORE}/test/topic-contexts.test.ts`,
     because: "the declared goal lands on the start checkout's context, nowhere near the branch it is about",
+  },
+  {
+    label: "set_intent's default picks the topic touched last though another was touched a second before",
+    file: `${CORE}/src/flows/topic-contexts.ts`,
+    from: "  return branches.length > 1 && newest.branch !== null ? { kind: \"ambiguous\", branches } : newest.target;",
+    to: "  return newest.target;",
+    test: `${CORE}/test/topic-contexts.test.ts`,
+    because: "review M2: subagent A's intent lands on the branch subagent B touched a second later, and the ghost-intent tier and search match the wrong piece of work",
+  },
+  {
+    label: "set_intent refuses its default over a topic touched minutes before",
+    file: `${CORE}/src/flows/topic-contexts.ts`,
+    from: "  const close = [newest, ...rest.filter((other) => isWithinAmbiguity(newest.at, other.at))];",
+    to: "  const close = [newest, ...rest];",
+    test: `${CORE}/test/topic-contexts.test.ts`,
+    because: "every session that ever left its checkout must name a topic for every intent, and an agent that does not is refused forever",
+  },
+  {
+    label: "set_intent refuses a default only a branchless session could answer",
+    file: `${CORE}/src/flows/topic-contexts.ts`,
+    from: "  return branches.length > 1 && newest.branch !== null ? { kind: \"ambiguous\", branches } : newest.target;",
+    to: "  return branches.length > 1 ? { kind: \"ambiguous\", branches } : newest.target;",
+    test: `${CORE}/test/topic-contexts.test.ts`,
+    because: "a session whose own checkout has no branch can never be named, so the refusal is a dead end until another touch",
+  },
+  {
+    label: "the ambiguous-topic refusal names no branch",
+    file: `${CORE}/src/mcp/tools/set-intent.ts`,
+    from: "    return refusalOf(AMBIGUOUS_TOPIC_REFUSAL, target.branches);",
+    to: "    return refusalOf(AMBIGUOUS_TOPIC_REFUSAL, []);",
+    test: `${CORE}/test/topic-contexts.test.ts`,
+    because: "the agent is told to name a branch and not told which ones it could mean",
   },
   {
     label: "set_intent on a topic moves the session's status",
@@ -20418,7 +20451,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/staleness-axis.test.ts 1
  * PRINTS: packages/connector-core/test/target-paths.test.ts 1
  * PRINTS: packages/connector-core/test/tool-window-pairing.test.ts 6
- * PRINTS: packages/connector-core/test/topic-contexts.test.ts 11
+ * PRINTS: packages/connector-core/test/topic-contexts.test.ts 15
  * PRINTS: packages/connector-core/test/topic-heads.test.ts 2
  * PRINTS: packages/connector-core/test/topic-rules.test.ts 13
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3

@@ -49,7 +49,7 @@
  */
 import type { Envelope } from "@crosscheck/schema";
 
-import { TOPIC_KEY_HEX_CHARS } from "../constants.ts";
+import { INTENT_TOPIC_AMBIGUITY_MS, TOPIC_KEY_HEX_CHARS } from "../constants.ts";
 import { workContextRecord } from "../capture/records.ts";
 import type { Producer } from "../capture/records.ts";
 import type { SessionState, TopicContext } from "../state/session-state.ts";
@@ -289,32 +289,71 @@ export const withTopicCapture = (state: SessionState, capture: TopicCapture | nu
 export type IntentTarget =
   | { readonly kind: "session" }
   | { readonly kind: "topic"; readonly topic: TopicContext }
-  | { readonly kind: "unknown"; readonly branches: readonly string[] };
+  | { readonly kind: "unknown"; readonly branches: readonly string[] }
+  | { readonly kind: "ambiguous"; readonly branches: readonly string[] };
+
+/** One context set_intent's default could mean, by the branch it is on now. */
+interface Contender {
+  readonly target: IntentTarget;
+  readonly at: string;
+  readonly branch: string | null;
+}
+
+const startLabelsOf = (state: SessionState): readonly string[] =>
+  state.startBranch === null ? [] : [state.startBranch, ...(state.startBranches ?? [])];
+
+/** Newest first; on a tie a topic before the session, as the default always ranked them. */
+const contendersOf = (state: SessionState, live: readonly TopicContext[]): readonly Contender[] => {
+  const topics: readonly Contender[] = live.map((topic) => ({
+    target: { kind: "topic", topic },
+    at: topic.lastTouchedAt,
+    branch: labelsOf(topic).at(-1) ?? null,
+  }));
+  const sessionAt = state.sessionTouchedAt ?? null;
+  const session: readonly Contender[] =
+    sessionAt === null ? [] : [{ target: { kind: "session" }, at: sessionAt, branch: startLabelsOf(state).at(-1) ?? null }];
+  return [...topics, ...session].sort((left, right) => right.at.localeCompare(left.at));
+};
+
+const isWithinAmbiguity = (newest: string, other: string): boolean =>
+  Date.parse(newest) - Date.parse(other) < INTENT_TOPIC_AMBIGUITY_MS;
+
+/**
+ * The default when no topic is named: the context touched MOST RECENTLY —
+ * unless another NAMEABLE one was touched within INTENT_TOPIC_AMBIGUITY_MS of
+ * it (review M2: parallel subagents race for "the one touched last"). Then
+ * `ambiguous`, newest first, by the branch each is on now. A session whose
+ * checkout has no branch cannot be named, so it never makes a race.
+ */
+const defaultTargetOf = (state: SessionState, live: readonly TopicContext[]): IntentTarget => {
+  const [newest, ...rest] = contendersOf(state, live);
+  if (newest === undefined) {
+    return { kind: "session" };
+  }
+  const close = [newest, ...rest.filter((other) => isWithinAmbiguity(newest.at, other.at))];
+  const branches = close.map((contender) => contender.branch).filter((branch): branch is string => branch !== null);
+  return branches.length > 1 && newest.branch !== null ? { kind: "ambiguous", branches } : newest.target;
+};
 
 /**
  * set_intent's TARGET (DESIGN.md "One session, many topics"): the topic whose
  * affinity holds the named branch when one is named, else the one this life
  * touched MOST RECENTLY — the session's own context when that was its own
- * checkout or when no topic was ever opened. A branch of the start topic
- * names the session's own context. A name this life never touched is
- * `unknown`, with the branches it did.
+ * checkout or when no topic was ever opened — and no default at all when two
+ * were touched within a minute of each other (`ambiguous`). A branch of the
+ * start topic names the session's own context. A name this life never touched
+ * is `unknown`, with the branches it did.
  */
 export const intentTargetOf = (state: SessionState, named?: string): IntentTarget => {
   const live = state.topicContexts.filter((topic) => topic.sessionId === state.crosscheckSessionId);
-  if (named !== undefined) {
-    const topic = live.find((entry) => labelsOf(entry).includes(named));
-    if (topic !== undefined) {
-      return { kind: "topic", topic };
-    }
-    const startLabels = state.startBranch === null ? [] : [state.startBranch, ...(state.startBranches ?? [])];
-    return startLabels.includes(named)
-      ? { kind: "session" }
-      : { kind: "unknown", branches: live.flatMap((entry) => labelsOf(entry)) };
+  if (named === undefined) {
+    return defaultTargetOf(state, live);
   }
-  const newest = live.reduce<TopicContext | null>(
-    (best, topic) => (best === null || topic.lastTouchedAt > best.lastTouchedAt ? topic : best),
-    null,
-  );
-  const sessionAt = state.sessionTouchedAt ?? "";
-  return newest === null || sessionAt > newest.lastTouchedAt ? { kind: "session" } : { kind: "topic", topic: newest };
+  const topic = live.find((entry) => labelsOf(entry).includes(named));
+  if (topic !== undefined) {
+    return { kind: "topic", topic };
+  }
+  return startLabelsOf(state).includes(named)
+    ? { kind: "session" }
+    : { kind: "unknown", branches: live.flatMap((entry) => labelsOf(entry)) };
 };
