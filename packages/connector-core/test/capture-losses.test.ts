@@ -16,6 +16,7 @@ import { repoKey } from "../src/config/paths.ts";
 import type { Producer } from "../src/capture/records.ts";
 import { captureFileTargets } from "../src/flows/capture-targets.ts";
 import { captureTouchedFiles } from "../src/flows/capture-touched-files.ts";
+import { NO_GENERATED } from "../src/capture/generated.ts";
 import { readDropDetail, readDropSummary } from "../src/spool/drops.ts";
 import { git, makeHome, makeRepo, writeRepoFile } from "./helpers.ts";
 
@@ -62,7 +63,7 @@ describe("LOSS-11: capture-side refusals are counted drops", () => {
     const paths = Array.from({ length: MAX_TARGETS_PER_INVOCATION + 5 }, (_, index) => `src/file-${String(index)}.ts`);
 
     // Act
-    const captured = await captureFileTargets(targetsInput(fx, paths));
+    const { captured } = await captureFileTargets(targetsInput(fx, paths));
 
     // Assert
     expect(captured).toHaveLength(MAX_TARGETS_PER_INVOCATION);
@@ -74,7 +75,7 @@ describe("LOSS-11: capture-side refusals are counted drops", () => {
     const fx = await fixture("secret");
 
     // Act
-    const captured = await captureFileTargets(targetsInput(fx, ["src/ok.ts", SECRET_PATH]));
+    const { captured } = await captureFileTargets(targetsInput(fx, ["src/ok.ts", SECRET_PATH]));
 
     // Assert
     expect(captured).toEqual(["src/ok.ts"]);
@@ -220,7 +221,7 @@ describe("loss-accounting §10 item 8: the git lane books only the dirty paths i
     const outcome = await laneAfterTheDirt(fx);
 
     // Assert: each path was examined and found stale, so nothing is unknown
-    expect(outcome).toEqual({ paths: [], unavailable: false });
+    expect(outcome).toEqual({ paths: [], unavailable: false, generated: NO_GENERATED });
     expect((await readDropDetail(fx.home, KEY)).byReason["capture-capped"]).toBeUndefined();
   });
 

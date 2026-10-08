@@ -599,7 +599,7 @@ describe("captureFileTargets", () => {
     await writeRepoFile(fx.repo, "src/limiter.ts", "export const a = 1;\n");
 
     // Act
-    const captured = await captureFileTargets(
+    const { captured } = await captureFileTargets(
       captureInput(fx, [
         join(fx.repo, "src/limiter.ts"), // absolute inside the repo
         "src/limiter.ts", // duplicate via relative spelling
@@ -624,7 +624,7 @@ describe("captureFileTargets", () => {
   test("respects the seen-set passed in", async () => {
     const fx = await fixture("targets-seen");
 
-    const captured = await captureFileTargets(
+    const { captured } = await captureFileTargets(
       captureInput(fx, ["src/seen-before.ts"], ["src/seen-before.ts"]),
     );
 
@@ -639,7 +639,7 @@ describe("captureFileTargets", () => {
       (_, index) => `src/file-${index}.ts`,
     );
 
-    const captured = await captureFileTargets(captureInput(fx, paths));
+    const { captured } = await captureFileTargets(captureInput(fx, paths));
 
     expect(captured.length).toBe(MAX_TARGETS_PER_INVOCATION);
   });

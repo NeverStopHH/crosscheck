@@ -1,5 +1,5 @@
 import { PROTOCOL_VERSION } from "@crosscheck/schema";
-import type { Envelope, Intent, LandedStop, WorkContextTitleSource } from "@crosscheck/schema";
+import type { Envelope, GeneratedSignal, Intent, LandedStop, WorkContextTitleSource } from "@crosscheck/schema";
 
 import { FOREIGN_SESSION_DELIVERY } from "./seq.ts";
 import type { DeliveryChannel } from "@crosscheck/schema";
@@ -155,8 +155,19 @@ export const targetRecord = (
   producer: Producer,
   now: Date,
   source: TargetSource = "tool_edit",
+  /**
+   * The generated-target signal that fired (capture/generated.ts), or absent
+   * for an ordinary target AND for one whose classification could not run —
+   * the wire carries only positive evidence, so an unknown stays ordinary.
+   */
+  generated?: GeneratedSignal,
 ): Envelope =>
-  buildEnvelope("target", { workContextId, kind, value, source }, producer, now);
+  buildEnvelope(
+    "target",
+    { workContextId, kind, value, source, ...(generated === undefined ? {} : { generated }) },
+    producer,
+    now,
+  );
 
 /**
  * KINDS WHOSE BODY NAMES THE SESSION THAT AUTHORED THEM — directly

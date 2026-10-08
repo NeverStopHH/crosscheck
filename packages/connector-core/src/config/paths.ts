@@ -223,6 +223,20 @@ export const presenceCachePath = (home: string, key: string): string =>
   join(home, "cache", `${key}-presence.json`);
 
 /**
+ * One worktree root's `git check-attr` answers (capture/generated.ts), keyed
+ * inside by the root's `.gitattributes` blob id. Named by a digest of the ROOT,
+ * not the repo key: two worktrees of one repo can carry different attribute
+ * files, and a path's answer is only as good as the file it was read under.
+ * Flat in `cache/`, so the temp sweep's one level reaches its temps.
+ */
+export const generatedAttributesCachePath = (home: string, root: string): string =>
+  join(
+    home,
+    "cache",
+    `generated-${new Bun.CryptoHasher("sha256").update(root).digest("hex").slice(0, REPO_KEY_CHARS)}.json`,
+  );
+
+/**
  * Where `crosscheck conference` leaves its reports (VISION.md §2). Under the
  * crosscheck home rather than in the repo: a report quotes teammates' claims,
  * so it is private-file material like every other state file here, and a

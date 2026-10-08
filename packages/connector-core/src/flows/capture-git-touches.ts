@@ -44,6 +44,8 @@ import { runGitOutcome } from "../git/git.ts";
 import { sessionSlug } from "../config/paths.ts";
 import { recordDrop } from "../spool/drops.ts";
 import { captureFileTargets } from "./capture-targets.ts";
+import { NO_GENERATED } from "../capture/generated.ts";
+import type { GeneratedTally } from "../capture/generated.ts";
 import type { DenylistConfig } from "../capture/denylist.ts";
 import type { Producer } from "../capture/records.ts";
 import type { SeqRange } from "../state/session-state.ts";
@@ -102,10 +104,16 @@ export interface GitTouchesOutcome {
    * than a silence that reads as health.
    */
   readonly unavailable: boolean;
+  /**
+   * How the recorded paths were classified by the generated-target rule — the
+   * lane that sees `bun install` and a codegen run, which is where most
+   * generated files are written.
+   */
+  readonly generated: GeneratedTally;
 }
 
-const UNAVAILABLE: GitTouchesOutcome = { paths: [], unavailable: true };
-const NOTHING_FRESH: GitTouchesOutcome = { paths: [], unavailable: false };
+const UNAVAILABLE: GitTouchesOutcome = { paths: [], unavailable: true, generated: NO_GENERATED };
+const NOTHING_FRESH: GitTouchesOutcome = { paths: [], unavailable: false, generated: NO_GENERATED };
 
 /**
  * Spools the git-lane touches and returns them, exactly like
@@ -157,7 +165,7 @@ export const captureGitTouches = async (
   // Through the SAME filter chain as the tool lane — repo-relative, denylist,
   // seen-set, secret scan — because a second lane that skipped the hot-file
   // denylist would be a way around it (capture/denylist.ts).
-  const paths = await captureFileTargets({
+  const { captured: paths, generated } = await captureFileTargets({
     home: input.home,
     repoKey: input.repoKey,
     hostSessionKey: input.hostSessionKey,
@@ -184,5 +192,5 @@ export const captureGitTouches = async (
     source: "git_diff",
     now: input.now,
   });
-  return { paths, unavailable: false };
+  return { paths, unavailable: false, generated };
 };

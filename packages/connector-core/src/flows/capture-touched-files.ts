@@ -54,6 +54,7 @@ import type {
 } from "../capture/touched-root.ts";
 import { captureFileTargets } from "./capture-targets.ts";
 import type { CaptureFileTargetsInput } from "./capture-targets.ts";
+import type { GeneratedTally } from "../capture/generated.ts";
 
 export interface CaptureTouchedFilesInput
   extends Omit<CaptureFileTargetsInput, "resolveRoot"> {
@@ -79,6 +80,12 @@ export interface CaptureTouchedFilesResult {
    * to `withCaptureBookkeeping` inside the caller's single locked write.
    */
   readonly resolution: TouchedRootsResolution | null;
+  /**
+   * How the captured paths were classified by the generated-target rule —
+   * feed it to `withCaptureBookkeeping` too, so doctor's counts are the same
+   * on every host.
+   */
+  readonly generated: GeneratedTally;
 }
 
 export const captureTouchedFiles = async (
@@ -105,7 +112,7 @@ export const captureTouchedFiles = async (
           identityRepoId,
           knownWorktreeRoots,
         });
-  const captured = await captureFileTargets({
+  const { captured, generated } = await captureFileTargets({
     ...targets,
     ...(resolution === null
       ? {}
@@ -135,5 +142,5 @@ export const captureTouchedFiles = async (
       targets.now,
     );
   }
-  return { captured, resolution };
+  return { captured, resolution, generated };
 };
