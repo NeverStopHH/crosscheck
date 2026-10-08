@@ -46,6 +46,7 @@ import type { ClosedWaiver, PinFence } from "./waiver-terminations.ts";
 import { locationHiddenFrom, projectRow } from "./live-location.ts";
 import type { HiddenLocations } from "./live-location.ts";
 import { visiblePresenceCondition } from "./visibility.ts";
+import type { HumanStamp } from "./human-provenance.ts";
 import type { Db, DbExecutor } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
@@ -82,7 +83,15 @@ export interface PinView {
   readonly verifiedAt: string;
   /** Which version of this invariant (04 §3.5) — what a waiver is granted against. */
   readonly version: number;
+  /**
+   * Who made it a pin (human provenance §7): `human_passkey_confirmed`, or
+   * `unknown_legacy` for a pin from before 0.11 — which keeps protecting and
+   * is listed as such, never as a person's proven word.
+   */
+  readonly provenance: string;
   readonly brokeAt: string | null;
+  /** The same for the break; null while unbroken. */
+  readonly brokeProvenance: string | null;
   readonly brokeByName: string | null;
   /** Pinned paths a sweep has rewritten — 0 on a pin nobody has moved. */
   readonly renamedPaths: number;
@@ -231,10 +240,16 @@ const findRepairedPin = async (
   return rows[0] ?? null;
 };
 
+/**
+ * A PIN ROW IS HUMAN PROTECTION, so only a passkey confirmation writes one
+ * (human provenance §7): `stamp` is the confirmation's. A key's pin is a draft
+ * in `human_drafts`, which nothing that protects ever reads.
+ */
 export const createPin = async (
-  deps: Deps,
+  deps: { readonly db: DbExecutor; readonly now: Clock },
   developerId: string,
   input: Pin,
+  stamp: HumanStamp,
 ): Promise<CreatePinOutcome> => {
   const now = deps.now();
   return deps.db.transaction(async (tx) => {
@@ -262,6 +277,8 @@ export const createPin = async (
         repairsPinId: repaired?.id ?? null,
         repairsPinVersion: repaired?.version ?? null,
         createdAt: now,
+        provenance: stamp.provenance,
+        confirmationId: stamp.confirmationId,
       })
       .onConflictDoNothing({ target: pins.id })
       .returning({ id: pins.id });
@@ -303,18 +320,27 @@ export const createPin = async (
  * `suspect` reads that timestamp as the falsifier's date.
  */
 export const markPinBroke = async (
-  deps: Deps,
+  deps: { readonly db: DbExecutor; readonly now: Clock },
   developerId: string,
   repo: string,
   pinId: string,
-  brokeAtCommit: string | null = null,
+  brokeAtCommit: string | null,
+  // human provenance §7: the break unlocks naming sessions and opens the fence,
+  // so only a passkey confirmation records one. A key's break is a draft.
+  stamp: HumanStamp,
 ): Promise<BreakPinOutcome> => {
   // SCOPED BY REPO, like every other read on this table. Scoped by pin id
   // alone, one checkout's retraction reached any pin on the hub — and this
   // is the row `crosscheck suspect` reads before it names anybody.
   const updated = await deps.db
     .update(pins)
-    .set({ brokeAt: deps.now(), brokeBy: developerId, brokeAtCommit })
+    .set({
+      brokeAt: deps.now(),
+      brokeBy: developerId,
+      brokeAtCommit,
+      brokeProvenance: stamp.provenance,
+      brokeConfirmationId: stamp.confirmationId,
+    })
     .where(and(eq(pins.id, pinId), eq(pins.repo, repo), isNull(pins.brokeAt)))
     .returning({ id: pins.id });
   if (updated[0] !== undefined) {
@@ -394,6 +420,8 @@ const toPinView = (
     readonly brokeAt: Date | null;
     readonly renamedPaths: number;
     readonly renamedAt: Date | null;
+    readonly provenance: string;
+    readonly brokeProvenance: string | null;
   },
   files: readonly PinFileView[],
   brokeByName: string | null,
@@ -411,7 +439,9 @@ const toPinView = (
   verifiedAtCommit: row.verifiedAtCommit,
   verifiedAt: row.verifiedAt.toISOString(),
   version: row.version,
+  provenance: row.provenance,
   brokeAt: iso(row.brokeAt),
+  brokeProvenance: row.brokeProvenance,
   brokeByName,
   renamedPaths: Number(row.renamedPaths),
   renamedAt: iso(row.renamedAt),
@@ -483,7 +513,9 @@ export const listPins = async (
       // WHICH VERSION of this invariant (04 §3.5). A waiver is granted against
       // a version, so every reader that could resolve one needs it.
       version: pins.version,
+      provenance: pins.provenance,
       brokeAt: pins.brokeAt,
+      brokeProvenance: pins.brokeProvenance,
       brokeBy: pins.brokeBy,
       renamedPaths: pins.renamedPaths,
       renamedAt: pins.renamedAt,
@@ -579,7 +611,9 @@ export const readPin = async (
       verifiedAtCommit: pins.verifiedAtCommit,
       verifiedAt: pins.verifiedAt,
       version: pins.version,
+      provenance: pins.provenance,
       brokeAt: pins.brokeAt,
+      brokeProvenance: pins.brokeProvenance,
       brokeBy: pins.brokeBy,
       renamedPaths: pins.renamedPaths,
       renamedAt: pins.renamedAt,

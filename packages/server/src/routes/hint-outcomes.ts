@@ -20,16 +20,23 @@ import {
   describeUnstorableText,
   unstorableTextPath,
 } from "@crosscheck/schema";
-import type { HintOutcomeChannel } from "@crosscheck/schema";
+import type { DraftProvenance, HintOutcomeChannel } from "@crosscheck/schema";
 
 import { PILOT_REPORT_DEFAULT_WINDOW_DAYS, PILOT_RETENTION_DAYS } from "../constants.ts";
 import { fail, ok } from "../http/envelope.ts";
 import { formatIssues, readJsonBody } from "../http/request.ts";
 import { developerAuth } from "../middleware/auth.ts";
 import { readMyHintOutcomes } from "../services/hint-outcome-view.ts";
-import { writeHintOutcome } from "../services/hint-outcomes.ts";
+import { DRAFT_REFUSAL_SENTENCE, draftOutcome } from "../services/draft-doors.ts";
+import type { DraftRefusal } from "../services/draft-doors.ts";
 import type { HintOutcomeRefusal } from "../services/hint-outcomes.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
+
+/** Which class each door's draft is given — from the route, never from a body. */
+const DRAFT_CLASS_OF_DOOR: Readonly<Record<HintOutcomeChannel, DraftProvenance>> = {
+  agent: "agent_asserted",
+  person: "interactive_terminal_asserted",
+};
 
 const HTTP_OK = 200;
 const HTTP_CREATED = 201;
@@ -38,7 +45,8 @@ const HTTP_CREATED = 201;
  * ONE SENTENCE PER REFUSAL, each saying what to do next — the reader is an
  * agent as often as a person, and a refusal it cannot act on is a retry loop.
  */
-export const HINT_OUTCOME_REFUSAL_SENTENCE: Record<HintOutcomeRefusal, string> = {
+export const HINT_OUTCOME_REFUSAL_SENTENCE: Record<HintOutcomeRefusal | DraftRefusal, string> = {
+  ...DRAFT_REFUSAL_SENTENCE,
   not_enrolled:
     "this repo is not in the pilot, so no hint outcome is recorded here — whoever runs the hub enrols it, or leave it as it is",
   // ALSO the answer for a delivery that reached somebody else: a separate
@@ -115,19 +123,43 @@ export const hintOutcomeRoutes = (deps: AppDeps): Hono<AppEnv> => {
     if (unstorable !== null) {
       return fail(c, 400, "validation_failed", describeUnstorableText(unstorable));
     }
-    const result = await writeHintOutcome(deps, {
-      repo: parsed.data.repo,
-      ref: parsed.data.ref,
-      outcome: parsed.data.outcome,
-      reason: parsed.data.reason ?? null,
-      session: parsed.data.session ?? null,
-      recordedBy: c.get("developer").id,
-      recordedVia,
-    });
+    // A DRAFT, NEVER A RATING (human provenance §3): the agent's door is
+    // `agent_asserted`, the person's door — taken by the CLI only behind its
+    // person gate — `interactive_terminal_asserted`. Neither is a person's
+    // judgement until they confirm it with their passkey.
+    const result = await draftOutcome(
+      deps,
+      {
+        repo: parsed.data.repo,
+        ref: parsed.data.ref,
+        outcome: parsed.data.outcome,
+        reason: parsed.data.reason ?? null,
+        session: parsed.data.session ?? null,
+        recordedBy: c.get("developer").id,
+        recordedVia,
+      },
+      DRAFT_CLASS_OF_DOOR[recordedVia],
+    );
     if ("refusal" in result) {
       return fail(c, 422, result.refusal, HINT_OUTCOME_REFUSAL_SENTENCE[result.refusal]);
     }
-    return ok(c, result, result.repeated ? HTTP_OK : HTTP_CREATED);
+    // The fields an older connector's parser requires (`id`, `deliveryId`,
+    // `outcome`, `repeated`, `replaced`), then what a newer one prints. No
+    // `stands`: nothing stands as the person's on a draft.
+    return ok(
+      c,
+      {
+        id: result.draftId,
+        deliveryId: result.deliveryId,
+        outcome: parsed.data.outcome,
+        repeated: result.repeated,
+        reasonRevised: false,
+        replaced: null,
+        draft: true,
+        provenance: result.provenance,
+      },
+      result.repeated ? HTTP_OK : HTTP_CREATED,
+    );
   };
 
   router.post("/", developerAuth(deps), record("agent"));

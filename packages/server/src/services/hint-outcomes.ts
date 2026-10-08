@@ -52,11 +52,13 @@ import {
 } from "./pointer-standing.ts";
 import type { LatestOutcome, PointerWords, StandingWord } from "./pointer-standing.ts";
 import { readTeamSettings } from "./team-settings.ts";
-import type { Db, DbExecutor } from "../db/client.ts";
+import type { HumanStamp } from "./human-provenance.ts";
+import type { DbExecutor } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
+/** Possibly the confirmation's open transaction (human provenance §6). */
 interface Deps {
-  readonly db: Db;
+  readonly db: DbExecutor;
   readonly now: Clock;
 }
 
@@ -75,7 +77,7 @@ export type HintOutcomeRefusal =
   | "past_window"
   | "reason_secret";
 
-export interface WriteHintOutcomeInput {
+export interface ResolveHintOutcomeInput {
   readonly repo: string;
   /** What the hint printed (a work-context or claim id), or a delivery id. */
   readonly ref: string;
@@ -86,6 +88,14 @@ export interface WriteHintOutcomeInput {
   readonly recordedBy: string;
   /** Which channel said it — set by the route it arrived on, never by its body (07 §13.12). */
   readonly recordedVia: HintOutcomeChannel;
+}
+
+/**
+ * AN OUTCOME THAT COUNTS IS A PERSON'S, PROVEN (human provenance §4): only a
+ * passkey confirmation writes one, with its stamp. Both doors draft.
+ */
+export interface WriteHintOutcomeInput extends ResolveHintOutcomeInput {
+  readonly stamp: HumanStamp;
 }
 
 
@@ -171,7 +181,7 @@ const readDeliveryById = async (
  */
 const readDeliveryByRef = async (
   deps: Deps,
-  input: WriteHintOutcomeInput,
+  input: ResolveHintOutcomeInput,
 ): Promise<ResolvedDelivery | undefined> => {
   const rows = await deps.db
     .select(deliveryColumns)
@@ -197,7 +207,7 @@ const readDeliveryByRef = async (
 /** In the order a person would want to be told: a mistyped id before a policy. */
 const refuse = (
   delivery: ResolvedDelivery | undefined,
-  input: WriteHintOutcomeInput,
+  input: ResolveHintOutcomeInput,
   countable: CountableSince,
 ): HintOutcomeRefusal | null => {
   if (delivery === undefined || delivery.recipient !== input.recordedBy) {
@@ -231,7 +241,7 @@ const TWIN_REFUSALS: ReadonlySet<HintOutcomeRefusal> = new Set(["before_outcomes
 const countableDeliveryOf = async (
   deps: Deps,
   named: ResolvedDelivery | undefined,
-  input: WriteHintOutcomeInput,
+  input: ResolveHintOutcomeInput,
   countable: CountableSince,
 ): Promise<ResolvedDelivery | undefined> => {
   const refusal = refuse(named, input, countable);
@@ -330,14 +340,30 @@ const appendOutcome = async (
     recordedBy: input.recordedBy,
     createdAt,
     recordedVia: input.recordedVia,
+    // human provenance §4: the confirmation that made this the person's word.
+    provenance: input.stamp.provenance,
+    confirmationId: input.stamp.confirmationId,
   });
   return id;
 };
 
-export const writeHintOutcome = async (
+/** The delivery an outcome is about, as both the door and the confirmation resolve it. */
+export interface OutcomeDelivery {
+  readonly id: string;
+  readonly sessionId: string;
+  readonly refId: string;
+}
+
+/**
+ * WHICH DELIVERY THIS WORD IS ABOUT, OR WHY IT MAY NOT BE SAID — every refusal
+ * of 07 §13, run by the door before it drafts (so the person and the agent
+ * hear at once that a word could never count) and by the confirmation again
+ * before it writes.
+ */
+export const resolveHintOutcome = async (
   deps: Deps,
-  input: WriteHintOutcomeInput,
-): Promise<WriteHintOutcomeResult> => {
+  input: ResolveHintOutcomeInput,
+): Promise<{ readonly delivery: OutcomeDelivery } | { readonly refusal: HintOutcomeRefusal }> => {
   const settings = await readTeamSettings(deps, input.repo);
   if (!settings.pilotEnrolled) {
     return { refusal: "not_enrolled" };
@@ -356,6 +382,22 @@ export const writeHintOutcome = async (
   const refusal = refuse(delivery, input, countable);
   if (refusal !== null || delivery === undefined) {
     return { refusal: refusal ?? "unknown_ref" };
+  }
+  return { delivery: { id: delivery.id, sessionId: delivery.sessionId, refId: delivery.refId } };
+};
+
+/** THE WORD, WRITTEN — by a passkey confirmation only (human provenance §6), every check run again. */
+export const writeHintOutcome = async (
+  deps: Deps,
+  input: WriteHintOutcomeInput,
+): Promise<WriteHintOutcomeResult> => {
+  const resolved = await resolveHintOutcome(deps, input);
+  if ("refusal" in resolved) {
+    return resolved;
+  }
+  const delivery = await readDeliveryById(deps, resolved.delivery.id);
+  if (delivery === undefined) {
+    return { refusal: "unknown_ref" };
   }
   return recordOnPointer(deps, delivery, input);
 };

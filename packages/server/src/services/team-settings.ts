@@ -103,7 +103,9 @@ const defaultSettingsFor = (repo: string): TeamSettingsView => ({
 });
 
 export const readTeamSettings = async (
-  deps: Deps,
+  // An open transaction too: a confirmation re-checks enrolment inside the
+  // transaction that applies its batch (human provenance §6).
+  deps: { readonly db: DbExecutor },
   repo: string,
 ): Promise<TeamSettingsView> => {
   const rows = await deps.db

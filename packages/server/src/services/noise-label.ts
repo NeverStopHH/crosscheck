@@ -24,11 +24,12 @@ import {
   standingOfWords,
 } from "./pointer-standing.ts";
 import type { PointerWords, StandingWord } from "./pointer-standing.ts";
-import type { Db } from "../db/client.ts";
+import type { DbExecutor } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
+/** Possibly the confirmation's open transaction (human provenance §6): this one then nests as a savepoint. */
 interface Deps {
-  readonly db: Db;
+  readonly db: DbExecutor;
   readonly now: Clock;
 }
 
@@ -77,6 +78,9 @@ export const writeNoiseOnPointer = (
       markedBy,
       reason: label.reason ?? null,
       createdAt: at,
+      // The same confirmation as the label it re-asserts (human provenance §4).
+      provenance: label.provenance,
+      confirmationId: label.confirmationId ?? null,
     });
     return { id, repeated: false, stands: "noise", replaced: before };
   });

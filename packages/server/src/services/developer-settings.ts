@@ -28,15 +28,29 @@
  */
 import { and, asc, desc, eq, gte, isNull, notInArray, or, sql } from "drizzle-orm";
 
+import { randomUUID } from "node:crypto";
+
+import type { ProvenanceClass } from "@crosscheck/schema";
+
 import { EVENT_KINDS, MS_PER_DAY, PRESENCE_REENABLE_NOTICE_DAYS } from "../constants.ts";
-import { agentSessions, developerEmails, developerMutes, developers, events, workContexts } from "../db/schema.ts";
+import {
+  agentSessions,
+  developerEmails,
+  developerMutes,
+  developers,
+  events,
+  privacyChanges,
+  workContexts,
+} from "../db/schema.ts";
+import type { HumanStamp } from "./human-provenance.ts";
+import { readPendingDrafts } from "./human-drafts.ts";
 import { appendEvent } from "./events.ts";
 import { resolvesToDeveloper } from "./cloud-agent-identity.ts";
 import { embedContextDoc, refreshNormalizedDoc } from "./normalized-doc.ts";
 import { listDeveloperEmails } from "./developers.ts";
 import type { DeveloperEmailView } from "./developers.ts";
 import type { Embedder } from "./embedder.ts";
-import type { Db } from "../db/client.ts";
+import type { Db, DbExecutor } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
 /**
@@ -67,6 +81,19 @@ export interface DeveloperSettingsView {
    * an agent holding their key is not silent, nor a brief one.
    */
   readonly presenceReenabledAt: string | null;
+  /**
+   * A key asked to show the caller's presence again and it waits for their
+   * passkey (human provenance §8): presence stays off until they confirm it.
+   */
+  readonly presenceOnPending: boolean;
+  /**
+   * The caller's presence was switched OFF by something holding their key,
+   * within PRESENCE_REENABLE_NOTICE_DAYS: immediate, because going more
+   * private never waits — and told to them, because they may not have done it.
+   */
+  readonly presenceOptOutChange: { readonly at: string; readonly provenance: ProvenanceClass } | null;
+  /** How many of the caller's drafts await their passkey at /ui/confirm. */
+  readonly pendingDrafts: number;
 }
 
 interface Deps {
@@ -126,13 +153,43 @@ export const getDeveloperSettings = async (
     .where(eq(developerMutes.readerDeveloperId, developerId))
     .orderBy(asc(developers.name), asc(developers.id))
     .limit(MAX_MUTES_PER_READER);
+  const pending = await readPendingDrafts(db, developerId);
   return {
     presenceOptOut,
     mutes,
     emails: await listDeveloperEmails(db, developerId),
     // Told for its full window, opted out again or not (presenceReenableNotice).
     presenceReenabledAt: await presenceReenableNotice(db, developerId, now),
+    presenceOnPending: pending.some((draft) => draft.kind === "presence_on"),
+    presenceOptOutChange: await keyedOptOutNotice(db, developerId, now),
+    pendingDrafts: pending.length,
   };
+};
+
+/**
+ * THE NEWEST OPT-OUT NO PASSKEY MADE, within the notice window (§8). Every
+ * opt-out by key is one: the hub cannot tell the person's from an agent's.
+ */
+const keyedOptOutNotice = async (
+  db: Db,
+  developerId: string,
+  now: Date,
+): Promise<{ readonly at: string; readonly provenance: ProvenanceClass } | null> => {
+  const rows = await db
+    .select({ at: privacyChanges.createdAt, provenance: privacyChanges.provenance })
+    .from(privacyChanges)
+    .where(
+      and(
+        eq(privacyChanges.developerId, developerId),
+        eq(privacyChanges.kind, "presence_off"),
+        sql`${privacyChanges.provenance} <> 'human_passkey_confirmed'`,
+        gte(privacyChanges.createdAt, new Date(now.getTime() - PRESENCE_REENABLE_NOTICE_DAYS * MS_PER_DAY)),
+      ),
+    )
+    .orderBy(desc(privacyChanges.createdAt))
+    .limit(1);
+  const row = rows[0];
+  return row === undefined ? null : { at: row.at.toISOString(), provenance: row.provenance };
 };
 
 /**
@@ -144,6 +201,27 @@ export const setPresenceOptOut = async (
   deps: IndexDeps,
   developerId: string,
   optOut: boolean,
+  provenance: ProvenanceClass,
+): Promise<void> => {
+  await applyPresenceOptOut(deps, developerId, optOut, provenance);
+  await rebuildLocationIndex(deps, developerId, optOut);
+};
+
+/**
+ * THE TOGGLE ITSELF, in the caller's transaction when it has one — a passkey
+ * confirmation switches presence back on inside the transaction that applies
+ * its batch, then runs `finishPresenceChange` after it commits.
+ *
+ * EVERY CHANGE IS RECORDED WITH ITS CLASS (human provenance §8) in
+ * `privacy_changes`: an opt-out made with the key is `agent_asserted`, shown
+ * to the person, because the hub cannot tell who made it; an opt-in can only
+ * be a confirmation. The re-enable event carries the class too.
+ */
+export const applyPresenceOptOut = async (
+  deps: { readonly db: DbExecutor; readonly now: Clock },
+  developerId: string,
+  optOut: boolean,
+  provenance: ProvenanceClass,
 ): Promise<void> => {
   await deps.db.transaction(async (tx) => {
     // FOR UPDATE: two toggles at once must not both read "opted out" and
@@ -158,12 +236,24 @@ export const setPresenceOptOut = async (
       .update(developers)
       .set({ presenceOptOut: optOut, locationIndexBuiltAt: null })
       .where(eq(developers.id, developerId));
+    if (before[0] !== undefined && before[0].presenceOptOut !== optOut) {
+      await tx.insert(privacyChanges).values({
+        id: `pc_${randomUUID()}`,
+        developerId,
+        kind: optOut ? "presence_off" : "presence_on",
+        provenance,
+        createdAt: deps.now(),
+      });
+    }
     if (before[0]?.presenceOptOut === true && !optOut) {
-      await appendEvent({ db: tx, now: deps.now }, EVENT_KINDS.PRESENCE_REENABLED, { developerId });
+      await appendEvent({ db: tx, now: deps.now }, EVENT_KINDS.PRESENCE_REENABLED, { developerId, provenance });
     }
   });
-  await rebuildLocationIndex(deps, developerId, optOut);
 };
+
+/** What a toggle leaves to do once its transaction committed: her index, for the setting she has. */
+export const finishPresenceChange = (deps: IndexDeps, developerId: string, optOut: boolean): Promise<void> =>
+  rebuildLocationIndex(deps, developerId, optOut);
 
 /**
  * Her location-titled docs rebuilt for the setting she has, and their vectors
@@ -324,7 +414,7 @@ const countByName = async (db: Db, loweredName: string): Promise<number> => {
  * query.
  */
 export const resolveDeveloperRef = async (
-  db: Db,
+  db: DbExecutor,
   ref: string,
 ): Promise<ResolveDeveloperResult> => {
   const trimmed = ref.trim();
@@ -431,10 +521,15 @@ export type AddMuteResult =
   | { readonly outcome: "self" }
   | { readonly outcome: "limit_reached" };
 
+/**
+ * A MUTE IS THE PERSON'S SETTING (human provenance §8): only a passkey
+ * confirmation writes one, with its stamp. A key's mute is a draft.
+ */
 export const addMute = async (
-  deps: Deps,
+  deps: { readonly db: DbExecutor; readonly now: Clock },
   readerDeveloperId: string,
   ref: string,
+  stamp: HumanStamp,
 ): Promise<AddMuteResult> => {
   const resolved = await resolveDeveloperRef(deps.db, ref);
   if (resolved.outcome === "ambiguous") {
@@ -463,6 +558,8 @@ export const addMute = async (
       readerDeveloperId,
       mutedDeveloperId: resolved.developer.id,
       createdAt: deps.now(),
+      provenance: stamp.provenance,
+      confirmationId: stamp.confirmationId,
     })
     .onConflictDoNothing()
     .returning({ id: developerMutes.mutedDeveloperId });
@@ -483,7 +580,7 @@ export type RemoveMuteResult =
   | { readonly outcome: "ambiguous" };
 
 export const removeMute = async (
-  db: Db,
+  db: DbExecutor,
   readerDeveloperId: string,
   ref: string,
 ): Promise<RemoveMuteResult> => {

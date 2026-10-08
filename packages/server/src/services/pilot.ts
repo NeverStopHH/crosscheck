@@ -47,7 +47,8 @@ import { PILOT_SET_COUNTERS, placeSession } from "./pilot-session-set.ts";
 import type { Placement } from "./pilot-session-set.ts";
 import type { CoverageRecord } from "./coverage.ts";
 import type { SuspectView } from "./suspect.ts";
-import type { Db } from "../db/client.ts";
+import type { HumanStamp } from "./human-provenance.ts";
+import type { Db, DbExecutor } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 import {
   PILOT_LEGACY_COHORT,
@@ -59,6 +60,15 @@ import type { PilotMark, PilotMarkRefKind } from "@crosscheck/schema";
 
 interface Deps {
   readonly db: Db;
+  readonly now: Clock;
+}
+
+/**
+ * A mark's deps may be an open transaction: a confirmation applies every item
+ * of its batch inside one, so the whole batch lands or none of it does.
+ */
+interface MarkDeps {
+  readonly db: DbExecutor;
   readonly now: Clock;
 }
 
@@ -489,7 +499,7 @@ interface MarkTarget {
 }
 
 const readMarkTarget = async (
-  deps: Deps,
+  deps: MarkDeps,
   refKind: PilotMarkRefKind,
   refId: string,
 ): Promise<MarkTarget | undefined> => {
@@ -547,7 +557,7 @@ const readMarkTarget = async (
  */
 const refuseMark = (
   target: MarkTarget | undefined,
-  input: WriteMarkInput,
+  input: CheckMarkInput,
 ): MarkRefusal | null => {
   if (target === undefined) {
     return "unknown_ref";
@@ -574,7 +584,7 @@ const refuseMark = (
   return null;
 };
 
-export interface WriteMarkInput {
+export interface CheckMarkInput {
   readonly repo: string;
   readonly refKind: PilotMarkRefKind;
   readonly refId: string;
@@ -582,6 +592,15 @@ export interface WriteMarkInput {
   readonly markedBy: string;
   /** One bounded sentence, or null — the ordinary case. */
   readonly reason: string | null;
+}
+
+/**
+ * A MARK THAT COUNTS IS A PERSON'S, PROVEN (human provenance §4): only a
+ * passkey confirmation writes one, so the writer takes the stamp a confirmed
+ * batch mints. A key's mark is a draft (routes/pilot-marks.ts).
+ */
+export interface WriteMarkInput extends CheckMarkInput {
+  readonly stamp: HumanStamp;
 }
 
 export type WriteMarkOutcome =
@@ -615,6 +634,9 @@ const markRow = (input: WriteMarkInput, id: string, createdAt: Date): MarkRow =>
   captureMode: HUMAN_CAPTURE_MODE,
   createdAt,
   reason: input.reason,
+  // human provenance §4: the confirmation that made this a person's label.
+  provenance: input.stamp.provenance,
+  confirmationId: input.stamp.confirmationId,
 });
 
 /**
@@ -641,23 +663,32 @@ const markRow = (input: WriteMarkInput, id: string, createdAt: Date): MarkRow =>
  * label and redact the sentence": the person can say it again in a moment,
  * and a stored derivative of a secret still leaks its shape.
  */
-export const writePilotMark = async (
-  deps: Deps,
-  input: WriteMarkInput,
-): Promise<WriteMarkOutcome> => {
+export const checkPilotMark = async (
+  deps: MarkDeps,
+  input: CheckMarkInput,
+): Promise<MarkRefusal | null> => {
   const settings = await readTeamSettings(deps, input.repo);
   if (!settings.pilotEnrolled) {
     // NOT silence: a person typed this, and "nothing happened" is the one
     // answer a gesture must never get.
-    return { refusal: "not_enrolled" };
+    return "not_enrolled";
   }
   if (input.reason !== null && containsSecret(input.reason)) {
-    return { refusal: "reason_secret" };
+    return "reason_secret";
   }
-  const refusal = refuseMark(
-    await readMarkTarget(deps, input.refKind, input.refId),
-    input,
-  );
+  return refuseMark(await readMarkTarget(deps, input.refKind, input.refId), input);
+};
+
+/**
+ * THE LABEL, WRITTEN — by a passkey confirmation only (human provenance §6),
+ * which runs every check above again inside its own transaction: what was
+ * true when the key drafted it may not be true when the person confirms.
+ */
+export const writePilotMark = async (
+  deps: MarkDeps,
+  input: WriteMarkInput,
+): Promise<WriteMarkOutcome> => {
+  const refusal = await checkPilotMark(deps, input);
   if (refusal !== null) {
     return { refusal };
   }

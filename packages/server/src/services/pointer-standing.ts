@@ -24,6 +24,7 @@ import type { SQL } from "drizzle-orm";
 import type { HintOutcome, HintOutcomeChannel } from "@crosscheck/schema";
 
 import { NOISE_WORDS } from "./pilot-label-figures.ts";
+import { isHumanRow } from "./human-provenance.ts";
 import type { DbExecutor } from "../db/client.ts";
 
 /** One pointer in one session — one intervention. */
@@ -99,6 +100,7 @@ export const readPointerOutcome = async (
     SELECT o.outcome, o.reason, o.created_at AS at FROM hint_outcomes o
     JOIN hint_deliveries d ON d.id = o.delivery_id
     WHERE ${ofPointer("d", pointer)} AND o.recorded_by = ${recipient} AND ${ofChannel(channel)}
+      AND ${isHumanRow("o")}
     ORDER BY o.created_at DESC, o.id DESC LIMIT 1`);
   const row = rows.rows[0];
   return row === undefined ? undefined : { outcome: row.outcome, reason: row.reason, createdAt: new Date(row.at) };
@@ -142,11 +144,11 @@ export const readPointerNoise = async (
       SELECT m.id, m.created_at AS at FROM pilot_marks m
       JOIN hint_deliveries d ON d.id = m.ref_id
       WHERE m.ref_kind = 'hint_delivery' AND ${ofPointer("d", pointer)}
-        AND m.marked_by = ${recipient} AND m.mark IN ${NOISE_WORDS}
+        AND m.marked_by = ${recipient} AND m.mark IN ${NOISE_WORDS} AND ${isHumanRow("m")}
       UNION ALL
       SELECT r.id, r.created_at AS at FROM noise_reassertions r
       JOIN hint_deliveries rd ON rd.id = r.delivery_id
-      WHERE ${ofPointer("rd", pointer)} AND r.marked_by = ${recipient}
+      WHERE ${ofPointer("rd", pointer)} AND r.marked_by = ${recipient} AND ${isHumanRow("r")}
     ) noise
     ORDER BY at DESC, id DESC LIMIT 1`);
   const row = rows.rows[0];
@@ -166,7 +168,7 @@ export const readPointerHelpful = async (
     SELECT m.id, m.created_at AS at FROM pilot_marks m
     JOIN hint_deliveries d ON d.id = m.ref_id
     WHERE m.ref_kind = 'hint_delivery' AND ${ofPointer("d", pointer)}
-      AND m.marked_by = ${recipient} AND m.mark = 'helpful'
+      AND m.marked_by = ${recipient} AND m.mark = 'helpful' AND ${isHumanRow("m")}
     ORDER BY m.created_at DESC, m.id DESC LIMIT 1`);
   const row = rows.rows[0];
   return row === undefined ? undefined : { id: row.id, createdAt: new Date(row.at) };
