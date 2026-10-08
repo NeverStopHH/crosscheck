@@ -1310,13 +1310,13 @@ export const MUTATIONS: readonly Mutation[
     label: "identity tests answer to whichever machine runs them",
     file: `${CORE}/src/git/ssh-hostname.ts`,
     from:
-      "  if (process.env[SSH_CANONICALIZE_ENV] === SSH_CANONICALIZE_OFF) {\n" +
-      "    return Promise.resolve(null);\n" +
-      "  }",
+      "    if (env[SSH_CANONICALIZE_ENV] === SSH_CANONICALIZE_OFF) {\n" +
+      "      return Promise.resolve(null);\n" +
+      "    }",
     to:
-      "  if (process.env[SSH_CANONICALIZE_ENV] === `${SSH_CANONICALIZE_OFF}-never`) {\n" +
-      "    return Promise.resolve(null);\n" +
-      "  }",
+      "    if (env[SSH_CANONICALIZE_ENV] === `${SSH_CANONICALIZE_OFF}-never`) {\n" +
+      "      return Promise.resolve(null);\n" +
+      "    }",
     test: `${CORE}/test/repo-ssh-determinism.test.ts`,
     because:
       "the off-switch is the suite's only isolation from the developer's " +
@@ -24050,6 +24050,27 @@ export const MUTATIONS: readonly Mutation[
       "touching a file of her old context again brings that context into a colleague's " +
       "suspect window, which says when she was there",
   },
+  // Found by the load-only flake in repo-ssh-determinism.test.ts: under CPU
+  // contention a process's first `ssh -G` ran out its 500 ms, and the memo
+  // kept that null for the process's life.
+  {
+    label: "one contended ssh -G costs a long-lived process its alias until restart",
+    file: `${CORE}/src/git/ssh-hostname.ts`,
+    from: "      if (strikes < SSH_RESOLVE_DEADLINE_STRIKES) {",
+    to: "      if (false) {",
+    test: `${CORE}/test/ssh-hostname-deadline.test.ts`,
+    because:
+      "every later MCP tool call resolves the repo under the literal alias host, an " +
+      "identity the hub treats as a different repo, so teammates silently never match",
+  },
+  {
+    label: "a config that never fits the ssh deadline is re-billed on every call",
+    file: `${CORE}/src/git/ssh-hostname.ts`,
+    from: "      if (strikes < SSH_RESOLVE_DEADLINE_STRIKES) {",
+    to: "      if (true) {",
+    test: `${CORE}/test/ssh-hostname-deadline.test.ts`,
+    because: "a pathological Match exec costs the MCP server 500 ms on every tool call for its whole life",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -24351,6 +24372,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 1
  * PRINTS: packages/connector-core/test/spool-ignored.test.ts 2
  * PRINTS: packages/connector-core/test/spool-lock.test.ts 2
+ * PRINTS: packages/connector-core/test/ssh-hostname-deadline.test.ts 2
  * PRINTS: packages/connector-core/test/staleness-axis.test.ts 1
  * PRINTS: packages/connector-core/test/target-paths.test.ts 1
  * PRINTS: packages/connector-core/test/tool-window-pairing.test.ts 6
