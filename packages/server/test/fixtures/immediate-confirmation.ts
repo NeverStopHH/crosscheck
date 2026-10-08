@@ -6,20 +6,19 @@
  * confirmation makes it the person's. The suites written before that pin what
  * the WRITERS do with a person's word — what stands, repeats, twins, the
  * fence, suspect, the skeleton — and they set up their worlds through the
- * doors. This wrapper keeps them testing exactly that: it lets each door draft
- * as it does in production, then confirms the draft on the spot, through code
- * the hub really runs:
+ * doors. This wrapper keeps them testing exactly that, and NOTHING production
+ * cannot do (review M1):
  *
- *   - an outcome or a label goes through its own writer with a seeded
- *     confirmation's stamp, in the door's own channel (`agent` for
- *     `/api/hint-outcomes`, `person` for `/person`), and the writer's answer
- *     is returned — the shape those suites assert on. A real confirmation
- *     always writes `person`: the agent channel among confirmed words is
- *     reached only here;
- *   - a pin, a break, a mute, an unmute or presence-on is confirmed through
- *     the real batch store (form + confirm), only the WebAuthn signature
- *     replaced by a seeded credential — the `seedPasskey` precedent — and the
- *     answer an older client read is returned.
+ *   - each door drafts as it does in production; a door that answered
+ *     `repeated: true` wrote nothing and its answer is returned untouched;
+ *   - otherwise the draft is confirmed through the REAL batch store — form
+ *     from the scoped pending set, liveness, the kind's registered writer over
+ *     the draft's payload, `recordedVia = person` for every confirmed word
+ *     (J8) — with only the WebAuthn signature replaced by a seeded credential
+ *     past its cool-off (the `seedPasskey` precedent);
+ *   - the answer is the writer's own (what stands, what it replaced, a repeat)
+ *     for a label or an outcome, and for a pin, a break, a mute, an unmute or
+ *     presence-on the answer an older client read.
  *
  * Production behaviour, drafts left pending, is `drafts: "pending"`
  * (helpers.ts) — what every human-provenance suite uses.
@@ -31,17 +30,14 @@ import type { AppEnv } from "../../src/types.ts";
 import { createServer } from "../../src/index.ts";
 import type { CreateServerOptions } from "../../src/index.ts";
 import { hashApiKey } from "../../src/auth/keys.ts";
-import { developers, humanConfirmationItems, humanConfirmations } from "../../src/db/schema.ts";
+import { developers } from "../../src/db/schema.ts";
 import type { Db } from "../../src/db/client.ts";
 import type { Embedder } from "../../src/services/embedder.ts";
 import { createBatchStore } from "../../src/services/confirmation-batch.ts";
+import type { ConfirmedBatch, ConfirmRefused } from "../../src/services/confirmation-batch.ts";
 import { CONFIRM_PAGE_SCOPE } from "../../src/services/confirm-page.ts";
 import { finishPresenceChange } from "../../src/services/developer-settings.ts";
-import { writeHintOutcome } from "../../src/services/hint-outcomes.ts";
 import { pendingFingerprint, readPendingDrafts } from "../../src/services/human-drafts.ts";
-import { humanStamp } from "../../src/services/human-provenance.ts";
-import type { HumanStamp } from "../../src/services/human-provenance.ts";
-import { writePilotMark } from "../../src/services/pilot.ts";
 import { seedPasskey } from "./passkeys.ts";
 
 type App = Hono<AppEnv>;
@@ -55,7 +51,7 @@ interface Deps {
 
 const SEEDED_ASSERTION = { authenticatorData: "seeded", clientDataJSON: "seeded", signature: "seeded", userHandle: null };
 
-/** One seeded passkey per developer, created on first use. */
+/** One seeded passkey per developer, created on first use — enrolled long ago, past its cool-off. */
 const credentialFor = (() => {
   const byDeveloper = new WeakMap<Db, Map<string, string>>();
   return async (db: Db, developerId: string): Promise<string> => {
@@ -71,46 +67,19 @@ const credentialFor = (() => {
   };
 })();
 
-/** A confirmation row of its own for one word — what a one-item batch would leave. */
-const seededStamp = async (deps: Deps, developerId: string): Promise<HumanStamp> => {
-  const id = `hc_now_${crypto.randomUUID()}`;
-  const at = deps.now();
-  await deps.db.insert(humanConfirmations).values({
-    id,
-    developerId,
-    credentialId: await credentialFor(deps.db, developerId),
-    rpId: "localhost",
-    digest: "confirmed at once",
-    pendingFingerprint: "confirmed at once",
-    itemCount: 1,
-    formedAt: at,
-    confirmedAt: at,
-    authenticatorData: SEEDED_ASSERTION.authenticatorData,
-    clientDataJson: SEEDED_ASSERTION.clientDataJSON,
-    signature: SEEDED_ASSERTION.signature,
-    userHandle: null,
-  });
-  return humanStamp(id);
-};
-
-/** Marks the door's draft as decided by that confirmation, so the person's page shows nothing left over. */
-const resolveDraft = async (deps: Deps, stamp: HumanStamp, draftId: string): Promise<void> => {
-  await deps.db.insert(humanConfirmationItems).values({
-    confirmationId: stamp.confirmationId,
-    position: 0,
-    draftId,
-    draftVersion: 1,
-    draftDigest: "confirmed at once",
-    decision: "confirm",
-    content: {},
-  });
+const NOTHING_CONFIRMED: ConfirmedBatch = {
+  confirmed: 0,
+  discarded: 0,
+  kept: 0,
+  presenceOn: false,
+  effects: new Map(),
 };
 
 /** Every pending draft of the developer, confirmed through the real batch store. */
-export const confirmDraftsDirectly = async (deps: Deps, developerId: string): Promise<void> => {
+export const confirmDraftsDirectly = async (deps: Deps, developerId: string): Promise<ConfirmedBatch | ConfirmRefused> => {
   const pending = await readPendingDrafts(deps, developerId, { scope: CONFIRM_PAGE_SCOPE });
   if (pending.length === 0) {
-    return;
+    return NOTHING_CONFIRMED;
   }
   const store = createBatchStore(() => deps.now().getTime());
   const owner = { developerId, sessionKey: "confirmed-at-once" };
@@ -128,11 +97,12 @@ export const confirmDraftsDirectly = async (deps: Deps, developerId: string): Pr
   }
   const outcome = await store.confirm(deps, batch, { id: await credentialFor(deps.db, developerId), rpId: "localhost" }, SEEDED_ASSERTION);
   if ("refusal" in outcome) {
-    throw new Error(`confirming at once was refused: ${outcome.refusal} (${String(outcome.cause)})`);
+    return outcome;
   }
   if (outcome.presenceOn) {
     await finishPresenceChange({ db: deps.db, now: deps.now, embedder: deps.embedder ?? null }, developerId, false);
   }
+  return outcome;
 };
 
 const developerOfKey = async (db: Db, init: RequestInit | undefined): Promise<string | null> => {
@@ -149,47 +119,15 @@ const refused = (code: string, status = 422): Response =>
 
 type Body = Record<string, unknown>;
 
-const outcomeAtOnce = async (deps: Deps, developerId: string, body: Body, draftId: string, via: "agent" | "person"): Promise<Response> => {
-  const stamp = await seededStamp(deps, developerId);
-  const result = await writeHintOutcome(deps, {
-    repo: String(body["repo"]),
-    ref: String(body["ref"]),
-    outcome: body["outcome"] as "followed",
-    reason: typeof body["reason"] === "string" ? body["reason"].trim() : null,
-    session: typeof body["session"] === "string" ? body["session"] : null,
-    recordedBy: developerId,
-    recordedVia: via,
-    stamp,
-  });
-  if ("refusal" in result) {
-    return refused(result.refusal);
-  }
-  await resolveDraft(deps, stamp, draftId);
-  return json(result, result.repeated ? 200 : 201);
-};
-
-const labelAtOnce = async (deps: Deps, developerId: string, body: Body, draftId: string): Promise<Response> => {
-  const stamp = await seededStamp(deps, developerId);
-  const result = await writePilotMark(deps, {
-    repo: String(body["repo"]),
-    refKind: body["refKind"] as "hint_delivery",
-    refId: String(body["refId"]),
-    mark: body["mark"] as "noise",
-    markedBy: developerId,
-    reason: typeof body["reason"] === "string" ? body["reason"].trim() : null,
-    stamp,
-  });
-  if ("refusal" in result) {
-    return refused(result.refusal);
-  }
-  await resolveDraft(deps, stamp, draftId);
-  const standing = result.stands === undefined ? {} : { stands: result.stands, replaced: result.replaced ?? null };
-  return json({ id: result.id, repeated: result.repeated, ...standing }, result.repeated ? 200 : 201);
+/** A label's writer answer as the 0.10 door answered it: its id, a repeat, and what now stands. */
+const labelAnswer = (effect: Body): Body => {
+  const standing = effect["stands"] === undefined ? {} : { stands: effect["stands"], replaced: effect["replaced"] ?? null };
+  return { id: effect["id"], repeated: effect["repeated"], ...standing };
 };
 
 /** The answer an older client read from each door that now drafts, once the draft took effect. */
 const effectAnswer = (path: string, data: Body): Body => {
-  const { draft: _draft, provenance: _provenance, ...rest } = data;
+  const { draft: _draft, provenance: _provenance, waiting: _waiting, ...rest } = data;
   if (path.startsWith("/api/settings/mutes")) {
     return "unmuted" in rest ? { ...rest, wasMuted: true } : { ...rest, alreadyMuted: false };
   }
@@ -203,6 +141,26 @@ const isDraftingDoor = (method: string, path: string): boolean =>
   (method === "POST" && (path === "/api/pins" || /^\/api\/pins\/[^/]+\/broke$/.test(path) || path === "/api/settings/mutes")) ||
   (method === "DELETE" && path.startsWith("/api/settings/mutes/")) ||
   (method === "PUT" && path === "/api/settings/presence");
+
+/** A judgement's door: its draft confirmed through the store, and the writer's own answer returned. */
+const judgementAtOnce = async (
+  deps: Deps,
+  developerId: string,
+  draftId: string,
+  kind: "outcome" | "label",
+  fallback: Response,
+): Promise<Response> => {
+  const confirmed = await confirmDraftsDirectly(deps, developerId);
+  if ("refusal" in confirmed) {
+    return refused(confirmed.cause ?? confirmed.refusal);
+  }
+  const effect = confirmed.effects.get(draftId) as Body | undefined;
+  if (effect === undefined) {
+    return fallback;
+  }
+  const answer = kind === "label" ? labelAnswer(effect) : effect;
+  return json(answer, answer["repeated"] === true ? 200 : 201);
+};
 
 /**
  * A HUB THAT APPLIES A KEY'S WORD AT ONCE, for the connector and CLI suites
@@ -236,23 +194,21 @@ export const confirmingAtOnce = (app: App, deps: Deps): App => {
     }
     const answered = (await response.clone().json()) as { data?: Body };
     const data = answered.data ?? {};
-    if (data["draft"] !== true) {
+    // A door that wrote nothing — not a draft, or a repeat of one — is answered as the hub answered it.
+    if (data["draft"] !== true || data["repeated"] === true) {
       return response;
     }
     const developerId = await developerOfKey(deps.db, init);
     if (developerId === null) {
       return response;
     }
-    // A DELETE (an unmute) carries no body.
-    const raw = String(init?.body ?? "");
-    const body = (raw.trim() === "" ? {} : JSON.parse(raw)) as Body;
-    if (isOutcome) {
-      return outcomeAtOnce(deps, developerId, body, String(data["id"]), path.endsWith("/person") ? "person" : "agent");
+    if (isOutcome || isLabel) {
+      return judgementAtOnce(deps, developerId, String(data["id"]), isLabel ? "label" : "outcome", response);
     }
-    if (isLabel) {
-      return labelAtOnce(deps, developerId, body, String(data["id"]));
+    const confirmed = await confirmDraftsDirectly(deps, developerId);
+    if ("refusal" in confirmed) {
+      throw new Error(`confirming at once was refused: ${confirmed.refusal} (${String(confirmed.cause)})`);
     }
-    await confirmDraftsDirectly(deps, developerId);
     return json(effectAnswer(path, data), 200);
   };
   // The same, for a hub on a real socket (`Bun.serve({ fetch })`): the

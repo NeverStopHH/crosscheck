@@ -322,31 +322,28 @@ describe("mark_hint_outcome", () => {
     expect(await mine()).toMatchObject({ received: 1, followed: 0, overrode: 1 });
   });
 
-  test("review H2, §13.12: after the person's noise label, the agent's same word again writes nothing, and a new word never overturns the label", async () => {
-    // Arrange — the person labels the delivery noise at a terminal, after the agent's word
-    const reason = "kept the narrow row: the wide one breaks the mobile layout";
-    await send("/api/pilot-marks", nickApiKey, {
-      repo: REPO_ID,
-      refKind: "hint_delivery",
-      refId: hintDeliveryId(NICK_SESSION, KEN_CONTEXT),
-      mark: "noise",
-      presence: PIN_PRESENCE_TERMINAL,
-    });
+  test("review H2, §13.12, from a 0.10 hub: after the person's noise label, the agent is told its words never overturn it", async () => {
+    // Arrange — a hub from before human provenance still ranks the agent's word under the
+    // person's label (07 §13.12) and answers so; a 0.11 hub only drafts the agent's word, and
+    // the ranking it answered with is retired there (review M1). The tool still reads both.
+    const env: Env = { ...nickEnv, CROSSCHECK_HUB_URL: `http://127.0.0.1:${String(hostileHub.port)}` };
+    const answers = [
+      { id: "hd_1", deliveryId: "hd_1", outcome: "overrode", repeated: true, replaced: null, stands: "noise" },
+      { id: "ho_2", deliveryId: "hd_1", outcome: "followed", repeated: false, replaced: "noise", stands: "noise" },
+    ];
+    hostileAnswer = () => Response.json({ ok: true, data: answers.shift() });
 
-    // Act — the agent repeats itself (#11 wrote this, for good); then says something new
-    const repeat = await call({ ref: KEN_CONTEXT, outcome: "overrode", reason });
-    const afterRepeat = await mine();
-    const changed = await call({ ref: KEN_CONTEXT, outcome: "followed" });
+    // Act — the agent repeats itself; then says something new
+    const repeat = await call({ ref: KEN_CONTEXT, outcome: "overrode", reason: "kept the narrow row" }, env);
+    const changed = await call({ ref: KEN_CONTEXT, outcome: "followed" }, env);
 
-    // Assert — the agent's new word is recorded, and the person's label still stands
+    // Assert
     expect(repeat.text).toContain(
       `Already recorded: the hint at ${KEN_CONTEXT} was overrode before, and the person's noise label stands over it: an agent's word never overturns the person's own.`,
     );
-    expect(afterRepeat).toMatchObject({ received: 1, overrode: 0, noise: 1 });
     expect(changed.text).toContain(`Recorded: the hint at ${KEN_CONTEXT}`);
     expect(changed.text).toContain("The person's noise label still stands: an agent's word never overturns the person's own.");
     expect(changed.text).not.toContain("It supersedes");
-    expect(await mine()).toMatchObject({ received: 1, followed: 0, noise: 1 });
   });
 
   test("survivor R19: the same word with a new reason says the reason was revised, not that it superseded itself", async () => {
