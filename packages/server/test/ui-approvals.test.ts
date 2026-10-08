@@ -13,6 +13,8 @@
  * Approve and revoke now run through /ui/webauthn with the 24-hour cool-off,
  * and POST /ui/artifacts/:id/(approve|revoke) only refuses.
  */
+import { createHash } from "node:crypto";
+
 import { describe, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 
@@ -31,6 +33,9 @@ import {
 import type { TestDeveloper, TestHarness, TestHarnessOptions } from "./helpers.ts";
 import { artifacts } from "../src/db/schema.ts";
 import { setArtifactApproval } from "../src/services/artifacts.ts";
+import { performOnArtifact } from "../src/routes/ui-ceremony-artifacts.ts";
+import type { ArtifactFields } from "../src/routes/ui-ceremony-artifacts.ts";
+import type { AppDeps } from "../src/types.ts";
 import {
   assertViaUi,
   ceremony,
@@ -271,6 +276,42 @@ describe("releasing an artifact takes a passkey (review M2)", () => {
 
     // Assert
     expect(response.status).toBe(422);
+    expect(await robinCanRead(setup.harness, setup.robin)).toBe(false);
+  });
+
+  test("the release UPDATE writes only the content that was signed (review L1)", async () => {
+    // Arrange — content with non-ASCII bytes, so the SQL digest must agree with
+    // the JS one byte for byte (UTF-8, hex)
+    const setup = await seedArtifacts();
+    const content = "SECRET LOG — naïve Ünïcode ✓";
+    await setup.harness.db.update(artifacts).set({ content }).where(eq(artifacts.id, PENDING_ARTIFACT_ID));
+    const signed = createHash("sha256").update(content).digest("hex");
+    const other = createHash("sha256").update("the content the page showed").digest("hex");
+    const { nick } = setup;
+
+    // Act
+    const mismatched = await setArtifactApproval(setup.harness.db, nick.developerId, PENDING_ARTIFACT_ID, true, other);
+    const visibleAfterMismatch = await robinCanRead(setup.harness, setup.robin);
+    const matched = await setArtifactApproval(setup.harness.db, nick.developerId, PENDING_ARTIFACT_ID, true, signed);
+
+    // Assert
+    expect(mismatched).toBe("not_found");
+    expect(visibleAfterMismatch).toBe(false);
+    expect(matched).toBe("updated");
+    expect(await robinCanRead(setup.harness, setup.robin)).toBe(true);
+  });
+
+  test("a verified release hands the signed digest to its write: other signed terms release nothing", async () => {
+    // Arrange — the ceremony's last step, as verify calls it once the signature held
+    const setup = await seedArtifacts();
+    const deps = { db: setup.harness.db } as unknown as AppDeps;
+    const signedOver = { contentDigest: createHash("sha256").update("what the page showed").digest("hex") };
+
+    // Act
+    const outcome = await performOnArtifact(deps, setup.nick.developerId, releaseFields as ArtifactFields, signedOver);
+
+    // Assert
+    expect(outcome).toEqual({ ceremonyRefusal: "unknown_artifact" });
     expect(await robinCanRead(setup.harness, setup.robin)).toBe(false);
   });
 

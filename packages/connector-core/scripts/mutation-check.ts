@@ -24340,6 +24340,23 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/ui-approvals.test.ts`,
     because: "every agent holding any member key hides every member's releases",
   },
+  // Review of the hub hardening, L1: sign A, release B.
+  {
+    label: "a release UPDATE ignores the digest it was signed over",
+    file: `${SERVER}/src/services/artifacts.ts`,
+    from: "          : [sql`encode(sha256(convert_to(${artifacts.content}, 'UTF8')), 'hex') = ${signedContentDigest}`]),",
+    to: "          : []),",
+    test: `${SERVER}/test/ui-approvals.test.ts`,
+    because: "the first feature that edits an artifact turns a signature over one content into the release of another",
+  },
+  {
+    label: "a verified release writes without the digest it signed",
+    file: `${SERVER}/src/routes/ui-ceremony-artifacts.ts`,
+    from: "    isApproving ? String(signedDigest) : undefined,",
+    to: "    undefined,",
+    test: `${SERVER}/test/ui-approvals.test.ts`,
+    because: "the UPDATE's digest check exists and the ceremony never asks for it",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -24790,7 +24807,7 @@ interface Outcome {
  * PRINTS: packages/server/test/suspect.test.ts 9
  * PRINTS: packages/server/test/target-last-seen.test.ts 1
  * PRINTS: packages/server/test/team-settings.test.ts 9
- * PRINTS: packages/server/test/ui-approvals.test.ts 9
+ * PRINTS: packages/server/test/ui-approvals.test.ts 11
  * PRINTS: packages/server/test/ui-ceremony-localhost.test.ts 5
  * PRINTS: packages/server/test/ui-feed.test.ts 3
  * PRINTS: packages/server/test/ui-passkeys.test.ts 9

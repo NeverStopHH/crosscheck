@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 2342
+    # PRINTS: 2344
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -445,14 +445,14 @@ jobs:
     # PRINTS: packages/server/src/routes/solved-matches.ts 1
     # PRINTS: packages/server/src/routes/suspect.ts 5
     # PRINTS: packages/server/src/routes/team-settings.ts 1
-    # PRINTS: packages/server/src/routes/ui-ceremony-artifacts.ts 1
+    # PRINTS: packages/server/src/routes/ui-ceremony-artifacts.ts 2
     # PRINTS: packages/server/src/routes/ui-ceremony.ts 8
     # PRINTS: packages/server/src/routes/ui-pages.tsx 6
     # PRINTS: packages/server/src/routes/ui-passkeys.tsx 1
     # PRINTS: packages/server/src/routes/ui.tsx 1
     # PRINTS: packages/server/src/routes/work-contexts.ts 9
     # PRINTS: packages/server/src/services/absences.ts 12
-    # PRINTS: packages/server/src/services/artifacts.ts 3
+    # PRINTS: packages/server/src/services/artifacts.ts 4
     # PRINTS: packages/server/src/services/calibration.ts 1
     # PRINTS: packages/server/src/services/causal-guarantees.ts 12
     # PRINTS: packages/server/src/services/ci-coverage.ts 3
@@ -540,7 +540,7 @@ jobs:
     # PRINTS: agent-host.ts 7
     # PRINTS: answer-question.ts 1
     # PRINTS: args.ts 2
-    # PRINTS: artifacts.ts 4
+    # PRINTS: artifacts.ts 5
     # PRINTS: ask-teammate.ts 1
     # PRINTS: attempt.ts 5
     # PRINTS: before-submit-prompt.ts 1
@@ -808,7 +808,7 @@ jobs:
     # PRINTS: touched-root.ts 5
     # PRINTS: transcript.ts 4
     # PRINTS: triggers.ts 6
-    # PRINTS: ui-ceremony-artifacts.ts 1
+    # PRINTS: ui-ceremony-artifacts.ts 2
     # PRINTS: ui-ceremony.ts 8
     # PRINTS: ui-pages.tsx 6
     # PRINTS: ui-passkeys.tsx 1

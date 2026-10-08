@@ -380,12 +380,17 @@ const performOnWaiver = async (
   });
 };
 
-/** The action a verified assertion authorises — and nothing before the signature held. */
+/**
+ * The action a verified assertion authorises — and nothing before the
+ * signature held. `signed` is what the signature covered, for an action whose
+ * write must still match it (an artifact's content digest).
+ */
 const perform = async (
   c: Context<AppEnv>,
   deps: AppDeps,
   fields: AssertionFields,
   credentialId: string,
+  signed: Signed,
 ): Promise<Response> => {
   const developerId = c.get("developer").id;
   switch (fields.action) {
@@ -423,7 +428,7 @@ const perform = async (
     }
     case "approve_artifact":
     case "revoke_artifact": {
-      const outcome = await performOnArtifact(deps, developerId, fields);
+      const outcome = await performOnArtifact(deps, developerId, fields, signed.terms);
       return "ceremonyRefusal" in outcome ? refuse(c, outcome.ceremonyRefusal) : ok(c, outcome);
     }
   }
@@ -502,5 +507,5 @@ export const ceremonyVerify = async (
     return refuse(c, verified.refusal);
   }
   await recordSignCount({ db: deps.db, credentialId: match.credential.id, counter: verified.newCounter });
-  return perform(c, deps, fields, match.credential.id);
+  return perform(c, deps, fields, match.credential.id, signed);
 };

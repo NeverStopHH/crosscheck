@@ -170,12 +170,19 @@ export const withdrawArtifactAsOperator = async (db: Db, artifactId: string): Pr
  * Approve or revoke one owned needs_approval artifact. `not_found` covers
  * both a missing id and a non-owner caller — deliberately indistinguishable,
  * so probing ids through this endpoint teaches nothing.
+ *
+ * `signedContentDigest`, when given, is the SHA-256 (hex) of the content a
+ * release ceremony signed, and the UPDATE only matches that content: sign A,
+ * release B is impossible even once something can edit an artifact (review
+ * of the hub hardening, L1). The same digest the route computes in JS
+ * (UTF-8, hex), here in SQL.
  */
 export const setArtifactApproval = async (
   db: Db,
   viewerDeveloperId: string,
   artifactId: string,
   isApproving: boolean,
+  signedContentDigest?: string,
 ): Promise<ApprovalOutcome> => {
   const updated = await db
     .update(artifacts)
@@ -192,6 +199,9 @@ export const setArtifactApproval = async (
           WHERE owner_claim.id = ${artifacts.claimId}
             AND owner_session.developer_id = ${viewerDeveloperId}
         )`,
+        ...(signedContentDigest === undefined
+          ? []
+          : [sql`encode(sha256(convert_to(${artifacts.content}, 'UTF8')), 'hex') = ${signedContentDigest}`]),
       ),
     )
     .returning({ id: artifacts.id });

@@ -70,9 +70,23 @@ export const performOnArtifact = async (
   deps: AppDeps,
   developerId: string,
   fields: ArtifactFields,
+  signedTerms: CeremonyTerms,
 ): Promise<{ readonly message: string } | { readonly ceremonyRefusal: ArtifactRefusal }> => {
   const isApproving = fields.action === "approve_artifact";
-  const outcome = await setArtifactApproval(deps.db, developerId, fields.subjectId, isApproving);
+  // A release writes only the content that was signed (review of the hub
+  // hardening, L1): the UPDATE matches the digest, so content that changed
+  // between the read that built the terms and this write releases nothing.
+  const signedDigest = signedTerms["contentDigest"];
+  if (isApproving && typeof signedDigest !== "string") {
+    return { ceremonyRefusal: "unknown_artifact" };
+  }
+  const outcome = await setArtifactApproval(
+    deps.db,
+    developerId,
+    fields.subjectId,
+    isApproving,
+    isApproving ? String(signedDigest) : undefined,
+  );
   if (outcome === "not_found") {
     return { ceremonyRefusal: "unknown_artifact" };
   }
