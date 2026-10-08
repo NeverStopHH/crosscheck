@@ -210,6 +210,32 @@ describe("a bait repo's bunfig.toml and .env", () => {
     PROCESS_TIMEOUT_MS * 2,
   );
 
+  test.skipIf(nodeExe === null)(
+    "the shim refuses to start without its own bunfig, rather than read the repo's",
+    async () => {
+      // Arrange — an install whose packages/ lacks connector-core (the bunfig's home)
+      const own = startListener();
+      const attacker = startListener();
+      const proxy = startListener();
+      const bait = await baitRepo("bait-no-bunfig", own, attacker, proxy);
+      const pkg = await mkdtemp(join(tmpdir(), "cx-pkg-broken-"));
+      paths.push(pkg);
+      await mkdir(join(pkg, "bin"));
+      await mkdir(join(pkg, "packages"));
+      await copyFile(SHIM, join(pkg, "bin", "crosscheck.cjs"));
+      await symlink(join(REPO_ROOT, "packages", "cli"), join(pkg, "packages", "cli"));
+
+      // Act
+      const hook = await runIn(bait, [nodeExe ?? "node", join(pkg, "bin", "crosscheck.cjs"), "hook", "session-start"], sessionStart(bait.repo, "bait-broken-uuid"));
+
+      // Assert — loud, and nothing ran
+      expect(hook.exitCode).toBe(70);
+      expect(await Bun.file(bait.marker).exists()).toBe(false);
+      expect(own.seen()).toEqual([]);
+    },
+    PROCESS_TIMEOUT_MS * 2,
+  );
+
   test(
     "the same bait, run WITHOUT the flags, would have steered it (the control arm)",
     async () => {

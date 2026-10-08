@@ -73,6 +73,21 @@ describe("doctor's MCP probe", () => {
     expect(result.stdout).toContain("this repo's .mcp.json names a command crosscheck did not write here");
   });
 
+  test("runs every probe from a neutral directory, never the repo", async () => {
+    // Arrange — the developer's own entry, which records where it was started
+    const s = await setup("probe-trust-cwd");
+    const entry = { type: "stdio", command: "/bin/sh", args: ["-c", `pwd > ${s.marker} # crosscheck mcp`] };
+    await writeFile(join(s.home, ".claude.json"), `${JSON.stringify({ mcpServers: { crosscheck: entry } })}\n`, "utf8");
+
+    // Act
+    await runDoctor(s.env, s.repo, async () => null);
+
+    // Assert — bun would read a repo cwd's bunfig and .env for the probe
+    const cwd = (await Bun.file(s.marker).text()).trim();
+    expect(cwd.length).toBeGreaterThan(0);
+    expect(cwd).not.toContain(s.repo.split("/").at(-1) ?? s.repo);
+  });
+
   test("still probes the developer's own user-scope entry (the control arm)", async () => {
     // Arrange — the same command, in a file only the developer writes
     const s = await setup("probe-trust-user");
