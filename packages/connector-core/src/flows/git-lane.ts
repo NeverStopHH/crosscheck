@@ -186,7 +186,7 @@ const readRoot = async (input: SweepGitRootsInput, lane: GitLaneRoot): Promise<R
   }
   const base = laneInput(input, lane);
   const [commits, touches] = await Promise.all([
-    readGitCommits(base),
+    readGitCommits({ ...base, gitDir: head?.gitDir ?? null }),
     readGitTouches({ ...base, includeUntracked: true }),
   ]);
   return { lane, head, gone: false, commits, touches };

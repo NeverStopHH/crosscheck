@@ -88,3 +88,70 @@ export const descendsInHeadLog = async (gitDir: string, ancestor: string, descen
   }
   return false;
 };
+
+/**
+ * The reflog messages of a move that MADE a commit in this worktree — a merge
+ * is left out, like `--no-merges` leaves it out, and so is every move onto a
+ * commit made elsewhere (a checkout, a pull, a rebase, a reset).
+ */
+const MADE_MESSAGES = ["commit:", "commit (initial):", "commit (amend):", "cherry-pick:"] as const;
+const COMMIT_ID = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
+const MS_PER_SECOND = 1000;
+
+/** A line's parts: the commits it moved from and to, when (whole seconds), and its message. */
+interface HeadMove {
+  readonly from: string;
+  readonly to: string;
+  readonly atSeconds: number;
+  readonly message: string;
+}
+
+const AMEND_MESSAGE = "commit (amend):";
+
+/** `<old> <new> <name> <<email>> <seconds> <tz>\t<message>`: the seconds are the identity's second-to-last word. */
+const movesOf = (log: string): readonly HeadMove[] =>
+  log.split("\n").flatMap((line) => {
+    const tab = line.indexOf("\t");
+    if (tab <= 0) {
+      return [];
+    }
+    const words = line.slice(0, tab).split(" ");
+    const [from = "", to = ""] = words;
+    return COMMIT_ID.test(to) ? [{ from, to, atSeconds: Number(words.at(-2)), message: line.slice(tab + 1) }] : [];
+  });
+
+/**
+ * THE COMMITS THIS WORKTREE MADE since `since`, oldest first, each once (review
+ * H1, DESIGN.md "One session, many topics"). The commit half used to read
+ * HEAD's history, so every own commit HEAD could reach was filed under the
+ * root's current topic wherever it was made: a merge of another topic's
+ * branch, a start checkout re-detached at a newer main, a worktree re-added
+ * at the same path from a tip just committed, two worktrees on one branch.
+ * The worktree's own HEAD log names exactly the commits made IN it — a merged,
+ * pulled, rebased or checked-out commit never appears there as a `commit:`
+ * move. The time is the move's, git's whole seconds; nothing when the log is
+ * gone or reflogs are off, which reads as "made nothing here". A commit an
+ * amend replaced is left out: the amend is the commit now, and the version it
+ * replaced may carry what was taken out of it.
+ */
+export const commitsMadeInHeadLog = async (gitDir: string, since: Date): Promise<readonly string[]> => {
+  const sinceSeconds = Math.floor(since.getTime() / MS_PER_SECOND);
+  const moves = movesOf(await readLogTail(gitDir));
+  const amended = new Set(moves.filter((move) => move.message.startsWith(AMEND_MESSAGE)).map((move) => move.from));
+  const made = moves
+    .filter((move) => move.atSeconds >= sinceSeconds && MADE_MESSAGES.some((prefix) => move.message.startsWith(prefix)))
+    .map((move) => move.to)
+    .filter((commit) => !amended.has(commit));
+  return [...new Set(made)];
+};
+
+/**
+ * Whether git itself recorded `from` renamed to `to` in this worktree (review
+ * H3): `git branch -m` writes `Branch: renamed refs/heads/<from> to
+ * refs/heads/<to>` into the HEAD log. A branch that is merely gone — deleted
+ * after the next one was cut at its tip — has no such line, and is no rename.
+ */
+export const isRenamedInHeadLog = async (gitDir: string, from: string, to: string): Promise<boolean> => {
+  const record = `Branch: renamed refs/heads/${from} to refs/heads/${to}`;
+  return movesOf(await readLogTail(gitDir)).some((move) => move.message === record);
+};

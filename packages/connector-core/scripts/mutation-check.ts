@@ -19765,6 +19765,23 @@ export const MUTATIONS: readonly Mutation[
     because: "a `pull --rebase` moves HEAD onto the upstream it diverged from, and the rules fold the next branch into a topic it holds none of",
   },
   {
+    // Review H1 of feat/topic-contexts: the commit half read HEAD's history.
+    label: "the commit half reads HEAD's history instead of the worktree's own commits",
+    file: `${CORE}/src/flows/capture-git-touches.ts`,
+    from: "        \"--no-walk=unsorted\",\n        \"--no-merges\",\n        `--format=${COMMIT_MARK}%ae${FIELD_MARK}%at`,\n        \"--name-only\",\n        ...made.slice(-MAX_GIT_LANE_COMMITS),\n",
+    to: "        \"--no-merges\",\n        \"-n\",\n        String(MAX_GIT_LANE_COMMITS),\n        `--format=${COMMIT_MARK}%ae${FIELD_MARK}%at`,\n        \"--name-only\",\n        \"HEAD\",\n",
+    test: `${CONNECTOR}/test/topic-nick-shape.test.ts`,
+    because: "a topic that merges another topic's branch, a start checkout re-detached at a newer main, or a re-added worktree takes every own commit HEAD can reach — the pilot's sweep rebuilt",
+  },
+  {
+    label: "a commit merged into the worktree counts as made in it",
+    file: `${CORE}/src/git/head-history.ts`,
+    from: "const MADE_MESSAGES = [\"commit:\", \"commit (initial):\", \"commit (amend):\", \"cherry-pick:\"] as const;",
+    to: "const MADE_MESSAGES = [\"commit:\", \"commit (initial):\", \"commit (amend):\", \"cherry-pick:\", \"merge \", \"checkout:\"] as const;",
+    test: `${CORE}/test/head-history.test.ts`,
+    because: "the HEAD log's merges and checkouts move HEAD onto commits made elsewhere, and their files are filed under the topic that only received them",
+  },
+  {
     // The last word (spool/work-context-ack.ts) is SessionEnd's and session-reap's at once.
     label: "the last word leaves out a topic the hub is behind on",
     file: `${CORE}/src/spool/work-context-ack.ts`,
@@ -19877,7 +19894,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the git lane never reads work committed during the session",
     file: `${CORE}/src/flows/git-lane.ts`,
-    from: "    readGitCommits(base),\n",
+    from: "    readGitCommits({ ...base, gitDir: head?.gitDir ?? null }),\n",
     to: "    Promise.resolve([]),\n",
     test: `${CONNECTOR}/test/topic-git-lane.test.ts`,
     because: "a session that commits through a shell leaves a clean tree, and the lane records nothing of it",
@@ -20214,6 +20231,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/summarizer-worker-env.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/topic-git-lane.test.ts 9
+ * PRINTS: packages/connector-claude/test/topic-nick-shape.test.ts 1
  * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 4
  * PRINTS: packages/connector-core/test/absence-render.test.ts 7
@@ -20253,7 +20271,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/git-timeout.test.ts 4
  * PRINTS: packages/connector-core/test/guarantee-declarations.test.ts 28
  * PRINTS: packages/connector-core/test/guarantee-doctor.test.ts 3
- * PRINTS: packages/connector-core/test/head-history.test.ts 1
+ * PRINTS: packages/connector-core/test/head-history.test.ts 2
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 2
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4

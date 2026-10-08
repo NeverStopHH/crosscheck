@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1862
+    # PRINTS: 1864
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -280,7 +280,7 @@ jobs:
     # PRINTS: derive/summarizer/gate.ts 7
     # PRINTS: evidence/render.ts 1
     # PRINTS: flows/briefing.ts 5
-    # PRINTS: flows/capture-git-touches.ts 2
+    # PRINTS: flows/capture-git-touches.ts 3
     # PRINTS: flows/capture-targets.ts 5
     # PRINTS: flows/capture-touched-files.ts 5
     # PRINTS: flows/claim-revalidation.ts 2
@@ -299,7 +299,7 @@ jobs:
     # PRINTS: git/claim-drift.ts 5
     # PRINTS: git/fix-diff.ts 7
     # PRINTS: git/git.ts 4
-    # PRINTS: git/head-history.ts 3
+    # PRINTS: git/head-history.ts 4
     # PRINTS: git/pin-paths.ts 8
     # PRINTS: git/pin-sweep.ts 2
     # PRINTS: git/repo-identity.ts 1
@@ -507,7 +507,7 @@ jobs:
     # PRINTS: calibration.ts 1
     # PRINTS: capabilities.ts 6
     # PRINTS: capture-bookkeeping.ts 6
-    # PRINTS: capture-git-touches.ts 2
+    # PRINTS: capture-git-touches.ts 3
     # PRINTS: capture-health.ts 2
     # PRINTS: capture-latency.test.ts 1
     # PRINTS: capture-targets.ts 5
@@ -589,7 +589,7 @@ jobs:
     # PRINTS: git-lane.ts 8
     # PRINTS: git-queries.ts 15
     # PRINTS: git.ts 4
-    # PRINTS: head-history.ts 3
+    # PRINTS: head-history.ts 4
     # PRINTS: heal-session.ts 22
     # PRINTS: heartbeat.ts 3
     # PRINTS: hint-deliveries.ts 3

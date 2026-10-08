@@ -47,6 +47,7 @@ import {
   MAX_GIT_TOUCH_CANDIDATES,
 } from "../constants.ts";
 import { runGit, runGitOutcome } from "../git/git.ts";
+import { commitsMadeInHeadLog } from "../git/head-history.ts";
 import { sessionSlug } from "../config/paths.ts";
 import { recordDrop } from "../spool/drops.ts";
 import { captureFileTargets } from "./capture-targets.ts";
@@ -267,35 +268,44 @@ const authoredPaths = (stdout: string, author: string, since: Date): readonly st
 
 /**
  * THE COMMIT HALF (DESIGN.md "One session, many topics"): the files of the
- * commits THIS developer authored on the root's branch since `since` — a
- * session that commits through a shell leaves a clean tree, and `git diff`
- * cannot see work that was already committed. A teammate's commit — a merge
- * pulled in, a rebase, a cherry-pick — keeps its own author and is never this
- * session's. Bounded at MAX_GIT_LANE_COMMITS commits and the lane's own path
- * bound. Null when git did not answer; an empty list when nobody is
- * configured to attribute a commit to.
+ * commits THIS developer made IN THIS WORKTREE since `since` — a session that
+ * commits through a shell leaves a clean tree, and `git diff` cannot see work
+ * that was already committed.
+ *
+ * WHICH COMMITS: the ones the worktree's own HEAD log says it made
+ * (git/head-history.ts `commitsMadeInHeadLog`, review H1), never HEAD's
+ * history. Read from history, a merge of another topic's branch, a start
+ * checkout re-detached at a newer main, a worktree re-added at the same path
+ * or a second worktree on the same branch filed another topic's commits under
+ * this one. A teammate's commit keeps its own author and is dropped here too.
+ * Bounded at MAX_GIT_LANE_COMMITS commits and the lane's own path bound. Null
+ * when git did not answer; an empty list when the worktree made nothing in the
+ * window, its HEAD log is unreadable, or nobody is configured to attribute a
+ * commit to.
  *
  * NO CLOCK QUESTION TO GIT (CCB-2, test/staleness-axis.test.ts). Git is asked
- * for the newest commits on HEAD — a count, not a date filter, so a merge that
- * brought in old committer dates cannot hide what sits behind it — and the
- * window is cut here, on each commit's AUTHOR time and this developer's own
- * address. It is a question about this session's ACTIVITY, never about a
- * claim's currency, and it feeds capture, not any claim's authority.
+ * about named commits — `--no-walk`, no date filter — and the window is cut
+ * on the HEAD log's own instants and each commit's AUTHOR time and this
+ * developer's address. It is a question about this session's ACTIVITY, never
+ * about a claim's currency, and it feeds capture, not any claim's authority.
  */
 export const readGitCommits = async (
-  input: CaptureGitTouchesInput & { readonly authorEmail?: string | null },
+  input: CaptureGitTouchesInput & { readonly gitDir: string | null; readonly authorEmail?: string | null },
 ): Promise<readonly string[] | null> => {
   const timeoutMs = input.gitTimeoutMs ?? GIT_TOUCHES_TIMEOUT_MS;
+  const made = input.gitDir === null ? [] : await commitsMadeInHeadLog(input.gitDir, input.since);
+  if (made.length === 0) {
+    return [];
+  }
   const [log, configured] = await Promise.all([
     runGitOutcome(
       [
         "log",
+        "--no-walk=unsorted",
         "--no-merges",
-        "-n",
-        String(MAX_GIT_LANE_COMMITS),
         `--format=${COMMIT_MARK}%ae${FIELD_MARK}%at`,
         "--name-only",
-        "HEAD",
+        ...made.slice(-MAX_GIT_LANE_COMMITS),
         "--",
       ],
       input.repoRoot,
