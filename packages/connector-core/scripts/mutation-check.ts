@@ -24118,6 +24118,27 @@ export const MUTATIONS: readonly Mutation[
       "any other process may bind 127.0.0.1 on that hub's port and answer every hook " +
       "that hub was handed, so a suite run beside another goes red with no behaviour wrong",
   },
+  // Found by the load-only flake in cli/test/doctor.test.ts: under CPU
+  // contention the launcher's `--version` probe ran past its 3 s deadline and
+  // doctor named the developer's own install a foreign tool.
+  {
+    label: "a launcher probe the deadline killed reads as a foreign tool",
+    file: `${CORE}/src/config/launcher.ts`,
+    from: "    if (probe.signalCode !== null) {\n      return \"unanswered\";\n    }\n",
+    to: "",
+    test: `${CORE}/test/launcher-identity.test.ts`,
+    because:
+      "doctor tells a developer on a busy machine that a different tool owns `crosscheck` " +
+      "on their PATH and to remove it, about their own working install",
+  },
+  {
+    label: "an unanswered launcher probe passes doctor as healthy",
+    file: `${CORE}/src/config/launcher-check.ts`,
+    from: "    if (identity === \"unanswered\") {",
+    to: "    if (false) {",
+    test: `${CORE}/test/launcher-identity.test.ts`,
+    because: "a launcher that hangs on --version, and so would hang every hook, reads PASS",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -24380,6 +24401,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/landing-fetch-trigger.test.ts 13
  * PRINTS: packages/connector-core/test/landing-fetch-worker.test.ts 20
  * PRINTS: packages/connector-core/test/latency.test.ts 3
+ * PRINTS: packages/connector-core/test/launcher-identity.test.ts 2
  * PRINTS: packages/connector-core/test/loopback-bind.test.ts 1
  * PRINTS: packages/connector-core/test/loss-ledger.test.ts 5
  * PRINTS: packages/connector-core/test/loss-report.test.ts 33
