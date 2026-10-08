@@ -21162,13 +21162,13 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/git-timeout.test.ts 4
  * PRINTS: packages/connector-core/test/guarantee-declarations.test.ts 28
  * PRINTS: packages/connector-core/test/guarantee-doctor.test.ts 3
- * PRINTS: packages/connector-core/test/hint-best-match.test.ts 11
+ * PRINTS: packages/connector-core/test/hint-best-match.test.ts 12
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 2
  * PRINTS: packages/connector-core/test/hint-harness-turn.test.ts 7
- * PRINTS: packages/connector-core/test/hint-intent-fallback.test.ts 7
+ * PRINTS: packages/connector-core/test/hint-intent-fallback.test.ts 8
  * PRINTS: packages/connector-core/test/hint-old-hub-floor.test.ts 15
- * PRINTS: packages/connector-core/test/hint-query-window.test.ts 4
+ * PRINTS: packages/connector-core/test/hint-query-window.test.ts 5
  * PRINTS: packages/connector-core/test/hint-render.test.ts 4
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
  * PRINTS: packages/connector-core/test/hint-substance-flow.test.ts 12
@@ -21210,7 +21210,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/pilot-platform-refusals.test.ts 2
  * PRINTS: packages/connector-core/test/pin-paths.test.ts 8
  * PRINTS: packages/connector-core/test/pin-sweep.test.ts 2
- * PRINTS: packages/connector-core/test/prompt-corpus-gate.test.ts 3
+ * PRINTS: packages/connector-core/test/prompt-corpus-gate.test.ts 6
  * PRINTS: packages/connector-core/test/question-delivery.test.ts 5
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3
  * PRINTS: packages/connector-core/test/read-text.test.ts 1
@@ -21247,20 +21247,23 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/causal-guarantees.test.ts 7
  * PRINTS: packages/schema/test/claim.test.ts 1
- * PRINTS: packages/schema/test/content-floor.test.ts 9
- * PRINTS: packages/schema/test/continuation.test.ts 13
+ * PRINTS: packages/schema/test/content-floor.test.ts 11
+ * PRINTS: packages/schema/test/continuation.test.ts 16
  * PRINTS: packages/schema/test/english-stem.test.ts 4
  * PRINTS: packages/schema/test/evidence-resolution.test.ts 8
+ * PRINTS: packages/schema/test/exact-token.test.ts 6
  * PRINTS: packages/schema/test/file-ref.test.ts 5
- * PRINTS: packages/schema/test/harness-turn.test.ts 25
+ * PRINTS: packages/schema/test/harness-turn.test.ts 28
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1
+ * PRINTS: packages/schema/test/prompt-task.test.ts 13
  * PRINTS: packages/schema/test/prompt-terms.test.ts 40
  * PRINTS: packages/schema/test/session-control.test.ts 7
  * PRINTS: packages/schema/test/session.test.ts 1
+ * PRINTS: packages/schema/test/shell-command.test.ts 8
  * PRINTS: packages/schema/test/slash-command.test.ts 4
- * PRINTS: packages/schema/test/substance-match.test.ts 4
+ * PRINTS: packages/schema/test/substance-match.test.ts 5
  * PRINTS: packages/schema/test/substance-sentence.test.ts 13
  * PRINTS: packages/schema/test/telemetry-loss.test.ts 2
  * PRINTS: packages/schema/test/typing-slip.test.ts 11
@@ -21295,13 +21298,17 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-closed-stems.test.ts 2
  * PRINTS: packages/server/test/hint-content-floor.test.ts 7
  * PRINTS: packages/server/test/hint-content-terms.test.ts 3
+ * PRINTS: packages/server/test/hint-continuation-scope.test.ts 2
  * PRINTS: packages/server/test/hint-deliveries.test.ts 10
+ * PRINTS: packages/server/test/hint-dotted-names.test.ts 7
  * PRINTS: packages/server/test/hint-draft-visibility.test.ts 2
  * PRINTS: packages/server/test/hint-evidence-backed.test.ts 13
+ * PRINTS: packages/server/test/hint-exact-targets.test.ts 6
  * PRINTS: packages/server/test/hint-floor-integrity.test.ts 4
  * PRINTS: packages/server/test/hint-harness-turn.test.ts 2
  * PRINTS: packages/server/test/hint-long-prompt.test.ts 8
  * PRINTS: packages/server/test/hint-pushable-ranking.test.ts 5
+ * PRINTS: packages/server/test/hint-shell-command.test.ts 1
  * PRINTS: packages/server/test/hint-strong-match.test.ts 12
  * PRINTS: packages/server/test/hint-topical-floor.test.ts 4
  * PRINTS: packages/server/test/hint-withheld-bodies.test.ts 5

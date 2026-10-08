@@ -151,7 +151,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 1894
+    # PRINTS: 1952
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -281,7 +281,7 @@ jobs:
     # PRINTS: flows/claim-surface.ts 1
     # PRINTS: flows/end-session.ts 3
     # PRINTS: flows/heartbeat.ts 1
-    # PRINTS: flows/hint.ts 35
+    # PRINTS: flows/hint.ts 37
     # PRINTS: flows/register-session.ts 4
     # PRINTS: flows/solved-hint.ts 4
     # PRINTS: git/check-ignore.ts 1
@@ -367,36 +367,39 @@ jobs:
     # PRINTS: packages/schema/src/causal-guarantees.ts 10
     # PRINTS: packages/schema/src/claim-revalidation.ts 1
     # PRINTS: packages/schema/src/commit-evidence.ts 2
-    # PRINTS: packages/schema/src/content-floor.ts 16
-    # PRINTS: packages/schema/src/continuation.ts 9
+    # PRINTS: packages/schema/src/content-floor.ts 20
+    # PRINTS: packages/schema/src/continuation.ts 14
     # PRINTS: packages/schema/src/delivery-id.ts 2
     # PRINTS: packages/schema/src/english-stem.ts 4
     # PRINTS: packages/schema/src/enums.ts 2
     # PRINTS: packages/schema/src/envelope.ts 1
     # PRINTS: packages/schema/src/evidence-axes.ts 1
     # PRINTS: packages/schema/src/evidence-resolution.ts 12
+    # PRINTS: packages/schema/src/exact-token.ts 7
     # PRINTS: packages/schema/src/file-ref.ts 5
-    # PRINTS: packages/schema/src/harness-turn.ts 25
+    # PRINTS: packages/schema/src/harness-turn.ts 28
     # PRINTS: packages/schema/src/hint.ts 3
     # PRINTS: packages/schema/src/landed-context.ts 3
     # PRINTS: packages/schema/src/landed-notice.ts 5
     # PRINTS: packages/schema/src/pilot-mark.ts 5
     # PRINTS: packages/schema/src/pin.ts 2
-    # PRINTS: packages/schema/src/prompt-terms.ts 44
-    # PRINTS: packages/schema/src/prompt-vocabulary.ts 18
+    # PRINTS: packages/schema/src/prompt-task.ts 12
+    # PRINTS: packages/schema/src/prompt-terms.ts 47
+    # PRINTS: packages/schema/src/prompt-vocabulary.ts 21
     # PRINTS: packages/schema/src/repo-path.ts 1
     # PRINTS: packages/schema/src/secret-scan.ts 1
     # PRINTS: packages/schema/src/session-control.ts 9
     # PRINTS: packages/schema/src/session.ts 2
+    # PRINTS: packages/schema/src/shell-command.ts 6
     # PRINTS: packages/schema/src/slash-command.ts 4
     # PRINTS: packages/schema/src/stop-words.ts 2
     # PRINTS: packages/schema/src/substance-sentence.ts 15
-    # PRINTS: packages/schema/src/substance-trust.ts 12
+    # PRINTS: packages/schema/src/substance-trust.ts 14
     # PRINTS: packages/schema/src/telemetry-loss.ts 6
     # PRINTS: packages/schema/src/typing-slip.ts 11
     # PRINTS: packages/schema/src/untrusted-text.ts 6
     # PRINTS: packages/server/src/constants.ts 1
-    # PRINTS: packages/server/src/db/bootstrap.sql 19
+    # PRINTS: packages/server/src/db/bootstrap.sql 21
     # PRINTS: packages/server/src/db/client.ts 8
     # PRINTS: packages/server/src/db/schema.ts 1
     # PRINTS: packages/server/src/http/schemas.ts 1
@@ -435,7 +438,7 @@ jobs:
     # PRINTS: packages/server/src/services/evidence-resolution.ts 10
     # PRINTS: packages/server/src/services/ghost-overlap.ts 4
     # PRINTS: packages/server/src/services/hint-deliveries.ts 5
-    # PRINTS: packages/server/src/services/hints.ts 50
+    # PRINTS: packages/server/src/services/hints.ts 57
     # PRINTS: packages/server/src/services/intent-ledger.ts 12
     # PRINTS: packages/server/src/services/landed-context.ts 20
     # PRINTS: packages/server/src/services/landed-notices.ts 28
@@ -456,7 +459,7 @@ jobs:
     # PRINTS: packages/server/src/services/retention-registry.ts 9
     # PRINTS: packages/server/src/services/retention.ts 24
     # PRINTS: packages/server/src/services/search-tokens.ts 4
-    # PRINTS: packages/server/src/services/search.ts 12
+    # PRINTS: packages/server/src/services/search.ts 14
     # PRINTS: packages/server/src/services/session-events.ts 9
     # PRINTS: packages/server/src/services/session-order.ts 9
     # PRINTS: packages/server/src/services/sessions.ts 13
@@ -486,7 +489,7 @@ jobs:
     # PRINTS: ask-teammate.ts 1
     # PRINTS: attempt.ts 5
     # PRINTS: before-submit-prompt.ts 1
-    # PRINTS: bootstrap.sql 19
+    # PRINTS: bootstrap.sql 21
     # PRINTS: briefing.ts 5
     # PRINTS: calibration.ts 1
     # PRINTS: capabilities.ts 6
@@ -515,9 +518,9 @@ jobs:
     # PRINTS: config.ts 4
     # PRINTS: connected-repo.ts 3
     # PRINTS: constants.ts 10
-    # PRINTS: content-floor.ts 16
+    # PRINTS: content-floor.ts 20
     # PRINTS: context-group.ts 1
-    # PRINTS: continuation.ts 9
+    # PRINTS: continuation.ts 14
     # PRINTS: contradictions.ts 1
     # PRINTS: cost.ts 2
     # PRINTS: counts.ts 1
@@ -551,6 +554,7 @@ jobs:
     # PRINTS: events.ts 1
     # PRINTS: evidence-axes.ts 3
     # PRINTS: evidence-resolution.ts 22
+    # PRINTS: exact-token.ts 7
     # PRINTS: exec.ts 1
     # PRINTS: exempt-surfaces.ts 2
     # PRINTS: fd-io.ts 1
@@ -573,11 +577,11 @@ jobs:
     # PRINTS: git-lane-cost.ts 2
     # PRINTS: git-queries.ts 15
     # PRINTS: git.ts 4
-    # PRINTS: harness-turn.ts 25
+    # PRINTS: harness-turn.ts 28
     # PRINTS: heartbeat.ts 1
     # PRINTS: hint-deliveries.ts 5
-    # PRINTS: hint.ts 39
-    # PRINTS: hints.ts 53
+    # PRINTS: hint.ts 41
+    # PRINTS: hints.ts 60
     # PRINTS: hook-budget.ts 2
     # PRINTS: hub.ts 14
     # PRINTS: index.ts 4
@@ -643,8 +647,9 @@ jobs:
     # PRINTS: probe.ts 39
     # PRINTS: profile.ts 2
     # PRINTS: project-copy.ts 9
-    # PRINTS: prompt-terms.ts 44
-    # PRINTS: prompt-vocabulary.ts 18
+    # PRINTS: prompt-task.ts 12
+    # PRINTS: prompt-terms.ts 47
+    # PRINTS: prompt-vocabulary.ts 21
     # PRINTS: prompt.ts 2
     # PRINTS: proxy.ts 1
     # PRINTS: publish-claim.ts 2
@@ -677,7 +682,7 @@ jobs:
     # PRINTS: schemas.ts 1
     # PRINTS: search-related-work.ts 1
     # PRINTS: search-tokens.ts 4
-    # PRINTS: search.ts 13
+    # PRINTS: search.ts 15
     # PRINTS: secret-scan.ts 1
     # PRINTS: select.ts 44
     # PRINTS: seq-cost.ts 8
@@ -692,6 +697,7 @@ jobs:
     # PRINTS: set-intent.ts 5
     # PRINTS: settings-merge.ts 2
     # PRINTS: shared.ts 2
+    # PRINTS: shell-command.ts 6
     # PRINTS: skeleton-identity.ts 8
     # PRINTS: slash-command.ts 4
     # PRINTS: slice.ts 2
@@ -707,7 +713,7 @@ jobs:
     # PRINTS: stop.ts 3
     # PRINTS: stream.ts 3
     # PRINTS: substance-sentence.ts 15
-    # PRINTS: substance-trust.ts 12
+    # PRINTS: substance-trust.ts 14
     # PRINTS: suspect-render.ts 3
     # PRINTS: suspect.ts 7
     # PRINTS: sweep.ts 3
