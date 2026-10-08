@@ -45,7 +45,20 @@
  *     days later makes look young. An undated base is not stamped: its age
  *     is unknown, and unknown is not evidence.
  * Every refusal leaves the context unlanded, the direction in which it stays
- * visible to every collision check. The hub has no default-branch history
+ * visible to every collision check.
+ *
+ * PER WORK CONTEXT, NEVER PER SESSION (topic review C1). One session that
+ * works in a dozen sibling worktrees owns one TOPIC context per (repo,
+ * worktree, branch), each with its own branch and base commit (DESIGN.md "One
+ * session, many topics"). A report naming the SESSION's base stamped every
+ * context of the session, so one teammate's SessionStart took every topic —
+ * mid-work, elsewhere, on other branches — out of the ghost checks and the
+ * conference at once. So the session's base lands only the session's OWN
+ * context, and a topic lands only by its own base, judged by the same rules
+ * on its own facts: its branch (detached, default), its connector's word
+ * about its base (`work_contexts.base_on_default` — a branch freshly cut from
+ * main says its base was there already), and, for a topic without a word,
+ * the dated fallback against when the TOPIC took its base (its created_at). The hub has no default-branch history
  * to derive "already on main at creation" from — commit evidence is one
  * aggregate row per author, no hashes — so the connector says it, or the
  * date stands in for it.
@@ -66,7 +79,8 @@
  * a new sha that no base names, so this lane can miss a landing — it must
  * never invent one.
  */
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, or } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
 import { isDefaultBranch, isDetachedBranch } from "@crosscheck/schema";
 import type { LandedEvidence } from "@crosscheck/schema";
 
@@ -134,13 +148,85 @@ export const ancestryLandsContext = (
 const commitDatesOf = (body: LandedEvidence): ReadonlyMap<string, Date> =>
   new Map((body.commitDates ?? []).map((entry) => [entry.sha, new Date(entry.committedAt)]));
 
+/** One context as the rule reads it: its own base, and the facts about that base. */
+export interface JudgedContext extends LandingCandidate {
+  readonly id: string;
+  readonly baseCommit: string;
+}
+
+/** What one candidate row holds: the context's own topic fields beside its session's. */
+export interface CandidateRow {
+  readonly id: string;
+  readonly topicBranch: string | null;
+  readonly topicBaseCommit: string | null;
+  readonly topicBaseOnDefault: boolean | null;
+  readonly createdAt: Date;
+  readonly sessionBaseCommit: string;
+  readonly sessionBranch: string;
+  readonly sessionBaseOnDefault: boolean | null;
+  readonly baseChangedAt: Date | null;
+  readonly startedAt: Date;
+}
+
+/** A session's OWN context: no topic field of its own, so its base and word are its session's. */
+const isSessionOwn = (row: Pick<CandidateRow, "topicBranch" | "topicBaseCommit">): boolean =>
+  row.topicBranch === null && row.topicBaseCommit === null;
+
+/** The columns a CandidateRow is read from, for every reader that judges a stamp. */
+export const CANDIDATE_COLUMNS = {
+  id: workContexts.id,
+  topicBranch: workContexts.branch,
+  topicBaseCommit: workContexts.baseCommit,
+  topicBaseOnDefault: workContexts.baseOnDefault,
+  createdAt: workContexts.createdAt,
+  sessionBaseCommit: agentSessions.baseCommit,
+  sessionBranch: agentSessions.branch,
+  sessionBaseOnDefault: agentSessions.baseOnDefault,
+  baseChangedAt: agentSessions.baseChangedAt,
+  startedAt: agentSessions.startedAt,
+} as const;
+
 /**
- * Stamps landed_at on every still-open context whose owning session is on
- * `body.repo` with a base commit the report names, and whose base reaching
- * the default branch is evidence of new work (ancestryLandsContext). The
- * candidates are read once, judged here, and stamped in one UPDATE that
- * re-checks `landed_at IS NULL` — the commit list is capped by the wire
- * schema (MAX_LANDED_COMMITS).
+ * A row as the rule judges it — a topic on ITS OWN facts: its base, its
+ * branch, its word, and its first touch as the instant it took its base.
+ * The operator's repair judges a stamp on the same facts
+ * (services/landed-repair.ts).
+ */
+export const judgedContextOf = (row: CandidateRow): JudgedContext =>
+  isSessionOwn(row)
+    ? {
+        id: row.id,
+        baseCommit: row.sessionBaseCommit,
+        branch: row.sessionBranch,
+        baseOnDefault: row.sessionBaseOnDefault,
+        baseAdoptedAt: row.baseChangedAt ?? row.startedAt,
+      }
+    : {
+        id: row.id,
+        baseCommit: row.topicBaseCommit ?? "",
+        branch: row.topicBranch ?? row.sessionBranch,
+        baseOnDefault: row.topicBaseOnDefault,
+        baseAdoptedAt: row.createdAt,
+      };
+
+/**
+ * WHICH CONTEXTS A REPORT CAN NAME: a session's own context by its session's
+ * base, a topic by its own base only — never through its session's, and a
+ * topic with no base of its own by none.
+ */
+const namedByReport = (commits: readonly string[]): SQL | undefined =>
+  or(
+    and(isNull(workContexts.branch), isNull(workContexts.baseCommit), inArray(agentSessions.baseCommit, [...commits])),
+    inArray(workContexts.baseCommit, [...commits]),
+  );
+
+/**
+ * Stamps landed_at on every still-open context on `body.repo` whose OWN base
+ * commit the report names (namedByReport), and whose base reaching the
+ * default branch is evidence of new work (ancestryLandsContext, judged per
+ * context). The candidates are read once, judged here, and stamped in one
+ * UPDATE that re-checks `landed_at IS NULL` — the commit list is capped by
+ * the wire schema (MAX_LANDED_COMMITS).
  *
  * Always "accepted", including when nothing matched: the write is idempotent
  * and the flush loop acts on nothing finer. No outbox event, same reasoning
@@ -152,22 +238,15 @@ export const ingestLandedEvidence = async (
   developerId: string,
   body: LandedEvidence,
 ): Promise<HandlerOutcome> => {
-  const candidates = await deps.db
-    .select({
-      id: workContexts.id,
-      baseCommit: agentSessions.baseCommit,
-      branch: agentSessions.branch,
-      baseOnDefault: agentSessions.baseOnDefault,
-      baseChangedAt: agentSessions.baseChangedAt,
-      startedAt: agentSessions.startedAt,
-    })
+  const candidates: readonly CandidateRow[] = await deps.db
+    .select(CANDIDATE_COLUMNS)
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
     .where(
       and(
         isNull(workContexts.landedAt),
         eq(agentSessions.repo, body.repo),
-        inArray(agentSessions.baseCommit, [...body.commits]),
+        namedByReport(body.commits),
         // A HIDDEN OWNER'S SESSIONS TAKE EVIDENCE FROM THE OWNER ONLY. The
         // stamp is visible to every colleague, so accepting anybody's report
         // let a colleague submit a guessed sha, watch `landedAt` flip and
@@ -181,9 +260,9 @@ export const ingestLandedEvidence = async (
   const committedAt = commitDatesOf(body);
   const report: LandingReport = { defaultBranch: body.defaultBranch ?? null, at: deps.now() };
   const landing = candidates
-    .map((row) => ({ ...row, baseAdoptedAt: row.baseChangedAt ?? row.startedAt }))
-    .filter((row) => ancestryLandsContext(row, committedAt.get(row.baseCommit), report))
-    .map((row) => row.id);
+    .map(judgedContextOf)
+    .filter((context) => ancestryLandsContext(context, committedAt.get(context.baseCommit), report))
+    .map((context) => context.id);
   if (landing.length > 0) {
     await deps.db
       .update(workContexts)

@@ -50,6 +50,8 @@ export interface TitledWorkContext extends OwnWorkContext {
   readonly topicKey?: string;
   readonly branch?: string;
   readonly baseCommit?: string | null;
+  /** The topic's own word about that base (flows/topic-base-word.ts), sent beside it. */
+  readonly baseOnDefault?: boolean | null;
 }
 
 /** The status field this write moves: the session's own, or one topic's entry. */
@@ -157,6 +159,11 @@ export const writeIntent = async (
     intent: write.intent,
     ...(own.branch === undefined ? {} : { branch: own.branch }),
     ...(own.baseCommit === undefined || own.baseCommit === null ? {} : { baseCommit: own.baseCommit }),
+    // ...with the topic's word about it, so a set_intent that reaches the hub
+    // before the spool's copy creates the topic whole (topic review C1).
+    ...(own.baseCommit === undefined || own.baseCommit === null || typeof own.baseOnDefault !== "boolean"
+      ? {}
+      : { baseOnDefault: own.baseOnDefault }),
     createdAt: own.startedAt,
   };
   const producer = { sessionId: own.crosscheckSessionId, developerId: own.developerId };

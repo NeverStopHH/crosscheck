@@ -58,6 +58,8 @@ import type { GeneratedTally } from "../capture/generated.ts";
 import { mergeTopicCaptures, plannedTopicRecords, relabelsKept, seenPathsOf, topicLifeOf, topicSeenKey } from "./topic-contexts.ts";
 import type { Filing, TopicCapture, TopicLife } from "./topic-contexts.ts";
 import { planTopics } from "./topic-rules.ts";
+import { topicBaseProbe, withTopicBaseWords } from "./topic-base-word.ts";
+import type { TopicBaseProbe } from "./topic-base-word.ts";
 
 /** One root the lane sweeps, and the window it reads it in. */
 export interface GitLaneRoot {
@@ -322,6 +324,7 @@ const spoolRoot = async (
   read: RootRead,
   index: number,
   life: TopicLife,
+  probe: TopicBaseProbe,
 ): Promise<RootSpooled | null> => {
   const commits = read.commits ?? [];
   const touches = read.touches ?? [];
@@ -330,7 +333,12 @@ const spoolRoot = async (
   if (first === undefined) {
     return null;
   }
-  const plan = await planTopics(life, resolutionOf(read, paths, input.state, input.now), paths, input.now, read.lane.root);
+  // The topics this root opens, each with its own word about its base (topic
+  // review C1; flows/topic-base-word.ts).
+  const plan = await withTopicBaseWords(
+    await planTopics(life, resolutionOf(read, paths, input.state, input.now), paths, input.now, read.lane.root),
+    probe,
+  );
   const session: Filing = { key: null, workContextId: life.sessionWorkContextId };
   const records = plannedTopicRecords(plan, life, input.producer, input.now);
   const isOpened =
@@ -390,8 +398,11 @@ export const sweepGitRoots = async (input: SweepGitRootsInput): Promise<GitLaneS
   const captured: string[] = [];
   const topics: TopicCapture[] = [];
   let generated = NO_GENERATED;
+  // One probe for the sweep: the topics its roots open share one default-ref
+  // lookup, the repo's (flows/topic-base-word.ts).
+  const probe = topicBaseProbe();
   for (const [index, read] of reads.entries()) {
-    const spooled = await spoolRoot(input, read, index, life);
+    const spooled = await spoolRoot(input, read, index, life, probe);
     if (spooled !== null) {
       captured.push(...spooled.captured);
       generated = addGeneratedTally(generated, spooled.generated);

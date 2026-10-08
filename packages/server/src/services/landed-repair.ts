@@ -35,7 +35,7 @@ import { isDefaultBranch, isDetachedBranch } from "@crosscheck/schema";
 
 import { agentSessions, workContexts } from "../db/schema.ts";
 import type { DbExecutor } from "../db/client.ts";
-import { isStaleBase } from "./landed.ts";
+import { CANDIDATE_COLUMNS, isStaleBase, judgedContextOf } from "./landed.ts";
 
 export const FALSE_LANDING_REASONS = ["flagged", "detached", "default", "named", "stale", "override"] as const;
 export type FalseLandingReason = (typeof FALSE_LANDING_REASONS)[number];
@@ -45,7 +45,7 @@ export interface LandedContextRow {
   readonly branch: string;
   readonly baseCommit: string;
   readonly baseOnDefault: boolean | null;
-  /** When the session took its base: base_changed_at, else its start. */
+  /** When the context took its base: a topic's first touch; else its session's base_changed_at, else its start. */
   readonly baseAdoptedAt: Date;
 }
 
@@ -76,21 +76,19 @@ export interface RepairPlan {
 export const REPAIR_SCOPES = ["open", "all"] as const;
 export type RepairScope = (typeof REPAIR_SCOPES)[number];
 
-/** Every landed context in the scope, with what the rule reads about its session. */
+/**
+ * Every landed context in the scope, with what the rule reads about ITS OWN
+ * base — a topic's branch, base, word and first touch, a session's own
+ * context's session — exactly as the ingest judges it (services/landed.ts
+ * judgedContextOf): a topic is never judged by its session's facts.
+ */
 export const listLandedContexts = async (
   db: DbExecutor,
   scope: RepairScope,
 ): Promise<readonly LandedContextRow[]> =>
   (
     await db
-      .select({
-        id: workContexts.id,
-        branch: agentSessions.branch,
-        baseCommit: agentSessions.baseCommit,
-        baseOnDefault: agentSessions.baseOnDefault,
-        baseChangedAt: agentSessions.baseChangedAt,
-        startedAt: agentSessions.startedAt,
-      })
+      .select(CANDIDATE_COLUMNS)
       .from(workContexts)
       .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
       .where(
@@ -99,7 +97,7 @@ export const listLandedContexts = async (
           scope === "open" ? isNull(agentSessions.endedAt) : undefined,
         ),
       )
-  ).map(({ baseChangedAt, startedAt, ...row }) => ({ ...row, baseAdoptedAt: baseChangedAt ?? startedAt }));
+  ).map(judgedContextOf);
 
 /** Why this stamp should not have been made, or null when nothing shows it. */
 export const falseLandingReason = (

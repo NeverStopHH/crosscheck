@@ -202,6 +202,16 @@ export const WorkContextSchema = z.looseObject({
    */
   branch: z.string().min(1).max(MAX_TOPIC_BRANCH_CHARS).optional(),
   baseCommit: z.string().regex(COMMIT_SHA_PATTERN).optional(),
+  /**
+   * A TOPIC'S OWN WORD ABOUT ITS BASE (topic review C1): was `baseCommit`
+   * already reachable from the default branch when the topic opened? A
+   * branch freshly cut from main says yes, and the hub then never stamps the
+   * topic landed by that base (server services/landed.ts) — the session's own
+   * word, `RegisterSessionBody.baseOnDefault`, is about the START checkout
+   * and says nothing about a topic. Optional and additive: absent is "did
+   * not say", and a word carried without `baseCommit` is about nothing.
+   */
+  baseOnDefault: z.boolean().optional(),
   description: z.string().optional(),
   /**
    * Optional and NOT nullable on the wire: a work_context record without the

@@ -56,7 +56,19 @@ export interface WorkContextRecordInput {
    */
   readonly branch?: string | undefined;
   readonly baseCommit?: string | null | undefined;
+  /**
+   * The topic's own word about that commit (flows/topic-base-word.ts): was it
+   * already on the default branch when the topic opened? Sent only beside
+   * the commit it is about; null or absent says nothing.
+   */
+  readonly baseOnDefault?: boolean | null | undefined;
 }
+
+/** A topic's word about its base, as the body carries it: only beside that base. */
+const baseWordOf = (input: WorkContextRecordInput): { readonly baseOnDefault?: boolean } =>
+  input.baseCommit === undefined || input.baseCommit === null || typeof input.baseOnDefault !== "boolean"
+    ? {}
+    : { baseOnDefault: input.baseOnDefault };
 
 export const workContextRecord = (
   input: WorkContextRecordInput,
@@ -74,6 +86,7 @@ export const workContextRecord = (
       ...(input.intent === undefined ? {} : { intent: input.intent }),
       ...(input.branch === undefined ? {} : { branch: input.branch }),
       ...(input.baseCommit === undefined || input.baseCommit === null ? {} : { baseCommit: input.baseCommit }),
+      ...baseWordOf(input),
       createdAt: now.toISOString(),
     },
     producer,

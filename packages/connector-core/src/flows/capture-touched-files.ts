@@ -64,6 +64,7 @@ import type { GeneratedTally } from "../capture/generated.ts";
 import { plannedTopicRecords, relabelsKept, seenPathsOf, topicSeenKey } from "./topic-contexts.ts";
 import type { Filing, TopicCapture, TopicLife, TopicPlan } from "./topic-contexts.ts";
 import { planTopics } from "./topic-rules.ts";
+import { withTopicBaseWords } from "./topic-base-word.ts";
 
 /** The capture-loss detail a topic overflow is booked under (state/loss-ledger.ts). */
 const TOPIC_OVERFLOW_DETAIL = "topic-cap";
@@ -208,7 +209,9 @@ const captureByTopic = async (
   resolution: TouchedRootsResolution,
   life: TopicLife,
 ): Promise<{ readonly captured: readonly string[]; readonly generated: GeneratedTally; readonly topics: TopicCapture }> => {
-  const plan = await planTopics(life, resolution, input.paths, input.now, input.cwd);
+  // Each topic this event opens says whether its base was on the default
+  // branch already (topic review C1) — git asked only for those.
+  const plan = await withTopicBaseWords(await planTopics(life, resolution, input.paths, input.now, input.cwd));
   const isOpened = await spoolOpenedTopics(input, plan, life);
   const session: Filing = { key: null, workContextId: life.sessionWorkContextId };
   const unopened = new Set(isOpened ? [] : plan.opened.map((topic) => topic.key));

@@ -761,6 +761,11 @@ const SessionStateObjectSchema = z.looseObject({
         title: z.string().min(1),
         status: z.string().min(1),
         baseCommit: z.string().min(1).nullable().default(null),
+        // Was `baseCommit` already on the default branch when the topic
+        // opened (flows/topic-base-word.ts; topic review C1)? Sent with every
+        // record of the topic, so the hub lands it by its own word. Optional:
+        // a state from before it, or a git that could not answer, says nothing.
+        baseOnDefault: z.boolean().nullable().optional(),
         root: z.string().min(1),
         registeredAt: z.string().min(1),
         lastTouchedAt: z.string().min(1),

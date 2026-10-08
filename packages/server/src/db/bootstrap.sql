@@ -308,6 +308,10 @@ ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS title_source text;
 -- so an existing hub gets both.
 ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS branch text;
 ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS base_commit text;
+-- ...and the topic's own word about that base (topic review C1): already on
+-- the default branch when the topic opened, or not. A topic lands by its own
+-- base and its own word only (services/landed.ts); null is "not said".
+ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS base_on_default boolean;
 
 -- Similarity-detected contradiction candidates (DESIGN.md §3 ingest gate).
 -- A TABLE for these, and only these: they exist only while an embedder is

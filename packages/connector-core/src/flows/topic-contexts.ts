@@ -197,6 +197,9 @@ const topicRecord = (topic: TopicContext, producer: Producer, now: Date): Envelo
       status: topic.status,
       branch: topic.branch,
       baseCommit: topic.baseCommit,
+      // The topic's own word about that base (flows/topic-base-word.ts): the
+      // hub lands a topic by its own base and word only (topic review C1).
+      baseOnDefault: topic.baseOnDefault,
     },
     producer,
     now,

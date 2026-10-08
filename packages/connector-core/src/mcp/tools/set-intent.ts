@@ -300,6 +300,7 @@ const targetOf = async (
       topicKey: target.topic.key,
       branch: target.topic.branch,
       baseCommit: target.topic.baseCommit,
+      baseOnDefault: target.topic.baseOnDefault ?? null,
     },
   };
 };

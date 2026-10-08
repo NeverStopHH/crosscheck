@@ -322,12 +322,23 @@ const mergeIntent = (
  * carries them fills a context that had none, and never moves one that had.
  */
 const topicFieldsOf = (
-  current: Pick<WorkContextRow, "branch" | "baseCommit">,
+  current: Pick<WorkContextRow, "branch" | "baseCommit" | "baseOnDefault">,
   body: WorkContext,
-): Pick<WorkContextRow, "branch" | "baseCommit"> => ({
-  branch: current.branch ?? body.branch ?? null,
-  baseCommit: current.baseCommit ?? body.baseCommit ?? null,
-});
+): Pick<WorkContextRow, "branch" | "baseCommit" | "baseOnDefault"> => {
+  const baseCommit = current.baseCommit ?? body.baseCommit ?? null;
+  return {
+    branch: current.branch ?? body.branch ?? null,
+    baseCommit,
+    // ...AND THE TOPIC'S WORD ABOUT THAT BASE, once, from a copy that names
+    // the base it is about (topic review C1): a word about another commit
+    // says nothing about this one, and a later copy never moves a stored word.
+    baseOnDefault: current.baseOnDefault ?? (body.baseCommit === baseCommit ? baseWordOf(body) : null),
+  };
+};
+
+/** A record's word about its own base: none without the base it is about. */
+const baseWordOf = (body: WorkContext): boolean | null =>
+  body.baseCommit === undefined ? null : (body.baseOnDefault ?? null);
 
 const workContextChanges = (
   current: WorkContextRow,
@@ -357,7 +368,8 @@ const workContextChanges = (
     JSON.stringify(next.intent) !== JSON.stringify(current.intent) ||
     next.status !== current.status ||
     next.branch !== current.branch ||
-    next.baseCommit !== current.baseCommit;
+    next.baseCommit !== current.baseCommit ||
+    next.baseOnDefault !== current.baseOnDefault;
   return hasChange ? next : null;
 };
 
@@ -516,6 +528,7 @@ export const ingestWorkContext = async (
         // topics"); null from a connector before topics.
         branch: body.branch ?? null,
         baseCommit: body.baseCommit ?? null,
+        baseOnDefault: baseWordOf(body),
         createdAt: new Date(body.createdAt),
         updatedAt:
           body.updatedAt === undefined ? null : new Date(body.updatedAt),

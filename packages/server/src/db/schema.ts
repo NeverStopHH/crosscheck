@@ -357,6 +357,14 @@ export const workContexts = pgTable("work_contexts", {
    */
   branch: text("branch"),
   baseCommit: text("base_commit"),
+  /**
+   * The TOPIC's own word about `base_commit` (topic review C1): already on the
+   * default branch when the topic opened — true for a branch freshly cut from
+   * main — or not. Written once, with the base it is about, and read by the
+   * landed rule for this context alone (services/landed.ts). Null: not said,
+   * and always on a session's own context, whose word is its session's.
+   */
+  baseOnDefault: boolean("base_on_default"),
 }, (table) => [
   // `session_id` is a foreign key, which Postgres does NOT index on its own.
   // services/presence.ts reads the newest context of every live session to

@@ -163,6 +163,7 @@ export const lastWorkContextRecords = (state: SessionState, now: Date): readonly
         status: topic.status,
         branch: topic.branch,
         baseCommit: topic.baseCommit,
+        baseOnDefault: topic.baseOnDefault,
       },
       producer,
       now,

@@ -25599,7 +25599,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "every base on the default branch stamps its context again, and ghost checks lose it",
     file: `${SERVER}/src/services/landed.ts`,
-    from: "    .filter((row) => ancestryLandsContext(row, committedAt.get(row.baseCommit), report))",
+    from: "    .filter((context) => ancestryLandsContext(context, committedAt.get(context.baseCommit), report))",
     to: "    .filter(() => true)",
     test: `${SERVER}/test/ghost-overlap.test.ts`,
     because:
@@ -25609,7 +25609,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "every base on the default branch stamps its context again, and the conference loses it",
     file: `${SERVER}/src/services/landed.ts`,
-    from: "    .filter((row) => ancestryLandsContext(row, committedAt.get(row.baseCommit), report))",
+    from: "    .filter((context) => ancestryLandsContext(context, committedAt.get(context.baseCommit), report))",
     to: "    .filter(() => true)",
     test: `${SERVER}/test/conference.test.ts`,
     because: "unfinished work drops out of the case file as if it had merged",
@@ -26139,8 +26139,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a base's age is judged from when its session started, not when it took the base",
     file: `${SERVER}/src/services/landed.ts`,
-    from: "    .map((row) => ({ ...row, baseAdoptedAt: row.baseChangedAt ?? row.startedAt }))",
-    to: "    .map((row) => ({ ...row, baseAdoptedAt: row.startedAt }))",
+    from: "        baseAdoptedAt: row.baseChangedAt ?? row.startedAt,",
+    to: "        baseAdoptedAt: row.startedAt,",
     test: `${SERVER}/test/landed.test.ts`,
     because: "a long session that pulls a five-day-old main reads that base as younger than its work and lands it",
   },
@@ -27472,6 +27472,169 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/doctor-losses.test.ts`,
     because: "the 1.0 release gate: status counts the 0.10 losses in its dropped total and never says what they were",
   },
+  {
+    // Topic review C1: the hub landed per SESSION. One teammate report naming
+    // the session's base stamped every topic of the session, mid-work in other
+    // worktrees, and every one of them left the ghost checks and the conference.
+    label: "a session's base lands every topic of the session",
+    file: `${SERVER}/src/services/landed.ts`,
+    from: "    and(isNull(workContexts.branch), isNull(workContexts.baseCommit), inArray(agentSessions.baseCommit, [...commits])),",
+    to: "    inArray(agentSessions.baseCommit, [...commits]),",
+    test: `${SERVER}/test/landed-topics.test.ts`,
+    because: "probe L1: a report of Nick's session base takes topic A out of Ken's ghost check while Ken edits its files",
+  },
+  {
+    label: "a topic never lands by its own base",
+    file: `${SERVER}/src/services/landed.ts`,
+    from: "    inArray(workContexts.baseCommit, [...commits]),\n  );",
+    to: "    isNull(workContexts.id),\n  );",
+    test: `${SERVER}/test/landed-topics.test.ts`,
+    because: "probe L2: DESIGN.md says landing is measured from the topic's own commit, and a topic whose work merged stays open forever",
+  },
+  {
+    label: "a topic is judged by its session's word about the session's base",
+    file: `${SERVER}/src/services/landed.ts`,
+    from: "        baseOnDefault: row.topicBaseOnDefault,",
+    to: "        baseOnDefault: row.sessionBaseOnDefault,",
+    test: `${SERVER}/test/landed-topics.test.ts`,
+    because: "a branch freshly cut from main says its base was there already, and a report of that base lands it anyway",
+  },
+  {
+    label: "a topic's age is judged from when its session took its own base",
+    file: `${SERVER}/src/services/landed.ts`,
+    from: "        baseAdoptedAt: row.createdAt,",
+    to: "        baseAdoptedAt: row.baseChangedAt ?? row.startedAt,",
+    test: `${SERVER}/test/landed-topics.test.ts`,
+    because: "the date fallback reads a topic opened days into its session on a two-day-old base as fresh work",
+  },
+  {
+    label: "a topic is judged by its session's branch",
+    file: `${SERVER}/src/services/landed.ts`,
+    from: "        branch: row.topicBranch ?? row.sessionBranch,",
+    to: "        branch: row.sessionBranch,",
+    test: `${SERVER}/test/landed-topics.test.ts`,
+    because: "a detached topic, or one on main, of a session on a feature branch is stamped by its base",
+  },
+  {
+    label: "a topic's base is dated by its session's base",
+    file: `${SERVER}/src/services/landed.ts`,
+    from: "        baseCommit: row.topicBaseCommit ?? \"\",",
+    to: "        baseCommit: row.sessionBaseCommit,",
+    test: `${SERVER}/test/landed-topics.test.ts`,
+    because: "a topic without a word is judged by the age of a commit that is not its own, and its own dated base never lands it",
+  },
+  {
+    label: "a later copy moves a topic's stored word about its base",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "    baseOnDefault: current.baseOnDefault ?? (body.baseCommit === baseCommit ? baseWordOf(body) : null),",
+    to: "    baseOnDefault: baseWordOf(body) ?? current.baseOnDefault,",
+    test: `${SERVER}/test/landed-topics.test.ts`,
+    because: "the word is about the commit the topic opened on; a later copy saying otherwise would flip whether its landing counts",
+  },
+  {
+    label: "a word about another base fills a topic's",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "    baseOnDefault: current.baseOnDefault ?? (body.baseCommit === baseCommit ? baseWordOf(body) : null),",
+    to: "    baseOnDefault: current.baseOnDefault ?? baseWordOf(body),",
+    test: `${SERVER}/test/landed-topics.test.ts`,
+    because: "a copy naming a different commit says nothing about the stored base, and its word would decide that base's landing",
+  },
+  {
+    label: "the work-context create drops a topic's word about its base",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "        baseOnDefault: baseWordOf(body),\n        createdAt",
+    to: "        baseOnDefault: null,\n        createdAt",
+    test: `${SERVER}/test/landed-topics.test.ts`,
+    because: "a fresh branch's topic falls to the date fallback, and its base — main's tip of an hour ago — reads as new work",
+  },
+  {
+    label: "a topic's word alone is no change to its context",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "    next.baseCommit !== current.baseCommit ||\n    next.baseOnDefault !== current.baseOnDefault;",
+    to: "    next.baseCommit !== current.baseCommit;",
+    test: `${SERVER}/test/landed-topics.test.ts`,
+    because: "a topic whose first copy carried no word never stores the one its later copies carry",
+  },
+  {
+    label: "the landed repair judges a topic by its session's facts",
+    file: `${SERVER}/src/services/landed-repair.ts`,
+    from: "  ).map(judgedContextOf);",
+    to: "  ).map((row) => ({ id: row.id, branch: row.sessionBranch, baseCommit: row.sessionBaseCommit, baseOnDefault: row.sessionBaseOnDefault, baseAdoptedAt: row.baseChangedAt ?? row.startedAt }));",
+    test: `${SERVER}/test/landed-topics.test.ts`,
+    because: "the operator's repair un-lands a topic that landed on its own new base because its session sits detached at an old main commit",
+  },
+  {
+    label: "a topic is opened without asking git about its base",
+    file: `${CORE}/src/flows/topic-base-word.ts`,
+    from: "  const words = await Promise.all(plan.opened.map((topic) => probe(topic)));",
+    to: "  const words = plan.opened.map(() => undefined);",
+    test: `${CORE}/test/topic-base-word.test.ts`,
+    because: "every topic says nothing about its base, and a teammate's report of a fresh branch's base lands it on the date fallback",
+  },
+  {
+    label: "the edit capture opens topics without their word about their base",
+    file: `${CORE}/src/flows/capture-touched-files.ts`,
+    from: "  const plan = await withTopicBaseWords(await planTopics(life, resolution, input.paths, input.now, input.cwd));",
+    to: "  const plan = await planTopics(life, resolution, input.paths, input.now, input.cwd);",
+    test: `${CORE}/test/topic-base-word.test.ts`,
+    because: "the topics an edit opens — almost all of them — reach the hub with no word, so the fresh-branch rule never applies",
+  },
+  {
+    label: "the git lane opens topics without their word about their base",
+    file: `${CORE}/src/flows/git-lane.ts`,
+    from: "  const plan = await withTopicBaseWords(\n    await planTopics(",
+    to: "  const plan = await Promise.resolve(\n    await planTopics(",
+    test: `${CORE}/test/topic-base-word.test.ts`,
+    because: "a topic a shell or a subagent opened in a sibling worktree reaches the hub with no word about its base",
+  },
+  {
+    label: "a topic's opening record leaves out its word about its base",
+    file: `${CORE}/src/flows/topic-contexts.ts`,
+    from: "      baseOnDefault: topic.baseOnDefault,\n    },\n    producer,",
+    to: "    },\n    producer,",
+    test: `${CORE}/test/topic-base-word.test.ts`,
+    because: "the word is asked of git and never sent: the hub judges every topic as one that said nothing",
+  },
+  {
+    label: "a work-context record never carries a base word",
+    file: `${CORE}/src/capture/records.ts`,
+    from: "      ...baseWordOf(input),\n",
+    to: "",
+    test: `${CORE}/test/topic-base-word.test.ts`,
+    because: "every sender builds its topic record here, and none of them would say whether the topic's base was on main",
+  },
+  {
+    label: "SessionEnd's last word sends a topic without its base word",
+    file: `${CORE}/src/spool/work-context-ack.ts`,
+    from: "        baseOnDefault: topic.baseOnDefault,\n",
+    to: "",
+    test: `${CORE}/test/topic-base-word.test.ts`,
+    because: "a topic whose opening copy was lost reaches the hub through SessionEnd alone, with no word",
+  },
+  {
+    label: "set_intent's topic post leaves out its base word",
+    file: `${CORE}/src/mcp/tools/intent-write.ts`,
+    from: "      : { baseOnDefault: own.baseOnDefault }),\n",
+    to: "      : {}),\n",
+    test: `${CORE}/test/topic-base-word.test.ts`,
+    because: "set_intent reaches the hub before the spool's copy and creates the topic without its word, which no later copy fills",
+  },
+  {
+    label: "set_intent's topic target forgets the topic's base word",
+    file: `${CORE}/src/mcp/tools/set-intent.ts`,
+    from: "      baseOnDefault: target.topic.baseOnDefault ?? null,\n",
+    to: "",
+    test: `${CORE}/test/topic-contexts.test.ts`,
+    because: "the tool's own target never hands the word to the writer, so a topic set_intent creates is born without it",
+  },
+  {
+    label: "the session state drops a topic's base word",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "        baseOnDefault: z.boolean().nullable().optional(),\n",
+    to: "",
+    test: `${CORE}/test/topic-contexts.test.ts`,
+    because: "the registry forgets the word at its first write, and every later sender of the topic — set_intent, SessionEnd — says nothing",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -27803,7 +27966,8 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/staleness-axis.test.ts 1
  * PRINTS: packages/connector-core/test/target-paths.test.ts 1
  * PRINTS: packages/connector-core/test/tool-window-pairing.test.ts 6
- * PRINTS: packages/connector-core/test/topic-contexts.test.ts 19
+ * PRINTS: packages/connector-core/test/topic-base-word.test.ts 7
+ * PRINTS: packages/connector-core/test/topic-contexts.test.ts 21
  * PRINTS: packages/connector-core/test/topic-heads.test.ts 3
  * PRINTS: packages/connector-core/test/topic-rules.test.ts 15
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
@@ -27893,6 +28057,7 @@ interface Outcome {
  * PRINTS: packages/server/test/landed-context.test.ts 22
  * PRINTS: packages/server/test/landed-notices.test.ts 34
  * PRINTS: packages/server/test/landed-repair.test.ts 20
+ * PRINTS: packages/server/test/landed-topics.test.ts 11
  * PRINTS: packages/server/test/landed.test.ts 15
  * PRINTS: packages/server/test/live-location-cost.test.ts 3
  * PRINTS: packages/server/test/live-location-differential.test.ts 6

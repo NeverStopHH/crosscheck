@@ -554,8 +554,10 @@ describe("against a hub", () => {
     // Arrange: a registered life with two topics, the second touched last
     const fx = await registered("intent");
     await fx.flush();
-    const one = topicEntry(fx.life.crosscheckSessionId, fx.life.workContextId, "feat/one", "2026-10-07T10:01:00.000Z");
-    const two = topicEntry(fx.life.crosscheckSessionId, fx.life.workContextId, "feat/two", "2026-10-07T10:05:00.000Z");
+    // ...each with its own word about its base (topic review C1): feat/one was
+    // cut from main, feat/two carries work of its own.
+    const one = { ...topicEntry(fx.life.crosscheckSessionId, fx.life.workContextId, "feat/one", "2026-10-07T10:01:00.000Z"), baseOnDefault: true };
+    const two = { ...topicEntry(fx.life.crosscheckSessionId, fx.life.workContextId, "feat/two", "2026-10-07T10:05:00.000Z"), baseOnDefault: false };
     await updateSessionState(fx.home, fx.hostSessionKey, (fresh) => ({ ...fresh, topicContexts: [one, two] }));
     const setup = await prepareMcp({ CROSSCHECK_HOME: fx.home, CROSSCHECK_HUB_URL: hubUrl, CROSSCHECK_API_KEY: apiKey }, fx.repo);
     if (!setup.ok) throw new Error(setup.message);
@@ -567,16 +569,22 @@ describe("against a hub", () => {
     const named = await tool.run(setup.ctx, { summary: "Rename the importer flags.", topic: "feat/one" });
     const unknown = await tool.run(setup.ctx, { summary: "Nothing here at all.", topic: "feat/nope" });
 
-    // Assert: each landed where it was aimed, created with its branch and commit
-    const rows = await raw<{ branch: string | null; intent: { summary: string } | null; base_commit: string | null; status: string }>(
-      "select branch, intent, base_commit, status from work_contexts where id = any($1) order by branch",
+    // Assert: each landed where it was aimed, created with its branch, commit and word
+    const rows = await raw<{
+      branch: string | null;
+      intent: { summary: string } | null;
+      base_commit: string | null;
+      base_on_default: boolean | null;
+      status: string;
+    }>(
+      "select branch, intent, base_commit, base_on_default, status from work_contexts where id = any($1) order by branch",
       [[one.workContextId, two.workContextId]],
     );
     expect(latest.isError === true).toBe(false);
     expect(named.isError === true).toBe(false);
-    expect(rows.map((row) => [row.branch, row.intent?.summary, row.base_commit, row.status])).toEqual([
-      ["feat/one", "Rename the importer flags.", "b".repeat(40), "implementing"],
-      ["feat/two", "Teach the importer to skip empty rows.", "b".repeat(40), "testing"],
+    expect(rows.map((row) => [row.branch, row.intent?.summary, row.base_commit, row.base_on_default, row.status])).toEqual([
+      ["feat/one", "Rename the importer flags.", "b".repeat(40), true, "implementing"],
+      ["feat/two", "Teach the importer to skip empty rows.", "b".repeat(40), false, "testing"],
     ]);
     expect(unknown.isError).toBe(true);
     expect(unknown.content.map((part) => part.text).join("\n")).toContain("feat/one");
