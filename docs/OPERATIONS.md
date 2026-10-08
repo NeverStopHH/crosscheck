@@ -4,12 +4,15 @@ What an operator needs beyond the README's "run it": where the hub listens, what
 
 ## Where the hub listens
 
-`CROSSCHECK_LISTEN` is a comma list of IP addresses. The hub starts one listener per address, all on `PORT`. An entry must be an IP literal (`127.0.0.1`, `100.101.4.7`, `::1` or `[::1]`), never a hostname, so where the hub listens never depends on a DNS lookup. `0.0.0.0` and `::` mean every interface and must stand alone. The list is checked before the database opens: an entry that is not an IP, an empty value, or an address no interface on this machine has stops the hub with a sentence naming it, and the data dir is not touched.
+`CROSSCHECK_LISTEN` is a comma list of IP addresses. The hub starts one listener per address, all on `PORT`. An entry must be an IP literal (`127.0.0.1`, `100.101.4.7`, `::1` or `[::1]`), never a hostname, so where the hub listens never depends on a DNS lookup. Entries are compared by address, not by spelling: `0:0:0:0:0:0:0:1` is `::1`. `0.0.0.0`, `::` and `::ffff:0.0.0.0` mean every interface and must stand alone. The list is checked before the database opens: an entry that is not an IP, an empty value, or an address no interface on this machine has stops the hub with a sentence naming it, and the data dir is not touched.
+
+Before binding, the hub knocks at each address it will listen at: both loopbacks when unset, and every interface address for a wildcard or for the every-interface plan. Something already answering there stops it with `port N is already in use`. On macOS a second listener can otherwise bind over a foreign one and split the traffic.
 
 Unset, the data dir decides, once, at the first start of a release that knows the setting (`hub_install` in `bootstrap.sql`):
 
 - **A data dir this release creates** listens on loopback only: `127.0.0.1`, plus `::1` where the machine has it.
 - **A data dir from an older hub** keeps listening on every interface, as it always did, so an upgrade cuts off no teammate. Every start logs `WARN listening on EVERY network interface` with the fix, and every member's `crosscheck doctor` prints `WARN hub listen` until it is set.
+- **A dump of an older hub restored into a fresh data dir** is recorded as new, so it listens on loopback. Every start logs `WARN listening on loopback only` while the hub holds members created before its own install record. A file-level copy of a data dir keeps its old record and is not affected.
 
 Pick one:
 
@@ -22,9 +25,9 @@ CROSSCHECK_LISTEN=127.0.0.1
 tailscale serve --bg 7100
 ```
 
-In the Docker kit the hub listens on `0.0.0.0` inside its own container, Caddy reaches it over the compose network, and `:7100` is never published to the host.
+In the Docker kit the hub must be told both settings, because a fresh containerised hub listens on the container's own loopback, where Caddy cannot reach it: `CROSSCHECK_LISTEN=0.0.0.0` inside the container, `CROSSCHECK_TRUSTED_PROXIES` set to the compose network, and `:7100` never published to the host. A hub started by launchd before `tailscaled` has its address refuses to start, loudly, so give the job `KeepAlive`.
 
-**Forwarded headers.** `X-Forwarded-*` (and RFC 7239 `Forwarded`) count only from a trusted TCP peer: loopback, where `tailscale serve` and any proxy on the hub's machine connect from, or an entry of `CROSSCHECK_TRUSTED_PROXIES`, a comma list of addresses and CIDRs (`172.18.0.0/16` for the Docker kit's Caddy). From any other peer they are ignored, as if absent. A malformed entry stops the hub at start-up.
+**Forwarded headers.** `X-Forwarded-*` (and RFC 7239 `Forwarded`) count only from a trusted TCP peer: loopback, where `tailscale serve` and any proxy on the hub's machine connect from, or an entry of `CROSSCHECK_TRUSTED_PROXIES`, a comma list of addresses and CIDRs (`172.18.0.0/16` for the Docker kit's Caddy). From any other peer they are ignored, as if absent. The client's protocol comes from the first `X-Forwarded-Proto` value, or else from `proto=` in the first `Forwarded` element. A malformed entry, or one that trusts every peer (`0.0.0.0/0`, `::/0`, `::ffff:0:0/96`), stops the hub at start-up.
 
 **Passkeys behind a proxy.** When `CROSSCHECK_WEBAUTHN_ORIGINS` lists an https origin, or a request arrives through a trusted proxy, the hub refuses every passkey ceremony at a `localhost` or loopback-IP origin (`localhost_origin_off`). Behind `tailscale serve` every request has a loopback peer, so "localhost only from loopback" no longer says "the hub's own machine". List only the https origin. The boot and `crosscheck doctor` warn while `localhost` is still listed beside it.
 
@@ -35,13 +38,14 @@ What to set in the hub's environment (for the pilot, `~/.crosscheck-hub/hub.env`
 1. `CROSSCHECK_LISTEN=127.0.0.1,<the hub machine's tailnet IPv4>` if teammates' `hubUrl` is `http://<tailnet IP>:7100`, or `CROSSCHECK_LISTEN=127.0.0.1` if everyone uses the `tailscale serve` https address. A teammate whose `hubUrl` names a LAN address or a `.local` name loses the hub with either list: check `crosscheck status` on each machine first.
 2. `CROSSCHECK_WEBAUTHN_ORIGINS=https://<host>.<tailnet>.ts.net`, without `http://localhost:7100`. A passkey enrolled at `localhost` stops working once an https origin is listed, so each person enrols one at the https address: the admin mints a code (`POST /api/developers/<id>/passkey-enrollments`), the person enrols at `/ui/passkeys`, and the new passkey waits its 24 hours. Fences already open stay open until their expiry. Artifacts already released stay released.
 3. Nothing for `CROSSCHECK_TRUSTED_PROXIES`: `tailscale serve` connects from loopback.
+4. After the restart, check what the hub really listens on. `lsof -nP -iTCP:7100 -sTCP:LISTEN` must show `127.0.0.1`, `[::1]` and the tailnet address, never `*:7100`. Until it does, the upgrade has not closed the exposure.
 
 If nobody sets anything:
 
 - The hub keeps listening on every interface on `:7100`, warns at every start, and every member's doctor warns. Nobody is cut off.
 - `X-Forwarded-Proto` still counts from `tailscale serve`. From a LAN peer talking to `:7100` directly it no longer does, so that peer's login cookie is not `Secure`, and login still works.
 - With an https origin listed, passkey prompts at `http://localhost:7100` are refused, so a person whose only passkey was enrolled at `localhost` can approve no waiver and release no artifact until they enrol at the https address. Without an https origin, a request through `tailscale serve` cannot use `localhost` either, and only the hub machine's own browser at `http://localhost:7100` can.
-- Approving and revoking artifacts on `/ui/approvals` is a passkey ceremony now. The old form posts answer 403.
+- Approving an artifact on `/ui/approvals` is a passkey ceremony now, and the old approve form post answers 403. Revoking a release still takes no passkey: the owner uses the plain button, and the operator can re-hide any release during the passkey gap with `POST /api/artifacts/<id>/withdraw` (admin token).
 
 ## Running SQL against a hub's data dir
 

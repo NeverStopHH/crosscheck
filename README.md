@@ -251,9 +251,15 @@ address it was enrolled at, so enrol yours at the https address.
 
 **Releasing an artifact takes the passkey too.** A `needs_approval` artifact
 stays visible to its owner only until the owner approves it on `/ui/approvals`,
-and that approval, and revoking it, is a passkey ceremony with the same 24-hour
-cool-off. An API key opens a web session, and every agent on your machine can
-read the key, so the session alone releases nothing.
+and that approval is a passkey ceremony with the same 24-hour cool-off. An API
+key opens a web session, and every agent on your machine can read the key, so
+the session alone releases nothing. Revoking a release makes it private again,
+so it takes no passkey: the owner revokes it with the plain button on the same
+page, and the operator re-hides any release with the admin token:
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $ADMIN_TOKEN" "$HUB_URL/api/artifacts/<artifact-id>/withdraw"
+```
 
 **The hub's own machine is the exception.** An agent running there as the same
 OS user can read the hub's database and bypass all of this. It can also put its
