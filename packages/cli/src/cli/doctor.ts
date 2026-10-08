@@ -139,6 +139,8 @@ import type {
 } from "@crosscheck/connector-core/http/hub.ts";
 import { DEFAULT_AGENT_KIND } from "@crosscheck/connector-core/constants.ts";
 import { hubTransportChecks } from "./doctor-hub-transport.ts";
+import { confirmChecks } from "./doctor-confirm.ts";
+import { getConfirmStatus } from "@crosscheck/connector-core/http/confirm.ts";
 import {
   contradictionDoctorLine,
   declarationDoctorLine,
@@ -3765,6 +3767,7 @@ export const runDoctor = async (
     pilotReport,
     passkeyAnnouncements,
     hubStatus,
+    confirmStatus,
   ] = await Promise.all([
     // ONE GET for both: the absence findings and the coverage record ride
     // the same response (03 §3.5), so reading them twice would be a second
@@ -3806,6 +3809,8 @@ export const runDoctor = async (
     // FETCHED, NOT CHECKED: two lines read it, the search rebuild and the
     // hub's transport WARNs (doctor-hub-transport.ts), so one GET.
     getHubStatus(hubCtx),
+    // Human provenance §9: whether a passkey can confirm anything here, and the caller's drafts.
+    getConfirmStatus(hubCtx),
   ]);
   const searchRebuildCheck = checkSearchRebuild(hubStatus);
   // SEQUENTIAL, and it has to be: this asks `suspect` about a pin whose id is
@@ -3843,6 +3848,7 @@ export const runDoctor = async (
     passkeyDoctorCheck(announcementAnswerOf(passkeyAnnouncements), config.hubUrl),
     ...(searchRebuildCheck === null ? [] : [searchRebuildCheck]),
     ...hubTransportChecks(hubStatus),
+    ...confirmChecks(confirmStatus, config.hubUrl),
   ];
 
   const skewCheck = ((): Check => {

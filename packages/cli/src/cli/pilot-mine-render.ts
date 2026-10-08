@@ -78,7 +78,7 @@ const receivedLines = (view: MyHintOutcomes): readonly string[] =>
   view.received === 0
     ? ["nothing reached you unasked on this repo in this window"]
     : [
-        `hints that reached you unasked: ${String(view.received)} — ${tallyWords(view)}`,
+        `hints that reached you unasked: ${String(view.received)} — as you confirmed them with your passkey: ${tallyWords(view)}`,
         ...view.bySource.flatMap((source) => [
           `${INDENT}from ${sourceName(source.source)}: ${String(source.received)} — ${tallyWords(source)}`,
           // 07 §13.14 (round-6 HIGH-1): the person's own verdict, on its own line — never one of the buckets
@@ -96,7 +96,7 @@ const reasonLines = (view: MyHintOutcomes): readonly string[] =>
   view.reasons.length === 0
     ? []
     : [
-        "why, newest first — as you or your agent wrote it:",
+        "why, newest first — as you confirmed it:",
         ...view.reasons.map(
           (said) =>
             `${INDENT}${reasonWord(said.outcome)}${said.reasserted === true ? ", said again" : ""}, from ${sourceName(said.source)}: ${quoted(said.reason, MAX_PILOT_LABEL_REASON_UTF16_UNITS)}`,
@@ -136,16 +136,53 @@ const creditLine = (credit: MyHintOutcomes["yourWork"]): string =>
       (credit.pausedInPeriod === true ? `; ${COUNTED_WHILE_ENROLLED}` : "") +
       (credit.reconstructed === true ? `; ${RECONSTRUCTED_ENROLMENT}` : "");
 
+/**
+ * WHAT IS NOT YOURS YET (human provenance §5), never inside the counts above:
+ * your agent's words and words typed at a terminal are drafts until your
+ * passkey confirms them, and words from before provenance existed stay apart.
+ * An older hub sends no block and gets no line.
+ */
+const notConfirmedLines = (view: MyHintOutcomes): readonly string[] => {
+  const pending = view.notConfirmed;
+  if (pending === undefined) {
+    return [];
+  }
+  const waiting = pending.byAgent + pending.atTerminal;
+  return [
+    `not confirmed by you, so not counted above: ${String(pending.byAgent)} rated by your agent · ${String(pending.atTerminal)} typed at a terminal · ${String(pending.legacy)} recorded before provenance existed`,
+    ...(waiting > 0 ? [`${INDENT}confirm or discard them with your passkey: crosscheck confirm`] : []),
+  ];
+};
+
+/** Human provenance §9: a hub where no passkey could confirm says so, rather than show an empty view as a verdict. */
+export const CONFIRMABILITY_LINE: Readonly<Record<"hub_machine_only" | "none", string>> = {
+  none: "no human-confirmed judgements possible on this hub: set up https",
+  hub_machine_only:
+    "human-confirmed judgements are possible here only from the hub's own machine (localhost): set up https, for example with tailscale serve, to confirm from yours",
+};
+
+const confirmabilityLines = (view: MyHintOutcomes): readonly string[] =>
+  view.humanConfirmation === "none" || view.humanConfirmation === "hub_machine_only"
+    ? [CONFIRMABILITY_LINE[view.humanConfirmation]]
+    : [];
+
 const footerLines = (view: MyHintOutcomes): readonly string[] => [
   creditLine(view.yourWork),
-  // §13.14 LOW-1: the commands are the person's only when typed in their own shell
-  "recorded with your key — by you (crosscheck followed / overrode, typed in your own shell) or by your agent (mark_hint_outcome, or those commands run by an agent's tool, a pipe or Claude Code's ! prefix); noise is your own label (crosscheck noise)",
+  // Human provenance §5: only a passkey makes a word yours; every door with your key only drafts
+  "counted above: only what you confirmed with your passkey (crosscheck confirm); your agent's words (mark_hint_outcome) and words typed at a terminal (crosscheck followed / overrode / noise / helpful) are drafts until then",
   "only you see this view in full; others see your words only inside totals for a whole past month: the team report's, and a teammate's count of how often their work was followed",
   `each is shown only if, leaving out any one person's words, words from at least ${PEOPLE_MINIMUM} people remain — the team report's also about at least ${String(HINT_OUTCOME_DISCLOSURE_MINIMUMS.sources)} people's work, ${String(HINT_OUTCOME_DISCLOSURE_MINIMUMS.recorded)} or more — so a team of three never gets either`,
 ];
 
 export const renderMyOutcomes = (view: MyHintOutcomes): string =>
-  `${[...headerLines(view), ...receivedLines(view), ...reasonLines(view), ...footerLines(view)].join("\n")}\n`;
+  `${[
+    ...headerLines(view),
+    ...confirmabilityLines(view),
+    ...receivedLines(view),
+    ...notConfirmedLines(view),
+    ...reasonLines(view),
+    ...footerLines(view),
+  ].join("\n")}\n`;
 
 export const MINE_NOT_SERVED_LINE =
   "this hub does not record hint outcomes — it predates them, so there is nothing to show until it is upgraded\n";

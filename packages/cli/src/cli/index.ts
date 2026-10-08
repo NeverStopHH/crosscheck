@@ -67,6 +67,8 @@ import { PILOT_LABEL_SUBCOMMAND, runPilotLabel } from "./pilot-label.ts";
 import { runPilotMine } from "./pilot-mine.ts";
 import type { LabelTerminal } from "./terminal.ts";
 import { REVALIDATE_USAGE, runRevalidate } from "./revalidate.ts";
+import { CONFIRM_USAGE, runConfirm } from "./confirm.ts";
+import type { UrlOpener } from "./confirm.ts";
 import { runStatus } from "./status.ts";
 import { resolveVersion } from "./version.ts";
 
@@ -116,6 +118,8 @@ const USAGE = [
   '  overrode [<id>] --reason "…"  a hint you saw and deliberately did your way',
   "  revalidate                ask whether the code under this repo's recorded",
   "                            claims has moved, and record what this clone saw",
+  "  confirm                   open the page where your drafts become yours: labels,",
+  "                            ratings, pins and settings count once your passkey says so",
   "  presence [off|on]         hide/show your live presence to teammates",
   "  mute <developer>          stop seeing hints/pointers about them (mute list to review)",
   "  unmute <developer>        see their hints/pointers again",
@@ -214,6 +218,7 @@ const SUBCOMMAND_HELP: Readonly<Record<string, HelpSpec>> = {
     booleanFlags: [PILOT_FLAG_JSON, PILOT_FLAG_BY_DEVELOPER, PILOT_FLAG_MINE],
   },
   revalidate: { usage: REVALIDATE_USAGE },
+  confirm: { usage: CONFIRM_USAGE },
   presence: { usage: PRESENCE_USAGE },
   mute: { usage: MUTE_USAGE },
   unmute: { usage: MUTE_USAGE },
@@ -234,6 +239,11 @@ export interface CliOptions {
    * as `isInteractive`; omitted, it is this process's own terminal.
    */
   readonly terminal?: LabelTerminal;
+  /**
+   * How `crosscheck confirm` opens its page in the person's browser; omitted,
+   * the platform's own opener. A parameter so no test ever opens a browser.
+   */
+  readonly openUrl?: UrlOpener;
 }
 
 export const runCli = async (
@@ -363,6 +373,9 @@ export const runCli = async (
     // `unknown` forever. A pull like the two above — no hook, no injection.
     case "revalidate":
       return runRevalidate(rest, env, cwd);
+    // Human provenance §6: where drafts become the person's — the page, opened in their browser.
+    case "confirm":
+      return runConfirm(env, cwd, options.openUrl);
     case "presence":
       return runPresence(rest, env, cwd);
     case "mute":

@@ -206,12 +206,22 @@ export const PilotReportSchema = z.looseObject({
     repairedWithoutBreakCommit: CountSchema,
     supersededAnswers: CountSchema,
     answersAfterRepair: CountSchema,
+    /** Human provenance §5: repaired breaks no passkey confirmed. Absent from an older hub. */
+    notHumanConfirmed: CountSchema.optional(),
   }),
   precision: LabelFiguresSchema.extend({
     /** Where the labelled figures start; null when nothing is measured. */
     labelledSinceIso: z.string().nullable(),
     /** 0.10 `off_target` marks, outside precision (second review, H1). */
     legacyNoise: CountSchema,
+    /**
+     * Human provenance §5: labels that are no person's judgement yet, by class.
+     * Absent from an older hub; a block this client cannot read is dropped.
+     */
+    notHuman: z
+      .looseObject({ atTerminal: CountSchema, byAgent: CountSchema, legacy: CountSchema })
+      .optional()
+      .catch(undefined),
     precisionTarget: z.number().finite().min(0).max(1),
     openedPer100: PilotFigureSchema,
     openedTargetPer100: z.number().finite().min(0),
@@ -244,6 +254,8 @@ export const PilotReportSchema = z.looseObject({
       counters: z.record(z.string(), CountSchema).nullable(),
     }),
   ),
+  /** Human provenance §9: where a passkey can confirm anything on this hub. Absent from an older hub. */
+  humanConfirmation: z.enum(["https", "hub_machine_only", "none"]).optional().catch(undefined),
 });
 
 export type PilotReport = z.infer<typeof PilotReportSchema>;
@@ -277,6 +289,11 @@ const MarkResultSchema = z.looseObject({
   stands: z.string().min(1).nullable().optional(),
   /** What stood before the label — an outcome it now stands over, the label itself, or nothing. */
   replaced: z.string().min(1).nullable().optional(),
+  /**
+   * Human provenance §3: the label was DRAFTED — it counts once the person
+   * confirms it with their passkey. Absent from an older hub, where it counted at once.
+   */
+  draft: z.boolean().optional(),
 });
 
 export type MarkResult = z.infer<typeof MarkResultSchema>;

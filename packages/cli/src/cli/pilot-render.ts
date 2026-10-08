@@ -216,6 +216,9 @@ const attributionLines = (view: PilotView): readonly string[] => {
     ...(proof.repairedWithoutBreakCommit > 0
       ? [`${INDENT}${count(proof.repairedWithoutBreakCommit)} repaired break(s) recorded no commit at the break, so there is no fix range to score`]
       : []),
+    ...((proof.notHumanConfirmed ?? 0) > 0
+      ? [`${INDENT}${count(proof.notHumanConfirmed ?? 0)} repaired break(s) whose break or repair no passkey confirmed (from before 0.11): counted, never scored`]
+      : []),
     ...(proof.repairedBeyondBound > 0
       ? [`${INDENT}(+${count(proof.repairedBeyondBound)} repaired past the diff bound, not scored)`]
       : []),
@@ -352,13 +355,39 @@ const legacyNoiseLines = (proof: PilotReport["precision"]): readonly string[] =>
       ];
 
 /**
- * WHAT "THE PERSON IT REACHED" RESTS ON, said where the claim is made
- * (second review, "Can an agent label?"). The hub's only check is a presence
- * literal any client can send; the key is a file on disk; a pty passes the
- * walk's terminal check. Attribution names the developer, and an agent acting
- * for that developer uses the same key — so attribution cannot detect it.
+ * WHAT "THE PERSON IT REACHED" RESTS ON, said where the claim is made. Since
+ * human provenance (0.11 §5): a key — an agent's or a terminal's — only
+ * drafts a label, and only a passkey confirmation makes it a person's, so
+ * every figure on this proof counts confirmed labels and nothing else.
  */
-const ATTRIBUTION_LIMIT_LINE = `${INDENT}labels are attributed to a developer's key: nothing at the hub can tell a person's label from an agent's acting with that key`;
+const ATTRIBUTION_LIMIT_LINE = `${INDENT}labels count only once the person confirmed them with their passkey; a key — an agent's or a terminal's — only drafts one`;
+
+/**
+ * THE LABELS THAT ARE NOBODY'S JUDGEMENT YET (§5), on their own line and in
+ * no figure: drafts by the class of their door, and words from before
+ * provenance existed. An older hub sends no block and gets no line.
+ */
+const notHumanLabelLines = (proof: PilotReport["precision"]): readonly string[] => {
+  const notHuman = proof.notHuman;
+  if (notHuman === undefined || notHuman.atTerminal + notHuman.byAgent + notHuman.legacy === 0) {
+    return [];
+  }
+  return [
+    `${INDENT}not counted as anyone's judgement: ${count(notHuman.atTerminal)} labelled at a terminal, unconfirmed · ${count(notHuman.byAgent)} by an agent, unconfirmed · ${count(notHuman.legacy)} recorded before provenance existed`,
+  ];
+};
+
+/** Human provenance §9: where nobody could confirm anything, the empty figures are said to be that. */
+export const REPORT_CONFIRMABILITY_LINE: Readonly<Record<"hub_machine_only" | "none", string>> = {
+  none: "no human-confirmed judgements possible on this hub: set up https",
+  hub_machine_only:
+    "human-confirmed judgements are possible here only from the hub's own machine (localhost): set up https, for example with tailscale serve, so every member can confirm theirs",
+};
+
+const confirmabilityLines = (report: PilotReport): readonly string[] =>
+  report.humanConfirmation === "none" || report.humanConfirmation === "hub_machine_only"
+    ? [REPORT_CONFIRMABILITY_LINE[report.humanConfirmation]]
+    : [];
 
 type OutcomeBlock = Exclude<NonNullable<PilotReport["outcomes"]>, UnreadableBlock>;
 
@@ -465,6 +494,7 @@ const precisionLines = (report: PilotReport): readonly string[] => {
     `${INDENT}behavioural signal: ${figure("opened per 100 sessions", proof.openedPer100, RATE_DECIMALS)} (target ${count(proof.openedTargetPer100)}, declared before measuring) — the agent pulled it; no person judged it`,
     `${INDENT}${figure("noisy sessions per 100", proof.noisySessionsPer100, RATE_DECIMALS)} (ceiling ${count(proof.noisySessionsCeilingPer100)}) — a FLOOR: labels are voluntary`,
     ...legacyNoiseLines(proof),
+    ...notHumanLabelLines(proof),
     `${INDENT}surface-ok marks ${count(proof.surfaceOkMarks)}`,
     ...reasonLines(proof),
     outcomeLine(report),
@@ -618,6 +648,7 @@ export const renderPilot = (view: PilotView): string => {
         : ""
     }${set.beforeLabels > 0 ? ` · ${count(set.beforeLabels)} started before labels, not in the set` : ""}`,
     QUOTED_DATA_NOTICE,
+    ...confirmabilityLines(report),
     ...duplicateWorkLines(report),
     ...collisionLines(report),
     ...attributionLines(view),
