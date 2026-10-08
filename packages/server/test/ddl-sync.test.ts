@@ -692,11 +692,16 @@ describe("bootstrap.sql DDL sync", () => {
     // `uniqueIndex` to `index` leaves every test in this repository green.
     // The two authorities are held together by the text assertions above;
     // this one asks the database, and the database only ever saw the SQL.
+    //
+    // Since human provenance (0.11) the key carries the provenance too: a
+    // mark recorded before provenance existed stays as it was, never
+    // upgraded, beside the one the person confirms with their passkey — one
+    // of each, never two of either (test/ddl-sync-provenance.test.ts).
     const harness = await createTestHarness();
 
     // Act
     const rows = await harness.db.execute(
-      sql`SELECT indexdef AS d FROM pg_indexes WHERE indexname = 'pilot_marks_ref_marker_idx'`,
+      sql`SELECT indexdef AS d FROM pg_indexes WHERE indexname = 'pilot_marks_ref_marker_provenance_idx'`,
     );
 
     // Assert
@@ -705,6 +710,7 @@ describe("bootstrap.sql DDL sync", () => {
     expect(definition).toContain("ref_kind");
     expect(definition).toContain("ref_id");
     expect(definition).toContain("marked_by");
+    expect(definition).toContain("provenance");
   });
 
   test("a waiver's two kinds have a shape the DATABASE enforces", async () => {

@@ -82,6 +82,7 @@ const setup = async () => {
     checkRecipe: null,
     captureMode: "human",
     createdAt: new Date(harness.clock.now().getTime() - HOUR),
+    provenance: "unknown_legacy",
   });
   return { harness, nick, ken };
 };

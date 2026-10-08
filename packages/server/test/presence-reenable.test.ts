@@ -58,7 +58,10 @@ describe("an opt-out switched back off through the API key", () => {
     expect(await settingsOf(harness, robin)).toMatchObject({ presenceOptOut: false, presenceReenabledAt: switchedAt });
     const seen = await reenables(harness, nick);
     expect(seen).toHaveLength(1);
-    expect(seen[0]?.payload).toEqual({ developerId: robin.developerId });
+    // Since human provenance the PUT only drafts; this harness confirms the
+    // draft at once (fixtures/immediate-confirmation.ts), and the event says
+    // how the change was decided — by her passkey, not by the key alone.
+    expect(seen[0]?.payload).toEqual({ developerId: robin.developerId, provenance: "human_passkey_confirmed" });
   });
 
   test("on, watched, off again: the feed keeps it and she is still told, with presence off now", async () => {

@@ -39,6 +39,7 @@ const seedPin = async (harness: TestHarness, id: string, developerId: string): P
     checkRecipe: "bun test",
     captureMode: "human",
     createdAt: ENROLLED,
+    provenance: "unknown_legacy",
   });
 };
 

@@ -42,6 +42,7 @@ import {
 import type { OutcomeWorld } from "./fixtures/hint-outcome-world.ts";
 import { labelNoise } from "./fixtures/hint-outcome-crowd.ts";
 import { TEST_ADMIN_TOKEN, jsonRequest, postRecords, registerTestSession } from "./helpers.ts";
+import { seedHumanStamp } from "./fixtures/human-confirmation.ts";
 
 /** A synthetic AWS example key, the fixture every secret-scan test uses. */
 const CREDENTIAL = "AKIAIOSFODNN7EXAMPLE";
@@ -733,11 +734,14 @@ describe("round-5 LOW-5: a word from before the channel was stamped is the agent
       reason: outcome === "overrode" ? "kept mine" : null,
       recordedBy: world.nick.developerId,
       createdAt: at,
+      // A row from before the channel is from before provenance too: never a person's.
+      provenance: "unknown_legacy",
+      confirmationId: null,
     });
   };
 
-  test("Q1: the agent saying a pre-channel word again is a repeat — that row was the agent's", async () => {
-    // Arrange
+  test("Q1, since human provenance: a pre-channel word is nobody's — the same word confirmed after it is a new one", async () => {
+    // Arrange — round 5 read that row as the agent's; since 0.11 it is unknown_legacy and stands for nothing
     const world = await createOutcomeWorld();
     await legacyWord(world, "followed", world.harness.clock.now());
     world.harness.clock.advanceSeconds(60);
@@ -746,11 +750,11 @@ describe("round-5 LOW-5: a word from before the channel was stamped is the agent
     const agent = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
 
     // Assert
-    expect(agent.status).toBe(200);
-    expect(await bodyOf(agent)).toMatchObject({ repeated: true });
+    expect(agent.status).toBe(201);
+    expect(await bodyOf(agent)).toMatchObject({ repeated: false, replaced: null });
   });
 
-  test("Q2: the agent's newer word stands over a pre-channel word — that row was never the person's", async () => {
+  test("Q2, since human provenance: a word confirmed after a pre-channel word replaces nothing — that row never stood", async () => {
     // Arrange
     const world = await createOutcomeWorld();
     await legacyWord(world, "followed", world.harness.clock.now());
@@ -760,7 +764,7 @@ describe("round-5 LOW-5: a word from before the channel was stamped is the agent
     const agent = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "overrode", reason: "kept mine" });
 
     // Assert
-    expect(await bodyOf(agent)).toMatchObject({ replaced: "followed", stands: "overrode" });
+    expect(await bodyOf(agent)).toMatchObject({ replaced: null, stands: "overrode" });
   });
 
   test("Q3: a newer pre-channel word never ranks above the person's own in the view", async () => {
@@ -909,6 +913,7 @@ describe("a person's word is never overturned by an agent's (07 §13.12)", () =>
     // Arrange — a tie the write path no longer makes (it stamps strictly later): a legacy pair of rows
     const world = await createOutcomeWorld();
     const at = world.harness.clock.now();
+    const stamp = await seedHumanStamp(world.harness.db, world.nick.developerId);
     await world.harness.db.insert(hintOutcomes).values({
       id: "ho_tied",
       repo: REPO,
@@ -918,6 +923,7 @@ describe("a person's word is never overturned by an agent's (07 §13.12)", () =>
       recordedBy: world.nick.developerId,
       createdAt: at,
       recordedVia: "person",
+      ...stamp,
     });
     await world.harness.db.insert(pilotMarks).values({
       id: "pm_tied",
@@ -929,6 +935,7 @@ describe("a person's word is never overturned by an agent's (07 §13.12)", () =>
       captureMode: "human",
       createdAt: at,
       reason: null,
+      ...stamp,
     });
     world.harness.clock.advanceSeconds(60);
 

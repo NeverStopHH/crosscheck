@@ -38,6 +38,9 @@ describe("hint outcomes age out with the pilot (D-O6)", () => {
       outcome: "followed" as const,
       reason: null,
       recordedBy: world.nick.developerId,
+      // What ages out is any row past the window, whoever confirmed it.
+      provenance: "unknown_legacy" as const,
+      confirmationId: null,
       createdAt,
     });
     await world.harness.db
@@ -96,6 +99,8 @@ describe("noise re-assertions age out with the outcomes they stand beside (revie
       markedBy: world.nick.developerId,
       reason: null,
       createdAt,
+      provenance: "unknown_legacy" as const,
+      confirmationId: null,
     });
     await world.harness.db
       .insert(noiseReassertions)

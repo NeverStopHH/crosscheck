@@ -31,6 +31,7 @@ import type { OutcomeWorld } from "./fixtures/hint-outcome-world.ts";
 import { NICK_CONTEXT, SECONDS_TO_AUGUST, createCrowd, recordCrowdWords } from "./fixtures/hint-outcome-crowd.ts";
 import { TEST_ADMIN_TOKEN, jsonRequest, postRecords, registerTestSession } from "./helpers.ts";
 import type { TestDeveloper } from "./helpers.ts";
+import { seedHumanStamp } from "./fixtures/human-confirmation.ts";
 
 const SECONDS_PER_DAY = 86_400;
 const KEN_SECOND_SESSION = "cc_bbbbbbbb-2222-4222-8222-222222222222";
@@ -124,8 +125,8 @@ describe("GET /api/hint-outcomes/mine", () => {
     expect(view["reasons"]).toEqual([{ outcome: "overrode", reason: OVERRIDE_REASON, source: "Ken" }]);
   });
 
-  test("an older hub's off_target mark is read as the noise it meant", async () => {
-    // Arrange
+  test("human provenance: an older hub's off_target mark is a legacy word — never counted as the person's noise", async () => {
+    // Arrange — 07 §12 read it as noise; since 0.11 a row from before provenance is no person's judgement
     const world = await createOutcomeWorld();
     await world.harness.db.insert(pilotMarks).values({
       id: "pm_legacy",
@@ -137,13 +138,15 @@ describe("GET /api/hint-outcomes/mine", () => {
       captureMode: "human",
       createdAt: world.harness.clock.now(),
       reason: null,
+      provenance: "unknown_legacy",
+      confirmationId: null,
     });
 
     // Act
     const view = await viewOf(await readMine(world, world.nick));
 
     // Assert
-    expect(view).toMatchObject(tally({ received: 3, noise: 1, unmarked: 2 }));
+    expect(view).toMatchObject(tally({ received: 3, noise: 0, unmarked: 3 }));
   });
 
   test("nobody else's deliveries or outcomes reach my view", async () => {
@@ -472,6 +475,7 @@ describe("ties and self-pointing hints (review M5: surviving mutations)", () => 
       captureMode: "human",
       createdAt: world.harness.clock.now(),
       reason: null,
+      ...(await seedHumanStamp(world.harness.db, world.nick.developerId)),
     });
 
     // Act

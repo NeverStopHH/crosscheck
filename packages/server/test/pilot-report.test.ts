@@ -49,6 +49,7 @@ import {
   jsonRequest,
 } from "./helpers.ts";
 import type { TestDeveloper, TestHarness } from "./helpers.ts";
+import { seedHumanStamp } from "./fixtures/human-confirmation.ts";
 
 const REPO = "github.com/acme/api";
 const NOW = new Date(TEST_START_ISO);
@@ -181,8 +182,15 @@ const label = async (
     captureMode: "human",
     createdAt: at(hoursAgo),
     reason,
+    // A person's label is what a passkey confirmation leaves; 0.10's off_target never was one.
+    ...(mark === "off_target" ? LEGACY : await confirmedBy(world)),
   });
 };
+
+const LEGACY = { provenance: "unknown_legacy" as const, confirmationId: null };
+
+/** The stamp a passkey confirmation by the test developer leaves on what it writes. */
+const confirmedBy = (world: World) => seedHumanStamp(world.harness.db, world.developer.developerId);
 
 /** A finished session in the set, in the cohort named. */
 const inCohort = async (
@@ -563,6 +571,10 @@ describe("proof 3 — attribution accuracy", () => {
       brokeAt: at(40),
       brokeAtCommit,
       createdAt: at(200),
+      // Proof 3 scores a break and a repair only when a passkey confirmed both.
+      ...(await confirmedBy(world)),
+      brokeProvenance: "human_passkey_confirmed",
+      brokeConfirmationId: (await confirmedBy(world)).confirmationId,
     });
     await world.harness.db.insert(pinFiles).values({
       pinId: id,
@@ -585,6 +597,7 @@ describe("proof 3 — attribution accuracy", () => {
       repairsPinId: repairs,
       repairsPinVersion: 1,
       createdAt: at(hoursAgo),
+      ...(await confirmedBy(world)),
     });
   };
 
@@ -1113,7 +1126,7 @@ describe("proof 4 — the reasons people gave", () => {
     expect(JSON.stringify(out)).not.toContain("said about the other repo");
   });
 
-  test("a legacy word's reason is listed under noise", async () => {
+  test("human provenance: a legacy word's reason is not a person's — it is not listed, and its mark is counted apart", async () => {
     // Arrange
     const world = await setup();
     const ids = await interventions(world, 1, 1);
@@ -1123,7 +1136,8 @@ describe("proof 4 — the reasons people gave", () => {
     const out = await report(world, 1);
 
     // Assert
-    expect(out.precision.reasons).toEqual([{ label: "noise", reason: "stale pointer" }]);
+    expect(out.precision.reasons).toEqual([]);
+    expect(out.precision.legacyNoise).toBe(1);
   });
 });
 
@@ -1214,9 +1228,9 @@ describe("labels counted only from when they became available", () => {
     expect(out.precision.sessions).toBe(1);
   });
 
-  test("the noisy-sessions floor still counts a 0.10 off_target mark — it predates the labels", async () => {
-    // Arrange — the floor was the first pilot's figure; the word its era
-    // stored is a noise mark for it, even though precision leaves it out
+  test("human provenance: the noisy-sessions floor counts only confirmed noise — a 0.10 off_target mark is counted apart", async () => {
+    // Arrange — the floor read 0.10's word as noise; since 0.11 a row from
+    // before provenance is no person's judgement, and it is legacy noise instead
     const world = await setup({ labelsSinceHoursAgo: 10 });
     await session(world, "s_prior", 100);
     await context(world, "wc_prior", "s_prior", "prior work");
@@ -1228,7 +1242,7 @@ describe("labels counted only from when they became available", () => {
     const out = await report(world, 1);
 
     // Assert
-    expect(out.precision.noisySessionsPer100).toEqual({ kind: "measured", value: 100 });
+    expect(out.precision.noisySessionsPer100).toEqual({ kind: "measured", value: 0 });
     expect(out.precision.legacyNoise).toBe(1);
   });
 

@@ -44,6 +44,7 @@ const setup = async (): Promise<Fixture> => {
     checkRecipe: "bun test",
     captureMode: "human",
     createdAt: now,
+    provenance: "unknown_legacy",
   });
   const laptop = await seedPasskey(harness.db, nick.developerId, { createdAt: new Date(now.getTime() - 30 * 24 * HOUR) });
   const expiresAt = new Date(now.getTime() + HELD_HOURS * HOUR);

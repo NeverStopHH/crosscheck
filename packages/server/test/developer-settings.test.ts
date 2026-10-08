@@ -15,6 +15,7 @@ import {
   jsonRequest,
 } from "./helpers.ts";
 import type { TestDeveloper, TestHarness } from "./helpers.ts";
+import { seedHumanStamp } from "./fixtures/human-confirmation.ts";
 
 interface MuteView {
   readonly id: string;
@@ -218,6 +219,7 @@ describe("POST /api/settings/mutes", () => {
       { db: harness.db, now: harness.clock.now },
       nick.developerId,
       "Sam",
+      await seedHumanStamp(harness.db, nick.developerId),
     );
 
     // Assert
