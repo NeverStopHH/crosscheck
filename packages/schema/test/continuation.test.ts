@@ -47,6 +47,9 @@ describe("a continuation signal, in a clause of the prompt", () => {
     ["the limit was reset but StatsBomb still returns 429, continue debugging"],
     ["keep going, and then the HEIC thumbnails"],
     ["next then fix the HEIC thumbnails"],
+    // round 5: a quote around the word, a short word beside a clause word
+    ["„weiter“"],
+    ["jo passt"],
   ])("%p carries the session on", (prompt) => {
     expect(hasContinuationSignal(prompt)).toBe(true);
   });
@@ -82,6 +85,7 @@ describe("a continuation signal, in a clause of the prompt", () => {
     ["the preceding migration dropped the index", "one slip from proceeding is a word of its own (round 5, L1)"],
     ["continue button in checkout does nothing", "continue names the button (round 5, L1)"],
     ["try it on the staging build first", "try it beside no again"],
+    ["the footer is dropped by the pdf writer", "one slip from weiter is a word of its own, at the clause's end too"],
     ["the proceed button is greyed out on mobile", "proceed names the button (round 5, L1)"],
   ])("%p does not — %s", (prompt) => {
     expect(hasContinuationSignal(prompt)).toBe(false);

@@ -183,6 +183,30 @@ describe("an old hub's candidate is recounted, and refused unless it clears the 
     expect(selection.kind === "pointer" ? selection.context.workContext.id : selection.kind).toBe("wc_stronger");
   });
 
+  test("the recount's topical words decide before its shared ones, weak words among them (round 5, M2)", () => {
+    // Arrange — the old hub ranks first a tree that shares more words, all but one of them weak
+    const tree = (id: string, body: string): HintContextCandidate => ({
+      ...oldHubContext([claim({ id: `clm_${id}`, workContextId: id, body })], "Nightly report formatting"),
+      workContext: { ...oldHubContext([], "Nightly report formatting").workContext, id },
+    });
+    const weak = tree("wc_weak", "Fix the zebrafrobnicator issue on the user page");
+    const topical = tree("wc_topical", "The zebrafrobnicator cache poisons the quuxinator");
+    const terms = promptTerms("fix the zebrafrobnicator cache poison issue on the quuxinator user page");
+
+    // Act
+    const selection = selectHint({
+      candidates: [weak, topical],
+      seenRefIds: [],
+      deliveredCount: 0,
+      selfDeveloperId: SELF,
+      promptTerms: terms.ranked,
+      promptTopicalTerms: terms.topical,
+    });
+
+    // Assert — four topical words beat one topical and four weak ones
+    expect(selection.kind === "pointer" ? selection.context.workContext.id : selection.kind).toBe("wc_topical");
+  });
+
   test("a steering word never counts toward the recount", () => {
     // Arrange — the body shares "continue" and "please" and one task word
     const context = oldHubContext([claim({ body: "Please continue the zebrafrobnicator import" })]);
