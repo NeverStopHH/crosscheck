@@ -62,6 +62,9 @@ const login = async (
     { CROSSCHECK_HOME: home, CROSSCHECK_API_KEY: "test-key", ...env },
     async () => null,
     measure,
+    // A person at a terminal: a login that takes the key from the environment
+    // needs one (login.ts loginGateNeed, review round 2 N7).
+    () => true,
   );
 
 describe("login stores a measured timeout for a far hub", () => {

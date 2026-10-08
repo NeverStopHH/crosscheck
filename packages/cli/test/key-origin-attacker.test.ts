@@ -378,6 +378,92 @@ describe("crosscheck login binds the key", () => {
   });
 });
 
+describe("a login that would send an unbound key needs a person (review round 2, N7)", () => {
+  test("a first login taking CROSSCHECK_API_KEY is refused without a person, and nothing is sent", async () => {
+    // Arrange — no stored login; the developer exported a key; an agent runs login
+    const attacker = startLoggingHub();
+    const home = await makeHome("login-first-envkey-agent");
+    paths.push(home);
+    const noStdin = (): Promise<string | null> => Promise.resolve(null);
+    const env: Env = { CROSSCHECK_HOME: home, HOME: home, CROSSCHECK_API_KEY: STORED_KEY };
+
+    // Act
+    const noTty = await runCli(["login", attacker.url], env, home, noStdin, { isInteractive: () => false });
+    const inHost = await runCli(["login", attacker.url], { ...env, CLAUDECODE: "1" }, home, noStdin, asPerson);
+
+    // Assert
+    expect(attacker.requests()).toEqual([]);
+    for (const result of [noTty, inHost]) {
+      expect(result.exitCode).toBe(64);
+      expect(result.stdout).toContain("with CROSSCHECK_API_KEY from the environment sends that key to that address");
+    }
+    expect(await Bun.file(join(home, "config.json")).exists()).toBe(false);
+  });
+
+  test("the same first login by a person uses the exported key (the control arm)", async () => {
+    // Arrange
+    const own = startLoggingHub();
+    const home = await makeHome("login-first-envkey-person");
+    paths.push(home);
+    const noStdin = (): Promise<string | null> => Promise.resolve(null);
+
+    // Act
+    const login = await runCli(["login", own.url], { CROSSCHECK_HOME: home, HOME: home, CROSSCHECK_API_KEY: STORED_KEY }, home, noStdin, asPerson);
+
+    // Assert
+    expect(login.exitCode).toBe(0);
+    expect(own.requests().some((request) => request.keyed)).toBe(true);
+  });
+
+  test("a login over a junk recorded keyOrigin is gated like a move and never takes the env key", async () => {
+    // Arrange — a binding nothing can read binds the key to no hub at all
+    const attacker = startLoggingHub();
+    const home = await makeHome("login-junk-origin");
+    paths.push(home);
+    await saveConfig(home, { version: 1, hubUrl: attacker.url, apiKey: STORED_KEY, keyOrigin: "not an origin" });
+    const before = await readFile(join(home, "config.json"), "utf8");
+    const pipedKey = (): Promise<string | null> => Promise.resolve(STORED_KEY);
+    const noStdin = (): Promise<string | null> => Promise.resolve(null);
+
+    // Act
+    const agent = await runCli(["login", attacker.url], { CROSSCHECK_HOME: home, HOME: home }, home, pipedKey, {
+      isInteractive: () => false,
+    });
+    const personEnvKey = await runCli(
+      ["login", attacker.url],
+      { CROSSCHECK_HOME: home, HOME: home, CROSSCHECK_API_KEY: "e".repeat(64) },
+      home,
+      noStdin,
+      asPerson,
+    );
+
+    // Assert — refused both ways, nothing sent, nothing rewritten
+    expect(agent.exitCode).toBe(64);
+    expect(agent.stdout).toContain("records a key binding crosscheck cannot read");
+    expect(personEnvKey.exitCode).toBe(64);
+    expect(personEnvKey.stdout).toContain("CROSSCHECK_API_KEY is set, but it is never used to move this machine's login");
+    expect(attacker.requests()).toEqual([]);
+    expect(await readFile(join(home, "config.json"), "utf8")).toBe(before);
+  });
+
+  test("a person piping the key over a junk binding logs in and binds it (the control arm)", async () => {
+    // Arrange
+    const own = startLoggingHub();
+    const home = await makeHome("login-junk-origin-person");
+    paths.push(home);
+    await saveConfig(home, { version: 1, hubUrl: own.url, apiKey: "e".repeat(64), keyOrigin: "not an origin" });
+    const pipedKey = (): Promise<string | null> => Promise.resolve(STORED_KEY);
+
+    // Act
+    const login = await runCli(["login", own.url], { CROSSCHECK_HOME: home, HOME: home }, home, pipedKey, asPerson);
+
+    // Assert
+    expect(login.exitCode).toBe(0);
+    const stored = JSON.parse(await readFile(join(home, "config.json"), "utf8")) as Record<string, unknown>;
+    expect(stored["keyOrigin"]).toBe(own.url);
+  });
+});
+
 describe("the pilot-shaped config keeps working", () => {
   test("one hub, the same spelling in the login and the repo: capture reaches it with the key", async () => {
     // Arrange — the login typed with capitals and a slash, the repo plain

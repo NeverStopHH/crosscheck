@@ -451,18 +451,19 @@ describe("crosscheck login without a key in argv", () => {
     return (JSON.parse(raw) as { apiKey: string }).apiKey;
   };
 
-  test("takes the api key from the environment", async () => {
+  test("takes the api key from the environment, for a person at a terminal", async () => {
     // Arrange
     const { repo, home } = await fixture();
     const server = acceptingHub();
     const env = { CROSSCHECK_HOME: home, CROSSCHECK_API_KEY: "env-key" };
 
-    // Act
+    // Act — an env-key login needs a person (login.ts loginGateNeed)
     const result = await runCli(
       ["login", `http://127.0.0.1:${server.port}`],
       env,
       repo,
       async () => null,
+      { isInteractive: () => true },
     );
 
     // Assert

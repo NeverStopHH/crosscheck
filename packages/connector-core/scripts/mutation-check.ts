@@ -25076,10 +25076,35 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a key move picks up CROSSCHECK_API_KEY silently",
     file: `${CLI}/src/cli/login.ts`,
-    from: "      : await resolveApiKey(positionalKey, {}, readSecret);",
-    to: "      : await resolveApiKey(positionalKey, env, readSecret);",
+    from: "    return { refusal: rebindRefusal(movingFrom, hubUrl), mayUseEnvKey: false };",
+    to: "    return { refusal: rebindRefusal(movingFrom, hubUrl), mayUseEnvKey: true };",
     test: `${CLI}/test/key-origin-attacker.test.ts`,
     because: "an exported agent key is carried to whatever hub a re-login names, without the person typing it",
+  },
+  // ROUND 2, N7: the other logins that send an unbound key.
+  {
+    label: "a first login sends the exported key with no person",
+    file: `${CLI}/src/cli/login.ts`,
+    from: "  return { refusal: takesEnvKey ? envKeyLoginRefusal(hubUrl) : null, mayUseEnvKey: true };",
+    to: "  return { refusal: null, mayUseEnvKey: true };",
+    test: `${CLI}/test/key-origin-attacker.test.ts`,
+    because: "with CROSSCHECK_API_KEY exported, an agent's `crosscheck login <bait hub>` probes that hub with the key",
+  },
+  {
+    label: "a junk recorded binding lets any login through",
+    file: `${CLI}/src/cli/login.ts`,
+    from: "  if (existing !== null && existing.keyOrigin !== undefined && storedKeyOrigin(existing) === null) {",
+    to: "  if (false) {",
+    test: `${CLI}/test/key-origin-attacker.test.ts`,
+    because: "one bad keyOrigin edit binds the key to nothing, and the next login moves it anywhere with no person",
+  },
+  {
+    label: "a login over a junk binding takes the exported key",
+    file: `${CLI}/src/cli/login.ts`,
+    from: "    return { refusal: junkBindingRefusal(hubUrl), mayUseEnvKey: false };",
+    to: "    return { refusal: junkBindingRefusal(hubUrl), mayUseEnvKey: true };",
+    test: `${CLI}/test/key-origin-attacker.test.ts`,
+    because: "a person's re-login over a broken binding silently sends whatever key the shell exported",
   },
   // THE REFUSAL LEDGER (review M1-M5, M9, M11; core state/foreign-hub.ts).
   {
@@ -25288,7 +25313,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/init-remove-verdict.test.ts 7
  * PRINTS: packages/cli/test/init-remove.test.ts 17
  * PRINTS: packages/cli/test/intent-cost.test.ts 1
- * PRINTS: packages/cli/test/key-origin-attacker.test.ts 11
+ * PRINTS: packages/cli/test/key-origin-attacker.test.ts 14
  * PRINTS: packages/cli/test/key-rotate.test.ts 6
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 9
  * PRINTS: packages/cli/test/landed-doctor.test.ts 3
