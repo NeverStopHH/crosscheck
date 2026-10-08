@@ -1,0 +1,107 @@
+/**
+ * WHAT THE PERSON SEES BEFORE THEY SIGN (human provenance §6, step 2): every
+ * pending draft with the context it needs to be judged — who drafted it (by
+ * class), when, which hint it is about and whose work that hint pointed at,
+ * or which pin, teammate or setting. Read-only, the caller's own drafts only.
+ *
+ * Titles and names are other people's text: returned as data, escaped and
+ * capped by the page. A pointer at another repo's work names nothing (07
+ * §11.9): the title is joined only within the draft's own repo.
+ */
+import { sql } from "drizzle-orm";
+import type { DraftKind, DraftProvenance } from "@crosscheck/schema";
+
+import { pendingFingerprint, readPendingDrafts } from "./human-drafts.ts";
+import type { DraftPayload, DraftRow } from "./human-drafts.ts";
+import type { Db } from "../db/client.ts";
+
+export interface DraftContext {
+  readonly id: string;
+  readonly version: number;
+  readonly kind: DraftKind;
+  readonly provenance: DraftProvenance;
+  readonly createdAt: string;
+  readonly repo: string | null;
+  readonly payload: DraftPayload;
+  /** The hint a label or an outcome is about: how it arrived, when. */
+  readonly channel: string | null;
+  readonly deliveredAt: string | null;
+  /** What the hint pointed at, on this repo only, and whose work it was. */
+  readonly pointedTitle: string | null;
+  readonly sourceName: string | null;
+  /** A pin's surface, for a break or an ok. */
+  readonly pinSurface: string | null;
+}
+
+export interface ConfirmPageView {
+  readonly fingerprint: string;
+  readonly drafts: readonly DraftContext[];
+}
+
+type DeliveryRow = {
+  readonly channel: string;
+  readonly delivered_at: string | Date;
+  readonly title: string | null;
+  readonly source_name: string | null;
+};
+
+const deliveryContext = async (db: Db, draft: DraftRow): Promise<DeliveryRow | undefined> => {
+  const deliveryId = String(draft.payload["deliveryId"] ?? "");
+  const rows = await db.execute<DeliveryRow>(sql`
+    SELECT hd.channel, hd.delivered_at,
+      (SELECT wc.title FROM work_contexts wc JOIN agent_sessions ws ON ws.id = wc.session_id
+        WHERE ws.repo = ${draft.repo} AND wc.id = CASE WHEN hd.ref_kind = 'work_context' THEN hd.ref_id
+          ELSE (SELECT c.work_context_id FROM claims c WHERE c.id = hd.ref_id) END) AS title,
+      (SELECT d.name FROM agent_sessions src JOIN developers d ON d.id = src.developer_id
+        WHERE src.repo = ${draft.repo} AND src.id = CASE WHEN hd.ref_kind = 'work_context'
+          THEN (SELECT wc.session_id FROM work_contexts wc WHERE wc.id = hd.ref_id)
+          ELSE (SELECT c.author_session_id FROM claims c WHERE c.id = hd.ref_id) END) AS source_name
+    FROM hint_deliveries hd WHERE hd.id = ${deliveryId}`);
+  return rows.rows[0];
+};
+
+const pinSurfaceOf = async (db: Db, draft: DraftRow): Promise<string | null> => {
+  if (draft.kind === "pin") {
+    return String(draft.payload["surface"] ?? "");
+  }
+  const rows = await db.execute<{ surface: string }>(sql`
+    SELECT surface FROM pins WHERE id = ${String(draft.payload["pinId"] ?? "")}`);
+  return rows.rows[0]?.surface ?? null;
+};
+
+const contextOf = async (db: Db, draft: DraftRow): Promise<DraftContext> => {
+  const base = {
+    id: draft.id,
+    version: draft.version,
+    kind: draft.kind,
+    provenance: draft.provenance,
+    createdAt: draft.createdAt.toISOString(),
+    repo: draft.repo,
+    payload: draft.payload,
+  };
+  const none = { channel: null, deliveredAt: null, pointedTitle: null, sourceName: null, pinSurface: null };
+  if (draft.kind === "label" || draft.kind === "outcome") {
+    const delivery = await deliveryContext(db, draft);
+    return {
+      ...base,
+      ...none,
+      channel: delivery?.channel ?? null,
+      deliveredAt: delivery === undefined ? null : new Date(delivery.delivered_at).toISOString(),
+      pointedTitle: delivery?.title ?? null,
+      sourceName: delivery?.source_name ?? null,
+    };
+  }
+  if (draft.kind === "pin" || draft.kind === "pin_broke" || draft.kind === "pin_ok") {
+    return { ...base, ...none, pinSurface: await pinSurfaceOf(db, draft) };
+  }
+  return { ...base, ...none };
+};
+
+/** The caller's pending drafts with their context, and the fingerprint of exactly that set. */
+export const readConfirmPage = async (db: Db, developerId: string): Promise<ConfirmPageView> => {
+  const drafts = await readPendingDrafts(db, developerId);
+  return {
+    fingerprint: pendingFingerprint(drafts),
+    drafts: await Promise.all(drafts.map((draft) => contextOf(db, draft))),
+  };
+};

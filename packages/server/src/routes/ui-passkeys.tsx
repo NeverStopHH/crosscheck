@@ -36,6 +36,8 @@ import { PASSKEY_SCRIPT } from "../ui/passkey-script.ts";
 import { forbidden, isPostedCsrfValid, viewerChrome } from "../ui/route-helpers.tsx";
 import type { AppDeps, AppEnv } from "../types.ts";
 import { ceremonyOptions, ceremonyVerify } from "./ui-ceremony.ts";
+import { uiConfirmRoutes } from "./ui-confirm.tsx";
+import { createBatchStore } from "../services/confirmation-batch.ts";
 
 const PASSKEYS_PATH = "/ui/passkeys";
 
@@ -53,6 +55,8 @@ export const uiPasskeyRoutes = (deps: AppDeps): Hono<AppEnv> => {
     origins: deps.webauthnOrigins,
     nowMs: () => deps.now().getTime(),
   });
+  // Frozen confirmation batches live beside the ceremonies that sign them, in this closure.
+  const batches = createBatchStore(() => deps.now().getTime());
   const hasOrigin = deps.webauthnOrigins.length > 0;
 
   router.get("/passkey.js", (c) =>
@@ -118,8 +122,11 @@ export const uiPasskeyRoutes = (deps: AppDeps): Hono<AppEnv> => {
     );
   });
 
-  router.post("/webauthn/options", (c) => ceremonyOptions(c, deps, webauthn));
-  router.post("/webauthn/verify", (c) => ceremonyVerify(c, deps, webauthn));
+  router.post("/webauthn/options", (c) => ceremonyOptions(c, deps, webauthn, batches));
+  router.post("/webauthn/verify", (c) => ceremonyVerify(c, deps, webauthn, batches));
+
+  // human provenance §6: the batches the `confirm_batch` ceremony confirms.
+  router.route("/", uiConfirmRoutes(deps, batches));
 
   return router;
 };

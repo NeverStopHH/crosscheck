@@ -24,7 +24,7 @@ export const PASSKEY_SCRIPT = String.raw`(() => {
 
   if (!window.PublicKeyCredential) {
     say("This browser offers no passkeys at this address. Passkeys need https, or the hub's own localhost.");
-    document.querySelectorAll("form[data-ceremony] button").forEach((b) => { b.disabled = true; });
+    document.querySelectorAll("form[data-ceremony] button, form[data-confirm-batch] button").forEach((b) => { b.disabled = true; });
     return;
   }
 
@@ -131,6 +131,48 @@ export const PASSKEY_SCRIPT = String.raw`(() => {
     say(result.message ?? "Done.");
     window.setTimeout(() => window.location.reload(), 1200);
   };
+
+  // /ui/confirm (human provenance §6): freeze the decisions on the page into a
+  // batch, show what the batch is, then sign exactly that batch — once.
+  const decisionsOf = (form) =>
+    Array.from(form.querySelectorAll("li[data-draft-id]")).map((item) => {
+      const decision = item.querySelector('select[name="decision"]').value;
+      const word = item.querySelector('select[name="word"]');
+      const reason = item.querySelector('input[name="reason"]');
+      const edits = decision === "confirm" && word ? { word: word.value, reason: reason ? reason.value : null } : {};
+      return { draftId: item.dataset.draftId, version: Number(item.dataset.version), decision, ...edits };
+    });
+
+  const confirmBatch = async (form) => {
+    const fingerprint = form.querySelector('input[name="fingerprint"]').value;
+    const batch = await post("/ui/confirm/batch", { fingerprint, items: decisionsOf(form) });
+    const output = form.querySelector("output");
+    if (output) {
+      output.textContent = "Signs: confirm " + batch.confirm + " · discard " + batch.discard +
+        " · leave " + batch.keep + " — batch " + batch.digest.slice(0, 12);
+    }
+    say("Confirm with your passkey on this device…");
+    const fields = { action: "confirm_batch", subjectId: batch.batchId };
+    const options = await post("/ui/webauthn/options", fields);
+    const credential = await navigator.credentials.get({ publicKey: requestOptions(options.publicKey) });
+    if (!credential) throw new Error("the device returned no passkey");
+    const result = await post("/ui/webauthn/verify", {
+      ...fields,
+      ceremonyId: options.ceremonyId,
+      response: assertionJSON(credential),
+    });
+    say(result.message ?? "Done.");
+    window.setTimeout(() => window.location.reload(), 1200);
+  };
+
+  document.querySelectorAll("form[data-confirm-batch]").forEach((form) => {
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      confirmBatch(form).catch((error) => say(error.name === "NotAllowedError"
+        ? "The passkey prompt was cancelled or timed out. Nothing was confirmed."
+        : String(error.message ?? error)));
+    });
+  });
 
   document.querySelectorAll("form[data-ceremony]").forEach((form) => {
     form.addEventListener("input", () => showTerms(form));
