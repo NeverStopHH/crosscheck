@@ -17,11 +17,11 @@
  * on top of it — so a topic carries:
  *
  *   - a STABLE id, MINTED when its (repo, worktree root, branch) is first seen
- *     in a life (`mintTopicId`): the root's key and the topic's ordinal in
- *     that root, never the branch, so no rename can change it. Its work
- *     context is `wc_<life>~t<id>`. Deterministic, so a crash, a retry or a
- *     sibling hook opening the same topic from the same state name one
- *     context;
+ *     in a life (`mintTopicId`): the root's key and a number hashed from the
+ *     branch it OPENED on — spelling no branch, and never re-derived, so no
+ *     rename can change it. Its work context is `wc_<life>~t<id>`.
+ *     Deterministic, so a crash, a retry or a sibling hook opening the same
+ *     topic from the same state name one context (review M1);
  *   - an AFFINITY: the root, every branch the rules attached to it, the
  *     commit it was last seen at, and the files it touched (its seen-set
  *     entries). Which topic a touch belongs to is a deterministic lookup in

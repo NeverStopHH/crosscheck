@@ -20,8 +20,9 @@ for one piece of work only split its evidence. A person sometimes knows better:
 
 ## 2. What the shipped model already guarantees
 
-1. **An id never changes and never names a branch.** A topic is `<rootKey>.<ordinal>` — the first
-   12 hex of sha256(repo, worktree root) and its ordinal in that root — and its work context is
+1. **An id never changes and never names a branch.** A topic is `<rootKey>.<branchKey>` — the first
+   12 hex of sha256(repo, worktree root) and the decimal of sha256(the branch it OPENED on)'s first
+   8 hex, minted once and never re-derived (review M1) — and its work context is
    `wc_<life>~t<id>` (`flows/topic-contexts.ts` `mintTopicId`). A merge or a split therefore never
    rewrites an id: it ADDS a record, and every record already on the hub keeps the id it was sent
    under.

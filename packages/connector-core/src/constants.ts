@@ -294,8 +294,9 @@ export const INTENT_TOPIC_AMBIGUITY_MS = 60_000;
 
 /**
  * Hex characters of sha256(repo, worktree root) a topic's minted id leads
- * with — the id is that root key and the topic's ordinal in the root, never
- * the branch (flows/topic-contexts.ts), so a rename cannot change it.
+ * with — the id is that root key and a number from the branch the topic
+ * OPENED on (flows/topic-contexts.ts `mintTopicId`), minted once, so a rename
+ * cannot change it.
  */
 export const TOPIC_KEY_HEX_CHARS = 12;
 
