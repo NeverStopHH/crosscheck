@@ -33,6 +33,7 @@ import {
   hubEnd,
   intent,
   ioFail,
+  NIGHT,
   oldFlush,
   par,
   recover,
@@ -297,6 +298,17 @@ const PR75_REVIEW: readonly CorpusSeed[] = [
   },
   { seed: 31214, generator: "all", invariant: "I3", fix: "4e0e9e89", bug: "the generated scenario", events: scenarioOf(31214, GENERATORS.all) },
   { seed: 4286, generator: "sleep", invariant: "I3", fix: "4e0e9e89", bug: "the same class, two vacations apart (the generated scenario)", events: scenarioOf(4286, GENERATORS.sleep) },
+  {
+    seed: 3851,
+    generator: "sleep",
+    invariant: "I1",
+    fix: "49424d96",
+    residual: ["I1r"],
+    bug: "a reap killed between removing a delivered spool's cursor and its data file re-exposed a line its ended life then withheld, counted though the hub holds it",
+    events: [start(1), end(1), fault("recordsLate", 2, 0), crash(8, "after"), NIGHT, start(0)],
+    shows: (run) => run.reexposed.size > 0,
+  },
+  { seed: 3851, generator: "sleep", invariant: "I1", fix: "49424d96", residual: ["I1r"], bug: "the generated scenario", events: scenarioOf(3851, GENERATORS.sleep) },
 ];
 
 export const SEED_CORPUS: readonly CorpusSeed[] = [
