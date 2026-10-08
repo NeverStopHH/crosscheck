@@ -30,6 +30,7 @@ import {
 import { appendEvent } from "./events.ts";
 import { appendIntentVersion } from "./intent-ledger.ts";
 import { refreshNormalizedDoc } from "./normalized-doc.ts";
+import { hubGeneratedSignal } from "./generated-targets.ts";
 import { touchFileRef } from "./skeleton-identity.ts";
 import {
   recordSessionEvent,
@@ -640,6 +641,11 @@ export const ingestTarget = async (
   // touch is evidence, and dropping it would be deciding the question it
   // exists to answer.
   const value = body.kind === "file" ? canonicalFileValue(body.value) : body.value;
+  // THE GENERATED-TARGET LABEL (services/generated-targets.ts): the
+  // connector's, or the path signal applied here to a target that carries
+  // none — so an older connector's nested lockfile is labelled all the same.
+  // Stored, never a reason to refuse or drop: the touch is kept either way.
+  const generated = hubGeneratedSignal(body.kind, value, body.generated);
   const eventKind = TARGET_EVENT_KINDS[body.kind as keyof typeof TARGET_EVENT_KINDS];
   /**
    * PROJECTED ON BOTH BRANCHES, accepted AND duplicate. The git lane's
@@ -674,6 +680,7 @@ export const ingestTarget = async (
       kind: body.kind,
       value,
       source,
+      generated,
       // First-seen age for the targets-only pointer (#19). onConflictDoNothing
       // below means a duplicate touch never bumps it — the honest age.
       createdAt: deps.now(),
@@ -691,10 +698,15 @@ export const ingestTarget = async (
     // THE RE-TOUCH IS RECORDED TOO (pilot finding, 2026-10-05): one UPDATE
     // moves `last_seen_at` to now and, only when the other lane saw it,
     // upgrades the label — first-seen stays where it was.
+    //
+    // THE GENERATED LABEL IS THE LATEST TOUCH'S: a classification that could
+    // not run this time sends none, and the row turns ordinary again rather
+    // than staying silenced on an answer nobody can repeat — toward warning.
     await deps.db
       .update(workContextTargets)
       .set({
         lastSeenAt: deps.now(),
+        generated,
         source: sql`case when ${workContextTargets.source} NOT IN (${source}, 'both') then 'both' else ${workContextTargets.source} end`,
       })
       .where(

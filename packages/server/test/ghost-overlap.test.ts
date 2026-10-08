@@ -262,7 +262,10 @@ describe("ghost checks, the deterministic overlap", () => {
 
   test("a hot value everybody touches is not evidence of a plan", async () => {
     const { harness, me, them } = await setup();
-    const lockfiles = ["package-lock.json", "bun.lock"];
+    // ORDINARY files every session edits — the config and the router. Not
+    // lockfiles: those are labelled generated and never evidence at all
+    // (services/generated-targets.ts), so they could not show the HOT rule.
+    const lockfiles = ["src/config.ts", "src/router.ts"];
     const plan = ["src/auth/token.ts", "src/auth/session.ts"];
     const asTargets = (values: readonly string[]): readonly {
       kind: string;
@@ -363,7 +366,7 @@ describe("ghost checks, the deterministic overlap", () => {
     await seed(harness, me, contextRecords(MY_CONTEXT, MY_SESSION, "Token refresh rework", files(shared)));
     const renamed = [
       ...shared,
-      ...Array.from({ length: GHOST_MAX_CONTEXT_TARGETS }, (_unused, index) => `src/generated/file-${String(index)}.ts`),
+      ...Array.from({ length: GHOST_MAX_CONTEXT_TARGETS }, (_unused, index) => `src/renamed/file-${String(index)}.ts`),
     ];
     await seed(harness, them, contextRecords(THEIR_CONTEXT, THEIR_SESSION, "Rename the whole module", files(renamed)));
     const mike = await addTestDeveloperWithSession(harness, "Mike", "mike@example.com", { id: "ses_mike" });

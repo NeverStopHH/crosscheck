@@ -639,6 +639,17 @@ ALTER TABLE pins
 ALTER TABLE work_context_targets
   ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'tool_edit';
 
+-- WHICH generated-target signal fired on a file target (release gate N2,
+-- @crosscheck/schema generated-target.ts): 'path', 'attribute' or 'header',
+-- or NULL for an ordinary file. The connector sends it; for a target that
+-- carries none the hub applies the path signal itself at ingest. A labelled
+-- row is KEPT — suspect and coverage still read it — and every overlap read
+-- (ghost pairs, conference pairs, the tripwire, the hot count, a context's
+-- size) asks for `generated IS NULL`. Nullable with no default, so a row
+-- that predates the column reads as ordinary: the direction that can only
+-- warn, never silence.
+ALTER TABLE work_context_targets ADD COLUMN IF NOT EXISTS generated text;
+
 -- THE PER-SESSION CAUSAL ORDER (spec 01 §3.5): append-only, content-free, one
 -- row per canonical event. `ref_id` names the row that already holds the
 -- content — a claim id, a session id, or a HASH of a target's (context, kind,

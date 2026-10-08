@@ -17,7 +17,7 @@ import {
 
 import { getTableConfig } from "drizzle-orm/pg-core";
 
-import { sessionCausalGuarantees } from "../src/db/schema.ts";
+import { sessionCausalGuarantees, workContextTargets } from "../src/db/schema.ts";
 import { BOOTSTRAP_SQL_URL, guardedBlockNamed } from "./fixtures/bootstrap-sql.ts";
 import { createTestHarness } from "./helpers.ts";
 
@@ -386,6 +386,27 @@ describe("bootstrap.sql DDL sync", () => {
     expect(bootstrapSql).toContain(
       "ALTER TABLE work_context_targets ADD COLUMN IF NOT EXISTS created_at timestamptz;",
     );
+  });
+
+  test("work_context_targets.generated reaches an EXISTING hub, nullable, in both authorities", async () => {
+    // Arrange: the drizzle column is nullable with no default, so an upgraded
+    // hub's old rows read as ordinary — the direction that can only warn.
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+    const harness = await createTestHarness();
+
+    // Act
+    const rows = await harness.db.execute(
+      sql`SELECT is_nullable AS n, column_default AS d FROM information_schema.columns WHERE table_name = 'work_context_targets' AND column_name = 'generated'`,
+    );
+    const drizzleColumn = getTableConfig(workContextTargets).columns.find((column) => column.name === "generated");
+
+    // Assert
+    expect(bootstrapSql).toContain("ALTER TABLE work_context_targets ADD COLUMN IF NOT EXISTS generated text;");
+    expect(rows.rows.length).toBe(1);
+    expect(rows.rows[0]?.n).toBe("YES");
+    expect(rows.rows[0]?.d ?? null).toBeNull();
+    expect(drizzleColumn?.notNull).toBe(false);
+    expect(drizzleColumn?.hasDefault).toBe(false);
   });
 
   test("ci_test_results test_id CHECK matches MAX_CI_TEST_ID_CHARS", async () => {

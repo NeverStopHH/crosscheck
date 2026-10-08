@@ -67,6 +67,7 @@ import {
   GUARANTEE_KINDS,
   STORED_GUARANTEE_REASONS,
   STORED_TARGET_SOURCES,
+  GENERATED_SIGNALS,
   TARGET_KINDS,
   TEAM_PIN_POLICIES,
   MAX_WAIVER_REASON_CHARS,
@@ -410,6 +411,17 @@ export const workContextTargets = pgTable(
      * reader may see only, since both are her instants.
      */
     lastSeenAt: timestamptz("last_seen_at"),
+    /**
+     * WHICH generated-target signal fired on this file (release gate N2,
+     * @crosscheck/schema generated-target.ts), or null for an ordinary one.
+     * Sent by the connector; applied by ingest itself (the path signal) to a
+     * target that carries none. The row is KEPT — `suspect` and coverage read
+     * it — and every overlap read asks for null (services/generated-targets.ts
+     * ordinaryTargetCondition). Nullable with no default: a row that predates
+     * the column is ordinary, the direction that can only warn. Mirrored in
+     * db/bootstrap.sql.
+     */
+    generated: text("generated", { enum: GENERATED_SIGNALS }),
   },
   (table) => [
     primaryKey({ columns: [table.workContextId, table.kind, table.value] }),
