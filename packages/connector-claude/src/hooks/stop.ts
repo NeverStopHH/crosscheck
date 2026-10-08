@@ -24,6 +24,7 @@ import {
   MAX_TARGETS_PER_INVOCATION,
 } from "@crosscheck/connector-core/constants.ts";
 import { captureGitTouches } from "@crosscheck/connector-core/flows/capture-git-touches.ts";
+import { NO_GENERATED } from "@crosscheck/connector-core/capture/generated.ts";
 import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
 import { recordCaptureLoss } from "@crosscheck/connector-core/state/loss-ledger.ts";
 import {
@@ -211,7 +212,7 @@ export const handleStop = async (
         since: new Date(state.startedAt),
         now: ctx.now(),
       })
-    : { paths: [], unavailable: true };
+    : { paths: [], unavailable: true, generated: NO_GENERATED };
   // BOOKED ON EVERY TURN, the one that ran and found nothing included. That
   // turn is the denominator doctor's verdict divides by (state/git-lane-cost
   // .ts): skipping the write when there was nothing to record left the ran
@@ -219,7 +220,11 @@ export const handleStop = async (
   // recorded FILES and stayed red forever on a healthy install that runs no
   // codemods. One more locked write on a quiet turn is the price of a
   // verdict that can be true.
-  const laneOutcome = { captured: outcome.paths, skipped: outcome.unavailable };
+  const laneOutcome = {
+    captured: outcome.paths,
+    skipped: outcome.unavailable,
+    generated: outcome.generated,
+  };
   // REVIEW M5: A SKIPPED OR UNANSWERED LANE IS A LOSS, NOT ONLY A NUMBER IN
   // SESSION STATE. Its window is the session's start, so the next turn's lane
   // re-examines the same touches — but a session whose last turn skipped,

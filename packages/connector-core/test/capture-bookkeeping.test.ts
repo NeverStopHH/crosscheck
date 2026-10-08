@@ -17,7 +17,7 @@ import {
 } from "../src/constants.ts";
 import { withCaptureBookkeeping } from "../src/state/capture-bookkeeping.ts";
 import type { TouchedRootsResolution } from "../src/capture/touched-root.ts";
-import { deriveSessionState } from "../src/state/session-state.ts";
+import { deriveSessionState, withGitTouches } from "../src/state/session-state.ts";
 import type { SessionState } from "../src/state/session-state.ts";
 
 const NOW = new Date("2026-08-26T10:00:00.000Z");
@@ -398,5 +398,52 @@ describe("the two diagnosis fields the agent gets to choose (finding A5)", () =>
     // ...and the drop it explains is still counted, so the WARN still fires
     expect(after.editToolFires).toBe(1);
     expect(after.outsideRootDrops).toBe(1);
+  });
+});
+
+describe("the generated-target counters doctor prints", () => {
+  test("each capture's classification adds in, on the tool lane and the git lane alike", () => {
+    // Arrange: a session measured from its start.
+    const before = state();
+
+    // Act
+    const edited = withCaptureBookkeeping(before, {
+      resolution: resolution(),
+      capturedCount: 3,
+      editFired: true,
+      toolLabel: "Edit",
+      firstPath: "/repos/api/apps/x/package-lock.json",
+      now: NOW,
+      generated: { path: 1, attribute: 1, header: 0, unknown: 1 },
+    });
+    const afterStop = withGitTouches(edited, {
+      captured: ["packages/proto/src/a_pb.ts"],
+      skipped: false,
+      generated: { path: 1, attribute: 0, header: 0, unknown: 0 },
+    });
+
+    // Assert
+    expect(before.generatedTargets).toEqual({ path: 0, attribute: 0, header: 0, unknown: 0 });
+    expect(afterStop.generatedTargets).toEqual({ path: 2, attribute: 1, header: 0, unknown: 1 });
+  });
+
+  test("a state that predates the counters starts counting at its first classified capture", () => {
+    // Arrange: an older state file, parsed — no field at all.
+    const { generatedTargets: _absent, ...older } = state();
+
+    // Act
+    const after = withCaptureBookkeeping(older, {
+      resolution: resolution(),
+      capturedCount: 1,
+      editFired: true,
+      toolLabel: "Edit",
+      firstPath: "/repos/api/src/a.ts",
+      now: NOW,
+      generated: { path: 0, attribute: 0, header: 1, unknown: 0 },
+    });
+
+    // Assert
+    expect(older.generatedTargets).toBeUndefined();
+    expect(after.generatedTargets).toEqual({ path: 0, attribute: 0, header: 1, unknown: 0 });
   });
 });

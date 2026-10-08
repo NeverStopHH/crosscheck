@@ -105,7 +105,7 @@ export const handleAfterFileEdit = async (
           ctx.hostSessionKey,
           MAX_TARGETS_PER_INVOCATION,
         );
-  const { captured: files, resolution } = await captureTouchedFiles({
+  const { captured: files, resolution, generated } = await captureTouchedFiles({
     seq,
     home: ctx.config.home,
     repoKey: ctx.repoKey,
@@ -155,6 +155,7 @@ export const handleAfterFileEdit = async (
       toolLabel: AFTER_FILE_EDIT_TOOL,
       firstPath: paths[0] ?? null,
       now,
+      generated,
     }),
     ...(didHeartbeat ? { lastHeartbeatAt: now.toISOString() } : {}),
   }));

@@ -47,6 +47,7 @@ import {
 import { readTextOrNull } from "../config/paths.ts";
 import { listSessionStateFiles, sessionSilentForMs } from "./session-scan.ts";
 import { SessionStateSchema } from "./session-state.ts";
+import type { GeneratedTally } from "../capture/generated.ts";
 
 const hoursToMs = (hours: number): number => (hours / HOURS_PER_DAY) * MS_PER_DAY;
 
@@ -98,6 +99,11 @@ export interface SessionCaptureHealth {
   readonly hintCandidatesSeen: number;
   /** Hints delivered to this session (the seen-set's length). */
   readonly hintsDelivered: number;
+  /**
+   * The generated-target rule's counters for this session, or ABSENT for a
+   * state file written before they existed — never a zero it did not measure.
+   */
+  readonly generatedTargets?: GeneratedTally;
 }
 
 export interface CaptureHealth {
@@ -268,6 +274,7 @@ export const readCaptureHealth = async (
         outsideRootDrops: state.outsideRootDrops,
         hintCandidatesSeen: state.hintCandidatesSeen,
         hintsDelivered: state.deliveredHintRefs.length,
+        ...(state.generatedTargets === undefined ? {} : { generatedTargets: state.generatedTargets }),
       };
     })
     .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));

@@ -298,7 +298,7 @@ export const handlePostToolUse = async (
   // The §1.3 flows: targets first, then the fingerprint — the same spool order
   // the combined batch used to produce. Claude-side stays exactly the payload
   // parsing: which fields carry paths, what counts as a failure response.
-  const { captured: files, resolution } = await captureTouchedFiles({
+  const { captured: files, resolution, generated } = await captureTouchedFiles({
     seq,
     home: ctx.config.home,
     repoKey: ctx.repoKey,
@@ -379,6 +379,7 @@ export const handlePostToolUse = async (
       toolLabel: ctx.payload.tool_name ?? null,
       firstPath: paths[0] ?? null,
       now,
+      generated,
     }),
     ...(didHeartbeat ? { lastHeartbeatAt: now.toISOString() } : {}),
     ...(closesWindow ? closeOwnWindow(fresh) : {}),

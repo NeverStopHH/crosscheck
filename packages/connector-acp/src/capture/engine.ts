@@ -753,7 +753,7 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     // "cwd sits in a sibling worktree" candidate can never apply here and
     // every out-of-checkout path takes the bounded fs walk. The per-session
     // cache above is what keeps that once per root rather than once per edit.
-    const { captured, resolution } = await captureTouchedFiles({
+    const { captured, resolution, generated } = await captureTouchedFiles({
       seq,
       home: session.config.home,
       repoKey: session.repoKey ?? "",
@@ -804,6 +804,7 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
           toolLabel: event.toolLabel,
           firstPath: paths[0] ?? null,
           now: at,
+          generated,
         }),
       );
     }

@@ -28,8 +28,9 @@
  *     #18 line has to be able to name a path that never resolved, and such a
  *     path has no repo-relative form to hold.
  */
-import { withKnownWorktreeRoot } from "./session-state.ts";
+import { withGeneratedTargets, withKnownWorktreeRoot } from "./session-state.ts";
 import type { SessionState } from "./session-state.ts";
+import type { GeneratedTally } from "../capture/generated.ts";
 import { containsSecret } from "../capture/secret-scan.ts";
 import {
   DOCTOR_PATH_MAX_CHARS,
@@ -103,6 +104,13 @@ export interface CaptureBookkeepingInput {
   /** The first touched path as the host spelled it, or null when there was none. */
   readonly firstPath: string | null;
   readonly now: Date;
+  /**
+   * How the spooled targets were classified by the generated-target rule
+   * (the capture flow's `generated`). Counted for EVERY spooled target, an
+   * ACP read's included: what it counts is what the hub keeps out of overlap,
+   * and a read's target is kept out exactly like an edit's.
+   */
+  readonly generated?: GeneratedTally;
 }
 
 /**
@@ -151,7 +159,7 @@ export const withCaptureBookkeeping = (
   // place all three hosts share, so Claude and Cursor are covered with it.
   const storedPath = diagnosisPath(input.firstPath);
   return {
-    ...next,
+    ...withGeneratedTargets(next, input.generated),
     editToolFires: next.editToolFires + (input.editFired ? 1 : 0),
     targetsCapturedCount:
       next.targetsCapturedCount + (input.editFired ? input.capturedCount : 0),
