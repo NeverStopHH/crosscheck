@@ -58,10 +58,11 @@
  * (hooks/collision-relay.ts), only while the envelope spares room to carry
  * the line out — and once more by UserPromptSubmit, which holds the prompt's
  * own hub calls to what the envelope spares once a queued relay was drained
- * first (round 2, M3):
+ * first (round 2, M3) — and once more by the relay's one presence refresh,
+ * bounded by what the envelope spares (hooks/collision-relay.ts):
  *
  * VERIFY: grep -rn 'budget\.spareMs()' packages/connector-claude/src | wc -l | tr -d ' '
- * PRINTS: 12
+ * PRINTS: 13
  */
 import { describe, expect, test } from "bun:test";
 
