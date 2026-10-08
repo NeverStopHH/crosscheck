@@ -143,19 +143,37 @@ const callMcpTool = async (w: World): Promise<string> => {
 
 const asPerson = { isInteractive: () => true };
 
+/** A label walk's terminal that quits at the first key, so the walk cannot block. */
+const quittingTerminal = {
+  write: (): void => undefined,
+  readKey: (): Promise<string | null> => Promise.resolve("q"),
+  readLine: (): Promise<string | null> => Promise.resolve(null),
+};
+
+/** Every repo-scoped command, as a person at a terminal would run it (review L5). */
 const runCommands = async (w: World): Promise<Readonly<Record<string, string>>> => {
   const noSecret = (): Promise<string | null> => Promise.resolve(null);
   const out = async (argv: readonly string[]): Promise<string> =>
-    (await runCli(argv, w.env, w.repo, noSecret, asPerson)).stdout;
+    (await runCli(argv, w.env, w.repo, noSecret, { ...asPerson, terminal: quittingTerminal })).stdout;
   return {
     status: await out(["status"]),
     doctor: await out(["doctor"]),
     conference: await out(["conference"]),
     pinList: await out(["pin", "list"]),
+    pinAdd: await out(["pin", "src/app.ts", "--check", "bun test"]),
     pilot: await out(["pilot"]),
     pilotMine: await out(["pilot", "--mine"]),
+    pilotLabel: await out(["pilot", "label"]),
     presence: await out(["presence"]),
+    presenceOff: await out(["presence", "off"]),
+    mute: await out(["mute", "Mallory"]),
+    unmute: await out(["unmute", "Mallory"]),
     trace: await out(["trace", "src/app.ts"]),
+    suspect: await out(["suspect", "src/app.ts"]),
+    noise: await out(["noise", "wc_bait"]),
+    helpful: await out(["helpful", "wc_bait"]),
+    followed: await out(["followed", "wc_bait"]),
+    overrode: await out(["overrode", "wc_bait", "--reason", "bait"]),
     revalidate: await out(["revalidate"]),
   };
 };
