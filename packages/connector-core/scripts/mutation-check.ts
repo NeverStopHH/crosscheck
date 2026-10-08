@@ -24802,7 +24802,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the test guard passes a shell's hub variables on to every child",
     file: `${CORE}/test/network-guard.ts`,
-    from: "  for (const key of HUB_ENV_KEYS) {\n    delete process.env[key];\n  }\n",
+    from: "    for (const key of HUB_CONNECTION_KEYS) {\n      delete process.env[key];\n    }\n",
     to: "",
     test: `${CORE}/test/network-guard.test.ts`,
     because: "with CROSSCHECK_HUB_URL exported, an e2e test's installed hook reports to the real hub and a second serve boots on the real archive",
@@ -24810,7 +24810,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the test guard leaves children the shell's crosscheck home",
     file: `${CORE}/test/network-guard.ts`,
-    from: "  process.env[\"CROSSCHECK_HOME\"] = home;\n",
+    from: "    process.env[\"CROSSCHECK_HOME\"] = home;\n",
     to: "",
     test: `${CORE}/test/network-guard.test.ts`,
     because: "a child spawned with the runner's env reads and writes the developer's ~/.crosscheck",
@@ -24886,6 +24886,38 @@ export const MUTATIONS: readonly Mutation[
     to: "",
     test: `${CORE}/test/network-guard.test.ts`,
     because: "a child spawned with no env gets the shell's environment as the runner started with it: the hub variables, no guard",
+  },
+  {
+    label: "the test guard keeps a shell's own hub URL as if a test had set it",
+    file: `${CORE}/test/network-guard-rules.ts`,
+    from: "url.port !== \"\" && !isRealHubUrl(url)",
+    to: "url.port !== \"\"",
+    test: `${CORE}/test/network-guard.test.ts`,
+    because: "a shell exporting http://127.0.0.1:7100 hands every child of the suite the machine's real hub and its key",
+  },
+  {
+    label: "the test guard scrubs the test hub a probe or harness handed its process",
+    file: `${CORE}/test/network-guard.ts`,
+    from: "  if (!isTestHubUrl(process.env[\"CROSSCHECK_HUB_URL\"])) {",
+    to: "  if (true) {",
+    test: `${CORE}/test/network-guard.test.ts`,
+    because: "a CLI or hook spawned with an explicit env and the guard preloaded loses its in-process hub and goes silent",
+  },
+  {
+    label: "the test guard passes a shell's archive directory on to every child",
+    file: `${CORE}/test/network-guard.ts`,
+    from: "  if (!isTempPath(process.env[HUB_DATA_KEY])) {\n    delete process.env[HUB_DATA_KEY];\n  }\n",
+    to: "",
+    test: `${CORE}/test/network-guard.test.ts`,
+    because: "a second crosscheck serve a test boots opens the real archive directory",
+  },
+  {
+    label: "the test guard replaces a test's own temp home",
+    file: `${CORE}/test/network-guard.ts`,
+    from: "  if (!isTempPath(process.env[\"CROSSCHECK_HOME\"])) {",
+    to: "  if (true) {",
+    test: `${CORE}/test/network-guard.test.ts`,
+    because: "a process a test starts on its own fixture home reads and writes a different, empty one",
   },
 ];
 

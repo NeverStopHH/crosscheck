@@ -24,6 +24,8 @@ import {
   GUARD_INSTALLED_KEY,
   HUB_ENV_KEYS,
   isRealHubUrl,
+  isTestHubUrl,
+  isUnderDir,
   withGuardPreload,
 } from "./network-guard-rules.ts";
 import type { GuardMarks } from "./network-guard-rules.ts";
@@ -86,6 +88,30 @@ describe("which URLs count as a real hub", () => {
   ] as const)("%s → %p", (url, expected) => {
     // Act / Assert
     expect(isRealHubUrl(new URL(url))).toBe(expected);
+  });
+});
+
+describe("what only a test sets, and so survives the first run's scrub (round 3, F-M3)", () => {
+  test.each([
+    ["http://127.0.0.1:41234", true],
+    ["http://localhost:9", true],
+    ["http://127.0.0.1:7100", false],
+    ["http://127.0.0.1", false],
+    ["https://hub.tailnet.ts.net:8443", false],
+    ["https://crosscheck.example.com:9443", false],
+    ["not a url", false],
+  ] as const)("hub URL %s is a test hub → %p", (url, expected) => {
+    // Act / Assert
+    expect(isTestHubUrl(url)).toBe(expected);
+  });
+
+  test("a home or archive counts as a test's only inside the temp directory", () => {
+    // Act / Assert
+    expect(isUnderDir("/tmp/x/cx-home-a", "/tmp/x")).toBe(true);
+    expect(isUnderDir("/tmp/x", "/tmp/x")).toBe(false);
+    expect(isUnderDir("/tmp/xy/home", "/tmp/x")).toBe(false);
+    expect(isUnderDir(join(homedir(), ".crosscheck"), tmpdir())).toBe(false);
+    expect(isUnderDir(undefined, tmpdir())).toBe(false);
   });
 });
 
@@ -185,13 +211,19 @@ describe("the guard reaches every child a test spawns with its env (round 3, F-M
     return JSON.parse(stdout) as ChildReport;
   };
 
-  /** A hub, its credentials and its archive, as a developer's shell might export them — none of them real. */
+  /**
+   * A hub's credentials and an archive, as a developer's shell might export
+   * them beside the hub's URL — none of them real, and the child below dials
+   * nothing but the refused 127.0.0.1:7100.
+   */
   const SHELL_HUB: Readonly<Record<string, string>> = {
-    CROSSCHECK_HUB_URL: "http://127.0.0.1:9",
     CROSSCHECK_API_KEY: "k",
     CROSSCHECK_CI_TOKEN: "t",
     CROSSCHECK_DATA_DIR: "/nonexistent/crosscheck-archive",
   };
+
+  /** The hub URLs a shell exports: the machine's own hub, a tailnet name, a team's host. */
+  const SHELL_HUB_URLS = ["http://127.0.0.1:7100", "https://hub.tailnet.ts.net", "https://crosscheck.example.com"] as const;
 
   test("this run carries no hub variable, a home of its own and the guard for its children", () => {
     // Assert
@@ -205,22 +237,51 @@ describe("the guard reaches every child a test spawns with its env (round 3, F-M
     expect(process.env[GUARD_CHILD_ENV]).toBe("1");
   });
 
-  test("a run started from a shell that exports a hub scrubs it, and gives itself a temp home, at preload", async () => {
-    // Arrange: a first run — no child marker, no BUN_OPTIONS — under a shell
-    // that exports a hub and a crosscheck home (one nothing can be written to)
-    const { [GUARD_CHILD_ENV]: _marker, BUN_OPTIONS: _options, ...rest } = process.env;
-    const shell = { ...rest, ...SHELL_HUB, CROSSCHECK_HOME: "/nonexistent/shell-home/.crosscheck" };
+  test.each([...SHELL_HUB_URLS])(
+    "a run started from a shell that exports %s scrubs it, and gives itself a temp home, at preload",
+    async (hubUrl) => {
+      // Arrange: a first run — no child marker, no BUN_OPTIONS — under a shell
+      // that exports a hub and a crosscheck home (one nothing can be written to)
+      const { [GUARD_CHILD_ENV]: _marker, BUN_OPTIONS: _options, ...rest } = process.env;
+      const shell = {
+        ...rest,
+        ...SHELL_HUB,
+        CROSSCHECK_HUB_URL: hubUrl,
+        CROSSCHECK_HOME: "/nonexistent/shell-home/.crosscheck",
+      };
+
+      // Act
+      const report = await reportOf([`--preload=${GUARD_PATH}`], shell);
+
+      // Assert
+      expect(report.hub).toEqual(Object.fromEntries(HUB_ENV_KEYS.map((key) => [key, null])));
+      expect(report.home?.startsWith(tmpdir())).toBe(true);
+      expect(report.homeExists).toBe(true);
+      expect(report.bunOptions.split(/\s+/u)).toContain(`--preload=${GUARD_PATH}`);
+      expect(report.child).toBe("1");
+      expect(report.guarded).toBe(true);
+    },
+  );
+
+  test("a process started with a test's own hub and temp home, the guard preloaded and no marker, keeps them", async () => {
+    // Arrange: the shape a probe or a test harness spawns — an explicit env, no spread
+    const home = await makeHome("guard-explicit");
+    paths.push(home);
+    const explicit = {
+      PATH: process.env["PATH"] ?? "",
+      CROSSCHECK_HUB_URL: "http://127.0.0.1:9",
+      CROSSCHECK_API_KEY: "test-key",
+      CROSSCHECK_HOME: home,
+    };
 
     // Act
-    const report = await reportOf([`--preload=${GUARD_PATH}`], shell);
+    const report = await reportOf([`--preload=${GUARD_PATH}`], explicit);
 
-    // Assert
-    expect(report.hub).toEqual(Object.fromEntries(HUB_ENV_KEYS.map((key) => [key, null])));
-    expect(report.home?.startsWith(tmpdir())).toBe(true);
-    expect(report.homeExists).toBe(true);
-    expect(report.bunOptions.split(/\s+/u)).toContain(`--preload=${GUARD_PATH}`);
-    expect(report.child).toBe("1");
-    expect(report.guarded).toBe(true);
+    // Assert: the test's hub and home survive; the guard still refuses the real one
+    expect(report.hub["CROSSCHECK_HUB_URL"]).toBe("http://127.0.0.1:9");
+    expect(report.hub["CROSSCHECK_API_KEY"]).toBe("test-key");
+    expect(report.home).toBe(home);
+    expect(report.refused).toContain("test network guard");
   });
 
   test("a bun child spawned with this run's env loads the guard through BUN_OPTIONS, with no flag of its own", async () => {
@@ -234,12 +295,13 @@ describe("the guard reaches every child a test spawns with its env (round 3, F-M
     expect(report.home).toBe(process.env["CROSSCHECK_HOME"] ?? "");
   });
 
-  test("a child keeps the test hub it was handed: only the first run scrubs", async () => {
-    // Act
-    const report = await reportOf([], { ...process.env, CROSSCHECK_HUB_URL: "http://127.0.0.1:9" });
+  test("a child keeps whatever hub a test handed it — even a dead remote one: only the first run scrubs", async () => {
+    // Act: a config test's dead host, which the first run's scrub would delete
+    const report = await reportOf([], { ...process.env, CROSSCHECK_HUB_URL: "https://hub.invalid", CROSSCHECK_API_KEY: "k" });
 
     // Assert
-    expect(report.hub["CROSSCHECK_HUB_URL"]).toBe("http://127.0.0.1:9");
+    expect(report.hub["CROSSCHECK_HUB_URL"]).toBe("https://hub.invalid");
+    expect(report.hub["CROSSCHECK_API_KEY"]).toBe("k");
     expect(report.guarded).toBe(true);
   });
 });

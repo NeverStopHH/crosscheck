@@ -24,9 +24,11 @@
  *
  *   - deletes the hub variables a developer's shell may export
  *     (HUB_ENV_KEYS) from `process.env`, so no child spawned with
- *     `{...process.env}` is pointed at the real hub or the real archive;
- *   - points CROSSCHECK_HOME at a temp directory of its own, so no such child
- *     reads or writes ~/.crosscheck;
+ *     `{...process.env}` is pointed at the real hub or the real archive —
+ *     keeping only what a test sets: an in-process hub on a port of its own,
+ *     an archive under the OS temp directory;
+ *   - points CROSSCHECK_HOME at a temp directory of its own unless it is one
+ *     already, so no such child reads or writes ~/.crosscheck;
  *   - exports `BUN_OPTIONS=--preload=<this file>`, so every bun child spawned
  *     with that env runs this guard before its own entry;
  *   - marks the env (GUARD_CHILD_ENV), so a child keeps what it was handed —
@@ -45,8 +47,11 @@ import {
   BLOCKED_FETCHES_KEY,
   GUARD_CHILD_ENV,
   GUARD_INSTALLED_KEY,
-  HUB_ENV_KEYS,
+  HUB_CONNECTION_KEYS,
+  HUB_DATA_KEY,
   isRealHubUrl,
+  isTestHubUrl,
+  isUnderDir,
   withGuardPreload,
 } from "./network-guard-rules.ts";
 import type { GuardMarks } from "./network-guard-rules.ts";
@@ -80,16 +85,39 @@ if (marks[GUARD_INSTALLED_KEY] !== true) {
   marks[GUARD_INSTALLED_KEY] = true;
 }
 
-/** What the first run hands every child it spawns with `{...process.env}`: no hub, a home of its own, this guard. */
+/**
+ * The directories a test's homes and archives live in: this process's temp
+ * directory, and the platform's own — a child handed an env without TMPDIR
+ * resolves a different one than the test that made its home.
+ */
+const TEMP_ROOTS: readonly string[] = [tmpdir(), "/tmp", "/private/tmp", "/var/folders", "/private/var/folders"];
+
+const isTempPath = (path: string | undefined): boolean => TEMP_ROOTS.some((root) => isUnderDir(path, root));
+
+/**
+ * What the first run hands every child it spawns with `{...process.env}`: no
+ * hub, a home of its own, this guard. What only a TEST could have set is
+ * kept — an in-process hub's URL on a port of its own (and the key that goes
+ * with it), a home or an archive under the OS temp directory — so a process
+ * a test or a probe starts with an explicit env and this guard preloaded,
+ * and no child marker, still talks to the hub it was handed.
+ */
 const guardTheChildren = (): void => {
-  for (const key of HUB_ENV_KEYS) {
-    delete process.env[key];
+  if (!isTestHubUrl(process.env["CROSSCHECK_HUB_URL"])) {
+    for (const key of HUB_CONNECTION_KEYS) {
+      delete process.env[key];
+    }
   }
-  const home = mkdtempSync(join(tmpdir(), "cx-test-home-"));
-  process.env["CROSSCHECK_HOME"] = home;
-  process.on("exit", () => {
-    rmSync(home, { recursive: true, force: true });
-  });
+  if (!isTempPath(process.env[HUB_DATA_KEY])) {
+    delete process.env[HUB_DATA_KEY];
+  }
+  if (!isTempPath(process.env["CROSSCHECK_HOME"])) {
+    const home = mkdtempSync(join(tmpdir(), "cx-test-home-"));
+    process.env["CROSSCHECK_HOME"] = home;
+    process.on("exit", () => {
+      rmSync(home, { recursive: true, force: true });
+    });
+  }
   process.env["BUN_OPTIONS"] = withGuardPreload(process.env["BUN_OPTIONS"], import.meta.path);
   process.env[GUARD_CHILD_ENV] = "1";
 };

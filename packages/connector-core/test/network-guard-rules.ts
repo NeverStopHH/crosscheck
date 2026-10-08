@@ -33,6 +33,12 @@ export interface GuardMarks {
   [GUARD_INSTALLED_KEY]?: boolean;
 }
 
+/** The variables that point a process at a hub and carry its credentials. */
+export const HUB_CONNECTION_KEYS: readonly string[] = ["CROSSCHECK_HUB_URL", "CROSSCHECK_API_KEY", "CROSSCHECK_CI_TOKEN"];
+
+/** The variable that points a server at its archive. */
+export const HUB_DATA_KEY = "CROSSCHECK_DATA_DIR";
+
 /**
  * The variables that point a process at a hub, its credentials or its
  * archive. A developer's shell may export any of them; a test runner deletes
@@ -41,12 +47,7 @@ export interface GuardMarks {
  * to the real hub, and a second `crosscheck serve` would boot on the real
  * archive directory.
  */
-export const HUB_ENV_KEYS: readonly string[] = [
-  "CROSSCHECK_HUB_URL",
-  "CROSSCHECK_API_KEY",
-  "CROSSCHECK_CI_TOKEN",
-  "CROSSCHECK_DATA_DIR",
-];
+export const HUB_ENV_KEYS: readonly string[] = [...HUB_CONNECTION_KEYS, HUB_DATA_KEY];
 
 /**
  * Set in process.env by the preload of the run that started first, and so
@@ -132,4 +133,30 @@ const isTailnet = (host: string): boolean => {
 export const isRealHubUrl = (url: URL): boolean => {
   const host = normalisedHost(url.hostname);
   return isTailnet(host) || (isLoopback(host) && url.port === REAL_HUB_PORT);
+};
+
+/**
+ * Whether a hub URL is one only a test would set: an in-process hub on this
+ * machine, on a port of its own. A shell exports the real one — 7100, a
+ * tailnet name, a team's host — and a test hands its children a random port.
+ */
+export const isTestHubUrl = (value: string | undefined): boolean => {
+  if (value === undefined) {
+    return false;
+  }
+  try {
+    const url = new URL(value);
+    return isLoopback(normalisedHost(url.hostname)) && url.port !== "" && !isRealHubUrl(url);
+  } catch {
+    return false;
+  }
+};
+
+/** Whether `path` lies inside `dir` — a test's own homes and archives live under the OS temp directory. */
+export const isUnderDir = (path: string | undefined, dir: string): boolean => {
+  if (path === undefined || path.length === 0) {
+    return false;
+  }
+  const root = dir.endsWith("/") ? dir : `${dir}/`;
+  return path.startsWith(root);
 };
