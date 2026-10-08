@@ -23832,8 +23832,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "doctor does not require the subagent-return hook",
     file: `${CLI}/src/cli/doctor.ts`,
-    from: "const REQUIRED_HOOK_KEYS: readonly string[] = [...REQUIRED_HOOK_EVENTS, SUBAGENT_RETURN_KEY];",
-    to: "const REQUIRED_HOOK_KEYS: readonly string[] = [...REQUIRED_HOOK_EVENTS];",
+    from: "const REQUIRED_HOOK_KEYS: readonly string[] = [...REQUIRED_HOOK_EVENTS, SUBAGENT_RETURN_KEY, TURN_END_KEY];",
+    to: "const REQUIRED_HOOK_KEYS: readonly string[] = [...REQUIRED_HOOK_EVENTS, TURN_END_KEY];",
     test: `${CLI}/test/doctor-global.test.ts`,
     because: "every install from before it passes, and its subagents' collisions keep waiting for the next prompt",
   },
@@ -24168,8 +24168,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the agent's copy of a relay is capped like the person's",
     file: `${CORE}/src/hints/collision-notice.ts`,
-    from: "        ...groups.map((group) => renderCollisionNotice(group, now)),\n        ...moreTail(hidden),",
-    to: "        renderCollisionNotices(groups, now, hidden),",
+    from: "    ...groups.map((group) => renderCollisionNotice(group, now)),\n    ...moreTail(hidden),",
+    to: "    renderCollisionNotices(groups, now, hidden),",
     test: `${CONNECTOR}/test/subagent-return-hook.test.ts`,
     because: "the groups past the person's five lines are drained and marked told, and named to nobody at all",
   },
@@ -24960,7 +24960,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-pilot.test.ts 6
  * PRINTS: packages/cli/test/doctor-search-rebuild.test.ts 2
  * PRINTS: packages/cli/test/doctor-sharing.test.ts 4
- * PRINTS: packages/cli/test/doctor-subagent-return.test.ts 5
+ * PRINTS: packages/cli/test/doctor-subagent-return.test.ts 10
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
  * PRINTS: packages/cli/test/doctor-verdict-legality.test.ts 2
  * PRINTS: packages/cli/test/doctor.test.ts 1
@@ -25037,9 +25037,10 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/collision-notice-hook.test.ts 12
  * PRINTS: packages/connector-claude/test/collision-order-hook.test.ts 4
  * PRINTS: packages/connector-claude/test/collision-prompt-render.test.ts 1
+ * PRINTS: packages/connector-claude/test/collision-relay-durable.test.ts 2
  * PRINTS: packages/connector-claude/test/collision-relay-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/collision-relay-slow-hub.test.ts 3
- * PRINTS: packages/connector-claude/test/collision-relay-unconfirmed.test.ts 7
+ * PRINTS: packages/connector-claude/test/collision-relay-unconfirmed.test.ts 9
  * PRINTS: packages/connector-claude/test/collision-statusline-unnamed.test.ts 3
  * PRINTS: packages/connector-claude/test/collision-teammates-hook.test.ts 4
  * PRINTS: packages/connector-claude/test/collision-tripwire-ttl.test.ts 3
@@ -25078,20 +25079,22 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
  * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
  * PRINTS: packages/connector-claude/test/settings-merge-removal.test.ts 1
- * PRINTS: packages/connector-claude/test/settings-merge.test.ts 2
+ * PRINTS: packages/connector-claude/test/settings-merge.test.ts 4
  * PRINTS: packages/connector-claude/test/solved-hook.test.ts 1
  * PRINTS: packages/connector-claude/test/state-reap.test.ts 1
+ * PRINTS: packages/connector-claude/test/statusline-person-strip.test.ts 4
  * PRINTS: packages/connector-claude/test/stop-gate.test.ts 6
  * PRINTS: packages/connector-claude/test/stop-git-touches.test.ts 1
  * PRINTS: packages/connector-claude/test/stop-hook.test.ts 2
  * PRINTS: packages/connector-claude/test/stop-latency.test.ts 1
- * PRINTS: packages/connector-claude/test/subagent-return-cost.test.ts 4
+ * PRINTS: packages/connector-claude/test/subagent-return-cost.test.ts 5
  * PRINTS: packages/connector-claude/test/subagent-return-hook.test.ts 8
  * PRINTS: packages/connector-claude/test/summarizer-argv.test.ts 3
  * PRINTS: packages/connector-claude/test/summarizer-child-guard.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-worker-env.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 8
+ * PRINTS: packages/connector-claude/test/turn-end-hook.test.ts 9
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 3
  * PRINTS: packages/connector-core/test/abandoned-temps.test.ts 24
  * PRINTS: packages/connector-core/test/absence-render.test.ts 7
@@ -25111,11 +25114,13 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/claim-surface.test.ts 1
  * PRINTS: packages/connector-core/test/claim-validity-parity.test.ts 2
  * PRINTS: packages/connector-core/test/claim-validity-render.test.ts 2
+ * PRINTS: packages/connector-core/test/collision-count-only.test.ts 2
  * PRINTS: packages/connector-core/test/collision-indicator.test.ts 4
  * PRINTS: packages/connector-core/test/collision-notice-bounds.test.ts 1
  * PRINTS: packages/connector-core/test/collision-notice.test.ts 30
- * PRINTS: packages/connector-core/test/collision-person-strip.test.ts 7
- * PRINTS: packages/connector-core/test/collision-relay-presence.test.ts 5
+ * PRINTS: packages/connector-core/test/collision-person-strip.test.ts 11
+ * PRINTS: packages/connector-core/test/collision-publish-busy-lock.test.ts 3
+ * PRINTS: packages/connector-core/test/collision-relay-presence.test.ts 7
  * PRINTS: packages/connector-core/test/collision-state-eviction.test.ts 6
  * PRINTS: packages/connector-core/test/collision-state.test.ts 4
  * PRINTS: packages/connector-core/test/commit-evidence.test.ts 1
@@ -25182,6 +25187,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/mcp-tools.test.ts 4
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
+ * PRINTS: packages/connector-core/test/network-guard.test.ts 11
  * PRINTS: packages/connector-core/test/outcome-clause.test.ts 2
  * PRINTS: packages/connector-core/test/pilot-client.test.ts 7
  * PRINTS: packages/connector-core/test/pilot-platform-refusals.test.ts 2
@@ -25213,7 +25219,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/target-paths.test.ts 1
  * PRINTS: packages/connector-core/test/tool-window-pairing.test.ts 6
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
- * PRINTS: packages/connector-core/test/tripwire-recheck.test.ts 3
+ * PRINTS: packages/connector-core/test/tripwire-recheck.test.ts 5
  * PRINTS: packages/connector-core/test/verdict-wire.test.ts 2
  * PRINTS: packages/connector-core/test/working-days.test.ts 3
  * PRINTS: packages/connector-cursor/test/briefing-parity.test.ts 1
