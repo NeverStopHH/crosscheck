@@ -599,6 +599,16 @@ const SessionStateObjectSchema = z.looseObject({
    * that a machine losing brackets stops reading exactly like one that is not.
    */
   toolWindowMisses: z.number().int().min(0).default(0),
+  /**
+   * A LIFE RESUMED ON AN EPOCH ITS HUB COULD NOT CONFIRM (seeds 31214, 4286):
+   * a register with no epoch of its own, onto a session the hub already held,
+   * answered by a hub too old to say which epoch it holds. The life's order on
+   * that hub is split between the epoch it started under and this one — the
+   * known residual against an older hub; a newer one hands its epoch back and
+   * the life goes on from it. Counted, never a WARN: the remedy is the hub's
+   * upgrade, and nothing on this machine can do better. Absent reads as none.
+   */
+  epochUnconfirmed: z.number().int().min(0).optional(),
 });
 
 /**
@@ -825,6 +835,9 @@ export const withCarriedCapture = (
         // reason: a number that restarts on every compact cannot say whether
         // this machine is losing them.
         toolWindowMisses: previous.toolWindowMisses,
+        // ...and the life it fires in stays on the epoch it resumed on, so the
+        // count of an epoch the hub could not confirm stays too.
+        ...(previous.epochUnconfirmed === undefined ? {} : { epochUnconfirmed: previous.epochUnconfirmed }),
         // A RE-FIRE ON THE SAME LIFE KEEPS ITS WORK CONTEXT'S TITLE AND STATUS
         // (review-2 round 8, L1): set_intent writes the status into this file
         // first, and one that ran while this fire's register was out would

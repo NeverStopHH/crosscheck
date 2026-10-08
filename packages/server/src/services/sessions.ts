@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNotNull, isNull, lt, or } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import { isSeqStamp, settleLossReport } from "@crosscheck/schema";
 import type {
   SeqField,
@@ -149,8 +149,45 @@ const lossColumns = (
     ? {}
     : reportedColumns(report, settleLossReport(report), now);
 
+/**
+ * THE ORDER THE HUB ALREADY HOLDS FOR A SESSION THAT REGISTERS AGAIN (seeds
+ * 31214, 4286): the epoch its `session.started` was filed under, and the
+ * highest position the hub holds in it. A connector that resumes the session
+ * with no epoch of its own — every trace of the life on its machine aged out
+ * — goes on from here rather than minting a second epoch into the session.
+ *
+ * ONLY FOR A SESSION THE REAPER ENDED, which this register revives: nobody
+ * else is writing it, as far as the hub can know. A LIVE one answers null —
+ * another machine may be on the same life (one host session key on two
+ * machines, review-2 round 8, M6), and its epoch handed to a second writer
+ * would have both hand out the same positions: a split, which that residual
+ * already costs, would become a conflict. Null too when the session is new,
+ * or its start carried no position.
+ */
+export interface HeldSeq {
+  readonly epoch: string;
+  readonly n: number;
+}
+
+const readHeldSeq = async (db: Db, sessionId: string): Promise<HeldSeq | null> => {
+  const started = await db
+    .select({ epoch: sessionEvents.seqEpoch })
+    .from(sessionEvents)
+    .where(and(eq(sessionEvents.sessionId, sessionId), eq(sessionEvents.kind, "session.started")))
+    .limit(1);
+  const epoch = started[0]?.epoch ?? null;
+  if (epoch === null) {
+    return null;
+  }
+  const highest = await db
+    .select({ n: sql<number | null>`max(${sessionEvents.seqN})` })
+    .from(sessionEvents)
+    .where(and(eq(sessionEvents.sessionId, sessionId), eq(sessionEvents.seqEpoch, epoch)));
+  return { epoch, n: Number(highest[0]?.n ?? 0) };
+};
+
 export type RegisterSessionResult =
-  | { readonly outcome: "created" | "updated"; readonly session: SessionView }
+  | { readonly outcome: "created" | "updated"; readonly session: SessionView; readonly held: HeldSeq | null }
   | { readonly outcome: "foreign_session" }
   | { readonly outcome: "already_ended" }
   | { readonly outcome: "repo_mismatch" };
@@ -201,7 +238,7 @@ export const registerSession = async (
       refKind: "session",
       refId: insertedRow.id,
     });
-    return { outcome: "created", session: toSessionView(insertedRow) };
+    return { outcome: "created", session: toSessionView(insertedRow), held: null };
   }
 
   const existing = await findSessionById(deps.db, input.id);
@@ -250,6 +287,11 @@ export const registerSession = async (
   return {
     outcome: "updated",
     session: toSessionView(requireWrittenRow(updated)),
+    // Only ever the caller's own session: another developer's id is refused
+    // as `foreign_session` above, before anything of it is read. And only one
+    // the reaper had ended (readHeldSeq's header): `existing` is the row as it
+    // was before this register revived it.
+    held: existing.endedAt === null ? null : await readHeldSeq(deps.db, input.id),
   };
 };
 

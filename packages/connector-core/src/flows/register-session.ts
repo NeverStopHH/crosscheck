@@ -202,6 +202,13 @@ export type RegisterLadderOutcome =
       readonly outcome: "registered";
       readonly sessionId: string;
       readonly developerId: string | null;
+      /**
+       * The order the hub holds for the session (http/hub.ts HeldSeqSchema):
+       * null for one it just created, undefined from a hub too old to say.
+       */
+      readonly held: SeqStamp | null | undefined;
+      /** The hub started the session before this register: an older hub's only tell. */
+      readonly preexisted: boolean;
     }
   /** Recovery only: a LIVE session with this id is bound to another repo. */
   | { readonly outcome: "repo_mismatch" }
@@ -214,6 +221,20 @@ export type RegisterLadderOutcome =
    * refused id they were refused for good.
    */
   | { readonly outcome: "unregistered"; readonly sessionId: string };
+
+/**
+ * How long before its own answer the hub must have started a session for it
+ * to have been there before the register: a `Date` header carries whole
+ * seconds, and a session it just created starts inside the same one.
+ */
+const PREEXISTING_SESSION_MIN_AGE_MS = 60_000;
+
+/** Whether the hub started the session well before it answered — both read off the hub's own clock. */
+const startedBefore = (startedAt: unknown, dateHeader: string | null): boolean => {
+  const started = typeof startedAt === "string" ? Date.parse(startedAt) : Number.NaN;
+  const answered = dateHeader === null ? Number.NaN : Date.parse(dateHeader);
+  return Number.isFinite(started) && Number.isFinite(answered) && answered - started > PREEXISTING_SESSION_MIN_AGE_MS;
+};
 
 /**
  * ONE WALK OF THE LIFE LADDER, shared by every register that can meet an
@@ -262,6 +283,8 @@ export const registerSessionLadder = async (
         outcome: "registered",
         sessionId,
         developerId: result.data.session.developerId,
+        held: result.data.held,
+        preexisted: startedBefore(result.data.session["startedAt"], result.dateHeader),
       };
     }
     if (result.status !== HTTP_CONFLICT) {
@@ -482,6 +505,17 @@ export const registerSessionFlow = async (
   // the state, or SessionEnd's end has not landed, and the hub still holds
   // the life under that epoch with those positions handed out.
   const restored = previous === null ? await readMarkedPosition(input, crosscheckSessionId) : null;
+  // ...AND ONE THIS MACHINE KEPT NOTHING OF TAKES THE HUB'S (seeds 31214,
+  // 4286): every trace of the life here aged out — state, marker, lineage —
+  // and the register minted, onto a session the hub still held. A newer hub
+  // hands back the epoch the life started under and the highest position in
+  // it, and the life goes on from there instead of opening a second epoch in
+  // it. A register with an epoch of its own keeps it. One answered by a hub
+  // too old to say counts the split it cannot avoid (epochUnconfirmed).
+  const isMinted = previous === null && fresh === mintedEpoch;
+  const adopted = isMinted && restored === null ? (registration?.held ?? null) : null;
+  const isUnconfirmed =
+    isMinted && restored === null && registration !== null && registration.held === undefined && registration.preexisted;
 
   // BEFORE the first append, always: `reap` decides that a spool file has no
   // writer left by finding no session state file for it, and that inference
@@ -531,12 +565,17 @@ export const registerSessionFlow = async (
     eventSeq: restored?.n ?? 0,
     ...(input.briefingPending === true ? { briefingPending: true } : {}),
   };
+  const startsAt = {
+    ...stateInput,
+    ...(adopted === null ? {} : { seqEpoch: adopted.epoch, eventSeq: adopted.n }),
+    ...(isUnconfirmed ? { epochUnconfirmed: 1 } : {}),
+  };
   if (input.recovery === true) {
     // CLAIM, never overwrite: a sibling recovery that published first keeps
     // its binding (the caller re-reads and judges the repo), and the loser
     // appends no second work-context record. A busy lock is fail-open —
     // nothing written, nothing appended, silence this invocation.
-    const claim = await claimSessionState(input.home, stateInput);
+    const claim = await claimSessionState(input.home, startsAt);
     if (claim === null || !claim.claimed) {
       return {
         crosscheckSessionId,
@@ -564,11 +603,14 @@ export const registerSessionFlow = async (
     // state under the same lock.
     const startOf = async (): Promise<SeqStart> => {
       const marked = await readMarkedPosition(input, crosscheckSessionId);
+      if (marked === null && adopted !== null) {
+        return { seqEpoch: adopted.epoch, eventSeq: adopted.n };
+      }
       return marked === null
         ? { seqEpoch: previous?.crosscheckSessionId === crosscheckSessionId ? fresh : seqEpoch, eventSeq: 0 }
         : { seqEpoch: marked.epoch, eventSeq: marked.n };
     };
-    await publishSessionState(input.home, stateInput, startOf);
+    await publishSessionState(input.home, startsAt, startOf);
   }
   // The state names the epoch now; the reservation has done its job.
   await removeFile(sessionEpochPathForSlug(input.home, sessionSlug(input.hostSessionKey)));

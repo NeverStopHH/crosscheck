@@ -19191,6 +19191,72 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/spool-simulation.test.ts`,
     because: "review-2 round 9, M1+M2 (probes E2, E4): a PostToolUse recovery after a week issues the life's positions twice",
   },
+  // Option A for all 31214 / sleep 4286: the hub hands back the order it holds,
+  // and a register with no epoch of its own goes on from it.
+  {
+    label: "the hub answers a register without the order it holds (31214)",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "    held: existing.endedAt === null ? null : await readHeldSeq(deps.db, input.id),\n",
+    to: "    held: null,\n",
+    test: `${SERVER}/test/session-register-held.test.ts`,
+    because: "a connector that resumes a life it kept nothing of mints a second epoch into it, and its order is split for good (I3)",
+  },
+  {
+    label: "the hub hands a live session's order to a second writer (M6)",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "    held: existing.endedAt === null ? null : await readHeldSeq(deps.db, input.id),\n",
+    to: "    held: await readHeldSeq(deps.db, input.id),\n",
+    test: `${SERVER}/test/session-register-held.test.ts`,
+    because: "two machines on one life both hand out the same positions: the split that residual costs becomes a conflict",
+  },
+  {
+    label: "the register route leaves the held order out (31214)",
+    file: `${SERVER}/src/routes/sessions.ts`,
+    from: "    return ok(c, { session: result.session, held: result.held });",
+    to: "    return ok(c, { session: result.session });",
+    test: `${SERVER}/test/session-register-held.test.ts`,
+    because: "every answer reads as an older hub's, and a resume onto a held life splits its order",
+  },
+  {
+    label: "a register with no epoch of its own ignores the order the hub holds (31214)",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "  const adopted = isMinted && restored === null ? (registration?.held ?? null) : null;",
+    to: "  const adopted = null as SeqStamp | null;",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "a resume onto a life this machine kept nothing of mints a second epoch into it, and its order is split for good (I3)",
+  },
+  {
+    label: "a register with an epoch of its own takes the hub's instead (31214)",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "  const isMinted = previous === null && fresh === mintedEpoch;",
+    to: "  const isMinted = previous === null;",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "the epoch a register reserved and sent is thrown away for the hub's, and the session.started it filed is split from the state",
+  },
+  {
+    label: "a split against an older hub is counted nowhere (31214)",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "    ...(isUnconfirmed ? { epochUnconfirmed: 1 } : {}),\n",
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "the known residual against a hub too old to hand its epoch back goes silent",
+  },
+  {
+    label: "every first register against an older hub reads as a split (31214)",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "  return Number.isFinite(started) && Number.isFinite(answered) && answered - started > PREEXISTING_SESSION_MIN_AGE_MS;",
+    to: "  return true;",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "doctor counts a split for every session a hub too old to say had never seen",
+  },
+  {
+    label: "doctor drops the lives an older hub could not confirm (31214)",
+    file: `${CORE}/src/state/seq-cost.ts`,
+    from: "      epochUnconfirmed: total.epochUnconfirmed + (state.epochUnconfirmed ?? 0),",
+    to: "      epochUnconfirmed: total.epochUnconfirmed,",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "the event-sequence line says nothing of a split this machine counted",
+  },
   {
     label: "a resume onto a marked life takes SessionStart's status (sleep 2687)",
     file: `${CORE}/src/flows/register-session.ts`,
@@ -19978,7 +20044,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
  * PRINTS: packages/connector-core/test/session-heal.test.ts 32
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 4
- * PRINTS: packages/connector-core/test/session-lives.test.ts 68
+ * PRINTS: packages/connector-core/test/session-lives.test.ts 73
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
@@ -20082,6 +20148,7 @@ interface Outcome {
  * PRINTS: packages/server/test/session-order.test.ts 7
  * PRINTS: packages/server/test/session-reap-liveness.test.ts 2
  * PRINTS: packages/server/test/session-reaper.test.ts 3
+ * PRINTS: packages/server/test/session-register-held.test.ts 3
  * PRINTS: packages/server/test/sessions.test.ts 1
  * PRINTS: packages/server/test/skeleton-identity.test.ts 19
  * PRINTS: packages/server/test/skeleton-sweep.test.ts 35
