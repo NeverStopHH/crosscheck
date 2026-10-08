@@ -1,6 +1,6 @@
-import { readdir, readlink, stat } from "node:fs/promises";
-import { homedir } from "node:os";
-import { basename, join, relative } from "node:path";
+import { readdir, readlink, realpath, stat } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { z } from "zod";
 import type { SessionEventRetentionMode } from "@crosscheck/schema";
 
@@ -172,6 +172,11 @@ import { checkSkeletonRetention } from "./doctor-retention.ts";
 import { coverageReportingCheck, lossChecks } from "./doctor-losses.ts";
 import { briefingOmissionsCheck } from "./doctor-briefings.ts";
 import { FOREIGN_HUB_MCP_CHECK, keyOriginChecks } from "./foreign-hub.ts";
+import { repoRuntimeChecks } from "./doctor-repo-runtime.ts";
+import {
+  ISOLATED_BUNFIG_PATH,
+  RUNTIME_ISOLATION_FLAGS,
+} from "@crosscheck/connector-core/config/runtime-isolation.ts";
 import { readForeignHubRefusals } from "@crosscheck/connector-core/state/foreign-hub.ts";
 import { readBriefingOmissions } from "@crosscheck/connector-core/state/briefing-omissions.ts";
 import { readSharingInput, sharingChecks } from "./doctor-sharing.ts";
@@ -1289,6 +1294,76 @@ const readRegisteredMcpEntry = async (
   return null;
 };
 
+/** This install's own entry, beside the bunfig it ships (runtime-isolation.ts). */
+const OWN_ENTRY_PATH = resolve(dirname(ISOLATED_BUNFIG_PATH), "..", "..", "..", "cli", "src", "bin", "crosscheck.ts");
+
+const realOrNull = async (path: string): Promise<string | null> => {
+  try {
+    return await realpath(path);
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * WHETHER A REPO-COMMITTED MCP ENTRY IS ONE THIS INSTALL WOULD HAVE WRITTEN.
+ * The project `.mcp.json` is shared content like `.crosscheck.json`, and
+ * `isOwnedMcpEntry` only recognises a crosscheck-SHAPED entry —
+ * `sh -c "… crosscheck mcp"` passes it — so spawning whatever it names would
+ * run a repo's command the moment a person types `crosscheck doctor`. Only
+ * the two forms init writes qualify: `crosscheck mcp` (the isolated shim on
+ * the developer's own PATH), or the bun running doctor with the isolation
+ * flags and this install's own entry, compared by real path.
+ */
+const isEntryCrosscheckWrote = async (entry: McpServerEntry): Promise<boolean> => {
+  if (entry.command === "crosscheck") {
+    return entry.args.length === 1 && entry.args[0] === "mcp";
+  }
+  const [noEnvFile, config, script, mcp, ...rest] = entry.args;
+  if (rest.length > 0 || mcp !== "mcp" || script === undefined) {
+    return false;
+  }
+  const hasFlags = noEnvFile === RUNTIME_ISOLATION_FLAGS[0] && config === RUNTIME_ISOLATION_FLAGS[1];
+  const [command, ownRuntime, entryReal, ownEntry] = await Promise.all([
+    realOrNull(entry.command),
+    realOrNull(process.execPath),
+    realOrNull(script),
+    realOrNull(OWN_ENTRY_PATH),
+  ]);
+  return hasFlags && command !== null && command === ownRuntime && entryReal !== null && entryReal === ownEntry;
+};
+
+type McpProbeTarget =
+  | { readonly kind: "probe"; readonly entry: McpServerEntry }
+  | { readonly kind: "skip"; readonly why: string };
+
+/** The entry to spawn, or why none is: project scope first, then user — the order an agent uses. */
+const mcpProbeTarget = async (repoRoot: string, env: Env): Promise<McpProbeTarget> => {
+  const scopes = [
+    { isRepo: true, path: join(repoRoot, MCP_CONFIG_FILE) },
+    { isRepo: false, path: claudeUserMcpPath(env) },
+  ];
+  for (const scope of scopes) {
+    const servers = z
+      .looseObject({ mcpServers: z.record(z.string(), z.unknown()).optional() })
+      .safeParse(await readJsonOrNull(scope.path));
+    const raw = servers.success ? servers.data.mcpServers?.[MCP_SERVER_KEY] : undefined;
+    const parsed = isOwnedMcpEntry(raw) ? McpServerEntrySchema.safeParse(raw) : null;
+    if (parsed === null || !parsed.success) {
+      continue;
+    }
+    const entry: McpServerEntry = { type: "stdio", command: parsed.data.command, args: parsed.data.args };
+    if (scope.isRepo && !(await isEntryCrosscheckWrote(entry))) {
+      return {
+        kind: "skip",
+        why: "this repo's .mcp.json names a command crosscheck did not write here, and doctor runs no command a repo chose",
+      };
+    }
+    return { kind: "probe", entry };
+  }
+  return { kind: "skip", why: "no launchable entry found" };
+};
+
 /**
  * Gathers the facts. The spawn is skipped under the same env var the
  * summarizer probe honours — doctor is human-run, but a script that loops it
@@ -1313,13 +1388,15 @@ const checkMcpUsable = async (
       probe: { kind: "not-probed", why: `${DOCTOR_NO_PROBE_ENV}=1` },
     });
   }
-  const entry = await readRegisteredMcpEntry(repoRoot, env);
+  const target = await mcpProbeTarget(repoRoot, env);
   return mcpUsableCheck({
     ...facts,
     probe:
-      entry === null
-        ? { kind: "not-probed", why: "no launchable entry found" }
-        : await probeMcpServer(entry, repoRoot),
+      target.kind === "skip"
+        ? { kind: "not-probed", why: target.why }
+        : // A neutral cwd: the probe asks for the tool list, which needs no
+          // repo, and bun must not read this repo's bunfig or .env for it.
+          await probeMcpServer(target.entry, tmpdir()),
   });
 };
 
@@ -3619,6 +3696,8 @@ export const runDoctor = async (
       : check("PASS", "repo identity", identity.repoId);
 
   const bunfigCheck = await checkBunfig(env, cwd, identity?.root ?? null);
+  // What the repo tries to hand bun; empty unless something is there.
+  const repoRuntime = await repoRuntimeChecks(cwd, identity?.root ?? null);
   const config = await loadConfig({ env, repoRoot: identity?.root });
   // "Connected" in the committed sense (DESIGN.md §2.1): the repo root
   // carries .crosscheck.json. Only when the cwd is NOT that does the
@@ -3695,6 +3774,7 @@ export const runDoctor = async (
             probe: { kind: "not-probed", why: "no hub configured" },
           }),
       bunfigCheck,
+      ...repoRuntime,
     ]);
   }
 
@@ -4038,6 +4118,7 @@ export const runDoctor = async (
     ...hubChecks,
     skewCheck,
     bunfigCheck,
+    ...repoRuntime,
     ...checkClaudeDerive(),
     ...checkCausalGuarantees(contradictedDeclarations),
     ...(await checkCursor(
