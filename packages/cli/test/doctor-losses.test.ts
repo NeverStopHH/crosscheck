@@ -184,6 +184,22 @@ describe("§5.1: doctor and status print every loss, in one spelling", () => {
     expect(result.stdout).toContain("PASS  coverage reporting  no recent losses to reflect");
   });
 
+  test("a collision rest whose recheck never ran is printed by doctor and status, per file and hook (round 3, F-M2)", async () => {
+    // Arrange: two files' rests booked by the next prompt, which could not reach the hub
+    const { repo, home, env, key } = await fixture("rest-unchecked");
+    await recordCaptureLoss(home, { kind: "rest_unchecked", count: 2, key, detail: "user-prompt-submit", now: new Date() });
+
+    // Act
+    const doctor = await runCli(["doctor"], env, repo);
+    const status = await runCli(["status"], env, repo);
+
+    // Assert
+    const line =
+      "2 collision files rested without the recheck that follows — a teammate who started on one meanwhile may not have been told (user-prompt-submit 2)";
+    expect(doctor.stdout).toContain(`WARN  capture losses  ${line}`);
+    expect(status.stdout).toContain(`\nlosses: ${line}`);
+  });
+
   test("status prints one losses line above zero only", async () => {
     // Arrange
     const lossy = await fixture("status-losses");

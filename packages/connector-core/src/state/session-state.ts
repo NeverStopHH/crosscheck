@@ -770,9 +770,23 @@ const SessionStateObjectSchema = z.looseObject({
    * Files whose live tripwire answer was fully dealt with — every teammate on
    * it asked about, every group recorded told — and when (round 2, L1):
    * within TRIPWIRE_RECHECK_TTL_MS the next edit of the file asks the hub
-   * nothing and writes nothing. FIFO-capped like the asked files.
+   * nothing and writes nothing.
+   *
+   * EACH ENTRY IS A RECHECK STILL OWED (round 3, F-M2, the owner's
+   * condition): a teammate who starts on the file inside its rest is seen by
+   * no edit of it, so the entry stays until a tripwire call has asked about
+   * the file again — the turn's end (hooks/turn-end.ts), any later hook that
+   * finds the rest expired, or the file's next edit, whose answer starts a new
+   * rest. An entry no hook could recheck is booked as a `rest_unchecked`
+   * capture loss, never dropped in silence. FIFO-capped like the asked files,
+   * the evicted ones counted in `tripwireRestsDropped`.
    */
   tripwireCheckedFiles: TripwireChecksSchema,
+  /**
+   * Owed rechecks the FIFO cap above had to evict before any hook rechecked
+   * them — counted, so the next hook that books losses books these too.
+   */
+  tripwireRestsDropped: z.number().int().min(0).optional().catch(undefined),
   /**
    * When each summarizer or derived-intent fire was booked, oldest first, the
    * newest DERIVE_FIRES_KEPT — what lets doctor tell a model run still in
@@ -1029,12 +1043,16 @@ export const withCarriedCapture = (
  * compact or resume is the same session: dropped, the re-fire's briefing
  * would tell them again about the same ghost row. The relay queue and its
  * drop tally come with it, or a subagent's hit waiting for the main thread is
- * lost to a compact.
+ * lost to a compact — and so do the rechecks still owed and their eviction
+ * tally (round 3, F-M2): a resume after a crash is exactly when an owed
+ * recheck has to survive.
  */
 const collisionFieldsOf = (previous: SessionState): Partial<SessionStateInput> => ({
   ...(previous.collisionNotices === undefined ? {} : { collisionNotices: previous.collisionNotices }),
   ...(previous.collisionRelayQueue === undefined ? {} : { collisionRelayQueue: previous.collisionRelayQueue }),
   ...(previous.collisionRelayDropped === undefined ? {} : { collisionRelayDropped: previous.collisionRelayDropped }),
+  ...(previous.tripwireCheckedFiles === undefined ? {} : { tripwireCheckedFiles: previous.tripwireCheckedFiles }),
+  ...(previous.tripwireRestsDropped === undefined ? {} : { tripwireRestsDropped: previous.tripwireRestsDropped }),
 });
 
 /**
@@ -1653,30 +1671,57 @@ export const isTripwireFresh = (state: SessionState, file: string, now: Date): b
   return ageMs >= 0 && ageMs < TRIPWIRE_RECHECK_TTL_MS;
 };
 
-/**
- * The files RESTING now — their live answer dealt with less than
- * TRIPWIRE_RECHECK_TTL_MS ago, so an edit of them asks the hub nothing —
- * newest rest first: what the turn-end hook asks about again (round 3, F-M2).
- */
-export const restingFiles = (state: SessionState, now: Date): readonly string[] =>
-  [...(state.tripwireCheckedFiles ?? [])]
-    .filter((check) => isTripwireFresh(state, check.file, now))
-    .sort((left, right) => Date.parse(right.at) - Date.parse(left.at))
-    .map((check) => check.file);
+/** The newest rest first; an undatable stamp counts as the oldest. */
+const byNewestRest = (left: TripwireCheck, right: TripwireCheck): number =>
+  (Date.parse(right.at) || 0) - (Date.parse(left.at) || 0);
 
-/** `file` resting no longer: its next edit asks the hub again (round 3, F-M2). */
-export const withoutTripwireRest = (state: SessionState, file: string): SessionState => ({
+/**
+ * Every recheck this session still owes (round 3, F-M2), newest rest first:
+ * what the turn-end hook asks about.
+ */
+export const owedRests = (state: SessionState): readonly TripwireCheck[] =>
+  [...(state.tripwireCheckedFiles ?? [])].sort(byNewestRest);
+
+/**
+ * The owed rechecks whose rest is OVER — expired, or stamped by a clock that
+ * stepped back — with no recheck after it: what every other hook asks about
+ * at its own next opportunity (round 3, F-M2). A rest still running is the
+ * turn's end's to recheck.
+ */
+export const overdueRests = (state: SessionState, now: Date): readonly TripwireCheck[] =>
+  owedRests(state).filter((check) => !isTripwireFresh(state, check.file, now));
+
+/**
+ * These owed rechecks discharged — each only while its entry is the SAME rest
+ * (file and stamp) the caller read: a rest a racing edit started since is a
+ * new debt and stays.
+ */
+export const withoutTripwireRests = (state: SessionState, rests: readonly TripwireCheck[]): SessionState => ({
   ...state,
-  tripwireCheckedFiles: (state.tripwireCheckedFiles ?? []).filter((check) => check.file !== file),
+  tripwireCheckedFiles: (state.tripwireCheckedFiles ?? []).filter(
+    (check) => !rests.some((rest) => rest.file === check.file && rest.at === check.at),
+  ),
 });
 
-/** `file`'s live answer dealt with now — one entry per file, FIFO-capped like the asked files. */
+/** The owed rechecks among `rests` this state still holds — what a writer may book or discharge. */
+export const stillOwed = (state: SessionState, rests: readonly TripwireCheck[]): readonly TripwireCheck[] =>
+  rests.filter((rest) => (state.tripwireCheckedFiles ?? []).some((check) => check.file === rest.file && check.at === rest.at));
+
+/** The eviction tally spent: the caller has booked it. */
+export const withRestsDroppedBooked = (state: SessionState): SessionState => ({ ...state, tripwireRestsDropped: 0 });
+
+/**
+ * `file`'s live answer dealt with now — one entry per file, which replaces an
+ * older debt for the same file (this answer IS its recheck) and starts a new
+ * one; FIFO-capped like the asked files, an evicted debt counted, never lost.
+ */
 export const withTripwireChecked = (state: SessionState, file: string, now: Date): SessionState => {
   const merged = [...(state.tripwireCheckedFiles ?? []).filter((check) => check.file !== file), { file, at: now.toISOString() }];
+  const evicted = Math.max(0, merged.length - MAX_TRIPWIRE_ASKED_FILES);
   return {
     ...state,
-    tripwireCheckedFiles:
-      merged.length <= MAX_TRIPWIRE_ASKED_FILES ? merged : merged.slice(merged.length - MAX_TRIPWIRE_ASKED_FILES),
+    tripwireCheckedFiles: evicted === 0 ? merged : merged.slice(evicted),
+    ...(evicted === 0 ? {} : { tripwireRestsDropped: (state.tripwireRestsDropped ?? 0) + evicted }),
   };
 };
 

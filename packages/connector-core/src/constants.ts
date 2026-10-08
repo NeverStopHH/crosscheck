@@ -1940,9 +1940,12 @@ export const SUBAGENT_RETURN_BUDGET_RATIO = 2;
  */
 export const TURN_END_HOOK = "turn-end";
 /**
- * The most resting files one turn's end asks about, newest rest first — one
- * bounded tripwire call each, made side by side. A turn that edited more
- * files than this inside the window leaves the rest to their next edit.
+ * The most owed rechecks one hook asks about (connector-claude
+ * hooks/rest-recheck.ts) — the turn's end, newest rest first, and every other
+ * sync hook for rests that are over — one bounded tripwire call each, made
+ * side by side. The ones past it are never dropped: they stay owed for the
+ * next hook, and only a recheck the hub would not answer, or a session that
+ * ends still owing, is booked as a `rest_unchecked` loss.
  */
 export const TURN_END_RECHECK_MAX_FILES = 3;
 /**

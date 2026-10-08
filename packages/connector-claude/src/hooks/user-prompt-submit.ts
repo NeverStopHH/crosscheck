@@ -84,9 +84,10 @@ import {
 } from "@crosscheck/connector-core/state/session-state.ts";
 import type { RenderableCollision } from "@crosscheck/connector-core/hints/collision-notice.ts";
 import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
-import { NO_DRAIN, agentCopy, drainCollisionRelay, hasPendingRelay, personCopy } from "./collision-relay.ts";
+import { NO_DRAIN, agentCopy, drainCollisionRelay, hasPendingRelay, personCopy, sweptAgentCopy } from "./collision-relay.ts";
 import type { RelayDrain } from "./collision-relay.ts";
 import { tellPersonOfGhosts } from "./ghost-notice.ts";
+import { recheckOverdueRests } from "./rest-recheck.ts";
 import { hasGhostAllowance, withGhostClaimed } from "@crosscheck/connector-core/derive/ghost/gate.ts";
 import { isSubstantivePrompt, withIntentFire } from "@crosscheck/connector-core/derive/intent/gate.ts";
 import { resolveSummarizerTimeoutMs } from "@crosscheck/connector-core/model/runner.ts";
@@ -150,16 +151,21 @@ const nonEmpty = (part: string): boolean => part.length > 0;
 const serialize = (
   output: PromptOutput | "",
   relay: RelayDrain,
+  swept: readonly RenderableCollision[],
   ghosts: readonly RenderableCollision[],
   now: Date,
 ): string => {
-  const text = [agentCopy(relay, now), output === "" ? "" : output.hookSpecificOutput.additionalContext]
+  const text = [
+    agentCopy(relay, now),
+    sweptAgentCopy(swept, now),
+    output === "" ? "" : output.hookSpecificOutput.additionalContext,
+  ]
     .filter(nonEmpty)
     .join("\n\n");
   if (text.length === 0) {
     return "";
   }
-  const person = personCopy(relay, now, ghosts);
+  const person = personCopy(relay, now, [...swept, ...ghosts]);
   return JSON.stringify(person.length === 0 ? envelope(text) : { systemMessage: person, ...envelope(text) });
 };
 
@@ -360,9 +366,17 @@ export const handleUserPromptSubmit = async (
   // no spare left on every prompt and a background subagent's collision never
   // reached anybody. The prompt's own delivery then gets only the budget that
   // is left, so the drained relay always leaves the hook.
-  const early = (await hasQueuedRelay(ctx)) ? await drainCollisionRelay(ctx, budget) : NO_DRAIN;
+  // Beside it, the rechecks owed for rests that are over (round 3, F-M2;
+  // hooks/rest-recheck.ts) — a turn that crashed, was killed or was cut before
+  // its end pays them on the next prompt — and a group either found is held
+  // the same way: the prompt's own hub calls get only what is left.
+  const [early, swept] = await Promise.all([
+    hasQueuedRelay(ctx).then((isQueued) => (isQueued ? drainCollisionRelay(ctx, budget) : NO_DRAIN)),
+    recheckOverdueRests(ctx, budget, USER_PROMPT_SUBMIT_HOOK),
+  ]);
   const isDrainedEarly = early.groups.length > 0 || early.hidden > 0;
-  const promptCtx = isDrainedEarly ? withSpareBoundHub(ctx, budget) : ctx;
+  const isHoldingTold = isDrainedEarly || swept.length > 0;
+  const promptCtx = isHoldingTold ? withSpareBoundHub(ctx, budget) : ctx;
   // Delivers nothing, like the two fires above: the background fetch of the
   // landing branches (hooks/landing-fetch.ts), beside the prompt's own work so
   // it adds no wall clock of its own.
@@ -376,5 +390,8 @@ export const handleUserPromptSubmit = async (
   // claims its own (review L5): one lock write, the last thing before output,
   // and not gated on the spare — it is this prompt's own delivery.
   const ghosts = await tellPersonOfGhosts(ctx, delivery.shownGhosts);
-  return serialize(delivery.output, relay, ghosts, ctx.now());
+  return serialize(delivery.output, relay, swept, ghosts, ctx.now());
 };
+
+/** This hook, as the loss ledger names it. */
+const USER_PROMPT_SUBMIT_HOOK = "user-prompt-submit";

@@ -11639,8 +11639,8 @@ export const MUTATIONS: readonly Mutation[
     // Landing fetch. The three triggers.
     label: "an edit no longer asks for the fetch",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "  const [output] = await Promise.all([askBeforeEdit(ctx, budget), requestLandingFetchFor(ctx)]);",
-    to: "  const [output] = await Promise.all([askBeforeEdit(ctx, budget)]);",
+    from: "    requestLandingFetchFor(ctx),\n  ]);",
+    to: "  ]);",
     test: `${CONNECTOR}/test/landing-fetch-hook.test.ts`,
     because: "an agent working an hour on one prompt never sees what landed in that hour",
   },
@@ -23413,8 +23413,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a tripwire hit tells the agent and never the person again",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "  return askOutput(ctx, reason, notices.length === 0 ? null : renderCollisionNotices(notices, ctx.now()));",
-    to: "  return askOutput(ctx, reason, null);",
+    from: "    : askOutput(ctx, answer.reason, notices.length === 0 ? null : renderCollisionNotices(notices, ctx.now()));",
+    to: "    : askOutput(ctx, answer.reason, null);",
     test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
     because: "the ask reaches the agent's context and the person, in notice mode or a subagent, reads nothing at all — the pilot's failure",
   },
@@ -23733,8 +23733,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a group the tripwire could not tell in time is never told",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "  if (reason === null && notices.length === 0) {",
-    to: "  if (reason === null) {",
+    from: "  return answer.reason === null && notices.length === 0",
+    to: "  return answer.reason === null",
     test: `${CONNECTOR}/test/collision-order-hook.test.ts`,
     because: "an edit whose pairs were all asked before says nothing, so a line skipped once is skipped for the session",
   },
@@ -23896,8 +23896,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a late briefing's ghost lines never reach systemMessage",
     file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
-    from: "  const person = personCopy(relay, now, ghosts);",
-    to: "  const person = personCopy(relay, now);",
+    from: "  const person = personCopy(relay, now, [...swept, ...ghosts]);",
+    to: "  const person = personCopy(relay, now, swept);",
     test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
     because: "the group is marked told and the line is thrown away",
   },
@@ -24278,15 +24278,15 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a queued relay is drained only after the prompt's hub calls",
     file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
-    from: "  const early = (await hasQueuedRelay(ctx)) ? await drainCollisionRelay(ctx, budget) : NO_DRAIN;",
-    to: "  const early = NO_DRAIN;",
+    from: "    hasQueuedRelay(ctx).then((isQueued) => (isQueued ? drainCollisionRelay(ctx, budget) : NO_DRAIN)),\n",
+    to: "    Promise.resolve(NO_DRAIN),\n",
     test: `${CONNECTOR}/test/collision-relay-slow-hub.test.ts`,
     because: "a hint hub answering in 390 ms of its 400 ms timeout leaves no spare, and a background subagent's collision is never relayed",
   },
   {
     label: "after an early drain the prompt's hub calls keep their full timeout",
     file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
-    from: "  const promptCtx = isDrainedEarly ? withSpareBoundHub(ctx, budget) : ctx;",
+    from: "  const promptCtx = isHoldingTold ? withSpareBoundHub(ctx, budget) : ctx;",
     to: "  const promptCtx = ctx;",
     test: `${CONNECTOR}/test/collision-relay-slow-hub.test.ts`,
     because: "the hint's call runs into the reserve, and the budget race throws away a relay the drain already emptied",
@@ -24368,15 +24368,15 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the subagent-return shortcut skips a queued relay",
     file: `${CONNECTOR}/src/hooks/subagent-return.ts`,
-    from: "  return state === null || !hasPendingRelay(state);",
-    to: "  return true;",
+    from: "    return state === null || (!hasPendingRelay(state) && !hasOverdueRests(state, new Date()));",
+    to: "    return true;",
     test: `${CONNECTOR}/test/subagent-return-cost.test.ts`,
     because: "a foreground subagent's collision waits for the next prompt again, after the reply that should have mentioned it",
   },
   // ── Review of feat/collision-visible, round 2, L7: one line per teammate context ──
   {
     label: "a teammate listed twice in one tripwire answer is told twice",
-    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    file: `${CONNECTOR}/src/hooks/rest-recheck.ts`,
     from: "groups.filter((group, index) => groups.findIndex((other) => other.key === group.key) === index);",
     to: "groups;",
     test: `${CONNECTOR}/test/collision-teammates-hook.test.ts`,
@@ -24426,7 +24426,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the tripwire's re-check stamps grow without bound",
     file: `${CORE}/src/state/session-state.ts`,
-    from: "    tripwireCheckedFiles:\n      merged.length <= MAX_TRIPWIRE_ASKED_FILES ? merged : merged.slice(merged.length - MAX_TRIPWIRE_ASKED_FILES),",
+    from: "    tripwireCheckedFiles: evicted === 0 ? merged : merged.slice(evicted),",
     to: "    tripwireCheckedFiles: merged,",
     test: `${CORE}/test/tripwire-recheck.test.ts`,
     because: "a long session of edits grows the state file every hook of the session reads",
@@ -24664,8 +24664,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an empty relay queue takes the subagent-return hook's full path",
     file: `${CONNECTOR}/src/hooks/subagent-return.ts`,
-    from: "  return state === null || !hasPendingRelay(state);",
-    to: "  return state === null;",
+    from: "(!hasPendingRelay(state) && !hasOverdueRests(state, new Date()))",
+    to: "false",
     test: `${CONNECTOR}/test/subagent-return-cost.test.ts`,
     because: "every completed Agent/Task call with nothing queued pays the runner's four git spawns and a marker write again",
   },
@@ -24673,8 +24673,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a teammate who starts on a resting file is never told at the turn's end",
     file: `${CONNECTOR}/src/hooks/turn-end.ts`,
-    from: "  const files = restingFiles(state, ctx.now()).slice(0, TURN_END_RECHECK_MAX_FILES);",
-    to: "  const files: readonly string[] = [];",
+    from: "owedRests(state).slice(0, TURN_END_RECHECK_MAX_FILES), {",
+    to: "[], {",
     test: `${CONNECTOR}/test/turn-end-hook.test.ts`,
     because: "a teammate who joins inside the 30 s rest, with every later edit of the file inside it too, is never surfaced (probe r3d D1)",
   },
@@ -24687,24 +24687,24 @@ export const MUTATIONS: readonly Mutation[
     because: "a turn that touched forty files inside their windows makes forty hub calls while the person waits on its end",
   },
   {
-    label: "the turn's end leaves a file resting though a teammate on it was never asked about",
-    file: `${CONNECTOR}/src/hooks/turn-end.ts`,
-    from: "(isAllAsked(fresh, recheck) ? state : withoutTripwireRest(state, recheck.file))",
-    to: "state",
+    label: "a paid recheck leaves its rest owed",
+    file: `${CONNECTOR}/src/hooks/rest-recheck.ts`,
+    from: "withoutTripwireRests(withCollisionNotices(fresh, groups), settled)",
+    to: "withCollisionNotices(fresh, groups)",
     test: `${CONNECTOR}/test/turn-end-hook.test.ts`,
-    because: "the person hears of Ken, and the agent editing the file next is never asked about him while the window lasts",
+    because: "a file the turn's end already rechecked is asked about again by every hook once its rest is over",
   },
   {
-    label: "the turn's end lets every re-checked file out of its rest",
+    label: "the turn's end books an unanswered recheck instead of keeping it",
     file: `${CONNECTOR}/src/hooks/turn-end.ts`,
-    from: "(isAllAsked(fresh, recheck) ? state :",
-    to: "(false ? state :",
-    test: `${CONNECTOR}/test/turn-end-hook.test.ts`,
-    because: "a turn's end that found nobody new rewrites the state and undoes the rest every repeat edit relies on",
+    from: "    onFailure: \"keep\",",
+    to: "    onFailure: \"book\",",
+    test: `${CONNECTOR}/test/rest-recheck-guarantee.test.ts`,
+    because: "one hub blip at a turn's end writes off a recheck the next prompt could have made",
   },
   {
     label: "the turn's end tells the person again of a teammate already told",
-    file: `${CONNECTOR}/src/hooks/turn-end.ts`,
+    file: `${CONNECTOR}/src/hooks/rest-recheck.ts`,
     from: "    told.value = groups.filter((group) => fresher.includes(group.key));",
     to: "    told.value = groups;",
     test: `${CONNECTOR}/test/turn-end-hook.test.ts`,
@@ -24712,7 +24712,7 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "a turn-end tripwire call ignores what the budget spares",
-    file: `${CONNECTOR}/src/hooks/turn-end.ts`,
+    file: `${CONNECTOR}/src/hooks/rest-recheck.ts`,
     from: "Math.min(ctx.hub.timeoutMs, budget.spareMs())",
     to: "ctx.hub.timeoutMs",
     test: `${CONNECTOR}/test/turn-end-hook.test.ts`,
@@ -24729,7 +24729,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the turn-end shortcut skips a resting file",
     file: `${CONNECTOR}/src/hooks/turn-end.ts`,
-    from: "    return state === null || restingFiles(state, new Date()).length === 0;",
+    from: "    return state === null || !hasOwedRests(state);",
     to: "    return true;",
     test: `${CONNECTOR}/test/turn-end-hook.test.ts`,
     because: "the re-check never runs, and a teammate who joined a resting file is never told",
@@ -24743,18 +24743,18 @@ export const MUTATIONS: readonly Mutation[
     because: "every turn's end pays four git spawns, a config read and a marker write while the person waits",
   },
   {
-    label: "the turn's end asks about rests already past the window",
-    file: `${CORE}/src/state/session-state.ts`,
-    from: "    .filter((check) => isTripwireFresh(state, check.file, now))\n",
-    to: "",
-    test: `${CORE}/test/tripwire-recheck.test.ts`,
-    because: "every file the session ever settled is asked about at every turn's end, up to the cap, before the ones that matter",
+    label: "the turn's end skips a rest that ended before the turn did",
+    file: `${CONNECTOR}/src/hooks/turn-end.ts`,
+    from: "owedRests(state).slice(0",
+    to: "owedRests(state).filter((rest) => Date.parse(rest.at) > Date.now() - 30_000).slice(0",
+    test: `${CONNECTOR}/test/turn-end-hook.test.ts`,
+    because: "a rest that ran out mid-turn is never rechecked at the turn's end, and its teammate waits for some later hook",
   },
   {
     label: "the turn's end asks about the oldest rests first",
     file: `${CORE}/src/state/session-state.ts`,
-    from: ".sort((left, right) => Date.parse(right.at) - Date.parse(left.at))",
-    to: ".sort((left, right) => Date.parse(left.at) - Date.parse(right.at))",
+    from: "(Date.parse(right.at) || 0) - (Date.parse(left.at) || 0)",
+    to: "(Date.parse(left.at) || 0) - (Date.parse(right.at) || 0)",
     test: `${CORE}/test/tripwire-recheck.test.ts`,
     because: "a long turn spends its few calls on the files settled first and skips the ones just edited",
   },
@@ -24919,6 +24919,191 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/network-guard.test.ts`,
     because: "a process a test starts on its own fixture home reads and writes a different, empty one",
   },
+  // ── Round 3, F-M2 as accepted: every rest's recheck is paid, kept for the next hook, or booked ──
+  {
+    label: "a recheck the hub did not answer is booked by no later hook",
+    file: `${CONNECTOR}/src/hooks/rest-recheck.ts`,
+    from: "const failed = policy.onFailure === \"book\" ?",
+    to: "const failed = false ?",
+    test: `${CONNECTOR}/test/rest-recheck-guarantee.test.ts`,
+    because: "a crashed turn followed by an unreachable hub leaves a teammate untold and no loss anywhere to say so",
+  },
+  {
+    label: "a debt the record's cap evicted is never booked",
+    file: `${CONNECTOR}/src/hooks/rest-recheck.ts`,
+    from: "stillOwed(fresh, failed).length + (fresh.tripwireRestsDropped ?? 0);",
+    to: "stillOwed(fresh, failed).length;",
+    test: `${CONNECTOR}/test/rest-recheck-guarantee.test.ts`,
+    because: "a recheck the FIFO cap dropped is gone without a count, the silent drop the guarantee forbids",
+  },
+  {
+    label: "a booked eviction tally is booked again by every pass",
+    file: `${CONNECTOR}/src/hooks/rest-recheck.ts`,
+    from: "const paid = withRestsDroppedBooked(withoutTripwireRests(",
+    to: "const paid = (withoutTripwireRests(",
+    test: `${CONNECTOR}/test/rest-recheck-guarantee.test.ts`,
+    because: "two evicted rechecks are counted as two more losses at every hook that pays a debt",
+  },
+  {
+    label: "a teammate a subagent's recheck finds never reaches the main thread",
+    file: `${CONNECTOR}/src/hooks/rest-recheck.ts`,
+    from: ": withQueuedCollisionRelays(paid, told.value.map((group) => group.key));",
+    to: ": paid;",
+    test: `${CONNECTOR}/test/rest-recheck-guarantee.test.ts`,
+    because: "the line goes to a subagent's systemMessage, which nothing documents a person sees, and is marked told",
+  },
+  {
+    label: "a hook sweeps rests that are still running",
+    file: `${CONNECTOR}/src/hooks/rest-recheck.ts`,
+    from: "(state === null ? [] : overdueRests(state, ctx.now()))",
+    to: "(state === null ? [] : owedRests(state))",
+    test: `${CONNECTOR}/test/rest-recheck-guarantee.test.ts`,
+    because: "every prompt and edit inside a rest asks the hub the very question the rest exists to save",
+  },
+  {
+    label: "a hook sweeps every overdue rest at once",
+    file: `${CONNECTOR}/src/hooks/rest-recheck.ts`,
+    from: ".filter((rest) => !isEditedFile(rest, editedPath))\n      .slice(0, TURN_END_RECHECK_MAX_FILES);",
+    to: ".filter((rest) => !isEditedFile(rest, editedPath));",
+    test: `${CONNECTOR}/test/rest-recheck-guarantee.test.ts`,
+    because: "a backlog of forty overdue rests holds one prompt for forty hub calls",
+  },
+  {
+    label: "an edit's sweep asks again about the file the edit itself asks about",
+    file: `${CONNECTOR}/src/hooks/rest-recheck.ts`,
+    from: "editedPath !== undefined && editedPath.endsWith(`/${rest.file}`)",
+    to: "false",
+    test: `${CONNECTOR}/test/collision-tripwire-ttl.test.ts`,
+    because: "the first edit after a rest pays two tripwire calls for one file",
+  },
+  {
+    label: "the next prompt never pays an overdue rest",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    from: "    recheckOverdueRests(ctx, budget, USER_PROMPT_SUBMIT_HOOK),\n",
+    to: "    Promise.resolve([]),\n",
+    test: `${CONNECTOR}/test/rest-recheck-guarantee.test.ts`,
+    because: "a turn that crashed before its end leaves the teammate who joined its rest untold at the next prompt",
+  },
+  {
+    label: "the next prompt finds a teammate and tells the agent nothing",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    from: "    sweptAgentCopy(swept, now),\n",
+    to: "",
+    test: `${CONNECTOR}/test/rest-recheck-guarantee.test.ts`,
+    because: "a teammate found and marked told reaches neither the agent nor, on a quiet prompt, the person",
+  },
+  {
+    label: "an edit never pays another file's overdue rest",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "    recheckOverdueRests(ctx, budget, PRE_TOOL_USE_HOOK, extractFilePaths(ctx.payload.tool_input)[0]),\n",
+    to: "    Promise.resolve([]),\n",
+    test: `${CONNECTOR}/test/rest-recheck-guarantee.test.ts`,
+    because: "a long turn past a rest leaves its teammate unseen until the turn ends, or never if it crashes",
+  },
+  {
+    label: "a subagent's return skips an overdue rest when nothing is queued",
+    file: `${CONNECTOR}/src/hooks/subagent-return.ts`,
+    from: " && !hasOverdueRests(state, new Date())",
+    to: "",
+    test: `${CONNECTOR}/test/rest-recheck-guarantee.test.ts`,
+    because: "the runner's shortcut answers the return before any recheck, and the debt waits for another hook",
+  },
+  {
+    label: "a subagent's return finds a teammate and tells nobody",
+    file: `${CONNECTOR}/src/hooks/subagent-return.ts`,
+    from: "[agentCopy(drain, ctx.now()), sweptAgentCopy(swept, ctx.now())]",
+    to: "[agentCopy(drain, ctx.now())]",
+    test: `${CONNECTOR}/test/rest-recheck-guarantee.test.ts`,
+    because: "the group is marked told and the hook prints nothing when no relay was queued beside it",
+  },
+  {
+    label: "a session that ends owing rechecks books none of them",
+    file: `${CONNECTOR}/src/hooks/session-end.ts`,
+    from: "  await bookOwedRestsAtEnd(ctx, SESSION_END_HOOK);\n",
+    to: "",
+    test: `${CONNECTOR}/test/rest-recheck-guarantee.test.ts`,
+    because: "the state that held the debts is deleted and no ledger ever says they existed",
+  },
+  {
+    label: "the reaper drops a dead session's owed rechecks unbooked",
+    file: `${CORE}/src/state/session-reap.ts`,
+    from: "      await bookOwedRests(home, parsed.data, now);\n",
+    to: "",
+    test: `${CORE}/test/collision-rest-reap.test.ts`,
+    because: "a session killed mid-turn takes its unpaid rechecks into the deleted corpse",
+  },
+  {
+    label: "a dead session's owed rechecks are dated at the reap",
+    file: `${CORE}/src/state/session-reap.ts`,
+    from: "    now: Number.isFinite(newest) && newest <= now.getTime() ? new Date(newest) : now,",
+    to: "    now,",
+    test: `${CORE}/test/collision-rest-reap.test.ts`,
+    because: "a loss a week old reads as today's, inside every coverage window for another week",
+  },
+  {
+    label: "a compact drops the rechecks still owed",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  ...(previous.tripwireCheckedFiles === undefined ? {} : { tripwireCheckedFiles: previous.tripwireCheckedFiles }),\n",
+    to: "",
+    test: `${CORE}/test/tripwire-recheck.test.ts`,
+    because: "a resume after a crash is exactly when an owed recheck has to survive, and it vanishes",
+  },
+  {
+    label: "the record's cap evicts an owed recheck uncounted",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "    ...(evicted === 0 ? {} : { tripwireRestsDropped: (state.tripwireRestsDropped ?? 0) + evicted }),\n",
+    to: "",
+    test: `${CORE}/test/tripwire-recheck.test.ts`,
+    because: "past a hundred owed rests the oldest disappear and nothing books them",
+  },
+  {
+    label: "a recheck pays a newer rest a racing edit started",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "!rests.some((rest) => rest.file === check.file && rest.at === check.at),",
+    to: "!rests.some((rest) => rest.file === check.file),",
+    test: `${CORE}/test/tripwire-recheck.test.ts`,
+    because: "an edit that re-settled the file while the recheck ran loses its own debt",
+  },
+  {
+    label: "a hook books a debt a racing edit already renewed",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "check.file === rest.file && check.at === rest.at",
+    to: "check.file === rest.file",
+    test: `${CORE}/test/tripwire-recheck.test.ts`,
+    because: "a file whose fresh answer started a new rest is booked as never rechecked",
+  },
+  {
+    label: "a rest still running is taken for an overdue one",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "owedRests(state).filter((check) => !isTripwireFresh(state, check.file, now));",
+    to: "owedRests(state);",
+    test: `${CORE}/test/tripwire-recheck.test.ts`,
+    because: "every hook inside a rest rechecks it, and the rest saves nothing",
+  },
+  {
+    label: "doctor and status never name a rest whose recheck did not run",
+    file: `${CORE}/src/spool/loss-report.ts`,
+    from: "    rests === 0\n      ? null",
+    to: "    true\n      ? null",
+    test: `${CLI}/test/doctor-losses.test.ts`,
+    because: "the loss is counted into the report and printed nowhere a person reads",
+  },
+  {
+    label: "the loss vocabulary has no word for an unchecked rest",
+    file: `${SCHEMA}/src/telemetry-loss.ts`,
+    from: "  \"rest_unchecked\",\n  /** Counted before",
+    to: "  /** Counted before",
+    test: `${SCHEMA}/test/telemetry-loss.test.ts`,
+    because: "the hub folds the kind into unattributed, and coverage can no longer say what was lost",
+  },
+  {
+    label: "the capture-loss ledger refuses an unchecked rest",
+    file: `${CORE}/src/state/loss-ledger.ts`,
+    from: "  \"wire_unobserved\",\n  \"rest_unchecked\",\n] as const;",
+    to: "  \"wire_unobserved\",\n] as const;",
+    test: `${CORE}/test/collision-rest-reap.test.ts`,
+    because: "every booked rest reads back as a malformed line, and no surface names it",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -24988,7 +25173,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1
  * PRINTS: packages/cli/test/doctor-last-sync.test.ts 1
  * PRINTS: packages/cli/test/doctor-latency.test.ts 2
- * PRINTS: packages/cli/test/doctor-losses.test.ts 6
+ * PRINTS: packages/cli/test/doctor-losses.test.ts 7
  * PRINTS: packages/cli/test/doctor-pilot.test.ts 6
  * PRINTS: packages/cli/test/doctor-search-rebuild.test.ts 2
  * PRINTS: packages/cli/test/doctor-sharing.test.ts 4
@@ -25075,7 +25260,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/collision-relay-unconfirmed.test.ts 9
  * PRINTS: packages/connector-claude/test/collision-statusline-unnamed.test.ts 3
  * PRINTS: packages/connector-claude/test/collision-teammates-hook.test.ts 4
- * PRINTS: packages/connector-claude/test/collision-tripwire-ttl.test.ts 3
+ * PRINTS: packages/connector-claude/test/collision-tripwire-ttl.test.ts 4
  * PRINTS: packages/connector-claude/test/collision-visibility-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/conclusion-corpus.test.ts 6
  * PRINTS: packages/connector-claude/test/conference-prompt.test.ts 1
@@ -25109,6 +25294,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/landing-fetch-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/recovery-losses.test.ts 1
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
+ * PRINTS: packages/connector-claude/test/rest-recheck-guarantee.test.ts 13
  * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
  * PRINTS: packages/connector-claude/test/settings-merge-removal.test.ts 1
  * PRINTS: packages/connector-claude/test/settings-merge.test.ts 4
@@ -25153,6 +25339,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/collision-person-strip.test.ts 11
  * PRINTS: packages/connector-core/test/collision-publish-busy-lock.test.ts 3
  * PRINTS: packages/connector-core/test/collision-relay-presence.test.ts 7
+ * PRINTS: packages/connector-core/test/collision-rest-reap.test.ts 3
  * PRINTS: packages/connector-core/test/collision-state-eviction.test.ts 6
  * PRINTS: packages/connector-core/test/collision-state.test.ts 4
  * PRINTS: packages/connector-core/test/commit-evidence.test.ts 1
@@ -25251,7 +25438,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/target-paths.test.ts 1
  * PRINTS: packages/connector-core/test/tool-window-pairing.test.ts 6
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
- * PRINTS: packages/connector-core/test/tripwire-recheck.test.ts 5
+ * PRINTS: packages/connector-core/test/tripwire-recheck.test.ts 9
  * PRINTS: packages/connector-core/test/verdict-wire.test.ts 2
  * PRINTS: packages/connector-core/test/working-days.test.ts 3
  * PRINTS: packages/connector-cursor/test/briefing-parity.test.ts 1
@@ -25273,7 +25460,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/landed-notice.test.ts 5
  * PRINTS: packages/schema/test/pin.test.ts 1
  * PRINTS: packages/schema/test/session.test.ts 1
- * PRINTS: packages/schema/test/telemetry-loss.test.ts 2
+ * PRINTS: packages/schema/test/telemetry-loss.test.ts 3
  * PRINTS: packages/server/test/absences.test.ts 7
  * PRINTS: packages/server/test/calibration.test.ts 1
  * PRINTS: packages/server/test/causal-guarantees.test.ts 23

@@ -57,6 +57,7 @@ export const CAPTURE_LOSS_KINDS = [
   "hook_timed_out",
   "host_contract_drift",
   "wire_unobserved",
+  "rest_unchecked",
 ] as const;
 
 export type CaptureLossKind = (typeof CAPTURE_LOSS_KINDS)[number];

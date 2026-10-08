@@ -121,6 +121,7 @@ import { namedLandedCommits } from "@crosscheck/connector-core/landed-changes/na
 import { LANDED_STOP_MAX_SUBJECT_CHARS, LandedStopSchema, containsSecret } from "@crosscheck/schema";
 import { NO_LANDED_ANSWER, landedWhyFor } from "./landed-why.ts";
 import { requestLandingFetchFor } from "./landing-fetch.ts";
+import { onePerKey, recheckOverdueRests } from "./rest-recheck.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
 /** The ONLY decision this connector can emit — the ladder's ceiling (§4). */
@@ -178,10 +179,18 @@ const resolveEditedFile = async (
   return root === undefined || file === null ? null : { file, root };
 };
 
-const askBeforeEdit = async (ctx: HookContext, budget: HookBudget): Promise<string> => {
+/** What one edit's own tripwire found to say: the ask's reason, and the groups its person is told of. */
+interface EditAnswer {
+  readonly reason: string | null;
+  readonly notices: readonly CollisionNotice[];
+}
+
+const NO_EDIT_ANSWER: EditAnswer = { reason: null, notices: [] };
+
+const askBeforeEdit = async (ctx: HookContext, budget: HookBudget): Promise<EditAnswer> => {
   const state = await readSessionState(ctx.config.home, ctx.payload.session_id);
   if (state === null) {
-    return "";
+    return NO_EDIT_ANSWER;
   }
   // OPENS THE WINDOW THIS TOOL'S EDIT WILL HAPPEN IN — before the tripwire
   // work, because the bracket is about the TOOL and must not depend on whether
@@ -216,13 +225,13 @@ const askBeforeEdit = async (ctx: HookContext, budget: HookBudget): Promise<stri
   }
   const edited = await resolveEditedFile(ctx, state);
   if (edited === null) {
-    return "";
+    return NO_EDIT_ANSWER;
   }
   const { file } = edited;
   // Hot files drown real overlap signal — the same denylist capture applies.
   const patterns = resolveDenylist(ctx.config.denylist ?? undefined);
   if (isDenied(file, patterns)) {
-    return "";
+    return NO_EDIT_ANSWER;
   }
   // One stop per file per session for the LANDED reason, and one per (file,
   // teammate work context) for the LIVE one (review M4): a teammate who starts
@@ -239,7 +248,7 @@ const askBeforeEdit = async (ctx: HookContext, budget: HookBudget): Promise<stri
     await rememberClean(ctx, found.cleanKey);
   }
   if (found.sessions.length === 0 && found.landed === null) {
-    return "";
+    return NO_EDIT_ANSWER;
   }
   const won = await claimReasons(ctx, file, found);
   // A sibling hook may have booked both reasons: then there is no ask to
@@ -251,10 +260,7 @@ const askBeforeEdit = async (ctx: HookContext, budget: HookBudget): Promise<stri
   // the line leaving the hook.
   const groups = found.sessions.map((session) => tripwireCollision(session, file, found.coverage));
   const notices = await tellPerson(ctx, budget, { file, sessions: found.sessions, groups: onePerKey(groups) });
-  if (reason === null && notices.length === 0) {
-    return "";
-  }
-  return askOutput(ctx, reason, notices.length === 0 ? null : renderCollisionNotices(notices, ctx.now()));
+  return { reason, notices };
 };
 
 /**
@@ -302,14 +308,6 @@ const statedReason = async (
   }
   return reason;
 };
-
-/**
- * One group per (teammate, work context) — a hub answer that lists the same
- * pair twice, two windows on one piece of work, is ONE line for the person
- * (round 2, L7).
- */
-export const onePerKey = (groups: readonly CollisionNotice[]): readonly CollisionNotice[] =>
-  groups.filter((group, index) => groups.findIndex((other) => other.key === group.key) === index);
 
 /** One live answer for one file, as the person's half of the hook takes it. */
 interface LiveAnswer {
@@ -365,9 +363,22 @@ export const handlePreToolUse = async (ctx: HookContext, budget: HookBudget): Pr
   // (hooks/landing-fetch.ts): an agent can work for an hour on one prompt,
   // and the stop only sees what the clone has fetched. Beside the stop, not
   // before it — the fetch serves the NEXT edit and must cost this one nothing.
-  const [output] = await Promise.all([askBeforeEdit(ctx, budget), requestLandingFetchFor(ctx)]);
-  return output;
+  // And beside it too, the rechecks other files' rests still owe once their
+  // rest is over (round 3, F-M2; hooks/rest-recheck.ts): a turn that ran past
+  // a rest without ending pays it at its next edit, not never.
+  const [answer, swept] = await Promise.all([
+    askBeforeEdit(ctx, budget),
+    recheckOverdueRests(ctx, budget, PRE_TOOL_USE_HOOK, extractFilePaths(ctx.payload.tool_input)[0]),
+    requestLandingFetchFor(ctx),
+  ]);
+  const notices = [...answer.notices, ...swept];
+  return answer.reason === null && notices.length === 0
+    ? ""
+    : askOutput(ctx, answer.reason, notices.length === 0 ? null : renderCollisionNotices(notices, ctx.now()));
 };
+
+/** This hook, as the loss ledger names it. */
+const PRE_TOOL_USE_HOOK = "pre-tool-use";
 
 interface Reasons {
   readonly teammate: TripwireSession | null;
@@ -395,7 +406,7 @@ interface FoundReasons {
 const NO_REASONS: Reasons = { teammate: null, landed: null };
 
 /** The live half's once-per key: this file, this teammate's work context. */
-export const liveAskKey = (file: string, session: TripwireSession): string =>
+const liveAskKey = (file: string, session: TripwireSession): string =>
   JSON.stringify([file, session.developerId, session.workContextId]);
 
 /** Which of the two questions this edit already has an answer to. */

@@ -11,9 +11,12 @@ import { MAX_TRIPWIRE_ASKED_FILES, TRIPWIRE_RECHECK_TTL_MS } from "../src/consta
 import {
   deriveSessionState,
   isTripwireFresh,
-  restingFiles,
+  overdueRests,
+  owedRests,
+  stillOwed,
+  withCarriedCapture,
   withTripwireChecked,
-  withoutTripwireRest,
+  withoutTripwireRests,
 } from "../src/state/session-state.ts";
 import type { SessionState } from "../src/state/session-state.ts";
 
@@ -77,33 +80,79 @@ describe("a settled tripwire answer rests its file for the re-check window", () 
   });
 });
 
-describe("the files a turn's end asks about again (round 3, F-M2)", () => {
-  test("only files still resting, the newest rest first", () => {
-    // Arrange: one rest past the window, two inside it, one stamped ahead of the clock
-    const rested = [
-      { file: "src/old.ts", at: at(-TRIPWIRE_RECHECK_TTL_MS - 1) },
-      { file: "src/older-inside.ts", at: at(-20_000) },
-      { file: "src/newer-inside.ts", at: at(-1_000) },
-      { file: "src/ahead.ts", at: at(60_000) },
-    ].reduce((next, check) => withTripwireChecked(next, check.file, check.at), state());
+/** One rest past the window, two inside it, one stamped by a clock that stepped back since. */
+const fourRests = (): SessionState =>
+  [
+    { file: "src/old.ts", at: at(-TRIPWIRE_RECHECK_TTL_MS - 1) },
+    { file: "src/older-inside.ts", at: at(-20_000) },
+    { file: "src/newer-inside.ts", at: at(-1_000) },
+    { file: "src/ahead.ts", at: at(60_000) },
+  ].reduce((next, check) => withTripwireChecked(next, check.file, check.at), state());
 
+describe("every rest owes a recheck, kept as state (round 3, F-M2)", () => {
+  test("the turn's end owes every rest, the newest first", () => {
     // Act
-    const files = restingFiles(rested, NOW);
+    const files = owedRests(fourRests()).map((check) => check.file);
 
     // Assert
-    expect(files).toEqual(["src/newer-inside.ts", "src/older-inside.ts"]);
+    expect(files).toEqual(["src/ahead.ts", "src/newer-inside.ts", "src/older-inside.ts", "src/old.ts"]);
   });
 
-  test("a file let out of its rest is no longer fresh, and the others keep theirs", () => {
+  test("a rest that is over — expired, or stamped ahead of the clock — is overdue; a running one is not", () => {
+    // Act
+    const files = overdueRests(fourRests(), NOW).map((check) => check.file);
+
+    // Assert
+    expect(files).toEqual(["src/ahead.ts", "src/old.ts"]);
+  });
+
+  test("a recheck pays only the very rest it read: a newer rest of the same file stays owed", () => {
+    // Arrange: the rest a hook read, then a newer one a racing edit started
+    const read = { file: FILE, at: NOW.toISOString() };
+    const newer = withTripwireChecked(withTripwireChecked(state(), FILE, NOW), FILE, at(5_000));
+
+    // Act
+    const paid = withoutTripwireRests(newer, [read]);
+
+    // Assert
+    expect(stillOwed(newer, [read])).toEqual([]);
+    expect(paid.tripwireCheckedFiles).toEqual([{ file: FILE, at: at(5_000).toISOString() }]);
+  });
+
+  test("a paid rest no longer rests its file, and the others keep theirs", () => {
     // Arrange
     const rested = withTripwireChecked(withTripwireChecked(state(), FILE, NOW), "src/b.ts", NOW);
 
     // Act
-    const unrested = withoutTripwireRest(rested, FILE);
+    const paid = withoutTripwireRests(rested, [{ file: FILE, at: NOW.toISOString() }]);
 
     // Assert
-    expect(isTripwireFresh(unrested, FILE, at(1))).toBe(false);
-    expect(isTripwireFresh(unrested, "src/b.ts", at(1))).toBe(true);
+    expect(isTripwireFresh(paid, FILE, at(1))).toBe(false);
+    expect(isTripwireFresh(paid, "src/b.ts", at(1))).toBe(true);
     expect(rested.tripwireCheckedFiles).toHaveLength(2);
+  });
+
+  test("a debt the record's cap evicts is counted, never lost", () => {
+    // Act: two past the cap
+    const many = Array.from({ length: MAX_TRIPWIRE_ASKED_FILES + 2 }, (_, index) => `src/e${String(index)}.ts`).reduce(
+      (next, file) => withTripwireChecked(next, file, NOW),
+      state(),
+    );
+
+    // Assert
+    expect(many.tripwireCheckedFiles).toHaveLength(MAX_TRIPWIRE_ASKED_FILES);
+    expect(many.tripwireRestsDropped).toBe(2);
+  });
+
+  test("a compact or resume carries the debts and the eviction tally into the re-fired state", () => {
+    // Arrange: a live session owing two rechecks, one more evicted
+    const live = { ...withTripwireChecked(withTripwireChecked(state(), FILE, NOW), "src/b.ts", NOW), tripwireRestsDropped: 1 };
+
+    // Act: SessionStart re-fires for the same session
+    const refired = withCarriedCapture(state(), live);
+
+    // Assert
+    expect(refired.tripwireCheckedFiles).toEqual(live.tripwireCheckedFiles);
+    expect(refired.tripwireRestsDropped).toBe(1);
   });
 });

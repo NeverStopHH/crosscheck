@@ -41,6 +41,10 @@ export interface HintHub {
   /** The author's notices (landed changes, step 4), on the same response. */
   readonly setNotices: (notices: readonly unknown[]) => void;
   readonly setTripwireSessions: (sessions: readonly unknown[]) => void;
+  /** The sessions the tripwire answers for ONE file; other files keep `setTripwireSessions`'s answer. */
+  readonly setTripwireSessionsFor: (file: string, sessions: readonly unknown[]) => void;
+  /** A status the tripwire fails with (an error envelope), or null to answer again. */
+  readonly setTripwireFailure: (status: number | null) => void;
   /**
    * The rows GET /api/presence answers with; null (the default) answers with a
    * body the client cannot read, which is what this hub always did.
@@ -260,6 +264,8 @@ export const startHintHub = (
   let answers: readonly unknown[] = [];
   let notices: readonly unknown[] = [];
   let tripwireSessions: readonly unknown[] = [];
+  const tripwireByFile = new Map<string, readonly unknown[]>();
+  let tripwireFailure: number | null = null;
   let solvedMatches: readonly unknown[] = [];
   let lastSolvedFingerprint: string | null = null;
   let lastCandidatesQuery: URLSearchParams | null = null;
@@ -292,9 +298,13 @@ export const startHintHub = (
       if (pathname === "/api/hints/tripwire") {
         calls.tripwire += 1;
         await sleep(latency.tripwire);
+        if (tripwireFailure !== null) {
+          return Response.json({ ok: false, error: { code: "unavailable", message: "tripwire down" } }, { status: tripwireFailure });
+        }
+        const sessions = tripwireByFile.get(searchParams.get("value") ?? "") ?? tripwireSessions;
         return Response.json({
           ok: true,
-          data: { sessions: tripwireSessions, ...(recordsOutcomes === undefined ? {} : { recordsOutcomes }) },
+          data: { sessions, ...(recordsOutcomes === undefined ? {} : { recordsOutcomes }) },
         });
       }
       if (pathname === "/api/records") {
@@ -347,6 +357,12 @@ export const startHintHub = (
     },
     setTripwireSessions: (next) => {
       tripwireSessions = next;
+    },
+    setTripwireSessionsFor: (file, next) => {
+      tripwireByFile.set(file, next);
+    },
+    setTripwireFailure: (status) => {
+      tripwireFailure = status;
     },
     setPresence: (next) => {
       presence = next;

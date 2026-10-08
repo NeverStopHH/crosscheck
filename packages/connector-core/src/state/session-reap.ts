@@ -27,9 +27,33 @@ import {
   SESSION_STATE_REAP_MAX_PER_RUN,
   SESSION_STATE_SCAN_MAX_FILES,
 } from "../constants.ts";
-import { readJsonOrNull, sessionSlug } from "../config/paths.ts";
+import { readJsonOrNull, repoKey, sessionSlug } from "../config/paths.ts";
+import { recordCaptureLoss } from "./loss-ledger.ts";
 import { listSessionStateFiles, sessionSilentForMs } from "./session-scan.ts";
 import { SessionStateSchema } from "./session-state.ts";
+import type { SessionState } from "./session-state.ts";
+
+/** The loss-ledger detail for a dead session's owed rechecks. */
+const REAPED_REST_DETAIL = "reap";
+
+/**
+ * A DEAD SESSION'S OWED RECHECKS ARE LOSSES (round 3, F-M2): a session that
+ * was killed mid-turn never ran the turn-end recheck its rests were owed, and
+ * no hook of it will ever run again. Booked under its own repo, dated at its
+ * newest rest — when the debt arose, not a week later when the corpse goes.
+ */
+const bookOwedRests = async (home: string, state: SessionState, now: Date): Promise<void> => {
+  const owed = state.tripwireCheckedFiles ?? [];
+  const count = owed.length + (state.tripwireRestsDropped ?? 0);
+  const newest = Math.max(...owed.map((check) => Date.parse(check.at)).filter((ms) => !Number.isNaN(ms)));
+  await recordCaptureLoss(home, {
+    kind: "rest_unchecked",
+    count,
+    key: repoKey(state.hubUrl, state.repoId),
+    detail: REAPED_REST_DETAIL,
+    now: Number.isFinite(newest) && newest <= now.getTime() ? new Date(newest) : now,
+  });
+};
 
 export interface StateReapOptions {
   /** Never reaped, whatever its age: the caller is mid-session inside it. */
@@ -82,6 +106,7 @@ export const reapStaleSessionStates = async (
       continue;
     }
     try {
+      await bookOwedRests(home, parsed.data, now);
       await rm(file.path, { force: true });
       reaped += 1;
     } catch {

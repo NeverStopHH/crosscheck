@@ -40,6 +40,14 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     corpusCoveredBy: ["test/collision-notice-hook.test.ts"],
   },
   {
+    // Round 3, F-M2 as accepted: the recheck every rest owes, paid by any hook.
+    kind: "composite",
+    name: "claude-rest-recheck",
+    delivery: "unsolicited",
+    module: "src/hooks/rest-recheck.ts",
+    note: "builds the groups an owed rest's fresh tripwire answer names with core tripwireCollision, from rows the hub already projected, exactly as the PreToolUse tripwire builds them, and returns the ones new to the session; it renders nothing itself — turn-end, pre-tool-use, user-prompt-submit and subagent-return print them through renderCollisionNotices (core's collision-notice surface) and collision-relay's sweptAgentCopy",
+  },
+  {
     // Round 3, F-M2: the sync Stop hook's re-check of resting files.
     kind: "composite",
     name: "claude-turn-end-recheck",

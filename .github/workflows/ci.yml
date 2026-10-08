@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 2412
+    # PRINTS: 2435
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -254,12 +254,14 @@ jobs:
     # PRINTS: hooks/post-tool-use.ts 10
     # PRINTS: hooks/pre-tool-use.ts 34
     # PRINTS: hooks/presence-refresh.ts 2
+    # PRINTS: hooks/rest-recheck.ts 11
     # PRINTS: hooks/runner.ts 9
+    # PRINTS: hooks/session-end.ts 1
     # PRINTS: hooks/session-start.ts 10
     # PRINTS: hooks/stop.ts 3
-    # PRINTS: hooks/subagent-return.ts 5
-    # PRINTS: hooks/turn-end.ts 8
-    # PRINTS: hooks/user-prompt-submit.ts 12
+    # PRINTS: hooks/subagent-return.ts 7
+    # PRINTS: hooks/turn-end.ts 6
+    # PRINTS: hooks/user-prompt-submit.ts 14
     # PRINTS: statusline/statusline.ts 7
     # PRINTS: summarizer/probe.ts 1
     # PRINTS: summarizer/transcript.ts 3
@@ -369,7 +371,7 @@ jobs:
     # PRINTS: spool/held-deliveries.ts 13
     # PRINTS: spool/ledger-read.ts 2
     # PRINTS: spool/lock.ts 2
-    # PRINTS: spool/loss-report.ts 14
+    # PRINTS: spool/loss-report.ts 15
     # PRINTS: spool/reap.ts 1
     # PRINTS: state/capture-bookkeeping.ts 6
     # PRINTS: state/capture-health.ts 2
@@ -377,12 +379,13 @@ jobs:
     # PRINTS: state/derive-history.ts 6
     # PRINTS: state/draft-nudge-spent.ts 5
     # PRINTS: state/git-lane-cost.ts 2
-    # PRINTS: state/loss-ledger.ts 10
+    # PRINTS: state/loss-ledger.ts 11
     # PRINTS: state/loss-refusals.ts 1
     # PRINTS: state/presence-cache.ts 1
     # PRINTS: state/seq-cost.ts 8
+    # PRINTS: state/session-reap.ts 2
     # PRINTS: state/session-scan.ts 2
-    # PRINTS: state/session-state.ts 50
+    # PRINTS: state/session-state.ts 54
     # PRINTS: state/temp-sweep.ts 15
     # PRINTS: state/tool-window-key.ts 2
     # PRINTS: packages/connector-core/test/intent-budget.test.ts 1
@@ -423,7 +426,7 @@ jobs:
     # PRINTS: packages/schema/src/repo-path.ts 1
     # PRINTS: packages/schema/src/secret-scan.ts 1
     # PRINTS: packages/schema/src/session.ts 2
-    # PRINTS: packages/schema/src/telemetry-loss.ts 6
+    # PRINTS: packages/schema/src/telemetry-loss.ts 7
     # PRINTS: packages/server/src/constants.ts 1
     # PRINTS: packages/server/src/db/bootstrap.sql 42
     # PRINTS: packages/server/src/db/client.ts 8
@@ -673,9 +676,9 @@ jobs:
     # PRINTS: ledger-read.ts 2
     # PRINTS: live-location.ts 32
     # PRINTS: lock.ts 2
-    # PRINTS: loss-ledger.ts 10
+    # PRINTS: loss-ledger.ts 11
     # PRINTS: loss-refusals.ts 1
-    # PRINTS: loss-report.ts 14
+    # PRINTS: loss-report.ts 15
     # PRINTS: manifest-doc.ts 2
     # PRINTS: mark-hint-outcome.ts 12
     # PRINTS: network-guard-rules.ts 7
@@ -746,6 +749,7 @@ jobs:
     # PRINTS: render.ts 116
     # PRINTS: repo-path.ts 1
     # PRINTS: report.ts 10
+    # PRINTS: rest-recheck.ts 11
     # PRINTS: retention-registry.ts 11
     # PRINTS: retention.ts 24
     # PRINTS: revalidate.ts 2
@@ -761,11 +765,13 @@ jobs:
     # PRINTS: secret-scan.ts 1
     # PRINTS: select.ts 16
     # PRINTS: seq-cost.ts 8
+    # PRINTS: session-end.ts 1
     # PRINTS: session-events.ts 9
     # PRINTS: session-order.ts 9
+    # PRINTS: session-reap.ts 2
     # PRINTS: session-scan.ts 2
     # PRINTS: session-start.ts 14
-    # PRINTS: session-state.ts 50
+    # PRINTS: session-state.ts 54
     # PRINTS: session.ts 4
     # PRINTS: sessions.ts 18
     # PRINTS: set-intent.ts 5
@@ -790,13 +796,13 @@ jobs:
     # PRINTS: statusline.ts 7
     # PRINTS: stop.ts 4
     # PRINTS: stream.ts 3
-    # PRINTS: subagent-return.ts 5
+    # PRINTS: subagent-return.ts 7
     # PRINTS: suspect-render.ts 4
     # PRINTS: suspect.ts 9
     # PRINTS: sweep.ts 3
     # PRINTS: target-paths.ts 1
     # PRINTS: team-settings.ts 16
-    # PRINTS: telemetry-loss.ts 6
+    # PRINTS: telemetry-loss.ts 7
     # PRINTS: temp-sweep.ts 15
     # PRINTS: terminal.ts 3
     # PRINTS: time-window.ts 1
@@ -807,11 +813,11 @@ jobs:
     # PRINTS: touched-root.ts 5
     # PRINTS: transcript.ts 4
     # PRINTS: triggers.ts 6
-    # PRINTS: turn-end.ts 8
+    # PRINTS: turn-end.ts 6
     # PRINTS: ui-ceremony.ts 5
     # PRINTS: ui-pages.tsx 2
     # PRINTS: ui-passkeys.tsx 1
-    # PRINTS: user-prompt-submit.ts 12
+    # PRINTS: user-prompt-submit.ts 14
     # PRINTS: v1.ts 2
     # PRINTS: verdict-latency.test.ts 1
     # PRINTS: verdict-render.ts 3

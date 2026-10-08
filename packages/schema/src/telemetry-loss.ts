@@ -46,6 +46,13 @@ export const LOSS_KINDS = [
   "host_contract_drift",
   /** ACP wire lines the observer could not read (lines, not records). */
   "wire_unobserved",
+  /**
+   * Collision files whose 30 s tripwire rest was never followed by its recheck
+   * — the turn ended in a crash, a kill or a budget cut, or the recheck could
+   * not reach the hub (files, not records): a teammate who started on one
+   * inside the rest may never have been told.
+   */
+  "rest_unchecked",
   /** Counted before the ledger kept reasons, or a kind this hub does not know. */
   "unattributed",
 ] as const;
@@ -60,7 +67,8 @@ export const isLossKind = (value: string): value is LossKind =>
   LOSS_KIND_SET.has(value);
 
 /**
- * The largest `kinds` map a hub accepts: the twelve kinds above, doubled, so
+ * The largest `kinds` map a hub accepts: the twelve kinds above when this was
+ * set (thirteen since `rest_unchecked`), doubled, so
  * a connector two vocabularies ahead of this hub still parses while a client
  * sending thousands of keys is refused at the schema rather than folded one
  * by one.

@@ -15,7 +15,9 @@
  * hints/collision-notice.ts; this module composes nothing.
  */
 import {
+  COLLISION_RELAY_SENTENCE,
   relayedCollisions,
+  renderCollisionNotice,
   renderCollisionNotices,
   renderSubagentCollisionRelay,
 } from "@crosscheck/connector-core/hints/collision-notice.ts";
@@ -53,6 +55,15 @@ export const agentCopy = (drain: RelayDrain, now: Date): string =>
  */
 export const personCopy = (drain: RelayDrain, now: Date, alsoTold: readonly RenderableCollision[] = []): string =>
   renderCollisionNotices([...drain.groups, ...alsoTold], now, drain.hidden);
+
+/**
+ * The main thread's copy of groups an owed rest's recheck found (round 3,
+ * F-M2; hooks/rest-recheck.ts): every line, then the one relay sentence — no
+ * subagent header, since the edits behind the rest may have been the main
+ * thread's own. "" when there is none.
+ */
+export const sweptAgentCopy = (groups: readonly RenderableCollision[], now: Date): string =>
+  groups.length === 0 ? "" : [...groups.map((group) => renderCollisionNotice(group, now)), COLLISION_RELAY_SENTENCE].join("\n");
 
 /**
  * THE PRESENCE ANSWER a drained group is held to (review M2, round 2 H1 as

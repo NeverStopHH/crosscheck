@@ -34,6 +34,7 @@ import {
   kenSession,
   parsed,
   pastRecheckWindow,
+  promptPayload,
   trackForCleanup,
 } from "./fixtures/collision-fixture.ts";
 import type { CollisionFixture } from "./fixtures/collision-fixture.ts";
@@ -98,19 +99,20 @@ describe("the turn's end asks again about the files still resting (round 3, F-M2
     expect(next.systemMessage).toBeUndefined();
   });
 
-  test("a resting file whose teammates were all told and asked: one call, nothing told, nothing written", async () => {
+  test("a resting file whose teammates were all told and asked: one call, nothing told, and the debt is paid", async () => {
     // Arrange: nobody new on the file
     const fix = await settledFixture("te-nothing-new");
     const before = fix.hub.calls.tripwire;
-    const written = await stateText(fix.home);
 
     // Act
     const ended = await runHook("turn-end", turnEnded(fix.repo), fix.env);
+    await pastRecheckWindow(fix.home);
+    await runHook("user-prompt-submit", promptPayload(fix.repo), fix.env);
 
-    // Assert
+    // Assert: told nothing, and owed nothing — the next prompt, past the rest, asks no tripwire again
     expect(ended).toBe("");
     expect(fix.hub.calls.tripwire).toBe(before + 1);
-    expect(await stateText(fix.home)).toBe(written);
+    expect((await readSessionState(fix.home, SESSION_ID))?.tripwireCheckedFiles).toEqual([]);
   });
 
   test("at most TURN_END_RECHECK_MAX_FILES resting files are asked about", async () => {
@@ -133,19 +135,19 @@ describe("the turn's end asks again about the files still resting (round 3, F-M2
     expect(fix.hub.calls.tripwire).toBe(TURN_END_RECHECK_MAX_FILES);
   });
 
-  test("a rest that ended before the turn did is not asked about at the turn's end", async () => {
-    // Arrange: the file settled longer ago than the window
+  test("a rest that ended before the turn did is still owed, and the turn's end pays it", async () => {
+    // Arrange: the file settled longer ago than the window, and Ken joined inside it
     const fix = await settledFixture("te-expired");
     await pastRecheckWindow(fix.home);
     fix.hub.setTripwireSessions([activeTeammateSession(), kenSession()]);
     const before = fix.hub.calls.tripwire;
 
     // Act
-    const ended = await runHook("turn-end", turnEnded(fix.repo), fix.env);
+    const ended = parsed(await runHook("turn-end", turnEnded(fix.repo), fix.env));
 
-    // Assert: its next edit asks, as it always did
-    expect(ended).toBe("");
-    expect(fix.hub.calls.tripwire).toBe(before);
+    // Assert
+    expect(ended.systemMessage).toBe(KEN_NOTICE);
+    expect(fix.hub.calls.tripwire).toBe(before + 1);
   });
 
   test("a Stop another stop hook forced is the same turn seen twice: nothing asked", async () => {

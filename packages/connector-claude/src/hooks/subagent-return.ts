@@ -33,7 +33,9 @@ import { crosscheckHome } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { parseHookPayload } from "../capture/tool-events.ts";
-import { agentCopy, drainCollisionRelay, hasPendingRelay, personCopy } from "./collision-relay.ts";
+import { SUBAGENT_RETURN_HOOK } from "@crosscheck/connector-core/constants.ts";
+import { agentCopy, drainCollisionRelay, hasPendingRelay, personCopy, sweptAgentCopy } from "./collision-relay.ts";
+import { hasOverdueRests, recheckOverdueRests } from "./rest-recheck.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
 /** `tool_response.status` of an Agent call that started a BACKGROUND subagent and returned at once. */
@@ -56,19 +58,28 @@ export const hasNothingToRelay = async (stdin: string, env: Env): Promise<boolea
       return true;
     }
     const state = await readSessionState(crosscheckHome(env), payload.session_id);
-    return state === null || !hasPendingRelay(state);
+    return state === null || (!hasPendingRelay(state) && !hasOverdueRests(state, new Date()));
   } catch {
     return false;
   }
 };
 
+/**
+ * The drained relay and, beside it, the rechecks owed for rests that are over
+ * (round 3, F-M2; hooks/rest-recheck.ts): a subagent that ran past a rest pays
+ * it when it returns, and the person hears of a teammate it finds in the
+ * same line.
+ */
 export const handleSubagentReturn = async (ctx: HookContext, budget: HookBudget): Promise<string> => {
-  const drain = await drainCollisionRelay(ctx, budget);
-  const agent = agentCopy(drain, ctx.now());
+  const [drain, swept] = await Promise.all([
+    drainCollisionRelay(ctx, budget),
+    recheckOverdueRests(ctx, budget, SUBAGENT_RETURN_HOOK),
+  ]);
+  const agent = [agentCopy(drain, ctx.now()), sweptAgentCopy(swept, ctx.now())].filter((part) => part.length > 0).join("\n\n");
   return agent.length === 0
     ? ""
     : JSON.stringify({
-        systemMessage: personCopy(drain, ctx.now()),
+        systemMessage: personCopy(drain, ctx.now(), swept),
         hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: agent },
       });
 };

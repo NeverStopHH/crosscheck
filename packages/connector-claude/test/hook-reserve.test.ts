@@ -59,12 +59,13 @@
  * the line out — and once more by UserPromptSubmit, which holds the prompt's
  * own hub calls to what the envelope spares once a queued relay was drained
  * first (round 2, M3) — and once more by the relay's one presence refresh,
- * bounded by what the envelope spares (hooks/collision-relay.ts) — and once
- * more by the turn-end hook, whose re-check of each resting file is bounded
- * the same way (hooks/turn-end.ts; round 3, F-M2):
+ * bounded by what the envelope spares (hooks/collision-relay.ts) — and twice
+ * by the recheck every 30 s rest owes (hooks/rest-recheck.ts; round 3, F-M2):
+ * each tripwire call is bounded the same way, and a hook with nothing to
+ * spare leaves the debt for the next one instead of asking at all:
  *
  * VERIFY: grep -rn 'budget\.spareMs()' packages/connector-claude/src | wc -l | tr -d ' '
- * PRINTS: 14
+ * PRINTS: 15
  */
 import { describe, expect, test } from "bun:test";
 
