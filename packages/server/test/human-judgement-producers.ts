@@ -127,6 +127,7 @@ export const HUMAN_JUDGEMENT_PRODUCERS: Readonly<Record<string, HumanJudgementPr
         until: new Date(now.getTime() + DAY_MS),
         who: sql`true`,
         sourceIs: null,
+        at: now,
       });
       return {
         followed: aggregate.followed,

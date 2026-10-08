@@ -179,7 +179,16 @@ export const MyHintOutcomesSchema = z.looseObject({
    * read is dropped, never zeros.
    */
   notConfirmed: z
-    .looseObject({ byAgent: CountSchema, atTerminal: CountSchema, legacy: CountSchema })
+    .looseObject({
+      byAgent: CountSchema,
+      atTerminal: CountSchema,
+      legacy: CountSchema,
+      /** Review H1: confirmed with a passkey still cooling off — counted from `countingFrom`. */
+      coolingOff: CountSchema.optional().catch(undefined),
+      countingFrom: z.string().nullable().optional().catch(undefined),
+      /** Confirmed with a passkey since revoked: retracted. */
+      retracted: CountSchema.optional().catch(undefined),
+    })
     .optional()
     .catch(undefined),
   /** Human provenance §9: where a passkey can confirm anything on this hub. Absent from an older hub. */

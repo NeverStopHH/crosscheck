@@ -94,6 +94,7 @@ const julyInterventions = async (world: OutcomeWorld): Promise<number> => {
     until: july.end,
     who: sql`true`,
     sourceIs: null,
+    at: world.harness.clock.now(),
   });
   return aggregate.interventions;
 };
@@ -543,6 +544,7 @@ describe("a pointer across a month boundary (review LOW, probe E)", () => {
       until: month.end,
       who: sql`true`,
       sourceIs: null,
+      at: world.harness.clock.now(),
     });
   };
 

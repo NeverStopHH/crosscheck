@@ -51,13 +51,12 @@
 import { and, asc, eq, gte, inArray, lt, notInArray, sql } from "drizzle-orm";
 import {
   DELIVERY_CHANNELS,
-  HUMAN_PROVENANCE,
   PILOT_COHORTS,
   PULLED_DELIVERY_CHANNEL,
   SUBSTANCE_DELIVERY_CHANNEL,
   TRIPWIRE_ASKING_HOSTS,
 } from "@crosscheck/schema";
-import { isHumanRow } from "./human-provenance.ts";
+import { isHumanBreak, isHumanRow } from "./human-provenance.ts";
 import type { DeliveryChannel } from "@crosscheck/schema";
 
 import {
@@ -568,21 +567,22 @@ const readAttribution = async (
               repairsPinId: pins.repairsPinId,
               repairCommit: pins.verifiedAtCommit,
               repairedAt: pins.createdAt,
-              provenance: pins.provenance,
+              // human provenance §5, H1: the one predicate, never a hand comparison (review L2)
+              counts: sql<boolean>`${isHumanRow("pins", deps.now())}`,
             })
             .from(pins)
             .where(and(eq(pins.repo, repo), inArray(pins.repairsPinId, pinIds))),
           deps.db
-            .select({ id: pins.id, brokeAtCommit: pins.brokeAtCommit, brokeProvenance: pins.brokeProvenance })
+            .select({ id: pins.id, brokeAtCommit: pins.brokeAtCommit, breakCounts: sql<boolean>`${isHumanBreak("pins", deps.now())}` })
             .from(pins)
             .where(inArray(pins.id, pinIds)),
         ]);
   const brokeAtCommit = new Map(broken.map((row) => [row.id, row.brokeAtCommit]));
   // human provenance §5: a break and its repair are a person's judgements — scored only when confirmed.
-  const humanBreak = new Set(broken.filter((row) => row.brokeProvenance === HUMAN_PROVENANCE).map((row) => row.id));
+  const humanBreak = new Set(broken.filter((row) => row.breakCounts).map((row) => row.id));
   const repairOf = new Map<
     string,
-    { repairPinId: string; repairCommit: string; repairedAt: Date; provenance: string }
+    { repairPinId: string; repairCommit: string; repairedAt: Date; counts: boolean }
   >();
   for (const row of repairs) {
     if (row.repairsPinId !== null) {
@@ -605,7 +605,7 @@ const readAttribution = async (
       continue;
     }
     // A legacy break or repair is counted apart, never scored as a person's (human provenance §5).
-    if (repair.provenance !== HUMAN_PROVENANCE || !humanBreak.has(pinId)) {
+    if (!repair.counts || !humanBreak.has(pinId)) {
       notHumanConfirmed += 1;
       continue;
     }
@@ -730,7 +730,7 @@ const readPrecision = async (
       FROM pilot_marks m
       JOIN hint_deliveries hd ON hd.id = m.ref_id
       JOIN agent_sessions s ON s.id = hd.session_id
-      WHERE m.ref_kind = 'hint_delivery' AND m.mark IN ${NOISE_WORDS} AND ${isHumanRow("m")}
+      WHERE m.ref_kind = 'hint_delivery' AND m.mark IN ${NOISE_WORDS} AND ${isHumanRow("m", deps.now())}
         AND ${windowSessions}`),
     deps.db
       .select({ n: sql<number>`count(*)::int` })
@@ -739,8 +739,8 @@ const readPrecision = async (
         and(
           eq(pilotMarks.repo, repo),
           eq(pilotMarks.mark, "surface_ok"),
-          // human provenance §5: `pin --ok` is a person's word only once confirmed
-          eq(pilotMarks.provenance, HUMAN_PROVENANCE),
+          // human provenance §5: `pin --ok` is a person's word only once confirmed, by a standing passkey
+          isHumanRow("pilot_marks", deps.now()),
           gte(pilotMarks.createdAt, since),
           lt(pilotMarks.createdAt, until),
         ),
@@ -854,7 +854,7 @@ const notEnrolled = (): Omit<
     ...notInstrumentedLabels(),
     labelledSinceIso: null,
     legacyNoise: 0,
-    notHuman: { atTerminal: 0, byAgent: 0, legacy: 0 },
+    notHuman: { atTerminal: 0, byAgent: 0, legacy: 0, coolingOff: 0, countingFrom: null, retracted: 0 },
     precisionTarget: PILOT_TARGET_INTERVENTION_PRECISION,
     openedPer100: unavailable("not_instrumented"),
     openedTargetPer100: PILOT_TARGET_HELPFUL_PER_100_SESSIONS,

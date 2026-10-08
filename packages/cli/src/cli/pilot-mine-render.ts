@@ -24,6 +24,7 @@ import { quoted } from "@crosscheck/connector-core/mcp/render.ts";
 import { HINT_OUTCOME_DISCLOSURE_MINIMUMS, MAX_PILOT_LABEL_REASON_UTF16_UNITS } from "@crosscheck/schema";
 
 import { COUNTED_WHILE_ENROLLED, RECONSTRUCTED_ENROLMENT, monthOf, outcomeWord } from "./outcome-render.ts";
+import { uncountedLines } from "./uncounted-lines.ts";
 
 const INDENT = "  ";
 /** A source the hub could not name — work that is not this repo's, or is gone. */
@@ -151,6 +152,7 @@ const notConfirmedLines = (view: MyHintOutcomes): readonly string[] => {
   return [
     `not confirmed by you, so not counted above: ${String(pending.byAgent)} rated by your agent · ${String(pending.atTerminal)} typed at a terminal · ${String(pending.legacy)} recorded before provenance existed`,
     ...(waiting > 0 ? [`${INDENT}confirm or discard them with your passkey: crosscheck confirm`] : []),
+    ...uncountedLines(pending, INDENT),
   ];
 };
 

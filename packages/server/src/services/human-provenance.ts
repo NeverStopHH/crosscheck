@@ -24,21 +24,51 @@ export const humanStamp = (confirmationId: string): HumanStamp => ({
 });
 
 /**
- * `<alias>.provenance` is the human class — the predicate every figure that
- * counts a person's judgement uses, and nothing else may stand in for it. A
- * legacy row (`unknown_legacy`) is never a person's, whatever it once claimed.
+ * THE PASSKEY THAT SIGNED `<confirmation>` (review H1, the owner's decision):
+ * unrevoked always, and — for a figure — past its announced cool-off at `at`.
+ * A fresh passkey's confirmation takes effect at once (Q19) but counts only
+ * from its usable instant; revoking the passkey retracts everything it signed.
  */
-export const isHumanRow = (alias: string): SQL => sql`${sql.raw(alias)}.provenance = ${HUMAN_PROVENANCE}`;
-
-/** The same for a pin's retraction, which carries its own provenance column. */
-export const isHumanBreak = (alias: string): SQL => sql`${sql.raw(alias)}.broke_provenance = ${HUMAN_PROVENANCE}`;
+const signerStands = (confirmationColumn: string, at: Date | null): SQL => sql`EXISTS (
+  SELECT 1 FROM human_confirmations hc JOIN passkeys p ON p.credential_id = hc.credential_id
+  WHERE hc.id = ${sql.raw(confirmationColumn)} AND p.revoked_at IS NULL
+    ${at === null ? sql`` : sql`AND p.usable_from <= ${at.toISOString()}::timestamptz`})`;
 
 /**
- * THE WRITE PATH'S RULE: `<alias>` is a word the person confirmed — what the
- * writers decide "what stood, what stands now" from (services/pointer-
- * standing.ts). Not a figure: a figure counts with `isHumanRow`.
+ * `<alias>` COUNTS AS A PERSON'S JUDGEMENT at `at` — the predicate every figure
+ * uses, and nothing else may stand in for it: the human class, signed by a
+ * passkey that is unrevoked and past its cool-off. A legacy row
+ * (`unknown_legacy`) is never a person's, whatever it once claimed.
  */
-export const isConfirmedRow = (alias: string): SQL => sql`${sql.raw(alias)}.provenance = ${HUMAN_PROVENANCE}`;
+export const isHumanRow = (alias: string, at: Date): SQL =>
+  sql`(${sql.raw(alias)}.provenance = ${HUMAN_PROVENANCE} AND ${signerStands(`${alias}.confirmation_id`, at)})`;
+
+/** The same for a pin's retraction, which carries its own provenance and confirmation. */
+export const isHumanBreak = (alias: string, at: Date): SQL =>
+  sql`(${sql.raw(alias)}.broke_provenance = ${HUMAN_PROVENANCE} AND ${signerStands(`${alias}.broke_confirmation_id`, at)})`;
+
+/**
+ * THE WRITE PATH'S RULE: `<alias>` is a word the person confirmed with a
+ * passkey not since revoked — what the writers decide "what stood, what stands
+ * now" from (services/pointer-standing.ts). A confirmation still in its
+ * passkey's cool-off already stands here (it took effect, Q19); it counts in
+ * a figure only later (`isHumanRow`).
+ */
+export const isConfirmedRow = (alias: string): SQL =>
+  sql`(${sql.raw(alias)}.provenance = ${HUMAN_PROVENANCE} AND ${signerStands(`${alias}.confirmation_id`, null)})`;
+
+/** Confirmed, its passkey unrevoked but still cooling off at `at`: counts from the passkey's usable instant. */
+export const isCoolingRow = (alias: string, at: Date): SQL =>
+  sql`(${isConfirmedRow(alias)} AND NOT ${signerStands(`${alias}.confirmation_id`, at)})`;
+
+/** Confirmed by a passkey since revoked: retracted from every figure, the row kept. */
+export const isRetractedRow = (alias: string): SQL =>
+  sql`(${sql.raw(alias)}.provenance = ${HUMAN_PROVENANCE} AND NOT ${signerStands(`${alias}.confirmation_id`, null)})`;
+
+/** When `<alias>`'s confirmation starts counting: its passkey's usable instant. */
+export const countingFromOf = (alias: string): SQL => sql`(
+  SELECT p.usable_from FROM human_confirmations hc JOIN passkeys p ON p.credential_id = hc.credential_id
+  WHERE hc.id = ${sql.raw(alias)}.confirmation_id)`;
 
 /**
  * WHERE A PERSON CAN CONFIRM ANYTHING ON THIS HUB (human provenance §9). A

@@ -219,7 +219,16 @@ export const PilotReportSchema = z.looseObject({
      * Absent from an older hub; a block this client cannot read is dropped.
      */
     notHuman: z
-      .looseObject({ atTerminal: CountSchema, byAgent: CountSchema, legacy: CountSchema })
+      .looseObject({
+        atTerminal: CountSchema,
+        byAgent: CountSchema,
+        legacy: CountSchema,
+        /** Review H1: confirmed with a passkey still cooling off — counted from `countingFrom`. */
+        coolingOff: CountSchema.optional().catch(undefined),
+        countingFrom: z.string().nullable().optional().catch(undefined),
+        /** Confirmed with a passkey since revoked: retracted. */
+        retracted: CountSchema.optional().catch(undefined),
+      })
       .optional()
       .catch(undefined),
     precisionTarget: z.number().finite().min(0).max(1),

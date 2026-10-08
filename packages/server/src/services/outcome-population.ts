@@ -192,7 +192,14 @@ const closedMonthStart = (since: Date, until: Date | null): SQL =>
  * a delivery's ref is the client's own word, so a pointer at another repo's
  * work names nobody (07 §11.9).
  */
-export const deliveryStates = (repo: string, since: Date, who: SQL, until: Date | null = null): SQL => sql`
+export const deliveryStates = (
+  repo: string,
+  since: Date,
+  who: SQL,
+  until: Date | null,
+  /** The read instant: a word counts only if its passkey stands then (human provenance H1). */
+  at: Date,
+): SQL => sql`
   WITH received AS (
     SELECT min(hd.id) AS id, hd.session_id, min(hd.ref_kind) AS ref_kind, hd.ref_id, s.developer_id AS recipient
     FROM hint_deliveries hd
@@ -226,7 +233,7 @@ export const deliveryStates = (repo: string, since: Date, who: SQL, until: Date 
         SELECT 'noise' AS word, m.reason AS reason, m.created_at AS at, m.id, false AS reasserted FROM pilot_marks m
         JOIN hint_deliveries md ON md.id = m.ref_id
         WHERE m.ref_kind = 'hint_delivery' AND md.session_id = so.session_id AND md.ref_id = so.ref_id
-          AND m.marked_by = so.recipient AND m.mark IN ${NOISE_WORDS} AND ${isHumanRow("m")}
+          AND m.marked_by = so.recipient AND m.mark IN ${NOISE_WORDS} AND ${isHumanRow("m", at)}
           ${before(sql`m.created_at`, until)}
         UNION ALL
         -- review H-B: the person saying noise again is a row of its own, read before the month's end too —
@@ -234,12 +241,12 @@ export const deliveryStates = (repo: string, since: Date, who: SQL, until: Date 
         SELECT 'noise', r.reason, r.created_at, r.id, true FROM noise_reassertions r
         JOIN hint_deliveries rd ON rd.id = r.delivery_id
         WHERE rd.session_id = so.session_id AND rd.ref_id = so.ref_id
-          AND r.marked_by = so.recipient AND ${isHumanRow("r")} ${before(sql`r.created_at`, until)}
+          AND r.marked_by = so.recipient AND ${isHumanRow("r", at)} ${before(sql`r.created_at`, until)}
         UNION ALL
         SELECT 'helpful', h.reason, h.created_at, h.id, false FROM pilot_marks h
         JOIN hint_deliveries hd2 ON hd2.id = h.ref_id
         WHERE h.ref_kind = 'hint_delivery' AND hd2.session_id = so.session_id AND hd2.ref_id = so.ref_id
-          AND h.marked_by = so.recipient AND h.mark = 'helpful' AND ${isHumanRow("h")}
+          AND h.marked_by = so.recipient AND h.mark = 'helpful' AND ${isHumanRow("h", at)}
           ${before(sql`h.created_at`, until)}
       ) l
       ORDER BY l.at DESC, l.id DESC LIMIT 1
@@ -256,7 +263,7 @@ export const deliveryStates = (repo: string, since: Date, who: SQL, until: Date 
         FROM hint_outcomes o
         JOIN hint_deliveries od ON od.id = o.delivery_id
         WHERE od.session_id = la.session_id AND od.ref_id = la.ref_id
-          AND o.recorded_by = la.recipient AND ${isHumanRow("o")} ${before(sql`o.created_at`, until)}
+          AND o.recorded_by = la.recipient AND ${isHumanRow("o", at)} ${before(sql`o.created_at`, until)}
         UNION ALL
         -- (a) the person's noise competes only while it is their newest label — a newer helpful cancels
         -- it — and only the newest noise ever could: helpful itself never competes with an outcome
@@ -337,10 +344,12 @@ export const readPeriodAggregate = async (
     readonly who: SQL;
     /** Only deliveries pointing at this developer's work; null for all. */
     readonly sourceIs: string | null;
+    /** When it is read: a word counts only if the passkey that confirmed it stands then (H1). */
+    readonly at: Date;
   },
 ): Promise<PeriodAggregate> => {
   const rows = await db.execute<AggregateRow>(sql`
-    ${deliveryStates(input.repo, input.from, input.who, input.until)},
+    ${deliveryStates(input.repo, input.from, input.who, input.until, input.at)},
     scoped AS (SELECT * FROM states ${input.sourceIs === null ? sql`` : sql`WHERE source_id = ${input.sourceIs}`}),
     words AS (SELECT recipient, source_id FROM scoped WHERE state <> 'unmarked')
     SELECT count(*)::int AS interventions,

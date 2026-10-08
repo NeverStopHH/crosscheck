@@ -48,6 +48,8 @@ const mineWith = (payload: string): MyHintOutcomes => ({
   ],
   reasonsBeyondList: 1,
   yourWork: { periodStartIso: payload, periodEndIso: payload, followed: null, withheld: payload },
+  // Human provenance (review H1): the hub's instant is re-printed by this client, never echoed.
+  notConfirmed: { byAgent: 1, atTerminal: 1, legacy: 1, coolingOff: 1, countingFrom: payload, retracted: 1 },
 });
 
 export const HINT_OUTCOME_SURFACES: readonly RenderSurface[] = [

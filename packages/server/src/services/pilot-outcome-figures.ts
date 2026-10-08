@@ -96,6 +96,7 @@ export const readOutcomeFigures = async (
     until: period.end,
     who: sql`true`,
     sourceIs: null,
+    at: input.now,
   });
   const withheld = withholdingOf(aggregate, { sources: true, recorded: true, followers: false });
   return {

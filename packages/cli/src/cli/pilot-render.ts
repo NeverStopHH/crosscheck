@@ -51,6 +51,7 @@ import type {
 } from "@crosscheck/connector-core/http/pilot.ts";
 
 import { COUNTED_WHILE_ENROLLED, RECONSTRUCTED_ENROLMENT, monthOf } from "./outcome-render.ts";
+import { uncountedLines } from "./uncounted-lines.ts";
 
 export interface ScoredFix {
   readonly repair: PilotRepair;
@@ -369,11 +370,16 @@ const ATTRIBUTION_LIMIT_LINE = `${INDENT}labels count only once the person confi
  */
 const notHumanLabelLines = (proof: PilotReport["precision"]): readonly string[] => {
   const notHuman = proof.notHuman;
-  if (notHuman === undefined || notHuman.atTerminal + notHuman.byAgent + notHuman.legacy === 0) {
+  if (notHuman === undefined) {
     return [];
+  }
+  const uncounted = uncountedLines(notHuman, INDENT);
+  if (notHuman.atTerminal + notHuman.byAgent + notHuman.legacy === 0) {
+    return uncounted;
   }
   return [
     `${INDENT}not counted as anyone's judgement: ${count(notHuman.atTerminal)} labelled at a terminal, unconfirmed · ${count(notHuman.byAgent)} by an agent, unconfirmed · ${count(notHuman.legacy)} recorded before provenance existed`,
+    ...uncounted,
   ];
 };
 
