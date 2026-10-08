@@ -24635,6 +24635,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/doctor-subagent-return.test.ts`,
     because: "a settings file anyone can commit writes OSC 52, line erases and a forged PASS straight to the reader's terminal",
   },
+  {
+    label: "doctor prints a matcher-less subagent-return group as matched on null",
+    file: `${CLI}/src/cli/doctor-global.ts`,
+    from: "  return entry.matcher === null ? \"matched on every tool\"",
+    to: "  return false ? \"matched on every tool\"",
+    test: `${CLI}/test/doctor-subagent-return.test.ts`,
+    because: "a group that fires on every tool reads 'matched on null', which names no setting the reader can find",
+  },
   // ── Review of feat/collision-visible, round 3, F-L7 / F-L8: reviewer survivors P3 and P10 ──
   {
     label: "the relay's presence refresh ignores what the budget spares",

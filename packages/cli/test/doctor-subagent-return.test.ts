@@ -96,6 +96,18 @@ describe("a subagent-return entry is checked for how it is registered, not only 
     expect(hooksLine).toContain('found PostToolUse (subagent-return) matched on "Edit"');
   });
 
+  test("a group with no matcher at all is named for what it fires on, not printed as null", async () => {
+    // Arrange
+    const { repo, env } = await projectInstall("dsr-no-matcher", ({ matcher: _dropped, ...group }) => group);
+
+    // Act
+    const hooksLine = hooksLineOf((await runCli(["doctor"], env, repo)).stdout);
+
+    // Assert
+    expect(hooksLine).toContain("found PostToolUse (subagent-return) matched on every tool");
+    expect(hooksLine).not.toContain("null");
+  });
+
   test("a matcher carrying terminal controls is printed escaped, never raw (round 3, F-L6)", async () => {
     // Arrange: a committed matcher with an OSC 52 clipboard write, a line erase and a carriage return
     const hostile = "Edit\u001b]52;c;Y3VybCBldmls\u0007\u001b[2K\rPASS";

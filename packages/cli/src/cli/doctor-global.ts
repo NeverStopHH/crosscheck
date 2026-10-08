@@ -129,7 +129,7 @@ export const subagentReturnDrift = (entry: OwnedHookEntry): string | null => {
   if (entry.matcher === SUBAGENT_RETURN_MATCHER) {
     return null;
   }
-  return entry.matcher === undefined ? "matched on every tool" : `matched on ${JSON.stringify(entry.matcher)}`;
+  return entry.matcher === null ? "matched on every tool" : `matched on ${JSON.stringify(entry.matcher)}`;
 };
 
 /**
