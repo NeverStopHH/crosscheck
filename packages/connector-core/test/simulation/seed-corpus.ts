@@ -204,7 +204,10 @@ const L7_LAST_WORD: readonly CorpusSeed[] = [
  * as ended whose hook died before it wrote the refusal down (`sleep` seed
  * 31110, found by the 2000-seed sweep around 30495). And a heal's retirement
  * of a life, an end sent without writing the life down (`sleep` seed 52221,
- * found by the 3000-seed sweep of every generator from 50001).
+ * found by the 3000-seed sweep of every generator from 50001). And from the
+ * release-candidate sweep: a resume onto a reaped life that took SessionStart's
+ * status (`sleep` seed 2687), and a status the hub took unheard that I4 read
+ * as a revert (`sleep` seed 4643, the checker's).
  */
 const PR75_REVIEW: readonly CorpusSeed[] = [
   {
@@ -248,6 +251,32 @@ const PR75_REVIEW: readonly CorpusSeed[] = [
     ],
   },
   { seed: 52221, generator: "sleep", invariant: "I2", fix: "c693f3d1", bug: "the generated scenario", events: scenarioOf(52221, GENERATORS.sleep) },
+  {
+    seed: 2687,
+    generator: "sleep",
+    invariant: "I4",
+    fix: "c577be72",
+    bug: "a resume onto a life session-reap took over put SessionStart's status back over the one its end marker kept",
+    events: [start(0), intent(0, "blocked"), abandon(0), start(2), wake(0), par(start(0), edit(1))],
+  },
+  { seed: 2687, generator: "sleep", invariant: "I4", fix: "c577be72", bug: "the generated scenario", events: scenarioOf(2687, GENERATORS.sleep) },
+  {
+    seed: 4643,
+    generator: "sleep",
+    invariant: "checker",
+    fix: "9143fe41",
+    bug: "a status the hub took from set_intent with its answer lost, the newest it could take before another process ended the life, read as a revert",
+    events: [
+      start(1),
+      intent(1, "blocked"),
+      fault("recordsLate", 2, 1),
+      edit(1),
+      intent(1, "implementing"),
+      hubEnd(1),
+      intent(1, "done"),
+    ],
+  },
+  { seed: 4643, generator: "sleep", invariant: "checker", fix: "9143fe41", bug: "the generated scenario", events: scenarioOf(4643, GENERATORS.sleep) },
 ];
 
 export const SEED_CORPUS: readonly CorpusSeed[] = [
