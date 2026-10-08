@@ -19191,6 +19191,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/spool-simulation.test.ts`,
     because: "review-2 round 9, M1+M2 (probes E2, E4): a PostToolUse recovery after a week issues the life's positions twice",
   },
+  {
+    label: "a resume onto a marked life takes SessionStart's status (sleep 2687)",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "      : ((await readMarkedStatus(input, crosscheckSessionId)) ?? input.status);",
+    to: "      : input.status;",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "the M3 family again: a resume onto a life session-reap took over puts SessionStart's status back over the one set_intent left (I4)",
+  },
   // All seed 30495: an end that LANDED removes its marker, so the position a
   // re-fire beside it goes on from is the lineage's.
   {
@@ -19970,7 +19978,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
  * PRINTS: packages/connector-core/test/session-heal.test.ts 32
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 4
- * PRINTS: packages/connector-core/test/session-lives.test.ts 67
+ * PRINTS: packages/connector-core/test/session-lives.test.ts 68
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2

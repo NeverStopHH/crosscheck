@@ -13,7 +13,7 @@
  * titles from session metadata) stays in each connector; this flow takes the
  * already-resolved values.
  */
-import { isSeqStamp, SeqFieldSchema } from "@crosscheck/schema";
+import { isSeqStamp, SeqFieldSchema, SessionStatusSchema } from "@crosscheck/schema";
 import type { CausalGuaranteeTriple, SeqField, SeqStamp } from "@crosscheck/schema";
 
 import { z } from "zod";
@@ -303,7 +303,27 @@ const reserveEpoch = async (input: RegisterSessionFlowInput, epoch: string): Pro
 const MarkedLifeSchema = z.looseObject({
   crosscheckSessionId: z.string().min(1),
   seq: SeqFieldSchema.optional(),
+  workContextStatus: SessionStatusSchema.optional().catch(undefined),
 });
+
+/**
+ * THE STATUS A LIFE'S END MARKER KEEPS, when it names that life (sleep seed
+ * 2687, the M3 family): the last status its state held — set_intent's, as
+ * like as not. A resume onto a life session-reap took over, or whose end was
+ * deferred, finds no state to carry it from and took SessionStart's starting
+ * status instead, and the work context it spooled put that back over the one
+ * the hub held.
+ */
+const readMarkedStatus = async (input: RegisterSessionFlowInput, sessionId: string): Promise<string | null> => {
+  const rung = lifeRungOf(crosscheckSessionIdFor(input.hostSessionKey), sessionId);
+  if (rung === null) {
+    return null;
+  }
+  const parsed = MarkedLifeSchema.safeParse(
+    await readJsonOrNull(spoolPendingEndPath(input.home, input.repoKey, sessionSlug(input.hostSessionKey), rung)),
+  );
+  return parsed.success && parsed.data.crosscheckSessionId === sessionId ? (parsed.data.workContextStatus ?? null) : null;
+};
 
 /**
  * THE POSITION A LIFE'S END MARKER KEEPS, when it names that life
@@ -449,7 +469,7 @@ export const registerSessionFlow = async (
   const status =
     current !== null && current.crosscheckSessionId === crosscheckSessionId
       ? (current.workContextStatus ?? input.status)
-      : input.status;
+      : ((await readMarkedStatus(input, crosscheckSessionId)) ?? input.status);
   if (registration !== null) {
     // A register that landed answers the last failed walk's verdict: the hub
     // knows the life now, and a stamp that still said `failed` kept every

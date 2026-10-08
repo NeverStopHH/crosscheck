@@ -1434,6 +1434,26 @@ describe("a resume onto a life session-reap took over (review-2 round 9, M1+M2)"
     expect(await readSessionCausalOrder(db, life.crosscheckSessionId)).toMatchObject({ state: "usable", epochs: 1 });
   });
 
+  test("keeps the status set_intent left in that life's state, not SessionStart's (sleep seed 2687)", async () => {
+    // Arrange: a life whose state set_intent moved to blocked; its host went
+    // quiet, and another conversation's SessionStart reaped its state
+    const fx = await fixture("reaped-resume-status");
+    const life = await register(fx);
+    await flushAsHook(fx);
+    await updateSessionState(fx.home, fx.hostSessionKey, (fresh) => ({ ...fresh, workContextStatus: "blocked" }));
+    await reapStaleSessionStates(fx.home, AFTER_A_WEEK());
+
+    // Act: the conversation resumes — SessionStart registers it "analyzing" — and drains
+    const resumed = await register(fx);
+    await flushAsHook(fx);
+
+    // Assert: the life, on disk and on the hub, keeps the status its end marker kept
+    const onHub = await raw<{ status: string }>("select status from work_contexts where id = $1", [life.workContextId]);
+    expect(resumed.crosscheckSessionId).toBe(life.crosscheckSessionId);
+    expect((await stateOf(fx))?.workContextStatus).toBe("blocked");
+    expect(onHub.map((row) => row.status)).toEqual(["blocked"]);
+  });
+
   test("keeps the position a resumed life reached, its epoch reused from the life before it (probe E1)", async () => {
     // Arrange: life 0 ended; the resume's life took its epoch from the
     // lineage and positioned two edits; then its state was reaped
