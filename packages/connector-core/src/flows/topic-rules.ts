@@ -10,9 +10,13 @@
  *          topic. The lookup every later touch takes — a branch the rules
  *          attached below is in the affinity from then on, so they run once
  *          per (root, branch) per life.
- *   (b)    RENAME: the root's last-active topic's newest branch no longer
- *          exists as a ref, and HEAD is that topic's commit or descends from
- *          it — the same topic, the new branch joins its affinity.
+ *   (b)    RENAME: git's own HEAD log records the root's last-active topic's
+ *          newest branch renamed to the root's current branch (`Branch:
+ *          renamed refs/heads/<old> to refs/heads/<new>`), and HEAD is that
+ *          topic's commit or descends from it — the same topic, the new
+ *          branch joins its affinity. A branch that is merely gone, deleted
+ *          after the next one was cut at its tip, is no rename (review H3):
+ *          that move falls through to (c).
  *   (c)    CONTINUED: HEAD descends from the last-active topic's commit and
  *          this event's files overlap the topic's files — the same topic,
  *          the branch joins its affinity.
@@ -30,14 +34,12 @@
 import { MAX_TOPICS_PER_SESSION } from "../constants.ts";
 import { toRepoRelative } from "../capture/target-paths.ts";
 import type { RootHead, TouchedRootsResolution } from "../capture/touched-root.ts";
-import { descendsInHeadLog } from "../git/head-history.ts";
-import { DETACHED_BRANCH_PREFIX, resolveHeadCommit, resolveRefCommit } from "../git/repo-identity.ts";
+import { descendsInHeadLog, isRenamedInHeadLog } from "../git/head-history.ts";
+import { DETACHED_BRANCH_PREFIX, resolveHeadCommit } from "../git/repo-identity.ts";
 import type { TopicContext } from "../state/session-state.ts";
 import { fallbackWorkContextTitle } from "./register-session.ts";
 import { labelsOf, mintTopicId, seenPathsOf, topicWorkContextIdFor } from "./topic-contexts.ts";
 import type { Filing, Relabel, TopicLife, TopicPlan } from "./topic-contexts.ts";
-
-const HEADS_PREFIX = "refs/heads/";
 
 /** One topic as the rules see it — `id` null is the session's own start topic. */
 interface Candidate {
@@ -92,10 +94,10 @@ const keep = (candidate: Candidate, relabel: Relabel | null): Decision => ({
   relabel,
 });
 
-/** Rule (b)'s first half: the topic's newest branch name is gone — it was renamed or deleted. */
-const isRenamedAway = async (candidate: Candidate, gitDir: string): Promise<boolean> => {
+/** Rule (b)'s test: git recorded the topic's NEWEST branch renamed to the root's current one (review H3). */
+const isRenamedTo = async (candidate: Candidate, branch: string, gitDir: string): Promise<boolean> => {
   const newest = [...candidate.labels].reverse().find((label) => !isDetached(label));
-  return newest !== undefined && (await resolveRefCommit(gitDir, `${HEADS_PREFIX}${newest}`)) === null;
+  return newest !== undefined && (await isRenamedInHeadLog(gitDir, newest, branch));
 };
 
 const overlaps = (paths: readonly string[], files: readonly string[]): boolean => {
@@ -130,7 +132,7 @@ const decide = async (
     return { kind: "open", branch, commit };
   }
   const relabel: Relabel = { id: last.id, label: branch, head: commit };
-  if (isDetached(branch) || (await isRenamedAway(last, gitDir))) {
+  if (isDetached(branch) || (await isRenamedTo(last, branch, gitDir))) {
     return keep(last, relabel);
   }
   return overlaps(paths, seenPathsOf(life.seenTargets, last.id)) ? keep(last, relabel) : { kind: "open", branch, commit };

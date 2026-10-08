@@ -19687,7 +19687,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a branch renamed in place opens a new topic",
     file: `${CORE}/src/flows/topic-rules.ts`,
-    from: "  if (isDetached(branch) || (await isRenamedAway(last, gitDir))) {",
+    from: "  if (isDetached(branch) || (await isRenamedTo(last, branch, gitDir))) {",
     to: "  if (isDetached(branch)) {",
     test: `${CORE}/test/topic-rules.test.ts`,
     because: "`git branch -m` cuts one piece of work into two topics, and the second starts with none of the first's files",
@@ -19695,8 +19695,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a detached HEAD on top of a topic's work opens a topic of its own",
     file: `${CORE}/src/flows/topic-rules.ts`,
-    from: "  if (isDetached(branch) || (await isRenamedAway(last, gitDir))) {",
-    to: "  if (await isRenamedAway(last, gitDir)) {",
+    from: "  if (isDetached(branch) || (await isRenamedTo(last, branch, gitDir))) {",
+    to: "  if (await isRenamedTo(last, branch, gitDir)) {",
     test: `${CORE}/test/topic-rules.test.ts`,
     because: "a rebase or a bisect step detaches HEAD on top of the work, and every touch there leaves its topic",
   },
@@ -19763,6 +19763,23 @@ export const MUTATIONS: readonly Mutation[
     to: "\"pull\", \"cherry-pick\"] as const;",
     test: `${CORE}/test/head-history.test.ts`,
     because: "a `pull --rebase` moves HEAD onto the upstream it diverged from, and the rules fold the next branch into a topic it holds none of",
+  },
+  {
+    // Review H3 of feat/topic-contexts, and its surviving mutation #6.
+    label: "a deleted branch reads as a rename",
+    file: `${CORE}/src/flows/topic-rules.ts`,
+    from: "  return newest !== undefined && (await isRenamedInHeadLog(gitDir, newest, branch));",
+    to: "  return newest !== undefined && (await resolveHeadCommit({ content: `ref: refs/heads/${newest}`, branch: newest, gitDir })) === null;",
+    test: `${CORE}/test/topic-rules.test.ts`,
+    because: "cleaning up the previous branch after cutting the next one at its tip folds the new branch's unrelated work into the old topic, under its title",
+  },
+  {
+    label: "rule (b) checks the topic's oldest name instead of its newest",
+    file: `${CORE}/src/flows/topic-rules.ts`,
+    from: "  const newest = [...candidate.labels].reverse().find((label) => !isDetached(label));\n  return newest !== undefined && (await isRenamedInHeadLog(",
+    to: "  const newest = [...candidate.labels].find((label) => !isDetached(label));\n  return newest !== undefined && (await isRenamedInHeadLog(",
+    test: `${CORE}/test/topic-rules.test.ts`,
+    because: "a second rename finds no record for the topic's first name, and the renamed branch's work opens a topic beside its own",
   },
   {
     // Review H1 of feat/topic-contexts: the commit half read HEAD's history.
@@ -20344,7 +20361,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/tool-window-pairing.test.ts 6
  * PRINTS: packages/connector-core/test/topic-contexts.test.ts 9
  * PRINTS: packages/connector-core/test/topic-heads.test.ts 2
- * PRINTS: packages/connector-core/test/topic-rules.test.ts 12
+ * PRINTS: packages/connector-core/test/topic-rules.test.ts 14
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
  * PRINTS: packages/connector-core/test/verdict-wire.test.ts 2
  * PRINTS: packages/connector-core/test/work-context-ack.test.ts 6

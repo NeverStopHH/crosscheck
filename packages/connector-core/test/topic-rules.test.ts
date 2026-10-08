@@ -206,6 +206,40 @@ describe("(b) a rename keeps the topic", () => {
     expect(topic?.head).toBe(await headCommit(sibling));
     expect(topic?.title).toBe("feat/a @ api");
   });
+
+  test("a second rename is judged against the topic's NEWEST name, and keeps the topic again", async () => {
+    // Arrange: feat/a renamed to feat/b (the topic now answers to both), then feat/b renamed to feat/c
+    const { main, sibling } = await world("rules-b-twice");
+    const first = await touch(await sessionIn(main), sibling, ["src/a.ts"], 1);
+    await git(sibling, ["branch", "-m", "feat/a", "feat/b"]);
+    const second = await touch(first.state, sibling, ["src/b.ts"], 2);
+    await git(sibling, ["branch", "-m", "feat/b", "feat/c"]);
+
+    // Act: a file the topic never touched
+    const { plan, state } = await touch(second.state, sibling, ["src/c.ts"], 3);
+
+    // Assert
+    const id = mintTopicId(REPO_ID, sibling, 1);
+    expect(plan.opened).toEqual([]);
+    expect(keysOf(plan)).toEqual([id]);
+    expect(state.topicContexts.find((entry) => entry.key === id)?.branches).toEqual(["feat/a", "feat/b", "feat/c"]);
+  });
+
+  test("a branch deleted after the next one was cut at its tip is no rename: unrelated work opens its own topic (review H3)", async () => {
+    // Arrange: a topic on feat/a with a commit; then feat/next cut at its tip, and feat/a deleted
+    const { main, sibling } = await world("rules-b-deleted");
+    await commitIn(sibling, "src/old-work.ts", "old work");
+    const first = await touch(await sessionIn(main), sibling, ["src/old-work.ts"], 1);
+    await git(sibling, ["switch", "-c", "feat/unrelated"]);
+    await git(sibling, ["branch", "-D", "feat/a"]);
+
+    // Act: a file the topic never touched
+    const { plan } = await touch(first.state, sibling, ["src/unrelated.ts"], 2);
+
+    // Assert: a new topic for feat/unrelated, nothing attached to feat/a's
+    expect(plan.opened.map((topic) => topic.branch)).toEqual(["feat/unrelated"]);
+    expect(plan.relabeled).toEqual([]);
+  });
 });
 
 describe("(c) a move to another branch", () => {
