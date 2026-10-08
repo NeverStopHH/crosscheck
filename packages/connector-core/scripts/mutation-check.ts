@@ -4894,13 +4894,8 @@ export const MUTATIONS: readonly Mutation[
     // across two emitters, 1 distinct position.
     label: "the allocator hands two emitters the same position",
     file: `${CORE}/src/state/session-state.ts`,
-    from:
-      "      const from = fresh.eventSeq + 1;\n" +
-      "      await writeSessionState(home, { ...fresh, eventSeq: from + count - 1 });\n" +
-      "      return { epoch: fresh.seqEpoch, from, count };",
-    to:
-      "      const from = fresh.eventSeq + 1;\n" +
-      "      return { epoch: fresh.seqEpoch, from, count };",
+    from: "    next: { ...fresh, eventSeq: from + count - 1 },\n",
+    to: "    next: fresh,\n",
     test: `${CORE}/test/session-seq.test.ts`,
     because:
       "every record in the session claims position 1, the hub answers " +
@@ -5260,8 +5255,8 @@ export const MUTATIONS: readonly Mutation[
     // window opens exactly where the block begins and holds nothing.
     label: "a window opens on a position the block then takes anyway",
     file: `${CORE}/src/state/session-state.ts`,
-    from: "        eventSeq: taken,\n        toolWindows: appended.slice(evicted),",
-    to: "        toolWindows: appended.slice(evicted),",
+    from: "      eventSeq: taken,\n      toolWindows: appended.slice(evicted),",
+    to: "      toolWindows: appended.slice(evicted),",
     test: `${CONNECTOR}/test/hook-window.test.ts`,
     because:
       "UNSAFE: the edit's interval collapses onto the first position of its " +
@@ -5275,8 +5270,8 @@ export const MUTATIONS: readonly Mutation[
     // written after the edit.
     label: "a tool whose open was refused takes a parallel tool's floor",
     file: `${CORE}/src/state/session-state.ts`,
-    from: "        windowKey === null ? null : toolWindowFloorFor(fresh, windowKey);",
-    to: "        windowKey === null ? null : (fresh.toolWindows[0]?.floor ?? null);",
+    from: "    windowKey === null ? null : toolWindowFloorFor(fresh, windowKey);",
+    to: "    windowKey === null ? null : (fresh.toolWindows[0]?.floor ?? null);",
     test: `${CONNECTOR}/test/hook-window-pairing.test.ts`,
     because:
       "UNSAFE: a call with no window of its own is bracketed from a moment " +
@@ -5287,7 +5282,7 @@ export const MUTATIONS: readonly Mutation[
     // Spec 01 §3.6: a close must remove what it closed.
     label: "a closed window keeps the floor it opened on",
     file: `${CORE}/src/state/session-state.ts`,
-    from: "        ...(windowKey === null ? {} : closedToolWindow(fresh, windowKey)),\n",
+    from: "      ...(windowKey === null ? {} : closedToolWindow(fresh, windowKey)),\n",
     to: "",
     test: `${CONNECTOR}/test/hook-window.test.ts`,
     because:
@@ -5325,8 +5320,8 @@ export const MUTATIONS: readonly Mutation[
     // shared-oldest floor could not express.
     label: "a window opens on another call's floor",
     file: `${CORE}/src/state/session-state.ts`,
-    from: "      const appended = [...fresh.toolWindows, { key: windowKey, floor: taken }];",
-    to: "      const appended = [...fresh.toolWindows, { key: windowKey, floor: fresh.toolWindows[0]?.floor ?? taken }];",
+    from: "  const appended = [...fresh.toolWindows, { key: windowKey, floor: taken }];",
+    to: "  const appended = [...fresh.toolWindows, { key: windowKey, floor: fresh.toolWindows[0]?.floor ?? taken }];",
     test: `${CONNECTOR}/test/hook-window-pairing.test.ts`,
     because:
       "SAFE BUT LOSSY: every call opened while another runs is bracketed from " +
@@ -5338,8 +5333,8 @@ export const MUTATIONS: readonly Mutation[
     // life of the session.
     label: "the tool-window list grows without bound",
     file: `${CORE}/src/state/session-state.ts`,
-    from: "        toolWindows: appended.slice(evicted),",
-    to: "        toolWindows: appended,",
+    from: "      toolWindows: appended.slice(evicted),",
+    to: "      toolWindows: appended,",
     test: `${CORE}/test/tool-window-pairing.test.ts`,
     because:
       "COSTLY: every call nothing closes stays in the state file forever, and " +
@@ -5349,8 +5344,8 @@ export const MUTATIONS: readonly Mutation[
     // Evictions are counted rather than inferred from a missing bracket.
     label: "a tool-window eviction goes uncounted",
     file: `${CORE}/src/state/session-state.ts`,
-    from: "        toolWindowEvictions: fresh.toolWindowEvictions + evicted,",
-    to: "        toolWindowEvictions: fresh.toolWindowEvictions,",
+    from: "      toolWindowEvictions: fresh.toolWindowEvictions + evicted,",
+    to: "      toolWindowEvictions: fresh.toolWindowEvictions,",
     test: `${CORE}/test/tool-window-pairing.test.ts`,
     because:
       "SILENT: the cap costs brackets and nothing says so — a missing bracket " +

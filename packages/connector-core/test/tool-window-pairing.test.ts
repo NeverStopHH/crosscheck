@@ -15,13 +15,22 @@ import { sessionStatePath } from "../src/config/paths.ts";
 
 import { MAX_TOOL_WINDOWS } from "../src/constants.ts";
 import {
+  SessionStateSchema,
   allocateSeq,
   allocateToolSeq,
   openToolWindow,
   readSessionState,
+  seqAllocation,
+  toolSeqAllocation,
+  toolWindowOpening,
   writeSessionState,
 } from "../src/state/session-state.ts";
-import type { SeqRange, SessionStateInput } from "../src/state/session-state.ts";
+import type {
+  Allocation,
+  SeqRange,
+  SessionState,
+  SessionStateInput,
+} from "../src/state/session-state.ts";
 import { toolWindowKey } from "../src/state/tool-window-key.ts";
 import { compareEvents, seqKindFor } from "@crosscheck/server";
 import type { OrderedEvent, SessionCausalOrder } from "@crosscheck/server";
@@ -39,9 +48,6 @@ const paths: string[] = [];
 afterEach(async () => {
   await Promise.all(paths.map((path) => rm(path, { recursive: true, force: true })));
   paths.length = 0;
-  // The enumeration's shared home is one of those paths, so the pointer to it
-  // has to go with it or the next test writes into a directory that is gone.
-  scriptHome = undefined;
 });
 
 const stateFor = (): SessionStateInput => ({
@@ -180,8 +186,9 @@ describe("a window is found by its own call's key", () => {
  * operational form (docs/1.0/README.md): "Ambiguous or unmatched closure can
  * only reduce certainty. It can never increase it."
  *
- * PROVED OVER PAIRS, NOT ASSERTED. Every script below runs the real allocator,
- * and every answer the hub gives from the bracket it handed out is compared
+ * PROVED OVER PAIRS, NOT ASSERTED. Every script below runs the real
+ * allocator's decisions (the ones its locked functions apply, in memory), and
+ * every answer the hub gives from the bracket it handed out is compared
  * with the answer the hub gives from the ORACLE bracket for the same call: the
  * floor that call's own open actually consumed (`openToolWindow`'s return
  * value), or no bracket when its open never happened or was evicted. The
@@ -272,93 +279,109 @@ interface Outcome {
 }
 
 /**
- * ONE SCRIPT against the real allocator. `keys` says what the hooks would
- * derive for the two calls; `fates` what happened to each call's open. An
- * eviction is a real one: the call opens, then MAX_TOOL_WINDOWS other calls
- * open behind it and push it out before anything else happens.
+ * THE ALLOCATOR'S OWN DECISIONS, applied to a state held in memory.
+ *
+ * `allocateSeq`, `openToolWindow` and `allocateToolSeq` are each a locked
+ * read, one of these decisions, and a write (state/session-state.ts); the
+ * decision is the rule this proof is about, and the file round trip around
+ * it is pinned by the file-backed cases above and below. Run through the
+ * files, the enumeration was ~7 locked writes per script: 420 scripts took
+ * 4.1 s + 1.7 s alone on a loaded Mac, and the KNOWN LIMIT case — under bun's
+ * 5 s default — ran out of it (5034 ms) when every suite shared the disk.
+ * In memory the proof is the same set of scripts and costs milliseconds.
  */
-/**
- * ONE HOME FOR THE WHOLE ENUMERATION, rewritten between scripts rather than
- * recreated. 270 scripts x (mkdtemp + recursive remove) is the cost that made
- * this file pathological under a parallel suite: 3.4 s alone on an idle Mac,
- * past 30 s on ubuntu-latest while eight other test processes shared the disk.
- * The state is overwritten at the head of every script and the allocator
- * removes its own lock on release, so a reused home carries nothing from the
- * script before it — and the per-script assertions on `toolWindows` are what
- * would catch it if it ever did.
- */
-let scriptHome: string | undefined;
+const memoryAllocator = (initial: SessionState) => {
+  let state = initial;
+  const apply = <T>(allocation: Allocation<T> | null): T | null => {
+    if (allocation === null) {
+      return null;
+    }
+    state = allocation.next;
+    return allocation.value;
+  };
+  return {
+    open: (key: string): number | null => apply(toolWindowOpening(state, key)),
+    close: (key: string): SeqRange | null => apply(toolSeqAllocation(state, CLOSE_BLOCK, key)) ?? null,
+    explain: (): SeqRange | null => apply(seqAllocation(state, 1)),
+    seed: (next: SessionState): void => {
+      state = next;
+    },
+    current: (): SessionState => state,
+  };
+};
 
-const runScript = async (
+/** A fresh session, parsed the way readSessionState would hand it over. */
+const freshState = (): SessionState => SessionStateSchema.parse(stateFor());
+
+/**
+ * ONE SCRIPT against the allocator's rules. `keys` says what the hooks would
+ * derive for the two calls; `fates` what happened to each call's open. An
+ * eviction is a real one: the call opens, then the cap pushes it out before
+ * anything else happens.
+ */
+const runScript = (
   order: readonly Step[],
   keys: { readonly A: string; readonly B: string },
   fates: { readonly A: OpenFate; readonly B: OpenFate },
-): Promise<Outcome> => {
-  scriptHome ??= await fixture("window-pairs");
-  const home = scriptHome;
-  {
-    await writeSessionState(home, stateFor());
-    const oracle: { A?: number; B?: number } = {};
-    const closed: Closed[] = [];
-    const open = async (call: "A" | "B"): Promise<void> => {
-      if (fates[call] === "refused") {
-        return;
-      }
-      const taken = await openToolWindow(home, SESSION_ID, keys[call]);
-      if (taken === null) {
-        throw new Error("the allocator refused with no lock contention");
-      }
-      if (fates[call] === "evicted") {
-        // THE EVICTION IS THE ALLOCATOR'S, THE FILLING IS NOT. Opening
-        // MAX_TOOL_WINDOWS further windows one at a time is what the cap
-        // needs and it costs a locked read-modify-write each — about 5 800
-        // of them across this enumeration, which is what made the file take
-        // 3.4 s alone here and time out past 30 s on a CI runner sharing its
-        // disk with eight other test processes. So the filler entries are
-        // SEEDED in one write, and the step that actually pushes this call's
-        // window out is still a real `openToolWindow`: the cap, the choice of
-        // which entry goes, and the eviction count all remain the
-        // allocator's, which is the only part a test may not fake.
-        const seeded = await readSessionState(home, SESSION_ID);
-        await writeSessionState(home, {
+): Outcome => {
+  const allocator = memoryAllocator(freshState());
+  const oracle: { A?: number; B?: number } = {};
+  const closed: Closed[] = [];
+  const open = (call: "A" | "B"): void => {
+    if (fates[call] === "refused") {
+      return;
+    }
+    const taken = allocator.open(keys[call]);
+    if (taken === null) {
+      throw new Error("the allocator declined a session with an epoch");
+    }
+    if (fates[call] === "evicted") {
+      // THE EVICTION IS THE ALLOCATOR'S, THE FILLING IS NOT. The filler
+      // entries are SEEDED in one step, and the open that actually pushes
+      // this call's window out is still the allocator's own decision: the
+      // cap, the choice of which entry goes, and the eviction count all
+      // remain its, which is the only part a test may not fake.
+      const seeded = allocator.current();
+      allocator.seed(
+        SessionStateSchema.parse({
           ...stateFor(),
-          eventSeq: seeded?.eventSeq ?? 0,
+          eventSeq: seeded.eventSeq,
           toolWindows: [
-            ...(seeded?.toolWindows ?? []),
+            ...seeded.toolWindows,
             ...Array.from({ length: MAX_TOOL_WINDOWS - 1 }, (_unused, index) => ({
               key: keyOf(`toolu_01SEED${call}${String(index)}`),
-              floor: (seeded?.eventSeq ?? 0) + index + 1,
+              floor: seeded.eventSeq + index + 1,
             })),
           ],
-          toolWindowEvictions: seeded?.toolWindowEvictions ?? 0,
-        } as SessionStateInput);
-        await openToolWindow(home, SESSION_ID, keyOf(`toolu_01FILL${call}`));
-        return;
-      }
-      oracle[call] = taken;
-    };
-    const close = async (call: "A" | "B"): Promise<void> => {
-      const range = await allocateToolSeq(home, SESSION_ID, CLOSE_BLOCK, keys[call]);
-      if (range === null) {
-        throw new Error("the allocator refused with no lock contention");
-      }
-      closed.push({ range, oracle: oracle[call] });
-    };
-    for (const step of order) {
-      if (step === "openA") await open("A");
-      if (step === "openB") await open("B");
-      if (step === "closeA") await close("A");
-      if (step === "closeB") await close("B");
-      if (step === "explain") await allocateSeq(home, SESSION_ID, 1);
+          toolWindowEvictions: seeded.toolWindowEvictions,
+        }),
+      );
+      allocator.open(keyOf(`toolu_01FILL${call}`));
+      return;
     }
-    const state = await readSessionState(home, SESSION_ID);
-    return {
-      script: `${order.join(" ")} [A ${fates.A}, B ${fates.B}]`,
-      closed,
-      highest: state?.eventSeq ?? 0,
-      evictions: state?.toolWindowEvictions ?? 0,
-    };
+    oracle[call] = taken;
+  };
+  const close = (call: "A" | "B"): void => {
+    const range = allocator.close(keys[call]);
+    if (range === null) {
+      throw new Error("the allocator declined a session with an epoch");
+    }
+    closed.push({ range, oracle: oracle[call] });
+  };
+  for (const step of order) {
+    if (step === "openA") open("A");
+    if (step === "openB") open("B");
+    if (step === "closeA") close("A");
+    if (step === "closeB") close("B");
+    if (step === "explain") allocator.explain();
   }
+  const state = allocator.current();
+  return {
+    script: `${order.join(" ")} [A ${fates.A}, B ${fates.B}]`,
+    closed,
+    highest: state.eventSeq,
+    evictions: state.toolWindowEvictions,
+  };
 };
 
 interface Divergence {
@@ -390,35 +413,20 @@ const divergences = (outcome: Outcome): readonly Divergence[] =>
     ),
   );
 
-const everyScript = async (
+/**
+ * THE ENUMERATION IS THE PROOF, and nothing here trims it to fit a clock:
+ * 30 interleavings x 3 fates x 3 fates = 270 scripts, every one run. It used
+ * to carry a 30 s timeout of its own because each step was a locked file
+ * write; it now runs on the allocator's decisions in memory (memoryAllocator
+ * above), so it needs no budget beyond bun's default and no clock decides it.
+ */
+const everyScript = (
   keys: { readonly A: string; readonly B: string },
   fates: readonly OpenFate[],
-): Promise<readonly Outcome[]> => {
-  const outcomes: Outcome[] = [];
-  for (const order of interleavings()) {
-    for (const A of fates) {
-      for (const B of fates) {
-        outcomes.push(await runScript(order, keys, { A, B }));
-      }
-    }
-  }
-  return outcomes;
-};
-
-/**
- * THE ENUMERATION IS THE PROOF, so it is the clock that moves.
- *
- * 30 interleavings x 3 fates x 3 fates = 270 scripts, and an `evicted` fate
- * deliberately opens MAX_TOOL_WINDOWS further windows to push a real entry out
- * — each one a lock acquisition and a state write. MEASURED 2026-09-17 on this
- * tree (bun 1.3.13, M-series Mac, idle): 3.0 s for the whole file, twice.
- * bun's default per-test timeout is 5 s, and CI runners are slower than a
- * developer's machine: both platforms failed here at exactly 5000 ms while the
- * assertions themselves passed locally. Trimming the enumeration to fit the
- * default would narrow the proof to fit a clock, which is the one thing this
- * file may not do, so the timeout says what the work costs instead.
- */
-const PROOF_TIMEOUT_MS = 30_000;
+): readonly Outcome[] =>
+  interleavings().flatMap((order) =>
+    fates.flatMap((A) => fates.map((B) => runScript(order, keys, { A, B }))),
+  );
 
 describe("an ambiguous or unmatched close can only cost certainty", () => {
   test("one key per call: every close answers what the oracle answers, or refuses", async () => {
@@ -428,7 +436,7 @@ describe("an ambiguous or unmatched close can only cost certainty", () => {
     const keys = { A: keyOf("toolu_01PAIR_A"), B: keyOf("toolu_01PAIR_B") };
 
     // Act
-    const outcomes = await everyScript(keys, FATES);
+    const outcomes = everyScript(keys, FATES);
 
     // Assert, in three parts.
     // 1. The enumeration is what it says it is.
@@ -455,7 +463,7 @@ describe("an ambiguous or unmatched close can only cost certainty", () => {
     // a cheaper fixture that never evicted would leave every assertion above
     // passing while a third of the enumeration quietly tested nothing.
     expect(outcomes.some((outcome) => outcome.evictions > 0)).toBe(true);
-  }, PROOF_TIMEOUT_MS);
+  });
 
   test("one call opened twice: both closes answer as its own floor would, or refuse", async () => {
     // Arrange: the one way a single key still holds two entries — a
@@ -503,8 +511,8 @@ describe("an ambiguous or unmatched close can only cost certainty", () => {
     const shared = { A: KEY, B: KEY };
 
     // Act
-    const bothOpened = await everyScript(shared, ["opened"]);
-    const withRefusals = await everyScript(shared, ["opened", "refused"]);
+    const bothOpened = everyScript(shared, ["opened"]);
+    const withRefusals = everyScript(shared, ["opened", "refused"]);
 
     // Assert: safe while every call has its own entry...
     expect(bothOpened.flatMap(divergences)).toEqual([]);

@@ -988,24 +988,65 @@ export const withWindowFloor = (
  * on every hook path and this is no exception; worst case is the spool lock's
  * own, SPOOL_LOCK_RETRIES × SPOOL_LOCK_RETRY_DELAY_MS.
  */
-export const allocateSeq = async (
+export const allocateSeq = (
   home: string,
   hostSessionKey: string,
   count: number,
 ): Promise<SeqRange | null> =>
-  withSessionStateLock<SeqRange | null>(
+  allocateUnderLock(home, hostSessionKey, (fresh) => seqAllocation(fresh, count));
+
+/**
+ * What one allocator DECIDED: the state it writes, and what it hands back.
+ * The three allocators below are each a read, one of these decisions and a
+ * write, all inside the state file's lock; the decisions are exported on
+ * their own so the pairing proof (test/tool-window-pairing.test.ts) can run
+ * its hundreds of scripts against the allocators' real rules without a file
+ * write per step — the I/O that put that proof past bun's per-test budget
+ * whenever every suite shared the disk. The locked path is unchanged.
+ */
+export interface Allocation<T> {
+  readonly next: SessionState;
+  readonly value: T;
+}
+
+/**
+ * Reads, decides and writes inside the state file's own lock. Null — nothing
+ * written — when there is no state file, when the decision declines (a state
+ * from before the protocol field), or when the lock stayed busy.
+ */
+const allocateUnderLock = <T>(
+  home: string,
+  hostSessionKey: string,
+  decide: (fresh: SessionState) => Allocation<T> | null,
+): Promise<T | null> =>
+  withSessionStateLock<T | null>(
     sessionStateLockPath(home, hostSessionKey),
     null,
     async () => {
       const fresh = await readSessionState(home, hostSessionKey);
-      if (fresh === null || fresh.seqEpoch === null) {
+      const allocation = fresh === null ? null : decide(fresh);
+      if (allocation === null) {
         return null;
       }
-      const from = fresh.eventSeq + 1;
-      await writeSessionState(home, { ...fresh, eventSeq: from + count - 1 });
-      return { epoch: fresh.seqEpoch, from, count };
+      await writeSessionState(home, allocation.next);
+      return allocation.value;
     },
   );
+
+/** `allocateSeq`'s decision: the next `count` positions, as one block. */
+export const seqAllocation = (
+  fresh: SessionState,
+  count: number,
+): Allocation<SeqRange> | null => {
+  if (fresh.seqEpoch === null) {
+    return null;
+  }
+  const from = fresh.eventSeq + 1;
+  return {
+    next: { ...fresh, eventSeq: from + count - 1 },
+    value: { epoch: fresh.seqEpoch, from, count },
+  };
+};
 
 /**
  * OPENS THE WINDOW A TOOL IS ABOUT TO RUN IN, in the SAME acquisition that
@@ -1026,31 +1067,34 @@ export const allocateSeq = async (
  * still running loses its bracket and nothing else, and the count is the only
  * thing that can say whether the cap is too small.
  */
-export const openToolWindow = async (
+export const openToolWindow = (
   home: string,
   hostSessionKey: string,
   windowKey: string,
 ): Promise<number | null> =>
-  withSessionStateLock<number | null>(
-    sessionStateLockPath(home, hostSessionKey),
-    null,
-    async () => {
-      const fresh = await readSessionState(home, hostSessionKey);
-      if (fresh === null || fresh.seqEpoch === null) {
-        return null;
-      }
-      const taken = fresh.eventSeq + 1;
-      const appended = [...fresh.toolWindows, { key: windowKey, floor: taken }];
-      const evicted = Math.max(0, appended.length - MAX_TOOL_WINDOWS);
-      await writeSessionState(home, {
-        ...fresh,
-        eventSeq: taken,
-        toolWindows: appended.slice(evicted),
-        toolWindowEvictions: fresh.toolWindowEvictions + evicted,
-      });
-      return taken;
+  allocateUnderLock(home, hostSessionKey, (fresh) => toolWindowOpening(fresh, windowKey));
+
+/** `openToolWindow`'s decision: one position taken, the window recorded on it. */
+export const toolWindowOpening = (
+  fresh: SessionState,
+  windowKey: string,
+): Allocation<number> | null => {
+  if (fresh.seqEpoch === null) {
+    return null;
+  }
+  const taken = fresh.eventSeq + 1;
+  const appended = [...fresh.toolWindows, { key: windowKey, floor: taken }];
+  const evicted = Math.max(0, appended.length - MAX_TOOL_WINDOWS);
+  return {
+    next: {
+      ...fresh,
+      eventSeq: taken,
+      toolWindows: appended.slice(evicted),
+      toolWindowEvictions: fresh.toolWindowEvictions + evicted,
     },
-  );
+    value: taken,
+  };
+};
 
 /**
  * THE FLOOR A TOOL'S OWN WINDOW OPENED ON, or null when this session holds no
@@ -1128,31 +1172,35 @@ export const closedToolWindow = (
  * tool context and three arguments, has no window, and is a different function
  * with the same name.
  */
-export const allocateToolSeq = async (
+export const allocateToolSeq = (
   home: string,
   hostSessionKey: string,
   count: number,
   windowKey: string | null,
 ): Promise<SeqRange | null> =>
-  withSessionStateLock<SeqRange | null>(
-    sessionStateLockPath(home, hostSessionKey),
-    null,
-    async () => {
-      const fresh = await readSessionState(home, hostSessionKey);
-      if (fresh === null || fresh.seqEpoch === null) {
-        return null;
-      }
-      const from = fresh.eventSeq + 1;
-      const floor =
-        windowKey === null ? null : toolWindowFloorFor(fresh, windowKey);
-      await writeSessionState(home, {
-        ...fresh,
-        eventSeq: from + count - 1,
-        ...(windowKey === null ? {} : closedToolWindow(fresh, windowKey)),
-      });
-      return withWindowFloor({ epoch: fresh.seqEpoch, from, count }, floor);
+  allocateUnderLock(home, hostSessionKey, (fresh) => toolSeqAllocation(fresh, count, windowKey));
+
+/** `allocateToolSeq`'s decision: the block, bracketed by its window, which it closes. */
+export const toolSeqAllocation = (
+  fresh: SessionState,
+  count: number,
+  windowKey: string | null,
+): Allocation<SeqRange | null> | null => {
+  if (fresh.seqEpoch === null) {
+    return null;
+  }
+  const from = fresh.eventSeq + 1;
+  const floor =
+    windowKey === null ? null : toolWindowFloorFor(fresh, windowKey);
+  return {
+    next: {
+      ...fresh,
+      eventSeq: from + count - 1,
+      ...(windowKey === null ? {} : closedToolWindow(fresh, windowKey)),
     },
-  );
+    value: withWindowFloor({ epoch: fresh.seqEpoch, from, count }, floor),
+  };
+};
 
 export interface SessionStateClaim {
   /** True when THIS caller published the state; false when it adopted one. */
