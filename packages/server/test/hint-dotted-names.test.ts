@@ -99,18 +99,22 @@ describe("one pattern, two dialects", () => {
     expect(result.rows[0]?.parts).toBe(dottedNamePartsText(text));
   });
 
-  test("bootstrap.sql builds both indexes on the pattern, verbatim", async () => {
+  test("bootstrap.sql stores both word columns on the pattern, verbatim, and indexes them", async () => {
     // Arrange
     const bootstrap = await Bun.file(BOOTSTRAP_SQL_URL).text();
     const harness = await createTestHarness();
 
     // Act
     const indexes = await harness.db.execute<{ name: string }>(
-      sql`SELECT indexname AS name FROM pg_indexes WHERE indexname IN ('claims_words_idx', 'work_contexts_words_idx') ORDER BY indexname`,
+      sql`SELECT indexname AS name FROM pg_indexes WHERE indexname IN ('claims_words_tsv_idx', 'work_contexts_words_tsv_idx') ORDER BY indexname`,
+    );
+    const columns = await harness.db.execute<{ name: string }>(
+      sql`SELECT table_name AS name FROM information_schema.columns WHERE column_name = 'words_tsv' AND is_generated = 'ALWAYS' ORDER BY table_name`,
     );
 
     // Assert
     expect(bootstrap.split(`'${DOTTED_NAME_DOT_SQL}'`).length - 1).toBe(2);
-    expect(indexes.rows.map((row) => row.name)).toEqual(["claims_words_idx", "work_contexts_words_idx"]);
+    expect(indexes.rows.map((row) => row.name)).toEqual(["claims_words_tsv_idx", "work_contexts_words_tsv_idx"]);
+    expect(columns.rows.map((row) => row.name)).toEqual(["claims", "work_contexts"]);
   });
 });

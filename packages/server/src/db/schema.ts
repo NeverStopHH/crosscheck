@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import { DOTTED_NAME_DOT_SQL } from "@crosscheck/schema";
 import type { FoldedLossKinds } from "@crosscheck/schema";
 
 import {
@@ -252,6 +253,10 @@ export const workContexts = pgTable("work_contexts", {
   tsv: tsvector("tsv").generatedAlwaysAs(
     sql`to_tsvector('english', coalesce(normalized_doc, ''))`,
   ),
+  /** The document's words AND its dotted names' parts, for the hint floor's known words (round 5, L2). */
+  wordsTsv: tsvector("words_tsv").generatedAlwaysAs(
+    sql`to_tsvector('english', coalesce(normalized_doc, '')) || to_tsvector('english', regexp_replace(coalesce(normalized_doc, ''), ${sql.raw(`'${DOTTED_NAME_DOT_SQL}'`)}, ' ', 'g'))`,
+  ),
   /** Null until an embedder is configured and has embedded the current doc. */
   embedding: vector("embedding", { dimensions: EMBEDDING_DIMENSIONS }),
   embeddingModel: text("embedding_model"),
@@ -391,6 +396,10 @@ export const claims = pgTable(
       .notNull()
       .default(sql`'[]'::jsonb`),
     tsv: tsvector("tsv").generatedAlwaysAs(sql`to_tsvector('english', body)`),
+    /** The body's words AND its dotted names' parts, for the hint floor (round 5, L2). */
+    wordsTsv: tsvector("words_tsv").generatedAlwaysAs(
+      sql`to_tsvector('english', body) || to_tsvector('english', regexp_replace(body, ${sql.raw(`'${DOTTED_NAME_DOT_SQL}'`)}, ' ', 'g'))`,
+    ),
     /** Null until an embedder is configured; written once at ingest (append-only). */
     embedding: vector("embedding", { dimensions: EMBEDDING_DIMENSIONS }),
     embeddingModel: text("embedding_model"),

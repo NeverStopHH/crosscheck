@@ -179,17 +179,15 @@ const contextStatementText = sql<string>`concat_ws(' ', ${workContexts.title}, $
  * A TEXT'S DOTTED NAMES IN THEIR PARTS, as the database reads them (hold-out
  * review round 5, L2): "products.name" says products and name here too, as
  * the shared rule (`@crosscheck/schema` textLexemes) and every prompt read it.
- * The pattern is inlined as a constant, so the planner matches the indexes
- * bootstrap.sql builds on the same expression.
  */
 const dottedNameParts = (text: SQL): SQL =>
   sql`to_tsvector('english', regexp_replace(${text}, ${sql.raw(`'${DOTTED_NAME_DOT_SQL}'`)}, ' ', 'g'))`;
 
-/** What one claim says to the floor: its words, and its dotted names' parts (L2; claims_words_idx). */
-const claimWords = sql`(${claims.tsv} || ${dottedNameParts(sql`${claims.body}`)})`;
+/** What one claim says to the floor: its words, and its dotted names' parts — stored (L2; claims_words_tsv_idx). */
+const claimWords = sql`${claims.wordsTsv}`;
 
-/** What a context's document says, to the known-word prefilter (L2; work_contexts_words_idx). */
-const documentWords = sql`(${workContexts.tsv} || ${dottedNameParts(sql`coalesce(${workContexts.normalizedDoc}, '')`)})`;
+/** What a context's document says, to the known-word prefilter — stored (L2; work_contexts_words_tsv_idx). */
+const documentWords = sql`${workContexts.wordsTsv}`;
 
 /** The same statement as a document, for the search's own ranking — its dotted names' parts too (L2). */
 const contextStatement = sql`(to_tsvector('english', ${contextStatementText}) || ${dottedNameParts(contextStatementText)})`;
