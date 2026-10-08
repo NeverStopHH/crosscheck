@@ -13,6 +13,7 @@ import { join } from "node:path";
 
 import {
   loadConfig,
+  persistLegacyBinding,
   readStoredConfig,
   resolveReportableConfig,
   saveConfig,
@@ -227,6 +228,28 @@ describe("a legacy login is bound at its first read", () => {
     const written = JSON.parse(await readFile(join(home, "config.json"), "utf8")) as Record<string, unknown>;
     expect(written["keyOrigin"]).toBe(PILOT_HUB);
     expect(written["apiKey"]).toBe(STORED_KEY);
+  });
+
+  test("the write-back never stamps the old hub onto a login that landed in between", async () => {
+    // Arrange — a new-version read of a legacy login, then an OLD-version
+    // `crosscheck login` (it writes no keyOrigin) to another hub and key,
+    // landing before the write-back
+    const home = await homeLoggedInTo("legacy-binding-race", PILOT_HUB);
+    const read = await readStoredConfig(home);
+    if (read === null) {
+      throw new Error("the legacy login did not parse");
+    }
+    await saveConfig(home, { version: 1, hubUrl: PILOT_HUB_BY_IP, apiKey: ENV_KEY });
+
+    // Act — the write-back for the login it read
+    await persistLegacyBinding(home, read, PILOT_HUB);
+
+    // Assert — the newer login stands, unbound, so its own first read binds it to ITS hub
+    const after = await readStoredConfig(home);
+    expect(after?.hubUrl).toBe(PILOT_HUB_BY_IP);
+    expect(after?.apiKey).toBe(ENV_KEY);
+    expect(after?.keyOrigin).toBeUndefined();
+    expect((await loadConfig({ env: { CROSSCHECK_HOME: home } }))?.keyOrigin).toBe(PILOT_HUB_BY_IP);
   });
 
   test("once bound, editing hubUrl does not move the key", async () => {

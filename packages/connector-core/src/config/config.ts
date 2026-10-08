@@ -102,8 +102,9 @@ export const saveConfig = async (
  * (the `rememberDeveloper` rule): a `crosscheck login` or `key rotate` that
  * landed since the first read must not be overwritten, so the write happens
  * only while the file still holds the same hub and key and no binding.
+ * Exported so the race it guards can be driven directly (key-binding.test.ts).
  */
-const persistLegacyBinding = async (
+export const persistLegacyBinding = async (
   home: string,
   read: Config,
   keyOrigin: string,
