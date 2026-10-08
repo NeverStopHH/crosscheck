@@ -441,8 +441,14 @@ describe("a foreign model that fails, fails SAFELY and VISIBLY", () => {
   const SHORT_DEADLINE_MS = 400;
   /** Far past the deadline, so only the kill can end the process. */
   const HANG_MS = 30_000;
-  /** The deadline plus the runner's SIGKILL grace, plus room for a busy box. */
-  const REAPED_BY_MS = 8000;
+  /**
+   * The deadline plus the runner's 1 s SIGKILL grace, plus room for a busy
+   * box — and INSIDE bun's 5 s per-test default, so a process the runner
+   * leaks fails on the reap assertion below, not on the test runner's
+   * timeout (a timeout is not proof the leak was seen; the mutation anchor
+   * "a hung summarizer is left running past its deadline" must go red here).
+   */
+  const REAPED_BY_MS = 3000;
   const REAP_POLL_MS = 50;
 
   test("a hung wrapper is a booked timeout, and the process is reaped", async () => {
