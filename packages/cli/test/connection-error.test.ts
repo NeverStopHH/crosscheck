@@ -48,6 +48,19 @@ const hangingHub = (): ReturnType<typeof Bun.serve> =>
 const codedError = (code: string, message = "boom"): Error =>
   Object.assign(new Error(message), { code });
 
+/** What one loopback fetch threw; undefined if it somehow answered. */
+const fetchError = async (url: string): Promise<unknown> => {
+  try {
+    await fetch(url, { signal: AbortSignal.timeout(2_000) });
+    return undefined;
+  } catch (error) {
+    return error;
+  }
+};
+
+/** The context the live pins render their sentences in. */
+const LIVE_CONTEXT = { hubUrl: "http://127.0.0.1:7777", timeoutMs: HTTP_TIMEOUT_MS };
+
 describe("classifyConnectionError pins the injected shapes", () => {
   test("classifies every shape the research measured, plus node-style codes", () => {
     // Arrange: the left column of the table in src/http/connection-error.ts —
@@ -190,8 +203,40 @@ describe("the live runtime still throws the researched shapes", () => {
     expect(classifyConnectionError(caught)).toBe("protocol");
   });
 
-  test("a connection terminated on open classifies as reset", async () => {
-    // Arrange
+  test("a connection reset mid-request classifies as reset", async () => {
+    // Arrange: the reset lands only once the request bytes have ARRIVED, so
+    // the client has seen its connect and written — the researched row,
+    // "connection reset mid-request", and nothing else.
+    const reset = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open() {
+          // Wait for the request.
+        },
+        data(socket) {
+          socket.terminate();
+        },
+      },
+    });
+
+    // Act
+    const caught = await fetchError(`http://127.0.0.1:${reset.port}/`);
+    reset.stop(true);
+
+    // Assert
+    expect(classifyConnectionError(caught)).toBe("reset");
+  });
+
+  test("a connection reset as it opens is reset OR refused, and either is told honestly", async () => {
+    // Arrange: terminated in `open`, BEFORE any byte. Whether the client saw
+    // its connect first is a race the runtime decides: Bun 1.3.13 throws
+    // ECONNRESET when it did and ConnectionRefused when the reset beat it,
+    // and CPU contention makes the second common (the old pin of this row
+    // demanded "reset" and went red only when every suite ran at once:
+    // 1 of 48 isolated runs under 8 burners). The pin is the PAIR — a third
+    // shape fails here — and the sentence for either one must not claim that
+    // nothing accepted the connection, because something did.
     const reset = Bun.listen({
       hostname: "127.0.0.1",
       port: 0,
@@ -206,18 +251,39 @@ describe("the live runtime still throws the researched shapes", () => {
     });
 
     // Act
-    let caught: unknown;
-    try {
-      await fetch(`http://127.0.0.1:${reset.port}/`, {
-        signal: AbortSignal.timeout(2_000),
-      });
-    } catch (error) {
-      caught = error;
-    }
+    const caught = await fetchError(`http://127.0.0.1:${reset.port}/`);
     reset.stop(true);
+    const cause = classifyConnectionError(caught);
 
     // Assert
-    expect(classifyConnectionError(caught)).toBe("reset");
+    expect(["reset", "refused"]).toContain(cause);
+    expect(describeConnectionFailure(cause, LIVE_CONTEXT, "")).toMatch(/clos/);
+    expect(shortConnectionMessage(cause, caught, HTTP_TIMEOUT_MS)).toMatch(/clos/);
+  });
+});
+
+describe("a reset the runtime reports as refused is never told as 'nothing accepted'", () => {
+  // The collapse above, pinned on SHAPE so it holds at any load: an
+  // accepted-then-reset connection arrives as Bun's ConnectionRefused, the
+  // same object a dead port throws. Classification cannot split them, so the
+  // words must cover both — the 2026-08-18 lesson that a confident wrong
+  // sentence costs more than a hedged right one.
+  const COLLAPSED = codedError(
+    "ConnectionRefused",
+    "Unable to connect. Is the computer able to access the url?",
+  );
+
+  test("the CLI sentence names the closed-at-once case and the proxy remedy", () => {
+    const text = describeConnectionFailure(classifyConnectionError(COLLAPSED), LIVE_CONTEXT, "");
+    expect(text).toContain("closed it at once");
+    expect(text).toContain("proxy");
+    expect(text).not.toMatch(/nothing accepted the connection;/);
+  });
+
+  test("the transport phrase hedges the closed-as-it-opened case too", () => {
+    expect(shortConnectionMessage(classifyConnectionError(COLLAPSED), COLLAPSED, HTTP_TIMEOUT_MS)).toContain(
+      "closed as it opened",
+    );
   });
 });
 

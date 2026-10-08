@@ -24071,6 +24071,33 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/ssh-hostname-deadline.test.ts`,
     because: "a pathological Match exec costs the MCP server 500 ms on every tool call for its whole life",
   },
+  // Found by the load-only flake in cli/test/connection-error.test.ts: under
+  // CPU contention Bun reports a connection that was accepted and reset as it
+  // opened as ConnectionRefused, the same shape a dead port throws.
+  {
+    label: "a reset the runtime reports as refused is told as 'nothing accepted the connection'",
+    file: `${CORE}/src/http/connection-error.ts`,
+    from:
+      "        `connection refused: ${hubUrl} — nothing accepted the connection, or ` +\n" +
+      "        \"whatever did closed it at once (the runtime reports both the same \" +\n" +
+      "        \"way); is the hub running there, is the port right, and is no proxy \" +\n" +
+      "        \"or other service holding it?\"",
+    to:
+      "        `connection refused: ${hubUrl} — nothing accepted the connection; ` +\n" +
+      "        \"is the hub running there, and is the port right?\"",
+    test: `${CLI}/test/connection-error.test.ts`,
+    because:
+      "login and doctor tell a developer behind a resetting proxy that nothing is listening, " +
+      "and send them to restart a hub that is running",
+  },
+  {
+    label: "the transport phrase calls an accepted-then-reset connection a refusal",
+    file: `${CORE}/src/http/connection-error.ts`,
+    from: "      return \"could not connect (refused, unresolvable name, wrong tls port, or closed as it opened)\";",
+    to: "      return \"could not connect (refused, unresolvable name, or wrong tls port)\";",
+    test: `${CLI}/test/connection-error.test.ts`,
+    because: "sync state, the statusline and the MCP tools omit the one cause a contended reset produces",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -24127,6 +24154,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/ci-report.test.ts 6
  * PRINTS: packages/cli/test/ci-status-render.test.ts 3
  * PRINTS: packages/cli/test/conference-cli.test.ts 12
+ * PRINTS: packages/cli/test/connection-error.test.ts 2
  * PRINTS: packages/cli/test/connector-capture-health.test.ts 3
  * PRINTS: packages/cli/test/coverage-cli.test.ts 6
  * PRINTS: packages/cli/test/cursor-doctor.test.ts 4
