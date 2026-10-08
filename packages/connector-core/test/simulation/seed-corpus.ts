@@ -194,7 +194,33 @@ const L7_LAST_WORD: readonly CorpusSeed[] = [
   { seed: 10478, generator: "sleep", invariant: "I4", fix: "7322b132", bug: "the generated scenario", events: scenarioOf(10478, GENERATORS.sleep) },
 ];
 
-export const SEED_CORPUS: readonly CorpusSeed[] = [...ROUND_7_SWEEP, ...ROUND_7_REVIEW, ...ROUND_8_REVIEW, ...L7_LAST_WORD];
+/**
+ * A re-fire beside a SessionEnd whose end LANDED (an independent review's
+ * `all` sweep, seed 30495): behind a slow hub a heal's register of the next
+ * life landed unheard under the life's epoch; the re-fire's register timed
+ * out, and it settled back on the ended life with neither the state nor the
+ * end's marker to carry, on a fresh mint. The heal carried that epoch into
+ * the next life, which the hub had filed under the old one.
+ */
+const REFIRE_BESIDE_LANDED_END: readonly CorpusSeed[] = [
+  {
+    seed: 30495,
+    generator: "all",
+    invariant: "I3",
+    fix: "2b901082",
+    bug: "a re-fire beside a landed SessionEnd settled back on the ended life on a fresh mint, and the heal split the next life",
+    events: [start(0), slow(1400, 2, 1), hubEnd(0), edit(0), par(start(0), end(0))],
+  },
+  { seed: 30495, generator: "all", invariant: "I3", fix: "2b901082", bug: "the generated scenario", events: scenarioOf(30495, GENERATORS.all) },
+];
+
+export const SEED_CORPUS: readonly CorpusSeed[] = [
+  ...ROUND_7_SWEEP,
+  ...ROUND_7_REVIEW,
+  ...ROUND_8_REVIEW,
+  ...L7_LAST_WORD,
+  ...REFIRE_BESIDE_LANDED_END,
+];
 
 /** A corpus entry as its fixed scenario's title names it. */
 export const corpusName = (entry: CorpusSeed): string =>
