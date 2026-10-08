@@ -17,6 +17,7 @@
 import { resolve } from "node:path";
 
 import { UNKNOWN_DEVELOPER_ID } from "@crosscheck/connector-core/capture/records.ts";
+import { selfSpawnCmd } from "@crosscheck/connector-core/config/runtime-isolation.ts";
 
 import {
   CHARS_PER_TOKEN_ESTIMATE,
@@ -81,8 +82,7 @@ const spawnSummarizeWorker = (
     home: ctx.config.home,
     agentKind: ctx.config.agentKind,
     cmd: [
-      process.execPath,
-      WORKER_ENTRY_PATH,
+      ...selfSpawnCmd(WORKER_ENTRY_PATH),
       "--transcript",
       transcriptPath,
       "--session",

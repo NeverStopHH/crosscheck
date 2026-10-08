@@ -19,7 +19,22 @@
  * No TypeScript, no Bun APIs, no dependencies in this file — it must run
  * exactly where nothing else of ours can. Proven end-to-end (all three paths)
  * by packages/cli/test/e2e/npm-package.e2e.test.ts.
+ *
+ * ISOLATED FROM THE REPO (connector-core config/runtime-isolation.ts). Hooks,
+ * the statusline and the MCP server run with the project as cwd, and bun
+ * would read that directory's bunfig.toml (a `preload` runs the repo's code
+ * in the process holding the api key) and its .env files (which steer the hub
+ * url, the key, a proxy). Path 2 therefore starts bun with `--no-env-file`
+ * and `--config=` naming crosscheck's own empty bunfig inside this package —
+ * the same relative layout in a checkout, a global install and an npx cache,
+ * which is why it is resolved from __dirname and checked before the spawn: a
+ * missing file must fail loudly, never fall back to reading the repo's.
+ * Path 1 cannot be isolated from in here: the bun running this file has
+ * already read the cwd's bunfig and .env. crosscheck never wires a hook that
+ * way (init writes the node shim or `bun <flags> <entry>`); a person who runs
+ * `bunx --bun crosscheck-hub` inside a repo gets that repo's bun config.
  */
+const fs = require("node:fs");
 const path = require("node:path");
 
 const ENTRY = path.join(
@@ -30,6 +45,16 @@ const ENTRY = path.join(
   "src",
   "bin",
   "crosscheck.ts",
+);
+
+const ISOLATED_BUNFIG = path.join(
+  __dirname,
+  "..",
+  "packages",
+  "connector-core",
+  "src",
+  "config",
+  "isolated.bunfig.toml",
 );
 
 /* BSD sysexits EX_SOFTWARE: an internal failure that is not the child's. */
@@ -67,6 +92,16 @@ if (process.versions.bun !== undefined) {
   /* A spawn error meaning "this candidate is not runnable here, try the next". */
   const RETRIABLE_SPAWN_ERRORS = ["ENOENT", "ENOTDIR", "EACCES"];
 
+  if (!fs.existsSync(ISOLATED_BUNFIG)) {
+    console.error(
+      "crosscheck's own bunfig is missing from its package (" +
+        ISOLATED_BUNFIG +
+        "), and crosscheck will not start without it: it is what keeps a " +
+        "repo's bunfig.toml and .env out of crosscheck. Reinstall crosscheck-hub.",
+    );
+    process.exit(EXIT_INTERNAL);
+  }
+
   const startWith = function (index) {
     if (index >= CANDIDATES.length) {
       console.error(
@@ -80,7 +115,7 @@ if (process.versions.bun !== undefined) {
     }
     const current = spawn(
       CANDIDATES[index],
-      [ENTRY].concat(process.argv.slice(2)),
+      ["--no-env-file", "--config=" + ISOLATED_BUNFIG, ENTRY].concat(process.argv.slice(2)),
       { stdio: "inherit" },
     );
     child = current;

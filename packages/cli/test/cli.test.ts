@@ -6,6 +6,7 @@ import { dirname, isAbsolute, join } from "node:path";
 import { runCli } from "../src/index.ts";
 import type { Env } from "../src/index.ts";
 import { resolveLauncher } from "../src/cli/init.ts";
+import { ISOLATED_BUNFIG_PATH } from "@crosscheck/connector-core/config/runtime-isolation.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
 const HUB_URL = "https://hub.example.com";
@@ -165,7 +166,7 @@ describe("crosscheck init", () => {
     expect(result.exitCode).toBe(0);
     const raw = await readFile(settingsPath, "utf8");
     expect(raw).not.toContain("@crosscheck/cli");
-    const [runtime, script, ...rest] = hookCommand(
+    const [runtime, noEnvFile, config, script, ...rest] = hookCommand(
       JSON.parse(raw),
       "SessionStart",
     ).split(" ");
@@ -174,6 +175,11 @@ describe("crosscheck init", () => {
     expect(isAbsolute(unquote(script ?? ""))).toBe(true);
     expect(await Bun.file(unquote(runtime ?? "")).exists()).toBe(true);
     expect(await Bun.file(unquote(script ?? "")).exists()).toBe(true);
+    // Isolated from the repo the hook fires in: no .env, crosscheck's own
+    // (existing, packaged) bunfig instead of the repo's.
+    expect(noEnvFile).toBe("--no-env-file");
+    expect(unquote(config ?? "")).toBe(`--config=${ISOLATED_BUNFIG_PATH}`);
+    expect(await Bun.file(ISOLATED_BUNFIG_PATH).exists()).toBe(true);
   });
 
   test("re-running init with the path launcher stays byte-identical", async () => {

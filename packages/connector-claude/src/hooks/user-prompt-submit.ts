@@ -49,6 +49,7 @@
 import { resolve } from "node:path";
 
 import { aPersonReads } from "@crosscheck/connector-core/config/tripwire.ts";
+import { selfSpawnCmd } from "@crosscheck/connector-core/config/runtime-isolation.ts";
 import { INTENT_PROMPT_MAX_CHARS } from "@crosscheck/connector-core/constants.ts";
 import { cutWellFormed } from "@crosscheck/connector-core/briefing/cut.ts";
 import {
@@ -119,8 +120,7 @@ const spawnDetached = (ctx: HookContext, cmd: readonly string[]): void => {
  */
 const spawnIntentWorker = (ctx: HookContext, promptFile: string): void => {
   spawnDetached(ctx, [
-    process.execPath,
-    INTENT_WORKER_ENTRY_PATH,
+    ...selfSpawnCmd(INTENT_WORKER_ENTRY_PATH),
     "--session",
     ctx.payload.session_id,
     "--prompt-file",
@@ -192,8 +192,7 @@ const maybeSpawnGhostWorker = async (ctx: HookContext): Promise<void> => {
       return;
     }
     spawnDetached(ctx, [
-      process.execPath,
-      GHOST_WORKER_ENTRY_PATH,
+      ...selfSpawnCmd(GHOST_WORKER_ENTRY_PATH),
       "--session",
       ctx.payload.session_id,
     ]);

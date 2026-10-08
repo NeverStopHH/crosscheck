@@ -14,6 +14,7 @@ import { realpath } from "node:fs/promises";
 
 import type { Env } from "./paths.ts";
 import type { McpServerEntry } from "./mcp-config.ts";
+import { RUNTIME_ISOLATION_FLAGS } from "./runtime-isolation.ts";
 
 /** Characters a POSIX shell passes through untouched. */
 const SHELL_SAFE_PATTERN = /^[\w@%+=:,./-]+$/;
@@ -203,7 +204,10 @@ export const resolveCommandPrefix = (launcher: UsableLauncher): string => {
     case "bare":
       return "crosscheck";
     case "entry":
-      return `${shellQuote(launcher.runtime)} ${shellQuote(launcher.entry)}`;
+      // Isolated from the repo it runs in (config/runtime-isolation.ts): the
+      // hook fires with the project as cwd, and bun would read its bunfig
+      // preload and .env first.
+      return [launcher.runtime, ...RUNTIME_ISOLATION_FLAGS, launcher.entry].map(shellQuote).join(" ");
   }
 };
 
@@ -230,7 +234,7 @@ export const resolveMcpLauncher = (launcher: UsableLauncher): McpServerEntry => 
       return {
         type: "stdio",
         command: launcher.runtime,
-        args: [launcher.entry, "mcp"],
+        args: [...RUNTIME_ISOLATION_FLAGS, launcher.entry, "mcp"],
       };
   }
 };

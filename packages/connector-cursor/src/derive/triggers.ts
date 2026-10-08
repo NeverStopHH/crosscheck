@@ -40,6 +40,7 @@ import {
   sessionSlug,
   writePrivateFile,
 } from "@crosscheck/connector-core/config/paths.ts";
+import { selfSpawnCmd } from "@crosscheck/connector-core/config/runtime-isolation.ts";
 import { spawnDeriveWorker } from "@crosscheck/connector-core/derive/spawn.ts";
 import {
   hasGhostAllowance,
@@ -144,8 +145,7 @@ export const maybeSpawnCursorIntentWorker = async (
       cutWellFormed(prompt, INTENT_PROMPT_MAX_CHARS),
     );
     spawn(ctx, [
-      process.execPath,
-      INTENT_WORKER_ENTRY_PATH,
+      ...selfSpawnCmd(INTENT_WORKER_ENTRY_PATH),
       "--session",
       ctx.hostSessionKey,
       "--prompt-file",
@@ -188,8 +188,7 @@ export const maybeSpawnCursorGhostWorker = async (
       return;
     }
     spawn(ctx, [
-      process.execPath,
-      GHOST_WORKER_ENTRY_PATH,
+      ...selfSpawnCmd(GHOST_WORKER_ENTRY_PATH),
       "--session",
       ctx.hostSessionKey,
     ]);
@@ -326,8 +325,7 @@ export const runCursorSummarizerGate = async (
 
   if (fired && look.slice !== null && look.transcriptPath !== null) {
     spawn(ctx, [
-      process.execPath,
-      SUMMARIZER_WORKER_ENTRY_PATH,
+      ...selfSpawnCmd(SUMMARIZER_WORKER_ENTRY_PATH),
       "--session",
       ctx.hostSessionKey,
       "--transcript",
