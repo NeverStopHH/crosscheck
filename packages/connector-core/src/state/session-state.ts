@@ -270,6 +270,23 @@ const SessionStateObjectSchema = z.looseObject({
         repoId: z.string().min(1).nullable(),
         attempts: z.number().int().min(1).default(1),
         stamp: z.string().min(1).nullable().default(null),
+        // THE ROOT'S TOPIC (capture/touched-root.ts `RootHead`): the branch
+        // read from its HEAD file, the bytes that were read, the commit at
+        // the session's first touch and the touch times — null on an entry
+        // written before topics existed, which reads as "not seen yet".
+        branch: z.string().min(1).nullable().default(null),
+        headStamp: z.string().min(1).nullable().default(null),
+        firstHead: z.string().min(1).nullable().default(null),
+        firstTouchedAt: z.string().min(1).nullable().default(null),
+        lastTouchedAt: z.string().min(1).nullable().default(null),
+        bashTouchedAt: z.string().min(1).nullable().default(null),
+        // When the Stop-time git lane last swept the root (flows/git-lane.ts):
+        // past MAX_GIT_LANE_ROOTS, the root swept longest ago goes next.
+        gitSweptAt: z.string().min(1).nullable().default(null),
+        // The life whose git lane already booked this root's untracked
+        // listing as cut at the bound (review M8): booked once per root per
+        // life, never once per Stop. Absent on entries written before it.
+        untrackedCutLife: z.string().min(1).nullable().optional(),
       }),
     )
     .default([]),
@@ -439,6 +456,30 @@ const SessionStateObjectSchema = z.looseObject({
    * state built by an older writer (or a test) without it still parses.
    */
   workContextTitleSource: WorkContextTitleSourceSchema.nullable().optional().catch(null),
+  /**
+   * The agent kind the life registered as (review-2 round 8, L7): the producer
+   * of the work context SessionEnd sends for it. Null on a state from before
+   * the field, whose end sends none.
+   */
+  agentKind: z.string().min(1).nullable().default(null),
+  /**
+   * THE STATUS THE HUB LAST ACKNOWLEDGED, and for which work context (review-2
+   * round 8, L7): the last update it accepted, from a flush or from
+   * set_intent's own post. SessionEnd sends the life's work context once more
+   * when the state's status is not this one — a post that may have landed and
+   * did not left the hub on the status before it, and no later sender of the
+   * work context was coming to make the two agree.
+   *
+   * `uncertain`: a set_intent post since then may have landed and was never
+   * answered, so the hub may hold ITS status instead — SessionEnd (or, for a
+   * host that died, session-reap) sends the work context whatever the state's
+   * status is (topics seed 416, sleep seed 10478). The next acknowledgement
+   * clears it.
+   */
+  workContextAcked: z
+    .object({ id: z.string().min(1), status: z.string().min(1), uncertain: z.boolean().optional() })
+    .nullable()
+    .default(null),
   /**
    * Derived-intent telemetry (trial finding #16; the finding-#14 lesson — a
    * fire that lands nothing must be a number somebody can explain): fires
@@ -684,6 +725,81 @@ const SessionStateObjectSchema = z.looseObject({
    * runs doctor then never blames.
    */
   deriveFires: DeriveFiresSchema,
+  /**
+   * THE TOPICS THIS LIFE HAS OPENED (DESIGN.md "One session, many topics";
+   * flows/topic-contexts.ts). One long-lived session edits sibling worktrees
+   * on many branches, and filing all of it under one context made a sweep
+   * every overlap check ignores. Each entry is one (repo, branch) the life
+   * touched outside its start topic, and the work context it spooled for it —
+   * spooled BEFORE its first target, which is why an entry is written only
+   * after that append persisted.
+   *
+   * PER LIFE: `sessionId` is the life that registered it, and an entry of any
+   * other life is no registration at all — a heal moves to the next life, and
+   * its topics' work contexts are owed again, spooled ahead of the next
+   * target each one gets (flows/heal-session.ts clears the list). Capped at
+   * MAX_TOPICS_PER_SESSION; `status` and `ackedStatus` are the topic's own,
+   * for set_intent, the flush-time rewrite and SessionEnd's last word.
+   */
+  topicContexts: z
+    .array(
+      z.object({
+        // The topic's MINTED id (flows/topic-contexts.ts `mintTopicId`): its
+        // root's key and its ordinal in that root — never its branch, so a
+        // rename keeps it.
+        key: z.string().min(1),
+        sessionId: z.string().min(1),
+        workContextId: z.string().min(1),
+        // The branch the topic was opened on — its title's, and its wire
+        // `branch` — and its AFFINITY: every branch the rules attached to it
+        // since (a rename, a continuation, a detached HEAD on top of it).
+        branch: z.string().min(1),
+        branches: z.array(z.string().min(1)).default([]),
+        // The commit the topic was last seen at: what "descends from the
+        // topic's HEAD" is asked of (git/head-history.ts).
+        head: z.string().min(1).nullable().default(null),
+        title: z.string().min(1),
+        status: z.string().min(1),
+        baseCommit: z.string().min(1).nullable().default(null),
+        root: z.string().min(1),
+        registeredAt: z.string().min(1),
+        lastTouchedAt: z.string().min(1),
+        ackedStatus: z.string().min(1).nullable().default(null),
+        // The topic's twin of `workContextAcked.uncertain`.
+        ackUncertain: z.boolean().optional(),
+      }),
+    )
+    .default([]),
+  /**
+   * The branch the START checkout was on when this life registered, read
+   * from its HEAD file exactly as a touched root's is — the topic whose
+   * touches file under the session's own work context. Null on a state from
+   * before topics: the session's own checkout then files there whatever its
+   * branch, and every other root opens a topic.
+   */
+  startBranch: z.string().min(1).nullable().default(null),
+  /**
+   * The start topic's own affinity, beside `startBranch`: the commit it was
+   * last seen at and the branches the topic rules attached to it since — a
+   * rename of the start branch, a detached HEAD on top of it. Optional, so a
+   * state from before them reads as the start branch alone.
+   */
+  startHead: z.string().min(1).nullable().optional(),
+  startBranches: z.array(z.string().min(1)).optional(),
+  /** When a touch last filed under the session's own context — set_intent's "most recent topic" needs both sides. */
+  sessionTouchedAt: z.string().min(1).nullable().default(null),
+  /** Touches filed under the session's own context because the topic cap was reached (counted, never silent). */
+  topicOverflowCount: z.number().int().min(0).default(0),
+  /**
+   * When a Bash call ran since the last full Stop sweep (review H2): the next
+   * Stop and SubagentStop also sweep the repo's worktrees that changed since
+   * their last sweep (git/shell-roots.ts `changedWorktreesOf`), because a
+   * shell's words cannot always tell where it worked. Optional, so a state
+   * from before it reads as no shell.
+   */
+  shellSweepSince: z.string().min(1).nullable().optional(),
+  /** Candidate roots the git lane's root cap left for a later Stop — counted, never silently skipped (review H2). */
+  gitLaneRootsDeferred: z.number().int().min(0).optional(),
 });
 
 /**
@@ -697,6 +813,9 @@ export const SessionStateSchema = z.preprocess(
 );
 
 export type SessionState = z.infer<typeof SessionStateObjectSchema>;
+
+/** One topic a life opened (`topicContexts`). */
+export type TopicContext = SessionState["topicContexts"][number];
 
 /**
  * What a WRITER may pass: the defaulted fields are optional, exactly as they
@@ -928,7 +1047,46 @@ export const withCarriedCapture = (
         // for a "first" finished turn the session had long ago, and doctor
         // counts a compacted session as a short one.
         stopTurnCount: previous.stopTurnCount,
+        // A RE-FIRE ON THE SAME LIFE KEEPS ITS WORK CONTEXT'S TITLE AND STATUS
+        // (review-2 round 8, L1): set_intent writes the status into this file
+        // first, and one that ran while this fire's register was out would
+        // otherwise be put back to the status the fire read before it. Read
+        // here, under the lock, from the file as it is now.
+        ...(previous.crosscheckSessionId === state.crosscheckSessionId
+          ? {
+              workContextTitle: previous.workContextTitle ?? state.workContextTitle,
+              // THE MARKER TRAVELS WITH THE TITLE IT DESCRIBES: a kept
+              // fallback title (the branch) under this fire's `host` marker
+              // would never be withheld from colleagues of an opted-out
+              // developer (services/live-location.ts on the hub).
+              ...(previous.workContextTitle === null
+                ? {}
+                : { workContextTitleSource: previous.workContextTitleSource ?? null }),
+              workContextStatus: previous.workContextStatus ?? state.workContextStatus,
+              // ...and what the hub acknowledged of it (L7).
+              workContextAcked: previous.workContextAcked,
+              // ...and the topics it opened, whose work contexts are spooled
+              // already: a re-fire that dropped them would spool every one
+              // again, and one that re-read the start branch would move the
+              // life's own topic under it (DESIGN.md "One session, many topics").
+              topicContexts: previous.topicContexts,
+              startBranch: previous.startBranch ?? state.startBranch ?? null,
+              startHead: previous.startHead ?? state.startHead ?? null,
+              startBranches: previous.startBranches ?? state.startBranches ?? [],
+              sessionTouchedAt: previous.sessionTouchedAt,
+            }
+          : {}),
+        topicOverflowCount: previous.topicOverflowCount,
+        // ...and a shell's pending sweep and the lane's deferred count (review H2).
+        shellSweepSince: previous.shellSweepSince ?? null,
+        gitLaneRootsDeferred: previous.gitLaneRootsDeferred ?? 0,
       };
+
+/** The epoch and counter a state that carries nothing starts on. */
+export interface SeqStart {
+  readonly seqEpoch: string | null;
+  readonly eventSeq: number;
+}
 
 /**
  * SessionStart's publication: create the state file, or replace one of the
@@ -940,17 +1098,29 @@ export const withCarriedCapture = (
  * that stays busy falls back to the plain create — publishing state is not
  * optional (spool reap infers "no writer left" from its absence), so the
  * counters lose rather than the file.
+ *
+ * `startOf` answers the epoch and counter a publish that finds nothing to
+ * carry starts on, read under the lock (review-2 round 8, L2): the register's
+ * caller knows which epoch the life's `session.started` went out under — and,
+ * from the life's end marker, how far its positions went (review-2 round 9,
+ * L4) — and a SessionEnd that deleted the state while the register was out
+ * leaves nothing else to name them. Under the lock because SessionEnd writes
+ * its marker before it deletes the state under this same lock: a publish that
+ * finds the state gone finds the marker there. The busy-lock fallback keeps
+ * `state` as it is — it may overwrite a state it never read, and only a fresh
+ * epoch is safe beside a counter at 0.
  */
 export const publishSessionState = async (
   home: string,
   state: SessionStateInput,
+  startOf: () => Promise<SeqStart> = () => Promise.resolve({ seqEpoch: state.seqEpoch ?? null, eventSeq: state.eventSeq ?? 0 }),
 ): Promise<void> => {
   const published = await withSessionStateLock(
     sessionStateLockPath(home, state.hostSessionKey),
     false,
     async () => {
       const previous = await readSessionState(home, state.hostSessionKey);
-      await writeSessionState(home, withCarriedCapture(measuredFromStart(state), previous));
+      await writeSessionState(home, withCarriedCapture(measuredFromStart({ ...state, ...(await startOf()) }), previous));
       return true;
     },
   );
@@ -1040,6 +1210,67 @@ export const allocateSeq = async (
       return { epoch: fresh.seqEpoch, from, count };
     },
   );
+
+/**
+ * A step that must not interleave with the state's own writers — a heal's
+ * switch, a debt it settles — under the state file's lock, with the same
+ * patience as every acquisition here. `fallback` is the answer when the lock
+ * stays busy.
+ */
+export const underSessionStateLock = <T>(
+  home: string,
+  hostSessionKey: string,
+  fallback: T,
+  action: () => Promise<T>,
+): Promise<T> => withSessionStateLock(sessionStateLockPath(home, hostSessionKey), fallback, action);
+
+/** A life SessionEnd found the state on that is not the one it ends, and that life's end position. */
+export interface MovedLife {
+  readonly crosscheckSessionId: string;
+  readonly seq: SeqRange | null;
+}
+
+const closeState = async (
+  home: string,
+  hostSessionKey: string,
+  crosscheckSessionId: string,
+): Promise<MovedLife | null> => {
+  const fresh = await readSessionState(home, hostSessionKey);
+  await deleteSessionState(home, hostSessionKey);
+  if (fresh === null || fresh.crosscheckSessionId === crosscheckSessionId) {
+    return null;
+  }
+  return {
+    crosscheckSessionId: fresh.crosscheckSessionId,
+    seq: fresh.seqEpoch === null ? null : { epoch: fresh.seqEpoch, from: fresh.eventSeq + 1, count: 1 },
+  };
+};
+
+/**
+ * SessionEnd's delete, COMPARED under the state lock (review-2 finding 2).
+ * SessionEnd reads the life it ends at its start; a mid-life heal can move
+ * the state to the next life before this delete, and a delete that did not
+ * look left that life open on the hub with nothing naming it — the next
+ * resume landed on it under a fresh epoch and split its order.
+ *
+ * The state goes either way: this SessionEnd closes the host session. When it
+ * named ANOTHER life, that life is returned with the position its end takes —
+ * past everything the counter handed out, in the same acquisition — and the
+ * caller ends it too. A lock that stays busy falls back to the same read and
+ * delete without it: a state file that outlives its session pins its spool.
+ */
+export const closeSessionState = async (
+  home: string,
+  hostSessionKey: string,
+  crosscheckSessionId: string,
+): Promise<MovedLife | null> => {
+  const closed = await withSessionStateLock<{ readonly moved: MovedLife | null } | null>(
+    sessionStateLockPath(home, hostSessionKey),
+    null,
+    async () => ({ moved: await closeState(home, hostSessionKey, crosscheckSessionId) }),
+  );
+  return closed === null ? closeState(home, hostSessionKey, crosscheckSessionId) : closed.moved;
+};
 
 /**
  * OPENS THE WINDOW A TOOL IS ABOUT TO RUN IN, in the SAME acquisition that
@@ -1385,10 +1616,37 @@ export const withKnownWorktreeRoot = (
    */
   stamp: string | null = null,
 ): SessionState => {
-  const withoutRoot = state.knownWorktreeRoots.filter(
-    (entry) => entry.root !== root,
-  );
-  const merged = [...withoutRoot, { root, repoId, attempts, stamp }];
+  const previous = state.knownWorktreeRoots.find((entry) => entry.root === root);
+  // A re-judged identity is a new answer about the REPO, not about the
+  // topic: what the HEAD pass recorded on the entry stays with it — unless
+  // the checkout itself was replaced, when nothing it said survives.
+  const isSameCheckout =
+    previous !== undefined && (previous.stamp === null || stamp === null || previous.stamp === stamp);
+  return withRootEntry(state, {
+    ...(isSameCheckout ? previous : EMPTY_ROOT_TOPIC),
+    root,
+    repoId,
+    attempts,
+    stamp,
+  });
+};
+
+type KnownRootEntry = SessionState["knownWorktreeRoots"][number];
+
+/** An entry's topic fields before any HEAD has been read for it. */
+const EMPTY_ROOT_TOPIC = {
+  branch: null,
+  headStamp: null,
+  firstHead: null,
+  firstTouchedAt: null,
+  lastTouchedAt: null,
+  bashTouchedAt: null,
+  gitSweptAt: null,
+} as const;
+
+/** Dedup by root, newest last, FIFO-capped — the one write every root entry takes. */
+const withRootEntry = (state: SessionState, entry: KnownRootEntry): SessionState => {
+  const merged = [...state.knownWorktreeRoots.filter((known) => known.root !== entry.root), entry];
   return {
     ...state,
     knownWorktreeRoots:
@@ -1397,6 +1655,95 @@ export const withKnownWorktreeRoot = (
         : merged.slice(merged.length - MAX_KNOWN_WORKTREE_ROOTS),
   };
 };
+
+/** What one touch read of a root's HEAD (capture/touched-root.ts `RootHead`). */
+export interface RootHeadFold {
+  readonly root: string;
+  readonly repoId: string;
+  readonly branch: string | null;
+  readonly headStamp: string | null;
+  readonly firstHead: string | null;
+  readonly touchedAt: string;
+}
+
+/**
+ * A touch's HEAD read, folded into the root's cache entry — created for a
+ * root the identity pass never had to judge, which is the session's own
+ * checkout. The first touch is kept once set (`firstTouchedAt`, `firstHead`):
+ * the git lane's commit window opens there (flows/capture-git-touches.ts).
+ * The entry moves to the end, so the FIFO cap evicts the root touched least
+ * recently rather than the one judged first.
+ */
+export const withRootHead = (state: SessionState, head: RootHeadFold): SessionState => {
+  const previous = state.knownWorktreeRoots.find((entry) => entry.root === head.root);
+  const base: KnownRootEntry = previous ?? {
+    root: head.root,
+    repoId: head.repoId,
+    attempts: 1,
+    stamp: null,
+    ...EMPTY_ROOT_TOPIC,
+  };
+  return withRootEntry(state, {
+    ...base,
+    branch: head.branch,
+    headStamp: head.headStamp,
+    firstHead: base.firstHead ?? head.firstHead,
+    firstTouchedAt: base.firstTouchedAt ?? head.touchedAt,
+    lastTouchedAt: head.touchedAt,
+  });
+};
+
+/**
+ * A SHELL RAN IN THIS ROOT (DESIGN.md "One session, many topics"): a Bash
+ * call's `cp`, `mv`, redirect, generator or `git commit` names no file to any
+ * edit event, so nothing is parsed out of it — the root is marked, and the
+ * next Stop or SubagentStop sweeps it FIRST (flows/git-lane.ts), the git lane
+ * doing the capture. A root no touch has judged yet is entered under the
+ * repo id the hook already resolved for its cwd; its first touch, if this is
+ * it, opens the lane's window there.
+ */
+export const withBashTouch = (state: SessionState, root: string, repoId: string, at: string): SessionState => {
+  const previous = state.knownWorktreeRoots.find((entry) => entry.root === root);
+  const base: KnownRootEntry = previous ?? { root, repoId, attempts: 1, stamp: null, ...EMPTY_ROOT_TOPIC };
+  return withRootEntry(state, {
+    ...base,
+    bashTouchedAt: at,
+    firstTouchedAt: base.firstTouchedAt ?? at,
+    lastTouchedAt: at,
+  });
+};
+
+/**
+ * ONE BASH CALL, written down (review H2): every root it is known to have
+ * worked in — the cwd's and the ones its words named — marked for the next
+ * sweep, and the shell's instant kept so that sweep also looks at every
+ * worktree of the repo that changed, for what the words could not tell.
+ */
+/**
+ * A root the git lane swept, written down (review H2): its bash mark spent and
+ * its turn stamped, and — for a worktree only a shell worked in, which the
+ * sweep found by discovery — an entry of its own, so the next discovery finds
+ * it already swept and its first sweep opens its window from here.
+ */
+export const withSweptRoot = (state: SessionState, root: string, at: string, isUntrackedCut = false): SessionState => {
+  const previous = state.knownWorktreeRoots.find((entry) => entry.root === root);
+  const base: KnownRootEntry = previous ?? {
+    root,
+    repoId: state.repoId,
+    attempts: 1,
+    stamp: null,
+    ...EMPTY_ROOT_TOPIC,
+    firstTouchedAt: at,
+    lastTouchedAt: at,
+  };
+  const cut = isUntrackedCut ? { untrackedCutLife: state.crosscheckSessionId } : {};
+  return withRootEntry(state, { ...base, bashTouchedAt: null, gitSweptAt: at, ...cut });
+};
+
+export const withShellRun = (state: SessionState, roots: readonly string[], repoId: string, at: string): SessionState => ({
+  ...roots.reduce((marked, root) => withBashTouch(marked, root, repoId, at), state),
+  shellSweepSince: state.shellSweepSince ?? at,
+});
 
 /** Remembers a probe key that answered "nothing", same FIFO cap as the markers. */
 export const withLandedClean = (
@@ -1631,6 +1978,8 @@ export const deriveSessionState = (
     workContextTitle: null,
     workContextStatus: null,
     workContextTitleSource: null,
+    agentKind: null,
+    workContextAcked: null,
     intentFireCount: 0,
     intentNoneCount: 0,
     intentSetCount: 0,
@@ -1666,5 +2015,9 @@ export const deriveSessionState = (
     draftNudge: null,
     draftNudgeRetryAt: null,
     deriveFires: [],
+    topicContexts: [],
+    startBranch: null,
+    sessionTouchedAt: null,
+    topicOverflowCount: 0,
   };
 };

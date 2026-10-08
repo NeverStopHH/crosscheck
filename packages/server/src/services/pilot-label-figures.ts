@@ -37,6 +37,7 @@ import {
   PILOT_REPORT_MAX_LABEL_REASONS,
 } from "../constants.ts";
 import { PER_HUNDRED, measured, unavailable } from "./pilot-figure.ts";
+import { sessionActiveIn } from "./session-window.ts";
 import type { Figure } from "./pilot-figure.ts";
 import type { Db } from "../db/client.ts";
 
@@ -156,11 +157,15 @@ export const readLabelTally = async (deps: Deps, population: SQL): Promise<Label
   };
 };
 
+/**
+ * The sessions a window holds: started in it, or did work in it — a target
+ * created or last seen there (services/session-window.ts), so one long-lived
+ * session's recent interventions are labelled with the week they happened in.
+ */
 export const windowPopulation = (repo: string, since: Date, until: Date): SQL =>
   sql`SELECT s.id FROM agent_sessions s
     WHERE s.repo = ${repo}
-      AND s.started_at >= ${since.toISOString()}::timestamptz
-      AND s.started_at < ${until.toISOString()}::timestamptz`;
+      AND ${sessionActiveIn(since, until)}`;
 
 const cohortPopulation = (repo: string, cohort: PilotCohort): SQL =>
   sql`SELECT ps.session_id AS id FROM pilot_sessions ps
@@ -238,8 +243,7 @@ const readLegacyNoise = async (
     JOIN agent_sessions s ON s.id = hd.session_id
     WHERE m.ref_kind = 'hint_delivery' AND m.mark = ${PILOT_LEGACY_NOISE_MARK}
       AND s.repo = ${repo}
-      AND s.started_at >= ${since.toISOString()}::timestamptz
-      AND s.started_at < ${until.toISOString()}::timestamptz`);
+      AND ${sessionActiveIn(since, until)}`);
   return rows.rows[0]?.n ?? 0;
 };
 

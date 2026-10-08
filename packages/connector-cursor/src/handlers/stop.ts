@@ -29,6 +29,7 @@ import {
   maybeSpawnCursorGhostWorker,
   runCursorSummarizerGate,
 } from "../derive/triggers.ts";
+import { healerFor } from "./heal.ts";
 
 export const handleCursorStop = async (
   ctx: CursorHookContext,
@@ -43,7 +44,7 @@ export const handleCursorStop = async (
   await maybeSpawnCursorGhostWorker(ctx);
   await flushSpool(
     ctx.hub,
-    { sessionId: state.crosscheckSessionId, developerId: state.developerId },
+    { sessionId: state.crosscheckSessionId, developerId: state.developerId, heal: healerFor(ctx) },
     budget.spareMs(),
   );
   return "";

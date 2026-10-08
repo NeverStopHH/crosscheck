@@ -82,6 +82,20 @@ describe("LOSS-7: the report folds every ledger", () => {
     expect(local.drops.ignoredRecordKinds["claim_revalidation"]).toBe(2);
   });
 
+  test("a withheld record reaches the wire as its own kind, never as the hub's refusal", async () => {
+    // Arrange: one record the hub refused, two the connector never sent
+    const path = await home();
+    await recordDrop(path, KEY, SLUG, 1, "rejected", T0, { target: 1 }, { session_ended: 1 });
+    await recordDrop(path, KEY, SLUG, 2, "withheld", T1, { target: 2 }, { session_ended: 2 });
+
+    // Act
+    const local = await readLocalLosses(path, KEY);
+
+    // Assert
+    expect(local.report.kinds).toEqual({ hub_rejected: 1, spool_withheld: 2 });
+    expect(local.report.total).toBe(3);
+  });
+
   test("a clean machine reports zero, as a statement rather than a silence", async () => {
     // Act
     const local = await readLocalLosses(await home(), KEY);
@@ -615,7 +629,101 @@ describe("one spelling for doctor and status", () => {
     const lines = formatLossLines(await readLocalLosses(await home(), KEY), T4);
 
     // Assert
-    expect(lines).toEqual({ dropped: null, ignored: null, ignoredEarlier: null, capture: null });
+    expect(lines).toEqual({ dropped: null, rejected: null, withheld: null, ignored: null, ignoredEarlier: null, capture: null, legacy: null });
+  });
+});
+
+/**
+ * WHAT A CONNECTOR BEFORE 1.0 LOST (the 1.0 release gate: "the old late-write
+ * losses migrated or counted"). A 0.10 connector kept a refused record as a
+ * ledger line of a count and the word `rejected` — no cause, no kind, no id —
+ * and the record itself only until reap removed its delivered spool; its
+ * archive kept the total alone. Nothing is left to send again, and nothing
+ * says which were late writes, so they are counted as what they are: losses
+ * from before 1.0, on their own line, never blended into this connector's.
+ */
+describe("losses a connector before 1.0 left are counted as legacy, apart from this one's", () => {
+  /** The aggregate line a 0.10 reap wrote: the total, and no reason. */
+  const archiveFrom010 = async (path: string, count: number): Promise<void> => {
+    await ensureDir(spoolDir(path, KEY));
+    await writePrivateFile(
+      spoolDropsArchivePath(path, KEY),
+      `${JSON.stringify({ at: T2.toISOString(), oldestAt: T0.toISOString(), count, entries: 2, malformed: 0, reason: "aggregated" })}\n`,
+    );
+  };
+
+  test("a 0.10 archive's total reads as legacy, never as unattributed, and the wire is unchanged", async () => {
+    // Arrange
+    const path = await home();
+    await archiveFrom010(path, 7);
+
+    // Act
+    const local = await readLocalLosses(path, KEY);
+
+    // Assert
+    expect(local.drops.byReason).toEqual({ legacy: 7 });
+    expect(local.report.kinds).toEqual({ unattributed: 7 });
+    expect(formatLossLines(local, T4).dropped).toContain("(legacy 7)");
+  });
+
+  test("a fold keeps an archive's legacy total legacy, and an unreadable ledger's floor unattributed", async () => {
+    // Arrange: a 0.10 archive, then this connector's ledger folded into it
+    const path = await home();
+    await archiveFrom010(path, 7);
+    await recordDrop(path, KEY, SLUG, 2, "expired", T3);
+    await archiveLedger(path, KEY, spoolDropsPath(path, KEY, SLUG));
+    await rm(spoolDropsPath(path, KEY, SLUG), { force: true });
+
+    // Act
+    const folded = await readDropDetail(path, KEY);
+
+    // Assert
+    expect(folded.byReason).toEqual({ legacy: 7, expired: 2 });
+  });
+
+  test("an archive that names its reasons keeps what none accounts for as unattributed, never as legacy", async () => {
+    // Arrange: an archive this connector wrote, holding an unreadable ledger's floor beside its reasons
+    const path = await home();
+    await ensureDir(spoolDir(path, KEY));
+    await writePrivateFile(
+      spoolDropsArchivePath(path, KEY),
+      `${JSON.stringify({ at: T2.toISOString(), oldestAt: T0.toISOString(), count: 5, entries: 1, malformed: 0, reason: "aggregated", byReason: { expired: 2 } })}\n`,
+    );
+
+    // Act
+    const local = await readLocalLosses(path, KEY);
+
+    // Assert
+    expect(local.drops.byReason).toEqual({ expired: 2, unattributed: 3 });
+    expect(local.report.kinds).toEqual({ spool_expired: 2, unattributed: 3 });
+  });
+
+  test("names them on a line of their own: the uncaused rejections and the archive's total, never this connector's", async () => {
+    // Arrange: a 0.10 archive, a 0.10 ledger line, and a rejection this connector recorded with its cause
+    const path = await home();
+    await archiveFrom010(path, 7);
+    await recordDrop(path, KEY, SLUG, 3, "rejected", T3);
+    await recordDrop(path, KEY, SLUG, 2, "rejected", T4, { target: 2 }, { session_ended: 2 });
+
+    // Act
+    const lines = formatLossLines(await readLocalLosses(path, KEY), T4);
+
+    // Assert
+    expect(lines.legacy).toStartWith("10 records lost by a connector before 1.0, whose ledgers kept only counts: ");
+    expect(lines.legacy).toContain("3 rejected by the hub with no cause recorded · 7 in a ledger archive that kept only the total");
+    expect(lines.rejected).toStartWith("5 records rejected by the hub: 2 because the session delivering them was one the hub held as ended");
+  });
+
+  test("this connector's own losses alone leave the legacy line empty", async () => {
+    // Arrange
+    const path = await home();
+    await recordDrop(path, KEY, SLUG, 2, "rejected", T4, { target: 2 }, { session_ended: 2 });
+
+    // Act
+    const lines = formatLossLines(await readLocalLosses(path, KEY), T4);
+
+    // Assert
+    expect(lines.legacy).toBeNull();
   });
 });
 

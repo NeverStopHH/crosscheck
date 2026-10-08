@@ -49,6 +49,13 @@ export interface WorkContextRecordInput {
    * has — so a registration or recovery re-send can never wipe one.
    */
   readonly intent?: Intent | undefined;
+  /**
+   * A TOPIC's branch and the commit HEAD named at the session's first touch
+   * of it (flows/topic-contexts.ts). Absent on the session's own context, and
+   * on a topic whose commit could not be read — never a guess.
+   */
+  readonly branch?: string | undefined;
+  readonly baseCommit?: string | null | undefined;
 }
 
 export const workContextRecord = (
@@ -65,6 +72,8 @@ export const workContextRecord = (
       ...(input.titleSource === undefined ? {} : { titleSource: input.titleSource }),
       status: input.status,
       ...(input.intent === undefined ? {} : { intent: input.intent }),
+      ...(input.branch === undefined ? {} : { branch: input.branch }),
+      ...(input.baseCommit === undefined || input.baseCommit === null ? {} : { baseCommit: input.baseCommit }),
       createdAt: now.toISOString(),
     },
     producer,
@@ -146,7 +155,7 @@ export const landedNoticeDeliveryRecord = (
  * lane, which is what every target minted before Stage 1 was — so an old
  * spool replays as itself instead of as an unlabelled unknown.
  */
-export type TargetSource = "tool_edit" | "git_diff";
+export type TargetSource = "tool_edit" | "git_diff" | "git_commit";
 
 export const targetRecord = (
   workContextId: string,
@@ -186,6 +195,10 @@ const BODY_NAMES_ITS_SESSION: ReadonlySet<string> = new Set([
   "work_context",
   "target",
 ]);
+
+/** Whether the hub files this kind's position in the session its BODY names. */
+export const bodyNamesItsSession = (kind: unknown): boolean =>
+  typeof kind === "string" && BODY_NAMES_ITS_SESSION.has(kind);
 
 /**
  * Flush-time rewrite: ingest rejects records from an ended producer session,

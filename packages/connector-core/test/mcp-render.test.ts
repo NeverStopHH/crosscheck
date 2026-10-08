@@ -37,6 +37,7 @@ import {
 } from "../src/mcp/render.ts";
 import type { SearchHit } from "../src/mcp/render.ts";
 import { UNKNOWN_COVERAGE } from "../src/http/coverage.ts";
+import { MAX_ID_CHARS } from "../src/constants.ts";
 import type {
   Diagnosis,
   DiagnosisClaim,
@@ -158,7 +159,7 @@ describe("safeId", () => {
   });
 
   test("caps an oversized id instead of letting it fill the output", () => {
-    expect(safeId("c".repeat(500)).length).toBeLessThanOrEqual(64);
+    expect(safeId("c".repeat(500)).length).toBeLessThanOrEqual(MAX_ID_CHARS);
   });
 });
 

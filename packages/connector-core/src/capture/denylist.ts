@@ -33,6 +33,26 @@ export const DEFAULT_DENYLIST: readonly string[] = [
   "**/.env*",
   "**/*.pem",
   "**/*.key",
+  // CREDENTIAL FILES BY NAME (review M6 of feat/topic-contexts): the git lane
+  // sends every untracked and committed path a worktree holds, and a path
+  // list naming these is a credential inventory even with no content in it.
+  "**/.netrc",
+  "**/.npmrc",
+  "**/.pypirc",
+  "**/id_rsa*",
+  "**/id_dsa*",
+  "**/id_ecdsa*",
+  "**/id_ed25519*",
+  "**/*.p12",
+  "**/*.pfx",
+  "**/*.keystore",
+  "**/*.jks",
+  "**/credentials.json",
+  "**/*-credentials.json",
+  "**/*service-account*.json",
+  "**/.aws/**",
+  "**/.ssh/**",
+  "**/.gnupg/**",
   "**/*.{png,jpg,jpeg,gif,pdf,zip,parquet,mp4,woff,woff2}",
 ];
 

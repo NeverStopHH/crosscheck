@@ -117,6 +117,7 @@ export {
   MAX_INTENT_CHAIN_VERSIONS,
   MAX_INTENT_SCOPE_ENTRIES,
   MAX_INTENT_SUMMARY_CHARS,
+  MAX_TOPIC_BRANCH_CHARS,
   TargetSchema,
   WORK_CONTEXT_TITLE_SOURCES,
   WorkContextSchema,
@@ -408,6 +409,7 @@ export {
   UNREADABLE_LOSS_REPORT,
   clampLossCount,
   foldLossKinds,
+  foldLossKindsFor,
   isLossKind,
   settleLossReport,
 } from "./telemetry-loss.ts";

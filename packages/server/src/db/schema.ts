@@ -348,6 +348,15 @@ export const workContexts = pgTable("work_contexts", {
    * (services/live-location.ts).
    */
   titleSource: text("title_source", { enum: WORK_CONTEXT_TITLE_SOURCES }),
+  /**
+   * THE TOPIC this context is (DESIGN.md "One session, many topics"): the
+   * branch its files were edited on and the commit HEAD named at the
+   * session's first touch of it. Null for a context from a connector before
+   * topics — one context per session — and every reader then falls back to
+   * the owning session's own branch and base commit, as it always did.
+   */
+  branch: text("branch"),
+  baseCommit: text("base_commit"),
 }, (table) => [
   // `session_id` is a foreign key, which Postgres does NOT index on its own.
   // services/presence.ts reads the newest context of every live session to
@@ -408,7 +417,9 @@ export const workContextTargets = pgTable(
      * re-edits the same files for weeks touched them today, not the day it
      * first did. Windows that ask "what was touched lately" read
      * greatest(created_at, last_seen_at) — for an owner whose location the
-     * reader may see only, since both are her instants.
+     * reader may see only, since both are her instants. The topic branch's
+     * session windows read the same column as coalesce(last_seen_at,
+     * created_at), which is the same instant.
      */
     lastSeenAt: timestamptz("last_seen_at"),
     /**
@@ -865,6 +876,30 @@ export const questionAnswers = pgTable(
  * `subject` is the author's own commit subject, carried by the reader's
  * connector: quoted data wherever it is rendered.
  */
+/**
+ * Every envelope the hub took (services/records.ts, review-2 round 8, M4), one
+ * receipt per developer and id (review-2 round 9, L3).
+ */
+export const recordReceipts = pgTable(
+  "record_receipts",
+  {
+    id: text("id").notNull(),
+    developerId: text("developer_id")
+      .notNull()
+      .references(() => developers.id),
+    /** The id the hub answered with — a claim's, an edge's — which a duplicate answers again. */
+    resultId: text("result_id"),
+    /** The hub kept the record and not the change inside it: a re-send is answered `ignored` again. */
+    isIgnored: boolean("ignored").notNull().default(false),
+    receivedAt: timestamptz("received_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ name: "record_receipts_pkey", columns: [table.developerId, table.id] }),
+    // The prune, in the reaper pass: "receipts past the retention".
+    index("record_receipts_received_idx").on(table.receivedAt),
+  ],
+);
+
 export const landedNotices = pgTable(
   "landed_notices",
   {

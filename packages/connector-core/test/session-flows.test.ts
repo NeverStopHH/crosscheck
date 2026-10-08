@@ -4,7 +4,7 @@
  * §5 scheduling note). These are the Claude hook-handler bodies with payload
  * parsing peeled off, so every pin here is shipped behavior restated:
  *
- *   - registerSessionFlow: register (+~r1/~r2 on 409) → state file BEFORE
+ *   - registerSessionFlow: register (+ the ~r<n> life ladder on 409) → state file BEFORE
  *     any append (reap's aliveness invariant) → work-context record;
  *   - captureFileTargets: toRepoRelative → denylist → seen-set → secret-scan
  *     → target records;
@@ -210,16 +210,20 @@ describe("resolveFallbackWorkContextTitle (detached HEAD, trial finding #15)", (
     expect(title).toBe("main @ api");
   });
 
-  test("a detached HEAD sitting on a branch tip takes that branch's name", async () => {
-    // Arrange: `git worktree add --detach` from a branch leaves HEAD ON its tip
+  test("a detached HEAD sitting on a branch tip keeps its sha — never the branch's name", async () => {
+    // Arrange: `git worktree add --detach` from a branch leaves HEAD ON its
+    // tip. The branch that happens to point there is not what the session is
+    // on: a long-lived detached checkout sits at an old commit that a stale
+    // branch also names, and every topic it worked on was titled by that
+    // stale branch (DESIGN.md "One session, many topics").
     const { identity, sha } = await detachedIdentity("title-tip");
     expect(identity.branch).toBe(`detached@${sha}`);
 
     // Act
     const title = await resolveFallbackWorkContextTitle(identity);
 
-    // Assert: the branch wins outright — no sha, no subject
-    expect(title).toBe("main @ api");
+    // Assert: the sha and the commit subject, and no branch
+    expect(title).toBe(`detached@${sha} · initial @ api`);
   });
 
   test("a detached HEAD off every branch tip carries the sha and the commit subject", async () => {

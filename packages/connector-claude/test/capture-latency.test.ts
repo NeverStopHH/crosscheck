@@ -123,6 +123,8 @@ const sessionState = (repoRoot: string): SessionState => ({
   summarizerLastUnreadable: null,
   workContextTitle: null,
   workContextStatus: null,
+  agentKind: null,
+  workContextAcked: null,
   intentNoneCount: 0,
   intentSetCount: 0,
   intentFailCount: 0,
@@ -151,6 +153,10 @@ const sessionState = (repoRoot: string): SessionState => ({
   draftNudge: null,
   draftNudgeRetryAt: null,
   deriveFires: [],
+  topicContexts: [],
+  startBranch: null,
+  sessionTouchedAt: null,
+  topicOverflowCount: 0,
   probedFingerprints: [],
 });
 

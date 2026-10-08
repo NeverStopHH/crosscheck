@@ -29,6 +29,11 @@ import {
  */
 const NUL = String.fromCharCode(0);
 const REPO = VALID_SESSION_BODY.repo;
+/** Past what a btree row holds (2704 bytes): the id the review sent. */
+const LONG_ID_LENGTH = 4300;
+/** Random text `length` long: Postgres compresses a long repeated string under the btree's limit. */
+const incompressible = (length: number): string =>
+  Buffer.from(crypto.getRandomValues(new Uint8Array(length))).toString("base64").slice(0, length);
 
 describe("text a text column cannot hold", () => {
   test("a NUL in a claim body is refused per record, never a 500", async () => {
@@ -72,6 +77,43 @@ describe("text a text column cannot hold", () => {
     expect(result.status).toBe(200);
     expect(result.data?.accepted).toBe(2);
     expect(result.data?.rejected).toBe(1);
+  });
+
+  /**
+   * THE ENVELOPE ID TOO (review-2 round 9, M5). Ingest read the ids of a whole
+   * flush for their receipts before it parsed a single envelope, so a NUL in
+   * one id failed that read, and with it the batch; a 4.3 kB id passed every
+   * check, landed its record, and then failed the receipt's INSERT — a 500 on
+   * every retry, with the spool pinned behind it.
+   */
+  const poisonedId = async (id: string) => {
+    const { harness, developer } = await createHarnessWithSession();
+    return postRecords(harness, developer, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody()),
+        recordEnvelope("claim", validClaimBody({ id: "clm_poisoned_id", body: "the token cache is stale" }), { id }),
+        recordEnvelope("claim", validClaimBody({ id: "clm_clean_id", body: "the refresh path retries" })),
+      ],
+    });
+  };
+
+  test("a NUL in an envelope's id refuses that record alone, never the batch", async () => {
+    // Act
+    const result = await poisonedId(`env_${NUL}x`);
+
+    // Assert
+    expect(result.status).toBe(200);
+    expect(result.data?.results.map((entry) => entry.status)).toEqual(["accepted", "rejected", "accepted"]);
+  });
+
+  test("an envelope id of 4.3 kB refuses that record alone, never the batch", async () => {
+    // Act
+    const result = await poisonedId(`env_${incompressible(LONG_ID_LENGTH)}`);
+
+    // Assert
+    expect(result.status).toBe(200);
+    expect(result.data?.results.map((entry) => entry.status)).toEqual(["accepted", "rejected", "accepted"]);
+    expect((result.data?.results[1]?.issues ?? []).join(" ")).toContain("id");
   });
 
   test("a NUL in a question body is a 400 the asker can read", async () => {

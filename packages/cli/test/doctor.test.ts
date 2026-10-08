@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
   DOCTOR_FLUSH_LOCK_WARN_MS,
+  MAX_SPOOL_AGE_DAYS,
   MS_PER_DAY,
   recordUnclosedSession,
   repoKey,
@@ -12,12 +13,16 @@ import {
 } from "../src/index.ts";
 import {
   ensureDir,
+  sessionStatePath,
   spoolCursorPath,
   spoolDataPath,
   spoolDir,
   spoolDropsPath,
   spoolFlushLockPath,
+  spoolOwedWorkContextPath,
 } from "@crosscheck/connector-core/config/paths.ts";
+import { targetRecord, workContextRecord } from "@crosscheck/connector-core/capture/records.ts";
+import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
 import { recordDrop } from "@crosscheck/connector-core/spool/drops.ts";
 import {
   deriveSessionState,
@@ -28,6 +33,8 @@ import { makeHome, makeRepo, spawnZombie } from "../../connector-core/test/helpe
 /** Unreachable on purpose: the spool checks run whether the hub answers or not. */
 const HUB_URL = "http://127.0.0.1:9";
 const REPO_ID = "github.com/acme/api";
+const HOUR_MS = MS_PER_DAY / 24;
+const HALF_HOUR_MS = HOUR_MS / 2;
 
 const doctorEnv = (home: string) => ({
   CROSSCHECK_HOME: home,
@@ -452,6 +459,215 @@ describe("crosscheck doctor flush lock check", () => {
 
     // Assert
     expect(result.stdout).toContain("PASS  flush lock  free");
+  });
+});
+
+describe("crosscheck doctor owed work contexts check (review-2 round 7, L4)", () => {
+  const owedLine = (sessionId: string, extra: Record<string, unknown> = {}): string =>
+    `${JSON.stringify({
+      sessionId,
+      record: workContextRecord(
+        { workContextId: `wc_${sessionId}`, sessionId, title: "Owed", status: "analyzing" },
+        { developerId: "d", agentKind: "claude-code", sessionId },
+        new Date(),
+      ),
+      ...extra,
+    })}\n`;
+
+  test("names a debt still open, one the hub refused, and a debt file that will not parse", async () => {
+    // Arrange
+    const { repo, home } = await fixture();
+    const key = repoKey(HUB_URL, REPO_ID);
+    await mkdir(spoolDir(home, key), { recursive: true });
+    await writeFile(spoolOwedWorkContextPath(home, key, "open-life"), owedLine("cc_open"));
+    await writeFile(
+      spoolOwedWorkContextPath(home, key, "pinned-life"),
+      owedLine("cc_pinned", { refusals: 2, firstRefusedAt: new Date().toISOString() }),
+    );
+    await writeFile(spoolOwedWorkContextPath(home, key, "torn-life"), "{torn");
+
+    // Act
+    const result = await runCli(["doctor"], doctorEnv(home), repo);
+
+    // Assert
+    expect(result.stdout).toContain("WARN  owed work contexts");
+    expect(result.stdout).toContain(
+      "1 owed, waiting for its life's next batch; 1 refused by the hub (2 of 3 refusals before it is released); 1 debt file that will not parse",
+    );
+  });
+
+  test("prints nothing while nothing is owed", async () => {
+    // Arrange
+    const { repo, home } = await fixture();
+
+    // Act
+    const result = await runCli(["doctor"], doctorEnv(home), repo);
+
+    // Assert
+    expect(result.stdout).not.toContain("owed work contexts");
+  });
+});
+
+describe("crosscheck doctor waiting records check (review-2 round 7)", () => {
+  /** The day a record waiting since `lastSignMs` goes to any flusher: the reap bound past it. */
+  const releaseDay = (lastSignMs: number): string =>
+    new Date(lastSignMs + MAX_SPOOL_AGE_DAYS * MS_PER_DAY).toISOString().slice(0, 10);
+
+  /** A conversation last heard from at `heardAt`, with `count` of its edits written at `writtenAt`. */
+  const waitingConversation = async (
+    home: string,
+    repo: string,
+    host: string,
+    heardAt: Date,
+    writtenAt: Date,
+    count: number,
+    repoId: string = REPO_ID,
+  ): Promise<void> => {
+    const state = deriveSessionState({
+      hostSessionKey: host,
+      repoId,
+      repoRoot: repo,
+      hubUrl: HUB_URL,
+      developerId: null,
+      startedAt: heardAt.toISOString(),
+    });
+    await writeSessionState(home, { ...state, lastHeartbeatAt: heardAt.toISOString() });
+    await utimes(sessionStatePath(home, host), heardAt, heardAt);
+    const producer = { developerId: "d", agentKind: "claude-code", sessionId: state.crosscheckSessionId };
+    await appendRecords(
+      home,
+      repoKey(HUB_URL, REPO_ID),
+      host,
+      Array.from({ length: count }, (_, index) =>
+        targetRecord(state.workContextId, "file", `src/${String(index)}.ts`, producer, writtenAt),
+      ),
+      writtenAt,
+    );
+  };
+
+  test("gives the oldest waiting record's age and the day they go to any flusher (review-2 round 8, L9)", async () => {
+    // Arrange: a session heard from half an hour ago, its edits three hours old
+    const { repo, home } = await fixture();
+    const heardAt = new Date(Date.now() - HALF_HOUR_MS);
+    await waitingConversation(home, repo, "doctor-oldest", heardAt, new Date(Date.now() - 3 * HOUR_MS), 2);
+
+    // Act
+    const result = await runCli(["doctor"], doctorEnv(home), repo);
+
+    // Assert
+    expect(result.stdout).toContain(
+      `2 records wait for their own conversation (another live session); the oldest is 3h old; released to any flusher on ${releaseDay(heardAt.getTime())} unless that session is heard from again`,
+    );
+  });
+
+  test("says a silent owner may have crashed, and when its records are released (review-2 round 8, L9)", async () => {
+    // Arrange: a session silent for three days, its edit four days old
+    const { repo, home } = await fixture();
+    const heardAt = new Date(Date.now() - 3 * MS_PER_DAY);
+    await waitingConversation(home, repo, "doctor-crashed", heardAt, new Date(Date.now() - 4 * MS_PER_DAY), 1);
+
+    // Act
+    const result = await runCli(["doctor"], doctorEnv(home), repo);
+
+    // Assert: released a week after it was last heard from, not a week from now
+    expect(result.stdout).toContain(
+      `1 record waits for a conversation silent for 3d — if it crashed, it is released to any flusher on ${releaseDay(heardAt.getTime())}; the oldest is 4d old`,
+    );
+  });
+
+  test("names the records of a conversation now bound to another repo (review-2 round 8, L9)", async () => {
+    // Arrange: a conversation resumed from another checkout, its edit still here
+    const { repo, home } = await fixture();
+    await waitingConversation(home, repo, "doctor-rebound", new Date(), new Date(), 1, "github.com/acme/other");
+
+    // Act
+    const result = await runCli(["doctor"], doctorEnv(home), repo);
+
+    // Assert
+    expect(result.stdout).toContain(
+      "1 record of a conversation now bound to another repo waits for this repo's next session to send it",
+    );
+  });
+
+  test("names the records that wait for their own conversation, another live session", async () => {
+    // Arrange: a live session, two of its edits on disk
+    const { repo, home } = await fixture();
+    const host = "doctor-waiting";
+    const at = new Date();
+    const state = deriveSessionState({
+      hostSessionKey: host,
+      repoId: REPO_ID,
+      repoRoot: repo,
+      hubUrl: HUB_URL,
+      developerId: null,
+      startedAt: at.toISOString(),
+    });
+    await writeSessionState(home, { ...state, lastHeartbeatAt: at.toISOString() });
+    const producer = { developerId: "d", agentKind: "claude-code", sessionId: state.crosscheckSessionId };
+    await appendRecords(
+      home,
+      repoKey(HUB_URL, REPO_ID),
+      host,
+      [
+        targetRecord(state.workContextId, "file", "src/a.ts", producer, at),
+        targetRecord(state.workContextId, "file", "src/b.ts", producer, at),
+      ],
+      at,
+    );
+
+    // Act
+    const result = await runCli(["doctor"], doctorEnv(home), repo);
+
+    // Assert
+    expect(result.stdout).toContain("WARN  waiting records");
+    expect(result.stdout).toContain("2 records wait for their own conversation (another live session)");
+  });
+
+  test("names the records held for a conversation whose state file cannot be read (review-2 round 8, L4)", async () => {
+    // Arrange: one edit on disk; the state path answers with an error that is
+    // not "no such file" (a link to itself, as EACCES or EIO would)
+    const { repo, home } = await fixture();
+    const host = "doctor-unstatable";
+    const at = new Date();
+    const state = deriveSessionState({
+      hostSessionKey: host,
+      repoId: REPO_ID,
+      repoRoot: repo,
+      hubUrl: HUB_URL,
+      developerId: null,
+      startedAt: at.toISOString(),
+    });
+    const producer = { developerId: "d", agentKind: "claude-code", sessionId: state.crosscheckSessionId };
+    await appendRecords(
+      home,
+      repoKey(HUB_URL, REPO_ID),
+      host,
+      [targetRecord(state.workContextId, "file", "src/a.ts", producer, at)],
+      at,
+    );
+    await ensureDir(join(home, "sessions"));
+    const statePath = sessionStatePath(home, host);
+    await symlink(statePath, statePath);
+
+    // Act
+    const result = await runCli(["doctor"], doctorEnv(home), repo);
+
+    // Assert
+    expect(result.stdout).toContain("WARN  waiting records");
+    expect(result.stdout).toContain(
+      "1 record is held for a conversation whose session state file cannot be read (check its permissions); nothing sends it until it can",
+    );
+  });
+
+  test("prints nothing while no record waits", async () => {
+    // Arrange
+    const { repo, home } = await fixture();
+
+    // Act
+    const result = await runCli(["doctor"], doctorEnv(home), repo);
+
+    // Assert
+    expect(result.stdout).not.toContain("waiting records");
   });
 });
 

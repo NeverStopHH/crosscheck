@@ -42,6 +42,7 @@ import {
 import { attemptFailureHint, attemptSolvedHint } from "../inject/hint.ts";
 import { cursorInjectionOutput } from "../inject/output.ts";
 import { requireSessionState } from "./recover.ts";
+import { healerFor } from "./heal.ts";
 
 const PERMISSION_DENIED = "permission_denied";
 
@@ -102,7 +103,7 @@ export const handlePostToolUseFailure = async (
   // drain on the spare budget (the split-event rule — file-edit.ts).
   await flushSpool(
     ctx.hub,
-    { sessionId: state.crosscheckSessionId, developerId: state.developerId },
+    { sessionId: state.crosscheckSessionId, developerId: state.developerId, heal: healerFor(ctx) },
     budget.spareMs(),
   );
   const text =

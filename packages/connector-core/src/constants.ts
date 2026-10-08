@@ -279,8 +279,79 @@ export const MAX_SEEN_TARGETS = 500;
  * answers are cached too — a foreign root under ITS OWN repoId, an
  * unresolvable root as null — so a repeated foreign touch also costs no git
  * after the first.
+ *
+ * SIXTEEN, NOT EIGHT, since every root also carries its TOPIC — the branch it
+ * is on, read from its HEAD file — and the Stop-time git lane sweeps the roots
+ * listed here (flows/capture-git-touches.ts). One long-lived session working
+ * a dozen sibling worktrees evicted the oldest at eight and the git lane then
+ * never looked at it again; the session root counts as one entry now too.
  */
-export const MAX_KNOWN_WORKTREE_ROOTS = 8;
+export const MAX_KNOWN_WORKTREE_ROOTS = 16;
+
+/**
+ * How many hex characters of a detached HEAD's commit its TOPIC LABEL keeps:
+ * `detached@<sha>` read straight from the root's HEAD file, with no git to ask
+ * for the shortest unambiguous prefix. Nine is git's own `--short` length in a
+ * repository of this monorepo's size, and the label only has to tell two
+ * detached roots of one session apart.
+ */
+export const DETACHED_LABEL_SHA_CHARS = 9;
+
+/**
+ * TOPICS ONE LIFE OF A SESSION MAY OPEN (DESIGN.md "One session, many
+ * topics"): one work context per (repo, branch) the session touched, beside
+ * the session's own. A session past this files further topics' touches under
+ * its own context and counts each one (`topic_overflow` in the capture-loss
+ * ledger) — delivered, but no longer told apart.
+ *
+ * WHY A CAP AT ALL: every topic is a work context on the hub and an entry in
+ * the session state read on every hook, and a runaway — a script checking out
+ * a branch per file — must not mint hundreds of either. Twenty-four is twice
+ * the worktrees the owner's busiest week ran from one session.
+ */
+export const MAX_TOPICS_PER_SESSION = 24;
+
+/**
+ * HOW CLOSE TWO TOUCHES MAKE `set_intent`'s DEFAULT A GUESS (review M2): with
+ * no `topic` named, an intent lands on the context this life touched last —
+ * unless another one was touched within this long of it. Then the tool
+ * refuses and names the branches, so the agent names its own.
+ *
+ * WHY: most of the owner's edits come from parallel subagents, and "the
+ * topic touched last" is then whichever one the other subagent touched a
+ * second ago — a misfiled intent, matched by the ghost-intent tier and by
+ * search, the very mislabel the pilot failed on. Measured from the newest
+ * touch, not from now, so the race does not expire while both subagents
+ * think; a single agent that left the other worktree minutes before still
+ * gets the default.
+ */
+export const INTENT_TOPIC_AMBIGUITY_MS = 60_000;
+
+/**
+ * Hex characters of sha256(repo, worktree root) a topic's minted id leads
+ * with — the id is that root key and a number from the branch the topic
+ * OPENED on (flows/topic-contexts.ts `mintTopicId`), minted once, so a rename
+ * cannot change it.
+ */
+export const TOPIC_KEY_HEX_CHARS = 12;
+
+/**
+ * How much of a worktree's HEAD log (`<gitdir>/logs/HEAD`) the topic rules
+ * read to ask "does this commit descend from that one" without spawning git
+ * (git/head-history.ts) — the newest part, a quarter megabyte: thousands of
+ * moves, and one read, made only when a root shows a branch its topics do not
+ * already name.
+ */
+export const MAX_HEAD_LOG_BYTES = 262_144;
+
+/**
+ * How many of a REFTABLE worktree's HEAD-log entries the git lane's commit
+ * half asks git for (review M3): the reftable keeps the log where no file
+ * read reaches, so one bounded `git reflog show -n` stands in for the
+ * MAX_HEAD_LOG_BYTES tail — about as many moves as a quarter megabyte of
+ * `logs/HEAD` lines holds.
+ */
+export const MAX_REFTABLE_REFLOG_ENTRIES = 2048;
 
 /**
  * Tool-call ids an ACP session remembers as ALREADY having booked their
@@ -1452,6 +1523,12 @@ export const SUMMARIZER_MODEL = "haiku";
  * the budget exists for the state lock and the maintenance flush it hosts.
  */
 export const STOP_BUDGET_RATIO = 2;
+/**
+ * SubagentStop runs the git lane over the subagent's own root and the roots a
+ * shell touched (flows/git-lane.ts) and a maintenance flush — Stop's work
+ * without the summarizer gate, so Stop's envelope.
+ */
+export const SUBAGENT_STOP_BUDGET_RATIO = STOP_BUDGET_RATIO;
 /** Draft pointers one briefing may spend — pointer discipline like solved. */
 export const MAX_DRAFT_POINTERS = 2;
 /**
@@ -1644,6 +1721,15 @@ export const MS_PER_DAY =
 /** Clock skew above this breaks the 90 s presence TTL (server PRESENCE_TTL_SECONDS). */
 export const MAX_CLOCK_SKEW_SECONDS = 120;
 
+/**
+ * How far ahead of the clock that reads it a local stamp may be and still be
+ * taken as written (review-2 round 8, L5). A heartbeat or heal stamp past it
+ * was written while the clock ran ahead, and is clamped to now plus this and
+ * written down, so it ages from there — read as dated, it stayed fresh until
+ * the clock caught up. The same bound as the hub's, one skew for both.
+ */
+export const CLOCK_SKEW_MS = MAX_CLOCK_SKEW_SECONDS * MS_PER_SECOND;
+
 export const DOCTOR_SPOOL_DEPTH_WARN = 200;
 export const DOCTOR_SPOOL_DEPTH_FAIL = 1500;
 export const DOCTOR_SPOOL_AGE_WARN_HOURS = 24;
@@ -1835,8 +1921,86 @@ export const ABANDONED_TEMP_MAX_AGE_MS = MS_PER_DAY;
  * spare budget bounds the TIME, and the sweep stops at whichever comes first.
  */
 export const ABANDONED_TEMP_SWEEP_MAX_PER_RUN = 100;
+/**
+ * Most register calls ONE walk of the life ladder makes (state/session-lineage.ts).
+ *
+ * The ladder used to be three fixed rungs — `cc_<id>`, `~r1`, `~r2` — and the
+ * pilot ran off its end: one Claude Code conversation is ONE host session id
+ * for its whole life, every VS Code reload or exit ENDS its crosscheck session,
+ * and the fourth life found all three rungs ended and fell back to the base id
+ * the hub had just refused. Every record of that conversation was then
+ * rejected as a late write, for a month (docs/1.0/loss-accounting.md §4.3).
+ *
+ * The walk starts at the newest life this machine knows — above it when that
+ * life was ended — and gallops from there (+0, +1, +2, +4, …), so a resume
+ * costs one call and a re-fire one;
+ * twelve attempts reach 1024 lives past the start when nothing is known —
+ * a lost lineage file, or one past its age — and a wrong guess about which
+ * rungs are taken costs a skipped rung name, never a refused record.
+ */
+export const REGISTER_LADDER_MAX_ATTEMPTS = 12;
+/**
+ * How long a session waits between two mid-life heals (flows/heal-session.ts).
+ *
+ * A flush or a heartbeat the hub refuses for the session's OWN id walks the
+ * ladder above once and registers the next life. A hub that refuses every
+ * register — down, misconfigured, a key it no longer takes — would otherwise
+ * turn every tool call into a register round trip on the hook the developer is
+ * waiting for. Five minutes is one walk per a few dozen tool calls at most;
+ * the attempt is stamped before the walk, so a hook killed mid-walk still
+ * counts it.
+ */
+export const HEAL_COOLDOWN_MS = 5 * 60 * 1000;
+/**
+ * How many times the hub may refuse an owed work context before the debt is
+ * released (spool/owed-work-context.ts, review-2 round 7 M3). A refusal is
+ * the hub's verdict on the record itself — its own-session refusals are the
+ * heal's to answer and never count — and one drain sends a debt once, so
+ * three refusals are three drains that got the same answer. Released, the
+ * debt and the records it pinned are counted `owed_wc_refused`, so a debt the
+ * hub will never take neither pins its life's records for good nor holds its
+ * SessionEnd open; MAX_SPOOL_AGE_DAYS from the first refusal bounds it too.
+ */
+export const OWED_WORK_CONTEXT_MAX_REFUSALS = 3;
+/**
+ * The least room a mid-life heal needs before it stamps an attempt: one
+ * register round trip against a reachable hub, which answers in tens of
+ * milliseconds. Below it the walk could not reach the hub, and stamping would
+ * cost the next caller — one with room — its turn for five minutes.
+ */
+export const HEAL_MIN_ROOM_MS = 100;
+/**
+ * Most refused lives one repo's note keeps (spool/refused-lives.ts): the newest
+ * ones, each younger than REFUSED_LIFE_KEEP_DAYS or still owning records on
+ * disk. A machine heals a handful of times a week; the bound keeps the note a
+ * few kilobytes on the drain path that reads it, whatever a pathological hub
+ * does.
+ */
+export const REFUSED_LIVES_MAX = 64;
+/**
+ * The least a refused-lives entry is kept, whatever is on disk (review-2 round
+ * 8, H1): TWICE the age bound. A spool is released as abandoned only after its
+ * host has been silent MAX_SPOOL_AGE_DAYS, and expires MAX_SPOOL_AGE_DAYS after
+ * that release (spool/reap.ts) — an entry kept for one bound aged out exactly
+ * when the successor could first send the stragglers it was there to withhold.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.REFUSED_LIFE_KEEP_DAYS >= 2 * c.MAX_SPOOL_AGE_DAYS)'
+ * PRINTS: true
+ */
+export const REFUSED_LIFE_KEEP_DAYS = 2 * MAX_SPOOL_AGE_DAYS;
+/**
+ * How long a SessionEnd's own refused-lives entry outlives an empty spool
+ * (review-2 round 9, H2). Every SessionEnd writes one (round 8, M1), and kept
+ * the full REFUSED_LIFE_KEEP_DAYS they filled the note and evicted the one
+ * entry still withholding a straggler. What such an entry guards is a record a
+ * hook still in flight beside the end appends — within its host's hook
+ * timeout, Claude Code's default being 60 s — so ten minutes outlasts any.
+ */
+export const REFUSED_END_GRACE_MS = 10 * SECONDS_PER_MINUTE * MS_PER_SECOND;
 /** A deferred end whose session the hub has never heard of (trial finding M6). */
 export const HTTP_NOT_FOUND = 404;
+/** A session the hub holds as ended, or an id somebody else owns. */
+export const HTTP_CONFLICT = 409;
 
 export const EXIT_OK = 0;
 export const EXIT_WARN = 1;
@@ -1887,7 +2051,7 @@ export const TRIPWIRE_MODE_ASK = "ask";
 export const TRIPWIRE_MODE_NOTICE = "notice";
 
 /**
- * The seven Claude Code hook events `crosscheck init` registers, mapped to the
+ * The eight Claude Code hook events `crosscheck init` registers, mapped to the
  * `crosscheck hook <name>` subcommand each one calls.
  *
  * ONE LIST, because three places used to keep their own and two of them
@@ -1913,11 +2077,17 @@ export const REGISTERED_HOOK_EVENTS = {
   UserPromptSubmit: "user-prompt-submit",
   PreToolUse: "pre-tool-use",
   Stop: "stop",
+  // The git lane over a subagent's own root the moment it finishes (DESIGN.md
+  // "One session, many topics"): missing, a subagent's shell work in its own
+  // worktree waits for the parent's next Stop, which may come after a revert.
+  // An install from before it is reported unregistered here, and `init`
+  // upgrades it.
+  SubagentStop: "subagent-stop",
 } as const;
 
 export type RegisteredHookEvent = keyof typeof REGISTERED_HOOK_EVENTS;
 
-/** The same seven as a list, for the callers that only need the names. */
+/** The same eight as a list, for the callers that only need the names. */
 export const REGISTERED_HOOK_EVENT_NAMES = Object.keys(
   REGISTERED_HOOK_EVENTS,
 ) as readonly RegisteredHookEvent[];
@@ -2213,8 +2383,14 @@ export const MAX_SEARCH_QUERY_CHARS = 2_000;
  *
  * VERIFY: bun -e 'const {crosscheckSessionIdFor,workContextIdFor}=await import("./packages/connector-core/src/state/session-state.ts");const s=crosscheckSessionIdFor(crypto.randomUUID());console.log(s.length,workContextIdFor(s).length)'
  * PRINTS: 39 42
+ *
+ * 96, NOT 64, SINCE TOPICS (DESIGN.md "One session, many topics"): a topic's
+ * work context adds `~t<12 hex>.<n>` to its life's, and a healed life on a
+ * Cursor host key (`cur-<uuid>`) is `wc_cc_cur-<uuid>~r3`, so its topic's id
+ * is 65 characters, and an ACP key's longer. At 64 `safeId` cut that id into
+ * one that does not exist (test/pointer-round-trip.test.ts).
  */
-export const MAX_ID_CHARS = 64;
+export const MAX_ID_CHARS = 96;
 
 /**
  * Width of a string THE HUB chose, as a tool prints it back.
@@ -2530,6 +2706,36 @@ export const GENERATED_HEADER_BYTES = 512;
  * go, which only costs a repeat `git check-attr` for them.
  */
 export const MAX_GENERATED_ATTRIBUTE_CACHE_ENTRIES = 4096;
+
+/**
+ * ROOTS ONE STOP'S GIT LANE SWEEPS (DESIGN.md "One session, many topics").
+ * The lane used to diff the one checkout the hook's cwd sat in; a session
+ * working sibling worktrees left every one of them unswept. Now it visits the
+ * session's own root, the cwd's and every worktree root the session touched —
+ * bash-touched ones first — up to this many, in parallel, each git call on
+ * its own GIT_TOUCHES_TIMEOUT_MS deadline, so the lane's wall time is one
+ * deadline whatever the count. Eight is half the root cache
+ * (MAX_KNOWN_WORKTREE_ROOTS); the next Stop sweeps the rest, most recently
+ * touched first. Measured with eight roots in connector-claude/test/
+ * topic-git-lane.test.ts.
+ */
+export const MAX_GIT_LANE_ROOTS = 8;
+
+/**
+ * Commits the lane reads per root per Stop (`git log -n`), newest first: the
+ * commits this developer authored on the root's branch since the session
+ * first touched it. Bounded so a long-lived session's history never becomes
+ * an unbounded `git log` inside a hook.
+ */
+export const MAX_GIT_LANE_COMMITS = 50;
+
+/**
+ * How far before a root's first recorded touch the lane's window opens.
+ * A shell command is marked when its PostToolUse fires — AFTER it ran — so a
+ * `cp` or `git commit` it made predates the mark by up to the command's own
+ * run time. Ten minutes is Claude Code's longest Bash timeout.
+ */
+export const GIT_LANE_TOUCH_SLACK_MS = 600_000;
 
 /**
  * ── Coverage integrity (docs/1.0/03-coverage-integrity.md §5.3) ─────────────

@@ -314,6 +314,21 @@ const mergeIntent = (
   return next;
 };
 
+/**
+ * A TOPIC'S BRANCH AND BASE COMMIT ARE WRITTEN ONCE (DESIGN.md "One session,
+ * many topics"): what the session's first touch of the topic saw. A record
+ * without them — a connector from before topics, or a copy that does not
+ * carry them — says nothing about the topic and keeps what is stored; one that
+ * carries them fills a context that had none, and never moves one that had.
+ */
+const topicFieldsOf = (
+  current: Pick<WorkContextRow, "branch" | "baseCommit">,
+  body: WorkContext,
+): Pick<WorkContextRow, "branch" | "baseCommit"> => ({
+  branch: current.branch ?? body.branch ?? null,
+  baseCommit: current.baseCommit ?? body.baseCommit ?? null,
+});
+
 const workContextChanges = (
   current: WorkContextRow,
   body: WorkContext,
@@ -330,6 +345,7 @@ const workContextChanges = (
     description: body.description ?? null,
     intent: mergeIntent(current.intent ?? null, body.intent),
     status: body.status,
+    ...topicFieldsOf(current, body),
   };
   // Accepted v0 limitation: JSON.stringify intent comparison is key-order
   // sensitive, so a semantically equal intent with reordered keys counts as
@@ -339,7 +355,9 @@ const workContextChanges = (
     next.titleSource !== current.titleSource ||
     next.description !== current.description ||
     JSON.stringify(next.intent) !== JSON.stringify(current.intent) ||
-    next.status !== current.status;
+    next.status !== current.status ||
+    next.branch !== current.branch ||
+    next.baseCommit !== current.baseCommit;
   return hasChange ? next : null;
 };
 
@@ -494,6 +512,10 @@ export const ingestWorkContext = async (
         description: body.description ?? null,
         intent: body.intent ?? null,
         status: body.status,
+        // A topic's branch and base commit (DESIGN.md "One session, many
+        // topics"); null from a connector before topics.
+        branch: body.branch ?? null,
+        baseCommit: body.baseCommit ?? null,
         createdAt: new Date(body.createdAt),
         updatedAt:
           body.updatedAt === undefined ? null : new Date(body.updatedAt),
@@ -583,10 +605,14 @@ export const TARGET_EVENT_KINDS = {
  * a file the tool lane already reported, the row becomes "both" while that
  * second event is still an upper bound, and stamping it emitted would let a
  * happens-before question answer from a position that cannot support one.
+ * `git_commit` is OBSERVED for the same reason: the Stop-time lane reads a
+ * commit after the turn that made it, and the commit's own date is the
+ * developer's clock, never a position in this session's order.
  */
 const SEQ_KIND_BY_SOURCE = {
   tool_edit: "emitted",
   git_diff: "observed",
+  git_commit: "observed",
   both: "emitted",
 } as const;
 
@@ -683,6 +709,9 @@ export const ingestTarget = async (
       generated,
       // First-seen age for the targets-only pointer (#19). onConflictDoNothing
       // below means a duplicate touch never bumps it — the honest age.
+      // `last_seen_at` stays null until the first re-touch (below); every
+      // window reads greatest(created_at, last_seen_at) or coalesce(…), so a
+      // first touch counts by its created_at.
       createdAt: deps.now(),
     })
     .onConflictDoNothing()
@@ -697,7 +726,14 @@ export const ingestTarget = async (
     //
     // THE RE-TOUCH IS RECORDED TOO (pilot finding, 2026-10-05): one UPDATE
     // moves `last_seen_at` to now and, only when the other lane saw it,
-    // upgrades the label — first-seen stays where it was.
+    // upgrades the label — first-seen stays where it was. The topic branch's
+    // session windows read the same instant (DESIGN.md "One session, many
+    // topics"): a long-lived session's re-touch counts in the week it happened.
+    //
+    // "both" is the TOOL lane and A GIT lane: two git lanes sighting one file
+    // (a change, then its commit) are still one kind of observer, and the
+    // label must not claim an Edit nobody reported (DESIGN.md "One session,
+    // many topics" added `git_commit` beside `git_diff`).
     //
     // THE GENERATED LABEL IS THE LATEST TOUCH'S: a classification that could
     // not run this time sends none, and the row turns ordinary again rather
@@ -706,7 +742,7 @@ export const ingestTarget = async (
       .update(workContextTargets)
       .set({
         lastSeenAt: deps.now(),
-        source: sql`case when ${workContextTargets.source} NOT IN (${source}, 'both') then 'both' else ${workContextTargets.source} end`,
+        source: sql`case when ((${workContextTargets.source} = 'tool_edit') <> (${source}::text = 'tool_edit')) and ${workContextTargets.source} NOT IN (${source}, 'both') then 'both' else ${workContextTargets.source} end`,
         generated,
       })
       .where(

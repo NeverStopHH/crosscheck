@@ -81,7 +81,10 @@ import { recordCaptureLoss } from "@crosscheck/connector-core/state/loss-ledger.
 import { captureFailure } from "@crosscheck/connector-core/flows/capture-targets.ts";
 import { captureTouchedFiles } from "@crosscheck/connector-core/flows/capture-touched-files.ts";
 import { seqAt } from "@crosscheck/connector-core/capture/seq.ts";
-import { allocateSeq } from "@crosscheck/connector-core/state/session-state.ts";
+import {
+  allocateSeq,
+  workContextIdFor,
+} from "@crosscheck/connector-core/state/session-state.ts";
 import type { KnownWorktreeRoot } from "@crosscheck/connector-core/capture/touched-root.ts";
 import {
   assembleBriefing,
@@ -89,6 +92,10 @@ import {
 } from "@crosscheck/connector-core/flows/briefing.ts";
 import type { AssembledBriefing } from "@crosscheck/connector-core/flows/briefing.ts";
 import { endSessionFlow } from "@crosscheck/connector-core/flows/end-session.ts";
+import { sessionHealer } from "@crosscheck/connector-core/flows/heal-session.ts";
+import { reapStaleLineages } from "@crosscheck/connector-core/state/session-lineage.ts";
+import { reapStaleSessionStates } from "@crosscheck/connector-core/state/session-reap.ts";
+import type { SessionHealer } from "@crosscheck/connector-core/flows/heal-session.ts";
 import { heartbeatMaybe } from "@crosscheck/connector-core/flows/heartbeat.ts";
 import { registerSessionFlow } from "@crosscheck/connector-core/flows/register-session.ts";
 import { probeBaseOnDefault } from "@crosscheck/connector-core/capture/landed.ts";
@@ -109,7 +116,10 @@ import {
   acpHostSessionKey,
 } from "@crosscheck/connector-core/state/host-session-key.ts";
 import { withCaptureBookkeeping } from "@crosscheck/connector-core/state/capture-bookkeeping.ts";
+import { topicLifeOf, withTopicCapture } from "@crosscheck/connector-core/flows/topic-contexts.ts";
+import type { TopicLife } from "@crosscheck/connector-core/flows/topic-contexts.ts";
 import {
+  readSessionState,
   updateSessionState,
   withSeenTargets,
 } from "@crosscheck/connector-core/state/session-state.ts";
@@ -273,15 +283,19 @@ interface CaptureSession {
   readonly identity: RepoIdentity | null;
   readonly hub: HubContext | null;
   readonly repoKey: string | null;
-  readonly crosscheckSessionId: string;
-  readonly workContextId: string;
+  /**
+   * Moved by a mid-life heal (`healerFor` below): the engine never reads its
+   * state file back, so the twin follows the session to its next life.
+   */
+  crosscheckSessionId: string;
+  workContextId: string;
   developerId: string | null;
   lastHeartbeatAt: string | null;
   readonly seenTargets: Set<string>;
   /**
    * The #17 per-session worktree-root cache, in memory beside `seenTargets`
-   * and for the same reason: the engine deliberately never reads its state
-   * file back. Newly resolved roots are ALSO persisted through the one
+   * and for the same reason: the engine deliberately reads nothing back from
+   * its state file but the topic registry (`topicLifeFor`). Newly resolved roots are ALSO persisted through the one
    * `updateSessionState` below, so `crosscheck doctor` can see them and a
    * Claude or Cursor hook on the same home is not affected — but a resumed
    * session (`session/load`) starts this twin empty and pays git once more
@@ -615,9 +629,17 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
           logger.line(`inject briefing-prefetch-error ${describeError(error)}`);
         });
     }
+    // WITH THE HEALER, as SessionStart's flush on the other hosts: a register
+    // the hub refused leaves the life unknown to it, and this flush is the
+    // first to hear so — the heal registers the life as itself and its work
+    // context goes with the batch (review-2 finding 1).
     await flushSpool(
       hub,
-      { sessionId: registered.crosscheckSessionId, developerId: registered.developerId },
+      {
+        sessionId: session.crosscheckSessionId,
+        developerId: registered.developerId,
+        heal: healerFor(session),
+      },
       ACP_CAPTURE_FLUSH_BUDGET_MS,
     );
   };
@@ -693,6 +715,24 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     readonly toolLabel: string | null;
   }
 
+  /**
+   * THE LIFE THE TOUCHES FILE UNDER, BY TOPIC (core flows/topic-contexts.ts) —
+   * the one thing this engine reads back from its state file. The topic
+   * registry has writers outside this process (set_intent in the MCP server
+   * moves a topic's status, a heal clears it), so the state is its single
+   * truth, and one small read per captured event is what parity with the
+   * Claude and Cursor hooks costs. The seen-set stays the in-memory one. A
+   * state that is gone, or names another life than this twin, files every
+   * touch under the session's own context, as before topics.
+   */
+  const topicLifeFor = async (session: CaptureSession, home: string): Promise<TopicLife | undefined> => {
+    const state = await readSessionState(home, session.hostSessionKey);
+    if (state === null || state.crosscheckSessionId !== session.crosscheckSessionId) {
+      return undefined;
+    }
+    return { ...topicLifeOf(state), seenTargets: [...session.seenTargets] };
+  };
+
   /** The in-memory root cache, dedup-by-root and FIFO-capped like seenTargets. */
   const rememberWorktreeRoots = (
     session: CaptureSession,
@@ -753,7 +793,8 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     // "cwd sits in a sibling worktree" candidate can never apply here and
     // every out-of-checkout path takes the bounded fs walk. The per-session
     // cache above is what keeps that once per root rather than once per edit.
-    const { captured, resolution, generated } = await captureTouchedFiles({
+    const life = await topicLifeFor(session, session.config.home);
+    const { captured, resolution, generated, topics } = await captureTouchedFiles({
       seq,
       home: session.config.home,
       repoKey: session.repoKey ?? "",
@@ -770,6 +811,7 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
       identityRoot: session.identity.root,
       identityRepoId: session.identity.repoId,
       knownWorktreeRoots: session.knownWorktreeRoots,
+      ...(life === undefined ? {} : { topics: life }),
     });
     for (const path of captured) {
       session.seenTargets.add(path);
@@ -791,13 +833,14 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     const booksSomething =
       captured.length > 0 ||
       event.editFired ||
+      (topics !== null && (topics.opened.length > 0 || topics.relabeled.length > 0 || topics.overflowed > 0)) ||
       (resolution !== null &&
         (resolution.foreignDrops > 0 ||
           resolution.outsideDrops > 0 ||
           resolution.newlyResolved.length > 0));
     if (booksSomething) {
       await updateSessionState(session.config.home, session.hostSessionKey, (fresh) =>
-        withCaptureBookkeeping(withSeenTargets(fresh, captured), {
+        withCaptureBookkeeping(withTopicCapture(withSeenTargets(fresh, captured), topics), {
           resolution,
           capturedCount: captured.length,
           editFired: event.editFired,
@@ -813,7 +856,11 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     }
     await flushSpool(
       session.hub,
-      { sessionId: session.crosscheckSessionId, developerId: session.developerId },
+      {
+        sessionId: session.crosscheckSessionId,
+        developerId: session.developerId,
+        heal: healerFor(session),
+      },
       ACP_CAPTURE_FLUSH_BUDGET_MS,
     );
   };
@@ -843,9 +890,60 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     counters.fingerprints += 1;
     await flushSpool(
       session.hub,
-      { sessionId: session.crosscheckSessionId, developerId: session.developerId },
+      {
+        sessionId: session.crosscheckSessionId,
+        developerId: session.developerId,
+        heal: healerFor(session),
+      },
       ACP_CAPTURE_FLUSH_BUDGET_MS,
     );
+  };
+
+  /**
+   * The mid-life heal (core flows/heal-session.ts) for one live session: the
+   * hub refused its own id — a second proxy ended it, or its register never
+   * landed. A heal that moves the session to its next life moves this
+   * in-memory twin with it, or every later capture would still name the
+   * refused life and be withheld (core spool/flush-heal.ts).
+   */
+  const healerFor = (session: CaptureSession): SessionHealer => {
+    if (
+      session.config === null ||
+      session.hub === null ||
+      session.identity === null ||
+      session.repoKey === null
+    ) {
+      // A disabled session captures nothing, so nothing of it is ever refused.
+      return () => Promise.resolve({ outcome: "failed" });
+    }
+    const heal = sessionHealer({
+      home: session.config.home,
+      repoKey: session.repoKey,
+      hub: session.hub,
+      agentKind: session.config.agentKind,
+      hostSessionKey: session.hostSessionKey,
+      repoId: session.identity.repoId,
+      branch: session.identity.branch,
+      baseCommit: session.identity.baseCommit,
+      guarantees: guaranteeDeclarationFor(ACP_CONNECTOR),
+      now,
+    });
+    const twin: SessionHealer = async (refusal, deadlineMs, beforeWalk) => {
+      const healed = await heal(refusal, deadlineMs, beforeWalk);
+      if (healed.outcome === "healed") {
+        session.crosscheckSessionId = healed.sessionId;
+        session.workContextId = workContextIdFor(healed.sessionId);
+        // A heal onto the same id too (review-2 MEDIUM-1): a refused life's
+        // records may never have reached the hub, and a file in the set would
+        // never be captured again.
+        session.seenTargets.clear();
+      }
+      return healed;
+    };
+    // The cooldown's verdict travels with it: a capture inside a failed
+    // walk's cooldown sends nothing the hub would refuse again (core
+    // spool/flush.ts, review-2 LOW-5).
+    return heal.refusedFor === undefined ? twin : Object.assign(twin, { refusedFor: heal.refusedFor });
   };
 
   const heartbeat = async (
@@ -862,6 +960,11 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
       lastHeartbeatAt: session.lastHeartbeatAt,
       now: at,
       status,
+      onRefused: (cause) =>
+        healerFor(session)(
+          { sessionId: session.crosscheckSessionId, cause },
+          Date.now() + ACP_CAPTURE_FLUSH_BUDGET_MS,
+        ),
     });
     if (!attempted) {
       return;
@@ -1368,6 +1471,15 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
               return result.status === HTTP_NOT_FOUND ? "gone" : "retry";
             },
           );
+          // ...and the lineage notes and heal stamps of lives that never came
+          // back (state/session-lineage.ts): a machine that only ever runs this
+          // proxy has no other path that sweeps them.
+          await reapStaleLineages(session.config.home, now());
+          // ...and the state files of sessions that died without an end, the
+          // way Claude's SessionStart sweeps them (state/session-reap.ts): a
+          // corpse pins its spool against reap. Never this session's own,
+          // whatever its age, like every other host's sweep.
+          await reapStaleSessionStates(session.config.home, now(), { keepHostSessionKey: session.hostSessionKey });
         }
       } catch (error) {
         counters.errors += 1;

@@ -1,7 +1,8 @@
 /**
  * `registerSessionFlow` (DESIGN-agent-agnostic.md §1.3) — the session-start
  * recipe as an extracted function: register with `cc_<hostSessionKey>`
- * (+ `~r1`/`~r2` retry on 409) → `writeSessionState` BEFORE any append (reap
+ * (+ the `~r<n>` life ladder on 409, state/session-lineage.ts) →
+ * `writeSessionState` BEFORE any append (reap
  * infers "writer alive" from the state file, so a spool without state is an
  * orphan on sight) → spool the work-context record.
  *
@@ -12,29 +13,50 @@
  * titles from session metadata) stays in each connector; this flow takes the
  * already-resolved values.
  */
-import type { CausalGuaranteeTriple, WorkContextTitleSource } from "@crosscheck/schema";
+import { isSeqStamp, SeqFieldSchema } from "@crosscheck/schema";
+import type { CausalGuaranteeTriple, SeqField, SeqStamp, WorkContextTitleSource } from "@crosscheck/schema";
 
 import { repoLabel } from "../git/repo-label.ts";
+import { z } from "zod";
+
+import {
+  readJsonOrNull,
+  removeFile,
+  sessionEpochPathForSlug,
+  sessionHealPathForSlug,
+  sessionSlug,
+  spoolPendingEndPath,
+  writePrivateFile,
+} from "../config/paths.ts";
+import { readHeadFile, resolveHeadCommit } from "../git/repo-identity.ts";
 import { registerSession } from "../http/hub.ts";
 import type { HubContext } from "../http/client.ts";
 import { appendRecords } from "../spool/append.ts";
 import { readTelemetryLossReport } from "../spool/loss-report.ts";
+import { recordRefusedLife } from "../spool/refused-lives.ts";
 import {
   UNKNOWN_DEVELOPER_ID,
   workContextRecord,
 } from "../capture/records.ts";
+import {
+  ladderRungs,
+  ladderStart,
+  lifeRungOf,
+  lifeSessionId,
+  readEndedLifeEpoch,
+  readEndedLifeRung,
+} from "../state/session-lineage.ts";
 import {
   carriedSeqEpoch,
   claimSessionState,
   crosscheckSessionIdFor,
   publishSessionState,
   readSessionState,
+  underSessionStateLock,
   workContextIdFor,
 } from "../state/session-state.ts";
+import type { SeqStart, SessionState } from "../state/session-state.ts";
 import { readNudgeSpent } from "../state/draft-nudge-spent.ts";
-
-/** A resumed session whose crosscheck session was closed gets a fresh suffix. */
-const RETRY_SUFFIXES = ["", "~r1", "~r2"] as const;
 
 const HTTP_CONFLICT = 409;
 
@@ -46,9 +68,6 @@ const HTTP_CONFLICT = 409;
  * ended session being reopened) keeps walking the suffixes.
  */
 const REPO_MISMATCH_CODE = "repo_mismatch";
-
-/** Sentinel: registration refused because a live sibling owns another repo. */
-const REPO_MISMATCH = Symbol("crosscheck.register.repo-mismatch");
 
 /**
  * The honest work-context title when the host supplied none: branch @ repo,
@@ -136,25 +155,110 @@ export interface RegisterSessionFlowResult {
   readonly registered: boolean;
 }
 
-interface Registration {
-  readonly sessionId: string;
-  readonly developerId: string | null;
+/** What one walk of the life ladder needs (state/session-lineage.ts). */
+export interface RegisterLadderInput {
+  readonly home: string;
+  readonly repoKey: string;
+  readonly hub: HubContext;
+  readonly agentKind: string;
+  readonly hostSessionKey: string;
+  readonly repoId: string;
+  readonly branch: string;
+  readonly baseCommit: string;
+  /**
+   * The register's base probe (RegisterSessionFlowInput.baseOnDefault), sent
+   * on every rung. A heal's walk has none — it probes no git — and sends
+   * nothing, so the hub keeps a stored answer for an unchanged base and
+   * knows none for a new life's row (server services/sessions.ts
+   * carriedBaseOnDefault).
+   */
+  readonly baseOnDefault?: boolean | undefined;
+  readonly status: string;
+  readonly guarantees: readonly CausalGuaranteeTriple[];
+  /** `session.started`'s own position, or the refusal that travels instead. */
+  readonly seq: SeqField;
+  /** Stop on `repo_mismatch` (RegisterSessionFlowInput.recovery). */
+  readonly recovery?: boolean;
+  /** The crosscheck session the state file is on, when there is one. */
+  readonly liveSessionId: string | null;
+  /**
+   * A life the caller KNOWS is ended — the hub just refused it as ended
+   * (flows/heal-session.ts). It counts like an end the lineage wrote down, so
+   * the walk starts above it instead of spending a round trip on a sure 409.
+   */
+  readonly endedSessionId?: string;
+  /**
+   * Wall-clock end of the walk (`Date.now()` ms), for a walk that runs inside
+   * a hook's flush (flows/heal-session.ts): no rung starts past it, and each
+   * request is clamped to what is left. Absent: each rung gets the hub's own
+   * timeout, as SessionStart's register always has.
+   */
+  readonly deadlineMs?: number;
 }
 
-const registerWithRetry = async (
-  input: RegisterSessionFlowInput,
-  baseId: string,
-  epoch: string,
-): Promise<Registration | typeof REPO_MISMATCH | null> => {
+/** The newer of two ended rungs, either of which may be unknown. */
+const newestRung = (left: number | null, right: number | null): number | null =>
+  left === null || right === null ? (left ?? right) : Math.max(left, right);
+
+/** The hub context for one rung: clamped to the walk's deadline, if it has one. */
+const rungContext = (input: RegisterLadderInput): HubContext | null => {
+  if (input.deadlineMs === undefined) {
+    return input.hub;
+  }
+  const roomMs = input.deadlineMs - Date.now();
+  return roomMs <= 0 ? null : { ...input.hub, timeoutMs: Math.min(input.hub.timeoutMs, roomMs) };
+};
+
+export type RegisterLadderOutcome =
+  | {
+      readonly outcome: "registered";
+      readonly sessionId: string;
+      readonly developerId: string | null;
+    }
+  /** Recovery only: a LIVE session with this id is bound to another repo. */
+  | { readonly outcome: "repo_mismatch" }
+  /**
+   * The hub did not answer, answered something else, or refused every rung.
+   * `sessionId` is the life this host session is on meanwhile: the rung the
+   * walk could not settle — never one the hub answered 409, which is ended or
+   * somebody else's. Records spooled under it are refused `session_unknown`
+   * until a heal registers it as itself (flows/heal-session.ts); under a
+   * refused id they were refused for good.
+   */
+  | { readonly outcome: "unregistered"; readonly sessionId: string };
+
+/**
+ * ONE WALK OF THE LIFE LADDER, shared by every register that can meet an
+ * ended session: SessionStart on all three hosts and Claude's state-less
+ * recovery. A 409 is the hub saying this rung is ended or somebody else's, so
+ * the walk climbs; anything else ends it.
+ */
+export const registerSessionLadder = async (
+  input: RegisterLadderInput,
+): Promise<RegisterLadderOutcome> => {
+  const baseId = crosscheckSessionIdFor(input.hostSessionKey);
   // THE LOSS REPORT, READ ONCE FOR THE LADDER (docs/1.0/loss-accounting.md
   // §4.2). Registration runs right after `reapSpool`, which is where expiry
   // drops and the unclosed count are written, so this is the call that
   // carries a DEAD session's post-mortem losses to the hub. A local read of
-  // the ledgers; every rung of the ~r1/~r2 ladder sends the same snapshot.
+  // the ledgers; every rung of the ladder sends the same snapshot.
   const losses = await readTelemetryLossReport(input.home, input.repoKey);
-  for (const suffix of RETRY_SUFFIXES) {
-    const sessionId = `${baseId}${suffix}`;
-    const result = await registerSession(input.hub, {
+  const start = ladderStart(
+    baseId,
+    input.liveSessionId,
+    newestRung(
+      await readEndedLifeRung(input.home, input.hostSessionKey, baseId),
+      input.endedSessionId === undefined ? null : lifeRungOf(baseId, input.endedSessionId),
+    ),
+  );
+  const rungs = ladderRungs(start);
+  for (const rung of rungs) {
+    const sessionId = lifeSessionId(baseId, rung);
+    const hub = rungContext(input);
+    if (hub === null) {
+      return { outcome: "unregistered", sessionId };
+    }
+    const result = await registerSession(hub, {
       id: sessionId,
       agentKind: input.agentKind,
       repo: input.repoId,
@@ -164,27 +268,116 @@ const registerWithRetry = async (
       status: input.status,
       losses,
       guarantees: input.guarantees,
-      // `session.started` AT POSITION ZERO (spec 01 §3.2), and this is the
-      // only call that can send it: the allocator mints `eventSeq` at 0 and
-      // hands out from 1, so nothing ever allocates this position — it is
-      // minted with the epoch, by construction. An ABSENT field here would
-      // not be a missing position but a WRONG SENTENCE: the hub reads an
-      // absent `seq` as `pre_seq_connector`, "a connector from before this
-      // field", and would say it about a current connector on the one row
-      // every session is guaranteed to have.
-      seq: { epoch, n: 0 },
+      seq: input.seq,
     });
     if (result.ok) {
-      return { sessionId, developerId: result.data.session.developerId };
+      return {
+        outcome: "registered",
+        sessionId,
+        developerId: result.data.session.developerId,
+      };
     }
     if (result.status !== HTTP_CONFLICT) {
-      return null;
+      return { outcome: "unregistered", sessionId };
     }
     if (input.recovery === true && result.code === REPO_MISMATCH_CODE) {
-      return REPO_MISMATCH;
+      return { outcome: "repo_mismatch" };
+    }
+    if (sessionId === input.liveSessionId && result.code !== REPO_MISMATCH_CODE) {
+      // THE LIFE THE STATE IS ON IS ENDED, and the walk climbs past it: its
+      // records still on disk are the refused life's stragglers, withheld from
+      // every later flush exactly as a heal withholds them (spool/refused-
+      // lives.ts) — delivered by the next life, the hub would file them into
+      // the ended one past its end (review-2 round 7, found by the spool
+      // simulation).
+      await recordRefusedLife(input.home, input.repoKey, sessionId, new Date());
     }
   }
-  return null;
+  return { outcome: "unregistered", sessionId: lifeSessionId(baseId, (rungs.at(-1) ?? start) + 1) };
+};
+
+const ReservedEpochSchema = z.looseObject({ epoch: z.string().min(1) });
+
+/** The epoch a register reserved and never named in a state file, or null. */
+const readReservedEpoch = async (input: RegisterSessionFlowInput): Promise<string | null> => {
+  const parsed = ReservedEpochSchema.safeParse(
+    await readJsonOrNull(sessionEpochPathForSlug(input.home, sessionSlug(input.hostSessionKey))),
+  );
+  return parsed.success ? parsed.data.epoch : null;
+};
+
+const reserveEpoch = async (input: RegisterSessionFlowInput, epoch: string): Promise<void> => {
+  await writePrivateFile(
+    sessionEpochPathForSlug(input.home, sessionSlug(input.hostSessionKey)),
+    `${JSON.stringify({ epoch, at: input.now.toISOString() })}\n`,
+  );
+};
+
+const MarkedLifeSchema = z.looseObject({
+  crosscheckSessionId: z.string().min(1),
+  seq: SeqFieldSchema.optional(),
+});
+
+/**
+ * THE POSITION A LIFE'S END MARKER KEEPS, when it names that life
+ * (spool/end-marker.ts): its epoch, and the end's position past everything
+ * its counter handed out — written by session-reap when it took the state
+ * over, or by a SessionEnd whose end has not landed (review-2 round 9, M1 +
+ * M2). Null when no marker speaks for the life, or speaks without a position.
+ */
+const readMarkedPosition = async (input: RegisterSessionFlowInput, sessionId: string): Promise<SeqStamp | null> => {
+  const rung = lifeRungOf(crosscheckSessionIdFor(input.hostSessionKey), sessionId);
+  if (rung === null) {
+    return null;
+  }
+  const parsed = MarkedLifeSchema.safeParse(
+    await readJsonOrNull(spoolPendingEndPath(input.home, input.repoKey, sessionSlug(input.hostSessionKey), rung)),
+  );
+  return parsed.success && parsed.data.crosscheckSessionId === sessionId && isSeqStamp(parsed.data.seq)
+    ? parsed.data.seq
+    : null;
+};
+
+/** The life a state-less register's walk starts on: past the last end written down, else the base id. */
+const firstRungLife = async (input: RegisterSessionFlowInput): Promise<string> => {
+  const baseId = crosscheckSessionIdFor(input.hostSessionKey);
+  return lifeSessionId(baseId, ladderStart(baseId, null, await readEndedLifeRung(input.home, input.hostSessionKey, baseId)));
+};
+
+/**
+ * The epoch a state-less register owes the hub: one it reserved and never
+ * named in a state file; else the one the marker of the life its walk starts
+ * on keeps (review-2 round 9, M1 + M2); else the one the conversation's last
+ * ended life was on (state/session-lineage.ts readEndedLifeEpoch). Null: mint
+ * one.
+ */
+const readUnnamedEpoch = async (input: RegisterSessionFlowInput): Promise<string | null> =>
+  (await readReservedEpoch(input)) ??
+  (await readMarkedPosition(input, await firstRungLife(input)))?.epoch ??
+  (await readEndedLifeEpoch(input.home, input.hostSessionKey));
+
+/** The epoch a fire's register sends, the state it was read from, and the fire's own fresh one. */
+interface WireEpoch {
+  readonly previous: SessionState | null;
+  readonly fresh: string;
+  readonly seqEpoch: string;
+}
+
+/**
+ * THE EPOCH THE REGISTER SENDS, READ AND RESERVED IN ONE STEP (review-2 round
+ * 8, L2). Two SessionStarts of one conversation that both read before either
+ * reserved minted two epochs: the register that landed filed `session.started`
+ * under one, and the state took the other. Under the state lock the second
+ * finds the first's reservation. The reservation names whatever goes out, a
+ * carried epoch too: a re-fire killed after its register climbed to the next
+ * life left that life's epoch nowhere else once SessionEnd deleted the state.
+ */
+const decideWireEpoch = async (input: RegisterSessionFlowInput, minted: string): Promise<WireEpoch> => {
+  const previous = await readSessionState(input.home, input.hostSessionKey);
+  const fresh = (previous === null ? await readUnnamedEpoch(input) : null) ?? minted;
+  const seqEpoch = carriedSeqEpoch(previous, input, fresh);
+  await reserveEpoch(input, seqEpoch);
+  return { previous, fresh, seqEpoch };
 };
 
 /** The session-start recipe: register → state BEFORE append → work context. */
@@ -208,13 +401,33 @@ export const registerSessionFlow = async (
   // under the foreign epoch and the hub answers `broken / epoch_split` for
   // every pair in that session, permanently. Read here, before the POST,
   // because the POST is what carries it (carriedSeqEpoch's header).
-  const seqEpoch = carriedSeqEpoch(
-    await readSessionState(input.home, input.hostSessionKey),
-    input,
-    mintedEpoch,
-  );
-  const registration = await registerWithRetry(input, baseSessionId, seqEpoch);
-  if (registration === REPO_MISMATCH) {
+  //
+  // ...AND A REGISTER KILLED BEFORE ITS STATE WAS WRITTEN LEFT ITS EPOCH ON THE
+  // HUB (review-2 round 7, found by the spool simulation): `session.started`
+  // under it, nothing on disk naming it, and the next SessionStart's fresh
+  // mint split the session for good. The epoch is reserved before the POST,
+  // and a state-less register takes the reservation it finds — nothing was
+  // ever positioned under it but `session.started` at 0. A busy lock decides
+  // without it, as before the lock was taken here.
+  const decide = (): Promise<WireEpoch> => decideWireEpoch(input, mintedEpoch);
+  const { previous, fresh, seqEpoch } =
+    (await underSessionStateLock<WireEpoch | null>(input.home, input.hostSessionKey, null, decide)) ??
+    (await decide());
+  const ladder = await registerSessionLadder({
+    ...input,
+    // `session.started` AT POSITION ZERO (spec 01 §3.2), and this is the only
+    // call that can send it: the allocator mints `eventSeq` at 0 and hands
+    // out from 1, so nothing ever allocates this position — it is minted with
+    // the epoch, by construction. An ABSENT field here would not be a missing
+    // position but a WRONG SENTENCE: the hub reads an absent `seq` as
+    // `pre_seq_connector`, "a connector from before this field", and would
+    // say it about a current connector on the one row every session is
+    // guaranteed to have.
+    seq: { epoch: seqEpoch, n: 0 },
+    liveSessionId: previous?.crosscheckSessionId ?? null,
+  });
+  const registration = ladder.outcome === "registered" ? ladder : null;
+  if (ladder.outcome === "repo_mismatch") {
     // First-wins (trial finding #9): a LIVE session with this id is bound to
     // another repo. NOTHING is written — a state file would re-home the
     // binding, and a spooled work context would be ingested against the
@@ -226,9 +439,39 @@ export const registerSessionFlow = async (
       registered: false,
     };
   }
-  const crosscheckSessionId = registration?.sessionId ?? baseSessionId;
+  // THE LIFE THE WALK SETTLED ON, registered or not — never the base id as a
+  // default. A re-fire whose register did not land keeps the life it is on; a
+  // resume takes the rung above the life its last end closed. Falling back to
+  // the base id put a resumed conversation back on a life the hub had ENDED,
+  // and the very next flush spent the whole repo spool under it (review E2E-2).
+  const crosscheckSessionId = ladder.sessionId;
   const developerId = registration?.developerId ?? input.fallbackDeveloperId;
   const workContextId = workContextIdFor(crosscheckSessionId);
+  // A RE-FIRE ON THE LIFE IT IS IN KEEPS THAT LIFE'S STATUS (review-2 round 7,
+  // found by the spool simulation): set_intent may have moved it since the
+  // first SessionStart, and the work context this register spools would put
+  // the host's starting status back over it. Read AFTER the register POST
+  // (review-2 round 8, L1): a set_intent that ran while it was out wrote its
+  // status into the state, and the read before the POST had the old one —
+  // the published state takes it under the lock (withCarriedCapture).
+  const current = await readSessionState(input.home, input.hostSessionKey);
+  const status =
+    current !== null && current.crosscheckSessionId === crosscheckSessionId
+      ? (current.workContextStatus ?? input.status)
+      : input.status;
+  if (registration !== null) {
+    // A register that landed answers the last failed walk's verdict: the hub
+    // knows the life now, and a stamp that still said `failed` kept every
+    // flush from sending for the rest of its cooldown (review-2 round 6,
+    // LOW-1, RS5-D).
+    await removeFile(sessionHealPathForSlug(input.home, sessionSlug(input.hostSessionKey)));
+  }
+  // A STATE-LESS REGISTER ONTO A LIFE ITS MARKER SPEAKS FOR RESTORES THAT
+  // LIFE'S EPOCH AND COUNTER (review-2 round 9, M1 + M2): session-reap took
+  // the state, or SessionEnd's end has not landed, and the hub still holds
+  // the life under that epoch with those positions handed out.
+  const restored = previous === null ? await readMarkedPosition(input, crosscheckSessionId) : null;
+  const startHeadFile = await readHeadFile(input.repoRoot);
 
   // BEFORE the first append, always: `reap` decides that a spool file has no
   // writer left by finding no session state file for it, and that inference
@@ -254,7 +497,18 @@ export const registerSessionFlow = async (
     // fabricate one (trial finding #16).
     workContextTitle: input.title,
     workContextTitleSource: input.titleSource,
-    workContextStatus: input.status,
+    workContextStatus: status,
+    // The producer of the work context SessionEnd may send for this life (L7).
+    agentKind: input.agentKind,
+    // THE START TOPIC (flows/topic-contexts.ts): the branch this checkout is
+    // on, read from its HEAD file exactly as every touched root's is, so the
+    // session's own touches are recognised as its own and every sibling
+    // worktree's branch opens a topic of its own. A re-fire of the same life
+    // keeps the first one (withCarriedCapture). Its commit is what the topic
+    // rules ask a later branch or detached HEAD there to descend from
+    // (flows/topic-rules.ts).
+    startBranch: startHeadFile?.branch ?? input.branch,
+    startHead: startHeadFile === null ? null : await resolveHeadCommit(startHeadFile),
     // THE EPOCH IS MINTED ON THE INPUT, not inside publishSessionState (spec
     // 01 §3.4). publishSessionState's busy-lock FALLBACK writes this object
     // verbatim, with no carry at all — "the counters lose rather than the
@@ -273,8 +527,8 @@ export const registerSessionFlow = async (
     // handed out — the one thing the order may never do (withCarriedCapture's
     // header: the pair moves together or not at all). The fallback keeps
     // costing comparability, and never correctness.
-    seqEpoch: mintedEpoch,
-    eventSeq: 0,
+    seqEpoch: restored?.epoch ?? fresh,
+    eventSeq: restored?.n ?? 0,
     // A conversation that spent its draft nudge in an earlier session (it
     // ended, then was resumed) starts with the slot spent — the record
     // SessionEnd left (state/draft-nudge-spent.ts). A re-fire inside a live
@@ -302,8 +556,27 @@ export const registerSessionFlow = async (
     // capture counters and the worktree-root cache across the fire; the
     // per-fire lists (briefing pointers, the hint seen-set) start empty again,
     // which is what withBriefingSolvedRefs' header specifies.
-    await publishSessionState(input.home, stateInput);
+    //
+    // A PUBLISH THAT FINDS NOTHING TO CARRY STARTS ON THE EPOCH THE REGISTER
+    // SENT (review-2 round 8, L2): a SessionEnd beside this fire deleted the
+    // state while its register was out, and the fresh mint above split the
+    // life it climbed to from the `session.started` it filed. Only for a life
+    // the state did not name before: that one's positions under the carried
+    // epoch were handed out, and its counter is gone with the file — unless
+    // the SessionEnd beside this fire left them on the life's end marker
+    // (review-2 round 9, L4), which this fire then goes on from. Read under
+    // the publish's lock: that end writes its marker before it deletes the
+    // state under the same lock.
+    const startOf = async (): Promise<SeqStart> => {
+      const marked = await readMarkedPosition(input, crosscheckSessionId);
+      return marked === null
+        ? { seqEpoch: previous?.crosscheckSessionId === crosscheckSessionId ? fresh : seqEpoch, eventSeq: 0 }
+        : { seqEpoch: marked.epoch, eventSeq: marked.n };
+    };
+    await publishSessionState(input.home, stateInput, startOf);
   }
+  // The state names the epoch now; the reservation has done its job.
+  await removeFile(sessionEpochPathForSlug(input.home, sessionSlug(input.hostSessionKey)));
   await appendRecords(
     input.home,
     input.repoKey,
@@ -315,7 +588,7 @@ export const registerSessionFlow = async (
           sessionId: crosscheckSessionId,
           title: input.title,
           titleSource: input.titleSource,
-          status: input.status,
+          status,
         },
         {
           developerId: developerId ?? UNKNOWN_DEVELOPER_ID,

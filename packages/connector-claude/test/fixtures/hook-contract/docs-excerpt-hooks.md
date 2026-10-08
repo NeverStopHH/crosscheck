@@ -244,3 +244,28 @@ Runs when the main Claude Code agent has finished responding.
   "stop_hook_active": false
 }
 ```
+
+### SubagentStop
+
+Runs when a Claude Code subagent has finished responding. Matches on agent type, same values as SubagentStart.
+
+#### SubagentStop input
+
+| Field                   | Description                                             |
+| :---------------------- | :------------------------------------------------------ |
+| `stop_hook_active`      | True when Claude is already continuing from a stop hook |
+| `agent_id`              | The subagent's identifier                               |
+| `agent_type`            | The subagent's type                                     |
+| `agent_transcript_path` | Path to the subagent's own transcript                   |
+
+```json
+{
+  "session_id": "abc123",
+  "cwd": "/home/dev/acme/api",
+  "hook_event_name": "SubagentStop",
+  "stop_hook_active": false,
+  "agent_id": "agent-1",
+  "agent_type": "general-purpose",
+  "agent_transcript_path": "/home/dev/.claude/projects/acme-api/abc123/subagents/agent-1.jsonl"
+}
+```

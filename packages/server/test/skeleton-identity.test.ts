@@ -315,6 +315,38 @@ describe("the backfill of rows that predate the columns", () => {
     }
   });
 
+  test("serves the requests that arrive during its walks between two pages, not after the walks (review-2 round 9)", async () => {
+    // Arrange — more rows than a page, their identity forgotten. PGlite answers
+    // in microtasks, so a walk that never yields reads no request until it is done
+    const w = await world();
+    await touch(w, "wc_a", [FILE, "src/z.ts", "src/q.ts"]);
+    await claimAndSupersede(w);
+    const complete = await identities(w.harness);
+    const filledOf = (of: readonly Record<string, unknown>[]) => ({
+      providers: of.filter((row) => row["provider"] !== null).length,
+      fileRefs: of.filter((row) => row["file_ref"] !== null).length,
+    });
+    const total = filledOf(complete);
+    await forgetIdentity(w.harness);
+
+    // Act — a query from every turn of the event loop, where a request is read
+    let isDone = false;
+    const walking = backfillSkeletonIdentity(deps(w.harness), { batch: 1 }).then(() => {
+      isDone = true;
+    });
+    const seen: { providers: number; fileRefs: number }[] = [];
+    while (!isDone) {
+      await new Promise((resolve) => setImmediate(resolve));
+      seen.push(filledOf(await identities(w.harness)));
+    }
+    await walking;
+
+    // Assert — each walk was seen part-way, and every row still filled
+    expect(seen.some((at) => at.providers > 0 && at.providers < total.providers)).toBe(true);
+    expect(seen.some((at) => at.fileRefs > 0 && at.fileRefs < total.fileRefs)).toBe(true);
+    expect(await identities(w.harness)).toEqual(complete);
+  });
+
   test("a row it cannot resolve stays NULL and is counted, never guessed", async () => {
     // Arrange — a file.modified row whose target this hub does not hold
     const w = await world();

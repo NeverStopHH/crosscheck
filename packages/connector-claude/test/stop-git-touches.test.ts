@@ -59,6 +59,9 @@ const STOP_RETURN_CEILING_MS = 3000;
 
 const paths: string[] = [];
 
+/** An author date two hours back: history the session found, not work it did. */
+const BEFORE_THE_SESSION = new Date(Date.now() - 7_200_000).toISOString();
+
 afterEach(async () => {
   await Promise.all(paths.map((path) => rm(path, { recursive: true, force: true })));
   paths.length = 0;
@@ -82,9 +85,14 @@ const fixture = async (label: string, wide = true): Promise<Fixture> => {
   const home = await makeHome(label);
   const dir = await mkdtemp(join(tmpdir(), "cx-stop-git-"));
   paths.push(repo, home, dir);
+  // The repo's history is the fixture's, from BEFORE the session: the lane
+  // also reads this developer's commits since the session began (DESIGN.md
+  // "One session, many topics"), and a fixture committed a moment ago would
+  // be the session's own work.
+  await git(repo, ["commit", "--amend", "--no-edit", `--date=${BEFORE_THE_SESSION}`]);
   await writeRepoFile(repo, "src/workbench/usePlayback.ts", "export const a = 1;\n");
   await git(repo, ["add", "-A"]);
-  await git(repo, ["commit", "-m", "workbench"]);
+  await git(repo, ["commit", "-m", "workbench", `--date=${BEFORE_THE_SESSION}`]);
   const transcript = join(dir, "transcript.jsonl");
   // A quiet turn: nothing for the summarizer gate, so this test measures the
   // lane rather than a model spawn.

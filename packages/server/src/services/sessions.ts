@@ -14,6 +14,7 @@ import {
   SESSION_REAP_STALE_HOURS,
 } from "../constants.ts";
 import { pruneLandedNotices } from "./landed-notices.ts";
+import { pruneRecordReceipts } from "./record-receipts.ts";
 import { prunePilotMeasurements, recordPilotSession } from "./pilot.ts";
 import { agentSessions, sessionEvents } from "../db/schema.ts";
 import { appendEvent } from "./events.ts";
@@ -301,7 +302,15 @@ export const heartbeatSession = async (
     return { outcome: "forbidden" };
   }
   if (existing.endedAt !== null) {
-    return { outcome: "already_ended" };
+    if (existing.reapedAt === null) {
+      return { outcome: "already_ended" };
+    }
+    // A HEARTBEAT IS PROOF OF LIFE TOO (review-2 round 9, H1), as a register
+    // or a record is: the first hook after a night beat a session the reaper
+    // had given up on, was answered `already_ended`, and its heal moved the
+    // conversation to the next life — a parallel hook's record of the old
+    // one was then withheld for good.
+    await reviveReapedSession(deps, existing);
   }
 
   const now = deps.now();
@@ -527,6 +536,17 @@ export const reapStaleSessions = async (
   // decision 10) — pruned here too, so a repo that sees no further stop
   // does not keep them, and their subjects, for good.
   await pruneLandedNotices(deps);
+  // ...and the receipts of envelopes taken past their retention
+  // (services/record-receipts.ts), for the same reason — on the timer pass
+  // only, as the skeleton sweep above (review-2 round 9, M4): the prune is
+  // hub-wide, and a SessionStart paid a restarted hub's whole backlog. Its
+  // failure is its own (review-2 round 9, L3), as the sweep's is: a prune
+  // that throws costs the next pass a retry, never this pass its reap.
+  if (options.developerId === undefined) {
+    await pruneRecordReceipts(deps).catch((error: unknown) => {
+      console.error("[crosscheck] record receipts prune failed; the next pass retries", error);
+    });
+  }
   // Candidates first, then one UPDATE by id: a bare `UPDATE … LIMIT` is not
   // portable, and the two-step keeps the write bounded by construction.
   const candidates = await deps.db

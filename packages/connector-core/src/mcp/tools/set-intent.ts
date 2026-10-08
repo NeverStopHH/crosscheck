@@ -33,6 +33,7 @@ import {
   MAX_INTENT_SCOPE_ENTRIES,
   MAX_INTENT_SUMMARY_CHARS,
   MAX_PIN_PATH_CHARS,
+  MAX_TOPIC_BRANCH_CHARS,
   SessionStatusSchema,
 } from "@crosscheck/schema";
 
@@ -46,23 +47,14 @@ import { renderGhostNotice } from "../../briefing/ghost.ts";
 import { redactionNote } from "../../briefing/sanitize.ts";
 import { containsSecret } from "../../capture/secret-scan.ts";
 import { isEchoOfDeliveredHint } from "../../hints/echo.ts";
-import { getGhostChecks, postRecords } from "../../http/hub.ts";
-import {
-  readSessionState,
-  updateSessionState,
-  withGhostNotices,
-  withRecordedIntent,
-} from "../../state/session-state.ts";
+import { getGhostChecks } from "../../http/hub.ts";
+import { readSessionState, updateSessionState, withGhostNotices } from "../../state/session-state.ts";
+import { intentTargetOf } from "../../flows/topic-contexts.ts";
+import type { IntentTarget } from "../../flows/topic-contexts.ts";
+import { writeIntent } from "./intent-write.ts";
+import type { TitledWorkContext } from "./intent-write.ts";
 import { NO_SESSION, contractFailure, requireOwnContext } from "./publish-claim.ts";
-import {
-  allocateToolSeq,
-  envelopeFor,
-  hubFailure,
-  issuesOf,
-  parseArgs,
-  resultAt,
-} from "./shared.ts";
-import { seqAt } from "../../capture/seq.ts";
+import { envelopeFor, hubFailure, issuesOf, parseArgs } from "./shared.ts";
 
 /** A declared intent is the session's own statement — full confidence, by definition. */
 const DECLARED_CONFIDENCE = 1;
@@ -124,6 +116,22 @@ export const ArgsSchema = z.object({
     .describe(
       "When re-declaring: one sentence on why the goal changed. Teammates' " +
         "agents read it beside the sentence it replaced.",
+    ),
+  /**
+   * WHICH TOPIC (DESIGN.md "One session, many topics"): one session works
+   * several branches in several worktrees, and each is its own work context.
+   * Absent, the intent lands on the topic this session touched most recently —
+   * refused instead when two were touched within a minute (review M2).
+   */
+  topic: z
+    .string()
+    .min(1)
+    .max(MAX_TOPIC_BRANCH_CHARS)
+    .optional()
+    .describe(
+      "Optional: the branch this intent is about, when this session works several " +
+        "branches. Omitted, it goes to the branch whose files this session edited last; " +
+        "if two branches were edited within a minute of each other, name it.",
     ),
 });
 
@@ -226,6 +234,76 @@ const deliverGhostNotice = async (
   return [notice.text];
 };
 
+
+/** The refusal for a branch this life never touched — naming the ones it did, never guessing. */
+export const UNKNOWN_TOPIC_REFUSAL =
+  "This session has no topic on that branch, so the intent was not recorded. Name one " +
+  "of the branches this session has edited files on.";
+
+/**
+ * The refusal for a default that would be a guess (review M2): two of this
+ * session's branches were edited within a minute of each other — parallel
+ * subagents, most likely — so "the one edited last" may be the other one's.
+ */
+export const AMBIGUOUS_TOPIC_REFUSAL =
+  "This session edited files on more than one branch within a minute, so the intent " +
+  "was not recorded: it could belong to either. Call set_intent again with `topic` set " +
+  "to the branch this intent is about.";
+
+/** What this call writes to — or the refusal, naming the branches it could have meant. */
+type TargetChoice =
+  | { readonly kind: "chosen"; readonly context: TitledWorkContext }
+  | { readonly kind: "refused"; readonly text: string };
+
+const refusalOf = (sentence: string, branches: readonly string[]): TargetChoice => ({
+  kind: "refused",
+  text:
+    branches.length === 0
+      ? sentence
+      : quotingText(sentence, `Its branches: ${branches.map((branch) => quoted(branch, MAX_TOPIC_BRANCH_CHARS)).join(", ")}.`),
+});
+
+/**
+ * The context this intent is written to: the session's own (title and status
+ * from its state, as always), or one of its topics (flows/topic-contexts.ts
+ * `intentTargetOf`). Refused when a named branch is no topic of this life, or
+ * when no branch is named and the default would be a guess.
+ */
+const targetOf = async (
+  ctx: McpContext,
+  own: OwnWorkContext & { readonly workContextTitle: string; readonly workContextStatus: string },
+  named: string | undefined,
+): Promise<TargetChoice> => {
+  const state = await readSessionState(ctx.config.home, own.hostSessionKey);
+  const isOwnLife = state !== null && state.crosscheckSessionId === own.crosscheckSessionId;
+  const target: IntentTarget = isOwnLife
+    ? intentTargetOf(state, named)
+    : named === undefined
+      ? { kind: "session" }
+      : { kind: "unknown", branches: [] };
+  if (target.kind === "unknown") {
+    return refusalOf(UNKNOWN_TOPIC_REFUSAL, target.branches);
+  }
+  if (target.kind === "ambiguous") {
+    return refusalOf(AMBIGUOUS_TOPIC_REFUSAL, target.branches);
+  }
+  if (target.kind === "session") {
+    return { kind: "chosen", context: { ...own, workContextTitle: own.workContextTitle, workContextStatus: own.workContextStatus } };
+  }
+  return {
+    kind: "chosen",
+    context: {
+      ...own,
+      workContextId: target.topic.workContextId,
+      workContextTitle: target.topic.title,
+      workContextStatus: target.topic.status,
+      topicKey: target.topic.key,
+      branch: target.topic.branch,
+      baseCommit: target.topic.baseCommit,
+    },
+  };
+};
+
 export const run = async (ctx: McpContext, args: unknown): Promise<ToolResult> => {
   const parsed = parseArgs(ArgsSchema, args, definition.name);
   if (!parsed.ok) {
@@ -291,32 +369,36 @@ export const run = async (ctx: McpContext, args: unknown): Promise<ToolResult> =
   if (!rules.ok) {
     return contractFailure(rules.messages);
   }
-  const status = parsed.value.status ?? own.workContextStatus;
-  const body = {
-    id: own.workContextId,
-    sessionId: own.crosscheckSessionId,
-    title: own.workContextTitle,
-    // The marker the title registered with: an update without it would leave
-    // the hub keeping a stored one only by luck (record-handlers.ts).
-    ...(own.workContextTitleSource === null ? {} : { titleSource: own.workContextTitleSource }),
-    status,
-    intent,
-    createdAt: own.startedAt,
-  };
-  const producer = { sessionId: own.crosscheckSessionId, developerId: own.developerId };
-  // BEFORE the envelope, never after the post: this tool writes state at the
-  // end of the call, and spec 01 §3.6's "fold it into the updateSessionState it
-  // already calls" would stamp a position on a record the hub has already
-  // stored. Under an ambiguous session no lock is taken at all and the record
-  // carries `allocation_failed` — the intent lands, its POSITION does not.
-  const seq = await allocateToolSeq(ctx, own, 1);
-  const posted = await postRecords(ctx.hub, [
-    envelopeFor(ctx, producer, "work_context", body, seqAt(seq, 0)),
-  ]);
-  if (!posted.ok) {
-    return hubFailure(ctx, posted);
+  // WHICH CONTEXT (DESIGN.md "One session, many topics"): the named topic, or
+  // the one this life touched last — the session's own when that was its own
+  // checkout. A branch this life never touched is refused with the ones it did,
+  // and so is the default when two were touched within a minute (review M2).
+  const target = await targetOf(
+    ctx,
+    { ...own, workContextTitle: own.workContextTitle, workContextStatus: own.workContextStatus },
+    parsed.value.topic,
+  );
+  if (target.kind === "refused") {
+    return toolFailure(target.text);
   }
-  const outcome = resultAt(posted.data.results, 0);
+  // The write itself — the status into the state first, the post, what each
+  // answer leaves in the state — is mcp/tools/intent-write.ts, which the spool
+  // simulation calls too (review-2 round 8, M5).
+  const titled: TitledWorkContext = target.context;
+  const written = await writeIntent(
+    {
+      home: ctx.config.home,
+      repoKey: ctx.repoKey,
+      hub: ctx.hub,
+      now: ctx.now,
+      envelope: (producer, body, seq) => envelopeFor(ctx, producer, "work_context", body, seq),
+    },
+    titled,
+    { summary: parsed.value.summary, status: parsed.value.status, intent },
+  );
+  if (written.outcome === "failed") {
+    return hubFailure(ctx, written.failure);
+  }
   // THE CAP IS AN ANSWER, NOT A SUCCESS. `ignored` is the hub's outcome for a
   // record that survived while the change inside it did not, and it is what
   // the 21st amendment gets: the ledger holds every version it keeps, so this
@@ -324,25 +406,19 @@ export const run = async (ctx: McpContext, args: unknown): Promise<ToolResult> =
   // the author a thing that is not true on the one surface whose whole job is
   // to record the sentence — so it is a failure result, with the hub's own
   // words beside it.
-  if (outcome?.status === "ignored") {
+  if (written.outcome === "ignored") {
     return toolFailure(
-      quotingText(INTENT_CAP_REFUSAL, explainRejection(issuesOf(outcome))),
+      quotingText(INTENT_CAP_REFUSAL, explainRejection(issuesOf(written.result))),
     );
   }
-  if (outcome?.status === "rejected") {
+  if (written.outcome === "rejected") {
     return toolFailure(
-      quotingText("The hub did not accept that intent.", explainRejection(issuesOf(outcome))),
+      quotingText("The hub did not accept that intent.", explainRejection(issuesOf(written.result))),
     );
   }
-  // The state write carries THREE facts at once, and one lock round is the
-  // reason they are together: the status the hub now holds, the sentence the
-  // ghost worker will compare (`workContextIntent`), and the debt that makes
-  // it run (`ghostPending`). Best-effort like every state update on this path.
-  await updateSessionState(ctx.config.home, own.hostSessionKey, (fresh) => ({
-    ...withRecordedIntent(fresh, parsed.value.summary),
-    workContextStatus: parsed.value.status === undefined ? fresh.workContextStatus : status,
-  }));
+  const outcome = written.result;
   const ghost = await deliverGhostNotice(ctx, own);
+  const workContextId = titled.workContextId;
   // Audit row M14, the author's half. An intent is LABEL class — every surface
   // that shows it blanks it WHOLE when the phrase filter matches — so without
   // this note the author reads their own sentence back from this tool while
@@ -355,7 +431,7 @@ export const run = async (ctx: McpContext, args: unknown): Promise<ToolResult> =
   if (outcome?.status === "duplicate") {
     return toolText(
       quotingText(
-        `That intent is already recorded on your work context ${safeId(own.workContextId)}: ${framed}. Nothing changed.`,
+        `That intent is already recorded on your work context ${safeId(workContextId)}: ${framed}. Nothing changed.`,
         ...notes,
         ...ghost,
       ),
@@ -363,7 +439,7 @@ export const run = async (ctx: McpContext, args: unknown): Promise<ToolResult> =
   }
   return toolText(
     quotingText(
-      `Recorded your intent on work context ${safeId(own.workContextId)}: ${framed}.`,
+      `Recorded your intent on work context ${safeId(workContextId)}: ${framed}.`,
       "It is declared (confidence 1) and replaces any intent crosscheck derived from your " +
         "first prompt; teammates' briefings, prompt hints and the file-overlap tripwire " +
         "now show it. Calling set_intent again supersedes it.",

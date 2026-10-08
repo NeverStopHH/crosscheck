@@ -129,15 +129,17 @@ describe("the uploaded title says how it was written (review round 3, the title 
 });
 
 describe("a detached worktree session uploads a readable title", () => {
-  test("SessionStart on a worktree at the branch tip titles it by the branch", async () => {
+  test("SessionStart on a worktree at the branch tip keeps the sha, never the branch", async () => {
     // Arrange
     const fix = await fixture("tip");
 
     // Act
     await runHook("session-start", sessionStartPayload(fix), fix.env);
 
-    // Assert: `git worktree add --detach` left HEAD on main's tip
-    expect(await spooledTitles(fix)).toEqual(["main @ api"]);
+    // Assert: `git worktree add --detach` left HEAD on main's tip, and `main`
+    // is still not what this checkout is on — a stale branch at an old
+    // commit titled every topic of a long-lived detached session.
+    expect(await spooledTitles(fix)).toEqual([`detached@${fix.sha} · initial @ api`]);
   });
 
   test("SessionStart off the branch tip carries the sha and the commit subject", async () => {

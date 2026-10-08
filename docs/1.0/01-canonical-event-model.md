@@ -220,7 +220,7 @@ and 05's `CI_RETENTION_DAYS`; the corpora floor rule (00 §6.2) applies.
 | PostToolUse targets and PostToolUseFailure (`flows/capture-targets.ts:97`, `:136`) | folded into the bookkeeping transform already there (`state/capture-bookkeeping.ts`) | **no** |
 | Stop git lane (#50, `connector-claude/src/hooks/stop.ts`) | folded into `withGitTouches` | **no** |
 | Summarizer, ghost and intent workers (`derive/summarizer/derive.ts:182`, `derive/ghost/worker.ts:358`, `derive/intent/worker.ts:222`) | one `allocateSeq` immediately before `appendRecords`; **`seq_kind = observed`** (below) | yes — **off the hook path** |
-| `set_intent` (`mcp/tools/set-intent.ts`) | folded into the `updateSessionState` it already calls | **no** |
+| `set_intent` (`mcp/tools/intent-write.ts`, the write `set-intent.ts` calls) | folded into the `updateSessionState` it already calls | **no** |
 | `publish_claim` | one `allocateSeq` | yes — MCP path, `MCP_TIMEOUT_MS = 10_000` |
 | SessionEnd (`flows/end-session.ts`) | last `n`, read in the acquisition that reads state before deletion | **no** |
 

@@ -16,22 +16,11 @@
  */
 import { resolve } from "node:path";
 
-import { UNKNOWN_DEVELOPER_ID } from "@crosscheck/connector-core/capture/records.ts";
-
-import {
-  CHARS_PER_TOKEN_ESTIMATE,
-  GIT_TOUCHES_TIMEOUT_MS,
-  MAX_TARGETS_PER_INVOCATION,
-} from "@crosscheck/connector-core/constants.ts";
-import { captureGitTouches } from "@crosscheck/connector-core/flows/capture-git-touches.ts";
-import { NO_GENERATED } from "@crosscheck/connector-core/capture/generated.ts";
+import { CHARS_PER_TOKEN_ESTIMATE } from "@crosscheck/connector-core/constants.ts";
 import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
-import { recordCaptureLoss } from "@crosscheck/connector-core/state/loss-ledger.ts";
 import {
-  allocateSeq,
   readSessionState,
   updateSessionState,
-  withGitTouches,
 } from "@crosscheck/connector-core/state/session-state.ts";
 import {
   isCaptureMoment,
@@ -43,6 +32,8 @@ import { SUMMARIZER_PROMPT, resolveSummarizerTimeoutMs } from "@crosscheck/conne
 import { extractSliceText, readTurnSlice } from "../summarizer/transcript.ts";
 import type { TurnSlice } from "../summarizer/transcript.ts";
 import { spawnDeriveWorker } from "@crosscheck/connector-core/derive/spawn.ts";
+import { ownCwdRoot, runGitLane } from "./git-lane.ts";
+import { healerFor } from "./heal.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
 /**
@@ -106,13 +97,6 @@ const estimateFireTokens = (sliceText: string): number =>
     (SUMMARIZER_PROMPT.length + sliceText.length) / CHARS_PER_TOKEN_ESTIMATE,
   );
 
-/**
- * The git lane's worst case: `captureFileTargets` caps what it spools at
- * MAX_TARGETS_PER_INVOCATION however many candidates git printed, so the block
- * can never be short. Unused positions are gaps, and gaps are legal.
- */
-const GIT_LANE_SEQ_BLOCK = MAX_TARGETS_PER_INVOCATION;
-
 /** The capture-loss detail for a git lane this turn could not run (review M5). */
 const GIT_LANE_LOSS_DETAIL = "stop-git-lane";
 
@@ -160,89 +144,21 @@ export const handleStop = async (
 
   // THE SECOND EVIDENCE LANE (regression-guard Stage 1). Stop is where it
   // belongs: the turn is over, so the working tree holds what the turn did,
-  // including everything `sed -i`, a codemod or a generator changed without
-  // ever raising an Edit event. Without it `crosscheck suspect` names the
-  // session that used Edit with full confidence while the codemod session
-  // leaves no trace at all.
+  // including everything `sed -i`, a codemod, a generator or a `cp` changed
+  // without ever raising an Edit event — and the commits the turn made. Since
+  // DESIGN.md "One session, many topics" it sweeps EVERY root the session
+  // touched, not the one its cwd sat in, and files each root's findings under
+  // that root's topic (core flows/git-lane.ts; hooks/git-lane.ts holds the
+  // budget and the bookkeeping, shared with SubagentStop).
   //
-  // ON THE SPARE BUDGET, and skipped rather than shortened when it is gone:
-  // one bounded `git diff --name-only HEAD` at GIT_TOUCHES_TIMEOUT_MS, run
-  // only while the hook's reserve still covers it.
-  //
-  // TWO WAYS THE LANE PRODUCES NOTHING, and BOTH are counted (state
-  // gitLaneSkipped): the budget was gone before it started, or git did not
-  // answer inside its own deadline. Neither is the same as a clean worktree,
-  // and a lane that silently produces nothing on every turn would otherwise
-  // read in `status` and `doctor` exactly like a lane watching a quiet tree —
-  // the fail-silent-dead this feature exists to refuse. The skip is not
-  // hypothetical: driven 12 times against a machine held busy by eight
-  // spinning processes, 11 turns recorded and 1 skipped — and the 1 was a
-  // number in the session state rather than a silence. (HISTORICAL: that
-  // split belongs to the machine it was measured on and nothing here
-  // re-derives it; test/stop-git-touches.test.ts asserts the invariant that
-  // holds at any load.)
-  const laneAffordable = budget.spareMs() >= GIT_TOUCHES_TIMEOUT_MS;
-  // ALLOCATED BEFORE THE LANE RUNS, not folded into the `withGitTouches` write
-  // below: this lane spools its records inside `captureGitTouches` and that
-  // locked write happens AFTER them. A position stamped there would be stamped
-  // on records already on disk. One block, taken only when the lane is
-  // actually going to run — a starved turn pays nothing.
-  const seq = laneAffordable
-    ? await allocateSeq(
-        ctx.config.home,
-        ctx.payload.session_id,
-        GIT_LANE_SEQ_BLOCK,
-      )
-    : null;
-  const outcome = laneAffordable
-    ? await captureGitTouches({
-        seq,
-        home: ctx.config.home,
-        repoKey: ctx.repoKey,
-        hostSessionKey: ctx.payload.session_id,
-        repoRoot: ctx.identity.root,
-        workContextId: state.workContextId,
-        producer: {
-          developerId: state.developerId ?? UNKNOWN_DEVELOPER_ID,
-          agentKind: ctx.config.agentKind,
-          sessionId: state.crosscheckSessionId,
-        },
-        seenTargets: state.seenTargets,
-        denylist: ctx.config.denylist,
-        since: new Date(state.startedAt),
-        now: ctx.now(),
-      })
-    : { paths: [], unavailable: true, generated: NO_GENERATED };
-  // BOOKED ON EVERY TURN, the one that ran and found nothing included. That
-  // turn is the denominator doctor's verdict divides by (state/git-lane-cost
-  // .ts): skipping the write when there was nothing to record left the ran
-  // count structurally zero, so the WARN compared skipped TURNS against
-  // recorded FILES and stayed red forever on a healthy install that runs no
-  // codemods. One more locked write on a quiet turn is the price of a
-  // verdict that can be true.
-  const laneOutcome = {
-    captured: outcome.paths,
-    skipped: outcome.unavailable,
-    generated: outcome.generated,
-  };
-  // REVIEW M5: A SKIPPED OR UNANSWERED LANE IS A LOSS, NOT ONLY A NUMBER IN
-  // SESSION STATE. Its window is the session's start, so the next turn's lane
-  // re-examines the same touches — but a session whose last turn skipped,
-  // or a touch reverted before the next run, is lost for good, and nothing
-  // told the hub. Booked keyed (this hook knows its repo), dated, so it ages
-  // out; the over-count for the turns a later lane recovers is the safe side.
-  if (outcome.unavailable) {
-    await recordCaptureLoss(ctx.config.home, {
-      kind: "hook_timed_out",
-      count: 1,
-      key: ctx.repoKey,
-      detail: GIT_LANE_LOSS_DETAIL,
-      now: ctx.now(),
-    });
-  }
-  await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) =>
-    withGitTouches(fresh, laneOutcome),
-  );
+  // The skip is not hypothetical: driven 12 times against a machine held
+  // busy by eight spinning processes, 11 turns recorded and 1 skipped — and
+  // the 1 was a number in the session state rather than a silence.
+  // (HISTORICAL: that split belongs to the machine it was measured on and
+  // nothing here re-derives it; test/stop-git-touches.test.ts asserts the
+  // invariant that holds at any load.) The lane books the generated-target
+  // rule's counts beside its captures (hooks/git-lane.ts).
+  await runGitLane(ctx, budget, state, { cwdRoot: ownCwdRoot(ctx, state) }, GIT_LANE_LOSS_DETAIL);
 
   // Maintenance on the spare budget, like every hook: earlier drafts and
   // records ship now instead of waiting for the next tool use.
@@ -251,6 +167,7 @@ export const handleStop = async (
     {
       sessionId: state.crosscheckSessionId,
       developerId: state.developerId,
+      heal: healerFor(ctx),
     },
     budget.spareMs(),
   );

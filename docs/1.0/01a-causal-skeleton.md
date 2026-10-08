@@ -1180,9 +1180,10 @@ refuses any row whose statement differs from that fold.
 The evidence for each row:
 
 - **`session.started`**: the register flow sends `seq: { epoch, n: 0 }` and allocates nothing
-  (`connector-core/src/flows/register-session.ts:170`). Claude has a second origin that the first scan
-  missed: the mid-session recovery in PostToolUse, `{ epoch: derived.seqEpoch, n: 0 }`
-  (`connector-claude/src/hooks/post-tool-use.ts:78`).
+  (`connector-core/src/flows/register-session.ts:170`). Claude had a second origin that the first scan
+  missed: the mid-session recovery in PostToolUse, `{ epoch: derived.seqEpoch, n: 0 }`. Since review-2
+  round 9 (M2) that recovery runs the same register flow (`recovery: true`), as Cursor's does, so the
+  register flow is the only origin left.
 - **`session.ended`**: `end-session.ts:86` allocates the end before the state file is deleted. A
   detached worker can still allocate past it in that gap, so "nothing can allocate after it", as this
   line first said, was false (review L5). The hub now caps the declaration when such a row lands

@@ -44,6 +44,7 @@ import type { HookBudget } from "@crosscheck/connector-core/config/hook-budget.t
 
 import type { CursorHookContext } from "../runner.ts";
 import { maybeSpawnCursorIntentWorker } from "../derive/triggers.ts";
+import { healerFor } from "./heal.ts";
 
 export const handleBeforeSubmitPrompt = async (
   ctx: CursorHookContext,
@@ -58,7 +59,7 @@ export const handleBeforeSubmitPrompt = async (
   // records ship now instead of waiting for the next tool use.
   await flushSpool(
     ctx.hub,
-    { sessionId: state.crosscheckSessionId, developerId: state.developerId },
+    { sessionId: state.crosscheckSessionId, developerId: state.developerId, heal: healerFor(ctx) },
     budget.spareMs(),
   );
   return "";

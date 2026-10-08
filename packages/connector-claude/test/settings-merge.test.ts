@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
+import { REGISTERED_HOOK_EVENT_NAMES } from "@crosscheck/connector-core/constants.ts";
+
 import { buildSettingsPlan, mergeClaudeSettings } from "../src/index.ts";
 
 const PLAN = buildSettingsPlan("crosscheck", false);
@@ -68,6 +70,34 @@ describe("buildSettingsPlan", () => {
     expect(stop).toBeDefined();
     expect(JSON.stringify(stop)).toContain("crosscheck hook stop");
     expect(stop?.hooks[0]?.async).toBe(true);
+  });
+
+  test("registers SubagentStop, async, for the git lane over a subagent's own root", () => {
+    // DESIGN.md "One session, many topics": the subagent's shell work in its
+    // own worktree is swept the moment it finishes; async because the hook
+    // answers nothing.
+    const subagent = PLAN.hooks["SubagentStop"];
+    expect(subagent?.hooks[0]?.command).toBe("crosscheck hook subagent-stop");
+    expect(subagent?.hooks[0]?.async).toBe(true);
+    expect(subagent?.matcher).toBeUndefined();
+  });
+
+  test("installs every event the doctor requires — no list of its own to drift", () => {
+    expect(Object.keys(PLAN.hooks).sort()).toEqual([...REGISTERED_HOOK_EVENT_NAMES].sort());
+  });
+
+  test("re-running init over an install from before SubagentStop adds it — the upgrade", () => {
+    // Arrange: a crosscheck install whose plan had no SubagentStop
+    const { SubagentStop: _added, ...older } = PLAN.hooks;
+    const installed = mergeClaudeSettings({}, { ...PLAN, hooks: older });
+
+    // Act
+    const upgraded = mergeClaudeSettings(installed.settings, PLAN);
+
+    // Assert
+    const hooks = upgraded.settings["hooks"] as Record<string, readonly { hooks: readonly { command: string }[] }[]>;
+    expect(hooks["SubagentStop"]?.[0]?.hooks[0]?.command).toBe("crosscheck hook subagent-stop");
+    expect(hooks["Stop"]).toHaveLength(1);
   });
 });
 

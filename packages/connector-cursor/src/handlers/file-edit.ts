@@ -41,6 +41,7 @@
  * builds.
  */
 import { captureTouchedFiles } from "@crosscheck/connector-core/flows/capture-touched-files.ts";
+import { topicLifeOf, withTopicCapture } from "@crosscheck/connector-core/flows/topic-contexts.ts";
 import { MAX_TARGETS_PER_INVOCATION } from "@crosscheck/connector-core/constants.ts";
 import { allocateSeq } from "@crosscheck/connector-core/state/session-state.ts";
 import { heartbeatMaybe } from "@crosscheck/connector-core/flows/heartbeat.ts";
@@ -49,6 +50,7 @@ import type { Producer } from "@crosscheck/connector-core/capture/records.ts";
 import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
 import { withCaptureBookkeeping } from "@crosscheck/connector-core/state/capture-bookkeeping.ts";
 import {
+  readSessionState,
   updateSessionState,
   withSeenTargets,
 } from "@crosscheck/connector-core/state/session-state.ts";
@@ -56,6 +58,7 @@ import type { HookBudget } from "@crosscheck/connector-core/config/hook-budget.t
 
 import type { CursorHookContext } from "../runner.ts";
 import { IMPLEMENTING_STATUS, requireSessionState } from "./recover.ts";
+import { healerFor, onRefusedHeartbeat } from "./heal.ts";
 
 /**
  * What `lastPostToolUseTool` holds for this host. The field name is
@@ -105,7 +108,7 @@ export const handleAfterFileEdit = async (
           ctx.hostSessionKey,
           MAX_TARGETS_PER_INVOCATION,
         );
-  const { captured: files, resolution, generated } = await captureTouchedFiles({
+  const { captured: files, resolution, generated, topics } = await captureTouchedFiles({
     seq,
     home: ctx.config.home,
     repoKey: ctx.repoKey,
@@ -127,6 +130,9 @@ export const handleAfterFileEdit = async (
     identityRoot: ctx.identity.root,
     identityRepoId: ctx.identity.repoId,
     knownWorktreeRoots: state.knownWorktreeRoots,
+    // ONE CONTEXT PER TOPIC (core flows/topic-contexts.ts), exactly as on
+    // Claude: an edit in a sibling worktree files under its topic's context.
+    topics: topicLifeOf(state),
   });
   // Claude's PostToolUse hosts capture + drain + heartbeat in one event;
   // Cursor splits the event, each split keeps the drain — `spareMs`, not the
@@ -134,21 +140,28 @@ export const handleAfterFileEdit = async (
   // write after it is what keeps this session's spool safe.
   await flushSpool(
     ctx.hub,
-    { sessionId: state.crosscheckSessionId, developerId: state.developerId },
+    { sessionId: state.crosscheckSessionId, developerId: state.developerId, heal: healerFor(ctx) },
     budget.spareMs(),
   );
+  // The life the state names NOW: the flush above may have healed it, and a
+  // beat at the refused id tells the new life nothing (review P3).
+  const current = (await readSessionState(ctx.config.home, ctx.hostSessionKey)) ?? state;
   const didHeartbeat = await heartbeatMaybe({
     hub: ctx.hub,
-    crosscheckSessionId: state.crosscheckSessionId,
-    lastHeartbeatAt: state.lastHeartbeatAt,
+    crosscheckSessionId: current.crosscheckSessionId,
+    lastHeartbeatAt: current.lastHeartbeatAt,
     now,
     status: IMPLEMENTING_STATUS,
+    onRefused: onRefusedHeartbeat(ctx, budget, current.crosscheckSessionId),
   });
   // Freshest state under the lock — never the snapshot read above (the
   // Claude state-race lesson: sibling hooks overlap). The #17 root cache and
   // the #18/#20 capture counters fold in here too: ONE write per event.
   await updateSessionState(ctx.config.home, ctx.hostSessionKey, (fresh) => ({
-    ...withCaptureBookkeeping(withSeenTargets(fresh, files), {
+    // Files this event captured into a life the flush then healed away from
+    // were withheld with it: they stay unseen, so the next life captures them
+    // — and so do the topics it opened (withTopicCapture registers none then).
+    ...withCaptureBookkeeping(withTopicCapture(withSeenTargets(fresh, fresh.crosscheckSessionId === state.crosscheckSessionId ? files : []), topics), {
       resolution,
       capturedCount: files.length,
       editFired: true,

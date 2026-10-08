@@ -300,6 +300,15 @@ ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS updated_by_session_id text RE
 -- judges by the title's shape. ALTER so an existing hub gets it too.
 ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS title_source text;
 
+-- THE TOPIC a work context is (DESIGN.md "One session, many topics"): one
+-- session edits sibling worktrees on several branches and sends one context
+-- per (repo, branch), each naming its branch and the commit HEAD named at the
+-- session's first touch. Null for a context from a connector before topics,
+-- whose readers fall back to the session's own branch and base commit. ALTER
+-- so an existing hub gets both.
+ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS branch text;
+ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS base_commit text;
+
 -- Similarity-detected contradiction candidates (DESIGN.md §3 ingest gate).
 -- A TABLE for these, and only these: they exist only while an embedder is
 -- configured, and recomputing pairwise cosine at read time would be O(n²) over
@@ -520,6 +529,46 @@ CREATE INDEX IF NOT EXISTS question_answers_claim_idx
 -- The author's notice (docs/1.0/landed-changes.md, step 4): one row per
 -- reader, file and commit, told to the author once, within seven days.
 -- Mirrored in db/schema.ts, which says why there is no session key.
+-- EVERY ENVELOPE THE HUB TOOK, for RECORD_RECEIPT_RETENTION_DAYS
+-- (services/records.ts, review-2 round 8, M4): the same envelope again, where
+-- the producer check would refuse it, is answered `duplicate` — so a connector
+-- re-sending a batch whose answer it never heard, under a life the hub ended
+-- since, does not count records the hub holds as lost. `result_id` is the id
+-- the hub answered with (a claim's, an edge's), which a duplicate answers again;
+-- `ignored` says the hub kept the record and not the change inside it, which a
+-- re-send is answered with again (review-2 round 9, L3). One receipt per
+-- developer and id: keyed by the id alone, the first developer to send an id
+-- held it, and another's envelope under it went unreceipted.
+CREATE TABLE IF NOT EXISTS record_receipts (
+  id text NOT NULL,
+  developer_id text NOT NULL REFERENCES developers(id),
+  result_id text,
+  ignored boolean NOT NULL DEFAULT false,
+  received_at timestamptz NOT NULL,
+  PRIMARY KEY (developer_id, id)
+);
+
+CREATE INDEX IF NOT EXISTS record_receipts_received_idx
+  ON record_receipts (received_at);
+
+-- A hub whose receipts predate review-2 round 9 (L3): the column, and the key
+-- over the pair rather than the id alone — swapped once, left alone after.
+ALTER TABLE record_receipts ADD COLUMN IF NOT EXISTS ignored boolean NOT NULL DEFAULT false;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'record_receipts_pkey'
+      AND conrelid = 'record_receipts'::regclass
+      AND pg_get_constraintdef(oid) = 'PRIMARY KEY (developer_id, id)'
+  ) THEN
+    ALTER TABLE record_receipts DROP CONSTRAINT IF EXISTS record_receipts_pkey;
+    ALTER TABLE record_receipts ADD CONSTRAINT record_receipts_pkey PRIMARY KEY (developer_id, id);
+  END IF;
+END
+$$;
+
 CREATE TABLE IF NOT EXISTS landed_notices (
   id text PRIMARY KEY,
   repo text NOT NULL,

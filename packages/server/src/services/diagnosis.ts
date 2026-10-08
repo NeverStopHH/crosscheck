@@ -20,6 +20,7 @@ import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
 import { readIntentChain } from "./intent-ledger.ts";
 import { activitySeenBy, locationHiddenFrom, projectRow } from "./live-location.ts";
 import type { RowOwner } from "./live-location.ts";
+import { contextBaseCommit } from "./topic-base-commit.ts";
 import { notMutedCondition } from "./visibility.ts";
 import type { ClaimRevalidationReading } from "./claim-validity.ts";
 import type { ClaimValidity, EvidenceAxes } from "@crosscheck/schema";
@@ -66,14 +67,25 @@ export interface WorkContextView {
   readonly intent: Record<string, unknown> | null;
   readonly status: string;
   /**
-   * The owning session's base commit — what the connector's drift label and
-   * landed ancestry check run against. OMITTED for a viewer the owner's live
-   * location is hidden from (services/live-location.ts): it is `rev-parse
-   * HEAD` of the live branch. Omitted rather than "", because every shipped
-   * connector reads it as `z.string().min(1).optional()` — absent is the
-   * shape an older hub already sends, and drift and landed simply skip.
+   * The base commit the context's work stands on — what the connector's drift
+   * label and landed ancestry check run against: the TOPIC's own when it
+   * carried one, else the owning session's (services/topic-base-commit.ts).
+   * OMITTED for a viewer the owner's live location is hidden from
+   * (services/live-location.ts): it is `rev-parse HEAD` of a live branch.
+   * Omitted rather than "", because every shipped connector reads it as
+   * `z.string().min(1).optional()` — absent is the shape an older hub
+   * already sends, and drift and landed simply skip.
    */
   readonly baseCommit?: string;
+  /**
+   * The branch a TOPIC context was edited on (DESIGN.md "One session, many
+   * topics"); null for the session's own context and for one from a
+   * connector before topics. The work-context LISTING sends the branch its
+   * work is on, the topic's else the session's. OMITTED, like `baseCommit`,
+   * for a viewer the owner's live location is hidden from: a branch is
+   * location (services/live-location.ts withholds `branch` by name).
+   */
+  readonly branch?: string | null;
   /** Merged-branch detection (DESIGN.md §5); null while unobserved. */
   readonly landedAt: string | null;
   readonly createdAt: string;
@@ -306,6 +318,7 @@ const toWorkContextView = (
   intent: row.intent ?? null,
   status: row.status,
   baseCommit,
+  branch: row.branch ?? null,
   landedAt: toIsoOrNull(row.landedAt),
   createdAt: row.createdAt.toISOString(),
   updatedAt: toIsoOrNull(row.updatedAt),
@@ -438,10 +451,12 @@ export const listWorkContextsByRepo = async (
       workContext: workContexts,
       developerId: agentSessions.developerId,
       developerName: developers.name,
-      baseCommit: agentSessions.baseCommit,
+      baseCommit: contextBaseCommit,
       // Raw here, withheld per viewer by projectRow below: the row is
-      // published knowledge, the live branch is where its author is now.
-      branch: agentSessions.branch,
+      // published knowledge, the branch is where its author works. A TOPIC's
+      // own branch, else the owning session's (DESIGN.md "One session, many
+      // topics") — and the branch the title is judged against (ownerOf).
+      branch: sql<string>`coalesce(${workContexts.branch}, ${agentSessions.branch})`,
       // Scalar subqueries rather than the LEFT JOIN + GROUP BY this query used
       // to carry: the join multiplied every context by its claims (100,000
       // rows aggregated to answer about 10,000) and could only ever count ONE
@@ -609,7 +624,7 @@ export const getDiagnosis = async (
   const contextRows = await db
     .select({
       workContext: workContexts,
-      baseCommit: agentSessions.baseCommit,
+      baseCommit: contextBaseCommit,
       repo: agentSessions.repo,
       branch: agentSessions.branch,
       ownerDeveloperId: agentSessions.developerId,

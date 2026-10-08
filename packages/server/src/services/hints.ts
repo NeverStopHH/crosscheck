@@ -49,6 +49,7 @@ import { claimValidity, loadRevalidations } from "./claim-validity.ts";
 import { locationHiddenFrom, projectRow } from "./live-location.ts";
 import type { HiddenLocations } from "./live-location.ts";
 import { presenceCutoff } from "./presence.ts";
+import { contextBaseCommit } from "./topic-base-commit.ts";
 import {
   exactTargetTokenConditions,
   exactTokens,
@@ -438,7 +439,10 @@ const listStatementTerms = async (
   return new Map(rows.map((row) => [row.id, Number(row.terms)]));
 };
 
-/** The base commit of each context's owning session, for the drift label. */
+/**
+ * The base commit each context's work stands on, for the drift label: a
+ * topic's own, else its owning session's (services/topic-base-commit.ts).
+ */
 const listBaseCommits = async (
   db: Db,
   workContextIds: readonly string[],
@@ -447,7 +451,7 @@ const listBaseCommits = async (
     return new Map();
   }
   const rows = await db
-    .select({ id: workContexts.id, baseCommit: agentSessions.baseCommit })
+    .select({ id: workContexts.id, baseCommit: contextBaseCommit })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
     .where(inArray(workContexts.id, workContextIds))

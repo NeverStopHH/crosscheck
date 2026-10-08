@@ -6,6 +6,7 @@ import { generateApiKey } from "./auth/keys.ts";
 import { DEFAULT_PORT, SESSION_REAP_INTERVAL_MS } from "./constants.ts";
 import { createDb } from "./db/client.ts";
 import { createEmbedderFromEnv } from "./services/embedder.ts";
+import { pruneRecordReceipts } from "./services/record-receipts.ts";
 import { reapStaleSessions } from "./services/sessions.ts";
 import { parseWebAuthnOrigins } from "./services/webauthn.ts";
 import { backfillSkeletonIdentity } from "./services/skeleton-identity.ts";
@@ -293,6 +294,18 @@ export const startServer = async (): Promise<void> => {
   // old rows behave as they did before the upgrade, and nothing waits on
   // them. All idempotent; each start finishes what the last left.
   void runStartupUpgrades({ db, embedder });
+  // THE RECEIPTS PAST THEIR RETENTION, once at boot (review-2 round 9, M4):
+  // the timer's first pass comes SESSION_REAP_INTERVAL_MS from now, and a hub
+  // restarted after weeks off would carry the backlog until then. A chunk at
+  // a time, so the requests served meanwhile wait out one chunk at most.
+  void pruneRecordReceipts({ db, now: () => new Date() }).then(
+    (pruned) => {
+      console.log(`[crosscheck] record receipts: ${String(pruned)} past their retention pruned at boot`);
+    },
+    (error: unknown) => {
+      console.error("[crosscheck] record receipts prune at boot failed; the reaper pass retries", error);
+    },
+  );
   // The hub's own reaper (trial finding M6). HERE and not in `createApp`:
   // every test that builds an app would otherwise leak a timer, and the
   // registration path already reaps the registering developer's own sessions

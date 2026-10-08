@@ -334,6 +334,11 @@ export const buildSettingsPlan = (
       // hook returns nothing — it gates deterministically and spawns the
       // detached worker; the model must never wait on it.
       Stop: group(`${prefix} hook stop`, undefined, true),
+      // The git lane over a subagent's own root (DESIGN.md "One session, many
+      // topics"): ASYNC like Stop — it answers nothing and decides nothing,
+      // and the reference allows `async` on any command hook. No matcher, so
+      // every agent type's finish is swept.
+      SubagentStop: group(`${prefix} hook subagent-stop`, undefined, true),
     },
     statusLine: { type: "command", command: `${prefix} statusline` },
     forceStatusline,

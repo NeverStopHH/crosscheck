@@ -61,7 +61,7 @@ export const CLAUDE_CAPABILITY_MANIFEST: DeriveCapabilityManifest = {
     {
       name: "git lane blind spots",
       sentence:
-        "the Stop-time lane reads UNCOMMITTED changes only, so work committed during the turn and untracked new files are invisible to it — and every position it does record is `observed` rather than `emitted`, an upper bound that refuses a happens-before question instead of answering one it cannot support",
+        "the Stop-time lane reads the working tree's changes, new untracked files and this developer's own commits in every worktree the session touched — but a file changed and changed back inside one turn, and a commit on a branch the worktree has since left, are invisible to it — and every position it does record is `observed` rather than `emitted`, an upper bound that refuses a happens-before question instead of answering one it cannot support",
     },
   ],
 };

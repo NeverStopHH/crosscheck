@@ -99,6 +99,14 @@ export interface CaptureFileTargetsInput {
    * `withCaptureBookkeeping` makes for its counters.
    */
   readonly editFired?: boolean;
+  /**
+   * How many targets this call may still write — MAX_TARGETS_PER_INVOCATION
+   * when absent. One host event whose paths land in several TOPICS spools
+   * one call per topic (flows/capture-touched-files.ts), and they share the
+   * event's one cap and one position block, so each later call is handed what
+   * the earlier ones left. Paths past it are `capture-capped`, as always.
+   */
+  readonly maxTargets?: number;
 }
 
 interface CaptureRefusals {
@@ -177,8 +185,9 @@ export const captureFileTargets = async (
   const collected: Collected[] = [];
   let secretPaths = 0;
   let examined = 0;
+  const limit = input.maxTargets ?? MAX_TARGETS_PER_INVOCATION;
   for (const path of input.paths) {
-    if (collected.length >= MAX_TARGETS_PER_INVOCATION) {
+    if (collected.length >= limit) {
       break;
     }
     examined += 1;

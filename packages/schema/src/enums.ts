@@ -97,8 +97,14 @@ export const TARGET_KINDS = [
  * codemods, `prettier --write` and generators are invisible to the first,
  * which is exactly how a ranking built on it alone names the session that
  * used Edit while the codemod session leaves no trace at all.
+ *
+ * `git_commit` is the git lane's second half (DESIGN.md "One session, many
+ * topics"): a file in a commit THIS developer authored on the root's branch
+ * since the session first touched that root. A working-tree diff cannot see
+ * work that was already committed, and a session whose agent runs `cp`,
+ * `mv` or `git commit` through a shell leaves a clean tree behind it.
  */
-export const TARGET_SOURCES = ["tool_edit", "git_diff"] as const;
+export const TARGET_SOURCES = ["tool_edit", "git_diff", "git_commit"] as const;
 
 /**
  * WHICH SURFACE HANDED A REF TO A READER (1.0 spec 07 §3.1).

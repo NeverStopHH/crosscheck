@@ -26,6 +26,7 @@ import type { HookBudget } from "@crosscheck/connector-core/config/hook-budget.t
 
 import type { CursorHookContext } from "../runner.ts";
 import { requireSessionState } from "./recover.ts";
+import { healerFor } from "./heal.ts";
 
 export const handleAfterShellExecution = async (
   ctx: CursorHookContext,
@@ -61,7 +62,7 @@ export const handleAfterShellExecution = async (
   // drain on the spare budget (the split-event rule — file-edit.ts).
   await flushSpool(
     ctx.hub,
-    { sessionId: state.crosscheckSessionId, developerId: state.developerId },
+    { sessionId: state.crosscheckSessionId, developerId: state.developerId, heal: healerFor(ctx) },
     budget.spareMs(),
   );
   return "";

@@ -57,6 +57,9 @@ export const CAPTURE_LOSS_KINDS = [
   "hook_timed_out",
   "host_contract_drift",
   "wire_unobserved",
+  // Touches a session past its topic cap filed under its own context
+  // (flows/capture-touched-files.ts): delivered, their topic lost.
+  "topic_overflow",
 ] as const;
 
 export type CaptureLossKind = (typeof CAPTURE_LOSS_KINDS)[number];
