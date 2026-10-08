@@ -23,12 +23,19 @@ import type { Check } from "./doctor.ts";
 const isSameRefusal = (group: ForeignHubRefusals, repoId: string, foreign: ForeignHub): boolean =>
   group.repoId === repoId && group.hubOrigin === foreign.hubOrigin && group.keyOrigin === foreign.keyOrigin;
 
-/** This repo's own count, for the line beside the live mismatch. */
+/**
+ * This repo's own count, for the line beside the live mismatch. A FULL
+ * ledger with no line for it has stopped counting, which is not the same as
+ * nothing refused — said as such, never as zero.
+ */
 const countHere = (ledger: ForeignHubLedger, repoId: string, foreign: ForeignHub): string => {
   const group = ledger.groups.find((entry) => isSameRefusal(entry, repoId, foreign));
-  return group === undefined
-    ? "no hook has been refused here yet"
-    : formatForeignHubCount(group, ledger.isFull);
+  if (group !== undefined) {
+    return formatForeignHubCount(group, ledger.isFull);
+  }
+  return ledger.isFull
+    ? "not counted — the local refusal ledger is full, so recent refusals were not recorded"
+    : "no hook has been refused here yet";
 };
 
 /** One sentence: what was refused, the fix, and what it cost here. */
