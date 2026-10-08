@@ -8,6 +8,9 @@
  *
  * The CONTENT is the batch's — what the person saw, edited and signed — never
  * the draft's payload, which the confirmation never rewrites.
+ *
+ * One function per kind; services/draft-kinds.ts registers each beside the
+ * kind's liveness and authority.
  */
 import { HUMAN_PROVENANCE, PIN_PRESENCE_TERMINAL } from "@crosscheck/schema";
 import type { HintOutcome, Pin, PilotMark } from "@crosscheck/schema";
@@ -27,43 +30,51 @@ export interface ApplyDeps {
   readonly now: Clock;
 }
 
-/** Why one item could not be applied — the code the page names it by. */
+/** Why one item could not be applied — the writer's own refusal word. */
 export type ApplyRefusal = string;
 
 export type ApplyOutcome =
   | { readonly applied: true; readonly presenceOn: boolean }
   | { readonly refusal: ApplyRefusal };
 
+export type ApplyKind = (
+  deps: ApplyDeps,
+  draft: DraftRow,
+  content: DraftPayload,
+  stamp: HumanStamp,
+) => Promise<ApplyOutcome>;
+
 const APPLIED = { applied: true, presenceOn: false } as const;
 
-const text = (payload: DraftPayload, key: string): string => String(payload[key] ?? "");
+export const payloadText = (payload: DraftPayload, key: string): string => String(payload[key] ?? "");
 
-const textOrNull = (payload: DraftPayload, key: string): string | null => {
+export const payloadTextOrNull = (payload: DraftPayload, key: string): string | null => {
   const value = payload[key];
   return typeof value === "string" ? value : null;
 };
 
-const applyLabel = async (deps: ApplyDeps, draft: DraftRow, content: DraftPayload, stamp: HumanStamp): Promise<ApplyOutcome> => {
+/** A label on a delivery, or `pin --ok` — both rows of `pilot_marks`. */
+export const applyLabel: ApplyKind = async (deps, draft, content, stamp) => {
   const isPin = draft.kind === "pin_ok";
   const written = await writePilotMark(deps, {
     repo: draft.repo ?? "",
     refKind: isPin ? "pin" : "hint_delivery",
-    refId: isPin ? text(content, "pinId") : text(content, "deliveryId"),
-    mark: (isPin ? "surface_ok" : text(content, "word")) as PilotMark,
+    refId: isPin ? payloadText(content, "pinId") : payloadText(content, "deliveryId"),
+    mark: (isPin ? "surface_ok" : payloadText(content, "word")) as PilotMark,
     markedBy: draft.developerId,
-    reason: isPin ? null : textOrNull(content, "reason"),
+    reason: isPin ? null : payloadTextOrNull(content, "reason"),
     stamp,
   });
   return "refusal" in written ? { refusal: written.refusal } : APPLIED;
 };
 
-const applyOutcome = async (deps: ApplyDeps, draft: DraftRow, content: DraftPayload, stamp: HumanStamp): Promise<ApplyOutcome> => {
+export const applyOutcome: ApplyKind = async (deps, draft, content, stamp) => {
   const written = await writeHintOutcome(deps, {
     repo: draft.repo ?? "",
-    ref: text(content, "deliveryId"),
-    outcome: text(content, "word") as HintOutcome,
-    reason: textOrNull(content, "reason"),
-    session: textOrNull(content, "sessionId"),
+    ref: payloadText(content, "deliveryId"),
+    outcome: payloadText(content, "word") as HintOutcome,
+    reason: payloadTextOrNull(content, "reason"),
+    session: payloadTextOrNull(content, "sessionId"),
     recordedBy: draft.developerId,
     // A confirmed word is the PERSON's, whichever door drafted it.
     recordedVia: "person",
@@ -72,7 +83,7 @@ const applyOutcome = async (deps: ApplyDeps, draft: DraftRow, content: DraftPayl
   return "refusal" in written ? { refusal: written.refusal } : APPLIED;
 };
 
-const applyPin = async (deps: ApplyDeps, draft: DraftRow, content: DraftPayload, stamp: HumanStamp): Promise<ApplyOutcome> => {
+export const applyPin: ApplyKind = async (deps, draft, content, stamp) => {
   const pin = { ...content, presence: PIN_PRESENCE_TERMINAL } as unknown as Pin;
   // THE TEAM'S PIN POLICY, checked again at the tap: it may have changed since.
   const settings = await readTeamSettings(deps, pin.repo);
@@ -86,50 +97,31 @@ const applyPin = async (deps: ApplyDeps, draft: DraftRow, content: DraftPayload,
   return created.outcome === "duplicate" ? { refusal: "pin_exists" } : APPLIED;
 };
 
-const applyBreak = async (deps: ApplyDeps, draft: DraftRow, content: DraftPayload, stamp: HumanStamp): Promise<ApplyOutcome> => {
+export const applyBreak: ApplyKind = async (deps, draft, content, stamp) => {
   const outcome = await markPinBroke(
     deps,
     draft.developerId,
     draft.repo ?? "",
-    text(content, "pinId"),
-    textOrNull(content, "brokeAtCommit"),
+    payloadText(content, "pinId"),
+    payloadTextOrNull(content, "brokeAtCommit"),
     stamp,
   );
   return outcome === "not_found" ? { refusal: "unknown_pin" } : APPLIED;
 };
 
-const applyMute = async (deps: ApplyDeps, draft: DraftRow, content: DraftPayload, stamp: HumanStamp): Promise<ApplyOutcome> => {
-  const target = text(content, "developerId");
+export const applyMuteChange: ApplyKind = async (deps, draft, content, stamp) => {
+  const target = payloadText(content, "developerId");
   if (draft.kind === "unmute") {
     const removed = await removeMute(deps.db, draft.developerId, target);
     return removed.outcome === "unmuted" ? APPLIED : { refusal: "unknown_developer" };
   }
   const added = await addMute(deps, draft.developerId, target, stamp);
-  return added.outcome === "muted" ? APPLIED : { refusal: added.outcome === "limit_reached" ? "mute_limit_reached" : "unknown_developer" };
+  return added.outcome === "muted"
+    ? APPLIED
+    : { refusal: added.outcome === "limit_reached" ? "mute_limit_reached" : "unknown_developer" };
 };
 
-/** One confirmed item, applied in the caller's transaction — or why not. */
-export const applyDraft = async (
-  deps: ApplyDeps,
-  draft: DraftRow,
-  content: DraftPayload,
-  stamp: HumanStamp,
-): Promise<ApplyOutcome> => {
-  switch (draft.kind) {
-    case "label":
-    case "pin_ok":
-      return applyLabel(deps, draft, content, stamp);
-    case "outcome":
-      return applyOutcome(deps, draft, content, stamp);
-    case "pin":
-      return applyPin(deps, draft, content, stamp);
-    case "pin_broke":
-      return applyBreak(deps, draft, content, stamp);
-    case "mute":
-    case "unmute":
-      return applyMute(deps, draft, content, stamp);
-    case "presence_on":
-      await applyPresenceOptOut(deps, draft.developerId, false, HUMAN_PROVENANCE);
-      return { applied: true, presenceOn: true };
-  }
+export const applyPresenceOn: ApplyKind = async (deps, draft) => {
+  await applyPresenceOptOut(deps, draft.developerId, false, HUMAN_PROVENANCE);
+  return { applied: true, presenceOn: true };
 };

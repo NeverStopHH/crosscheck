@@ -5,6 +5,7 @@
  * software authenticator (fixtures/soft-authenticator.ts) over that batch.
  * Shared by the batch suite, the invariant walk and the end-to-end test.
  */
+import { CONFIRM_PAGE_SCOPE } from "../../src/services/confirm-page.ts";
 import { pendingFingerprint, readPendingDrafts } from "../../src/services/human-drafts.ts";
 import type { DraftRow } from "../../src/services/human-drafts.ts";
 import { TEST_WEBAUTHN_ORIGIN } from "../helpers.ts";
@@ -45,9 +46,11 @@ export interface Pending {
   readonly drafts: readonly DraftRow[];
 }
 
-/** What the page renders: the pending drafts and the fingerprint of exactly that set. */
+/** What /ui/confirm renders: the pending drafts of its scope and the fingerprint of exactly that set. */
 export const pendingOf = async (harness: TestHarness, developer: TestDeveloper): Promise<Pending> => {
-  const drafts = await readPendingDrafts(harness.db, developer.developerId);
+  const drafts = await readPendingDrafts({ db: harness.db, now: harness.clock.now }, developer.developerId, {
+    scope: CONFIRM_PAGE_SCOPE,
+  });
   return { fingerprint: pendingFingerprint(drafts), drafts };
 };
 
@@ -60,12 +63,12 @@ export interface DecisionInput {
 }
 
 /** POST /ui/confirm/batch, as the page's script sends it. */
-export const formBatch = (
+export const formBatch = async (
   harness: TestHarness,
   viewer: Viewer,
   body: { readonly fingerprint: string; readonly items: readonly DecisionInput[] },
 ): Promise<Response> =>
-  harness.app.request("/ui/confirm/batch", {
+  await harness.app.request("/ui/confirm/batch", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

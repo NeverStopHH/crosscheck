@@ -22,8 +22,8 @@ import type { TestDeveloper, TestHarness } from "./helpers.ts";
 
 const dataOf = async <T>(response: Response): Promise<T> => ((await response.json()) as { data: T }).data;
 
-const post = (harness: TestHarness, developer: TestDeveloper, path: string, body: unknown): Promise<Response> =>
-  harness.app.request(path, jsonRequest("POST", developer.apiKey, body));
+const post = async (harness: TestHarness, developer: TestDeveloper, path: string, body: unknown): Promise<Response> =>
+  await harness.app.request(path, jsonRequest("POST", developer.apiKey, body));
 
 const draftsOf = (harness: TestHarness) => harness.db.select().from(humanDrafts);
 

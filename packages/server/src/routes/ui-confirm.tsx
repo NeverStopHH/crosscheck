@@ -17,7 +17,7 @@ import { fail, ok } from "../http/envelope.ts";
 import { formatIssues, readJsonBody } from "../http/request.ts";
 import { BATCH_SENTENCE, BatchBodySchema } from "../services/confirmation-batch.ts";
 import type { BatchStore } from "../services/confirmation-batch.ts";
-import { readConfirmPage } from "../services/confirm-page.ts";
+import { CONFIRM_PAGE_SCOPE, readConfirmPage } from "../services/confirm-page.ts";
 import { getDeveloperSettings } from "../services/developer-settings.ts";
 import { confirmingCredentials } from "../services/passkeys.ts";
 import { UI_PASSKEY_CSP } from "../ui/constants.ts";
@@ -34,7 +34,7 @@ export const uiConfirmRoutes = (deps: AppDeps, batches: BatchStore): Hono<AppEnv
     c.header("Content-Security-Policy", UI_PASSKEY_CSP);
     const developerId = c.get("developer").id;
     const [page, credentials, settings] = await Promise.all([
-      readConfirmPage(deps.db, developerId),
+      readConfirmPage(deps, developerId),
       confirmingCredentials({ db: deps.db, developerId }),
       getDeveloperSettings(deps.db, developerId, deps.now()),
     ]);
@@ -58,7 +58,8 @@ export const uiConfirmRoutes = (deps: AppDeps, batches: BatchStore): Hono<AppEnv
     if (!parsed.success) {
       return fail(c, 400, "validation_failed", formatIssues(parsed.error));
     }
-    const batch = await batches.form(deps, ceremonyOwnerOf(c), parsed.data);
+    // The page's own scope: a batch it forms covers the kinds it shows, and only those.
+    const batch = await batches.form(deps, ceremonyOwnerOf(c), parsed.data, CONFIRM_PAGE_SCOPE);
     if ("refusal" in batch) {
       return fail(c, 422, batch.refusal, BATCH_SENTENCE[batch.refusal]);
     }

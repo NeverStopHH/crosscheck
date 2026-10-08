@@ -9,11 +9,13 @@
  * §11.9): the title is joined only within the draft's own repo.
  */
 import { sql } from "drizzle-orm";
+import { DRAFT_KINDS } from "@crosscheck/schema";
 import type { DraftKind, DraftProvenance } from "@crosscheck/schema";
 
 import { pendingFingerprint, readPendingDrafts } from "./human-drafts.ts";
 import type { DraftPayload, DraftRow } from "./human-drafts.ts";
 import type { Db } from "../db/client.ts";
+import type { Clock } from "../types.ts";
 
 export interface DraftContext {
   readonly id: string;
@@ -97,11 +99,21 @@ const contextOf = async (db: Db, draft: DraftRow): Promise<DraftContext> => {
   return { ...base, ...none };
 };
 
-/** The caller's pending drafts with their context, and the fingerprint of exactly that set. */
-export const readConfirmPage = async (db: Db, developerId: string): Promise<ConfirmPageView> => {
-  const drafts = await readPendingDrafts(db, developerId);
+/**
+ * THE KINDS /ui/confirm SHOWS — its scope (§6): a batch it forms covers these
+ * and nothing else, so a draft of a kind another page shows never invalidates
+ * it. Today every kind; a later page with its own kinds takes its own scope.
+ */
+export const CONFIRM_PAGE_SCOPE: readonly DraftKind[] = DRAFT_KINDS;
+
+/** The caller's pending drafts in the page's scope, with their context, and the fingerprint of exactly that set. */
+export const readConfirmPage = async (
+  deps: { readonly db: Db; readonly now: Clock },
+  developerId: string,
+): Promise<ConfirmPageView> => {
+  const drafts = await readPendingDrafts(deps, developerId, { scope: CONFIRM_PAGE_SCOPE });
   return {
     fingerprint: pendingFingerprint(drafts),
-    drafts: await Promise.all(drafts.map((draft) => contextOf(db, draft))),
+    drafts: await Promise.all(drafts.map((draft) => contextOf(deps.db, draft))),
   };
 };

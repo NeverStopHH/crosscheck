@@ -43,7 +43,6 @@ import {
   workContexts,
 } from "../db/schema.ts";
 import type { HumanStamp } from "./human-provenance.ts";
-import { readPendingDrafts } from "./human-drafts.ts";
 import { appendEvent } from "./events.ts";
 import { resolvesToDeveloper } from "./cloud-agent-identity.ts";
 import { embedContextDoc, refreshNormalizedDoc } from "./normalized-doc.ts";
@@ -82,18 +81,11 @@ export interface DeveloperSettingsView {
    */
   readonly presenceReenabledAt: string | null;
   /**
-   * A key asked to show the caller's presence again and it waits for their
-   * passkey (human provenance §8): presence stays off until they confirm it.
-   */
-  readonly presenceOnPending: boolean;
-  /**
    * The caller's presence was switched OFF by something holding their key,
    * within PRESENCE_REENABLE_NOTICE_DAYS: immediate, because going more
    * private never waits — and told to them, because they may not have done it.
    */
   readonly presenceOptOutChange: { readonly at: string; readonly provenance: ProvenanceClass } | null;
-  /** How many of the caller's drafts await their passkey at /ui/confirm. */
-  readonly pendingDrafts: number;
 }
 
 interface Deps {
@@ -153,16 +145,13 @@ export const getDeveloperSettings = async (
     .where(eq(developerMutes.readerDeveloperId, developerId))
     .orderBy(asc(developers.name), asc(developers.id))
     .limit(MAX_MUTES_PER_READER);
-  const pending = await readPendingDrafts(db, developerId);
   return {
     presenceOptOut,
     mutes,
     emails: await listDeveloperEmails(db, developerId),
     // Told for its full window, opted out again or not (presenceReenableNotice).
     presenceReenabledAt: await presenceReenableNotice(db, developerId, now),
-    presenceOnPending: pending.some((draft) => draft.kind === "presence_on"),
     presenceOptOutChange: await keyedOptOutNotice(db, developerId, now),
-    pendingDrafts: pending.length,
   };
 };
 

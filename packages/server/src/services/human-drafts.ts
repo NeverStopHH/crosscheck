@@ -25,6 +25,7 @@ import type { DraftKind, DraftProvenance } from "@crosscheck/schema";
 
 import { MAX_PENDING_DRAFT_SUBJECTS } from "../constants.ts";
 import { humanDrafts } from "../db/schema.ts";
+import { staysPending } from "./draft-kinds.ts";
 import type { Db, DbExecutor } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
@@ -133,12 +134,37 @@ const RESOLVED = sql`EXISTS (
   SELECT 1 FROM human_confirmation_items i
   WHERE i.draft_id = d.id AND i.decision IN ('confirm', 'discard'))`;
 
+export interface PendingOptions {
+  /** Take the person's drafts FOR UPDATE: the confirmation compares under it. */
+  readonly lock?: boolean;
+  /** Only these kinds — the ones a page shows. Absent: every kind. */
+  readonly scope?: readonly DraftKind[];
+}
+
 /**
- * THE PERSON'S PENDING DRAFTS, oldest first. `lock` takes them FOR UPDATE —
- * the confirmation's verify reads under it, so nothing it compares can change
- * before it commits.
+ * THE PERSON'S PENDING DRAFTS, oldest first: each subject's newest version,
+ * undecided, and still LIVE by its kind's registry entry (services/
+ * draft-kinds.ts) — a break of a pin already broken is no decision anybody can
+ * make, so it leaves the list on its own. `scope` keeps a page's own kinds.
  */
 export const readPendingDrafts = async (
+  deps: { readonly db: DbExecutor; readonly now: Clock },
+  developerId: string,
+  options: PendingOptions = {},
+): Promise<readonly DraftRow[]> => {
+  const rows = await readPendingRows(deps.db, developerId, options);
+  const scoped = options.scope === undefined ? rows : rows.filter((draft) => options.scope?.includes(draft.kind));
+  const kept: DraftRow[] = [];
+  for (const draft of scoped) {
+    if (await staysPending(deps, draft)) {
+      kept.push(draft);
+    }
+  }
+  return kept;
+};
+
+/** The undecided newest versions, liveness unread: what the bound on pending subjects counts first. */
+const readPendingRows = async (
   db: DbExecutor,
   developerId: string,
   options: { readonly lock?: boolean } = {},
@@ -170,8 +196,14 @@ const readNewest = async (
   return raw === undefined ? undefined : { draft: rowOf(raw), resolved: raw.resolved };
 };
 
-const countPendingSubjects = async (db: DbExecutor, developerId: string): Promise<number> =>
-  (await readPendingDrafts(db, developerId)).length;
+/**
+ * Whether the person's page is full. The raw count first, which is all a write
+ * pays while there is room; only at the bound are the dead drafts left out, so
+ * drafts that died on their own never hold the page shut.
+ */
+const isPageFull = async (deps: { readonly db: DbExecutor; readonly now: Clock }, developerId: string): Promise<boolean> =>
+  (await readPendingRows(deps.db, developerId)).length >= MAX_PENDING_DRAFT_SUBJECTS &&
+  (await readPendingDrafts(deps, developerId)).length >= MAX_PENDING_DRAFT_SUBJECTS;
 
 /**
  * ONE DRAFT. A repeat of the subject's newest version writes nothing; a new
@@ -186,7 +218,7 @@ export const writeDraft = (deps: Deps, input: WriteDraftInput): Promise<WriteDra
       return { id: newest.draft.id, version: newest.draft.version, repeated: true };
     }
     const opensSubject = newest === undefined || newest.resolved;
-    if (opensSubject && (await countPendingSubjects(tx, input.developerId)) >= MAX_PENDING_DRAFT_SUBJECTS) {
+    if (opensSubject && (await isPageFull({ db: tx, now: deps.now }, input.developerId))) {
       return { refusal: "too_many_drafts" as const };
     }
     const id = `dr_${randomUUID()}`;
@@ -207,11 +239,11 @@ export const writeDraft = (deps: Deps, input: WriteDraftInput): Promise<WriteDra
 
 /** How many drafts await this person, by kind — the count `crosscheck confirm` and doctor print. */
 export const countPendingByKind = async (
-  db: DbExecutor,
+  deps: { readonly db: DbExecutor; readonly now: Clock },
   developerId: string,
 ): Promise<Readonly<Partial<Record<DraftKind, number>>>> => {
   const counts: Partial<Record<DraftKind, number>> = {};
-  for (const draft of await readPendingDrafts(db, developerId)) {
+  for (const draft of await readPendingDrafts(deps, developerId)) {
     counts[draft.kind] = (counts[draft.kind] ?? 0) + 1;
   }
   return counts;
