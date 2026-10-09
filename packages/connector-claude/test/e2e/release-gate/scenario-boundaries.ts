@@ -256,7 +256,7 @@ export const runSelfCase = async (hub: TestHub, profile: GateProfile = GENEROUS)
 export const N5_SHARED_FILE = "apps/practice/mapping/PlayerMappingGrid.tsx";
 const N5_FOCUSED = [N5_SHARED_FILE, "apps/practice/mapping/MappingRow.tsx", "apps/practice/mapping/mappingApi.ts"];
 const N5_SWEEP = [N5_SHARED_FILE, ...Array.from({ length: 299 }, (_, index) => `apps/web/src/fmt/file${pad(index + 1)}.ts`)];
-/** Enough Stops for the git lane, MAX_TARGETS_PER_INVOCATION (20) per Stop, to take all 300. */
+/** An upper bound on the Stops the git lane may need to take all 300 (one, at MAX_GIT_LANE_TARGETS_PER_ROOT per root per Stop; many more when lanes are cut on a starved machine). */
 const MAX_SWEEP_TURNS = 20;
 
 export interface SweepWorld {
