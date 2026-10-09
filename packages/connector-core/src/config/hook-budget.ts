@@ -43,6 +43,15 @@ export interface HookBudget {
   readonly isCut?: () => boolean;
   /** How to undo a claim this hook's output must deliver, should the race abandon the hook. */
   readonly onCut?: (undo: CutUndo) => void;
+  /**
+   * The hook's capture is on disk — its records appended, its state written —
+   * and only maintenance is left: a cut from here on loses nothing, since a
+   * drain the race abandons leaves its records in the spool for the next hook
+   * (the runner books a cut capture hook as `hook_timed_out` until this is
+   * said; release gate, loaded lane, 2026-10-09). Absent on a budget built
+   * outside a race.
+   */
+  readonly captured?: () => void;
 }
 
 /** Undoes one claim of a hook the race abandoned; never throws (the race's settle swallows it). */
@@ -90,6 +99,8 @@ export interface HookRace {
    * claim registered so far runs. Answers how many ran; never throws.
    */
   readonly cut: () => Promise<number>;
+  /** Whether the handler said its capture was on disk before the race was lost (`budget.captured`). */
+  readonly isCaptured: () => boolean;
 }
 
 /**
@@ -108,6 +119,9 @@ export const hookRace = (
 ): HookRace => {
   const undos: CutUndo[] = [];
   const lost = { value: false };
+  // Said BEFORE the race is lost, or not at all: a capture settled after the
+  // cut is one the abandoned handler finished too late to vouch for.
+  const captured = { value: false };
   return {
     budget: {
       ...hookBudget(deadlineMs, timeoutMs, now, holdsReserve),
@@ -115,12 +129,16 @@ export const hookRace = (
       onCut: (undo) => {
         undos.push(undo);
       },
+      captured: () => {
+        captured.value = captured.value || !lost.value;
+      },
     },
     cut: async () => {
       lost.value = true;
       const settled = await Promise.allSettled(undos.map((undo) => undo()));
       return settled.length;
     },
+    isCaptured: () => captured.value,
   };
 };
 

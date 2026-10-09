@@ -48,6 +48,9 @@ export const handleSubagentStop = async (
     { cwdRoot: ownCwdRoot(ctx, state), subagent: true },
     SUBAGENT_GIT_LANE_LOSS_DETAIL,
   );
+  // The subagent's capture is on disk; a cut from here on abandons only the
+  // drain below, whose records wait for the next hook (hooks/stop.ts says why).
+  budget.captured?.();
   // Maintenance on the spare budget, like every hook.
   const current = (await readSessionState(ctx.config.home, ctx.payload.session_id)) ?? state;
   await flushSpool(

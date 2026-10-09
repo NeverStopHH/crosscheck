@@ -599,8 +599,14 @@ export const runHookWith = async (
     // the race answered, abandoning whatever the handler had not yet
     // written. Booked here, after the race, for the reason the fired marker
     // below is — and keyed to the repo when prepare got that far, unkeyed
-    // (charged to every repo) when the budget beat repo identity.
-    if (outcome.timedOut && CAPTURE_HOOKS.has(name)) {
+    // (charged to every repo) when the budget beat repo identity. UNLESS THE
+    // HANDLER SAID ITS CAPTURE WAS ON DISK before the race was lost
+    // (`budget.captured`; hooks/stop.ts, subagent-stop.ts): what the cut
+    // abandoned then was the drain, whose records stay in the spool for the
+    // next hook — a slow hub cutting that is no loss, as SessionEnd's drain
+    // already is, and booking it made the hub's coverage answer contradict
+    // the connector's own ledger (release gate, loaded lane, 2026-10-09).
+    if (outcome.timedOut && CAPTURE_HOOKS.has(name) && !race.isCaptured()) {
       const owner = resolved.value ?? (await unresolvedOwner(stdin, env));
       if (owner !== null) {
         await recordHookTimeout(owner.home, name, owner.key, new Date());

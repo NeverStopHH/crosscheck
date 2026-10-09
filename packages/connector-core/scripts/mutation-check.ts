@@ -37084,6 +37084,16 @@ export const MUTATIONS: readonly Mutation[
       "the budget arithmetic knows about answerless hooks but the runner never says which they are, and the " +
       "lane is starved on a loaded machine exactly as before",
   },
+  {
+    label: "a drain the budget cut after the capture was on disk is booked as a lost capture",
+    file: `${CONNECTOR}/src/hooks/runner.ts`,
+    from: "    if (outcome.timedOut && CAPTURE_HOOKS.has(name) && !race.isCaptured()) {",
+    to: "    if (outcome.timedOut && CAPTURE_HOOKS.has(name)) {",
+    test: `${CONNECTOR}/test/hook-time-budget.test.ts`,
+    because:
+      "a Stop whose lane and state write landed and whose drain the race cut books hook_timed_out for records " +
+      "still safe in the spool, and the hub's coverage answer then contradicts the connector's ledger",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -37344,7 +37354,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/hook-contract.test.ts 1
  * PRINTS: packages/connector-claude/test/hook-reserve.test.ts 2
  * PRINTS: packages/connector-claude/test/hook-seq.test.ts 3
- * PRINTS: packages/connector-claude/test/hook-time-budget.test.ts 1
+ * PRINTS: packages/connector-claude/test/hook-time-budget.test.ts 2
  * PRINTS: packages/connector-claude/test/hook-timeout-loss.test.ts 6
  * PRINTS: packages/connector-claude/test/hook-window-pairing.test.ts 11
  * PRINTS: packages/connector-claude/test/hook-window.test.ts 4
