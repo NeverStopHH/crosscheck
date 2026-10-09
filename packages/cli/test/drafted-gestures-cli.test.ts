@@ -19,6 +19,9 @@ import { rm } from "node:fs/promises";
 import { createDb, createServer } from "@crosscheck/server";
 import { hintDeliveryId } from "@crosscheck/connector-core/capture/records.ts";
 import { EXIT_OK } from "@crosscheck/connector-core/constants.ts";
+import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
+import { assembleBriefing } from "@crosscheck/connector-core/flows/briefing.ts";
+import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
 import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 
 import { runCli } from "../src/index.ts";
@@ -31,6 +34,7 @@ const LIVE = "cc_12121212-2222-4333-8444-555555555555";
 const KEN_SESSION = "cc_34343434-2222-4333-8444-555555555555";
 const KEN_CONTEXTS = ["wc_ken_filters", "wc_ken_playback", "wc_ken_export"] as const;
 const PINNED = "src/workbench/usePlayback.ts";
+const PRESENCE_WAITING = "a request to show your presence again is waiting for your passkey";
 
 let server: ReturnType<typeof Bun.serve>;
 let hubUrl: string;
@@ -213,6 +217,21 @@ describe("a key gesture against a hub since human provenance", () => {
     expect(on.stdout).toStartWith("presence: hidden from teammates");
     expect(on.stdout).toContain("presence on is drafted — nothing changed yet");
     expect(shown.stdout).toStartWith("presence: hidden from teammates");
+  });
+
+  test("§8: while presence on waits, status, doctor and the briefing say so", async () => {
+    // Arrange — the draft from the test above still waits
+    const ctx: HubContext = { hubUrl, apiKey: nick.apiKey, timeoutMs: 4000, home, repoKey: repoKey(hubUrl, REPO_ID), now: () => new Date() };
+
+    // Act
+    const status = await cli(["status"]);
+    const doctor = await cli(["doctor"]);
+    const briefing = (await assembleBriefing({ hub: ctx, repoId: REPO_ID, repoRoot: repo, selfDeveloperId: nick.id, now: new Date() })).briefing;
+
+    // Assert
+    expect(status.stdout).toContain(PRESENCE_WAITING);
+    expect(doctor.stdout).toContain(PRESENCE_WAITING);
+    expect(briefing).toContain("A request to show your presence again is waiting for your passkey; until it is confirmed, your presence stays hidden.");
   });
 
   test("a word the person discarded, said again through the agent's door, is said as not drafted again", () => {
