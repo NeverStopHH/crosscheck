@@ -180,10 +180,10 @@ jobs:
     # named in the file's table with its track and branch, so the job is
     # green today and goes red the day a fix lands without its marker being
     # removed.
-    # RUNTIME: 309-407 s in five consecutive runs on a 16-core laptop shared
-    # with other work (load 16-37; 64 tests; P1 and N1 alone start about 500
+    # RUNTIME: 298-491 s in five consecutive runs on a 16-core laptop shared
+    # with other work (load 15-34; 72 tests; P1 and N1 alone start about 500
     # hook processes each). Not yet measured on a hosted runner: the bound
-    # below leaves a 4-vCPU one more than four times the slowest run.
+    # below leaves a 4-vCPU one more than three and a half times the slowest.
     name: Release gate (production budgets)
     runs-on: ubuntu-latest
     timeout-minutes: 30
