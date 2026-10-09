@@ -29290,6 +29290,22 @@ export const MUTATIONS: readonly Mutation[
     because: "a file a commit never had reads as unknown, and the moot check can no longer prove a branch changed nothing",
   },
   {
+    label: "an edit's classification asks check-attr about its file alone",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "  const prefetch = await neighboursOf(edited);",
+    to: "  const prefetch: readonly string[] = [];",
+    test: `${CONNECTOR}/test/pre-tool-use-cost.test.ts`,
+    because: "every edit of a new file in a directory pays its own check-attr spawn on the hook's critical path",
+  },
+  {
+    label: "the attribute call never answers the neighbours it was handed",
+    file: `${CORE}/src/capture/generated-attributes.ts`,
+    from: "      : await askGit(input.root, [...misses, ...neighbours], input.timeoutMs ?? GENERATED_ATTR_TIMEOUT_MS);",
+    to: "      : await askGit(input.root, misses, input.timeoutMs ?? GENERATED_ATTR_TIMEOUT_MS);",
+    test: `${CORE}/test/generated-targets.test.ts`,
+    because: "the neighbours are never cached, and each of their edits spawns check-attr again",
+  },
+  {
     label: "the files stand in for the git answers a caller staged",
     file: `${CORE}/src/landed-changes/probe.ts`,
     from: "  const isRealGit = input.runGit === undefined;",
@@ -35422,6 +35438,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/landed-probe-cut-hook.test.ts 8
  * PRINTS: packages/connector-claude/test/landed-why-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/landing-fetch-hook.test.ts 3
+ * PRINTS: packages/connector-claude/test/pre-tool-use-cost.test.ts 1
  * PRINTS: packages/connector-claude/test/recovery-epoch.test.ts 2
  * PRINTS: packages/connector-claude/test/recovery-losses.test.ts 1
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
@@ -35503,7 +35520,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/fix-diff.test.ts 7
  * PRINTS: packages/connector-core/test/foreign-hub-ledger.test.ts 8
  * PRINTS: packages/connector-core/test/future-stamps.test.ts 5
- * PRINTS: packages/connector-core/test/generated-targets.test.ts 16
+ * PRINTS: packages/connector-core/test/generated-targets.test.ts 17
  * PRINTS: packages/connector-core/test/ghost-declare.test.ts 2
  * PRINTS: packages/connector-core/test/ghost-render.test.ts 7
  * PRINTS: packages/connector-core/test/git-lane-cost.test.ts 1

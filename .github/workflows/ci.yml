@@ -168,7 +168,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 3631
+    # PRINTS: 3633
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -275,7 +275,7 @@ jobs:
     # PRINTS: hooks/landing-fetch.ts 2
     # PRINTS: hooks/post-tool-use-failure.ts 5
     # PRINTS: hooks/post-tool-use.ts 15
-    # PRINTS: hooks/pre-tool-use.ts 46
+    # PRINTS: hooks/pre-tool-use.ts 47
     # PRINTS: hooks/presence-refresh.ts 2
     # PRINTS: hooks/rest-recheck.ts 12
     # PRINTS: hooks/runner.ts 18
@@ -303,7 +303,7 @@ jobs:
     # PRINTS: capture/authoritative-generated.ts 6
     # PRINTS: capture/commit-evidence.ts 1
     # PRINTS: capture/denylist.ts 6
-    # PRINTS: capture/generated-attributes.ts 4
+    # PRINTS: capture/generated-attributes.ts 5
     # PRINTS: capture/generated.ts 7
     # PRINTS: capture/landed.ts 6
     # PRINTS: capture/records.ts 4
@@ -763,7 +763,7 @@ jobs:
     # PRINTS: forwarded.ts 10
     # PRINTS: gate.ts 16
     # PRINTS: gates.ts 1
-    # PRINTS: generated-attributes.ts 4
+    # PRINTS: generated-attributes.ts 5
     # PRINTS: generated-target.ts 5
     # PRINTS: generated-targets.ts 2
     # PRINTS: generated.ts 7
@@ -877,7 +877,7 @@ jobs:
     # PRINTS: post-tool-use-failure.ts 5
     # PRINTS: post-tool-use.ts 16
     # PRINTS: post.ts 1
-    # PRINTS: pre-tool-use.ts 46
+    # PRINTS: pre-tool-use.ts 47
     # PRINTS: precision.ts 2
     # PRINTS: presence-cache.ts 1
     # PRINTS: presence-notice.ts 2

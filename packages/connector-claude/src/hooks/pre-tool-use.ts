@@ -73,6 +73,8 @@
  * about where a subagent hook's `systemMessage` shows, and the subagent's
  * context is not the conversation the person reads.
  */
+import { readdir } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { isDeniedUnlessAuthoritative, resolveDenylist } from "@crosscheck/connector-core/capture/denylist.ts";
 import { classifyGenerated, wireGeneratedSignal } from "@crosscheck/connector-core/capture/generated.ts";
 import type { GeneratedClassification } from "@crosscheck/connector-core/capture/generated.ts";
@@ -201,15 +203,36 @@ const resolveEditedFile = async (
   return root === undefined || file === null ? null : { file, root };
 };
 
+/** Neighbours one edit hands the attribute call: a directory's worth, never a tree. */
+const MAX_EDIT_NEIGHBOURS = 64;
+
+/**
+ * The edited file's neighbours — the other files in its directory,
+ * repo-relative — which the classification's `check-attr` answers in the same
+ * call when the file misses the cache (batch-2 review, M6): agents edit a
+ * directory's files one after another, and each of those edits is then a
+ * cache hit instead of a git spawn on this hook's critical path.
+ */
+const neighboursOf = async (edited: EditedFile): Promise<readonly string[]> => {
+  const dir = dirname(edited.file);
+  const entries = await readdir(join(edited.root, dir), { withFileTypes: true }).catch(() => []);
+  return entries
+    .filter((entry) => entry.isFile())
+    .map((entry) => (dir === "." ? entry.name : `${dir}/${entry.name}`))
+    .filter((path) => path !== edited.file)
+    .slice(0, MAX_EDIT_NEIGHBOURS);
+};
+
 /** The edited file as the generated-target rule classifies it — the rule capture applies. */
 const classifyEditedFile = async (
   home: string,
   edited: EditedFile,
   declared: AuthoritativeGenerated,
-): Promise<GeneratedClassification> =>
-  (await classifyGenerated({ home, root: edited.root, paths: [edited.file], authoritative: declared })).get(
-    edited.file,
-  ) ?? "unknown";
+): Promise<GeneratedClassification> => {
+  const prefetch = await neighboursOf(edited);
+  const classified = await classifyGenerated({ home, root: edited.root, paths: [edited.file], authoritative: declared, prefetch });
+  return classified.get(edited.file) ?? "unknown";
+};
 
 /** What one edit's own tripwire found to say: the ask's reason, and the groups its person is told of. */
 interface EditAnswer {
