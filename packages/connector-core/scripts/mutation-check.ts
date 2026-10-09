@@ -6542,11 +6542,12 @@ export const MUTATIONS: readonly Mutation[
   {
     // The PreToolUse ask states what a teammate is doing; the note states how
     // far the archive that claim came from reaches. Dropped, the ask reads as
-    // a complete picture of who is in the file.
+    // a complete picture of who is in the file. RETARGETED (I1): the note's
+    // lines are one helper now, shared with the nameless teammate's ask.
     label: "the ask reason states a teammate and not what was watched",
     file: `${CORE}/src/hints/render.ts`,
-    from: "    ...(note === null ? [] : [note]),",
-    to: "    ...[],",
+    from: "  return note === null ? [] : [note];",
+    to: "  return [];",
     test: `${CORE}/test/coverage-hints.test.ts`,
     because:
       "the one surface that interrupts a tool call says nothing about the " +
@@ -20707,10 +20708,11 @@ export const MUTATIONS: readonly Mutation[
   },
   // ── 07 §13.9, D-O3: the tripwire and the briefing ─────────────────────────
   {
+    // RETARGETED (I1): the answer carries the nameless row beside the sessions.
     label: "the tripwire answer says it records outcomes on a repo nobody enrolled",
     file: `${SERVER}/src/routes/hints.ts`,
-    from: "    return ok(c, { sessions, coverage, recordsOutcomes: settings.pilotEnrolled });",
-    to: "    return ok(c, { sessions, coverage, recordsOutcomes: true });",
+    from: "    return ok(c, { sessions, anonymous, coverage, recordsOutcomes: settings.pilotEnrolled });",
+    to: "    return ok(c, { sessions, anonymous, coverage, recordsOutcomes: true });",
     test: `${SERVER}/test/hints-records-outcomes.test.ts`,
     because: "every stop on an unenrolled repo invites a call the hub then refuses",
   },
@@ -26644,6 +26646,208 @@ export const MUTATIONS: readonly Mutation[
   // aggregate hands rows on by its group key, never by where they sit: a
   // rewritten tied claim moved nothing, so the tie-break was an equivalent
   // mutant under the L7 case and is left out.
+  // ── The owner's decision on the integration review's I1: an opted-out
+  // teammate is still a collision — anonymous and live, and nothing more ──
+  {
+    label: "an opted-out teammate's anonymous tripwire row says who and where she is",
+    file: `${SERVER}/src/services/hints.ts`,
+    from:
+      "    .select({ one: sql<number>`1` })\n    .from(workContextTargets)\n" +
+      "    .innerJoin(workContexts, eq(workContextTargets.workContextId, workContexts.id))\n" +
+      "    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))\n" +
+      "    .where(hiddenAndLiveOnFile)\n    .limit(1);\n  return rows.length === 0 ? [] : [ANONYMOUS_ROW];\n",
+    to:
+      "    .select({ developerId: agentSessions.developerId, branch: agentSessions.branch, lastHeartbeatAt: agentSessions.lastHeartbeatAt })\n    .from(workContextTargets)\n" +
+      "    .innerJoin(workContexts, eq(workContextTargets.workContextId, workContexts.id))\n" +
+      "    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))\n" +
+      "    .where(hiddenAndLiveOnFile)\n    .limit(1);\n  return rows.map((row) => ({ ...ANONYMOUS_ROW, ...row }));\n",
+    test: `${SERVER}/test/anonymous-presence.test.ts`,
+    because: "the row that may say only THAT someone is on the file names her id, her branch and her last heartbeat",
+  },
+  {
+    label: "an opted-out teammate's anonymous tripwire row says who and where she is (differential)",
+    file: `${SERVER}/src/services/hints.ts`,
+    from:
+      "    .select({ one: sql<number>`1` })\n    .from(workContextTargets)\n" +
+      "    .innerJoin(workContexts, eq(workContextTargets.workContextId, workContexts.id))\n" +
+      "    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))\n" +
+      "    .where(hiddenAndLiveOnFile)\n    .limit(1);\n  return rows.length === 0 ? [] : [ANONYMOUS_ROW];\n",
+    to:
+      "    .select({ developerId: agentSessions.developerId, branch: agentSessions.branch, lastHeartbeatAt: agentSessions.lastHeartbeatAt })\n    .from(workContextTargets)\n" +
+      "    .innerJoin(workContexts, eq(workContextTargets.workContextId, workContexts.id))\n" +
+      "    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))\n" +
+      "    .where(hiddenAndLiveOnFile)\n    .limit(1);\n  return rows.map((row) => ({ ...ANONYMOUS_ROW, ...row }));\n",
+    test: `${SERVER}/test/live-location-differential.test.ts`,
+    because: "her live world and her quiet one differ by a field of the anonymous row that is not its kind, which «anonymous» does not accept",
+  },
+  {
+    label: "the tripwire drops the anonymous row: an opted-out teammate on the file is a silence again",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  return rows.length === 0 ? [] : [ANONYMOUS_ROW];",
+    to: "  return [];",
+    test: `${SERVER}/test/anonymous-presence.test.ts`,
+    because: "Mike opted out and edited the file Nick was about to change, and Nick was told nothing: the pilot's failure, for every opted-out person",
+  },
+  {
+    label: "the tripwire drops the anonymous row: an opted-out teammate on the file is a silence again (differential)",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  return rows.length === 0 ? [] : [ANONYMOUS_ROW];",
+    to: "  return [];",
+    test: `${SERVER}/test/live-location-differential.test.ts`,
+    because: "her being live on his file and her being quiet read the same to him: the one difference the policy owes him is gone",
+  },
+  {
+    label: "the tripwire drops the anonymous row: an opted-out teammate on the file is a silence again (release gate)",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  return rows.length === 0 ? [] : [ANONYMOUS_ROW];",
+    to: "  return [];",
+    test: `${CONNECTOR}/test/e2e/release-gate-opted-out.e2e.test.ts`,
+    because: "Nick's real hooks edit the three files Mike is live on, opted out, and nobody tells Nick anything",
+  },
+  {
+    label: "the anonymous row outlives her presence window",
+    file: `${SERVER}/src/services/hints.ts`,
+    from:
+      "    gt(agentSessions.lastHeartbeatAt, presenceCutoff(deps.now())),\n" +
+      "    not(visiblePresenceCondition(callerDeveloperId, agentSessions.developerId)),\n",
+    to: "    not(visiblePresenceCondition(callerDeveloperId, agentSessions.developerId)),\n",
+    test: `${SERVER}/test/anonymous-presence.test.ts`,
+    because: "\"right now\" stays true of a session that went quiet, so whether the row shows says when she last beat",
+  },
+  {
+    label: "the anonymous row interrupts a reader who muted her",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    notMutedCondition(callerDeveloperId, agentSessions.developerId),\n  );\n",
+    to: "  );\n",
+    test: `${SERVER}/test/anonymous-presence.test.ts`,
+    because: "a mute is the reader's own control over who interrupts them, and an anonymous row of the muted teammate still did",
+  },
+  {
+    label: "a teammate the tripwire names is counted again as anonymous",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    not(visiblePresenceCondition(callerDeveloperId, agentSessions.developerId)),\n",
+    to: "    sql`true`,\n",
+    test: `${SERVER}/test/anonymous-presence.test.ts`,
+    because: "every named teammate on the file also arrives as \"a teammate\": one person read as two",
+  },
+  {
+    label: "the ghost check drops the anonymous overlap count",
+    file: `${SERVER}/src/services/ghost-overlap.ts`,
+    from: "  return shared.length === 0 ? null : { sharedFileCount: shared.length };",
+    to: "  return null;",
+    test: `${SERVER}/test/anonymous-presence.test.ts`,
+    because: "an opted-out teammate's unfinished work on the reader's files is in nobody's briefing",
+  },
+  {
+    label: "the anonymous overlap count reads her work's times",
+    file: `${SERVER}/src/services/ghost-overlap.ts`,
+    from:
+      "        ...liveWorkConditions(),\n      ),\n    )\n" +
+      "    // Distinct values out of the reader's own files: never more than those.\n",
+    to:
+      "        ...liveWorkConditions(),\n        gte(activityExpression, cutoff),\n      ),\n    )\n" +
+      "    // Distinct values out of the reader's own files: never more than those.\n",
+    test: `${SERVER}/test/anonymous-presence.test.ts`,
+    because: "the count shows or not by when she last touched that work, which the opt-out withholds",
+  },
+  {
+    label: "a teammate the ghost check names is counted again in the anonymous overlap",
+    file: `${SERVER}/src/services/ghost-overlap.ts`,
+    from: "        not(visiblePresenceCondition(viewerDeveloperId, agentSessions.developerId)),\n",
+    to: "        sql`true`,\n",
+    test: `${SERVER}/test/anonymous-presence.test.ts`,
+    because: "a named row and a nameless count for the same person's work: one teammate read as two",
+  },
+  {
+    label: "the connector ignores the tripwire's anonymous row",
+    file: `${CORE}/src/http/hub.ts`,
+    from: "      anonymous: (value.anonymous ?? []).some(isAnonymousRow),\n",
+    to: "      anonymous: false,\n",
+    test: `${CONNECTOR}/test/e2e/release-gate-opted-out.e2e.test.ts`,
+    because: "the hub says a teammate is on the file and Nick's connector reads past it: silence again, one layer up",
+  },
+  {
+    label: "the edit hook drops the hub's anonymous answer",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "    anonymous: hub?.anonymous ?? false,\n",
+    to: "    anonymous: false,\n",
+    test: `${CONNECTOR}/test/collision-anonymous-hook.test.ts`,
+    because: "neither the person nor the agent hears that a teammate is on the file being edited",
+  },
+  {
+    label: "the person is not told of an anonymous teammate on the file they edit",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "    ...(found.anonymous ? [anonymousTripwireCollision(file, found.coverage)] : []),\n",
+    to: "",
+    test: `${CONNECTOR}/test/collision-anonymous-hook.test.ts`,
+    because: "the agent is asked and the person is not: the pilot's hints reached only agents, 0 of 157 opened",
+  },
+  {
+    label: "the anonymous live line says the teammate only recently worked on the file",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  return group.unconfirmed === true\n    ? `crosscheck: ${UNKNOWN_TEAMMATE} recently worked on",
+    to: "  return true\n    ? `crosscheck: ${UNKNOWN_TEAMMATE} recently worked on",
+    test: `${CONNECTOR}/test/collision-anonymous-hook.test.ts`,
+    because: "a teammate live on the file this second reads as old news, and \"right now\" is the whole warning",
+  },
+  {
+    label: "the session state forgets that a stored group was nameless",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  anonymous: z.boolean().optional(),\n});",
+    to: "});",
+    test: `${CONNECTOR}/test/collision-anonymous-hook.test.ts`,
+    because: "read back from the state, the opted-out teammate's group is a named one with no name, and a relay with no presence answer prints it in a named teammate's sentence",
+  },
+  {
+    label: "the turn-end recheck drops the anonymous row",
+    file: `${CONNECTOR}/src/hooks/rest-recheck.ts`,
+    from: "      ...(outcome.anonymous ? [anonymousTripwireCollision(outcome.rest.file, outcome.coverage)] : []),\n",
+    to: "",
+    test: `${CONNECTOR}/test/collision-anonymous-hook.test.ts`,
+    because: "a teammate who arrived on a file the session already edited is found by the recheck and told to nobody",
+  },
+  {
+    label: "the briefing drops the anonymous ghost count",
+    file: `${CORE}/src/briefing/render.ts`,
+    from:
+      "    ...(input.anonymousGhost === null || input.anonymousGhost === undefined\n      ? []\n" +
+      "      : [formatAnonymousGhostLine(input.anonymousGhost.sharedFileCount)]),\n",
+    to: "",
+    test: `${CONNECTOR}/test/collision-anonymous-hook.test.ts`,
+    because: "the agent's briefing never says that a teammate's unfinished work touches the reader's files",
+  },
+  {
+    label: "the person is not told of the anonymous ghost count at session start",
+    file: `${CONNECTOR}/src/hooks/ghost-notice.ts`,
+    from: "  const groups = [...ghostCollisions(shown), ...(anonymousFiles === null ? [] : [anonymousGhostCollision(anonymousFiles)])];",
+    to: "  const groups = ghostCollisions(shown);",
+    test: `${CONNECTOR}/test/collision-anonymous-hook.test.ts`,
+    because: "the briefing tells the agent and the person hears nothing, which is the gap the visible collision closed",
+  },
+  {
+    label: "`crosscheck presence` does not say what an opt-out hides",
+    file: `${CLI}/src/cli/privacy.ts`,
+    from: "    stdout: `${presenceStateLine(settings.data.presenceOptOut)}\\n${OPT_OUT_GUARANTEE}\\n`,",
+    to: "    stdout: `${presenceStateLine(settings.data.presenceOptOut)}\\n`,",
+    test: `${CLI}/test/privacy-cli.test.ts`,
+    because: "the person learns only after opting out that teammates still hear somebody is on their file",
+  },
+  {
+    label: "`crosscheck presence off` does not state the guarantee",
+    file: `${CLI}/src/cli/privacy.ts`,
+    from: "  OPT_OUT_GUARANTEE,\n",
+    to: "",
+    test: `${CLI}/test/privacy-cli.test.ts`,
+    because: "the scope an opt-out prints leaves out the one thing it does not hide",
+  },
+  {
+    label: "doctor's privacy check does not state the guarantee",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    `${presencePart}, ${result.data.mutes.length} muted${aliasPart}. ${OPT_OUT_GUARANTEE}`,",
+    to: "    `${presencePart}, ${result.data.mutes.length} muted${aliasPart}.`,",
+    test: `${CLI}/test/privacy-cli.test.ts`,
+    because: "the check a person runs to see their privacy state is silent on what their opt-out still says",
+  },
   // THE GENERATED-TARGET RULE (release gate N2): every gate, from the signal
   // that names a file generated to the hub read that keeps it out of overlap.
   {
@@ -26887,10 +27091,11 @@ export const MUTATIONS: readonly Mutation[
     because: "an older connector's hand edit of a file a teammate's connector labelled generated stops on that teammate",
   },
   {
+    // RETARGETED (I1): the name check is one helper both tripwire answers use.
     label: "an older connector's tripwire is answered about a nested lockfile",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "  if (!authoritative && isGeneratedPath(value)) {",
-    to: "  if (false) {",
+    from: "  !authoritative && isGeneratedPath(value);",
+    to: "  false;",
     test: `${SERVER}/test/generated-targets.test.ts`,
     because: "a connector with no rule asks about every lockfile, and a row stored before the column answers it",
   },
@@ -29026,10 +29231,11 @@ export const MUTATIONS: readonly Mutation[
     because: "a teammate on nine of your files is reported as one, from the hub's bounded sample",
   },
   {
+    // RETARGETED (I1): the field is one helper, shared with the nameless group.
     label: "a partial record behind the person's notice goes unsaid",
     file: `${CORE}/src/hints/collision-notice.ts`,
-    from: "    ...(coverage !== undefined && hasIncompleteRung(coverage) ? { partial: true } : {}),",
-    to: "    ...({}),",
+    from: "  coverage !== undefined && hasIncompleteRung(coverage) ? { partial: true } : {};",
+    to: "  ({});",
     test: `${CORE}/test/collision-notice.test.ts`,
     because: "COV-9: the person learns only from doctor that the overlap rests on an incomplete record and may be wider",
   },
@@ -29201,18 +29407,20 @@ export const MUTATIONS: readonly Mutation[
     because: "the asked marker is per file again, and Ken, who started on it after Nick, is never named to anybody",
   },
   {
+    // RETARGETED (I1): the named groups are the first part of the list now.
     label: "only the first teammate on a file is told to the person",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "  const groups = found.sessions.map((session) => tripwireCollision(session, file, found.coverage));",
-    to: "  const groups = won.teammate === null ? [] : [tripwireCollision(won.teammate, file, found.coverage)];",
+    from: "    ...found.sessions.map((session) => tripwireCollision(session, file, found.coverage)),\n",
+    to: "    ...(won.teammate === null ? [] : [tripwireCollision(won.teammate, file, found.coverage)]),\n",
     test: `${CONNECTOR}/test/collision-teammates-hook.test.ts`,
     because: "two teammates on the file, and the person hears about one",
   },
   {
+    // RETARGETED (I1): the asked key is the named teammate's or the nameless one's.
     label: "the same teammate on the same file is asked about on every edit",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "      teammate === null ? fresh : withTripwireGroupAsked(withTripwireAsked(fresh, file), liveAskKey(file, teammate));",
-    to: "      teammate === null ? fresh : withTripwireAsked(fresh, file);",
+    from: "    const withLive = liveKey === null ? fresh : withTripwireGroupAsked(withTripwireAsked(fresh, file), liveKey);",
+    to: "    const withLive = liveKey === null ? fresh : withTripwireAsked(fresh, file);",
     test: `${CONNECTOR}/test/collision-teammates-hook.test.ts`,
     because: "the permission prompt comes back on every save of a file the person already chose to edit",
   },
@@ -29406,9 +29614,10 @@ export const MUTATIONS: readonly Mutation[
     because: "a garbled stamp keeps branch and age forever",
   },
   {
+    // RETARGETED (I1): the nameless count rides along with the named rows.
     label: "a briefing paid late tells the agent of its ghost row and never the person",
     file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
-    from: "  const ghosts = await tellPersonOfGhosts(ctx, delivery.shownGhosts);",
+    from: "  const ghosts = await tellPersonOfGhosts(ctx, delivery.shownGhosts, delivery.shownAnonymousGhost);",
     to: "  const ghosts = \"\";",
     test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
     because: "a late-registered session's multi-day overlap stays inside additionalContext, which shows no chat message",
@@ -29422,10 +29631,11 @@ export const MUTATIONS: readonly Mutation[
     because: "the group is marked told and the line is thrown away",
   },
   {
+    // RETARGETED (I1): the paid briefing also hands on its nameless count.
     label: "a paid deferred briefing hides the ghost rows it shows",
     file: `${CORE}/src/flows/briefing.ts`,
-    from: "  return { briefing: assembled.briefing, shownGhosts: assembled.shownGhosts };",
-    to: "  return { briefing: assembled.briefing, shownGhosts: [] };",
+    from: "  return { briefing: assembled.briefing, shownGhosts: assembled.shownGhosts, shownAnonymousGhost: assembled.shownAnonymousGhost };",
+    to: "  return { briefing: assembled.briefing, shownGhosts: [], shownAnonymousGhost: assembled.shownAnonymousGhost };",
     test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
     because: "the prompt hook has no row to tell the person about",
   },
@@ -29439,10 +29649,11 @@ export const MUTATIONS: readonly Mutation[
   },
   // ── Review of feat/collision-visible, L9: the ghost claim inside SessionStart's budget ──
   {
+    // RETARGETED (I1): the claim also carries the nameless count.
     label: "SessionStart claims its ghost notice only from the spare the drain spends",
     file: `${CONNECTOR}/src/hooks/session-start.ts`,
-    from: "await tellPersonOfGhosts(ctx, assembled.shownGhosts);",
-    to: "(budget.spareMs() > 0 ? await tellPersonOfGhosts(ctx, assembled.shownGhosts) : []);",
+    from: "await tellPersonOfGhosts(ctx, assembled.shownGhosts, assembled.shownAnonymousGhost);",
+    to: "(budget.spareMs() > 0 ? await tellPersonOfGhosts(ctx, assembled.shownGhosts, assembled.shownAnonymousGhost) : []);",
     test: `${CONNECTOR}/test/hook-time-budget.test.ts`,
     because: "a session that starts on a backlog — the one whose drain spends the spare — never tells its person of the multi-day overlap",
   },
@@ -29571,10 +29782,11 @@ export const MUTATIONS: readonly Mutation[
   },
   // ── Review of feat/collision-visible, round 2, H1: a queued hit is never nothing ──
   {
+    // RETARGETED (I1): the nameless group's branch now opens the map.
     label: "a relayed hit whose teammate presence cannot confirm is dropped",
     file: `${CORE}/src/hints/collision-notice.ts`,
-    from: "  groups.map((group) => {\n    if (presence === null) {",
-    to: "  groups.filter((group) => presence === null || confirmingEntry(group, presence) !== undefined).map((group) => {\n    if (presence === null) {",
+    from: "  groups.map((group) => {\n    // A teammate the hub never named",
+    to: "  groups.filter((group) => presence === null || confirmingEntry(group, presence) !== undefined).map((group) => {\n    // A teammate the hub never named",
     test: `${CONNECTOR}/test/collision-relay-unconfirmed.test.ts`,
     because: "the queue is drained and the group marked told, and a subagent's collision with a teammate who just ended their session reaches nobody",
   },
@@ -29587,10 +29799,13 @@ export const MUTATIONS: readonly Mutation[
     because: "an hour-old answer decides instead of the refresh, so the same hit reads differently by the cache's age alone",
   },
   {
+    // RETARGETED (I1): a nameless line's tense is its group's now — live only
+    // for the tripwire's own nameless row — so the anonymized relay must
+    // carry the past tense itself.
     label: "an unconfirmed relay line reads as live work in progress",
     file: `${CORE}/src/hints/collision-notice.ts`,
-    from: "  if (group.anonymous === true) {",
-    to: "  if (false) {",
+    from: "  anonymous: true,\n  unconfirmed: true,\n});",
+    to: "  anonymous: true,\n});",
     test: `${CONNECTOR}/test/collision-relay-unconfirmed.test.ts`,
     because: "an unnamed teammate is told as 'A teammate is working on' it, a live claim presence never confirmed",
   },
@@ -30081,10 +30296,11 @@ export const MUTATIONS: readonly Mutation[
     because: "a teammate who opted out since the hit is still placed on a branch, up to 90 s old, whenever the refresh fails",
   },
   {
+    // RETARGETED (I1): the nameless line has its own tense switch; this is the named one.
     label: "a relay with no presence answer says the teammate is on the file now",
     file: `${CORE}/src/hints/collision-notice.ts`,
-    from: "  return group.unconfirmed === true\n",
-    to: "  return false\n",
+    from: "  return group.unconfirmed === true\n    ? `crosscheck: ${name} recently worked on",
+    to: "  return false\n    ? `crosscheck: ${name} recently worked on",
     test: `${CORE}/test/collision-relay-presence.test.ts`,
     because: "a subagent that ran for two hours relays 'Mike is working on' from a row as old as its run",
   },
@@ -34200,10 +34416,11 @@ export const MUTATIONS: readonly Mutation[
     because: "the repo's word loses to a name the hub cannot read the repo to judge",
   },
   {
+    // RETARGETED (I1): the name check is one helper both tripwire answers use.
     label: "the hub's name check answers nobody for a file the repo declared",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "  if (!authoritative && isGeneratedPath(value)) {",
-    to: "  if (isGeneratedPath(value)) {",
+    from: "  !authoritative && isGeneratedPath(value);",
+    to: "  isGeneratedPath(value);",
     test: `${SERVER}/test/generated-targets.test.ts`,
     because: "a hand edit of declared client bindings stops on no teammate however many are in them",
   },
@@ -35242,6 +35459,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/pin-waive-hostile-hub.test.ts 1
  * PRINTS: packages/cli/test/pins-cli.test.ts 6
  * PRINTS: packages/cli/test/presence-reenabled-cli.test.ts 3
+ * PRINTS: packages/cli/test/privacy-cli.test.ts 3
  * PRINTS: packages/cli/test/publish-workflow.test.ts 2
  * PRINTS: packages/cli/test/release-preflight.test.ts 5
  * PRINTS: packages/cli/test/revalidate-cli.test.ts 1
@@ -35291,6 +35509,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/briefing-omission-hook.test.ts 4
  * PRINTS: packages/connector-claude/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-claude/test/capture-latency.test.ts 1
+ * PRINTS: packages/connector-claude/test/collision-anonymous-hook.test.ts 7
  * PRINTS: packages/connector-claude/test/collision-notice-hook.test.ts 12
  * PRINTS: packages/connector-claude/test/collision-order-hook.test.ts 4
  * PRINTS: packages/connector-claude/test/collision-prompt-render.test.ts 1
@@ -35309,6 +35528,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/detached-title.test.ts 3
  * PRINTS: packages/connector-claude/test/double-wiring.test.ts 1
  * PRINTS: packages/connector-claude/test/draft-nudge-hook.test.ts 2
+ * PRINTS: packages/connector-claude/test/e2e/release-gate-opted-out.e2e.test.ts 2
  * PRINTS: packages/connector-claude/test/failure-hook.test.ts 2
  * PRINTS: packages/connector-claude/test/fingerprint.test.ts 1
  * PRINTS: packages/connector-claude/test/foreign-model.test.ts 2
@@ -35577,6 +35797,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/typing-slip.test.ts 11
  * PRINTS: packages/schema/test/weak-words.test.ts 5
  * PRINTS: packages/server/test/absences.test.ts 7
+ * PRINTS: packages/server/test/anonymous-presence.test.ts 8
  * PRINTS: packages/server/test/calibration.test.ts 1
  * PRINTS: packages/server/test/causal-guarantees.test.ts 23
  * PRINTS: packages/server/test/ci-coverage.test.ts 3
@@ -35656,7 +35877,7 @@ interface Outcome {
  * PRINTS: packages/server/test/listen-boot.test.ts 8
  * PRINTS: packages/server/test/listen.test.ts 16
  * PRINTS: packages/server/test/live-location-cost.test.ts 3
- * PRINTS: packages/server/test/live-location-differential.test.ts 14
+ * PRINTS: packages/server/test/live-location-differential.test.ts 16
  * PRINTS: packages/server/test/live-location-privacy.test.ts 27
  * PRINTS: packages/server/test/live-location-projection.test.ts 9
  * PRINTS: packages/server/test/live-location-prose.test.ts 3
