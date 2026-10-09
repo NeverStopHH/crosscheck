@@ -8253,7 +8253,9 @@ export const MUTATIONS: readonly Mutation[
       "    .onConflictDoNothing()\n" +
       "    .returning({ id: pilotMarks.id });",
     to: "    .returning({ id: pilotMarks.id });",
-    test: `${SERVER}/test/pilot-marks.test.ts`,
+    // Since human provenance a noise mark goes through writeNoiseOnPointer, so the guard is a
+    // helpful label said again and confirmed, against the hub as it runs.
+    test: `${SERVER}/test/draft-repeats.test.ts`,
     because:
       "the one figure that says whether this product is worth installing is " +
       "inflated by the gesture designed to make complaining cheap, so a " +
