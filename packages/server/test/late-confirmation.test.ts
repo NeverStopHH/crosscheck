@@ -18,7 +18,14 @@ import { sql } from "drizzle-orm";
 import { readPeriodAggregate } from "../src/services/outcome-population.ts";
 import { confirmPending, prepareConfirmer } from "./fixtures/confirm-driver.ts";
 import { viewerOf } from "./fixtures/ceremony-driver.ts";
-import { KEN_CONTEXT, NICK_SESSION, REPO, createOutcomeWorld, recordOutcome } from "./fixtures/hint-outcome-world.ts";
+import {
+  KEN_CONTEXT,
+  NICK_SESSION,
+  REPO,
+  createOutcomeWorld,
+  recordOutcome,
+  recordPersonOutcome,
+} from "./fixtures/hint-outcome-world.ts";
 import type { OutcomeWorld } from "./fixtures/hint-outcome-world.ts";
 
 const DAY_S = 86_400;
@@ -65,5 +72,22 @@ describe("a word confirmed after its hint's month closed", () => {
     // Assert
     expect(july).toMatchObject({ followed: 1, late: { followed: 0 } });
     expect(august).toMatchObject({ followed: 0, late: { followed: 0 } });
+  });
+
+  test("a word confirmed in August that counts nowhere yet drags July's word into August by nothing", async () => {
+    // Arrange — July's word confirmed in July; in August a fresh passkey, still cooling, confirms overrode
+    const world = await confirmedAfter(DAY_S);
+    world.harness.clock.advanceSeconds(9 * DAY_S);
+    const cooling = await prepareConfirmer(world.harness, world.nick);
+    expect(
+      (await recordPersonOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "overrode", reason: "kept the old key" })).status,
+    ).toBe(201);
+    expect((await confirmPending(world.harness, world.nick, cooling)).status).toBe(200);
+
+    // Act
+    const august = await aggregate(world, AUGUST);
+
+    // Assert — the word standing in figures is July's, said before August: not August's, late or not
+    expect(august).toMatchObject({ followed: 0, interventions: 0, late: { followed: 0, overrode: 0, notRelevantNow: 0, noise: 0 } });
   });
 });
