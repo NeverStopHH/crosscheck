@@ -79,10 +79,10 @@ const parseLine = (line: string): z.infer<typeof LineSchema> | null => {
  */
 const prunedToWindow = (at: string, now: Date): Promise<number> =>
   withLock(`${at}.lock`, MAX_BRIEFING_OMISSION_LEDGER_BYTES, async () => {
-    const since = now.getTime() - BRIEFING_OMISSION_WINDOW_DAYS * MS_PER_DAY;
+    const windowOpens = now.getTime() - BRIEFING_OMISSION_WINDOW_DAYS * MS_PER_DAY;
     const kept = ((await readTextOrNull(at)) ?? "").split("\n").filter((line) => {
       const entry = line.length === 0 ? null : parseLine(line);
-      return entry !== null && Date.parse(entry.at) >= since;
+      return entry !== null && Date.parse(entry.at) >= windowOpens;
     });
     const body = kept.map((line) => `${line}\n`).join("");
     await writePrivateFile(at, body);
