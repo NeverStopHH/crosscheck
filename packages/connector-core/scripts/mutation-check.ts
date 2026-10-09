@@ -37020,6 +37020,40 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/repo-identity-cache.test.ts`,
     because: "every hook's repo stamp stats and hashes the developer's own ~/.gitconfig and ~/.ssh/config in a test the guard was meant to keep off them",
   },
+  // THE FAN-OUT'S SILENCE (release gate, production lane, 2026-10-09): two
+  // defects the generous lane never meets, because it neither compacts nor
+  // resumes. A compact dropped the seen-set, and the git lane's cap was one
+  // tool call's twenty.
+  {
+    label: "a compact drops the life's seen-set, and the next Stop files the tool lane's work again",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "        seenTargets: previous.seenTargets,\n",
+    to: "",
+    test: `${CORE}/test/session-state-transforms.test.ts`,
+    because:
+      "the Stop after a compaction spends the git lane's whole cap on files the hub already holds, and the " +
+      "Bash-only files behind them never reach it — the pilot's six, with only capture-capped moving",
+  },
+  {
+    label: "the git lane files one tool call's twenty per root per Stop",
+    file: `${CORE}/src/flows/capture-git-touches.ts`,
+    from: "    maxTargets: input.maxTargets ?? MAX_GIT_LANE_TARGETS_PER_ROOT,",
+    to: "    maxTargets: input.maxTargets ?? 20,",
+    test: `${CORE}/test/git-lane-sweep.test.ts`,
+    because:
+      "a root a long session left a hundred files dirty files twenty per Stop and books the rest, and a resumed " +
+      "life never re-files the shared files its earlier life left — Mike warned on 0 of 11 after Nick's resume",
+  },
+  {
+    label: "the sweep's block is a cap's worth per root, not what the roots file",
+    file: `${CORE}/src/flows/git-lane.ts`,
+    from: "  const total = widths.reduce((sum, width) => sum + width, 0);",
+    to: "  const total = widths.length * MAX_GIT_LANE_TARGETS_PER_ROOT;",
+    test: `${CORE}/test/git-lane-sweep.test.ts`,
+    because:
+      "every Stop takes five hundred positions per root it sweeps, and the hub reads a gap that size as the " +
+      "session's own residue on every turn",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -37383,7 +37417,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/ghost-declare.test.ts 2
  * PRINTS: packages/connector-core/test/ghost-render.test.ts 7
  * PRINTS: packages/connector-core/test/git-lane-cost.test.ts 1
- * PRINTS: packages/connector-core/test/git-lane-sweep.test.ts 1
+ * PRINTS: packages/connector-core/test/git-lane-sweep.test.ts 3
  * PRINTS: packages/connector-core/test/git-safety-pins.test.ts 7
  * PRINTS: packages/connector-core/test/git-timeout.test.ts 4
  * PRINTS: packages/connector-core/test/git-touches.test.ts 1
@@ -37482,7 +37516,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/session-lives.test.ts 73
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
- * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 9
+ * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 10
  * PRINTS: packages/connector-core/test/set-intent.test.ts 15
  * PRINTS: packages/connector-core/test/sharing.test.ts 30
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4
