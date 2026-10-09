@@ -164,4 +164,34 @@ describe("R2-H2: each printed figure meets the minimums on its own", () => {
       late: { withheld: "below_minimums", followed: null },
     });
   }, 120_000);
+
+  test("the credit's reverse: four teammates' August follows print, while Ken's one late follow is withheld", async () => {
+    // Arrange — Ken follows Nick's July work, confirmed in August (late); four teammates follow it on August hints
+    const crowd = await pendingCrowd();
+    expect((await recordOutcome(crowd, crowd.ken, { ref: NICK_CONTEXT, outcome: "followed" })).status).toBe(201);
+    crowd.harness.clock.advanceSeconds(SECONDS_TO_AUGUST);
+    const followers = [
+      [crowd.ken, "cc_f5f5f5f5-1111-4111-8111-111111111111"],
+      [crowd.mike, "cc_f6f6f6f6-1111-4111-8111-111111111111"],
+      [crowd.anna, "cc_f7f7f7f7-1111-4111-8111-111111111111"],
+      [crowd.lena, "cc_f8f8f8f8-1111-4111-8111-111111111111"],
+    ] as const;
+    for (const [follower, session] of followers) {
+      await augustHint(crowd, follower, session, NICK_CONTEXT);
+      expect((await recordOutcome(crowd, follower, { ref: NICK_CONTEXT, outcome: "followed", session })).status).toBe(201);
+    }
+    await everyoneConfirms(crowd, [crowd.ken, crowd.mike, crowd.anna, crowd.lena]);
+
+    // Act
+    crowd.harness.clock.advanceSeconds(31 * DAY_S);
+    const credit = (await mine(crowd, crowd.nick))["yourWork"];
+
+    // Assert — the month's own follows print; the late one is one person's: no count
+    expect(credit).toMatchObject({
+      periodStartIso: "2026-08-01T00:00:00.000Z",
+      withheld: null,
+      followed: 4,
+      late: { withheld: "below_minimums", followed: null },
+    });
+  }, 120_000);
 });
