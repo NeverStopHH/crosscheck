@@ -308,6 +308,35 @@ describe("when Robin last touched her work (review round 3, M1)", () => {
     }
   });
 
+  test("search and hint candidates mark her rows withheld to Nick, nobody else's, and none to her (integration review M5)", async () => {
+    // The listing's word on the two routes a connector prints an age off:
+    // without it the pointer and the search line fell back to her work's
+    // creation, which for a topic is the moment she first edited.
+    const world = await seedOptedOutWorld();
+    type Marked = { readonly id: string; readonly developerId: string; readonly locationWithheld?: unknown };
+    const searchRows = (answer: { readonly body: string }): readonly Marked[] =>
+      (JSON.parse(answer.body) as { data: { results: readonly Marked[] } }).data.results;
+    const candidateRows = (answer: { readonly body: string }): readonly Marked[] =>
+      (JSON.parse(answer.body) as { data: { candidates: readonly { workContext: Marked }[] } }).data.candidates.map(
+        (candidate) => candidate.workContext,
+      );
+
+    const asNick = [
+      searchRows(await getAs(world, "nick", url("/api/search", { q: "rotation window", repo: REPO }))),
+      candidateRows(await getAs(world, "nick", url("/api/hints/candidates", { repo: REPO, query: "rotation window refresh key id" }))),
+    ];
+    const asRobin = searchRows(await getAs(world, "robin", url("/api/search", { q: "rotation window", repo: REPO })));
+
+    for (const rows of asNick) {
+      const hers = rows.filter((row) => row.developerId === world.robin.developerId);
+      expect(hers.map((row) => row.id)).toContain(ROBIN_CONTEXT);
+      expect(hers.map((row) => row.locationWithheld)).toEqual(hers.map(() => true));
+      expect(rows.filter((row) => row.developerId !== world.robin.developerId && row.locationWithheld !== undefined)).toEqual([]);
+    }
+    expect(asRobin.map((row) => row.id)).toContain(ROBIN_CONTEXT);
+    expect(asRobin.filter((row) => row.locationWithheld !== undefined)).toEqual([]);
+  });
+
   test("a since= window admits her work by its creation, never by her last touch", async () => {
     const world = await seedOptedOutWorld();
 

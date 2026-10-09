@@ -1511,6 +1511,8 @@ export const SearchResultEntrySchema = z.looseObject({
   intent: tolerantIntent,
   createdAt: z.string().min(1),
   updatedAt: z.string().nullable().optional(),
+  /** The owner opted out of presence (M5): no age is printed off this row. Tolerant: an older hub sends none. */
+  locationWithheld: z.literal(true).optional().catch(undefined),
   tier: z.string().min(1).optional(),
   score: z.number().optional(),
   /** Solved-tree marker (VISION.md §1); optional — older hubs send neither. */
@@ -1733,6 +1735,12 @@ const HintContextSchema = z.looseObject({
   solvedAt: z.string().nullable().optional(),
   createdAt: z.string().min(1),
   updatedAt: z.string().nullable().optional(),
+  /**
+   * The hub's word that the owner opted out of presence (batch-2 integration
+   * review, M5): her last touch is withheld, and the pointer prints no age
+   * off the creation that is left. Tolerant: an older hub sends none.
+   */
+  locationWithheld: z.literal(true).optional().catch(undefined),
   /**
    * How many distinct TOPICAL words of the matched query the context's OWN
    * statement (title, description, intent) shares — a tree clearly about the

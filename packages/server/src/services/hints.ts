@@ -343,6 +343,13 @@ export interface HintContextCandidate {
     readonly developerName: string;
     readonly baseCommit: string;
     /**
+     * The owner opted out of presence, so her last touch is withheld from
+     * this reader (batch-2 integration review, M5) — the listing's word
+     * (services/diagnosis.ts), on the candidate too, so the connector's
+     * pointer prints no age off the creation that is left.
+     */
+    readonly locationWithheld?: true;
+    /**
      * Solved trees are presented differently (VISION.md §1) — the fact rides
      * the search row (services/solved.ts computes it there) so this endpoint
      * stays one bounded call.
@@ -1089,6 +1096,7 @@ const matchCandidates = async (
         // context whose base commit the hub never knew.
         { baseCommit: "empty" },
       ),
+      ...(hidden.has(row.developerId) ? { locationWithheld: true as const } : {}),
     },
     // Each nested row by its OWN owner: a claim by its author, who may not
     // be the context's; a matched target by the context's owner, whose

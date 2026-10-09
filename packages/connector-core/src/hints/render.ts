@@ -468,7 +468,11 @@ export const renderPointerHint = (input: PointerHintInput): string => {
     `- ${authorLabel(context.developerName)}`,
     `work context ${safeId(context.id)}`,
     `status ${bare(context.status)}`,
-    ageLabel(context.updatedAt ?? context.createdAt, now),
+    // NO AGE FOR AN AUTHOR WHO OPTED OUT (batch-2 integration review, M5):
+    // the hub withholds her last touch and marks the row, and the creation
+    // the fallback read is when her session began the work — when she was
+    // there. The fact goes whole; the pointer keeps who, what and the status.
+    ...(context.locationWithheld === true ? [] : [ageLabel(context.updatedAt ?? context.createdAt, now)]),
   ];
   const factsLine = `${facts.join(" · ")}${driftLabel(drift)}${solvedLabel(context, now)}: ${quoted(context.title, MAX_WORK_CONTEXT_TITLE_CHARS)}`;
   const tailLine =

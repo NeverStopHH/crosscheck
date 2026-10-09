@@ -1110,3 +1110,34 @@ describe("search_related_work runs on the hub's search block", () => {
     }
   });
 });
+
+/**
+ * NO AGE FOR AN OWNER WHO OPTED OUT (batch-2 integration review, M5): the hub
+ * withholds her last touch and marks the row, and the tool used to fall back
+ * to the creation — "2s ago" about a teammate who turned presence off. Her
+ * line keeps her name, the status and the title, and says nothing of when.
+ */
+describe("search_related_work and an owner who opted out of presence", () => {
+  const lineOf = (text: string, id: string): string => text.split("\n").find((line) => line.startsWith(`- ${id}`)) ?? "";
+
+  test("her result line carries no age; a teammate's still does", async () => {
+    // Arrange: Carol, with work the query finds, opts out as `crosscheck presence off` does
+    const carol = await setUpDeveloper("mcp-carol", "Carol", "carol@example.com", "Quiet mode for the mapping grid");
+    const optedOut = await fetch(`${hubUrl}/api/settings/presence`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${carol.apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ optOut: true }),
+    });
+    expect(optedOut.ok).toBe(true);
+
+    // Act
+    const quiet = await call(bob, "search_related_work", { query: "mapping grid" });
+    const login = await call(bob, "search_related_work", { query: "login" });
+
+    // Assert
+    expect(quiet.isError).toBe(false);
+    expect(lineOf(quiet.text, carol.workContextId)).toContain("Carol · status analyzing");
+    expect(lineOf(quiet.text, carol.workContextId)).not.toMatch(/\b\d+[smhd] ago\b/);
+    expect(lineOf(login.text, alice.workContextId)).toMatch(/· \d+[smhd] ago · status analyzing/);
+  });
+});
