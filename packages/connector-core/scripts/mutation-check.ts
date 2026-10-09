@@ -35699,6 +35699,31 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/review-survivors-r2.test.ts`,
     because: "the person's noise said again in August about a July hint counts nowhere",
   },
+  // AGENT CREDENTIAL ≠ OPERATOR AUTHORITY (cli/doctor-hub-separation.ts).
+  {
+    label: "doctor passes a readable operator token",
+    file: `${CLI}/src/cli/doctor-hub-separation.ts`,
+    from: '    return line("FAIL", TOKEN_CHECK, `${reasons.join("; ")} — move the hub under its own user (${SEE_DOCS})`);',
+    to: '    return line("PASS", TOKEN_CHECK, `${reasons.join("; ")} — move the hub under its own user (${SEE_DOCS})`);',
+    test: `${CLI}/test/doctor-hub-separation.test.ts`,
+    because: "a hub.env every agent of this user can read prints PASS, the one state the line exists to stop",
+  },
+  {
+    label: "doctor passes a hub running as my user",
+    file: `${CLI}/src/cli/doctor-hub-separation.ts`,
+    from: "  const mine = hubs.filter((listener) => listener.uid === myUid);",
+    to: "  const mine = hubs.filter((listener) => listener.uid === -1);",
+    test: `${CLI}/test/doctor-hub-separation.test.ts`,
+    because: "the hub's bun listening under the developer's own uid reads as another user's, so agents keep operator authority and doctor says separated",
+  },
+  {
+    label: "a failed lsof reads as separated",
+    file: `${CLI}/src/cli/doctor-hub-separation.ts`,
+    from: '    return line("SKIP", PROCESS_CHECK, `not checked: ${lookup.why}`);',
+    to: '    return line("PASS", PROCESS_CHECK, "the hub runs as another user");',
+    test: `${CLI}/test/doctor-hub-separation.test.ts`,
+    because: "an lsof that timed out or saw nothing proves nothing, and doctor prints PASS for a hub it never looked at",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -35822,6 +35847,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-global.test.ts 5
  * PRINTS: packages/cli/test/doctor-home-repo.test.ts 3
  * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1
+ * PRINTS: packages/cli/test/doctor-hub-separation.test.ts 3
  * PRINTS: packages/cli/test/doctor-hub-transport.test.ts 4
  * PRINTS: packages/cli/test/doctor-last-sync.test.ts 1
  * PRINTS: packages/cli/test/doctor-latency.test.ts 2

@@ -107,8 +107,21 @@ describe("first login from far away, zero configuration", () => {
     const init = await runInit([], env, repo);
     expect(init.exitCode).toBe(0);
 
-    // Act 3: the health check, at the stored timeout, over the same far hub
-    const doctor = await runDoctor(env, repo);
+    // Act 3: the health check, at the stored timeout, over the same far hub.
+    // SIMULATED: a hub running under its own OS user. This test's far hub is
+    // served on loopback by the test process itself, so it shares the test's
+    // uid, and the hub separation check (doctor-hub-separation.ts) would
+    // rightly WARN about that. This file tests login from far away, not
+    // separation, so the listener lookup reports what a teammate's hub would
+    // show: another uid's bun. The check itself still runs on that answer.
+    const separatedHub = {
+      listListeners: () =>
+        Promise.resolve({
+          kind: "found" as const,
+          listeners: [{ uid: (process.getuid?.() ?? 0) + 1, user: "crosscheck-hub", command: "bun" }],
+        }),
+    };
+    const doctor = await runDoctor(env, repo, undefined, undefined, separatedHub);
     server.stop(true);
 
     // Assert 3: GREEN — every check passes, and the three connection lines
