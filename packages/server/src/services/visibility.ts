@@ -66,7 +66,15 @@
  *               included, so it must not hide what that key did. The row
  *               names her id and who acted (`self` or `admin`), never a
  *               branch, HEAD or heartbeat. A self-rotation's instant is an
- *               instant she, or something holding her key, was active
+ *               instant she, or something holding her key, was active.
+ *               And a PASSKEY ENROLMENT of hers (batch-2 integration review,
+ *               L9): GET /api/passkeys/announcements and the /ui/passkeys
+ *               page list every member's recent enrolments — name, label,
+ *               authenticator, when it was created and becomes usable,
+ *               whether it was revoked — because the announcement IS the
+ *               control against a planted passkey (1.0 spec 04a §4.3), and
+ *               the admin's per-developer list is how one is revoked.
+ *               Team-wide by design, never the caller's own
  *
  * Every one of them holds at a colleague's POLL interval: a colleague who
  * reads again and again sees when a residual changed — when a claim

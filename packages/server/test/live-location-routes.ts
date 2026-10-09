@@ -90,6 +90,15 @@ const byId = (pattern: string): readonly Variant[] =>
   ROBIN_CONTEXTS.map((id) => ({ path: pattern.replace(":id", id) }));
 
 const OWN = "the caller's own settings, counters or records — no colleague's row";
+/**
+ * TEAM-WIDE BY DESIGN, NOT THE CALLER'S OWN (batch-2 integration review, L9):
+ * every member's passkey enrolments, hers included, with when each was
+ * created, becomes usable and whether it was revoked — the announcement IS
+ * the control against a planted passkey (1.0 spec 04a §4.3), so the opt-out
+ * does not hide it (visibility.ts «security»; the differential's «security»
+ * residual accepts it). The seed enrols no passkey of hers.
+ */
+const SECURITY_ANNOUNCEMENT = "«security», team-wide: every member's passkey enrolments, hers included; the seed enrols none of hers";
 const ADMIN_ONLY = "admin-only: a developer is refused, and the admin's view names no session";
 const NONE_SEEDED = "a store the seed puts nothing of hers in";
 const PRESENCE = (surface: string): { readonly hidden: string } => ({
@@ -156,7 +165,7 @@ const GET_ROUTES: Readonly<Record<string, RouteSpec>> = {
   },
   "GET /api/developers/:id/passkeys": {
     variants: [{ path: "/api/developers/:robin/passkeys", as: "admin" }],
-    colleague: { hidden: "her passkeys: the seed enrols none" },
+    colleague: { hidden: "her passkeys, to the admin who may revoke them («security»): the seed enrols none" },
     self: { none: ADMIN_ONLY },
   },
   "GET /api/drafts": {
@@ -246,8 +255,8 @@ const GET_ROUTES: Readonly<Record<string, RouteSpec>> = {
   },
   "GET /api/passkeys/announcements": {
     variants: [{ path: "/api/passkeys/announcements" }],
-    colleague: { hidden: OWN },
-    self: { none: OWN },
+    colleague: { hidden: SECURITY_ANNOUNCEMENT },
+    self: { none: SECURITY_ANNOUNCEMENT },
   },
   "GET /api/pilot-marks/candidates": {
     variants: [
@@ -398,7 +407,7 @@ const GET_ROUTES: Readonly<Record<string, RouteSpec>> = {
   "GET /ui/login": { variants: [{ path: "/ui/login" }], colleague: { hidden: "a static form" }, self: { none: "a static form" } },
   "GET /ui/members": { variants: [{ path: "/ui/members" }], colleague: "withheld", self: "located" },
   "GET /ui/passkey.js": { variants: [{ path: "/ui/passkey.js" }], colleague: { hidden: "a static script" }, self: { none: "a static script" } },
-  "GET /ui/passkeys": { variants: [{ path: "/ui/passkeys" }], colleague: { hidden: OWN }, self: { none: OWN } },
+  "GET /ui/passkeys": { variants: [{ path: "/ui/passkeys" }], colleague: { hidden: SECURITY_ANNOUNCEMENT }, self: { none: SECURITY_ANNOUNCEMENT } },
   "GET /ui/styles.css": { variants: [{ path: "/ui/styles.css" }], colleague: { hidden: "a stylesheet" }, self: { none: "a stylesheet" } },
   "GET /ui/waivers": { variants: [{ path: "/ui/waivers" }], colleague: { hidden: NONE_SEEDED }, self: { none: NONE_SEEDED } },
   "GET /ui/work-contexts/:id": { variants: byId("/ui/work-contexts/:id"), colleague: "withheld", self: "located" },

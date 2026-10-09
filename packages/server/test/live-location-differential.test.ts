@@ -31,6 +31,7 @@ import {
   validWorkContextBody,
 } from "./helpers.ts";
 import { ROUTES } from "./live-location-routes.ts";
+import { seedPasskey } from "./fixtures/passkeys.ts";
 import { call, label, walk } from "./live-location-walk.ts";
 import type { Answer } from "./live-location-walk.ts";
 import {
@@ -275,6 +276,16 @@ const ACTIONS: readonly Action[] = [
     run: (w) => records(w, [live("target", { workContextId: ROBIN_OLD_CONTEXT, kind: "file", value: FILE })], "re-touch"),
   },
   {
+    // A passkey of hers enrolled (batch-2 integration review, L9): the team's
+    // enrolment announcement lists it — who, when, cooling off — because the
+    // announcement IS the control against a planted passkey, so the opt-out
+    // must not hide it (visibility.ts «security»).
+    name: "enrol a passkey",
+    run: async (w) => {
+      await seedPasskey(w.harness.db, w.robin.developerId, { createdAt: w.harness.clock.now() });
+    },
+  },
+  {
     name: "pin a surface",
     content: true,
     run: (w) => post(w, "/api/pins", { id: "pin_robin_diff", repo: REPO, surface: "Rotation keeps sessions", files: ["src/auth/keys.ts"], check: "rotate, refresh, stay logged in", presence: "controlling_terminal", verifiedAtCommit: SECRET_SHA }, "pin"),
@@ -416,6 +427,8 @@ interface Residual {
   /** The actions it holds for. Absent: every action. */
   readonly actions?: readonly string[];
   readonly contentOnly?: true;
+  /** The policy accepts WHEN, too («security»): a line it accepts may carry her action's instant. */
+  readonly instants?: true;
 }
 
 const RESIDUALS: readonly Residual[] = [
@@ -459,6 +472,17 @@ const RESIDUALS: readonly Residual[] = [
   // reading's finding — and the counts and rankings that follow from it.
   // Never an instant of hers: that is checked on every line apart.
   { name: "content", contentOnly: true, line: /./ },
+  // visibility.ts «security»: that a security event about her credentials
+  // happened, and when — a passkey enrolment is announced to every member
+  // while it cools off, on the API and the passkeys page, and the admin
+  // lists it to revoke it (batch-2 integration review, L9).
+  {
+    name: "security",
+    actions: ["enrol a passkey"],
+    route: /^GET \/(?:api\/passkeys\/announcements|ui\/passkeys|api\/developers\/:id\/passkeys)$/,
+    line: /./,
+    instants: true,
+  },
 ];
 
 /**
@@ -493,11 +517,14 @@ const unaccepted = (action: Action, base: Walked, acted: Walked): readonly strin
       return [`${action.name} · ${label(answer)}: no answer in the base world`];
     }
     return differences(linesOf(base.world, before), linesOf(acted.world, answer)).flatMap((line) => {
-      const accepted = acceptedBy(RESIDUALS, action, answer, line);
+      const accepting = RESIDUALS.filter((residual) => acceptedBy([residual], action, answer, line));
+      const accepted = accepting.length > 0;
+      // «security» accepts WHEN as well: its instant is not withheld.
+      const isWhenAccepted = accepting.some((residual) => residual.instants === true);
       // A content line may carry her action's instant only as the shared
       // row's creation time — and only when the action shares work.
       const carriesHerInstant =
-        instantsNear(line, actionInstant, now).length > 0 && !(action.content === true && isCreationLine(action, line));
+        instantsNear(line, actionInstant, now).length > 0 && !(action.content === true && isCreationLine(action, line)) && !isWhenAccepted;
       return accepted && !carriesHerInstant
         ? []
         : [`${action.name} · ${label(answer)}: ${carriesHerInstant ? "carries her action's instant: " : ""}${line.slice(0, 220)}`];
