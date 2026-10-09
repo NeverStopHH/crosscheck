@@ -292,7 +292,7 @@ describe("a request served between two pages of an opt-out's rebuild (M11)", () 
   /** More location-titled contexts than one page holds, straight into the table. */
   const MANY = 150;
 
-  test("never finds her by her branch: her docs are emptied before the first page", async () => {
+  test("never reads her title in the index: her docs are emptied before the first page", async () => {
     // Arrange
     const world = await seed();
     await world.harness.db.execute(sql`
@@ -300,22 +300,28 @@ describe("a request served between two pages of an opt-out's rebuild (M11)", () 
       SELECT 'wc_many_' || lpad(g::text, 4, '0'), ${ROBIN_S}, ${SECRET_BRANCH}, NULL, 'analyzing',
              ${SECRET_BRANCH} || E'\nanalyzing', now()
       FROM generate_series(1, ${MANY}) g`);
-    const params = new URLSearchParams({ repo: REPO, query: SECRET_BRANCH });
-    let between: Promise<string> = Promise.resolve("never ran");
-    setImmediate(() => {
-      between = Promise.resolve(world.harness.app.request(`/api/search?${params.toString()}`, jsonRequest("GET", world.nick.apiKey))).then(
-        (response) => response.text(),
+    const titledDocs = async (): Promise<number> =>
+      Number(
+        (
+          await world.harness.db.execute<{ n: number }>(
+            sql`SELECT count(*)::int AS n FROM work_contexts WHERE normalized_doc LIKE ${`%${SECRET_BRANCH}%`}`,
+          )
+        ).rows[0]?.n,
       );
+    expect(await titledDocs()).toBeGreaterThan(MANY);
+    let between: Promise<number> = Promise.resolve(-1);
+    setImmediate(() => {
+      between = titledDocs();
     });
 
-    // Act
+    // Act — the request served at the rebuild's first turn of the event loop
     const response = await world.harness.app.request("/api/settings/presence", jsonRequest("PUT", world.robin.apiKey, { optOut: true }));
     const seenBetween = await between;
 
     // Assert
     expect(response.status).toBe(200);
-    expect(seenBetween).not.toBe("never ran");
-    expect(seenBetween).not.toContain("wc_many_");
+    expect(seenBetween).toBe(0);
+    expect(await titledDocs()).toBe(0);
   });
 });
 

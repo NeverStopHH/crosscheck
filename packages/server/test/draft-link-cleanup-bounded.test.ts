@@ -113,8 +113,8 @@ describe("the draft-link cleanup reads a legacy edge's wire record by index (H6)
     // Act
     const plan = await planOf(harness);
 
-    // Assert
-    expect(plan).toContain(INDEX);
+    // Assert — the index by its own name, not one that merely starts with it
+    expect(plan).toMatch(new RegExp(`\\b${INDEX}\\b`));
     expect(plan).not.toContain("SubPlan");
   });
 });

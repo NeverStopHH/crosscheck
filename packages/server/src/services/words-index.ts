@@ -9,8 +9,10 @@
  * it listens, which kept a pilot-scale hub's port closed for 79 s; this pass
  * fills the rows it found, after serving:
  *
- *   - a chunk of WORDS_INDEX_BACKFILL_BATCH rows per statement, with a turn of
- *     the event loop between chunks, so a request waits out one chunk at most;
+ *   - a chunk of rows per statement (WORDS_INDEX_CLAIMS_BATCH claims — each
+ *     re-enters the HNSW graph on a hub with an embedder — or
+ *     WORDS_INDEX_BACKFILL_BATCH work contexts), with a turn of the event
+ *     loop between chunks, so a request waits out one chunk at most;
  *   - claims first (the floor's own statements), then work contexts;
  *   - each chunk is its own statement and commits on its own, and the next
  *     chunk is simply the next rows still empty: a start that dies mid-pass
@@ -29,7 +31,12 @@
 import { sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 
-import { WORDS_INDEX_BACKFILL_BATCH, WORDS_INDEX_PROGRESS_CHUNKS, WORDS_INDEX_VACUUM_CHUNKS } from "../constants.ts";
+import {
+  WORDS_INDEX_BACKFILL_BATCH,
+  WORDS_INDEX_CLAIMS_BATCH,
+  WORDS_INDEX_PROGRESS_CHUNKS,
+  WORDS_INDEX_VACUUM_CHUNKS,
+} from "../constants.ts";
 import type { Db, DbExecutor } from "../db/client.ts";
 import { yieldToRequests } from "../db/yield-to-requests.ts";
 
@@ -40,15 +47,21 @@ export interface WordsBackfillReport {
   readonly workContexts: number;
 }
 
-/** One table's backfill: the table, and the text its words are built from. */
+/** One table's backfill: the table, the text its words are built from, and its chunk. */
 interface WordsTable {
   readonly name: "claims" | "work_contexts";
   readonly label: string;
   readonly text: SQL;
+  readonly batch: number;
 }
 
-const CLAIMS: WordsTable = { name: "claims", label: "claim", text: sql`body` };
-const WORK_CONTEXTS: WordsTable = { name: "work_contexts", label: "work context", text: sql`coalesce(normalized_doc, '')` };
+const CLAIMS: WordsTable = { name: "claims", label: "claim", text: sql`body`, batch: WORDS_INDEX_CLAIMS_BATCH };
+const WORK_CONTEXTS: WordsTable = {
+  name: "work_contexts",
+  label: "work context",
+  text: sql`coalesce(normalized_doc, '')`,
+  batch: WORDS_INDEX_BACKFILL_BATCH,
+};
 
 const countIn = async (db: DbExecutor, table: WordsTable): Promise<number> => {
   const rows = await db.execute<{ pending: number }>(
@@ -85,7 +98,8 @@ const fillChunk = async (db: Db, table: WordsTable, batch: number): Promise<numb
 };
 
 interface Progress {
-  readonly batch: number;
+  /** The chunk for every table, when the caller sets one (tests); otherwise each table's own. */
+  readonly batch: number | undefined;
   readonly progress: (line: string) => void;
 }
 
@@ -100,7 +114,7 @@ const vacuum = async (db: Db, table: WordsTable): Promise<void> => {
 };
 
 const fillTable = async (db: Db, table: WordsTable, options: Progress, done = 0, chunks = 0): Promise<number> => {
-  const filled = await fillChunk(db, table, options.batch);
+  const filled = await fillChunk(db, table, options.batch ?? table.batch);
   if (filled === 0) {
     return done;
   }
@@ -135,7 +149,7 @@ export const backfillWordsIndex = async (
   options: { readonly batch?: number; readonly progress?: (line: string) => void } = {},
 ): Promise<WordsBackfillReport> => {
   const progress: Progress = {
-    batch: options.batch ?? WORDS_INDEX_BACKFILL_BATCH,
+    batch: options.batch,
     progress: options.progress ?? (() => undefined),
   };
   const claims = await backfillTable(deps.db, CLAIMS, progress);

@@ -166,13 +166,21 @@ export const DOC_UPGRADE_STAMP_BATCH = 1000;
 export const DRAFT_LINK_CLEANUP_BATCH = 100;
 
 /**
- * Rows per chunk of the start-up words backfill (services/words-index.ts),
- * one UPDATE each with a turn of the event loop between chunks. A row's
- * words cost ~0.3 ms to compute plus its index entries, and a claim on a hub
- * with an embedder also re-enters the HNSW graph (several ms), so a chunk of
- * 50 keeps a request's wait to tens of milliseconds even there.
+ * Work contexts per chunk of the start-up words backfill
+ * (services/words-index.ts), one UPDATE each with a turn of the event loop
+ * between chunks. A row's words cost ~0.3 ms to compute plus its index
+ * entries, so a chunk of 50 keeps a request's wait to tens of milliseconds.
  */
 export const WORDS_INDEX_BACKFILL_BATCH = 50;
+
+/**
+ * Claims per chunk of the same backfill. Smaller: on a hub with an embedder a
+ * filled claim re-enters the HNSW graph of claim vectors, ~3 ms a row on the
+ * pilot-scale synthetic hub (load 28): a chunk of 50 took 160 ms at the
+ * median and up to 607 ms, a chunk of 10 took 26 ms. 20 keeps the median
+ * near 60 ms and 10 000 claims to about 30 s.
+ */
+export const WORDS_INDEX_CLAIMS_BATCH = 20;
 
 /** Chunks of the words backfill between its progress lines: one per 5 000 rows. */
 export const WORDS_INDEX_PROGRESS_CHUNKS = 100;
