@@ -26590,6 +26590,22 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/live-location-surfaces.test.ts`,
     because: "four answers wait and three are handed out: hers is in or out by her own instant",
   },
+  {
+    label: "a draft her connector derived shows its machine stamp to the second",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  owner.kind === \"claim\" && (row as { readonly provenance?: unknown }).provenance === DERIVED_PROVENANCE\n",
+    to: "  false && (row as { readonly provenance?: unknown }).provenance === DERIVED_PROVENANCE\n",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because: "the derivation's stamp is the instant her session did the work, and her tree reads \"1m ago\" to a colleague",
+  },
+  {
+    label: "a draft her connector derived shows its machine stamp to the second (differential)",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  owner.kind === \"claim\" && (row as { readonly provenance?: unknown }).provenance === DERIVED_PROVENANCE\n",
+    to: "  false && (row as { readonly provenance?: unknown }).provenance === DERIVED_PROVENANCE\n",
+    test: `${SERVER}/test/live-location-differential.test.ts`,
+    because: "her connector's derivation puts her instant on her tree, on a line no residual accepts",
+  },
   // NOT ADDED, measured: an id tie-break on the two CLAIM tiers (hints'
   // pushable pass, search's claim pass). Both GROUP BY the context, and the
   // aggregate hands rows on by its group key, never by where they sit: a
@@ -35552,11 +35568,11 @@ interface Outcome {
  * PRINTS: packages/server/test/listen-boot.test.ts 8
  * PRINTS: packages/server/test/listen.test.ts 16
  * PRINTS: packages/server/test/live-location-cost.test.ts 3
- * PRINTS: packages/server/test/live-location-differential.test.ts 10
+ * PRINTS: packages/server/test/live-location-differential.test.ts 11
  * PRINTS: packages/server/test/live-location-privacy.test.ts 27
  * PRINTS: packages/server/test/live-location-projection.test.ts 9
  * PRINTS: packages/server/test/live-location-prose.test.ts 3
- * PRINTS: packages/server/test/live-location-surfaces.test.ts 46
+ * PRINTS: packages/server/test/live-location-surfaces.test.ts 47
  * PRINTS: packages/server/test/live-location-told.test.ts 1
  * PRINTS: packages/server/test/live-location-topics.test.ts 4
  * PRINTS: packages/server/test/location-index-rebuild.test.ts 7

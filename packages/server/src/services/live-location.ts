@@ -339,6 +339,22 @@ const ACTIVITY_COUNTERS: Readonly<Record<string, number>> = { dedupCount: 1 };
  */
 const DAY_PRECISION: ReadonlySet<string> = new Set(["landedAt"]);
 
+/**
+ * A DERIVED claim's creation is a MACHINE STAMP (batch-2 integration review,
+ * L8): her connector writes it the moment it derives the draft from what her
+ * session did — when she was there, not when somebody chose to say
+ * something, which is what «creation» accepts. Shown to the day, like her
+ * work's landing; every other claim keeps its creation whole.
+ */
+const DERIVED_PROVENANCE = "derived";
+const NO_PATHS: ReadonlySet<string> = new Set();
+const MACHINE_STAMPED: ReadonlySet<string> = new Set(["createdAt"]);
+
+const dayPathsOf = (owner: RowOwner, row: object): ReadonlySet<string> =>
+  owner.kind === "claim" && (row as { readonly provenance?: unknown }).provenance === DERIVED_PROVENANCE
+    ? MACHINE_STAMPED
+    : NO_PATHS;
+
 export type WithheldForms = Readonly<Record<string, WithheldForm>>;
 
 /** Title fields: withheld only when the title IS the branch. */
@@ -377,6 +393,8 @@ interface Projection {
   readonly forms: WithheldForms;
   readonly reportedBranches: readonly string[];
   readonly shown: ReadonlySet<string>;
+  /** Paths shown to the day only (dayPathsOf): a machine stamp of hers. */
+  readonly dayPaths: ReadonlySet<string>;
   /** Where in the row this part sits: "" at the root, `validity` inside it. */
   readonly path: string;
 }
@@ -428,7 +446,7 @@ const projectEntry = (
   if (counter !== undefined) {
     return [[key, counter]];
   }
-  if (DAY_PRECISION.has(key)) {
+  if (DAY_PRECISION.has(key) || p.dayPaths.has(path)) {
     return [[key, toDay(value)]];
   }
   if (LOCATION_BY_NAME.has(key) || isWithheldShape(key, value)) {
@@ -538,6 +556,10 @@ export const projectRow = <R extends object>(
   if (reportedBranches === undefined) {
     return row;
   }
-  const shown: ReadonlySet<string> = new Set(owner.kind === undefined ? [] : SHOWN_FOR_HIDDEN[owner.kind]);
-  return projectObject({ owner, forms, reportedBranches, shown, path: "" }, row) as R;
+  // A machine stamp leaves the allowlist for the day rule (dayPathsOf).
+  const dayPaths = dayPathsOf(owner, row);
+  const shown: ReadonlySet<string> = new Set(
+    (owner.kind === undefined ? [] : SHOWN_FOR_HIDDEN[owner.kind]).filter((entry: string) => !dayPaths.has(entry)),
+  );
+  return projectObject({ owner, forms, reportedBranches, shown, dayPaths, path: "" }, row) as R;
 };

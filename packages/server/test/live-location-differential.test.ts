@@ -235,6 +235,16 @@ const ACTIONS: readonly Action[] = [
       }, "answer"),
   },
   {
+    // Her connector derives a draft from what her session did: a claim like
+    // any, shared on her tree, but its creation is the DERIVATION's machine
+    // stamp — when she was there — so it may show only to the day (batch-2
+    // integration review, L8). No `creates`: its instant is not accepted.
+    name: "her connector derives a draft",
+    content: true,
+    run: (w) =>
+      records(w, [live("claim", validClaimBody({ id: "clm_robin_diff_draft", workContextId: ROBIN_CONTEXT, authorSessionId: ROBIN_LIVE, kind: "observation", status: "proposed", provenance: "derived", captureMode: "agent", confidence: 0.4, body: "The refresh retries hit the cache before the rotation lands", createdAt: nowIso(w) }))], "draft"),
+  },
+  {
     name: "publish a claim",
     content: true,
     creates: CLAIM_CREATION,

@@ -533,6 +533,35 @@ describe("her activity after the opt-out (review round 4, H3 and M3)", () => {
     expect(claim?.["dedupCount"]).toBe(1);
   });
 
+  test("a draft her connector derived is dated to the day on a colleague's tree (integration review L8)", async () => {
+    // A derived claim's creation is the derivation's machine stamp — the
+    // instant her session did the work — not when somebody chose to write.
+    const world = await seedOptedOutWorld();
+    const derivedAt = world.harness.clock.now().toISOString();
+    const posted = await postRecords(world.harness, world.robin, {
+      records: [
+        recordEnvelope(
+          "claim",
+          validClaimBody({ id: "clm_robin_draft", workContextId: ROBIN_CONTEXT, authorSessionId: ROBIN_LIVE, kind: "observation", status: "proposed", provenance: "derived", captureMode: "agent", confidence: 0.4, body: "The refresh retries hit the cache before the rotation lands", createdAt: derivedAt }),
+          { sessionId: ROBIN_LIVE },
+        ),
+      ],
+    });
+    expect(posted.data?.accepted).toBe(1);
+    world.harness.clock.advanceSeconds(ANSWER_DELAY_S);
+
+    const createdAtOf = async (who: "nick" | "robin"): Promise<unknown> =>
+      (JSON.parse((await getAs(world, who, `/api/work-contexts/${ROBIN_CONTEXT}/diagnosis`)).body) as { data: { claims: readonly Record<string, unknown>[] } }).data.claims.find(
+        (row) => row["id"] === "clm_robin_draft",
+      )?.["createdAt"];
+    const page = await getAs(world, "nick", `/ui/work-contexts/${ROBIN_CONTEXT}`);
+
+    expect(await createdAtOf("nick")).toBe(`${derivedAt.slice(0, 10)}T00:00:00.000Z`);
+    expect(await createdAtOf("robin")).toBe(derivedAt);
+    expect(page.body).not.toContain(derivedAt);
+    expect(page.body).not.toMatch(/\b1m ago\b/);
+  });
+
   test("a teammate's claim on her context keeps its own re-observation: each row by its own owner", async () => {
     const world = await seedOptedOutWorld();
     const kenClaim = (id: string) =>

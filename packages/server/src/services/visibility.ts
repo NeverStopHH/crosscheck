@@ -29,7 +29,10 @@
  *               verification's time and HEAD are withheld (below), so a
  *               pin of hers carries no instant of hers at all. The docs
  *               once listed it here; the code withholds it, which is the
- *               harmless direction (review round 5, L2)
+ *               harmless direction (review round 5, L2). Nor a DERIVED
+ *               claim's to the second: her connector stamps a draft when it
+ *               derives it from her session's work, so its creation is
+ *               shown to the day (batch-2 integration review, L8)
  *   «coverage»  honest coverage that SOME session went quiet or reported:
  *               the agent_event rung's state, its reason and whether its
  *               gap is withheld (`session_silent` with `withheld: true`) —
