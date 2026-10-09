@@ -266,7 +266,7 @@ const runRow = async (row: Row): Promise<RowOutcome> => {
     workContextIntentProvenance: "derived",
   });
   const key = repoKey(seeded.hubUrl, REPO_ID);
-  const hub: HubContext = { hubUrl: seeded.hubUrl, apiKey: seeded.reader.apiKey, timeoutMs: 20_000, home, repoKey: key, now: () => NOW };
+  const hub: HubContext = { hubUrl: seeded.hubUrl, keyOrigin: seeded.hubUrl, apiKey: seeded.reader.apiKey, timeoutMs: 20_000, home, repoKey: key, now: () => NOW };
   const before = seeded.candidateCalls();
   const hint = await selectAndRenderHint({
     home,

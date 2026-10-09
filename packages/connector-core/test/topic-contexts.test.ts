@@ -480,7 +480,7 @@ describe("against a hub", () => {
     const repo = await makeRepo(label, { remote: "git@github.com:acme/api.git" });
     cleanups.push(home, repo);
     const key = repoKey(hubUrl, REPO_ID);
-    const hub = { hubUrl, apiKey, timeoutMs: 4000, home, repoKey: key, now: () => new Date() };
+    const hub = { hubUrl, keyOrigin: hubUrl, apiKey, timeoutMs: 4000, home, repoKey: key, now: () => new Date() };
     const hostSessionKey = `topics-${label}`;
     const life = await registerSessionFlow({
       home,

@@ -14,6 +14,9 @@ import { realpath } from "node:fs/promises";
 
 import type { Env } from "./paths.ts";
 import type { McpServerEntry } from "./mcp-config.ts";
+import { selfLaunch } from "./runtime-isolation.ts";
+import type { SelfLaunch } from "./runtime-isolation.ts";
+import { trustedPath, untrustedPathEntries } from "./trusted-path.ts";
 
 /** Characters a POSIX shell passes through untouched. */
 const SHELL_SAFE_PATTERN = /^[\w@%+=:,./-]+$/;
@@ -24,9 +27,10 @@ export const shellQuote = (value: string): string =>
     ? value
     : `'${value.split("'").join(`'\\''`)}'`;
 
+/** A PATH lookup that skips relative and in-repo entries (trusted-path.ts). */
 const whichOnPath = (command: string, env: Env): string | null => {
   try {
-    return Bun.which(command, { PATH: env["PATH"] ?? "" });
+    return Bun.which(command, { PATH: trustedPath(env["PATH"] ?? "", process.cwd()) });
   } catch {
     return null;
   }
@@ -171,7 +175,9 @@ export const probeCrosscheckBin = async (
 export type Launcher =
   | { readonly kind: "override"; readonly prefix: string }
   | { readonly kind: "bare"; readonly path: string }
-  | { readonly kind: "entry"; readonly runtime: string; readonly entry: string }
+  // The absolute form carries its finished, isolated start and nothing a
+  // caller could reassemble without the flags (config/runtime-isolation.ts).
+  | { readonly kind: "entry"; readonly launch: SelfLaunch }
   | { readonly kind: "refused"; readonly reason: string };
 
 export type UsableLauncher = Exclude<Launcher, { kind: "refused" }>;
@@ -200,8 +206,12 @@ export const resolveLauncher = async (
     return { kind: "override", prefix: override };
   }
   const hit = whichOnPath("crosscheck", env);
+  // The host resolves a bare `crosscheck` through the developer's whole PATH
+  // at hook time, so with a relative or in-repo entry on it the name is a
+  // repo's to answer: the absolute form below is written instead.
   if (
     hit !== null &&
+    untrustedPathEntries(env["PATH"] ?? "", process.cwd()).length === 0 &&
     !isEphemeralInstallPath(await realpathOrSelf(hit)) &&
     (await isOwnCrosscheckBin(hit))
   ) {
@@ -213,7 +223,7 @@ export const resolveLauncher = async (
     if (isEphemeralInstallPath(await realpathOrSelf(entryPath))) {
       return { kind: "refused", reason: CACHE_REFUSAL };
     }
-    return { kind: "entry", runtime: process.execPath, entry: entryPath };
+    return { kind: "entry", launch: selfLaunch(entryPath) };
   }
   return { kind: "refused", reason: NO_LAUNCHER_REFUSAL };
 };
@@ -226,7 +236,10 @@ export const resolveCommandPrefix = (launcher: UsableLauncher): string => {
     case "bare":
       return "crosscheck";
     case "entry":
-      return `${shellQuote(launcher.runtime)} ${shellQuote(launcher.entry)}`;
+      // Isolated from the repo it runs in (config/runtime-isolation.ts): the
+      // hook fires with the project as cwd, and bun would read its bunfig
+      // preload and .env first.
+      return [launcher.launch.command, ...launcher.launch.args].map(shellQuote).join(" ");
   }
 };
 
@@ -252,8 +265,8 @@ export const resolveMcpLauncher = (launcher: UsableLauncher): McpServerEntry => 
     case "entry":
       return {
         type: "stdio",
-        command: launcher.runtime,
-        args: [launcher.entry, "mcp"],
+        command: launcher.launch.command,
+        args: [...launcher.launch.args, "mcp"],
       };
   }
 };

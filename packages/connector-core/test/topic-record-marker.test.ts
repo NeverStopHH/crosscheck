@@ -234,7 +234,7 @@ describe("set_intent on a topic", () => {
       {
         home,
         repoKey: "topic-marker",
-        hub: { hubUrl: url, apiKey: "test-key", timeoutMs: 2000, home, repoKey: "topic-marker", now: () => NOW },
+        hub: { hubUrl: url, keyOrigin: url, apiKey: "test-key", timeoutMs: 2000, home, repoKey: "topic-marker", now: () => NOW },
         now: () => NOW,
         envelope: (producer, body, seq) => ({
           cx: PROTOCOL_VERSION,

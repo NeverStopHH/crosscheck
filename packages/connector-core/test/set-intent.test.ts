@@ -550,7 +550,7 @@ describe("set_intent", () => {
       {
         home: hana.home,
         repoKey: key,
-        hub: { hubUrl: url, apiKey: hana.apiKey, timeoutMs: SHORT_TIMEOUT_MS, home: hana.home, repoKey: key, now },
+        hub: { hubUrl: url, keyOrigin: url, apiKey: hana.apiKey, timeoutMs: SHORT_TIMEOUT_MS, home: hana.home, repoKey: key, now },
         now,
         envelope: (producer, body, seq) => ({
           cx: PROTOCOL_VERSION,

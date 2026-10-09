@@ -43,6 +43,7 @@ import {
   sweepPins,
 } from "@crosscheck/connector-core/http/hub.ts";
 import type { HubContext, PinSweepUpdate } from "@crosscheck/connector-core/http/hub.ts";
+import type { HubFailureKind } from "@crosscheck/connector-core/http/client.ts";
 import {
   COMMIT_SHA_PATTERN,
   MAX_PIN_FILES,
@@ -148,6 +149,7 @@ const resolve = async (
     ctx: {
       hubUrl: config.hubUrl,
       apiKey: config.apiKey,
+      keyOrigin: config.keyOrigin,
       timeoutMs: config.timeoutMs,
       home: config.home,
       repoKey: repoKey(config.hubUrl, identity.repoId),
@@ -166,9 +168,15 @@ const resolve = async (
  * instruction here would land in exactly the reader it should not reach.
  */
 const failureResult = (result: {
-  readonly kind: "network" | "http" | "malformed";
+  readonly kind: HubFailureKind;
   readonly message: string;
 }): CliResult => {
+  // Never sent (http/client.ts key-origin check): the sentence is the
+  // client's own, two canonical origins, printed whole — the bare class
+  // would strip the colons out of both URLs.
+  if (result.kind === "refused") {
+    return { stdout: `${result.message}\n`, exitCode: EXIT_FAIL };
+  }
   const said = hubSaid(result.message);
   return result.kind === "network"
     ? { stdout: `hub unreachable: ${said}\n`, exitCode: EXIT_UNREACHABLE }

@@ -188,17 +188,100 @@ export const runBoundedCommandOutcome = async (
 };
 
 /**
+ * GIT RUNS NO COMMAND A REPO'S CONFIG NAMES, ON CROSSCHECK'S ACCOUNT
+ * (review round 2, N3).
+ *
+ * crosscheck runs git on its own, at Stop and in a detached worker, with a
+ * repo as cwd. Measured on git 2.50 against a repo whose config named a
+ * marker script for every executing key:
+ * - `diff --name-only HEAD` ran `core.fsmonitor` and the `post-index-change`
+ *   hook;
+ * - `check-attr` and `ls-files` ran `core.fsmonitor`;
+ * - `log` and `show` ran `gpg.program` under `log.showSignature=true`;
+ * - `ls-remote` and `fetch` ran `remote.<name>.uploadpack`.
+ * And committed content can supply that config: a directory laid out as a
+ * bare repository (`HEAD`, `config`, `objects/`, `refs/`) survives a plain
+ * clone, and any git whose cwd is inside it uses its committed `config`.
+ *
+ * So every call carries `-c` pins, which outrank repo config and
+ * `GIT_CONFIG_COUNT` alike:
+ * - `safe.bareRepository=explicit` refuses an implicitly found bare repo
+ *   (a linked worktree of a bare repo and a cwd inside `.git` still work —
+ *   measured), which closes the committed-config route;
+ * - `core.fsmonitor=false`, `core.hooksPath=/dev/null` (no hook can be found
+ *   under a file) and `core.pager=cat`;
+ * - `log.showSignature=false`: no call verifies a signature, so
+ *   `gpg.program` and its ssh/x509 siblings are never consulted;
+ * - `--no-ext-diff --no-textconv` on the three subcommands that can render a
+ *   diff, and `--upload-pack=git-upload-pack` (git's default) on the two that
+ *   talk to a remote.
+ *
+ * WHAT IS LEFT ON PURPOSE: a clean filter. `diff --name-only` runs it on a
+ * stat-dirty file to compare content, and Git LFS depends on that, so it
+ * cannot be switched off without wrong answers. `.gitattributes` alone names
+ * no command (measured); only config defines one, so with the bare-repo route
+ * closed only the developer's own config (global, or the clone's `.git/config`
+ * and what it includes) can make crosscheck's git run a filter — the same
+ * filter their own `git status` runs. The same holds for `core.sshCommand`
+ * and credential helpers on the landing fetch.
+ */
+export const GIT_SAFETY_CONFIG: readonly string[] = [
+  "-c",
+  "safe.bareRepository=explicit",
+  "-c",
+  "core.fsmonitor=false",
+  "-c",
+  "core.hooksPath=/dev/null",
+  "-c",
+  "log.showSignature=false",
+  "-c",
+  "core.pager=cat",
+];
+
+/** Options a subcommand gets right after its name: no diff program, git's own upload-pack. */
+const SUBCOMMAND_PINS: ReadonlyMap<string, readonly string[]> = new Map([
+  ["diff", ["--no-ext-diff", "--no-textconv"]],
+  ["log", ["--no-ext-diff", "--no-textconv"]],
+  ["show", ["--no-ext-diff", "--no-textconv"]],
+  ["ls-remote", ["--upload-pack=git-upload-pack"]],
+  ["fetch", ["--upload-pack=git-upload-pack"]],
+]);
+
+/** The global options a caller passes that take the next argument. */
+const GLOBAL_OPTIONS_WITH_VALUE: ReadonlySet<string> = new Set(["-c", "-C"]);
+
+/** Where the subcommand sits, past any global options (`-c k=v`, `--literal-pathspecs`), or -1. */
+const subcommandIndex = (args: readonly string[]): number => {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index] ?? "";
+    if (GLOBAL_OPTIONS_WITH_VALUE.has(arg)) {
+      index += 1;
+    } else if (!arg.startsWith("-")) {
+      return index;
+    }
+  }
+  return -1;
+};
+
+/** The full argv of one of crosscheck's git calls: the pins, then the caller's args. */
+export const pinnedGitArgv = (args: readonly string[]): readonly string[] => {
+  const at = subcommandIndex(args);
+  const pins = at === -1 ? [] : (SUBCOMMAND_PINS.get(args[at] ?? "") ?? []);
+  return ["git", ...GIT_SAFETY_CONFIG, ...args.slice(0, at + 1), ...pins, ...args.slice(at + 1)];
+};
+
+/**
  * Runs git and returns trimmed stdout, or null for any failure at all
  * (missing binary, not a repo, non-zero exit, deadline). Hooks treat null as
  * "this information does not exist" and keep going. The deadline discipline
- * lives in runBoundedCommand above; the wrapper only supplies the binary and
- * the git default budget.
+ * lives in runBoundedCommand above; the wrapper supplies the binary, the
+ * safety pins and the git default budget.
  */
 export const runGit = (
   args: readonly string[],
   cwd: string,
   timeoutMs: number = GIT_TIMEOUT_MS,
-): Promise<string | null> => runBoundedCommand(["git", ...args], cwd, timeoutMs);
+): Promise<string | null> => runBoundedCommand(pinnedGitArgv(args), cwd, timeoutMs);
 
 /** `runGit` for the caller that needs empty-but-answered (see the outcome). */
 export const runGitOutcome = (
@@ -209,4 +292,4 @@ export const runGitOutcome = (
   options: CommandOptions = {},
 ): Promise<
   { readonly ok: true; readonly stdout: string } | CommandFailure
-> => runBoundedCommandOutcome(["git", ...args], cwd, timeoutMs, extraEnv, options);
+> => runBoundedCommandOutcome(pinnedGitArgv(args), cwd, timeoutMs, extraEnv, options);

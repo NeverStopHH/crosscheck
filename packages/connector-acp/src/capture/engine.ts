@@ -73,8 +73,14 @@ import {
 import { extractFailureText } from "@crosscheck/connector-core/capture/failure-text.ts";
 import type { Producer } from "@crosscheck/connector-core/capture/records.ts";
 import { UNKNOWN_DEVELOPER_ID } from "@crosscheck/connector-core/capture/records.ts";
-import { hubOrigin, isDisabled, loadReportableConfig } from "@crosscheck/connector-core/config/config.ts";
+import {
+  hubOrigin,
+  isDisabled,
+  loadReportableConfig,
+  resolveReportableConfig,
+} from "@crosscheck/connector-core/config/config.ts";
 import type { ResolvedConfig } from "@crosscheck/connector-core/config/config.ts";
+import { recordForeignHubRefusal } from "@crosscheck/connector-core/state/foreign-hub.ts";
 import { crosscheckHome, repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { recordCaptureLoss } from "@crosscheck/connector-core/state/loss-ledger.ts";
@@ -495,11 +501,26 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     // The finding-#11 gate (core config.ts `loadReportableConfig`): a stored
     // login must not stand in for the missing committed .crosscheck.json —
     // the proxy wraps agents anywhere, and only connected repos may report.
-    const config = await loadReportableConfig({
+    const resolved = await resolveReportableConfig({
       env: options.env,
       repoRoot: identity.root,
       defaultAgentKind: options.agentKindFlag ?? acpAgentKind(agentName ?? undefined),
     });
+    // Connected to ANOTHER hub than the key's (core config/key-binding.ts):
+    // capture off for the whole session, nothing sent, and counted once.
+    if (resolved.kind === "foreign_hub") {
+      await recordForeignHubRefusal(resolved.home, {
+        repoId: identity.repoId,
+        foreignHub: resolved.foreignHub,
+        surface: "acp",
+        sessionKey: acpHostSessionKey(agentName ?? "", acpSessionId),
+        now: now(),
+      });
+      sessions.set(acpSessionId, disabledSession(acpSessionId, cwd));
+      logger.line(`capture session=${acpSessionId} off (key bound to another hub)`);
+      return;
+    }
+    const config = resolved.kind === "reportable" ? resolved.config : null;
     if (config === null) {
       sessions.set(acpSessionId, disabledSession(acpSessionId, cwd));
       logger.line(`capture session=${acpSessionId} off (no config)`);
@@ -519,6 +540,9 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
       get apiKey() {
         return apiKey;
       },
+      // Fixed for the session: a rotation keeps the key's hub, and a fresh
+      // key bound anywhere else is refused below before it is ever kept.
+      keyOrigin: config.keyOrigin,
       timeoutMs: config.timeoutMs,
       home: config.home,
       repoKey: key,

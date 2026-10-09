@@ -50,7 +50,7 @@ const sentQuery = async (label: string, prompt: string, classified?: ClassifiedP
     deliveredHintHashes: [], tripwireAskedFiles: [], landedAskedFiles: [], landedCleanKeys: [],
   });
   await selectAndRenderHint({
-    home, repoKey: key, hub: { hubUrl: hub.url, apiKey: "test-key", timeoutMs: 20_000, home, repoKey: key, now: () => NOW },
+    home, repoKey: key, hub: { hubUrl: hub.url, keyOrigin: hub.url, apiKey: "test-key", timeoutMs: 20_000, home, repoKey: key, now: () => NOW },
     hostSessionKey: HOST_KEY, repoId: REPO_ID, repoRoot: repo, agentKind: "acp:fake-agent", prompt, now: NOW,
     ...(classified === undefined ? {} : { classified }),
   });

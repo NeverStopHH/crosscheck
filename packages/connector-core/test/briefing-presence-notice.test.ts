@@ -52,6 +52,7 @@ const briefingWith = async (settings: unknown): Promise<string> => {
   paths.push(home, repo);
   const ctx: HubContext = {
     hubUrl: hub.url.href.replace(/\/$/, ""),
+    keyOrigin: hub.url.href.replace(/\/$/, ""),
     apiKey: "test-key",
     timeoutMs: 20_000,
     home,

@@ -21,9 +21,11 @@
  * FOREIGN tool wearing the name. Hooks are silent by design, so a doctor is
  * the only place either state ever becomes a sentence.
  */
-import { isAbsolute } from "node:path";
+import { basename, isAbsolute } from "node:path";
 
 import type { Env } from "./paths.ts";
+import { NO_ENV_FILE_FLAG } from "./runtime-isolation.ts";
+import { trustedPath, untrustedPathEntries } from "./trusted-path.ts";
 import {
   isEphemeralInstallPath,
   isVersionManagerPath,
@@ -56,6 +58,40 @@ export const splitLauncherTokens = (command: string): readonly string[] =>
       : token,
   );
 
+const CONFIG_FLAG_PREFIX = "--config=";
+
+/**
+ * THE ISOLATION FLAGS ON AN ENTRY-FORM LAUNCHER (config/runtime-isolation.ts).
+ * A `<bun> <entry.ts>` hook command written before crosscheck isolated its
+ * processes starts every hook with the repo's bunfig preload and .env, so it
+ * WARNs until init rewrites it; a `--config=` naming a file that is gone
+ * FAILs, because bun then refuses to start and every hook dies silently.
+ * Null when neither applies (the bare `crosscheck` shim passes the flags
+ * itself; an operator's other prefix is theirs).
+ */
+const isolationHealth = async (
+  launcherTokens: readonly string[],
+  absoluteTokens: readonly string[],
+): Promise<LauncherHealth | null> => {
+  const config = launcherTokens.find((token) => token.startsWith(CONFIG_FLAG_PREFIX));
+  if (config !== undefined && !(await Bun.file(config.slice(CONFIG_FLAG_PREFIX.length)).exists())) {
+    return health(
+      "FAIL",
+      `${config.slice(CONFIG_FLAG_PREFIX.length)} does not exist, so bun refuses to start and every hook dies silently — rerun crosscheck init`,
+    );
+  }
+  const isBunEntry =
+    absoluteTokens.some((token) => basename(token) === "bun") &&
+    absoluteTokens.some((token) => token.endsWith(".ts"));
+  if (isBunEntry && !launcherTokens.includes(NO_ENV_FILE_FLAG)) {
+    return health(
+      "WARN",
+      "these hooks start bun without crosscheck's isolation flags, so a repo's bunfig.toml preload and .env files run inside every hook — rerun crosscheck init (or init --global) to rewrite them",
+    );
+  }
+  return null;
+};
+
 /**
  * Whether the launcher the given hook command names would actually RUN.
  * `probe` is the identity probe (injectable so its three answers are pinned
@@ -78,7 +114,7 @@ export const checkLauncherCommand = async (
   if (head === "crosscheck") {
     const hit = ((): string | null => {
       try {
-        return Bun.which("crosscheck", { PATH: env["PATH"] ?? "" });
+        return Bun.which("crosscheck", { PATH: trustedPath(env["PATH"] ?? "", process.cwd()) });
       } catch {
         return null;
       }
@@ -103,6 +139,15 @@ export const checkLauncherCommand = async (
       return health(
         "FAIL",
         `${hit} does not identify as the crosscheck cli (--version) — a different tool owns the name on this PATH and would receive the hooks' session json; remove it or rerun crosscheck init --command-prefix with an explicit launcher`,
+      );
+    }
+    // The host resolves the bare name through the whole PATH (review round 2,
+    // N6): a relative or in-repo entry lets a repo answer to it first.
+    const untrusted = untrustedPathEntries(env["PATH"] ?? "", process.cwd());
+    if (untrusted.length > 0) {
+      return health(
+        "WARN",
+        `hooks call the bare name "crosscheck", and PATH carries ${untrusted.join(", ")} (relative, or inside this repo) — a repo that ships a crosscheck there receives every hook; remove those entries, or rerun crosscheck init here, which then writes the absolute launcher`,
       );
     }
     const real = await realpathOrSelf(hit);
@@ -146,6 +191,10 @@ export const checkLauncherCommand = async (
         `${token} sits in a package-runner cache — it dies on cache eviction; install permanently and rerun crosscheck init`,
       );
     }
+  }
+  const isolation = await isolationHealth(launcherTokens, absoluteTokens);
+  if (isolation !== null) {
+    return isolation;
   }
   return absoluteTokens.length > 0
     ? health("PASS", launcherTokens.join(" "))

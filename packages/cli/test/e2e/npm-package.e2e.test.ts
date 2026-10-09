@@ -241,6 +241,9 @@ describe("packed npm tarball", () => {
       "packages/connector-core/NOTICE",
       "packages/connector-core/src/mcp/server.ts",
       "packages/connector-core/src/spool/append.ts",
+      // The bunfig the shim names with --config= (non-TS runtime asset): a
+      // package without it refuses to start rather than read the repo's.
+      "packages/connector-core/src/config/isolated.bunfig.toml",
       "packages/connector-acp/LICENSE",
       "packages/connector-acp/NOTICE",
       "packages/connector-acp/src/proxy.ts",

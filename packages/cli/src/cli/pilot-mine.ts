@@ -57,6 +57,7 @@ export const runPilotMine = async (
     {
       hubUrl: config.hubUrl,
       apiKey: config.apiKey,
+      keyOrigin: config.keyOrigin,
       timeoutMs: config.timeoutMs,
       home: config.home,
       repoKey: repoKey(config.hubUrl, identity.repoId),

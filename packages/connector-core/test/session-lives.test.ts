@@ -131,8 +131,8 @@ const fixture = async (label: string): Promise<Fixture> => {
     repo,
     key,
     hostSessionKey: `acp-lives--${label}`,
-    hub: { ...base, hubUrl },
-    proxied: { ...base, hubUrl: proxyUrl },
+    hub: { ...base, hubUrl, keyOrigin: hubUrl },
+    proxied: { ...base, hubUrl: proxyUrl, keyOrigin: proxyUrl },
   };
 };
 

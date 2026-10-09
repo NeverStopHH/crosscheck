@@ -181,9 +181,14 @@ const gitWrapper = async (shape: "held" | "delayed"): Promise<string> => {
     shape === "held"
       ? `exec sleep ${String(HELD_GIT_SECONDS)}`
       : `sleep ${String(DELAYED_GIT_SECONDS)}; exec "${realGit}" "$@"`;
+  // The subcommand sits past crosscheck's pinned `-c` options (git.ts
+  // pinnedGitArgv), so it is found the way git finds it, never as `$1`.
+  const findSubcommand =
+    'sub=""; skip=0\nfor a in "$@"; do\n  if [ "$skip" = 1 ]; then skip=0; continue; fi\n' +
+    '  case "$a" in -c|-C) skip=1 ;; -*) ;; *) sub="$a"; break ;; esac\ndone\n';
   await writeFile(
     join(dir, "git"),
-    `#!/bin/sh\ncase "$1" in\n  log|merge-base) ${walk} ;;\nesac\nexec "${realGit}" "$@"\n`,
+    `#!/bin/sh\n${findSubcommand}case "$sub" in\n  log|merge-base) ${walk} ;;\nesac\nexec "${realGit}" "$@"\n`,
     { mode: 0o755 },
   );
   return dir;

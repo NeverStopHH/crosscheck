@@ -422,6 +422,8 @@ describe("login names the real connection failure", () => {
       { CROSSCHECK_HOME: home, CROSSCHECK_API_KEY: "test-key" },
       async () => null,
       () => Promise.resolve(null),
+      // A person at a terminal, as an env-key login requires (login.ts).
+      () => true,
     );
 
     // Assert: the cause and the remedy, in one sentence naming the url

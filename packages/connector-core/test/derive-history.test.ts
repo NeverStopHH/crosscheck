@@ -137,7 +137,7 @@ describe("the history belongs to the session's own repo", () => {
     await endSessionFlow({
       home: at,
       repoKey: otherKey,
-      hub: { hubUrl: DEAD_HUB_URL, apiKey: "k", timeoutMs: 400, home: at, repoKey: otherKey, now: () => new Date() },
+      hub: { hubUrl: DEAD_HUB_URL, apiKey: "k", keyOrigin: DEAD_HUB_URL, timeoutMs: 400, home: at, repoKey: otherKey, now: () => new Date() },
       hostSessionKey: "own-repo-uuid",
       crosscheckSessionId: "cc_own-repo-uuid",
       developerId: "dev_self",
@@ -161,7 +161,7 @@ describe("the end flow folds before it deletes", () => {
     await endSessionFlow({
       home: at,
       repoKey: KEY,
-      hub: { hubUrl: DEAD_HUB_URL, apiKey: "k", timeoutMs: 400, home: at, repoKey: KEY, now: () => new Date() },
+      hub: { hubUrl: DEAD_HUB_URL, apiKey: "k", keyOrigin: DEAD_HUB_URL, timeoutMs: 400, home: at, repoKey: KEY, now: () => new Date() },
       hostSessionKey: "ended-uuid",
       crosscheckSessionId: "cc_ended-uuid",
       developerId: "dev_self",

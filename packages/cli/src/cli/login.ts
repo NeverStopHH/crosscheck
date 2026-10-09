@@ -13,6 +13,7 @@ import {
 } from "@crosscheck/connector-core/constants.ts";
 import {
   envTimeoutMs,
+  hubOrigin,
   normalizeHubUrl,
   readStoredConfig,
   resolveTimeoutMs,
@@ -41,6 +42,10 @@ import {
   recommendedTimeoutMs,
 } from "@crosscheck/connector-core/http/latency.ts";
 import type { LatencyMeasurement } from "@crosscheck/connector-core/http/latency.ts";
+import { storedKeyOrigin } from "@crosscheck/connector-core/config/key-binding.ts";
+
+import { agentHostRefusalLine, personGate } from "./agent-host.ts";
+import type { InteractiveProbe } from "./pin.ts";
 
 export interface CliResult {
   readonly stdout: string;
@@ -70,6 +75,9 @@ export const probeCredentials = async (
     {
       hubUrl,
       apiKey,
+      // The binding act itself: the person named this hub with this key, so
+      // it is the one origin the probe may carry the key to.
+      keyOrigin: hubOrigin(hubUrl),
       timeoutMs,
       home: "",
       repoKey: "",
@@ -215,11 +223,106 @@ const resolveApiKey = async (
   return readSecret();
 };
 
+/**
+ * A person is at this login. The key arrives on STDIN (piped), so stdin is
+ * no terminal for a person either — stderr is the terminal they read. An
+ * agent's tool captures both, and an agent host's markers are checked by
+ * `personGate` whatever this answers.
+ */
+export const loginPersonProbe: InteractiveProbe = () =>
+  process.stderr.isTTY === true || process.stdin.isTTY === true;
+
+/**
+ * The origin this login would MOVE the machine's key away from, or null.
+ * A stored login is bound to its recorded origin (config/key-binding.ts); an
+ * environment key with its own CROSSCHECK_HUB_URL is bound to that. Logging
+ * in to the same origin again (a new key, a new spelling) moves nothing.
+ */
+const rebindFrom = (env: Env, existing: Config | null, hubUrl: string): string | null => {
+  const envHub = env["CROSSCHECK_HUB_URL"];
+  const current =
+    existing !== null
+      ? storedKeyOrigin(existing)
+      : env["CROSSCHECK_API_KEY"] !== undefined && envHub !== undefined
+        ? hubOrigin(envHub)
+        : null;
+  return current !== null && current !== hubOrigin(hubUrl) ? current : null;
+};
+
+const rebindRefusal = (from: string, hubUrl: string): string =>
+  [
+    `logging in to ${hubUrl} would move this machine's crosscheck key from ${from} to another hub,`,
+    "and that needs a person at a terminal — logging in sends the key to that address.",
+    "If you were told this is your team's hub, confirm the address with whoever runs it, then run",
+    "the login yourself in your own terminal, piping the key on stdin.",
+    "",
+  ].join("\n");
+
+const REBIND_ENV_KEY_REFUSAL =
+  "CROSSCHECK_API_KEY is set, but it is never used to move this machine's login to another hub —\n" +
+  "pipe the key for the new hub on stdin, or pass it as the second argument.\n";
+
+/** A recorded binding crosscheck cannot read binds the key to nothing, so any login could move it. */
+const junkBindingRefusal = (hubUrl: string): string =>
+  [
+    `this machine's crosscheck login records a key binding crosscheck cannot read, so logging in to ${hubUrl}`,
+    "could move the key anywhere, and that needs a person at a terminal — logging in sends the key to that address.",
+    "Run the login yourself in your own terminal, piping the key on stdin.",
+    "",
+  ].join("\n");
+
+/** An exported key would be sent to whatever address the command names. */
+const envKeyLoginRefusal = (hubUrl: string): string =>
+  [
+    `logging in to ${hubUrl} with CROSSCHECK_API_KEY from the environment sends that key to that address,`,
+    "and that needs a person at a terminal. If you were told this is your team's hub, confirm the address with",
+    "whoever runs it, then run the login yourself in your own terminal.",
+    "",
+  ].join("\n");
+
+interface LoginGateNeed {
+  /** Why a person must be at this login, as the refusal says it; null when nothing needs one. */
+  readonly refusal: string | null;
+  /** Whether CROSSCHECK_API_KEY may supply the key. */
+  readonly mayUseEnvKey: boolean;
+}
+
+/**
+ * WHEN A LOGIN NEEDS A PERSON (key-binding review H2; round 2, N7). Three
+ * logins can send a key somewhere it was not bound:
+ * - one that moves the binding to another origin (`rebindFrom`);
+ * - one over a junk recorded `keyOrigin`, which binds the key to nothing, so
+ *   the login could move it anywhere — treated exactly as a move;
+ * - one whose key comes from `CROSSCHECK_API_KEY`: an exported key goes to
+ *   whatever the command names. A person may still use it, since there is no
+ *   binding to move; a key piped on stdin or passed as an argument stays
+ *   ungated, so scripted setups keep working.
+ * Moves never take the environment's key.
+ */
+const loginGateNeed = (
+  env: Env,
+  existing: Config | null,
+  hubUrl: string,
+  movingFrom: string | null,
+  positionalKey: string | undefined,
+): LoginGateNeed => {
+  if (movingFrom !== null) {
+    return { refusal: rebindRefusal(movingFrom, hubUrl), mayUseEnvKey: false };
+  }
+  if (existing !== null && existing.keyOrigin !== undefined && storedKeyOrigin(existing) === null) {
+    return { refusal: junkBindingRefusal(hubUrl), mayUseEnvKey: false };
+  }
+  const envKey = env["CROSSCHECK_API_KEY"];
+  const takesEnvKey = positionalKey === undefined && envKey !== undefined && envKey.length > 0;
+  return { refusal: takesEnvKey ? envKeyLoginRefusal(hubUrl) : null, mayUseEnvKey: true };
+};
+
 export const runLogin = async (
   args: readonly string[],
   env: Env,
   readSecret: SecretReader = readSecretFromStdin,
   measure: LatencyMeasurer = defaultMeasurer,
+  isInteractive: InteractiveProbe = loginPersonProbe,
 ): Promise<CliResult> => {
   const [rawHubUrl, positionalKey] = args;
   if (rawHubUrl === undefined) {
@@ -232,16 +335,37 @@ export const runLogin = async (
       exitCode: EXIT_FAIL,
     };
   }
-  const apiKey = await resolveApiKey(positionalKey, env, readSecret);
-  if (apiKey === null || apiKey.length === 0) {
-    return {
-      stdout: `no api key supplied\n${LOGIN_USAGE}`,
-      exitCode: EXIT_USAGE,
-    };
-  }
 
   const home = crosscheckHome(env);
   const existing = await readStoredConfig(home);
+  // SENDING THE KEY SOMEWHERE NEW IS A PERSON'S ACT (key-binding review, H2;
+  // round 2, N7): a bait repo's remedy text, or an agent "getting crosscheck
+  // working", must not be able to point this machine's login at another hub.
+  // Refused before the probe, so nothing is sent.
+  //
+  // The gate is DENY-ONLY (agent-host.ts `personGate`): it refuses where it
+  // can see an agent — no terminal, or a known host's markers — and cannot
+  // prove a person is there. A host that runs its agent's commands in a pty
+  // and sets none of the markers, or an agent that strips them and wraps
+  // itself in `script`, passes. The human proof in crosscheck is the passkey
+  // on the hub, never this terminal check (DESIGN §2.1, "What the binding
+  // does not stop").
+  const movingFrom = rebindFrom(env, existing, hubUrl);
+  const need = loginGateNeed(env, existing, hubUrl, movingFrom, positionalKey);
+  if (need.refusal !== null) {
+    const gate = personGate(env, isInteractive);
+    if (!gate.isPerson) {
+      return { stdout: `${agentHostRefusalLine(gate)}${need.refusal}`, exitCode: EXIT_USAGE };
+    }
+  }
+  const apiKey = await resolveApiKey(positionalKey, need.mayUseEnvKey ? env : {}, readSecret);
+  if (apiKey === null || apiKey.length === 0) {
+    const envKeyNote = !need.mayUseEnvKey && env["CROSSCHECK_API_KEY"] !== undefined ? REBIND_ENV_KEY_REFUSAL : "";
+    return {
+      stdout: `${envKeyNote}no api key supplied\n${LOGIN_USAGE}`,
+      exitCode: EXIT_USAGE,
+    };
+  }
   const probeTimeoutMs = loginProbeTimeoutMs(env, existing);
   const probe = await probeCredentials(hubUrl, apiKey, probeTimeoutMs);
   if (!probe.ok) {
@@ -274,10 +398,14 @@ export const runLogin = async (
   const latencyLine = renderLatencyLine(env, existing, owner, measurement, decision);
 
   await ensureDir(home);
+  // The key is bound HERE, to the hub it was just proven against
+  // (config/key-binding.ts) — written explicitly, so the previous login's
+  // binding never survives the spread of `existing`.
+  const keyOrigin = hubOrigin(hubUrl) ?? undefined;
   await saveConfig(
     home,
     withTimeoutDecision(
-      { ...(existing ?? {}), version: 1, hubUrl, apiKey },
+      { ...(existing ?? {}), version: 1, hubUrl, apiKey, keyOrigin },
       decision,
     ),
   );

@@ -304,7 +304,7 @@ describe("every sender of a topic's record carries the word", () => {
         {
           home,
           repoKey: "word-intent",
-          hub: { hubUrl: url, apiKey: "test-key", timeoutMs: 2000, home, repoKey: "word-intent", now: () => NOW },
+          hub: { hubUrl: url, keyOrigin: url, apiKey: "test-key", timeoutMs: 2000, home, repoKey: "word-intent", now: () => NOW },
           now: () => NOW,
           envelope: (producer, body, seq) => ({
             cx: PROTOCOL_VERSION,

@@ -95,7 +95,7 @@ const fixture = async (label: string): Promise<Fixture> => {
     key,
     hostSessionKey: `acp-rules--${label}`,
     clock,
-    hub: { hubUrl: proxyUrl, apiKey, timeoutMs: TIMEOUT_MS, home, repoKey: key, now: () => new Date(clock.ms) },
+    hub: { hubUrl: proxyUrl, keyOrigin: proxyUrl, apiKey, timeoutMs: TIMEOUT_MS, home, repoKey: key, now: () => new Date(clock.ms) },
   };
 };
 

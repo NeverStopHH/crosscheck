@@ -122,6 +122,30 @@ const guardTheChildren = (): void => {
   process.env[GUARD_CHILD_ENV] = "1";
 };
 
+/**
+ * A CROSSCHECK ENTRY A TEST STARTS RUNS GUARDED, NOT RESTARTED (the
+ * key-origin merge). Every crosscheck entry's first import restarts it
+ * without `BUN_OPTIONS` (connector-core config/runtime-isolation.ts
+ * `ensureCleanRuntime`), so under this guard's `BUN_OPTIONS` a hook, the cli,
+ * the ACP proxy or a worker came back as a second process with no guard at
+ * all — another pid, and signals sent to the first never reaching it. A child
+ * whose `BUN_OPTIONS` is this guard ALONE, installed just above, drops it
+ * before its entry runs: nothing else was preloaded, so a restart would undo
+ * nothing. Any other preload stays, and the entry restarts as it must.
+ */
+const CROSSCHECK_ENTRY = /\/packages\/[^/]+\/src\/(?:bin\/crosscheck|(?:[^/]+\/)*[^/]*worker-entry)\.ts$/u;
+
+const isGuardAlone = (bunOptions: string | undefined): boolean =>
+  bunOptions?.trim() === withGuardPreload(undefined, import.meta.path);
+
+if (
+  process.env[GUARD_CHILD_ENV] === "1" &&
+  CROSSCHECK_ENTRY.test(process.argv[1] ?? "") &&
+  isGuardAlone(process.env["BUN_OPTIONS"])
+) {
+  delete process.env["BUN_OPTIONS"];
+}
+
 if (process.env[GUARD_CHILD_ENV] !== "1") {
   guardTheChildren();
 }

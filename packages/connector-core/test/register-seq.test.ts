@@ -86,6 +86,7 @@ describe("registerSessionFlow positions the session it opens", () => {
       hub: {
         hubUrl: HUB_URL,
         apiKey: "test-key",
+        keyOrigin: HUB_URL,
         timeoutMs: 2000,
         home,
         repoKey: repoKey(HUB_URL, REPO_ID),
@@ -162,6 +163,7 @@ describe("a SessionStart re-fire registers under the epoch the session uses", ()
         hub: {
           hubUrl: HUB_URL,
           apiKey: "test-key",
+          keyOrigin: HUB_URL,
           timeoutMs: 2000,
           home,
           repoKey: repoKey(HUB_URL, REPO_ID),
@@ -251,6 +253,7 @@ describe("a re-fire over a foreign binding carries nothing", () => {
       hub: {
         hubUrl: HUB_URL,
         apiKey: "test-key",
+        keyOrigin: HUB_URL,
         timeoutMs: 2000,
         home,
         repoKey: repoKey(HUB_URL, REPO_ID),

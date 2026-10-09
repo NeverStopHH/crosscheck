@@ -1,6 +1,6 @@
-import { readdir, readlink, stat } from "node:fs/promises";
-import { homedir } from "node:os";
-import { basename, join, relative } from "node:path";
+import { readdir, readlink, realpath, stat } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { z } from "zod";
 import type { SessionEventRetentionMode } from "@crosscheck/schema";
 
@@ -176,6 +176,15 @@ import {
 import { checkSkeletonRetention } from "./doctor-retention.ts";
 import { coverageReportingCheck, lossChecks } from "./doctor-losses.ts";
 import { briefingOmissionsCheck } from "./doctor-briefings.ts";
+import { FOREIGN_HUB_MCP_CHECK, keyOriginChecks } from "./foreign-hub.ts";
+import { repoRuntimeChecks } from "./doctor-repo-runtime.ts";
+import { hostEnvChecks, mcpEntryEnvKeys } from "./doctor-host-env.ts";
+import {
+  ISOLATED_BUNFIG_PATH,
+  RUNTIME_ISOLATION_FLAGS,
+  selfLaunch,
+} from "@crosscheck/connector-core/config/runtime-isolation.ts";
+import { readForeignHubRefusals } from "@crosscheck/connector-core/state/foreign-hub.ts";
 import { readBriefingOmissions } from "@crosscheck/connector-core/state/briefing-omissions.ts";
 import { landedProbeCutsCheck } from "./landed-probe-cuts.ts";
 import { readLandedProbeCuts } from "@crosscheck/connector-core/state/landed-probe-cuts.ts";
@@ -1330,6 +1339,85 @@ const readRegisteredMcpEntry = async (
   return null;
 };
 
+/** This install's own entry, beside the bunfig it ships (runtime-isolation.ts). */
+const OWN_ENTRY_PATH = resolve(dirname(ISOLATED_BUNFIG_PATH), "..", "..", "..", "cli", "src", "bin", "crosscheck.ts");
+
+const realOrNull = async (path: string): Promise<string | null> => {
+  try {
+    return await realpath(path);
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * WHETHER A REPO-COMMITTED MCP ENTRY IS ONE THIS INSTALL WOULD HAVE WRITTEN.
+ * The project `.mcp.json` is shared content like `.crosscheck.json`, and
+ * `isOwnedMcpEntry` only recognises a crosscheck-SHAPED entry —
+ * `sh -c "… crosscheck mcp"` passes it — so spawning whatever it names would
+ * run a repo's command the moment a person types `crosscheck doctor`. Only
+ * the two forms init writes qualify: `crosscheck mcp` (the isolated shim on
+ * the developer's own PATH), or the bun running doctor with the isolation
+ * flags and this install's own entry, compared by real path.
+ */
+const isEntryCrosscheckWrote = async (entry: McpServerEntry): Promise<boolean> => {
+  if (entry.command === "crosscheck") {
+    return entry.args.length === 1 && entry.args[0] === "mcp";
+  }
+  const [noEnvFile, config, script, mcp, ...rest] = entry.args;
+  if (rest.length > 0 || mcp !== "mcp" || script === undefined) {
+    return false;
+  }
+  const hasFlags = noEnvFile === RUNTIME_ISOLATION_FLAGS[0] && config === RUNTIME_ISOLATION_FLAGS[1];
+  const [command, ownRuntime, entryReal, ownEntry] = await Promise.all([
+    realOrNull(entry.command),
+    realOrNull(selfLaunch(OWN_ENTRY_PATH).command),
+    realOrNull(script),
+    realOrNull(OWN_ENTRY_PATH),
+  ]);
+  return hasFlags && command !== null && command === ownRuntime && entryReal !== null && entryReal === ownEntry;
+};
+
+type McpProbeTarget =
+  | { readonly kind: "probe"; readonly entry: McpServerEntry }
+  | { readonly kind: "skip"; readonly why: string };
+
+/** The entry to spawn, or why none is: project scope first, then user — the order an agent uses. */
+const mcpProbeTarget = async (repoRoot: string, env: Env): Promise<McpProbeTarget> => {
+  const scopes = [
+    { isRepo: true, path: join(repoRoot, MCP_CONFIG_FILE) },
+    { isRepo: false, path: claudeUserMcpPath(env) },
+  ];
+  for (const scope of scopes) {
+    const servers = z
+      .looseObject({ mcpServers: z.record(z.string(), z.unknown()).optional() })
+      .safeParse(await readJsonOrNull(scope.path));
+    const raw = servers.success ? servers.data.mcpServers?.[MCP_SERVER_KEY] : undefined;
+    const parsed = isOwnedMcpEntry(raw) ? McpServerEntrySchema.safeParse(raw) : null;
+    if (parsed === null || !parsed.success) {
+      continue;
+    }
+    const entry: McpServerEntry = { type: "stdio", command: parsed.data.command, args: parsed.data.args };
+    // Any scope: init never writes an env block, and the host hands it to
+    // the server — a probe without it would vouch for a process the host
+    // starts differently (review round 2, N2; doctor-host-env.ts names it).
+    if (mcpEntryEnvKeys(raw).length > 0) {
+      return {
+        kind: "skip",
+        why: "its entry carries an env block, which crosscheck never writes, and doctor runs no server a file configures",
+      };
+    }
+    if (scope.isRepo && !(await isEntryCrosscheckWrote(entry))) {
+      return {
+        kind: "skip",
+        why: "this repo's .mcp.json names a command crosscheck did not write here, and doctor runs no command a repo chose",
+      };
+    }
+    return { kind: "probe", entry };
+  }
+  return { kind: "skip", why: "no launchable entry found" };
+};
+
 /**
  * Gathers the facts. The spawn is skipped under the same env var the
  * summarizer probe honours — doctor is human-run, but a script that loops it
@@ -1354,13 +1442,15 @@ const checkMcpUsable = async (
       probe: { kind: "not-probed", why: `${DOCTOR_NO_PROBE_ENV}=1` },
     });
   }
-  const entry = await readRegisteredMcpEntry(repoRoot, env);
+  const target = await mcpProbeTarget(repoRoot, env);
   return mcpUsableCheck({
     ...facts,
     probe:
-      entry === null
-        ? { kind: "not-probed", why: "no launchable entry found" }
-        : await probeMcpServer(entry, repoRoot),
+      target.kind === "skip"
+        ? { kind: "not-probed", why: target.why }
+        : // A neutral cwd: the probe asks for the tool list, which needs no
+          // repo, and bun must not read this repo's bunfig or .env for it.
+          await probeMcpServer(target.entry, tmpdir()),
   });
 };
 
@@ -3767,6 +3857,12 @@ export const runDoctor = async (
       : check("PASS", "repo identity", identity.repoId);
 
   const bunfigCheck = await checkBunfig(env, cwd, identity?.root ?? null);
+  // What the repo tries to hand bun, and what a host hands crosscheck as
+  // environment; each empty unless something is there.
+  const repoRuntime = [
+    ...(await repoRuntimeChecks(cwd, identity?.root ?? null)),
+    ...(await hostEnvChecks(identity?.root ?? null, env)),
+  ];
   const config = await loadConfig({ env, repoRoot: identity?.root });
   // "Connected" in the committed sense (DESIGN.md §2.1): the repo root
   // carries .crosscheck.json. Only when the cwd is NOT that does the
@@ -3782,7 +3878,15 @@ export const runDoctor = async (
   // The scope question the commands ask before touching anything: a repo
   // whose project files ARE the user-level ones has ONE install.
   const oneInstall = identity === null ? null : await readOneInstall(identity.root, env);
-  if (config === null || identity === null) {
+  // A hub the key does not belong to (core config/key-binding.ts): this repo's
+  // .crosscheck.json or CROSSCHECK_HUB_URL names another origin than the
+  // login's. Every check past this branch asks that hub something with the
+  // key, so doctor takes the no-hub branch instead and says why, naming both
+  // origins and the fix. The local ledger counts what it has cost.
+  const foreignHub = config?.foreignHub ?? null;
+  const foreignLedger = await readForeignHubRefusals(home, now);
+  const keyOriginLines = keyOriginChecks(foreignHub, foreignLedger, identity?.repoId ?? null);
+  if (config === null || identity === null || foreignHub !== null) {
     const projectWired =
       identity === null
         ? null
@@ -3805,7 +3909,10 @@ export const runDoctor = async (
           : await projectCopyForRemedy(identity.root, projectWired, globalWiring),
         oneInstall,
       ),
-      check("FAIL", "hub reachable", "no hub configured"),
+      // The mismatch is not "no hub": the key is configured and safe, so it
+      // is the WARN naming both origins, never the FAIL below.
+      ...(foreignHub === null ? [check("FAIL", "hub reachable", "no hub configured")] : []),
+      ...keyOriginLines,
       ...(identity === null
         ? []
         : [
@@ -3816,20 +3923,23 @@ export const runDoctor = async (
               oneInstall,
             }),
           ]),
-      mcpUsableCheck({
-        configured: config !== null,
-        hubUrl: config?.hubUrl ?? null,
-        // No probe ran in this branch: there is no hub to ask, so the line
-        // rests on `configured` alone exactly as it always did here.
-        hub: null,
-        registered:
-          globalWiring.mcpRegistered ||
-          (identity !== null &&
-            (await readRegisteredMcpEntry(identity.root, env)) !== null),
-        userScopeUnknown: userMcpUnknown(globalWiring),
-        probe: { kind: "not-probed", why: "no hub configured" },
-      }),
+      foreignHub !== null
+        ? FOREIGN_HUB_MCP_CHECK
+        : mcpUsableCheck({
+            configured: config !== null,
+            hubUrl: config?.hubUrl ?? null,
+            // No probe ran in this branch: there is no hub to ask, so the line
+            // rests on `configured` alone exactly as it always did here.
+            hub: null,
+            registered:
+              globalWiring.mcpRegistered ||
+              (identity !== null &&
+                (await readRegisteredMcpEntry(identity.root, env)) !== null),
+            userScopeUnknown: userMcpUnknown(globalWiring),
+            probe: { kind: "not-probed", why: "no hub configured" },
+          }),
       bunfigCheck,
+      ...repoRuntime,
     ]);
   }
 
@@ -3837,6 +3947,7 @@ export const runDoctor = async (
   const hubCtx: HubContext = {
     hubUrl: config.hubUrl,
     apiKey: config.apiKey,
+    keyOrigin: config.keyOrigin,
     timeoutMs: config.timeoutMs,
     home: config.home,
     repoKey: key,
@@ -4130,6 +4241,7 @@ export const runDoctor = async (
     }),
     ...(await checkSpool(config.home, key, now, openOnHub)),
     ...(await foreignDropChecks(config.home)),
+    ...keyOriginLines,
     ...captureChecks(captureHealth, now),
     generatedTargetsCheck(captureHealth, await readAuthoritativeGenerated(identity.root)),
     await checkHints(hubCtx, identity.repoId, captureHealth),
@@ -4178,6 +4290,7 @@ export const runDoctor = async (
     ...hubChecks,
     skewCheck,
     bunfigCheck,
+    ...repoRuntime,
     ...checkClaudeDerive(),
     ...checkCausalGuarantees(contradictedDeclarations),
     ...(await checkCursor(

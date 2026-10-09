@@ -65,6 +65,7 @@ afterAll(async () => {
 const hubFor = (home: string, key: string): HubContext => ({
   hubUrl,
   apiKey: "key",
+  keyOrigin: hubUrl,
   timeoutMs: 4000,
   home,
   repoKey: key,

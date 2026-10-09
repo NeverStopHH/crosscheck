@@ -98,8 +98,12 @@ describe("the same hook event fired through both wirings", () => {
       `${JSON.stringify({ hubUrl: hub.url }, null, 2)}\n`,
       "utf8",
     );
+    // The key arrives with its hub as an operator pair: a CROSSCHECK_API_KEY
+    // with no CROSSCHECK_HUB_URL and no login is bound to no hub, and a
+    // repo-named one never receives it (core config/key-binding.ts).
     const env: Env = {
       CROSSCHECK_HOME: home,
+      CROSSCHECK_HUB_URL: hub.url,
       CROSSCHECK_API_KEY: "test-key",
       CROSSCHECK_TIMEOUT_MS: TIMEOUT_MS,
     };

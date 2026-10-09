@@ -113,7 +113,7 @@ const fixture = async (label: string, url: string = hubUrl): Promise<Fixture> =>
     repo,
     key,
     hostSessionKey: `acp-test--${label}`,
-    hub: { hubUrl: url, apiKey, timeoutMs: TIMEOUT_MS, home, repoKey: key, now: () => new Date() },
+    hub: { hubUrl: url, keyOrigin: url, apiKey, timeoutMs: TIMEOUT_MS, home, repoKey: key, now: () => new Date() },
   };
 };
 

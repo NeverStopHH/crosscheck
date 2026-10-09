@@ -153,7 +153,7 @@ describe("the preload refuses a real hub on every door a test uses", () => {
 
     // Act
     const result = await hubRequest(
-      { hubUrl: "http://127.0.0.1:7100", apiKey: "test-key", timeoutMs: 400, home, repoKey: "guard", now: () => new Date() },
+      { hubUrl: "http://127.0.0.1:7100", keyOrigin: "http://127.0.0.1:7100", apiKey: "test-key", timeoutMs: 400, home, repoKey: "guard", now: () => new Date() },
       { method: "GET", path: "/api/health", schema: z.unknown() },
     );
 

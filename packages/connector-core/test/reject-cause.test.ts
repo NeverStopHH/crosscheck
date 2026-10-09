@@ -90,7 +90,7 @@ describe("a late write after a final end", () => {
     const repo = await makeRepo("reject-late", { remote: "git@github.com:acme/api.git" });
     cleanups.push(home, repo);
     const key = repoKey(hubUrl, REPO_ID);
-    const hub: HubContext = { hubUrl, apiKey, timeoutMs: 4000, home, repoKey: key, now: () => new Date() };
+    const hub: HubContext = { hubUrl, keyOrigin: hubUrl, apiKey, timeoutMs: 4000, home, repoKey: key, now: () => new Date() };
     const hostSessionKey = "acp-test--sess_late";
     const registered = await registerSessionFlow({
       home,

@@ -264,7 +264,9 @@ export const runCli = async (
         exitCode: EXIT_OK,
       };
     case "login":
-      return runLogin(rest, env, readSecret);
+      // A person at a terminal only when it would move the key to another
+      // hub (cli/login.ts rebindFrom); a first login or a new key is not gated.
+      return runLogin(rest, env, readSecret, undefined, options.isInteractive);
     case "init": {
       // "Refusing beats ignoring", the --global --hub rule below, for removal
       // (review 2026-10-05): an install-only flag on `--remove` was dropped

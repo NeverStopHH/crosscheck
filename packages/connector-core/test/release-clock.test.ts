@@ -79,7 +79,7 @@ const fixture = async (label: string): Promise<Fixture> => {
   const repo = await makeRepo(label, { remote: "git@github.com:acme/api.git" });
   cleanups.push(home, repo);
   const key = repoKey(hubUrl, REPO_ID);
-  return { home, repo, key, hub: { hubUrl, apiKey, timeoutMs: HTTP_TIMEOUT_MS, home, repoKey: key, now: () => new Date() } };
+  return { home, repo, key, hub: { hubUrl, keyOrigin: hubUrl, apiKey, timeoutMs: HTTP_TIMEOUT_MS, home, repoKey: key, now: () => new Date() } };
 };
 
 const register = (fx: Fixture, hostSessionKey: string) =>
@@ -236,7 +236,7 @@ describe("the expiry clock of a released spool (H2)", () => {
     await diedAgo(fx, host, ABANDONED_MS);
     const other = await register(fx, "acp-release--early-successor");
     const firstSend = Date.now();
-    const unreachable = { ...fx.hub, hubUrl: "http://127.0.0.1:1", now: () => new Date(firstSend) };
+    const unreachable = { ...fx.hub, hubUrl: "http://127.0.0.1:1", keyOrigin: "http://127.0.0.1:1", now: () => new Date(firstSend) };
 
     // Act: the release by that send; session-reap three days on; reap a full bound after the send
     await flushSpool(unreachable, { sessionId: other.crosscheckSessionId, developerId }, 3000);

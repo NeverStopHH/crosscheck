@@ -1,4 +1,6 @@
 #!/usr/bin/env bun
+// First, before any module that reads config or a key (config/clean-runtime.ts).
+import "@crosscheck/connector-core/config/clean-runtime.ts";
 import { EXIT_FAIL, EXIT_OK, STDIN_TIMEOUT_MS } from "@crosscheck/connector-core/constants.ts";
 import {
   isHookName,

@@ -87,6 +87,7 @@ const session = (id: string): Record<string, unknown> => ({
 const ctx = (): HubContext => ({
   hubUrl,
   apiKey,
+  keyOrigin: hubUrl,
   timeoutMs: 5000,
   home: "/tmp/does-not-exist",
   repoKey: "",

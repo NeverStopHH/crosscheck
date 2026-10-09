@@ -42,6 +42,7 @@ const HUB_URL = `http://127.0.0.1:${String(server.port)}`;
 const hubCtx = (home: string): HubContext => ({
   hubUrl: HUB_URL,
   apiKey: "test-key",
+  keyOrigin: HUB_URL,
   timeoutMs: 2000,
   home,
   repoKey: repoKey(HUB_URL, REPO_ID),
@@ -65,7 +66,7 @@ describe("registerSessionFlow sends the connector's declaration", () => {
     // Act
     await registerSessionFlow({
       home,
-      hub: { hubUrl: HUB_URL, apiKey: "test-key", timeoutMs: 2000, home, repoKey: key, now: () => new Date() },
+      hub: { hubUrl: HUB_URL, apiKey: "test-key", keyOrigin: HUB_URL, timeoutMs: 2000, home, repoKey: key, now: () => new Date() },
       repoKey: key,
       hostSessionKey: "register-guarantees-uuid",
       repoId: REPO_ID,

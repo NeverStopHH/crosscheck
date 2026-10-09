@@ -276,7 +276,7 @@ const turn = async (prompt: string): Promise<Turn> => {
   const before = new Set(await deliveredRefs());
   const calls = seeded.candidateCalls();
   const key = repoKey(seeded.hubUrl, REPO_ID);
-  const hub: HubContext = { hubUrl: seeded.hubUrl, apiKey: seeded.reader.apiKey, timeoutMs: 20_000, home, repoKey: key, now: () => NOW };
+  const hub: HubContext = { hubUrl: seeded.hubUrl, keyOrigin: seeded.hubUrl, apiKey: seeded.reader.apiKey, timeoutMs: 20_000, home, repoKey: key, now: () => NOW };
   await selectAndRenderHint({ home, repoKey: key, hub, hostSessionKey: HOST_KEY, repoId: REPO_ID, repoRoot: repo, agentKind: "acp:holdout-round4", prompt, now: NOW });
   const ref = (await deliveredRefs()).find((candidate) => !before.has(candidate)) ?? null;
   return {

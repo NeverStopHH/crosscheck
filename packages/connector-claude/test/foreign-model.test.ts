@@ -347,6 +347,7 @@ describe("a derived draft stays derived, whatever the model claims", () => {
       {
         hubUrl: `http://127.0.0.1:${String(server.port)}`,
         apiKey: "test-key",
+        keyOrigin: `http://127.0.0.1:${String(server.port)}`,
         timeoutMs: 20_000,
         home: run.fixture.home,
         repoKey: run.fixture.key,

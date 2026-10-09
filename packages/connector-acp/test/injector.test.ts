@@ -22,6 +22,7 @@ import { join } from "node:path";
 
 import { QUOTED_DATA_NOTICE } from "@crosscheck/connector-core/briefing/render.ts";
 import { repoKey, sessionSlug } from "@crosscheck/connector-core/config/paths.ts";
+import { ISOLATED_BUNFIG_PATH } from "@crosscheck/connector-core/config/runtime-isolation.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { readSessionSpool } from "@crosscheck/connector-core/spool/files.ts";
 import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
@@ -277,7 +278,9 @@ describe("write point 1: the mcpServers append (§2.5)", () => {
     const own = replaced.params.mcpServers[1];
     expect(own?.name).toBe("crosscheck");
     expect(own?.command).toBe(process.execPath);
-    expect(own?.args).toEqual([BIN_PATH, "mcp"]);
+    // Isolated like every other start (review round 2, N1): the agent spawns
+    // this entry with the session's project as cwd.
+    expect(own?.args).toEqual(["--no-env-file", `--config=${ISOLATED_BUNFIG_PATH}`, BIN_PATH, "mcp"]);
   });
 
   test("session/load gets the same append", async () => {

@@ -205,7 +205,7 @@ describe("a healed life's work context, pointed at and read back", () => {
       repo,
       hostSessionKey,
       workContextId,
-      hub: { hubUrl, apiKey: account.apiKey, timeoutMs: 4000, home, repoKey: key, now: () => new Date() },
+      hub: { hubUrl, keyOrigin: hubUrl, apiKey: account.apiKey, timeoutMs: 4000, home, repoKey: key, now: () => new Date() },
       mcp: setup.ctx,
     };
   };

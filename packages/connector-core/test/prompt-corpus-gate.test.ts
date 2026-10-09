@@ -125,7 +125,7 @@ const runRow = async (row: CorpusPrompt): Promise<RowOutcome> => {
     workContextIntentProvenance: "declared",
   });
   const key = repoKey(seeded.hubUrl, REPO_ID);
-  const hub: HubContext = { hubUrl: seeded.hubUrl, apiKey: seeded.readerKey, timeoutMs: 20_000, home, repoKey: key, now: () => NOW };
+  const hub: HubContext = { hubUrl: seeded.hubUrl, keyOrigin: seeded.hubUrl, apiKey: seeded.readerKey, timeoutMs: 20_000, home, repoKey: key, now: () => NOW };
   const before = seeded.candidateCalls();
   const hint = await selectAndRenderHint({
     home,

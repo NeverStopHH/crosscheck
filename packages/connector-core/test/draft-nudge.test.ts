@@ -415,6 +415,7 @@ interface Session {
 const hubContext = (target: DraftHub, home: string): HubContext => ({
   hubUrl: target.hubUrl,
   apiKey: target.apiKey,
+  keyOrigin: target.hubUrl,
   timeoutMs: 4000,
   home,
   repoKey: repoKey(target.hubUrl, REPO_ID),
@@ -492,7 +493,7 @@ describe("deliverDraftNudge (real hub)", () => {
 
   test("an unreachable hub costs the prompt nothing and keeps the slot", async () => {
     const s = await session("nudge-down", hub);
-    const dead = { ...s.ctx, hubUrl: "http://127.0.0.1:9", timeoutMs: 200 };
+    const dead = { ...s.ctx, hubUrl: "http://127.0.0.1:9", keyOrigin: "http://127.0.0.1:9", timeoutMs: 200 };
 
     expect(await nudge(s, { hub: dead })).toBe("");
     expect((await readSessionState(s.home, HOST_KEY))?.draftNudge).toBeNull();
@@ -594,7 +595,7 @@ describe("deliverDraftNudge (real hub)", () => {
 
   const nudgeAgainst = async (label: string, fake: ReturnType<typeof Bun.serve>): Promise<{ text: string; slot: string | null | undefined }> => {
     const s = await session(label, hub);
-    const text = await nudge(s, { hub: { ...s.ctx, hubUrl: `http://127.0.0.1:${String(fake.port)}` } });
+    const text = await nudge(s, { hub: { ...s.ctx, hubUrl: `http://127.0.0.1:${String(fake.port)}`, keyOrigin: `http://127.0.0.1:${String(fake.port)}` } });
     return { text, slot: (await readSessionState(s.home, HOST_KEY))?.draftNudge };
   };
 
@@ -622,7 +623,7 @@ describe("deliverDraftNudge (real hub)", () => {
     });
     try {
       const s = await session("nudge-cooldown", hub);
-      const ctx = { ...s.ctx, hubUrl: `http://127.0.0.1:${String(fake.port)}` };
+      const ctx = { ...s.ctx, hubUrl: `http://127.0.0.1:${String(fake.port)}`, keyOrigin: `http://127.0.0.1:${String(fake.port)}` };
       const start = Date.now();
       const promptAt = (offsetMs: number): Promise<string> =>
         deliverDraftNudge({
@@ -686,7 +687,7 @@ describe("deliverDraftNudge (real hub)", () => {
     });
     try {
       const s = await session(label, hub);
-      const ctx = { ...s.ctx, hubUrl: `http://127.0.0.1:${String(fake.port)}` };
+      const ctx = { ...s.ctx, hubUrl: `http://127.0.0.1:${String(fake.port)}`, keyOrigin: `http://127.0.0.1:${String(fake.port)}` };
       const start = Date.now();
       const promptAt = (offsetMs: number): Promise<string> =>
         deliverDraftNudge({
@@ -727,7 +728,7 @@ describe("deliverDraftNudge (real hub)", () => {
     try {
       const s = await session("nudge-one-get", hub);
 
-      const text = await nudge(s, { hub: { ...s.ctx, hubUrl: `http://127.0.0.1:${String(fake.port)}` } });
+      const text = await nudge(s, { hub: { ...s.ctx, hubUrl: `http://127.0.0.1:${String(fake.port)}`, keyOrigin: `http://127.0.0.1:${String(fake.port)}` } });
 
       expect(text).toContain("3 of your own auto-captured draft claims");
       expect(requests).toBe(1);

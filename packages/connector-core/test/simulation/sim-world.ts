@@ -705,7 +705,8 @@ const oldFlush = async (world: World, c: number): Promise<void> => {
 const hubEnd = async (world: World, c: number): Promise<void> => {
   const state = await readSessionState(world.home, world.keys[c] ?? "");
   if (state !== null) {
-    await endSession({ ...world.ctx, hubUrl: world.hub.directUrl }, state.crosscheckSessionId);
+    // Its own login, bound to the hub it reaches (config/key-binding.ts).
+    await endSession({ ...world.ctx, hubUrl: world.hub.directUrl, keyOrigin: world.hub.directUrl }, state.crosscheckSessionId);
   }
 };
 
@@ -1127,7 +1128,7 @@ const newWorld = async (hub: SimHub, events: readonly SimEvent[], repoRoot: stri
     home,
     repoRoot,
     key,
-    ctx: { hubUrl: hub.url, apiKey: hub.apiKey, timeoutMs: REQUEST_TIMEOUT_MS, home, repoKey: key, now: () => new Date() },
+    ctx: { hubUrl: hub.url, keyOrigin: hub.url, apiKey: hub.apiKey, timeoutMs: REQUEST_TIMEOUT_MS, home, repoKey: key, now: () => new Date() },
     keys,
     phase: keys.map((): Phase => "new"),
     history: keys.map(() => []),

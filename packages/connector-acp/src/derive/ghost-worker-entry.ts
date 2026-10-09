@@ -4,6 +4,7 @@
  * session owes a ghost check, never by a person. intent-worker-entry.ts
  * beside it states why the entry lives here while the worker lives in core.
  */
+import "@crosscheck/connector-core/config/clean-runtime.ts";
 import { runGhostWorker } from "@crosscheck/connector-core/derive/ghost/worker.ts";
 
 process.exit(await runGhostWorker(process.argv.slice(2), process.env));

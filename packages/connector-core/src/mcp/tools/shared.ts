@@ -12,6 +12,7 @@ import { z } from "zod";
 import { PROTOCOL_VERSION } from "@crosscheck/schema";
 
 import { MAX_HUB_MESSAGE_CHARS, MAX_ID_CHARS } from "../../constants.ts";
+import { AGENT_REMEDY } from "../../config/key-binding.ts";
 import { ALLOCATION_FAILED, AMBIGUOUS_SESSION } from "../../capture/seq.ts";
 import type { SeqAllocation } from "../../capture/seq.ts";
 import { allocateSeq } from "../../state/session-state.ts";
@@ -52,6 +53,15 @@ export type HubFailure = Extract<HubResult<unknown>, { ok: false }>;
  */
 export const hubFailureText = (hubUrl: string, failure: HubFailure): string => {
   const message = quoted(failure.message, MAX_HUB_MESSAGE_CHARS);
+  // Never sent (http/client.ts key-origin check): no hub answered, and the
+  // URL is the one the key does NOT belong to — text a repo chose, so it is
+  // not repeated, and nothing here suggests logging in to it.
+  if (failure.kind === "refused") {
+    return (
+      "crosscheck did not send this request: the hub it was for is not the one the " +
+      `developer's crosscheck key belongs to. Nothing was recorded. ${AGENT_REMEDY}`
+    );
+  }
   if (failure.kind === "network") {
     return quotingText(
       `crosscheck could not reach the hub at ${hubUrl} (${message}).`,

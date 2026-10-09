@@ -14,8 +14,9 @@ import { readSessionState } from "@crosscheck/connector-core/state/session-state
 import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
 import { personName, personText, renderOverlapIndicator } from "@crosscheck/connector-core/hints/collision-notice.ts";
 import { tripsPhraseFilter } from "@crosscheck/connector-core/briefing/sanitize.ts";
+import type { HubFailureKind } from "@crosscheck/connector-core/http/client.ts";
 import { refreshPresence } from "../hooks/presence-refresh.ts";
-import { prepareHook } from "../hooks/runner.ts";
+import { prepareHookFor } from "../hooks/runner.ts";
 import type { HookContext } from "../hooks/runner.ts";
 
 const ELLIPSIS = "…";
@@ -125,10 +126,10 @@ const HTTP_UNAUTHORIZED = 401;
  * at a protocol or version problem (review finding B2-L5). A 5xx, a 403 and a
  * 404 are a hub that is up and failing, and the status is the actionable part.
  */
-const failureHead = (
-  status: number,
-  kind: "network" | "http" | "malformed",
-): string => {
+const failureHead = (status: number, kind: HubFailureKind): string => {
+  if (kind === "refused") {
+    return KEY_NOT_SENT;
+  }
   if (status === HTTP_UNAUTHORIZED) {
     return "key rejected · crosscheck login";
   }
@@ -140,6 +141,14 @@ const failureHead = (
   }
   return `hub error ${String(status)}`;
 };
+
+/**
+ * A repo connected to another hub than the key's (config/key-binding.ts):
+ * nothing is captured or sent, and this is where a person in a terminal
+ * session sees it. Neither origin is printed — `doctor` names both — so the
+ * line fits the bar and carries no text the repo chose.
+ */
+const KEY_NOT_SENT = "key not sent · hub mismatch · crosscheck doctor";
 
 const failureLine = (head: string, age: string | null): string =>
   capLine(age === null ? `cx ! ${head}` : `cx ! ${head} · last capture ${age}`);
@@ -220,10 +229,14 @@ export const runStatusline = async (
   env: Env,
 ): Promise<string> => {
   try {
-    const ctx = await prepareHook(stdin, env);
-    if (ctx === null) {
+    const prepared = await prepareHookFor(stdin, env);
+    if (prepared.kind === "foreign_hub") {
+      return failureLine(KEY_NOT_SENT, null);
+    }
+    if (prepared.kind === "silent") {
       return "";
     }
+    const { ctx } = prepared;
     const presence = await renderForContext(ctx);
     const overlap = await overlapSegment(ctx, presence.present);
     const line = `${overlap}${presence.line}`;

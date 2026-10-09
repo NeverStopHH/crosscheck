@@ -17,7 +17,7 @@
  * to that while costing nothing.
  */
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
-import { resolveLauncher } from "@crosscheck/connector-core/config/launcher.ts";
+import { resolveLauncher, resolveMcpLauncher } from "@crosscheck/connector-core/config/launcher.ts";
 
 import { MCP_SERVER_NAME } from "@crosscheck/connector-core/constants.ts";
 
@@ -46,40 +46,21 @@ export const resolveAcpMcpServer = async (
   entryPath: string,
 ): Promise<AcpMcpServerResolution> => {
   const launcher = await resolveLauncher(undefined, env, entryPath);
-  switch (launcher.kind) {
-    case "refused":
-      return { kind: "refused", reason: launcher.reason };
-    case "override":
-      // Unreachable in the proxy (no --command-prefix flag exists here), but
-      // the type demands honesty: pass the operator's word through as sh -c.
-      return {
-        kind: "entry",
-        entry: {
-          name: MCP_SERVER_NAME,
-          command: "sh",
-          args: ["-c", `${launcher.prefix} mcp`],
-          env: [],
-        },
-      };
-    case "bare":
-      return {
-        kind: "entry",
-        entry: {
-          name: MCP_SERVER_NAME,
-          command: launcher.path,
-          args: ["mcp"],
-          env: [],
-        },
-      };
-    case "entry":
-      return {
-        kind: "entry",
-        entry: {
-          name: MCP_SERVER_NAME,
-          command: launcher.runtime,
-          args: [launcher.entry, "mcp"],
-          env: [],
-        },
-      };
+  if (launcher.kind === "refused") {
+    return { kind: "refused", reason: launcher.reason };
   }
+  // The bare install's RESOLVED path (header). Every other form is the one
+  // init writes into `.mcp.json`, taken from the core rather than rebuilt
+  // here: a hand-built `[runtime, entry, "mcp"]` in this file once dropped
+  // the isolation flags, and the agent started the server in a bait repo
+  // with that repo's bunfig preload (review round 2, N1). The `override`
+  // form is unreachable in the proxy (no --command-prefix flag exists here).
+  const mcp =
+    launcher.kind === "bare"
+      ? { command: launcher.path, args: ["mcp"] }
+      : resolveMcpLauncher(launcher);
+  return {
+    kind: "entry",
+    entry: { name: MCP_SERVER_NAME, command: mcp.command, args: mcp.args, env: [] },
+  };
 };

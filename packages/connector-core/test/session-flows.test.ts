@@ -79,6 +79,7 @@ const cleanups: string[] = [];
 const hubFor = (home: string, key: string, url: string = hubUrl): HubContext => ({
   hubUrl: url,
   apiKey,
+  keyOrigin: url,
   timeoutMs: TIMEOUT_MS,
   home,
   repoKey: key,
@@ -724,6 +725,7 @@ describe("heartbeatMaybe", () => {
       hub: {
         hubUrl: `http://127.0.0.1:${counting.port}`,
         apiKey: "k",
+        keyOrigin: `http://127.0.0.1:${counting.port}`,
         timeoutMs: TIMEOUT_MS,
         home,
         repoKey: "",

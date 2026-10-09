@@ -338,6 +338,7 @@ const fixture = async (label: string): Promise<Fixture> => {
     ctx: {
       hubUrl: hub.url,
       apiKey: "test-key",
+      keyOrigin: hub.url,
       // 20 s, not the product's 2 s: this deadline is the TEST's patience with a
       // fake hub on localhost, never a bound the product ships (the real ones are
       // measured in connector-claude's hook-budget tests). At 2 s the whole-suite

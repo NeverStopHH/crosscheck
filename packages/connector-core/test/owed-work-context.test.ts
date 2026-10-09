@@ -96,7 +96,7 @@ const fixture = async (label: string, timeoutMs: number = TIMEOUT_MS): Promise<F
     repo,
     key,
     hostSessionKey: `acp-owed--${label}`,
-    hub: { hubUrl: proxyUrl, apiKey, timeoutMs, home, repoKey: key, now: () => new Date() },
+    hub: { hubUrl: proxyUrl, keyOrigin: proxyUrl, apiKey, timeoutMs, home, repoKey: key, now: () => new Date() },
   };
 };
 

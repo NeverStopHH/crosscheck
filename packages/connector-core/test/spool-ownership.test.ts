@@ -81,7 +81,7 @@ const fixture = async (label: string): Promise<Fixture> => {
     repo,
     key,
     hostSessionKey: `acp-own--${label}`,
-    hub: { hubUrl: proxyUrl, apiKey, timeoutMs: TIMEOUT_MS, home, repoKey: key, now: () => new Date() },
+    hub: { hubUrl: proxyUrl, keyOrigin: proxyUrl, apiKey, timeoutMs: TIMEOUT_MS, home, repoKey: key, now: () => new Date() },
   };
 };
 

@@ -16,6 +16,7 @@ import {
   readRepoConfig,
   repoConfigPath,
 } from "@crosscheck/connector-core/config/repo-config.ts";
+import type { RepoConfig } from "@crosscheck/connector-core/config/repo-config.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import { mergeMcpConfig } from "@crosscheck/connector-core/config/mcp-config.ts";
 import {
@@ -172,12 +173,29 @@ const resolveInputs = async (
   }
   const apiKey = env["CROSSCHECK_API_KEY"] ?? stored?.apiKey;
   if (apiKey === undefined) {
-    return {
-      error: `no api key for ${hubUrl} — run \`crosscheck login ${hubUrl}\` first`,
-    };
+    return { error: noApiKeyError(hubUrl, isRepoNamed(options, env, repoConfig)) };
   }
   return { hubUrl };
 };
+
+/** The hub came from the repo's committed file, not from the person who ran init. */
+const isRepoNamed = (options: InitOptions, env: Env, repoConfig: RepoConfig | null): boolean =>
+  options.hubUrl === undefined && env["CROSSCHECK_HUB_URL"] === undefined && repoConfig !== null;
+
+/**
+ * A REPO-NAMED HUB IS NOT A LOGIN TARGET (key-binding review, H2). The url in
+ * a cloned repo's .crosscheck.json is shared content; printing
+ * `crosscheck login <it>` hands whoever reads this — an agent included — the
+ * one command that sends a key there. The person confirms the address out of
+ * band and logs in themselves. A hub the person named (--hub, the env) is
+ * their own word and keeps the direct command.
+ */
+const noApiKeyError = (hubUrl: string, isFromRepo: boolean): string =>
+  isFromRepo
+    ? `no api key — log in to your team's hub yourself first (crosscheck login <your hub's url>). ` +
+      `This repo's .crosscheck.json names ${hubUrl}: confirm with whoever runs your hub that it is ` +
+      "its address before you log in there, because logging in sends your key to it — never let an agent do it"
+    : `no api key for ${hubUrl} — run \`crosscheck login ${hubUrl}\` first`;
 
 export const runInit = async (
   args: readonly string[],

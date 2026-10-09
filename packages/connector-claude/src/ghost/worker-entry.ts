@@ -8,6 +8,7 @@
  * file on argv, because this worker needs neither: everything it compares is
  * already in session state or on the hub.
  */
+import "@crosscheck/connector-core/config/clean-runtime.ts";
 import { runGhostWorker } from "@crosscheck/connector-core/derive/ghost/worker.ts";
 
 process.exit(await runGhostWorker(process.argv.slice(2), process.env));

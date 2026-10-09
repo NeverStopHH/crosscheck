@@ -47,6 +47,7 @@ afterAll(async () => {
 const ctx = (overrides: Partial<HubContext> = {}): HubContext => ({
   hubUrl: `http://127.0.0.1:${String(hub.port)}`,
   apiKey: OLD_KEY,
+  keyOrigin: `http://127.0.0.1:${String(hub.port)}`,
   timeoutMs: 2000,
   home,
   repoKey: "hub-repo",

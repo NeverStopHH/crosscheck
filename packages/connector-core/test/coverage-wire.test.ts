@@ -39,6 +39,7 @@ afterAll(() => {
 const ctx = (): HubContext => ({
   hubUrl: `http://127.0.0.1:${String(server.port)}`,
   apiKey: "key",
+  keyOrigin: `http://127.0.0.1:${String(server.port)}`,
   timeoutMs: 2000,
   home: "/tmp/does-not-exist",
   repoKey: "",

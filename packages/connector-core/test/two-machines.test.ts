@@ -58,7 +58,7 @@ test("one host session key on two machines: the broken order is visible and ever
   const machines = [await makeHome("machine-a"), await makeHome("machine-b")] as const;
   cleanups.push(...machines);
   const key = repoKey(hub.url, REPO);
-  const ctxOf = (home: string) => ({ hubUrl: hub.url, apiKey: hub.apiKey, timeoutMs: HTTP_TIMEOUT_MS, home, repoKey: key, now: () => new Date() });
+  const ctxOf = (home: string) => ({ hubUrl: hub.url, keyOrigin: hub.url, apiKey: hub.apiKey, timeoutMs: HTTP_TIMEOUT_MS, home, repoKey: key, now: () => new Date() });
   const captured: string[] = [];
   const start = (home: string) =>
     registerSessionFlow({

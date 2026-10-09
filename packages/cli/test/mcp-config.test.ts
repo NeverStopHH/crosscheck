@@ -23,6 +23,7 @@ import { join } from "node:path";
 import { MCP_CONFIG_FILE, MCP_SERVER_KEY, runCli } from "../src/index.ts";
 import { isOwnedMcpEntry, mergeMcpConfig } from "@crosscheck/connector-core/config/mcp-config.ts";
 import type { McpServerEntry } from "@crosscheck/connector-core/config/mcp-config.ts";
+import { ISOLATED_BUNFIG_PATH } from "@crosscheck/connector-core/config/runtime-isolation.ts";
 import type { Env } from "../src/index.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
@@ -210,7 +211,11 @@ describe("crosscheck init writes .mcp.json", () => {
       args: string[];
     };
     expect(entry.command.startsWith("/")).toBe(true);
-    expect(await Bun.file(entry.args[0] ?? "").exists()).toBe(true);
+    // Isolated from the repo the server starts in (connector-core
+    // config/runtime-isolation.ts), then the absolute entry, then `mcp`.
+    expect(entry.args.slice(0, 2)).toEqual(["--no-env-file", `--config=${ISOLATED_BUNFIG_PATH}`]);
+    expect(await Bun.file(entry.args[2] ?? "").exists()).toBe(true);
+    expect(entry.args[3]).toBe("mcp");
   });
 
   test("says what it wrote, so a developer knows to commit it", async () => {

@@ -105,7 +105,7 @@ describe("a heal stamp dated a year ahead (review-2 round 8, L5)", () => {
     const healer = sessionHealer({
       home,
       repoKey: key,
-      hub: { hubUrl: HUB_URL, apiKey: "k", timeoutMs: 400, home, repoKey: key, now: () => new Date(nowMs) },
+      hub: { hubUrl: HUB_URL, keyOrigin: HUB_URL, apiKey: "k", timeoutMs: 400, home, repoKey: key, now: () => new Date(nowMs) },
       agentKind: "acp:test",
       hostSessionKey,
       repoId: REPO_ID,
