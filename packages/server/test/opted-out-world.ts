@@ -53,6 +53,8 @@ export const SECRET_SHA2 = "beefbeefbeef0123456789abcdef0123456789ab";
  * without them.
  */
 export const SECRET_TOPIC_BRANCH = "feat/robin-topic-lugano";
+/** A second sibling worktree's branch, whose topic says the same words as the first (a tie). */
+export const SECRET_SECOND_TOPIC_BRANCH = "feat/robin-topic-bellinzona";
 export const SECRET_LOCAL_TOPIC_BRANCH = "feat/robin-topic-locarno";
 export const SECRET_TOPIC_SHA = "c0c0abadc0de0123456789abcdef0123456789ab";
 export const FILE = "src/auth/refresh.ts";
@@ -72,6 +74,7 @@ export const ROBIN_DETACHED_CONTEXT = "wc_robin_detached";
 export const ROBIN_HOST_CONTEXT = "wc_robin_host";
 /** Her topics' contexts: one beside her live session's on the shared repo, one on the local repo. */
 export const ROBIN_TOPIC = `${ROBIN_CONTEXT}~t0a1b2c3d4e5f.1`;
+export const ROBIN_SECOND_TOPIC = `${ROBIN_CONTEXT}~t5e4d3c2b1a0f.3`;
 export const ROBIN_LOCAL_TOPIC = `${ROBIN_LOCAL_CONTEXT}~tf5e4d3c2b1a0.2`;
 /**
  * Created long before every window a surface applies (conference, suspect,
@@ -189,6 +192,7 @@ export const SECRETS: readonly (readonly [label: string, value: string])[] = [
   ["branch", SECRET_BRANCH],
   ["local branch", SECRET_LOCAL_BRANCH],
   ["topic branch", SECRET_TOPIC_BRANCH],
+  ["second topic branch", SECRET_SECOND_TOPIC_BRANCH],
   ["local topic branch", SECRET_LOCAL_TOPIC_BRANCH],
   ...shaForms(SECRET_SHA).map((value) => [`sha ${String(value.length)}`, value] as const),
   ...shaForms(SECRET_SHA2).map((value) => [`local sha ${String(value.length)}`, value] as const),
@@ -686,6 +690,44 @@ export const postAs = async (
   const { apiKey } = credentialsOf(world, who);
   const response = await world.harness.app.request(url, jsonRequest("POST", apiKey, body));
   return { status: response.status, body: await response.text() };
+};
+
+/**
+ * TWO TOPICS OF HERS THAT SAY THE SAME WORDS (batch-2 integration review, L7):
+ * sibling worktrees of one feature, each with the same description and the
+ * same finding, so every tier ranks them equal and only a tie-break orders
+ * them. Not seeded: the cases that need a tie open it.
+ */
+export const TIED_TOPIC_WORDS = "rotation window refresh topic";
+/** Words only the tied topics' finding says — no statement of theirs — so the claim tier alone ranks them. */
+export const TIED_FINDING_WORDS = "stale cache entry evicts the rotated key id";
+const TIED_FINDING = `Rotation window refresh: the ${TIED_FINDING_WORDS}`;
+const TIED_TOPICS = [
+  { id: ROBIN_TOPIC, branch: SECRET_TOPIC_BRANCH, claim: "clm_robin_tied_1" },
+  { id: ROBIN_SECOND_TOPIC, branch: SECRET_SECOND_TOPIC_BRANCH, claim: "clm_robin_tied_2" },
+] as const;
+
+export const openTiedTopics = async (world: OptedOutWorld): Promise<void> => {
+  const posted = await postRecords(world.harness, world.robin, {
+    records: TIED_TOPICS.flatMap(({ id, branch, claim }) => [
+      recordEnvelope("work_context", validWorkContextBody({ id, sessionId: ROBIN_LIVE, title: `${branch} @ api`, titleSource: "fallback", status: "implementing", branch, baseCommit: SECRET_TOPIC_SHA, description: TIED_TOPIC_WORDS, createdAt: CREATED_AT }), { sessionId: ROBIN_LIVE }),
+      recordEnvelope("target", { workContextId: id, kind: "file", value: FILE }, { sessionId: ROBIN_LIVE }),
+      recordEnvelope("claim", validClaimBody({ id: claim, workContextId: id, authorSessionId: ROBIN_LIVE, kind: "observation", body: TIED_FINDING, createdAt: CREATED_AT }), { sessionId: ROBIN_LIVE }),
+    ]),
+  });
+  assertAccepted(posted, "Robin's tied topics");
+};
+
+/**
+ * An update of hers that changes no value — a status resent, a heartbeat —
+ * as the table sees it: new tuple versions of the first tied topic, its
+ * claim and her live session, which move them on disk and nothing else.
+ */
+export const rewriteTiedTopicInPlace = async (world: OptedOutWorld): Promise<void> => {
+  const [first] = TIED_TOPICS;
+  await world.harness.db.execute(sql`UPDATE work_contexts SET title = title WHERE id = ${first.id}`);
+  await world.harness.db.execute(sql`UPDATE claims SET body = body WHERE id = ${first.claim}`);
+  await world.harness.db.execute(sql`UPDATE agent_sessions SET branch = branch WHERE id = ${ROBIN_LIVE}`);
 };
 
 export const url = (path: string, query: Readonly<Record<string, string>> = {}): string => {

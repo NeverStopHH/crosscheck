@@ -48,7 +48,7 @@ import {
 import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
 import { resolvedEvidenceCounts } from "./evidence-resolution.ts";
 import { claimValidity, loadRevalidations } from "./claim-validity.ts";
-import { locationHiddenFrom, projectRow } from "./live-location.ts";
+import { locationHiddenFrom, projectRow, updatedAtSeenBy } from "./live-location.ts";
 import type { HiddenLocations } from "./live-location.ts";
 import { presenceCutoff } from "./presence.ts";
 import { contextBaseCommit } from "./topic-base-commit.ts";
@@ -803,24 +803,34 @@ const rankOnPushableText =
     // The statement as THIS reader may read it: a hidden owner's location
     // title neither ranks her work nor pulls it into the pool (titleSeenBy).
     const statement = statementDocument(titleSeenBy(readerDeveloperId));
+    // ...and her last touch as THIS reader may read it (integration review
+    // H5): the search decays every tier by `updatedAt ?? createdAt`, and the
+    // raw column let her withheld last touch decay or boost her trees in a
+    // pool capped at three — which tree, and so which branch, she is on now.
+    // It reads the owner, so the claim pass groups by her too: a context has
+    // one session, and the groups are the same.
+    const updatedAt = updatedAtSeenBy(readerDeveloperId, agentSessions.developerId, workContexts.updatedAt);
     const [statements, pushable] = await Promise.all([
       db
         .select({
           id: workContexts.id,
           createdAt: workContexts.createdAt,
-          updatedAt: workContexts.updatedAt,
+          updatedAt,
           rank: sql<number>`ts_rank(${statement}, ${tsquery})`,
         })
         .from(workContexts)
         .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
         .where(and(scope, sql`${statement} @@ ${tsquery}`))
-        .orderBy(sql`ts_rank(${statement}, ${tsquery}) DESC`)
+        // Equal ranks to the id, never to the order the scan met the rows in
+        // (integration review L7): an update of hers that changed no value
+        // moved a tuple and reordered the pool a colleague is hinted from.
+        .orderBy(sql`ts_rank(${statement}, ${tsquery}) DESC`, asc(workContexts.id))
         .limit(TIER_CANDIDATES),
       db
         .select({
           id: claims.workContextId,
           createdAt: workContexts.createdAt,
-          updatedAt: workContexts.updatedAt,
+          updatedAt,
           rank: sql<number>`max(ts_rank(${claimWords}, ${tsquery}))`,
         })
         .from(claims)
@@ -836,7 +846,7 @@ const rankOnPushableText =
             notMutedCondition(readerDeveloperId, claimAuthors.developerId),
           ),
         )
-        .groupBy(claims.workContextId, workContexts.createdAt, workContexts.updatedAt)
+        .groupBy(claims.workContextId, workContexts.createdAt, workContexts.updatedAt, agentSessions.developerId)
         .orderBy(sql`max(ts_rank(${claimWords}, ${tsquery})) DESC`)
         .limit(TIER_CANDIDATES),
     ]);

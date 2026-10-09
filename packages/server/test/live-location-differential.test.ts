@@ -34,6 +34,8 @@ import {
   HOST_CREATED_AT,
   HOST_TITLE,
   NICK_CONTEXT,
+  OLD_CREATED_AT,
+  OLD_TITLE,
   REPO,
   ROBIN_CONTEXT,
   ROBIN_HOST_CONTEXT,
@@ -49,6 +51,8 @@ import {
   SECRET_TOPIC_SHA,
   instantsNear,
   leaksIn,
+  openTiedTopics,
+  rewriteTiedTopicInPlace,
   seedOptedOutWorld,
 } from "./opted-out-world.ts";
 import type { OptedOutWorld } from "./opted-out-world.ts";
@@ -362,7 +366,11 @@ const RESIDUALS: readonly Residual[] = [
   // reported — the agent_event rung's state, its reason and whether the gap
   // is withheld. Never whose, never when: its start is NOT here (review
   // round 5, M3) — nothing she does may move it.
-  { name: "coverage", line: /coverage\.sources\[agent_event\]\.(?:state|reason|withheld)=/ },
+  // The order block reads the same window (services/coverage-order.ts): no
+  // session in it, or the weakest declaration of those in it — some session's,
+  // never whose. Moved only by WHEN she last reported, which the timed walks
+  // below compare; one action of hers inside the window never moves it.
+  { name: "coverage", line: /coverage\.sources\[agent_event\]\.(?:state|reason|withheld)=|coverage\.order\.(?:state|reason)=/ },
   // visibility.ts «pilot»: team-level pilot counts — sessions, deliveries,
   // pulls and the integrity counters, and which prior work was opened.
   {
@@ -408,6 +416,16 @@ const TARGET_ROW = /(?:matchedTargets|targets)\[\]\./;
 const isCreationLine = (action: Action, line: string): boolean =>
   action.creates !== undefined && action.creates.test(line) && !TARGET_ROW.test(line);
 
+/** Does one of `residuals` accept this differing line of `answer`, for `action`? */
+const acceptedBy = (residuals: readonly Residual[], action: Action, answer: Answer, line: string): boolean =>
+  residuals.some(
+    (residual) =>
+      residual.line.test(line) &&
+      (residual.route === undefined || residual.route.test(answer.key)) &&
+      (residual.actions === undefined || residual.actions.includes(action.name)) &&
+      (residual.contentOnly !== true || action.content === true),
+  );
+
 /** Every difference no residual accepts, for one action, as `action · route: line`. */
 const unaccepted = (action: Action, base: Walked, acted: Walked): readonly string[] => {
   const now = acted.world.harness.clock.now();
@@ -418,13 +436,7 @@ const unaccepted = (action: Action, base: Walked, acted: Walked): readonly strin
       return [`${action.name} · ${label(answer)}: no answer in the base world`];
     }
     return differences(linesOf(base.world, before), linesOf(acted.world, answer)).flatMap((line) => {
-      const accepted = RESIDUALS.some(
-        (residual) =>
-          residual.line.test(line) &&
-          (residual.route === undefined || residual.route.test(answer.key)) &&
-          (residual.actions === undefined || residual.actions.includes(action.name)) &&
-          (residual.contentOnly !== true || action.content === true),
-      );
+      const accepted = acceptedBy(RESIDUALS, action, answer, line);
       // A content line may carry her action's instant only as the shared
       // row's creation time — and only when the action shares work.
       const carriesHerInstant =
@@ -436,19 +448,24 @@ const unaccepted = (action: Action, base: Walked, acted: Walked): readonly strin
   });
 };
 
+/** Every line two worlds' walks differ by, as `route: line` — no residual applied. */
+const between = (first: Walked, second: Walked): readonly { readonly answer: Answer; readonly line: string }[] =>
+  first.answers.flatMap((answer, index) => {
+    const other = second.answers[index];
+    return other === undefined
+      ? [{ answer, line: "missing" }]
+      : differences(linesOf(first.world, answer), linesOf(second.world, other)).map((line) => ({ answer, line }));
+  });
+
+const shown = ({ answer, line }: { readonly answer: Answer; readonly line: string }): string =>
+  `${label(answer)}: ${line.slice(0, 220)}`;
+
 describe("one action of hers changes only what the policy names", () => {
   test("two identical worlds read identically — the masks leave no noise", async () => {
     const first = await walkWorld(null);
     const second = await walkWorld(null);
 
-    const noise = first.answers.flatMap((answer, index) => {
-      const other = second.answers[index];
-      return other === undefined
-        ? [`${label(answer)}: missing`]
-        : differences(linesOf(first.world, answer), linesOf(second.world, other)).map((line) => `${label(answer)}: ${line.slice(0, 220)}`);
-    });
-
-    expect(noise).toEqual([]);
+    expect(between(first, second).map(shown)).toEqual([]);
   }, 300_000);
 
   test.each(ACTIONS.map((action) => [action.name, action] as const))(
@@ -471,4 +488,100 @@ describe("one action of hers changes only what the policy names", () => {
     },
     300_000,
   );
+});
+
+/**
+ * WHEN SHE ACTED, AND NOTHING ELSE (batch-2 integration review, H5). Every
+ * case above compares a world with her action against one without it, and a
+ * content action may change what follows from its words — which hid a hint
+ * ranking by her withheld last touch behind the content residual. These
+ * compare two worlds with the SAME action, twenty days and two minutes before
+ * Nick reads (both past the presence TTL, so she is quiet in both): whatever
+ * differs follows from when she acted alone. Only «coverage» may, and neither
+ * instant may show.
+ */
+const SECONDS_PER_DAY = 86_400;
+const SKEW_S = 20 * SECONDS_PER_DAY;
+const LATE_S = 120;
+
+const TIMED_ACTIONS: readonly Action[] = [
+  {
+    // The review's probe: her old context — outside every window by its
+    // creation — moved again, which only her last touch could rank by.
+    name: "change her old context's status",
+    content: true,
+    run: (w) =>
+      records(w, [live("work_context", validWorkContextBody({ id: ROBIN_OLD_CONTEXT, sessionId: ROBIN_LIVE, title: OLD_TITLE, titleSource: "host", status: "testing", createdAt: OLD_CREATED_AT }))], "old status"),
+  },
+  ...ACTIONS.filter((action) => ["change a context's status", "set an intent", "touch a file again"].includes(action.name)),
+];
+
+/** A world where her action runs `beforeReadS` before Nick's walk, which reads SKEW_S after the seed. */
+const timedWorld = async (action: Action, beforeReadS: number): Promise<Walked> => {
+  const world = await seedOptedOutWorld();
+  world.harness.clock.advanceSeconds(ACTION_DELAY_S + SKEW_S - beforeReadS);
+  const actionAt = nowIso(world);
+  await action.run(world);
+  world.harness.clock.advanceSeconds(beforeReadS);
+  return { answers: await walk(world, "nick"), world, actionAt };
+};
+
+/** «coverage» and «pilot»: the window's honest coverage and the team's integrity counters that count it. */
+const COVERAGE_ONLY: readonly Residual[] = RESIDUALS.filter((residual) => residual.name === "coverage" || residual.name === "pilot");
+
+describe("when she acted, and nothing else, changes nothing a colleague reads", () => {
+  test.each(TIMED_ACTIONS.map((action) => [action.name, action] as const))(
+    "%s, twenty days or two minutes before the read: only coverage differs, and neither instant shows",
+    async (_name, action) => {
+      const early = await timedWorld(action, SKEW_S);
+      const late = await timedWorld(action, LATE_S);
+      const now = late.world.harness.clock.now();
+      const instants: readonly (readonly [string, string])[] = [
+        ["her action twenty days back", early.actionAt],
+        ["her action two minutes back", late.actionAt],
+      ];
+
+      const problems = [
+        ...between(early, late)
+          .filter((difference) => !acceptedBy(COVERAGE_ONLY, action, difference.answer, difference.line))
+          .map(shown),
+        ...[...early.answers, ...late.answers].flatMap((answer) =>
+          instantsNear(`${answer.body}\n${answer.headers}`, instants, now).map((instant) => `${label(answer)}: carries ${instant}`),
+        ),
+      ];
+
+      expect(problems).toEqual([]);
+    },
+    300_000,
+  );
+});
+
+/**
+ * HER ROWS' PLACE ON DISK IS NO ORDER (batch-2 integration review, L7).
+ * Equally ranked candidates fell to the order the scan met them in, so an
+ * update of hers that changed nothing a colleague may read — a status resent,
+ * a heartbeat — moved a tuple and reordered his bounded hint list (the twin
+ * probe saw it follow the byte length of her branch names). Two of her topics
+ * say the same words (opted-out-world.ts openTiedTopics); the second world
+ * rewrites one of them, its claim and her live session in place.
+ */
+const tiedWorld = async (isRewritten: boolean): Promise<Walked> => {
+  const world = await seedOptedOutWorld();
+  await openTiedTopics(world);
+  world.harness.clock.advanceSeconds(ACTION_DELAY_S);
+  const actionAt = nowIso(world);
+  if (isRewritten) {
+    await rewriteTiedTopicInPlace(world);
+  }
+  world.harness.clock.advanceSeconds(READ_DELAY_S);
+  return { answers: await walk(world, "nick"), world, actionAt };
+};
+
+describe("her rows' place on disk orders nothing a colleague reads", () => {
+  test("a rewrite of her rows that changes no value changes no answer", async () => {
+    const base = await tiedWorld(false);
+    const rewritten = await tiedWorld(true);
+
+    expect(between(base, rewritten).map(shown)).toEqual([]);
+  }, 300_000);
 });

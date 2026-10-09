@@ -26534,6 +26534,43 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/live-location-differential.test.ts`,
     because: "one heartbeat of hers changes what the stop names, and no residual accepts it",
   },
+  {
+    label: "the hint pool decays an opted-out teammate's trees by her withheld last touch",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    const updatedAt = updatedAtSeenBy(readerDeveloperId, agentSessions.developerId, workContexts.updatedAt);\n",
+    to: "    const updatedAt = workContexts.updatedAt;\n",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because: "a tree she touched two minutes ago joins a pool capped at three: which topic, so which branch, she is on now",
+  },
+  {
+    label: "the hint pool decays an opted-out teammate's trees by her withheld last touch (differential)",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    const updatedAt = updatedAtSeenBy(readerDeveloperId, agentSessions.developerId, workContexts.updatedAt);\n",
+    to: "    const updatedAt = workContexts.updatedAt;\n",
+    test: `${SERVER}/test/live-location-differential.test.ts`,
+    because: "the same action twenty days or two minutes before the read hints a colleague differently",
+  },
+  {
+    label: "equally ranked statements reach the hint pool in the order the scan met them",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "        .orderBy(sql`ts_rank(${statement}, ${tsquery}) DESC`, asc(workContexts.id))",
+    to: "        .orderBy(sql`ts_rank(${statement}, ${tsquery}) DESC`)",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because: "an update of hers that changes no value moves a tuple and re-ranks her tied trees, since a fused contribution is a position",
+  },
+  {
+    label: "equally ranked statements reach the hint pool in the order the scan met them (differential)",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "        .orderBy(sql`ts_rank(${statement}, ${tsquery}) DESC`, asc(workContexts.id))",
+    to: "        .orderBy(sql`ts_rank(${statement}, ${tsquery}) DESC`)",
+    test: `${SERVER}/test/live-location-differential.test.ts`,
+    because: "two worlds that differ only by where her rows sit on disk hint a colleague differently",
+  },
+  // NOT ADDED, measured: an id tie-break on the two CLAIM tiers (hints'
+  // pushable pass, search's claim pass). Both GROUP BY the context, and the
+  // aggregate hands rows on by its group key, never by where they sit: a
+  // rewritten tied claim moved nothing, so the tie-break was an equivalent
+  // mutant under the L7 case and is left out.
   // THE GENERATED-TARGET RULE (release gate N2): every gate, from the signal
   // that names a file generated to the hub read that keeps it out of overlap.
   {
@@ -31885,8 +31922,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a muted author's claim ranks a tree into the hint pool",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "            notMutedCondition(readerDeveloperId, claimAuthors.developerId),\n          ),\n        )\n        .groupBy(claims.workContextId, workContexts.createdAt, workContexts.updatedAt)",
-    to: "          ),\n        )\n        .groupBy(claims.workContextId, workContexts.createdAt, workContexts.updatedAt)",
+    // RETARGETED (batch-2 integration review, H5): the claim pass groups by the owner too.
+    from: "            notMutedCondition(readerDeveloperId, claimAuthors.developerId),\n          ),\n        )\n        .groupBy(claims.workContextId, workContexts.createdAt, workContexts.updatedAt, agentSessions.developerId)",
+    to: "          ),\n        )\n        .groupBy(claims.workContextId, workContexts.createdAt, workContexts.updatedAt, agentSessions.developerId)",
     test: `${SERVER}/test/hint-pushable-ranking.test.ts`,
     because: "a muted teammate's words still fill the reader's pool and push the answer out (M3)",
   },
@@ -35490,11 +35528,11 @@ interface Outcome {
  * PRINTS: packages/server/test/listen-boot.test.ts 8
  * PRINTS: packages/server/test/listen.test.ts 16
  * PRINTS: packages/server/test/live-location-cost.test.ts 3
- * PRINTS: packages/server/test/live-location-differential.test.ts 7
+ * PRINTS: packages/server/test/live-location-differential.test.ts 9
  * PRINTS: packages/server/test/live-location-privacy.test.ts 27
  * PRINTS: packages/server/test/live-location-projection.test.ts 9
  * PRINTS: packages/server/test/live-location-prose.test.ts 3
- * PRINTS: packages/server/test/live-location-surfaces.test.ts 42
+ * PRINTS: packages/server/test/live-location-surfaces.test.ts 44
  * PRINTS: packages/server/test/live-location-told.test.ts 1
  * PRINTS: packages/server/test/live-location-topics.test.ts 4
  * PRINTS: packages/server/test/location-index-rebuild.test.ts 7

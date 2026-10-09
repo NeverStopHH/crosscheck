@@ -44,14 +44,22 @@ import {
   ROBIN_LOCAL,
   ROBIN_LOCAL_CONTEXT,
   ROBIN_OLD_CONTEXT,
+  ROBIN_SECOND_TOPIC,
   ROBIN_SOLVED,
+  ROBIN_TOPIC,
+  OLD_CREATED_AT,
+  OLD_TITLE,
   SECRET_BRANCH,
   SECRET_LOCAL_BRANCH,
   SECRET_SHA,
   SECRET_SHA2,
+  TIED_FINDING_WORDS,
+  TIED_TOPIC_WORDS,
   UPDATED_AT,
   getAs,
+  openTiedTopics,
   postAs,
+  rewriteTiedTopicInPlace,
   secretsIn,
   seedOptedOutWorld,
   url,
@@ -279,7 +287,70 @@ describe("when Robin last touched her work (review round 3, M1)", () => {
     expect(robinsRows(world, listed(asNick.body))[0]?.id).toBe(ROBIN_HOST_CONTEXT);
     expect(robinsRows(world, listed(asRobin.body))[0]?.id).toBe(ROBIN_CONTEXT);
   });
+
+  test("the hint pool ranks her trees by creation, never by her last touch (integration review H5)", async () => {
+    // Her old context, created ninety days back, moved again twenty days or
+    // two minutes before Nick's prompt. The pool decays every tier by
+    // `updatedAt ?? createdAt`, and read raw, her withheld touch brought the
+    // old tree into a list capped at three and pushed Ken's out.
+    const pool = async (beforeReadS: number): Promise<readonly string[]> => {
+      const world = await seedOptedOutWorld();
+      world.harness.clock.advanceSeconds(TOUCH_SKEW_S - beforeReadS);
+      const moved = await postRecords(world.harness, world.robin, {
+        records: [
+          recordEnvelope(
+            "work_context",
+            validWorkContextBody({ id: ROBIN_OLD_CONTEXT, sessionId: ROBIN_LIVE, title: OLD_TITLE, titleSource: "host", status: "testing", createdAt: OLD_CREATED_AT }),
+            { sessionId: ROBIN_LIVE },
+          ),
+        ],
+      });
+      expect(moved.data?.accepted).toBe(1);
+      world.harness.clock.advanceSeconds(beforeReadS);
+      return candidateIds(await getAs(world, "nick", url("/api/hints/candidates", { repo: REPO, query: "why does POST /login return a 500" })));
+    };
+
+    const early = await pool(TOUCH_SKEW_S);
+    const late = await pool(TOUCH_LATE_S);
+
+    expect(early.length).toBeGreaterThan(0);
+    expect(late).toEqual(early);
+  });
+
+  test("equal ranks follow the ids, never where her rows sit on disk (integration review L7)", async () => {
+    // Two topics of hers say the same words; an update that changes no value
+    // moves one of them, its claim and her session to new tuples.
+    const world = await seedOptedOutWorld();
+    await openTiedTopics(world);
+    // By their statements, and by their finding alone — the claim tier's own tie.
+    const read = async (): Promise<readonly (readonly string[])[]> => [
+      candidateIds(await getAs(world, "nick", url("/api/hints/candidates", { repo: REPO, query: TIED_TOPIC_WORDS }))),
+      candidateIds(await getAs(world, "nick", url("/api/hints/candidates", { repo: REPO, query: TIED_FINDING_WORDS }))),
+      searchIds(await getAs(world, "nick", url("/api/search", { query: TIED_TOPIC_WORDS, repo: REPO }))),
+      searchIds(await getAs(world, "nick", url("/api/search", { query: TIED_FINDING_WORDS, repo: REPO }))),
+    ];
+
+    const before = await read();
+    await rewriteTiedTopicInPlace(world);
+    const after = await read();
+
+    expect(before[0]).toEqual(expect.arrayContaining([ROBIN_TOPIC, ROBIN_SECOND_TOPIC]));
+    expect(before[1]).toEqual(expect.arrayContaining([ROBIN_TOPIC, ROBIN_SECOND_TOPIC]));
+    expect(after).toEqual(before);
+  });
 });
+
+/** Twenty days, and two minutes past the presence TTL: she is quiet at both reads. */
+const TOUCH_SKEW_S = 20 * 86_400;
+const TOUCH_LATE_S = 120;
+
+const candidateIds = (answer: { readonly body: string }): readonly string[] =>
+  (JSON.parse(answer.body) as { data: { candidates: readonly { workContext: { id: string } }[] } }).data.candidates.map(
+    (candidate) => candidate.workContext.id,
+  );
+
+const searchIds = (answer: { readonly body: string }): readonly string[] =>
+  (JSON.parse(answer.body) as { data: { results: readonly { id: string }[] } }).data.results.map((result) => result.id);
 
 const titleOf = (body: string, id: string): string | undefined =>
   listed(body).find((row) => row.id === id)?.["title" as keyof ListedContext] as string | undefined;

@@ -35,7 +35,10 @@
  *               gap is withheld (`session_silent` with `withheld: true`) —
  *               never whose session, never when: its start is withheld for
  *               as long as she has a session on the repo, so nothing she
- *               does moves it (services/coverage.ts)
+ *               does moves it (services/coverage.ts). The coverage record's
+ *               order block reads the same window (no session in it, or the
+ *               weakest declaration of those in it), so whether SOME session
+ *               reported inside the window moves it too
  *   «pilot»     team-level pilot counts: sessions, deliveries and pulls,
  *               the integrity counters, which prior work was opened
  *   «sequence»  event sequence gaps (the feed's ids, below)
