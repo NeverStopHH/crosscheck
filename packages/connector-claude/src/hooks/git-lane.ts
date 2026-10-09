@@ -18,7 +18,7 @@
  */
 import { UNKNOWN_DEVELOPER_ID } from "@crosscheck/connector-core/capture/records.ts";
 import { NO_GENERATED } from "@crosscheck/connector-core/capture/generated.ts";
-import { GIT_TOUCHES_TIMEOUT_MS, MAX_TARGETS_PER_INVOCATION } from "@crosscheck/connector-core/constants.ts";
+import { GIT_TOUCHES_TIMEOUT_MS } from "@crosscheck/connector-core/constants.ts";
 import {
   deferredRootsOf,
   discoverShellRoots,
@@ -32,14 +32,6 @@ import { recordCaptureLoss } from "@crosscheck/connector-core/state/loss-ledger.
 import { allocateSeq, updateSessionState, withGitTouches } from "@crosscheck/connector-core/state/session-state.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
-
-/**
- * Each swept root's worst case: `captureFileTargets` caps what one root
- * spools at MAX_TARGETS_PER_INVOCATION, commits and changes together, so a
- * root's slice of the block can never be short. Unused positions are gaps,
- * and gaps are legal.
- */
-const GIT_LANE_SEQ_BLOCK = MAX_TARGETS_PER_INVOCATION;
 
 const SKIPPED: GitLaneSweep = { captured: [], topics: null, unavailable: true, swept: [], untrackedCut: [], generated: NO_GENERATED };
 
@@ -67,13 +59,11 @@ export const runGitLane = async (
     // in a subagent that touched no root of its own.
     return;
   }
-  // ALLOCATED BEFORE THE SWEEP, not folded into the state write below: the
-  // sweep spools its records and that locked write happens AFTER them, so a
-  // position stamped there would be stamped on records already on disk. One
-  // block, one slice per root, taken only when the lane is going to run.
-  const seq = isAffordable
-    ? await allocateSeq(ctx.config.home, ctx.payload.session_id, GIT_LANE_SEQ_BLOCK * roots.length)
-    : null;
+  // ALLOCATED INSIDE THE SWEEP — after its reads, before its spools — and not
+  // folded into the state write below: the sweep spools its records and that
+  // locked write happens AFTER them, so a position stamped there would be
+  // stamped on records already on disk. One block, as wide as the roots may
+  // file (core flows/git-lane.ts `blockFor`), taken only when the lane runs.
   const sweep = isAffordable
     ? await sweepGitRoots({
         home: ctx.config.home,
@@ -88,7 +78,8 @@ export const runGitLane = async (
         },
         denylist: ctx.config.denylist,
         now: ctx.now(),
-        seq,
+        seq: null,
+        allocate: (count) => allocateSeq(ctx.config.home, ctx.payload.session_id, count),
       })
     : SKIPPED;
   // REVIEW M5: A SKIPPED OR UNANSWERED LANE IS A LOSS, NOT ONLY A NUMBER IN

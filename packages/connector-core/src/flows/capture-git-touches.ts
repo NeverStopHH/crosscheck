@@ -44,6 +44,7 @@ import { join } from "node:path";
 import {
   GIT_TOUCHES_TIMEOUT_MS,
   MAX_GIT_LANE_COMMITS,
+  MAX_GIT_LANE_TARGETS_PER_ROOT,
   MAX_GIT_TOUCH_CANDIDATES,
   MAX_REFTABLE_REFLOG_ENTRIES,
 } from "../constants.ts";
@@ -304,7 +305,12 @@ export const spoolGitTouches = async (
     // audit in capture-touched-files.ts able to see this call site.
     resolveRoot: () => input.repoRoot,
     ...(input.seq === undefined ? {} : { seq: input.seq }),
-    ...(input.maxTargets === undefined ? {} : { maxTargets: input.maxTargets }),
+    // THE LANE'S OWN CAP, never the tool lane's per-call one: a root a long
+    // session left a hundred files dirty files them in one sweep, and a
+    // resumed life files again what its earlier life left (constants.ts
+    // MAX_GIT_LANE_TARGETS_PER_ROOT). A caller handing over what an earlier
+    // half of the same root left keeps its narrower number.
+    maxTargets: input.maxTargets ?? MAX_GIT_LANE_TARGETS_PER_ROOT,
     paths: fresh,
     denylist: input.denylist,
     seenTargets: input.seenTargets,

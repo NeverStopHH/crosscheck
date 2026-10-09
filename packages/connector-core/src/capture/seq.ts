@@ -78,14 +78,19 @@ export const seqAfter = (range: SeqRange | null | undefined, used: number): SeqR
     : { ...range, from: range.from + used, count: Math.max(0, range.count - used) };
 
 /**
- * The `index`-th slice of `width` positions of a block — one root's share of
- * a Stop that sweeps several (flows/git-lane.ts). A block too small for it is
- * an empty slice, whose every record says `allocation_failed`.
+ * `width` positions of a block, starting `offset` positions in — one root's
+ * share of a Stop whose roots file different counts (flows/git-lane.ts). A
+ * block too small for it is a shorter window, or an empty one whose every
+ * record says `allocation_failed`.
  */
-export const seqSlice = (range: SeqRange | null | undefined, index: number, width: number): SeqRange | null => {
-  const rest = seqAfter(range, index * width);
+export const seqWindow = (range: SeqRange | null | undefined, offset: number, width: number): SeqRange | null => {
+  const rest = seqAfter(range, offset);
   return rest === null ? null : { ...rest, count: Math.min(width, rest.count) };
 };
+
+/** The `index`-th slice of `width` positions of a block: equal shares. */
+export const seqSlice = (range: SeqRange | null | undefined, index: number, width: number): SeqRange | null =>
+  seqWindow(range, index * width, width);
 
 /**
  * The stamp for the offset-th record of a block, or the refusal when there is

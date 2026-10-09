@@ -8,8 +8,10 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { realpath, rm } from "node:fs/promises";
 
+import { MAX_GIT_LANE_TARGETS_PER_ROOT, MAX_TARGETS_PER_INVOCATION } from "../src/constants.ts";
 import { sweepGitRoots } from "../src/flows/git-lane.ts";
 import type { SweepGitRootsInput } from "../src/flows/git-lane.ts";
+import { readDropDetail } from "../src/spool/drops.ts";
 import { deriveSessionState } from "../src/state/session-state.ts";
 import { makeHome, makeRepo, writeRepoFile } from "./helpers.ts";
 
@@ -79,5 +81,81 @@ describe("a sweep answers only for the roots git answered for (review mutation #
     expect(sweep.unavailable).toBe(false);
     expect(sweep.swept).toEqual([root]);
     expect(sweep.captured).toContain("src/dirty.ts");
+  });
+});
+
+/** `count` fresh files only a shell wrote, `src/f000.ts` on, beside the fixture's one. */
+const dirtyMany = async (root: string, count: number): Promise<readonly string[]> => {
+  const paths = Array.from({ length: count }, (_, index) => `src/f${String(index).padStart(3, "0")}.ts`);
+  for (const path of paths) {
+    await writeRepoFile(root, path, "export const f = 1;\n");
+  }
+  return paths;
+};
+
+/** Five hundred files written and listed is seconds of git on a loaded machine, past bun's 5 s. */
+const LANE_CAP_TEST_TIMEOUT_MS = 60_000;
+
+/**
+ * THE LANE'S OWN CAP IS PILOT-SCALE (release gate, production lane,
+ * 2026-10-09). The sweep stats up to MAX_GIT_TOUCH_CANDIDATES paths and then
+ * handed the fresh ones to a cap written for ONE TOOL CALL — twenty — so a
+ * root a long session left a hundred files dirty filed twenty per Stop and
+ * booked the rest, the shared files behind them never reached a teammate, and
+ * a resumed life could never re-file what its earlier life had left. Every
+ * fresh path the lane examined is filed, up to the lane's own bound; what that
+ * bound cuts is still counted.
+ */
+describe("a root's sweep files every fresh path it examined, up to the lane's own cap", () => {
+  test("more fresh files than one tool call may spool are all filed by one sweep, nothing capped", async () => {
+    // Arrange
+    const { root, input } = await sweepOf("sweep-pilot-scale", WIDE_GIT_TIMEOUT_MS);
+    const fresh = await dirtyMany(root, MAX_TARGETS_PER_INVOCATION + 5);
+
+    // Act
+    const sweep = await sweepGitRoots(input);
+
+    // Assert: every fresh file, beside the fixture's own dirty one and the
+    // README its first commit made inside the window — nothing cut
+    expect(sweep.captured).toEqual(expect.arrayContaining([...fresh, "src/dirty.ts"]));
+    expect((await readDropDetail(input.home, input.repoKey)).byReason["capture-capped"]).toBeUndefined();
+  });
+
+  test(
+    "past the lane's cap the rest is counted, exactly as many as were cut",
+    async () => {
+      // Arrange: the cap plus two fresh files, beside the fixture's own two
+      // (its dirty file, and the README its first commit made in the window)
+      const { root, input } = await sweepOf("sweep-lane-cap", WIDE_GIT_TIMEOUT_MS);
+      await dirtyMany(root, MAX_GIT_LANE_TARGETS_PER_ROOT + 2);
+
+      // Act
+      const sweep = await sweepGitRoots(input);
+
+      // Assert: four candidates past the cap, four counted
+      expect(sweep.captured).toHaveLength(MAX_GIT_LANE_TARGETS_PER_ROOT);
+      expect((await readDropDetail(input.home, input.repoKey)).byReason["capture-capped"]).toBe(4);
+    },
+    LANE_CAP_TEST_TIMEOUT_MS,
+  );
+
+  test("the block a hook's allocator hands the sweep is as wide as the roots file, not a cap's worth per root", async () => {
+    // Arrange: an allocator that remembers what it was asked for
+    const { root, input } = await sweepOf("sweep-exact-block", WIDE_GIT_TIMEOUT_MS);
+    await dirtyMany(root, MAX_TARGETS_PER_INVOCATION + 5);
+    const asked: number[] = [];
+
+    // Act
+    const sweep = await sweepGitRoots({
+      ...input,
+      allocate: async (count) => {
+        asked.push(count);
+        return { epoch: "e1", from: 1, count };
+      },
+    });
+
+    // Assert: one block, exactly the paths filed — positions precede records and leave no cap-sized gap
+    expect(asked).toEqual([sweep.captured.length]);
+    expect(sweep.captured.length).toBeGreaterThan(MAX_TARGETS_PER_INVOCATION);
   });
 });
