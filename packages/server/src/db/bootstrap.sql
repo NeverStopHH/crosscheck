@@ -289,18 +289,79 @@ CREATE INDEX IF NOT EXISTS claims_tsv_idx
 -- What the hint floor reads (hold-out review round 5, L2; services/hints.ts
 -- claimWords and documentWords): the words AND a dotted name's parts —
 -- "products.name" says products and name — as @crosscheck/schema
--- textLexemes reads a text and every prompt reads it. GENERATED and STORED
--- like tsv, so no query computes them per row; the pattern is
--- DOTTED_NAME_DOT_SQL verbatim (test/hint-dotted-names.test.ts pins the
--- two equal).
-ALTER TABLE claims ADD COLUMN IF NOT EXISTS words_tsv tsvector
-  GENERATED ALWAYS AS (to_tsvector('english', body) || to_tsvector('english', regexp_replace(body, '(?<=(?:^|[[:space:]])[^[:space:]/@]*[[:alnum:]_-])[.](?=[[:alnum:]_-][^[:space:]/@]*(?:[[:space:]]|$))', ' ', 'g'))) STORED;
+-- textLexemes reads a text and every prompt reads it. One function spells
+-- them, with DOTTED_NAME_PARTS_SQL and its replacement verbatim
+-- (test/hint-dotted-names.test.ts pins both, and the function's words equal
+-- to the shared rule's).
+CREATE OR REPLACE FUNCTION crosscheck_words_tsv(body text) RETURNS tsvector
+  LANGUAGE sql IMMUTABLE PARALLEL SAFE
+  AS $$ SELECT to_tsvector('english', body) || to_tsvector('english', regexp_replace(body, '([^[:space:]]*[/@][^[:space:]]*)|([[:alnum:]_-])[.](?=[[:alnum:]_-])', '\1\2 ', 'g')) $$;
+
+-- A PLAIN COLUMN THE DATABASE FILLS ON WRITE, NOT A GENERATED ONE (batch-2
+-- integration review, M10). A STORED generated column is computed for every
+-- row when it is added: on a pilot-scale 0.10 hub that rewrote work_contexts
+-- (51 s) and claims (13.8 s) before the port opened, +325 MB of disk at the
+-- peak. Added plain it costs nothing; the trigger below fills every row
+-- written from now on, so it can no more drift from the text than a
+-- generated column could, and the rows an upgrade found are filled after
+-- serving, a chunk at a time (services/words-index.ts), found meanwhile by
+-- their plain words. A hub that ran the generated column keeps its values:
+-- DROP EXPRESSION turns it plain without a rewrite.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = current_schema() AND table_name = 'claims'
+      AND column_name = 'words_tsv' AND is_generated = 'ALWAYS'
+  ) THEN
+    ALTER TABLE claims ALTER COLUMN words_tsv DROP EXPRESSION;
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = current_schema() AND table_name = 'work_contexts'
+      AND column_name = 'words_tsv' AND is_generated = 'ALWAYS'
+  ) THEN
+    ALTER TABLE work_contexts ALTER COLUMN words_tsv DROP EXPRESSION;
+  END IF;
+END
+$$;
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS words_tsv tsvector;
+ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS words_tsv tsvector;
+
+CREATE OR REPLACE FUNCTION crosscheck_claims_words_tsv() RETURNS trigger
+  LANGUAGE plpgsql
+  AS $$
+BEGIN
+  NEW.words_tsv := crosscheck_words_tsv(NEW.body);
+  RETURN NEW;
+END
+$$;
+CREATE OR REPLACE TRIGGER claims_words_tsv_fill
+  BEFORE INSERT OR UPDATE OF body ON claims
+  FOR EACH ROW EXECUTE FUNCTION crosscheck_claims_words_tsv();
+
+CREATE OR REPLACE FUNCTION crosscheck_work_contexts_words_tsv() RETURNS trigger
+  LANGUAGE plpgsql
+  AS $$
+BEGIN
+  NEW.words_tsv := crosscheck_words_tsv(coalesce(NEW.normalized_doc, ''));
+  RETURN NEW;
+END
+$$;
+CREATE OR REPLACE TRIGGER work_contexts_words_tsv_fill
+  BEFORE INSERT OR UPDATE OF normalized_doc ON work_contexts
+  FOR EACH ROW EXECUTE FUNCTION crosscheck_work_contexts_words_tsv();
+
 CREATE INDEX IF NOT EXISTS claims_words_tsv_idx
   ON claims USING gin (words_tsv);
-ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS words_tsv tsvector
-  GENERATED ALWAYS AS (to_tsvector('english', coalesce(normalized_doc, '')) || to_tsvector('english', regexp_replace(coalesce(normalized_doc, ''), '(?<=(?:^|[[:space:]])[^[:space:]/@]*[[:alnum:]_-])[.](?=[[:alnum:]_-][^[:space:]/@]*(?:[[:space:]]|$))', ' ', 'g'))) STORED;
 CREATE INDEX IF NOT EXISTS work_contexts_words_tsv_idx
   ON work_contexts USING gin (words_tsv);
+-- The rows the backfill has yet to fill, so it, hub-status and the hint
+-- floor find them without reading every row; empty once it is done.
+CREATE INDEX IF NOT EXISTS claims_words_tsv_pending_idx
+  ON claims (id) WHERE words_tsv IS NULL;
+CREATE INDEX IF NOT EXISTS work_contexts_words_tsv_pending_idx
+  ON work_contexts (id) WHERE words_tsv IS NULL;
 
 -- Optional vector tier: null until an embedder is configured AND has embedded
 -- the row. embedding_model records WHICH embedder minted the vector, because

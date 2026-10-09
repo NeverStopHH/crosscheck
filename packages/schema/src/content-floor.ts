@@ -150,14 +150,32 @@ const lexemesOf = (text: string): readonly string[] =>
  * the finding "ILIKE on products.name does a sequential scan".
  *
  * Spelled twice, once per regex dialect: the hub's database reads the same
- * dots with DOTTED_NAME_DOT_SQL, whose [[:alnum:]] knows "café" as this
+ * dots with DOTTED_NAME_PARTS_SQL, whose [[:alnum:]] knows "café" as this
  * side's \p{L} does, so both sides split the same words (server test
  * hint-dotted-names.test.ts holds them together).
  */
 const DOTTED_NAME_DOT = /(?<=(?:^|\s)[^\s/@]*[\p{L}\p{N}_-])\.(?=[\p{L}\p{N}_-][^\s/@]*(?:\s|$))/gu;
 
-/** The same dots in PostgreSQL's regex dialect, for the hub's index and queries (L2). */
-export const DOTTED_NAME_DOT_SQL = "(?<=(?:^|[[:space:]])[^[:space:]/@]*[[:alnum:]_-])[.](?=[[:alnum:]_-][^[:space:]/@]*(?:[[:space:]]|$))";
+/**
+ * The same split in PostgreSQL's regex dialect, for the hub's words column
+ * and queries (L2): ONE regexp_replace with DOTTED_NAME_PARTS_SQL_REPLACEMENT.
+ * A word holding a slash or an "@" is matched whole and put back (`\1`); a
+ * name character before a dot that a name character follows is put back with
+ * a space for the dot (`\2 `). So a dot is split exactly where DOTTED_NAME_DOT
+ * splits it, and the one other difference in the text — a space after a word
+ * put back, before the whitespace or the end that ends it — splits no word.
+ *
+ * NO LOOKBEHIND, unlike the JavaScript spelling: PostgreSQL matches one from
+ * the start of the text at every position, so the lookbehind spelling was
+ * 70–82% of the 65 s a pilot-scale upgrade spent rewriting its two word
+ * columns (batch-2 integration review, M10). This one costs a fifth, and
+ * gave the same lexemes, positions included, on all 60 000 rows of the
+ * review's synthetic hub.
+ */
+export const DOTTED_NAME_PARTS_SQL = "([^[:space:]]*[/@][^[:space:]]*)|([[:alnum:]_-])[.](?=[[:alnum:]_-])";
+
+/** DOTTED_NAME_PARTS_SQL's replacement: the whole word, or the character before the dot and a space. */
+export const DOTTED_NAME_PARTS_SQL_REPLACEMENT = "\\1\\2 ";
 
 /** A text with its dotted names split at their dots: "products.name" reads "products name" (L2). */
 export const dottedNamePartsText = (text: string): string => text.replace(DOTTED_NAME_DOT, " ");

@@ -129,4 +129,61 @@ describe("startServer", () => {
     },
     BOOT_TIMEOUT_MS + SHUTDOWN_TIMEOUT_MS * 3,
   );
+
+  test(
+    "a booted hub withholds an opted-out index before it listens, then rebuilds it and fills the words in the background (M10, M11)",
+    async () => {
+      // Arrange — Robin opted out on an older release (her doc still holds
+      // her branch), and no row has its hint-floor words yet
+      const dataDir = await mkdtemp(join(tmpdir(), "crosscheck-boot-"));
+      tempDirs.push(dataDir);
+      await seedOlderHub(dataDir);
+      const seeded = await createDb({ dataDir });
+      await seeded.execute(sql`UPDATE developers SET presence_opt_out = true WHERE id = 'dev_r'`);
+      await seeded.execute(sql`UPDATE agent_sessions SET branch = 'feat/robin-lisbon' WHERE id = 'ses_r'`);
+      await seeded.execute(sql`UPDATE work_contexts SET title = 'feat/robin-lisbon', normalized_doc = E'feat/robin-lisbon\nanalyzing' WHERE id = 'wc_r'`);
+      await seeded.execute(sql`UPDATE claims SET words_tsv = NULL`);
+      await seeded.execute(sql`UPDATE work_contexts SET words_tsv = NULL`);
+      await closeDb(seeded);
+      const withheld = "[crosscheck] search index: location titles withheld for 1 opted-out developer(s)";
+      const listening = "crosscheck server listening on";
+      const rebuilt = "[crosscheck] location index: rebuilt for 1 opted-out developer(s)";
+      const words = "[crosscheck] words index: 2 claim(s) and";
+
+      // Act
+      const child = Bun.spawn({
+        cmd: [process.execPath, SERVER_ENTRY],
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        env: keylessEnv(randomPort(), dataDir),
+      });
+      const stdout = await readUntilAll(child.stdout, [withheld, listening, rebuilt, words]);
+      child.kill("SIGTERM");
+      const exit = await Promise.race([
+        child.exited,
+        new Promise<"hung">((resolveRace) => setTimeout(() => resolveRace("hung"), SHUTDOWN_TIMEOUT_MS)),
+      ]);
+      if (exit === "hung") {
+        child.kill("SIGKILL");
+        await child.exited;
+      }
+      const db = await createDb({ dataDir });
+      const doc = await db.execute<{ doc: string }>(sql`SELECT normalized_doc AS doc FROM work_contexts WHERE id = 'wc_r'`);
+      const empty = await db.execute<{ n: number }>(
+        sql`SELECT (SELECT count(*) FROM claims WHERE words_tsv IS NULL) + (SELECT count(*) FROM work_contexts WHERE words_tsv IS NULL) AS n`,
+      );
+      await closeDb(db);
+
+      // Assert — withheld before the hub listened; rebuilt and filled after
+      expect(stdout.indexOf(withheld)).toBeGreaterThanOrEqual(0);
+      expect(stdout.indexOf(withheld)).toBeLessThan(stdout.indexOf(listening));
+      expect(stdout.indexOf(listening)).toBeLessThan(stdout.indexOf(rebuilt));
+      expect(stdout).toContain(words);
+      expect(doc.rows[0]?.doc).not.toContain("lisbon");
+      expect(doc.rows[0]?.doc).not.toBe("");
+      expect(Number(empty.rows[0]?.n)).toBe(0);
+    },
+    BOOT_TIMEOUT_MS + SHUTDOWN_TIMEOUT_MS * 3,
+  );
 });

@@ -65,10 +65,10 @@ import { pushableClaimCondition } from "./pushable-claims.ts";
 import { DECLARED_PROVENANCE } from "./similarity-gate.ts";
 import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
 import { ordinaryTargetCondition } from "./generated-targets.ts";
+import { isWordsIndexComplete } from "./words-index.ts";
 import {
   WITHHELD_TITLE,
   isGeneratedPath,
-  DOTTED_NAME_DOT_SQL,
   HINT_LONG_PROMPT_KNOWN_TERMS,
   HINT_MAX_EXAMINED_TERMS,
   HINT_MIN_SHARED_TERMS,
@@ -214,29 +214,58 @@ const titleSeenBy = (readerDeveloperId: string | undefined): SQL =>
     ? sql`${workContexts.title}`
     : sql`(CASE WHEN ${visiblePresenceCondition(readerDeveloperId, agentSessions.developerId)} OR ${workContexts.titleSource} IN ('host', 'person') THEN ${workContexts.title} ELSE NULL END)`;
 
-/**
- * A TEXT'S DOTTED NAMES IN THEIR PARTS, as the database reads them (hold-out
- * review round 5, L2): "products.name" says products and name here too, as
- * the shared rule (`@crosscheck/schema` textLexemes) and every prompt read it.
- */
-const dottedNameParts = (text: SQL): SQL =>
-  sql`to_tsvector('english', regexp_replace(${text}, ${sql.raw(`'${DOTTED_NAME_DOT_SQL}'`)}, ' ', 'g'))`;
-
 /** What one claim says to the floor: its words, and its dotted names' parts — stored (L2; claims_words_tsv_idx). */
 const claimWords = sql`${claims.wordsTsv}`;
 
 /**
  * What a context's document says, to the known-word prefilter — stored (L2;
- * work_contexts_words_tsv_idx). Generated from normalized_doc, which already
+ * work_contexts_words_tsv_idx). Filled from normalized_doc, which already
  * keeps a withheld title out (services/live-location.ts isTitleWithheldFromIndex).
  */
 const documentWords = sql`${workContexts.wordsTsv}`;
 
-/** The same statement as a document, for the search's own ranking — its dotted names' parts too (L2). */
+/**
+ * The same statement as a document, for the search's own ranking — its
+ * dotted names' parts too (L2): "products.name" says products and name here,
+ * as the shared rule (`@crosscheck/schema` textLexemes) and every prompt read
+ * it. The database function that fills the stored words spells them, so the
+ * statement and the stored columns cannot split a word differently.
+ */
 const statementDocument = (title: SQL): SQL => {
   const text = statementTextWith(title);
-  return sql`(to_tsvector('english', ${text}) || ${dottedNameParts(text)})`;
+  return sql`crosscheck_words_tsv(${text})`;
 };
+
+/**
+ * A TABLE'S WORDS AS THE FLOOR READS THEM, while the words backfill runs and
+ * after (batch-2 integration review, M10). A row an upgrade found has no
+ * stored words until the start-up backfill reaches it
+ * (services/words-index.ts); meanwhile it is read by its plain words, `tsv`
+ * — what a 0.10 hub matched it by — so no row drops out of the floor while
+ * the pass runs, and a dotted name in it matches whole until then. Both arms
+ * read an index (the words' GIN index and tsv's), so the window costs no
+ * scan; once every row has its words, the floor reads the stored words alone.
+ */
+interface FloorWords {
+  /** The row's words, for ranking. */
+  readonly words: SQL;
+  /** Whether the row says `query`. */
+  readonly says: (query: SQL) => SQL;
+}
+
+const floorWordsOf = (stored: SQL, column: SQL, plain: SQL, isComplete: boolean): FloorWords =>
+  isComplete
+    ? { words: stored, says: (query) => sql`${stored} @@ ${query}` }
+    : {
+        words: sql`coalesce(${column}, ${plain})`,
+        says: (query) => sql`(${stored} @@ ${query} OR (${column} IS NULL AND ${plain} @@ ${query}))`,
+      };
+
+const claimFloorWords = (isComplete: boolean): FloorWords =>
+  floorWordsOf(claimWords, sql`${claims.wordsTsv}`, sql`${claims.tsv}`, isComplete);
+
+const documentFloorWords = (isComplete: boolean): FloorWords =>
+  floorWordsOf(documentWords, sql`${workContexts.wordsTsv}`, sql`${workContexts.tsv}`, isComplete);
 
 /** Most sessions one tripwire response names — one is enough to ask. */
 export const TRIPWIRE_MAX_SESSIONS = 5;
@@ -747,18 +776,19 @@ const listClaimTermMaxima = async (
     return new Map();
   }
   const anyToken = sql`websearch_to_tsquery('english', ${floor.all.join(" or ")})`;
+  const words = claimFloorWords(await isWordsIndexComplete(db));
   const ranked = db
     .select({
       workContextId: claims.workContextId,
       body: claims.body,
-      position: sql<number>`row_number() over (partition by ${claims.workContextId} order by ts_rank(${claimWords}, ${anyToken}) desc, ${claims.id})`.as("position"),
+      position: sql<number>`row_number() over (partition by ${claims.workContextId} order by ts_rank(${words.words}, ${anyToken}) desc, ${claims.id})`.as("position"),
     })
     .from(claims)
     .innerJoin(agentSessions, eq(claims.authorSessionId, agentSessions.id))
     .where(
       and(
         inArray(claims.workContextId, workContextIds),
-        sql`${claimWords} @@ ${anyToken}`,
+        words.says(anyToken),
         notSuperseded(db),
         notMutedCondition(readerDeveloperId, agentSessions.developerId),
         // A draft's words never qualify its tree (review 1006b, L6).
@@ -803,6 +833,7 @@ const rankOnPushableText =
     // The statement as THIS reader may read it: a hidden owner's location
     // title neither ranks her work nor pulls it into the pool (titleSeenBy).
     const statement = statementDocument(titleSeenBy(readerDeveloperId));
+    const words = claimFloorWords(await isWordsIndexComplete(db));
     const [statements, pushable] = await Promise.all([
       db
         .select({
@@ -821,7 +852,7 @@ const rankOnPushableText =
           id: claims.workContextId,
           createdAt: workContexts.createdAt,
           updatedAt: workContexts.updatedAt,
-          rank: sql<number>`max(ts_rank(${claimWords}, ${tsquery}))`,
+          rank: sql<number>`max(ts_rank(${words.words}, ${tsquery}))`,
         })
         .from(claims)
         .innerJoin(workContexts, eq(claims.workContextId, workContexts.id))
@@ -830,14 +861,14 @@ const rankOnPushableText =
         .where(
           and(
             scope,
-            sql`${claimWords} @@ ${tsquery}`,
+            words.says(tsquery),
             pushableClaimCondition(),
             notSuperseded(db),
             notMutedCondition(readerDeveloperId, claimAuthors.developerId),
           ),
         )
         .groupBy(claims.workContextId, workContexts.createdAt, workContexts.updatedAt)
-        .orderBy(sql`max(ts_rank(${claimWords}, ${tsquery})) DESC`)
+        .orderBy(sql`max(ts_rank(${words.words}, ${tsquery})) DESC`)
         .limit(TIER_CANDIDATES),
     ]);
     const best = [...statements, ...pushable].reduce<ReadonlyMap<string, RankedRow>>(
@@ -1181,6 +1212,7 @@ const listKnownTerms = async (
     return [];
   }
   const lexeme = sql.raw("query.lexeme");
+  const isComplete = await isWordsIndexComplete(db);
   const visibleOwner = readerDeveloperId === undefined ? [] : [ne(agentSessions.developerId, readerDeveloperId), notMutedCondition(readerDeveloperId, agentSessions.developerId)];
   const statementSays = db
     .select({ one: sql`1` })
@@ -1191,7 +1223,7 @@ const listKnownTerms = async (
     .where(
       and(
         eq(agentSessions.repo, repo),
-        sql`${documentWords} @@ ${lexeme}`,
+        documentFloorWords(isComplete).says(lexeme),
         sql`${statementDocument(titleSeenBy(readerDeveloperId))} @@ ${lexeme}`,
         ...visibleOwner,
       ),
@@ -1205,7 +1237,7 @@ const listKnownTerms = async (
     .where(
       and(
         eq(agentSessions.repo, repo),
-        sql`${claimWords} @@ ${lexeme}`,
+        claimFloorWords(isComplete).says(lexeme),
         pushableClaimCondition(),
         notSuperseded(db),
         ...visibleOwner,

@@ -8,6 +8,17 @@
  * claims only, so a teammate whose search comes back thin can see why — and
  * that it is temporary. 0 on a hub with nothing left to rebuild.
  *
+ * `wordsIndexPending`: rows an upgrade found whose hint-floor words the
+ * start-up backfill has yet to fill (services/words-index.ts; batch-2
+ * integration review, M10). Until it does, a dotted name in such a row
+ * matches whole only. Rows written since the upgrade never count: the
+ * database fills theirs on write. 0 once the backfill is done.
+ *
+ * `vectorsPending`: with an embedder, work contexts whose doc has no vector
+ * of the current model yet — what the start-up vector backfill and the
+ * opted-out index rebuild re-embed in the background (M11); the vector tier
+ * misses them until then. Null on a keyless hub.
+ *
  * `transport`: two facts about how the hub is reachable, each a doctor WARN
  * with its fix (hub hardening, review M7 and H6):
  *   - `listensOnEveryInterface`: CROSSCHECK_LISTEN is unset on a data dir
@@ -24,8 +35,10 @@ import { Hono } from "hono";
 
 import { ok } from "../http/envelope.ts";
 import { developerAuth } from "../middleware/auth.ts";
+import { countMissingVectors } from "../services/embedding-backfill.ts";
 import { countPendingDocs } from "../services/stale-docs.ts";
 import { hasLocalhostBesideHttps } from "../services/webauthn.ts";
+import { countWordsIndexPending } from "../services/words-index.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
 
 export const hubStatusRoutes = (deps: AppDeps): Hono<AppEnv> => {
@@ -34,6 +47,8 @@ export const hubStatusRoutes = (deps: AppDeps): Hono<AppEnv> => {
   router.get("/", developerAuth(deps), async (c) =>
     ok(c, {
       searchDocsPending: await countPendingDocs(deps.db),
+      wordsIndexPending: await countWordsIndexPending(deps.db),
+      vectorsPending: deps.embedder === null ? null : await countMissingVectors(deps.db, deps.embedder.model),
       transport: {
         listensOnEveryInterface: deps.listen === "legacy_all_interfaces",
         localhostBesideHttps: hasLocalhostBesideHttps(deps.webauthnOrigins),

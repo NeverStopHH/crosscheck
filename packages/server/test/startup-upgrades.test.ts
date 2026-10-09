@@ -30,7 +30,7 @@ const capture = (): CapturedLog => {
 };
 
 describe("runStartupUpgrades", () => {
-  test("runs the link cleanup, the doc upgrade and — with an embedder — the vector backfill, each logging its own line", async () => {
+  test("runs the link cleanup, the location index, the doc upgrade, the words index and — with an embedder — the vector backfill, each logging its own line", async () => {
     // Arrange
     const { harness } = await inMemoryUpgradeHub();
     await seedPreRoundContexts(harness.db, 2);
@@ -41,12 +41,16 @@ describe("runStartupUpgrades", () => {
 
     // Assert
     expect(report.links?.removed).toEqual([]);
+    expect(report.locations).toBe(0);
     expect(report.docs).toMatchObject({ contexts: 2, reembedded: 2 });
+    expect(report.words).toEqual({ claims: 0, workContexts: 0 });
     expect(report.vectors).toEqual({ embedded: 0, failed: 0 });
     const expectedStarts = [
       "[crosscheck] draft link cleanup: 0 cross-developer draft link(s) archived in claim_edges_removed and removed (pass dlc_",
+      "[crosscheck] location index: rebuilt for 0 opted-out developer(s)",
       "[crosscheck] doc upgrade: starting: 2 work context doc(s) still fold drafts in",
       "[crosscheck] doc upgrade: 2 work context doc(s) rebuilt without drafts, 0 stamped current, 2 re-embedded",
+      "[crosscheck] words index: 0 claim(s) and 0 work context(s) given their dotted names' parts",
       "[crosscheck] vector backfill: 0 work context(s) embedded, 0 failed",
     ];
     expect(captured.infos.map((line, index) => line.startsWith(expectedStarts[index] ?? "\0"))).toEqual(
@@ -56,10 +60,12 @@ describe("runStartupUpgrades", () => {
   });
 
   test("a cleanup that fails never keeps the doc upgrade from running, and logs its own error", async () => {
-    // Arrange: the archive the cleanup writes to is gone
+    // Arrange: the column the cleanup selects the gate's edges by is gone
+    // (the cleanup is paged and writes its archive only for a page it found,
+    // so a missing archive no longer fails a hub with nothing to clean)
     const { harness } = await inMemoryUpgradeHub();
     await seedPreRoundContexts(harness.db, 2);
-    await harness.db.execute(sql`DROP TABLE claim_edges_removed`);
+    await harness.db.execute(sql`ALTER TABLE claim_edges DROP COLUMN origin`);
     const captured = capture();
 
     // Act
@@ -69,7 +75,54 @@ describe("runStartupUpgrades", () => {
     expect(report.links).toBeNull();
     expect(report.docs?.contexts).toBe(2);
     expect(captured.errors).toEqual(["[crosscheck] draft link cleanup failed; the next start retries it"]);
-    expect(captured.infos.map((line) => line.split(":")[0])).toEqual(["[crosscheck] doc upgrade", "[crosscheck] doc upgrade"]);
+    expect(captured.infos.map((line) => line.split(":")[0])).toEqual([
+      "[crosscheck] location index",
+      "[crosscheck] doc upgrade",
+      "[crosscheck] doc upgrade",
+      "[crosscheck] words index",
+    ]);
+  });
+
+  test("fills the words an upgrade left empty, and gives an opted-out index its rebuild (M10, M11)", async () => {
+    // Arrange — declared-only contexts (the doc upgrade only stamps them),
+    // every row's words still empty, and a developer opted out before the
+    // index followed the setting
+    const { harness, nick } = await inMemoryUpgradeHub();
+    await seedPreRoundContexts(harness.db, 2, { withDraft: false });
+    await harness.db.execute(sql`UPDATE claims SET words_tsv = NULL`);
+    await harness.db.execute(sql`UPDATE work_contexts SET words_tsv = NULL`);
+    await harness.db.execute(sql`UPDATE developers SET presence_opt_out = true WHERE id = ${nick.developerId}`);
+    const captured = capture();
+
+    // Act
+    const report = await runStartupUpgrades({ db: harness.db, embedder: null, log: captured.log });
+
+    // Assert
+    expect(report.locations).toBe(1);
+    expect(report.words).toEqual({ claims: 2, workContexts: 0 });
+    expect(captured.infos).toContain("[crosscheck] words index: 2 claim(s) and 0 work context(s) given their dotted names' parts");
+    expect(captured.errors).toEqual([]);
+  });
+
+  test("a words backfill that fails never keeps the vector backfill from running", async () => {
+    // Arrange: the function the backfill fills by is gone
+    const { harness } = await inMemoryUpgradeHub();
+    await seedPreRoundContexts(harness.db, 2);
+    await harness.db.execute(sql`UPDATE claims SET words_tsv = NULL`);
+    await harness.db.execute(sql`DROP TRIGGER claims_words_tsv_fill ON claims`);
+    await harness.db.execute(sql`DROP TRIGGER work_contexts_words_tsv_fill ON work_contexts`);
+    await harness.db.execute(sql`DROP FUNCTION crosscheck_claims_words_tsv()`);
+    await harness.db.execute(sql`DROP FUNCTION crosscheck_work_contexts_words_tsv()`);
+    await harness.db.execute(sql`DROP FUNCTION crosscheck_words_tsv(text)`);
+    const captured = capture();
+
+    // Act
+    const report = await runStartupUpgrades({ db: harness.db, embedder: createFakeEmbedder(), log: captured.log });
+
+    // Assert
+    expect(report.words).toBeNull();
+    expect(report.vectors).not.toBeNull();
+    expect(captured.errors).toEqual(["[crosscheck] words index failed; the next start resumes it"]);
   });
 
   test("a doc upgrade that fails never keeps the vector backfill from running", async () => {

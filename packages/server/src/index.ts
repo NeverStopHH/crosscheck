@@ -30,7 +30,7 @@ import { reapStaleSessions } from "./services/sessions.ts";
 import { hasLocalhostBesideHttps, localhostBesideHttpsWarning, parseWebAuthnOrigins } from "./services/webauthn.ts";
 import { backfillSkeletonIdentity } from "./services/skeleton-identity.ts";
 import { runStartupUpgrades } from "./services/startup-upgrades.ts";
-import { rebuildOptedOutLocationIndexes } from "./services/developer-settings.ts";
+import { withholdPendingLocationTitles } from "./services/developer-settings.ts";
 import type { Db } from "./db/client.ts";
 import type { Embedder } from "./services/embedder.ts";
 import type { AppEnv, Clock } from "./types.ts";
@@ -328,12 +328,19 @@ export const startServer = async (): Promise<void> => {
     listen: listenPlan.kind,
   });
   // AN OPT-OUT FROM BEFORE THE INDEX FOLLOWED THE SETTING (review round 5,
-  // M1): her docs still hold her branch titles, so they are rebuilt BEFORE
+  // M1): her docs still hold her branch titles, so they are EMPTIED before
   // serving — a colleague's first search must not find her by a guessed
-  // branch. Once per opt-out (developers.location_index_built_at).
-  const indexesRebuilt = await rebuildOptedOutLocationIndexes({ db, now: () => new Date(), embedder });
-  if (indexesRebuilt > 0) {
-    console.log(`[crosscheck] search index: rebuilt for ${String(indexesRebuilt)} opted-out developer(s)`);
+  // branch — in one statement; the rebuild itself is a start-up pass after
+  // serving, a page and one embedder call at a time. Rebuilding here kept a
+  // pilot-scale hub's port closed 17–26 s, and with an embedder for one
+  // call per doc (batch-2 integration review, M11). Once per opt-out
+  // (developers.location_index_built_at, set when the rebuild is done).
+  const indexesPending = await withholdPendingLocationTitles(db);
+  if (indexesPending > 0) {
+    console.log(
+      `[crosscheck] search index: location titles withheld for ${String(indexesPending)} opted-out developer(s); ` +
+        "their docs are rebuilt in the background",
+    );
   }
   const servers = serveOnPlan(listenPlan, port, app.fetch);
   const listeningPort = servers[0]?.port ?? port;
@@ -362,12 +369,14 @@ export const startServer = async (): Promise<void> => {
     },
   );
   // DRAFTS OUT OF WHAT AN OLDER HUB BUILT: the auto links its gate made into
-  // teammates' trees on a draft's strength, the docs that still fold drafts
-  // in, and — with an embedder — every vector missing or from another model
-  // (services/startup-upgrades.ts runs them apart, each logging its own
-  // outcome). After serving, for the same reason: until they have run the
-  // old rows behave as they did before the upgrade, and nothing waits on
-  // them. All idempotent; each start finishes what the last left.
+  // teammates' trees on a draft's strength, the opted-out docs emptied above,
+  // the docs that still fold drafts in, the hint floor's words an upgrade
+  // left empty, and — with an embedder — every vector missing or from
+  // another model (services/startup-upgrades.ts runs them apart, each
+  // logging its own outcome, each a page at a time). After serving, for the
+  // same reason: until they have run the old rows behave as they did before
+  // the upgrade, and nothing waits on them. All idempotent; each start
+  // finishes what the last left.
   void runStartupUpgrades({ db, embedder });
   // THE RECEIPTS PAST THEIR RETENTION, once at boot (review-2 round 9, M4):
   // the timer's first pass comes SESSION_REAP_INTERVAL_MS from now, and a hub

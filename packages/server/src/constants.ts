@@ -164,6 +164,28 @@ export const DOC_UPGRADE_STAMP_BATCH = 1000;
 export const DRAFT_LINK_CLEANUP_BATCH = 500;
 
 /**
+ * Rows per chunk of the start-up words backfill (services/words-index.ts),
+ * one UPDATE each with a turn of the event loop between chunks. A row's
+ * words cost ~0.3 ms to compute plus its index entries, and a claim on a hub
+ * with an embedder also re-enters the HNSW graph (several ms), so a chunk of
+ * 50 keeps a request's wait to tens of milliseconds even there.
+ */
+export const WORDS_INDEX_BACKFILL_BATCH = 50;
+
+/** Chunks of the words backfill between its progress lines: one per 5 000 rows. */
+export const WORDS_INDEX_PROGRESS_CHUNKS = 100;
+
+/**
+ * An opted-out developer's location-titled docs rebuilt per page, re-embedded
+ * in one embedder call per page, with a turn of the event loop between pages
+ * (services/developer-settings.ts; batch-2 integration review, M11). A doc's
+ * rebuild is ~2 ms on a pilot-scale hub, so a page is a few hundred ms at
+ * most; one call per page is 100 times fewer embedder round trips than one
+ * per doc.
+ */
+export const LOCATION_INDEX_REBUILD_BATCH = 100;
+
+/**
  * THE RETENTION THIS HUB APPLIES TO `session_events`, declared on
  * `GET /api/sessions/order` so that `doctor` prints the hub's own statement
  * rather than a connector's assumption about it (schema session-event.ts says
