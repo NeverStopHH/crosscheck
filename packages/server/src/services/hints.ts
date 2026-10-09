@@ -30,7 +30,7 @@
  * with this note rather than half-built. The lexical fast path (exact targets +
  * FTS) is the one the design names normative for the sync budget.
  */
-import { and, asc, desc, eq, gt, inArray, isNull, lte, ne, notExists, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lte, ne, not, notExists, or, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 
@@ -1271,6 +1271,16 @@ const TRIPWIRE_MAX_CANDIDATES = GHOST_HOT_TARGET_MAX_CONTEXTS;
 const MS_PER_DAY = 86_400_000;
 
 /**
+ * A well-known mechanically generated name is nobody's plan, whoever asks:
+ * an older connector's tripwire, which knows no generated-target rule, asks
+ * about a nested lockfile all the same (services/generated-targets.ts). A
+ * repo that declared the file authoritative is answered about it. One rule
+ * for both of the tripwire's answers, the named rows and the nameless one.
+ */
+const isNobodysPlan = (value: string, authoritative: boolean): boolean =>
+  !authoritative && isGeneratedPath(value);
+
+/**
  * The ask names the FIRST row (connector hooks/pre-tool-use.ts), so the order
  * is the decision. Focused before a LARGE CHANGE — a session renaming three
  * hundred files through this one is weaker evidence of a plan in the reader's
@@ -1314,10 +1324,7 @@ export const listTargetSessions = async (
    */
   authoritative = false,
 ): Promise<readonly TargetSessionView[]> => {
-  // A well-known mechanically generated name is nobody's plan, whoever asks:
-  // an older connector's tripwire, which knows no generated-target rule, asks
-  // about a nested lockfile all the same (services/generated-targets.ts).
-  if (!authoritative && isGeneratedPath(value)) {
+  if (isNobodysPlan(value, authoritative)) {
     return [];
   }
   const cutoff = presenceCutoff(deps.now());
@@ -1391,4 +1398,64 @@ export const listTargetSessions = async (
     }))
     .sort(byTripwireStrength)
     .slice(0, TRIPWIRE_MAX_SESSIONS);
+};
+
+/**
+ * A teammate the reader may not be told about, working on the file now — and
+ * nothing else about them. The row's only field is its kind.
+ */
+export interface AnonymousTargetRow {
+  readonly anonymous: true;
+}
+
+const ANONYMOUS_ROW: AnonymousTargetRow = { anonymous: true };
+
+/**
+ * AN OPTED-OUT TEAMMATE IS STILL A COLLISION (the owner's decision on the
+ * batch-2 integration review's I1). The named rows above leave a hidden
+ * owner's sessions out whole, and that recreated the pilot's failure for
+ * every opted-out person: Mike opted out, edited the files Nick was about to
+ * change, and Nick was told nothing. So the tripwire answers one more
+ * question: is ANYBODY whose location this caller may not be told live on
+ * this file right now?
+ *
+ * The answer is one row or none, whoever and however many they are, so a
+ * count singles nobody out; and the row carries no developer, name, session,
+ * branch, title, topic, work context, intent or instant (opting out still
+ * hides WHO, WHERE and WHEN — services/visibility.ts «anonymous»). "Live"
+ * is the presence rule the named rows use, and the same filters hold: the
+ * caller's own sessions never count, a teammate the caller muted never
+ * interrupts them, and a file her connector labelled generated, or a well-
+ * known generated name, is nobody's plan.
+ */
+export const listAnonymousTargetPresence = async (
+  deps: Deps,
+  callerDeveloperId: string,
+  repo: string,
+  value: string,
+  authoritative = false,
+): Promise<readonly AnonymousTargetRow[]> => {
+  if (isNobodysPlan(value, authoritative)) {
+    return [];
+  }
+  const hiddenAndLiveOnFile = and(
+    eq(workContextTargets.value, value),
+    eq(agentSessions.repo, repo),
+    ordinaryTargetCondition(),
+    ne(agentSessions.developerId, callerDeveloperId),
+    isNull(agentSessions.endedAt),
+    gt(agentSessions.lastHeartbeatAt, presenceCutoff(deps.now())),
+    not(visiblePresenceCondition(callerDeveloperId, agentSessions.developerId)),
+    notMutedCondition(callerDeveloperId, agentSessions.developerId),
+  );
+  // Nothing of theirs is selected, and the row is a constant: there is no
+  // column of theirs here to leak.
+  const rows = await deps.db
+    .select({ one: sql<number>`1` })
+    .from(workContextTargets)
+    .innerJoin(workContexts, eq(workContextTargets.workContextId, workContexts.id))
+    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
+    .where(hiddenAndLiveOnFile)
+    .limit(1);
+  return rows.length === 0 ? [] : [ANONYMOUS_ROW];
 };

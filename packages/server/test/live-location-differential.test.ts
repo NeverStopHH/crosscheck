@@ -472,6 +472,17 @@ const RESIDUALS: readonly Residual[] = [
   // reading's finding — and the counts and rankings that follow from it.
   // Never an instant of hers: that is checked on every line apart.
   { name: "content", contentOnly: true, line: /./ },
+  // visibility.ts «anonymous» (the owner's decision on the batch-2
+  // integration review's I1): THAT a teammate the reader may not be told
+  // about is working on the file right now — the tripwire's one nameless row
+  // — and how many of the reader's own files such a teammate's unfinished
+  // work touches. The row's only field is its kind and the count's only field
+  // the count: any other field on either line is no residual, and fails.
+  {
+    name: "anonymous",
+    route: /^GET \/api\/(?:hints\/tripwire|ghost-checks)$/,
+    line: /^[-+] data\.(?:anonymous\[\]\.anonymous=true|anonymousOverlap\.sharedFileCount=\d+|anonymousOverlap=null)$/,
+  },
   // visibility.ts «security»: that a security event about her credentials
   // happened, and when — a passkey enrolment is announced to every member
   // while it cools off, on the API and the passkeys page, and the admin
@@ -667,5 +678,55 @@ describe("her rows' place on disk orders nothing a colleague reads", () => {
     const rewritten = await tiedWorld(true);
 
     expect(between(base, rewritten).map(shown)).toEqual([]);
+  }, 300_000);
+});
+
+/**
+ * SOMEONE IS ON THE FILE, AND NOTHING MORE (visibility.ts «anonymous»; the
+ * owner's decision on the batch-2 integration review's I1). Two worlds where
+ * she has gone quiet past the presence window, and in the second her live
+ * session beats once more just before Nick reads: she is live on his file in
+ * one and not in the other. They may differ by the anonymous row and nothing
+ * else — no field of it but its kind, no instant of her beat — and they MUST
+ * differ by it: an opted-out teammate who vanished from the tripwire is the
+ * pilot's failure again.
+ */
+const PAST_PRESENCE_S = 120;
+const HEARTBEAT: Action = ACTIONS.find((action) => action.name === "heartbeat") ?? ACTIONS[0]!;
+const ANONYMOUS_ONLY: readonly Residual[] = RESIDUALS.filter((residual) => residual.name === "anonymous");
+const ANONYMOUS_ROW_LINE = "+ data.anonymous[].anonymous=true";
+const TRIPWIRE_KEY = "GET /api/hints/tripwire";
+
+/** Past her presence window from the seed; `isLive`: her session beats once more just before the read. */
+const presenceWorld = async (isLive: boolean): Promise<Walked> => {
+  const world = await seedOptedOutWorld();
+  world.harness.clock.advanceSeconds(PAST_PRESENCE_S);
+  const actionAt = nowIso(world);
+  if (isLive) {
+    await HEARTBEAT.run(world);
+  }
+  world.harness.clock.advanceSeconds(ACTION_DELAY_S);
+  return { answers: await colleagueReads(world), world, actionAt };
+};
+
+describe("a teammate hidden from him, live on his file, is one anonymous row and nothing more", () => {
+  test("her being live differs from her being quiet only by the anonymous row — and the row is there", async () => {
+    const quiet = await presenceWorld(false);
+    const live = await presenceWorld(true);
+    const now = live.world.harness.clock.now();
+    const beat: readonly (readonly [string, string])[] = [["her heartbeat", live.actionAt]];
+    const differs = between(quiet, live);
+
+    const problems = [
+      ...differs.filter((difference) => !acceptedBy(ANONYMOUS_ONLY, HEARTBEAT, difference.answer, difference.line)).map(shown),
+      ...differs.filter((difference) => instantsNear(difference.line, beat, now).length > 0).map((difference) => `carries her heartbeat: ${shown(difference)}`),
+      ...live.answers.flatMap((answer) => leaksIn(`${answer.body}\n${answer.headers}`, now).map((secret) => `${label(answer)}: leaks her ${secret}`)),
+    ];
+    const appeared = differs.filter((difference) => difference.line === ANONYMOUS_ROW_LINE).map((difference) => difference.answer.key);
+
+    expect(problems).toEqual([]);
+    // Both tripwire variants (the plain and the authoritative read) name her
+    // presence, and nothing else does.
+    expect(appeared).toEqual([TRIPWIRE_KEY, TRIPWIRE_KEY]);
   }, 300_000);
 });

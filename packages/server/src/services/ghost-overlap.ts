@@ -80,6 +80,7 @@ import {
   isNull,
   lte,
   ne,
+  not,
   or,
   sql,
 } from "drizzle-orm";
@@ -752,6 +753,64 @@ const byStrength = (left: RankedCandidate, right: RankedCandidate): number =>
   right.candidate.intentTokenHits - left.candidate.intentTokenHits ||
   right.row.lastActiveAt.getTime() - left.row.lastActiveAt.getTime() ||
   left.candidate.id.localeCompare(right.candidate.id);
+
+/** How many of the reader's own files a hidden teammate's unfinished work touches — and nothing else. */
+export interface AnonymousOverlapView {
+  readonly sharedFileCount: number;
+}
+
+/**
+ * AN OPTED-OUT TEAMMATE'S PLAN IS STILL IN THE READER'S WAY (the owner's
+ * decision on the batch-2 integration review's I1). Every query above keeps a
+ * hidden owner out, so a reader whose files an opted-out colleague is
+ * reworking heard nothing. This counts, over the reader's own live files
+ * (the same probe the tiers compare), the ones ANY unfinished work of a
+ * developer hidden from the reader also carries — one number for all of
+ * them, so it singles nobody out.
+ *
+ * TIME-FREE AND NAMELESS: her side has no activity window (her work's times
+ * are never read), and nothing of hers leaves — no context, title, branch,
+ * intent or age; only the count, of files the reader's own session already
+ * holds. Unfinished means what it means above (liveWorkConditions): her
+ * session open, so the count goes when she ends it or the reaper closes it
+ * after SESSION_REAP_STALE_HOURS of silence — THAT someone is still at work
+ * is the one thing «anonymous» says. Mutes, generated files and the reader's
+ * own sessions stay out, as everywhere.
+ */
+export const countAnonymousOverlap = async (
+  deps: Deps,
+  viewerDeveloperId: string,
+  repo: string,
+): Promise<AnonymousOverlapView | null> => {
+  const cutoff = new Date(deps.now().getTime() - GHOST_ACTIVE_WINDOW_DAYS * MS_PER_DAY);
+  const ownContexts = await listOwnContexts(deps, viewerDeveloperId, repo, cutoff);
+  const ownFiles = (await listOwnTargets(deps, viewerDeveloperId, ownContexts.map((context) => context.id))).filter(
+    (target) => target.kind === FILE_KIND,
+  );
+  const files = targetValueCondition(ownFiles);
+  if (files === undefined) {
+    return null;
+  }
+  const shared = await deps.db
+    .selectDistinct({ value: workContextTargets.value })
+    .from(workContextTargets)
+    .innerJoin(workContexts, eq(workContextTargets.workContextId, workContexts.id))
+    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
+    .where(
+      and(
+        eq(agentSessions.repo, repo),
+        files,
+        ordinaryTargetCondition(),
+        ne(agentSessions.developerId, viewerDeveloperId),
+        not(visiblePresenceCondition(viewerDeveloperId, agentSessions.developerId)),
+        notMutedCondition(viewerDeveloperId, agentSessions.developerId),
+        ...liveWorkConditions(),
+      ),
+    )
+    // Distinct values out of the reader's own files: never more than those.
+    .limit(ownFiles.length);
+  return shared.length === 0 ? null : { sharedFileCount: shared.length };
+};
 
 /**
  * Overlaps between the reader's live plan and their teammates' — strongest

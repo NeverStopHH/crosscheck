@@ -24,7 +24,7 @@ import {
 import { COVERAGE_SESSION_WINDOW_DAYS } from "../constants.ts";
 import { readCoverage } from "../services/coverage.ts";
 import { countCoverageAnswer } from "../services/pilot.ts";
-import { listHintCandidates, listTargetSessions } from "../services/hints.ts";
+import { listAnonymousTargetPresence, listHintCandidates, listTargetSessions } from "../services/hints.ts";
 import { listLandedNotices } from "../services/landed-notices.ts";
 import { listUndeliveredAnswers } from "../services/questions.ts";
 import { SEARCH_MAX_QUERY_CHARS } from "../services/search.ts";
@@ -126,13 +126,12 @@ export const hintsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     }
     // In sequence, not in parallel: the coverage folds over the sessions
     // this answer names (review H3), so they come first.
-    const sessions = await listTargetSessions(
-      deps,
-      c.get("developer").id,
-      parsed.data.repo,
-      parsed.data.value,
-      parsed.data.authoritative === "1",
-    );
+    const [sessions, anonymous] = await Promise.all([
+      listTargetSessions(deps, c.get("developer").id, parsed.data.repo, parsed.data.value, parsed.data.authoritative === "1"),
+      // A teammate the caller may not be told about, live on the file: one
+      // nameless row or none (services/hints.ts listAnonymousTargetPresence).
+      listAnonymousTargetPresence(deps, c.get("developer").id, parsed.data.repo, parsed.data.value, parsed.data.authoritative === "1"),
+    ]);
     // SCOPED TO THE FILE the tripwire is about (§3.2a): the question is
     // "was anybody watching THIS path", not "was anybody watching this
     // repo for a fortnight".
@@ -155,7 +154,7 @@ export const hintsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     // 07 §13 (D-O3): the ask ends with the outcome clause only where the
     // repo records outcomes — the "stop, Ken built it this way" moment.
     const settings = await readTeamSettings(deps, parsed.data.repo);
-    return ok(c, { sessions, coverage, recordsOutcomes: settings.pilotEnrolled });
+    return ok(c, { sessions, anonymous, coverage, recordsOutcomes: settings.pilotEnrolled });
   });
 
   /**
