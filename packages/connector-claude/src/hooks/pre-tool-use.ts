@@ -134,7 +134,7 @@ import { namedLandedCommits } from "@crosscheck/connector-core/landed-changes/na
 import { LANDED_STOP_MAX_SUBJECT_CHARS, LandedStopSchema, containsSecret } from "@crosscheck/schema";
 import { NO_LANDED_ANSWER, landedWhyFor } from "./landed-why.ts";
 import { requestLandingFetchFor } from "./landing-fetch.ts";
-import { onePerKey, recheckOverdueRests } from "./rest-recheck.ts";
+import { onePerKey, oweUnansweredRecheck, recheckOverdueRests } from "./rest-recheck.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
 /** The ONLY decision this connector can emit — the ladder's ceiling (§4). */
@@ -304,6 +304,11 @@ const askBeforeEdit = async (ctx: HookContext, budget: HookBudget): Promise<Edit
   if (found.probeCut !== null) {
     await bookProbeCut(ctx, found.probeCut);
   }
+  // An unanswered live tripwire told nobody and counted nothing: it leaves a
+  // recheck owed at once, which the next sync hook pays or books (M1).
+  if (found.isLiveUnanswered) {
+    await oweUnansweredRecheck(ctx, file, PRE_TOOL_USE_HOOK);
+  }
   return answer;
 };
 
@@ -456,6 +461,8 @@ interface Reasons {
 interface FoundReasons {
   /** EVERY live teammate session the hub named on the file, in its order (review M4). */
   readonly sessions: readonly TripwireSession[];
+  /** The live tripwire was asked and did not answer: a recheck is owed (review batch 2, M1). */
+  readonly isLiveUnanswered: boolean;
   readonly landed: LandedChanges | null;
   readonly coverage?: CoverageRecord;
   /** The tripwire answer said this repo records hint outcomes (07 §13); false when it did not answer. */
@@ -529,6 +536,7 @@ const findReasons = async (
   const [hub, probed] = await Promise.all([live, probing]);
   return {
     sessions: hub?.sessions ?? [],
+    isLiveUnanswered: !answered.isLiveFresh && hub === null,
     landed: worthStopping(probed.landed),
     cleanKey: probed.landed?.cleanKey ?? null,
     probeCut: probed.cutShort,

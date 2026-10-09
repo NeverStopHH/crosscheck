@@ -19,10 +19,12 @@ import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import { TURN_END_RECHECK_MAX_FILES } from "@crosscheck/connector-core/constants.ts";
 import { readCaptureLosses } from "@crosscheck/connector-core/state/loss-ledger.ts";
 import { readRestOmissions } from "@crosscheck/connector-core/state/rest-omissions.ts";
-import { readSessionState, updateSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import { readSessionState, sessionStateLockPath, updateSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import { withLock } from "@crosscheck/connector-core/spool/lock.ts";
 import { activeTeammateSession } from "../../connector-core/test/fixtures/hint-hub.ts";
 import {
   BEHAVIOUR_TIMING,
+  NICK_NOTICE,
   OVERLAP_FILE,
   REPO_ID,
   SECOND_FILE,
@@ -324,6 +326,41 @@ describe("every sync hook pays an overdue rest at its own next opportunity (roun
   });
 });
 
+describe("an unanswered tripwire leaves a recheck owed (review batch 2, M1)", () => {
+  test("the edit the hub did not answer owes a recheck, and the next prompt pays it and tells the person", async () => {
+    // Arrange: Nick is on the file, and the hub does not answer the edit's tripwire
+    const fix = await collisionFixture("rg-unanswered", BEHAVIOUR_TIMING);
+    fix.hub.setTripwireFailure(SERVICE_UNAVAILABLE);
+
+    // Act
+    const edit = await runHook("pre-tool-use", editPayload(fix.repo, OVERLAP_FILE), fix.env);
+    const owedAfterEdit = await owedFiles(fix);
+    fix.hub.setTripwireFailure(null);
+    const prompt = parsed(await runHook("user-prompt-submit", promptPayload(fix.repo), fix.env));
+
+    // Assert: silent at the edit, owed after it, told at the next hook
+    expect(edit).toBe("");
+    expect(owedAfterEdit).toEqual([OVERLAP_FILE]);
+    expect(prompt.systemMessage).toBe(NICK_NOTICE);
+    expect(await owedFiles(fix)).toEqual([]);
+    expect((await restLosses(fix)).total).toBe(0);
+  });
+
+  test("a hub that still does not answer at the next prompt books the file", async () => {
+    // Arrange
+    const fix = await collisionFixture("rg-unanswered-down", BEHAVIOUR_TIMING);
+    fix.hub.setTripwireFailure(SERVICE_UNAVAILABLE);
+
+    // Act
+    await runHook("pre-tool-use", editPayload(fix.repo, OVERLAP_FILE), fix.env);
+    await runHook("user-prompt-submit", promptPayload(fix.repo), fix.env);
+
+    // Assert
+    expect(await restLosses(fix)).toEqual({ total: 1, byDetail: { "user-prompt-submit": 1 } });
+    expect(await owedFiles(fix)).toEqual([]);
+  });
+});
+
 describe("a session that ends owing rechecks (round 3, F-M2)", () => {
   test("SessionEnd books every debt as rest_unchecked before the state goes", async () => {
     // Arrange: two files owed, and the session ends without its turn's end
@@ -333,6 +370,31 @@ describe("a session that ends owing rechecks (round 3, F-M2)", () => {
     await runHook("session-end", sessionEnded(fix.repo), fix.env);
 
     // Assert
+    expect(await restLosses(fix)).toEqual({ total: 2, byDetail: { "session-end": 2 } });
+    expect(await restOmissions(fix)).toBe(1);
+  });
+
+  test("SessionEnd under a state lock that stays busy still books every debt (review batch 2, M8)", async () => {
+    // Arrange: two files owed, and a sibling hook holds the state lock past
+    // SessionEnd's patience — its delete then falls back without the lock.
+    const fix = await settled("rg-end-busy", [OVERLAP_FILE, SECOND_FILE]);
+    const release: { value: () => void } = { value: () => undefined };
+    const held = withLock(sessionStateLockPath(fix.home, SESSION_ID), undefined, () =>
+      new Promise<void>((done) => {
+        release.value = done;
+      }),
+    );
+
+    // Act
+    try {
+      await runHook("session-end", sessionEnded(fix.repo), fix.env);
+    } finally {
+      release.value();
+      await held;
+    }
+
+    // Assert: the state is gone, and its debts went to the ledgers, not with it.
+    expect(await readSessionState(fix.home, SESSION_ID)).toBeNull();
     expect(await restLosses(fix)).toEqual({ total: 2, byDetail: { "session-end": 2 } });
     expect(await restOmissions(fix)).toBe(1);
   });

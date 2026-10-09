@@ -40,6 +40,7 @@ import {
   stillOwed,
   updateSessionState,
   withCollisionNotices,
+  withOverdueRest,
   withQueuedCollisionRelays,
   withRestsDroppedBooked,
   withoutTripwireRests,
@@ -204,19 +205,55 @@ export const hasOverdueRests = (state: SessionState, now: Date): boolean => over
 export const hasOwedRests = (state: SessionState): boolean => owedRests(state).length > 0;
 
 /**
+ * AN UNANSWERED TRIPWIRE LEAVES A DEBT (review batch 2, M1): a live tripwire
+ * call that failed — the hub at or past the request timeout — gave the edit no
+ * agent text, no person line, no rest and no count. It now owes a recheck of
+ * the file, already overdue (core state/session-state.ts withOverdueRest), so
+ * the next sync hook asks again and tells the person, or books the file as
+ * `rest_unchecked` when the hub still will not answer; a session that ends
+ * first books it at SessionEnd. A state lock that stays busy books it here at
+ * once rather than drop it. Fail open: the edit's own answer is untouched.
+ */
+export const oweUnansweredRecheck = async (ctx: HookContext, file: string, detail: string): Promise<void> => {
+  try {
+    const isOwed = await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) =>
+      withOverdueRest(fresh, file, ctx.now()),
+    );
+    if (!isOwed) {
+      await bookUncheckedRests(ctx, 1, detail);
+    }
+  } catch {
+    // Fail open, like every collision write on a hook path.
+  }
+};
+
+/** Every recheck a state still owes, the evicted ones included. */
+const owedCountOf = (state: SessionState): number =>
+  (state.tripwireCheckedFiles ?? []).length + (state.tripwireRestsDropped ?? 0);
+
+/**
  * The session is ending and no hook of it will run again: every debt still
  * owed is claimed in one locked write and booked, so a SessionEnd that does
  * not reach its state delete leaves nothing for the reaper to book twice.
+ *
+ * A LOCK THAT STAYS BUSY BOOKS FROM AN UNLOCKED READ (review batch 2, M8):
+ * the state delete right after this falls back the same way
+ * (core state/session-state.ts closeSessionState) and takes the debts with
+ * it, so giving up here dropped them unbooked — 9 of 9 trials in the review.
+ * A sibling paying one of them at the same moment books it once more, the
+ * over-count's safe side.
  */
 export const bookOwedRestsAtEnd = async (ctx: HookContext, detail: string): Promise<void> => {
   try {
     const owed: { value: number } = { value: 0 };
     const isWritten = await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => {
-      owed.value = (fresh.tripwireCheckedFiles ?? []).length + (fresh.tripwireRestsDropped ?? 0);
+      owed.value = owedCountOf(fresh);
       return owed.value === 0 ? null : withRestsDroppedBooked({ ...fresh, tripwireCheckedFiles: [] });
     });
-    if (isWritten) {
-      await bookUncheckedRests(ctx, owed.value, detail);
+    const unlocked = isWritten ? null : await readSessionState(ctx.config.home, ctx.payload.session_id);
+    const booked = isWritten ? owed.value : unlocked === null ? 0 : owedCountOf(unlocked);
+    if (booked > 0) {
+      await bookUncheckedRests(ctx, booked, detail);
     }
   } catch {
     // Fail open: an unbooked debt stays in the state file, where the reaper books it.

@@ -2314,6 +2314,17 @@ export const withTripwireChecked = (state: SessionState, file: string, now: Date
   };
 };
 
+/**
+ * A RECHECK OWED AT ONCE (review batch 2, M1): `file`'s live tripwire was
+ * asked and did not answer, so this edit told nobody — not the agent, not the
+ * person — and counted nothing. Owed as a rest that is already over: it never
+ * keeps the next edit from asking, and the next sync hook pays it — tells the
+ * person of a teammate it finds — or books it, as every rest is
+ * (hooks/rest-recheck.ts).
+ */
+export const withOverdueRest = (state: SessionState, file: string, now: Date): SessionState =>
+  withTripwireChecked(state, file, new Date(now.getTime() - TRIPWIRE_RECHECK_TTL_MS));
+
 /** A (file, group) pair the tripwire asked about — FIFO-capped like the asked files. */
 export const withTripwireGroupAsked = (
   state: SessionState,
