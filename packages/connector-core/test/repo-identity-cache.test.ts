@@ -17,10 +17,14 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
+import { TEST_REAL_HOME_ENV } from "../src/config/paths.ts";
 import { REPO_IDENTITY_CACHE_TTL_MS } from "../src/constants.ts";
 import { resolveRepoIdentity } from "../src/git/repo-identity.ts";
 import type { RepoIdentity } from "../src/git/repo-identity.ts";
-import { resolveRepoIdentityCached } from "../src/git/repo-identity-cache.ts";
+import { gitConfigPaths, resolveRepoIdentityCached } from "../src/git/repo-identity-cache.ts";
+
+/** A real home that does not exist, so not even a test without the guard could read a real one. */
+const ABSENT_REAL_HOME = "/cx-absent-real-home/someone";
 import { git, makeHome, makeRepo, writeRepoFile } from "./helpers.ts";
 
 const made: string[] = [];
@@ -215,5 +219,22 @@ describe("a working directory's repo identity", () => {
 
     // Assert
     expect(git1.calls()).toBe(2);
+  });
+
+  test("in a test process, the git and ssh configs of the real user's home are refused, on the path alone", () => {
+    // Arrange: a recorded real home that does not exist
+    const recorded = process.env[TEST_REAL_HOME_ENV];
+    process.env[TEST_REAL_HOME_ENV] = ABSENT_REAL_HOME;
+
+    try {
+      // Act + Assert
+      expect(() => gitConfigPaths("/repo/.git", "/repo/.git", { HOME: ABSENT_REAL_HOME })).toThrow("test home guard");
+    } finally {
+      if (recorded === undefined) {
+        delete process.env[TEST_REAL_HOME_ENV];
+      } else {
+        process.env[TEST_REAL_HOME_ENV] = recorded;
+      }
+    }
   });
 });

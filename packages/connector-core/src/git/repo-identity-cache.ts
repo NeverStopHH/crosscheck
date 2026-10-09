@@ -32,12 +32,11 @@
  * error; nothing here can make a hook resolve a repo git would not.
  */
 import { realpath, stat } from "node:fs/promises";
-import { homedir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { z } from "zod";
 
 import { REPO_IDENTITY_CACHE_TTL_MS, SSH_CANONICALIZE_ENV } from "../constants.ts";
-import { readJsonOrNull, repoIdentityCachePath, writePrivateFile } from "../config/paths.ts";
+import { readJsonOrNull, repoIdentityCachePath, userHomeOf, writePrivateFile } from "../config/paths.ts";
 import { branchLabelOfHead, commonDirOf, readHeadFile, resolveHeadCommit, resolveRepoIdentity } from "./repo-identity.ts";
 import type { HeadFile, RepoIdentity } from "./repo-identity.ts";
 
@@ -122,9 +121,13 @@ const gitEntryStamp = async (root: string): Promise<string> => {
   }
 };
 
-/** The git config files a repo's answers depend on: its own, its worktree's, the user's two. */
+/**
+ * The git config files a repo's answers depend on: its own, its worktree's,
+ * the user's two. The user's home through `userHomeOf`, so in a test process
+ * it is never the real one (config/paths.ts, the real-home guard).
+ */
 export const gitConfigPaths = (gitDir: string, commonDir: string, env: Env): readonly string[] => {
-  const home = env["HOME"] ?? homedir();
+  const home = userHomeOf(env);
   const xdg = env["XDG_CONFIG_HOME"] ?? join(home, ".config");
   return [join(commonDir, "config"), join(gitDir, "config.worktree"), join(home, ".gitconfig"), join(xdg, "git", "config")];
 };
@@ -132,7 +135,7 @@ export const gitConfigPaths = (gitDir: string, commonDir: string, env: Env): rea
 /** Every config file that can name, rewrite or alias the remote git resolved. */
 const configPaths = (head: HeadFile, commonDir: string, env: Env): readonly string[] => [
   ...gitConfigPaths(head.gitDir, commonDir, env),
-  join(env["HOME"] ?? homedir(), ".ssh", "config"),
+  join(userHomeOf(env), ".ssh", "config"),
 ];
 
 const rootFacts = async (root: string, env: Env): Promise<RootFacts | null> => {

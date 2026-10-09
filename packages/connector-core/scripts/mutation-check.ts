@@ -37012,6 +37012,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/doctor-hub-separation.test.ts`,
     because: "a test that hands doctor the real HOME reads the developer's own ~/.crosscheck-hub, the one look the guard exists to stop",
   },
+  {
+    label: "the repo identity cache reads a real HOME's git config in a test",
+    file: `${CORE}/src/git/repo-identity-cache.ts`,
+    from: "  const home = userHomeOf(env);",
+    to: '  const home = env["HOME"] ?? "";',
+    test: `${CORE}/test/repo-identity-cache.test.ts`,
+    because: "every hook's repo stamp stats and hashes the developer's own ~/.gitconfig and ~/.ssh/config in a test the guard was meant to keep off them",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -37460,7 +37468,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/release-clock.test.ts 10
  * PRINTS: packages/connector-core/test/remember-developer.test.ts 1
  * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 7
- * PRINTS: packages/connector-core/test/repo-identity-cache.test.ts 6
+ * PRINTS: packages/connector-core/test/repo-identity-cache.test.ts 7
  * PRINTS: packages/connector-core/test/repo-ssh-determinism.test.ts 2
  * PRINTS: packages/connector-core/test/rest-unchecked-scope.test.ts 3
  * PRINTS: packages/connector-core/test/review-draft.test.ts 2
