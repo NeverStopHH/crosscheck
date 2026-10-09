@@ -219,6 +219,72 @@ describe("renderPilot", () => {
     expect(out).not.toContain("none could be recorded");
   });
 
+  const monthBlock = {
+    ...JULY,
+    recordableSinceIso: "2026-06-03T09:00:00.000Z",
+    countedFromIso: JULY.periodStartIso,
+    pausedInPeriod: false,
+  };
+  const OWN = { interventions: 20, followed: 10, overrode: 2, notRelevantNow: 2, noise: 2, unmarked: 4 };
+  const LATE = { followed: 2, overrode: 0, notRelevantNow: 0, noise: 1 };
+  const LATE_LINE =
+    "confirmed late in July 2026, about hints of earlier months (counted here, never there): followed 2 · overrode 0 · not relevant now 0 · noise 1";
+  const LATE_WITHHELD_LINE =
+    "confirmed late in July 2026, about hints of earlier months: no count — below the disclosure minimums";
+
+  test("review M6: words confirmed late are printed in the month they were confirmed, apart, never in the rates", () => {
+    // Arrange — the month's own figure and its late words, each past the minimums on its own
+    const outcomes = { ...monthBlock, withheld: null, figures: OWN, late: { withheld: null, figures: LATE } };
+
+    // Act
+    const out = renderPilot(view({ outcomes }));
+
+    // Assert
+    expect(out).toContain(LATE_LINE);
+    expect(out).toContain("followed 50.0");
+  });
+
+  test("round-2 R2-H2: late words below the minimums on their own print no count, beside a month's own figure", () => {
+    // Arrange
+    const outcomes = { ...monthBlock, withheld: null, figures: OWN, late: { withheld: "below_minimums", figures: null } };
+
+    // Act
+    const out = renderPilot(view({ outcomes }));
+
+    // Assert
+    expect(out).toContain(LATE_WITHHELD_LINE);
+    expect(out).not.toContain("counted here, never there");
+  });
+
+  test("round-2 R2-H2: a month's own figure withheld still prints its late words when they pass on their own", () => {
+    // Arrange
+    const outcomes = { ...monthBlock, withheld: "below_minimums", figures: null, late: { withheld: null, figures: LATE } };
+
+    // Act
+    const out = renderPilot(view({ outcomes }));
+
+    // Assert
+    expect(out).toContain(LATE_LINE);
+    expect(out).not.toContain("followed 50.0");
+  });
+
+  test("round-2 R2-H1: a later compromise prints a correction line beneath the month, which stands as it closed", () => {
+    // Arrange — one person's words, then the same with a count that passes
+    const one = { ...monthBlock, withheld: null, figures: OWN, laterRetracted: { count: null, withheld: "below_minimums" } };
+    const many = { ...monthBlock, withheld: null, figures: OWN, laterRetracted: { count: 12, withheld: null } };
+
+    // Act
+    const [withheld, counted] = [renderPilot(view({ outcomes: one })), renderPilot(view({ outcomes: many }))];
+
+    // Assert
+    expect(withheld).toContain(
+      "correction: some of July 2026's counted words were later retracted — their passkey was declared compromised; the figures above stand as the month closed — no count: below the disclosure minimums",
+    );
+    expect(counted).toContain(
+      "correction: 12 of July 2026's counted words were later retracted — their passkey was declared compromised; the figures above stand as the month closed",
+    );
+  });
+
   test("every channel prints, the empty ones and `unknown` included (PIL-1)", () => {
     // Arrange & Act
     const out = renderPilot(view());
@@ -388,17 +454,39 @@ describe("renderPilot", () => {
     expect(out).toContain("3 repaired break(s) recorded no commit at the break");
   });
 
-  test("proof 4 says plainly that the hub cannot tell a person's label from an agent's", () => {
-    // Arrange & Act — the second review's "Can an agent label?": the hub's
-    // only check is a presence literal any client can send, the key is a
-    // file on disk, and a pty passes the terminal check. A report that
-    // calls the labels a person's must say what that rests on.
+  test("review H1: proof 4 shows labels confirmed with a passkey still cooling off, from when they count, and the retracted ones", () => {
+    // Arrange
+    const base = report();
+    const out = renderPilot(
+      view({
+        precision: {
+          ...base.precision,
+          notHuman: { atTerminal: 0, byAgent: 0, legacy: 0, coolingOff: 2, countingFrom: "2026-08-02T10:00:00.000Z", retracted: 1 },
+        },
+      }),
+    );
+
+    // Assert — beside the figures, never in them
+    const proof4 = out.slice(out.indexOf("4. proactive precision"), out.indexOf("5. coverage"));
+    // Round-2 R2-L2: exact about which instant (the first of them), and about what a revoke then does
+    expect(proof4).toContain(
+      "2 confirmed, still in the cool-off of the passkey that confirmed them — the first counts from 2026-08-02T10:00:00.000Z; revoked before then, that passkey never counts, and what it confirmed comes back to your confirm page",
+    );
+    expect(proof4).toContain("1 retracted — the passkey that confirmed them was declared compromised, so they count nowhere");
+  });
+
+  test("proof 4 says plainly what makes a label a person's: their passkey, never the key", () => {
+    // Arrange & Act — the second review's "Can an agent label?": the key is a
+    // file on disk and a pty passes the terminal check. Since human
+    // provenance (0.11) the hub CAN tell: a label counts only once its
+    // person confirmed it with their passkey. A report that calls the
+    // labels a person's must say what that rests on.
     const out = renderPilot(view());
 
     // Assert — on proof 4, where the labels are presented as a person's
     const proof4 = out.slice(out.indexOf("4. proactive precision"), out.indexOf("5. coverage"));
     expect(proof4).toContain(
-      "labels are attributed to a developer's key: nothing at the hub can tell a person's label from an agent's acting with that key",
+      "labels count only once the person confirmed them with their passkey; a key — an agent's or a terminal's — only drafts one",
     );
   });
 

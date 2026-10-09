@@ -74,8 +74,8 @@ import type { InteractiveProbe } from "./pin.ts";
 import {
   candidateListLines,
   labelStandsLine,
+  markAnswerLine,
   markFailureLine,
-  markRecordedLine,
   noLiveSessionLine,
   nothingRecentLine,
   refNeverReachedLine,
@@ -187,7 +187,7 @@ const mark = async (target: Target, deliveryId: string, shortcut: LabelShortcut)
   }
   return {
     stdout:
-      markRecordedLine(HUB_KIND, deliveryId, asked.result.data.repeated, shortcut.command) +
+      markAnswerLine(HUB_KIND, deliveryId, asked.result.data, shortcut.command) +
       labelStandsLine(asked.result.data),
     exitCode: EXIT_OK,
   };

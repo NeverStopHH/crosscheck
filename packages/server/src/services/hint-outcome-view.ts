@@ -24,12 +24,14 @@
  */
 import { sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
+import { LEGACY_PROVENANCE } from "@crosscheck/schema";
 import type { HintOutcome, HintOutcomeWithholding } from "@crosscheck/schema";
 
 import { HINT_OUTCOME_MAX_REASONS, HINT_OUTCOME_MAX_SOURCES } from "../constants.ts";
 import {
   EMPTY_TALLY,
   addToTally,
+  correctionLineOf,
   deliveryStates,
   enrolledSpan,
   lastWholeMonth,
@@ -38,7 +40,8 @@ import {
   readPeriodAggregate,
   withholdingOf,
 } from "./outcome-population.ts";
-import type { DeliveryState, Enrolment, HintOutcomeTally } from "./outcome-population.ts";
+import type { CorrectionLine, DeliveryState, Enrolment, HintOutcomeTally } from "./outcome-population.ts";
+import { countingFromOf, isCoolingRow, isRetractedRow } from "./human-provenance.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
@@ -85,7 +88,92 @@ export interface MyHintOutcomes extends HintOutcomeTally {
   readonly reasonsBeyondList: number;
   /** Hints that pointed at the CALLER's work and that the teammate they reached followed. */
   readonly yourWork: YourWork;
+  /**
+   * WHAT IS NOT THE CALLER'S JUDGEMENT YET (human provenance §5), never inside
+   * the tallies above: outcome and label drafts waiting for their passkey, by
+   * the class of the door they came through, and pointers whose only words
+   * were recorded before provenance existed.
+   */
+  readonly notConfirmed: NotConfirmed;
 }
+
+export interface NotConfirmed {
+  /** Drafted by the caller's agent (`mark_hint_outcome`), not confirmed. */
+  readonly byAgent: number;
+  /** Typed at a terminal (`crosscheck followed / overrode / noise / helpful`), not confirmed. */
+  readonly atTerminal: number;
+  /** Pointers whose words date from before 0.11 (`unknown_legacy`). */
+  readonly legacy: number;
+  /**
+   * Pointers with a word confirmed by a passkey still in its cool-off (review
+   * H1): it took effect, and counts from `countingFrom` unless revoked first.
+   */
+  readonly coolingOff: number;
+  /** When the earliest of those starts counting, as ISO; null with none. */
+  readonly countingFrom: string | null;
+  /** Pointers with a word confirmed by a passkey since revoked: retracted, never counted. */
+  readonly retracted: number;
+}
+
+/** The person's confirmed words on their deliveries: outcomes, labels and noise said again. */
+const confirmedWordsOf = (developerId: string, repo: string, since: Date): SQL => sql`
+  SELECT hd.session_id, hd.ref_id, w.provenance, w.confirmation_id FROM (
+    SELECT o.delivery_id, o.provenance, o.confirmation_id, o.created_at FROM hint_outcomes o
+    WHERE o.recorded_by = ${developerId} AND o.repo = ${repo}
+    UNION ALL
+    SELECT m.ref_id, m.provenance, m.confirmation_id, m.created_at FROM pilot_marks m
+    WHERE m.marked_by = ${developerId} AND m.repo = ${repo} AND m.ref_kind = 'hint_delivery'
+    UNION ALL
+    SELECT r.delivery_id, r.provenance, r.confirmation_id, r.created_at FROM noise_reassertions r
+    WHERE r.marked_by = ${developerId} AND r.repo = ${repo}
+  ) w JOIN hint_deliveries hd ON hd.id = w.delivery_id
+  WHERE w.created_at >= ${since.toISOString()}::timestamptz`;
+
+/** The confirmed words that count in no figure now: cooling off, or retracted (review H1). */
+const readUncounted = async (
+  deps: Deps,
+  input: ReadMyHintOutcomesInput,
+  since: Date,
+): Promise<Pick<NotConfirmed, "coolingOff" | "countingFrom" | "retracted">> => {
+  const at = deps.now();
+  const rows = await deps.db.execute<{ cooling: number; counting_from: string | Date | null; retracted: number }>(sql`
+    WITH words AS (${confirmedWordsOf(input.developerId, input.repo, since)})
+    SELECT
+      (SELECT count(DISTINCT (session_id, ref_id))::int FROM words w WHERE ${isCoolingRow("w", at)}) AS cooling,
+      (SELECT min(${countingFromOf("w")}) FROM words w WHERE ${isCoolingRow("w", at)}) AS counting_from,
+      (SELECT count(DISTINCT (session_id, ref_id))::int FROM words w WHERE ${isRetractedRow("w")}) AS retracted`);
+  const row = rows.rows[0];
+  return {
+    coolingOff: row?.cooling ?? 0,
+    countingFrom: row?.counting_from === null || row?.counting_from === undefined ? null : new Date(row.counting_from).toISOString(),
+    retracted: row?.retracted ?? 0,
+  };
+};
+
+const readNotConfirmed = async (deps: Deps, input: ReadMyHintOutcomesInput, since: Date): Promise<NotConfirmed> => {
+  const uncounted = await readUncounted(deps, input, since);
+  const rows = await deps.db.execute<{ by_agent: number; at_terminal: number; legacy: number }>(sql`
+    WITH drafted AS (
+      SELECT DISTINCT ON (d.subject_key) d.id, d.provenance, d.created_at
+      FROM human_drafts d
+      WHERE d.developer_id = ${input.developerId} AND d.repo = ${input.repo} AND d.kind IN ('outcome', 'label')
+      ORDER BY d.subject_key, d.version DESC
+    ), pending AS (
+      SELECT * FROM drafted dr
+      WHERE dr.created_at >= ${since.toISOString()}::timestamptz
+        AND NOT EXISTS (SELECT 1 FROM human_confirmation_items i
+                        WHERE i.draft_id = dr.id AND i.decision IN ('confirm', 'discard'))
+    )
+    SELECT
+      (SELECT count(*)::int FROM pending WHERE provenance = 'agent_asserted') AS by_agent,
+      (SELECT count(*)::int FROM pending WHERE provenance = 'interactive_terminal_asserted') AS at_terminal,
+      (SELECT count(DISTINCT (hd.session_id, hd.ref_id))::int FROM hint_outcomes o
+        JOIN hint_deliveries hd ON hd.id = o.delivery_id
+        WHERE o.recorded_by = ${input.developerId} AND o.repo = ${input.repo} AND o.provenance = ${LEGACY_PROVENANCE}
+          AND o.created_at >= ${since.toISOString()}::timestamptz) AS legacy`);
+  const row = rows.rows[0];
+  return { byAgent: row?.by_agent ?? 0, atTerminal: row?.at_terminal ?? 0, legacy: row?.legacy ?? 0, ...uncounted };
+};
 
 /** The source credit: one closed month's follows of the caller's work, or why there is no number. */
 export interface YourWork {
@@ -93,6 +181,15 @@ export interface YourWork {
   readonly periodEndIso: string;
   readonly followed: number | null;
   readonly withheld: HintOutcomeWithholding | null;
+  /**
+   * Follows of your work CONFIRMED in this month about hints of an earlier one
+   * (review M6), apart from `followed` and withheld APART (round-2 R2-H2): it
+   * prints only when its own followers pass the minimum. Absent when the month
+   * was never recordable.
+   */
+  readonly late?: { readonly followed: number | null; readonly withheld: HintOutcomeWithholding | null };
+  /** The correction line: follows of this month later declared compromised (round-2 R2-H1); null when none. */
+  readonly laterRetracted?: CorrectionLine | null;
   /** The pilot paused inside the month: only its enrolled time was counted (review LOW). */
   readonly pausedInPeriod: boolean;
   /** The month is counted over an enrolment an upgrade reconstructed from what was recorded (review M-3). */
@@ -151,7 +248,7 @@ const readTallies = async (
   since: Date,
 ): Promise<readonly TallyRow[]> => {
   const rows = await deps.db.execute<TallyRow>(sql`
-    ${deliveryStates(input.repo, since, receivedBy(input.developerId))}
+    ${deliveryStates(input.repo, since, receivedBy(input.developerId), null, deps.now())}
     SELECT st.source_id, d.name AS source, st.state, count(*)::int AS n,
       count(*) FILTER (WHERE st.helpful_label)::int AS helpful
     FROM states st LEFT JOIN developers d ON d.id = st.source_id
@@ -166,7 +263,7 @@ const readReasons = async (
   since: Date,
 ): Promise<readonly ReasonRow[]> => {
   const rows = await deps.db.execute<ReasonRow>(sql`
-    ${deliveryStates(input.repo, since, receivedBy(input.developerId))}
+    ${deliveryStates(input.repo, since, receivedBy(input.developerId), null, deps.now())}
     SELECT r.outcome, r.reason, d.name AS source, r.reasserted, count(*) OVER ()::int AS total
     FROM (
       SELECT st.state AS outcome, st.reason, st.reasserted, st.outcome_at AS at, st.id, st.source_id
@@ -205,12 +302,17 @@ const readYourWork = async (
     who: sql`s.developer_id <> ${input.developerId}`,
     sourceIs: input.developerId,
   });
-  // review M-1: a count only once, with any one person left out, three people FOLLOWED — never "followed 0"
-  const withheld = withholdingOf(aggregate, { sources: false, recorded: false, followers: true });
+  // review M-1: a count only once, with any one person left out, three people FOLLOWED — never "followed 0";
+  // round-2 R2-H2: the month's own follows and its late ones each pass that on their own
+  const checks = { sources: false, recorded: false, followers: true } as const;
+  const withheld = withholdingOf(aggregate, checks);
+  const lateWithheld = withholdingOf(aggregate.late, checks);
   return {
     ...stamps,
     followed: withheld === null ? aggregate.followed : null,
     withheld,
+    late: { followed: lateWithheld === null ? aggregate.late.followed : null, withheld: lateWithheld },
+    laterRetracted: correctionLineOf(aggregate.laterRetracted, { sources: false, recorded: false, followers: false }),
     pausedInPeriod: span.paused,
     reconstructed: span.reconstructed,
   };
@@ -233,10 +335,11 @@ export const readMyHintOutcomes = async (
     first.start.toISOString(),
     now,
   );
-  const [tallies, reasons, yourWork] = await Promise.all([
+  const [tallies, reasons, yourWork, notConfirmed] = await Promise.all([
     readTallies(deps, input, since),
     readReasons(deps, input, since),
     readYourWork(deps, input, now, enrolments),
+    readNotConfirmed(deps, input, since),
   ]);
   const { total, sources } = foldTallies(tallies);
   const reasonsTotal = Number(reasons[0]?.total ?? 0);
@@ -258,5 +361,6 @@ export const readMyHintOutcomes = async (
     })),
     reasonsBeyondList: Math.max(0, reasonsTotal - reasons.length),
     yourWork,
+    notConfirmed,
   };
 };

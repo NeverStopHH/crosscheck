@@ -23,13 +23,14 @@ import { createHash } from "node:crypto";
 import type { Context } from "hono";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
-import { MAX_PASSKEY_LABEL_CHARS, MAX_WAIVER_REASON_CHARS } from "@crosscheck/schema";
+import { MAX_PASSKEY_LABEL_CHARS, MAX_WAIVER_REASON_CHARS, PASSKEY_REVOKE_REASONS } from "@crosscheck/schema";
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from "@simplewebauthn/server";
 
 import { fenceWaivers } from "../db/schema.ts";
 import { fail, ok } from "../http/envelope.ts";
 import { formatIssues, readJsonBody } from "../http/request.ts";
 import {
+  confirmingCredentials,
   enrolPasskey,
   enrolledCredentials,
   isEnrolmentCodeValid,
@@ -38,11 +39,21 @@ import {
   revokePasskey,
   usableCredentials,
 } from "../services/passkeys.ts";
+import type { UsableCredential } from "../services/passkeys.ts";
+import type { BatchStore } from "../services/confirmation-batch.ts";
+import { finishRevocation, revocationSentence } from "../services/confirmation-rollback.ts";
+import { BATCH_SENTENCE, confirmAuthorityOf, confirmTermsOf, performConfirm } from "./ui-ceremony-confirm.ts";
 import { amendWaiver, approveRequest, readPendingRequest } from "../services/waiver-requests.ts";
 import type { WaiverRequestRefusal } from "../services/waiver-requests.ts";
 import { readLiveWaiver, revokeWaiver } from "../services/waivers.ts";
 import { hasHttpsOrigin, isLocalOrigin, isLocalhostName } from "../services/webauthn.ts";
-import type { CeremonyOwner, CeremonyPurpose, CeremonyTerms, WebAuthn } from "../services/webauthn.ts";
+import type {
+  CeremonyOwner,
+  CeremonyPurpose,
+  CeremonyTerms,
+  StoredCredential,
+  WebAuthn,
+} from "../services/webauthn.ts";
 import { isTrustedProxied } from "../http/forwarded.ts";
 import { isLoopbackAddress } from "../http/peer.ts";
 import { isCsrfValid } from "../ui/session.ts";
@@ -59,6 +70,8 @@ const Reason = z.string().trim().min(1).max(MAX_WAIVER_REASON_CHARS);
 
 /** The eight actions and the fields each one signs. */
 const CeremonyFieldsSchema = z.discriminatedUnion("action", [
+  // human provenance §6: one frozen batch of the person's own drafts.
+  z.object({ action: z.literal("confirm_batch"), subjectId: Subject }),
   z.object({ action: z.literal("approve_artifact"), subjectId: Subject }),
   z.object({ action: z.literal("revoke_artifact"), subjectId: Subject }),
   z.object({
@@ -70,7 +83,8 @@ const CeremonyFieldsSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("approve"), subjectId: Subject, expiresAt: z.iso.datetime(), reason: Reason }),
   z.object({ action: z.literal("amend"), subjectId: Subject, expiresAt: z.iso.datetime(), reason: Reason }),
   z.object({ action: z.literal("revoke_waiver"), subjectId: Subject, reason: Reason }),
-  z.object({ action: z.literal("revoke_passkey"), subjectId: Subject }),
+  // round-2 R2-H3: why it is closed, signed — `compromised` retracts what it confirmed.
+  z.object({ action: z.literal("revoke_passkey"), subjectId: Subject, reason: z.enum(PASSKEY_REVOKE_REASONS).default("retired") }),
 ]);
 
 type CeremonyFields = z.infer<typeof CeremonyFieldsSchema>;
@@ -106,7 +120,10 @@ const CEREMONY_SENTENCE = {
   unknown_passkey: "you have no passkey with that id",
   already_revoked: "that passkey has already been revoked",
   passkey_required: "after its first day a passkey is revoked with a passkey",
+  compromised_needs_another_passkey:
+    "a passkey is declared compromised with ANOTHER of your passkeys, never with itself, a key or the admin token — the admin can retire it, which keeps what it confirmed",
   ...ARTIFACT_SENTENCE,
+  ...BATCH_SENTENCE,
 } as const;
 
 type CeremonyRefusal = keyof typeof CEREMONY_SENTENCE;
@@ -139,13 +156,22 @@ const isRefused = (signed: Signed | TermsRefusal): signed is TermsRefusal => !("
 const refuseTerms = (c: Context<AppEnv>, refused: TermsRefusal): Response =>
   "refusal" in refused ? refuseWaiver(c, refused.refusal) : refuse(c, refused.ceremonyRefusal);
 
+/** What a ceremony may consult beyond the database: who asks, and the batches their sessions formed. */
+interface CeremonyContext {
+  readonly owner: CeremonyOwner;
+  readonly batches: BatchStore;
+}
+
 /** The terms a ceremony signs, built by the hub from the fields and the stored request. */
 const signedTermsOf = async (
   deps: AppDeps,
-  developerId: string,
+  context: CeremonyContext,
   fields: AssertionFields,
 ): Promise<Signed | TermsRefusal> => {
+  const developerId = context.owner.developerId;
   switch (fields.action) {
+    case "confirm_batch":
+      return confirmTermsOf(context.batches, context.owner, fields);
     case "approve_artifact":
     case "revoke_artifact":
       return artifactTermsOf(deps, developerId, fields);
@@ -176,7 +202,7 @@ const signedTermsOf = async (
     case "revoke_waiver":
       return { purpose: fields.action, subject: fields.subjectId, terms: { reasonDigest: digest(fields.reason) } };
     case "revoke_passkey":
-      return { purpose: fields.action, subject: fields.subjectId, terms: {} };
+      return { purpose: fields.action, subject: fields.subjectId, terms: { reason: fields.reason } };
   }
 };
 
@@ -233,7 +259,7 @@ const readCeremonyRequest = async (
 ): Promise<
   { fields: CeremonyFields; body: unknown; origin: string; owner: CeremonyOwner } | Response
 > => {
-  if (!isCsrfValid(deps.uiSessionSecret, c.get("uiSessionToken"), c.req.header(CSRF_HEADER) ?? "")) {
+  if (!isCeremonyCsrfValid(c, deps)) {
     return fail(c, 403, "csrf_invalid", "invalid or missing CSRF token — reload the page");
   }
   const body = await readJsonBody(c);
@@ -251,19 +277,47 @@ const readCeremonyRequest = async (
   if (isLocalOriginFromElsewhere(c, deps, origin)) {
     return refuse(c, "origin_not_local");
   }
-  const owner: CeremonyOwner = {
-    developerId: c.get("developer").id,
-    // The session token is a bearer secret; the ceremony map only needs to
-    // tell sessions apart, so it holds the digest.
-    sessionKey: digest(c.get("uiSessionToken")),
-  };
-  return { fields: parsed.data, body, origin, owner };
+  return { fields: parsed.data, body, origin, owner: ceremonyOwnerOf(c) };
+};
+
+/**
+ * Who a ceremony — or a confirmation batch — belongs to: the developer AND
+ * this browser session. The session token is a bearer secret; the maps only
+ * need to tell sessions apart, so they hold its digest.
+ */
+export const ceremonyOwnerOf = (c: Context<AppEnv>): CeremonyOwner => ({
+  developerId: c.get("developer").id,
+  sessionKey: digest(c.get("uiSessionToken")),
+});
+
+/** The JSON-fetch CSRF rule both ceremony endpoints and the batch route apply. */
+export const isCeremonyCsrfValid = (c: Context<AppEnv>, deps: AppDeps): boolean =>
+  isCsrfValid(deps.uiSessionSecret, c.get("uiSessionToken"), c.req.header(CSRF_HEADER) ?? "");
+
+/**
+ * WHICH OF THE PERSON'S PASSKEYS MAY SIGN THIS: past the cool-off for every
+ * authority (04a §4.4) — but any unrevoked one for a confirmation of their own
+ * drafts, which is not a privileged action (human provenance §6, Q19).
+ */
+const signingCredentials = (
+  deps: AppDeps,
+  context: CeremonyContext,
+  fields: AssertionFields,
+): Promise<readonly UsableCredential[]> => {
+  const developerId = context.owner.developerId;
+  // A batch with a privileged kind in it (services/draft-kinds.ts) waits for the cool-off like any authority.
+  const isNormalConfirmation =
+    fields.action === "confirm_batch" && confirmAuthorityOf(context.batches, context.owner, fields) === "normal";
+  return isNormalConfirmation
+    ? confirmingCredentials({ db: deps.db, developerId })
+    : usableCredentials({ db: deps.db, developerId, now: deps.now() });
 };
 
 export const ceremonyOptions = async (
   c: Context<AppEnv>,
   deps: AppDeps,
   webauthn: WebAuthn,
+  batches: BatchStore,
 ): Promise<Response> => {
   const request = await readCeremonyRequest(c, deps);
   if (request instanceof Response) {
@@ -291,11 +345,11 @@ export const ceremonyOptions = async (
       ? refuse(c, minted.refusal)
       : ok(c, { ceremonyId: minted.ceremonyId, publicKey: minted.options });
   }
-  const signed = await signedTermsOf(deps, developer.id, fields);
+  const signed = await signedTermsOf(deps, { owner, batches }, fields);
   if (isRefused(signed)) {
     return refuseTerms(c, signed);
   }
-  const usable = await usableCredentials({ db: deps.db, developerId: developer.id, now: deps.now() });
+  const usable = await signingCredentials(deps, { owner, batches }, fields);
   const minted = await webauthn.authenticationOptions({
     ...owner,
     ...signed,
@@ -388,12 +442,18 @@ const performOnWaiver = async (
 const perform = async (
   c: Context<AppEnv>,
   deps: AppDeps,
+  context: CeremonyContext,
   fields: AssertionFields,
-  credentialId: string,
-  signed: Signed,
+  credential: StoredCredential,
+  signed: Signed & { readonly response: AuthenticationResponseJSON },
 ): Promise<Response> => {
   const developerId = c.get("developer").id;
+  const credentialId = credential.id;
   switch (fields.action) {
+    case "confirm_batch": {
+      const outcome = await performConfirm(deps, context.batches, context.owner, fields, credential, signed);
+      return "ceremonyRefusal" in outcome ? refuse(c, outcome.ceremonyRefusal) : ok(c, outcome);
+    }
     case "authorise_enrolment": {
       const { code } = await mintEnrolmentCode({ db: deps.db, developerId, source: "passkey", now: deps.now() });
       return ok(c, { code });
@@ -421,10 +481,14 @@ const perform = async (
         passkeyId: fields.subjectId,
         by: { kind: "passkey", developerId },
         now: deps.now(),
+        reason: fields.reason,
+        signerCredentialId: credentialId,
       });
-      return "refusal" in outcome
-        ? refuse(c, outcome.refusal)
-        : ok(c, { message: `Passkey revoked.${closedWithIt(outcome.terminated)}` });
+      if ("refusal" in outcome) {
+        return refuse(c, outcome.refusal);
+      }
+      await finishRevocation(deps, outcome);
+      return ok(c, { message: `${revocationSentence(outcome, fields.reason)}${closedWithIt(outcome.terminated)}` });
     }
     case "approve_artifact":
     case "revoke_artifact": {
@@ -468,6 +532,7 @@ export const ceremonyVerify = async (
   c: Context<AppEnv>,
   deps: AppDeps,
   webauthn: WebAuthn,
+  batches: BatchStore,
 ): Promise<Response> => {
   const request = await readCeremonyRequest(c, deps);
   if (request instanceof Response) {
@@ -485,12 +550,13 @@ export const ceremonyVerify = async (
   // Single use even when refused HERE, before the signature is looked at:
   // a ceremony that survived would be a nonce to try again with another key.
   const spend = (): void => webauthn.discard({ ...owner, ceremonyId: extras.data.ceremonyId });
-  const signed = await signedTermsOf(deps, developerId, fields);
+  const context: CeremonyContext = { owner, batches };
+  const signed = await signedTermsOf(deps, context, fields);
   if (isRefused(signed)) {
     spend();
     return refuseTerms(c, signed);
   }
-  const usable = await usableCredentials({ db: deps.db, developerId, now: deps.now() });
+  const usable = await signingCredentials(deps, context, fields);
   const match = usable.find((entry) => entry.credential.id === extras.data.response.id);
   if (match === undefined) {
     spend();
@@ -507,5 +573,8 @@ export const ceremonyVerify = async (
     return refuse(c, verified.refusal);
   }
   await recordSignCount({ db: deps.db, credentialId: match.credential.id, counter: verified.newCounter });
-  return perform(c, deps, fields, match.credential.id, signed);
+  return perform(c, deps, context, fields, match.credential, {
+    ...signed,
+    response: extras.data.response as unknown as AuthenticationResponseJSON,
+  });
 };

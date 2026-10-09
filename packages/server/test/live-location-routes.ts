@@ -120,6 +120,16 @@ const GET_ROUTES: Readonly<Record<string, RouteSpec>> = {
     colleague: { hidden: "counts only — no claim, context or developer" },
     self: { none: "counts only — no claim, context or developer" },
   },
+  "GET /api/confirm/confirmations": {
+    variants: [{ path: "/api/confirm/confirmations" }, { path: "/api/confirm/confirmations", query: { limit: "5" } }],
+    colleague: { hidden: OWN },
+    self: { none: OWN },
+  },
+  "GET /api/confirm/status": {
+    variants: [{ path: "/api/confirm/status" }],
+    colleague: { hidden: "the caller's own counts, passkeys and the hub's origins — no row of a draft" },
+    self: { none: OWN },
+  },
   "GET /api/conference": {
     variants: [
       { path: "/api/conference", query: { repo: REPO } },
@@ -394,6 +404,13 @@ const GET_ROUTES: Readonly<Record<string, RouteSpec>> = {
     variants: [{ path: "/ui/feed" }],
     colleague: PRESENCE("surface 4, the feed page"),
     self: "located",
+  },
+  // His agent's draft on the hint that pointed at HER context (the seed): the
+  // page names the pointed work, through the live-location projection.
+  "GET /ui/confirm": {
+    variants: [{ path: "/ui/confirm" }],
+    colleague: "withheld",
+    self: { none: "the caller's own pending drafts: the seed drafts nothing of hers" },
   },
   "GET /ui/login": { variants: [{ path: "/ui/login" }], colleague: { hidden: "a static form" }, self: { none: "a static form" } },
   "GET /ui/members": { variants: [{ path: "/ui/members" }], colleague: "withheld", self: "located" },
@@ -700,6 +717,12 @@ const WRITE_ROUTES: Readonly<Record<string, RouteSpec>> = {
     variants: [{ path: "/ui/passkeys/pk_none/revoke", body: { _csrf: "not-this-session" }, refused: "no such passkey; a form post" }],
     whyNoVariants: "revokes the caller's own passkey; none seeded",
     colleague: { hidden: NONE_SEEDED },
+    self: { none: WRITE_ACK },
+  },
+  "POST /ui/confirm/batch": {
+    variants: refusedPost("/ui/confirm/batch", "a batch is formed by the confirm page, with its session's CSRF header"),
+    whyNoVariants: "freezes the caller's own decisions on her own drafts into a batch held in hub memory",
+    colleague: { hidden: "the caller's own batch: an id, a digest and counts" },
     self: { none: WRITE_ACK },
   },
   "POST /ui/webauthn/options": {

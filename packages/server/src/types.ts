@@ -67,4 +67,10 @@ export interface AppDeps {
    * serving no socket of its own (an embedded app, a test).
    */
   readonly listen: ListenKind | null;
+  /**
+   * CROSSCHECK_REFUSE_PRE_011_DRAFTS (http/client-release.ts): the drafting
+   * doors refuse a client that names no release, or one older than 0.11. Not
+   * a security control — any program can send the header.
+   */
+  readonly refusePreDraftingClients: boolean;
 }

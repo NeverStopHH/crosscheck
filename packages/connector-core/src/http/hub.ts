@@ -2311,9 +2311,13 @@ export const PrivacySettingsSchema = z
     // An older hub sends nothing, and a value that is not an ISO instant
     // reads as nothing: tolerant, so it never costs the settings read.
     presenceReenabledAt: z.iso.datetime().nullable().optional().catch(null),
+    // A request to show presence again waits for the passkey (human
+    // provenance §8). An older hub sends nothing; anything else reads as no.
+    presenceOnPending: z.boolean().optional().catch(false),
   })
   .transform((value) => ({
     presenceReenabledAt: value.presenceReenabledAt ?? null,
+    presenceOnPending: value.presenceOnPending ?? false,
     presenceOptOut: value.presenceOptOut,
     mutes: value.mutes
       .map((item) => MutedDeveloperSchema.safeParse(item))
@@ -2331,6 +2335,8 @@ export interface PrivacySettings {
   readonly emails: readonly OwnEmail[];
   /** ISO instant the opt-out was last switched back off while presence is on, or null. */
   readonly presenceReenabledAt: string | null;
+  /** A request to show presence again waits for the person's passkey (§8). */
+  readonly presenceOnPending: boolean;
 }
 
 export const getPrivacySettings = (
@@ -2398,20 +2404,31 @@ export const getHubStatus = (ctx: HubContext): Promise<HubResult<HubStatus>> =>
     schema: HubStatusSchema,
   });
 
+/**
+ * Going more private takes effect at once; presence back ON is, on a hub
+ * since human provenance (0.11 §8), a draft (`draft: true`) the person
+ * confirms with their passkey. Any other field is the hub's business.
+ */
+const PresenceAnswerSchema = z.looseObject({ draft: z.boolean().optional().catch(undefined) }).catch({});
+
+export type PresenceAnswer = z.infer<typeof PresenceAnswerSchema>;
+
 export const putPresenceOptOut = (
   ctx: HubContext,
   optOut: boolean,
-): Promise<HubResult<unknown>> =>
+): Promise<HubResult<PresenceAnswer>> =>
   hubRequest(ctx, {
     method: "PUT",
     path: "/api/settings/presence",
-    schema: z.unknown(),
+    schema: PresenceAnswerSchema,
     body: { optOut },
   });
 
+/** `draft: true` from a hub since human provenance (0.11 §8): the mute waits for the person's passkey. */
 const MuteResponseSchema = z.looseObject({
   muted: MutedDeveloperSchema,
   alreadyMuted: z.boolean().default(false),
+  draft: z.boolean().optional().catch(undefined),
 });
 
 export type MuteResponse = z.infer<typeof MuteResponseSchema>;
@@ -2430,6 +2447,7 @@ export const postMute = (
 const UnmuteResponseSchema = z.looseObject({
   unmuted: MutedDeveloperSchema,
   wasMuted: z.boolean().default(true),
+  draft: z.boolean().optional().catch(undefined),
 });
 
 export type UnmuteResponse = z.infer<typeof UnmuteResponseSchema>;
@@ -2781,6 +2799,12 @@ export const PinEntrySchema = z.looseObject({
   verifiedByName: z.string().min(1),
   verifiedAtCommit: z.string().min(1),
   verifiedAt: z.string().min(1),
+  /**
+   * Who made it a pin (human provenance §7, round-1 L3): the person, with a
+   * passkey, or `unknown_legacy` for a pin from before provenance. Absent from
+   * an older hub, and read as absent when it is not a string.
+   */
+  provenance: z.string().min(1).optional().catch(undefined),
   brokeAt: z.string().nullable().default(null),
   brokeByName: z.string().nullable().default(null),
   speaking: z.boolean().default(false),
@@ -2893,12 +2917,19 @@ export interface CreatePinRequest {
   readonly verifiedAtCommit: string;
 }
 
-const CreatedPinSchema = z.looseObject({ id: z.string().min(1) });
+/**
+ * A hub since human provenance (0.11 §7) answers 202 with `draft: true`: the
+ * pin, or its break, waits for the person's passkey and protects nothing yet.
+ * An older hub sends no `draft` — it took effect at once.
+ */
+const CreatedPinSchema = z.looseObject({ id: z.string().min(1), draft: z.boolean().optional().catch(undefined) });
+
+export type CreatedPin = z.infer<typeof CreatedPinSchema>;
 
 export const createPin = (
   ctx: HubContext,
   request: CreatePinRequest,
-): Promise<HubResult<{ readonly id: string }>> =>
+): Promise<HubResult<CreatedPin>> =>
   hubRequest(ctx, {
     method: "POST",
     path: "/api/pins",
@@ -2922,7 +2953,7 @@ export const breakPin = (
    * still recorded; proof 3 then counts it and never scores it.
    */
   brokeAtCommit?: string,
-): Promise<HubResult<{ readonly id: string }>> =>
+): Promise<HubResult<CreatedPin>> =>
   hubRequest(ctx, {
     method: "POST",
     path: `/api/pins/${encodeURIComponent(pinId)}/broke`,

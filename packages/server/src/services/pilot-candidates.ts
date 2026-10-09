@@ -203,6 +203,18 @@ export const readUnlabeledInterventions = async (
         WHERE m.ref_kind = 'hint_delivery' AND m.ref_id = hd.id
           AND m.marked_by = ${input.developerId}
       )
+      -- human provenance §4: a pointer whose label draft WAITS at /ui/confirm is not asked for
+      -- again; one the person discarded there is offered again (review H3) — a confirmed one
+      -- is a pilot_marks row, above
+      AND NOT EXISTS (
+        SELECT 1 FROM human_drafts dr
+        WHERE dr.developer_id = ${input.developerId}
+          AND dr.subject_key = 'label:' || hd.session_id || ':' || hd.ref_id
+          AND dr.version = (SELECT max(v.version) FROM human_drafts v
+                            WHERE v.developer_id = dr.developer_id AND v.subject_key = dr.subject_key)
+          AND NOT EXISTS (SELECT 1 FROM human_confirmation_items i
+                          WHERE i.draft_id = dr.id AND i.decision IN ('confirm', 'discard'))
+      )
     ORDER BY hd.delivered_at DESC, hd.id ASC
     LIMIT ${PILOT_LABEL_MAX_CANDIDATES + 1}`);
   const hidden = await locationHiddenFrom(deps.db, input.developerId);

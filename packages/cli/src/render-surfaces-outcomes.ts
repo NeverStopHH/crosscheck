@@ -12,16 +12,21 @@ import type { RenderSurface } from "@crosscheck/connector-core/render-surfaces.t
 import type { MyHintOutcomes } from "@crosscheck/connector-core/http/hint-outcomes.ts";
 
 import {
+  AGENT_DRAFT_LINE,
   DELIVERY_HELD_AMBIGUOUS_LINE,
   DELIVERY_HELD_NO_LIVE_SESSION_LINE,
   DELIVERY_STILL_ON_THIS_MACHINE_LINE,
   OUTCOMES_NOT_SERVED_LINE,
   REASON_REQUIRED_LINE,
   REASON_SECRET_LINE,
+  agentHostDraftLine,
   outcomeRecordedLine,
   reasonTooLongLine,
 } from "./cli/outcome-render.ts";
 import { MINE_JSON_REFUSAL, MINE_NOT_SERVED_LINE, renderMyOutcomes } from "./cli/pilot-mine-render.ts";
+
+/** 0.11's surfaces, passed through here so the registry's import line stays one line. */
+export { PROVENANCE_SURFACES } from "./render-surfaces-provenance.ts";
 
 const TALLY = { received: 3, followed: 1, overrode: 1, notRelevantNow: 0, noise: 1, unmarked: 0 };
 
@@ -43,6 +48,8 @@ const mineWith = (payload: string): MyHintOutcomes => ({
   ],
   reasonsBeyondList: 1,
   yourWork: { periodStartIso: payload, periodEndIso: payload, followed: null, withheld: payload },
+  // Human provenance (review H1): the hub's instant is re-printed by this client, never echoed.
+  notConfirmed: { byAgent: 1, atTerminal: 1, legacy: 1, coolingOff: 1, countingFrom: payload, retracted: 1 },
 });
 
 export const HINT_OUTCOME_SURFACES: readonly RenderSurface[] = [
@@ -62,6 +69,21 @@ export const HINT_OUTCOME_SURFACES: readonly RenderSurface[] = [
         outcomeRecordedLine(payload, { id: payload, deliveryId: payload, outcome: "followed", repeated: false, replaced: null }),
         outcomeRecordedLine(payload, { id: payload, deliveryId: payload, outcome: payload, repeated: false, replaced: "noise", stands: payload }),
         outcomeRecordedLine(payload, { id: payload, deliveryId: payload, outcome: payload, repeated: true, replaced: null, stands: payload }),
+        // Human provenance (0.11 §5): a hub that only drafts the word.
+        outcomeRecordedLine(payload, { id: payload, deliveryId: payload, outcome: payload, repeated: false, replaced: null, draft: true }),
+        outcomeRecordedLine(payload, { id: payload, deliveryId: payload, outcome: payload, repeated: true, replaced: null, draft: true }),
+        outcomeRecordedLine(payload, {
+          id: payload,
+          deliveryId: payload,
+          outcome: payload,
+          repeated: true,
+          replaced: null,
+          draft: true,
+          waiting: false,
+          discardedByPerson: true,
+        }),
+        AGENT_DRAFT_LINE,
+        agentHostDraftLine("CLAUDECODE"),
         DELIVERY_STILL_ON_THIS_MACHINE_LINE,
         DELIVERY_HELD_NO_LIVE_SESSION_LINE,
         DELIVERY_HELD_AMBIGUOUS_LINE,

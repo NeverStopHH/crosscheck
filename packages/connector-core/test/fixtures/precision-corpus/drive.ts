@@ -20,7 +20,8 @@ import { serveLoopback } from "../loopback-serve.ts";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import { createDb, createServer } from "@crosscheck/server";
+import { createDb } from "@crosscheck/server";
+import { createServerConfirmingAtOnce } from "../../../../server/test/fixtures/immediate-confirmation.ts";
 
 import { MAX_HINTS_PER_SESSION } from "../../../src/constants.ts";
 import { substanceSentence } from "@crosscheck/schema";
@@ -122,7 +123,9 @@ const expectOk = async (
 
 const startHub = async (): Promise<Hub> => {
   const db = await createDb();
-  const app = createServer({
+  // The corpus seeds mutes as settings IN EFFECT: a hub that applies them at
+  // once, as every hub before human provenance (0.11) did.
+  const app = createServerConfirmingAtOnce({
     db,
     now: () => new Date(CORPUS_NOW_ISO),
     adminToken: ADMIN_TOKEN,

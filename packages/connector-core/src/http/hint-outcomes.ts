@@ -15,7 +15,7 @@ import { z } from "zod";
 import type { HintOutcome, HintOutcomeChannel } from "@crosscheck/schema";
 
 import { hubRequest } from "./client.ts";
-import { UNREADABLE_BLOCK } from "./pilot.ts";
+import { CorrectionSchema, UNREADABLE_BLOCK } from "./pilot.ts";
 import type { UnreadableBlock } from "./pilot.ts";
 import type { HubContext, HubResult } from "./client.ts";
 
@@ -48,6 +48,16 @@ const RecordedOutcomeSchema = z.looseObject({
    * read as the word itself.
    */
   stands: z.string().min(1).optional(),
+  /**
+   * Human provenance §3: the word was DRAFTED, not recorded as the person's —
+   * it counts once they confirm it with their passkey. Absent from an older
+   * hub, where every word counted at once.
+   */
+  draft: z.boolean().optional(),
+  /** Whether the draft waits on the person's confirm page now (review H2). Absent: read as waiting. */
+  waiting: z.boolean().optional().catch(undefined),
+  /** The agent said again a word the person discarded: not put back on their page. */
+  discardedByPerson: z.boolean().optional().catch(undefined),
 });
 
 export type RecordedOutcome = z.infer<typeof RecordedOutcomeSchema>;
@@ -136,6 +146,17 @@ const CreditSchema = z
     pausedInPeriod: z.boolean().optional(),
     /** 07 §13.12 (review M-3): counted over an enrolment an upgrade reconstructed. Absent from an older hub. */
     reconstructed: z.boolean().optional(),
+    /**
+     * Review M6: follows confirmed this month about earlier months' hints, withheld on their own
+     * (round-2 R2-H2). Absent from an older hub, and read as absent when it is inconsistent.
+     */
+    late: z
+      .looseObject({ followed: CountSchema.nullable(), withheld: z.string().min(1).nullable() })
+      .refine((late) => (late.withheld === null) === (late.followed !== null))
+      .optional()
+      .catch(undefined),
+    /** Round-2 R2-H1: follows of the month later declared compromised; null when none. Absent from an older hub. */
+    laterRetracted: CorrectionSchema.nullable().optional().catch(undefined),
   })
   .refine((credit) => (credit.withheld === null) === (credit.followed !== null), {
     message: "a source credit is either withheld or counted",
@@ -162,6 +183,27 @@ export const MyHintOutcomesSchema = z.looseObject({
   reasonsBeyondList: CountSchema,
   /** 07 §13.11 (round 3): lenient as a block — an unreadable credit never rejects the person's own view. */
   yourWork: z.unknown().transform(readCredit),
+  /**
+   * Human provenance §5: what is not the caller's judgement yet — drafts by
+   * class, and words from before provenance existed. Absent from an older
+   * hub, which counted every word as the caller's; a block this client cannot
+   * read is dropped, never zeros.
+   */
+  notConfirmed: z
+    .looseObject({
+      byAgent: CountSchema,
+      atTerminal: CountSchema,
+      legacy: CountSchema,
+      /** Review H1: confirmed with a passkey still cooling off — counted from `countingFrom`. */
+      coolingOff: CountSchema.optional().catch(undefined),
+      countingFrom: z.string().nullable().optional().catch(undefined),
+      /** Confirmed with a passkey since revoked: retracted. */
+      retracted: CountSchema.optional().catch(undefined),
+    })
+    .optional()
+    .catch(undefined),
+  /** Human provenance §9: where a passkey can confirm anything on this hub. Absent from an older hub. */
+  humanConfirmation: z.enum(["https", "hub_machine_only", "none"]).optional().catch(undefined),
 });
 
 export type MyHintOutcomes = z.infer<typeof MyHintOutcomesSchema>;

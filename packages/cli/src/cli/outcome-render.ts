@@ -16,6 +16,7 @@ import type { HeldWhy } from "@crosscheck/connector-core/spool/held-deliveries.t
 import { MAX_HINT_OUTCOME_REASON_CHARS } from "@crosscheck/schema";
 
 import type { AgentHostMarker } from "./agent-host.ts";
+import { ALREADY_DRAFTED, NOT_YOURS_YET } from "./draft-lines.ts";
 
 /** The stored word as a person reads it; a word this client does not know prints as itself. */
 const OUTCOME_WORDS: Readonly<Record<string, string>> = {
@@ -49,6 +50,18 @@ export const AGENT_WORD_LINE =
  */
 export const agentHostLine = (marker: AgentHostMarker): string =>
   `recorded as your agent's word — this command ran inside an agent's tool (${marker} is set); type it in your own shell for it to stand as yours\n`;
+
+/**
+ * THE SAME TWO, FROM A HUB THAT ONLY DRAFTS (human provenance §5): typed in
+ * your own shell or not, the word is a draft — the gate now decides only how
+ * the confirm page labels it, so these lines no longer promise that a shell
+ * makes it yours. Only the passkey does.
+ */
+export const AGENT_DRAFT_LINE =
+  "drafted as your agent's word — this command's input was not a terminal (an agent's tool, a pipe, or Claude Code's ! prefix), so the confirm page shows it as your agent's\n";
+
+export const agentHostDraftLine = (marker: AgentHostMarker): string =>
+  `drafted as your agent's word — this command ran inside an agent's tool (${marker} is set), so the confirm page shows it as your agent's\n`;
 
 /** 07 §13.11 (M3), §13.12 (LOW): a month the pilot paused in counted only its enrolled time — every line says so. */
 export const COUNTED_WHILE_ENROLLED = "counted only while the pilot was enrolled here";
@@ -86,8 +99,31 @@ const supersededWords = (recorded: RecordedOutcome): string => {
   return `, superseding ${earlier} (kept in the history)`;
 };
 
+/** What stays true of the word once it is the person's: who may ever see it. */
+const WHO_SEES_IT =
+  "It shows in full only in your own crosscheck pilot --mine; " +
+  "others see it only inside totals for a whole past month — the team report's, and the teammate's count of how often their work was followed — " +
+  "each shown only if, leaving out any one person's words, words from at least 3 people remain, so never in a team of three";
+
+/**
+ * A HUB SINCE HUMAN PROVENANCE ONLY DRAFTS THE WORD (0.11 §5): it stands over
+ * nothing and counts for nothing until the person confirms it with their
+ * passkey, so the line says that and never "recorded".
+ */
+const outcomeDraftedLine = (shown: string, recorded: RecordedOutcome): string => {
+  if (recorded.discardedByPerson === true) {
+    return `not drafted again: ${shown} — you discarded ${outcomeWord(recorded.outcome)} when your agent said it before; type it in your own shell if it is yours\n`;
+  }
+  return recorded.repeated
+    ? `already drafted: ${shown} — ${outcomeWord(recorded.outcome)} was drafted before; ${ALREADY_DRAFTED}\n`
+    : `drafted: ${shown} — ${outcomeWord(recorded.outcome)}. ${NOT_YOURS_YET}. Once it is: ${WHO_SEES_IT}\n`;
+};
+
 export const outcomeRecordedLine = (ref: string, recorded: RecordedOutcome): string => {
   const shown = safeId(ref);
+  if (recorded.draft === true) {
+    return outcomeDraftedLine(shown, recorded);
+  }
   if (recorded.repeated) {
     const stands = recorded.stands ?? recorded.outcome;
     // 07 §13.11 (H2): the word said again may be the one the person's label superseded.
@@ -95,11 +131,7 @@ export const outcomeRecordedLine = (ref: string, recorded: RecordedOutcome): str
       ? `already recorded: ${shown} stands at ${standingWord(stands)} — nothing was written a second time\n`
       : `already recorded: ${shown} — ${outcomeWord(recorded.outcome)} was said before, and ${standingWord(stands)}, made since, stands over it; nothing was written a second time\n`;
   }
-  return (
-    `recorded: ${shown} — ${outcomeWord(recorded.outcome)}${supersededWords(recorded)}. It shows in full only in your own crosscheck pilot --mine; ` +
-    "others see it only inside totals for a whole past month — the team report's, and the teammate's count of how often their work was followed — " +
-    "each shown only if, leaving out any one person's words, words from at least 3 people remain, so never in a team of three\n"
-  );
+  return `recorded: ${shown} — ${outcomeWord(recorded.outcome)}${supersededWords(recorded)}. ${WHO_SEES_IT}\n`;
 };
 
 export const DELIVERY_HELD_AMBIGUOUS_LINE =

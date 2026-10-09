@@ -33,6 +33,7 @@ import { holdsUnsentDelivery } from "@crosscheck/connector-core/spool/held-deliv
 import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 
 import { runCli } from "../src/index.ts";
+import { createServerConfirmingAtOnce } from "../../server/test/fixtures/immediate-confirmation.ts";
 import {
   AGENT_WORD_LINE,
   DELIVERY_HELD_AMBIGUOUS_LINE,
@@ -70,11 +71,21 @@ let personlessHub: ReturnType<typeof Bun.serve>;
 let recordlessHub: ReturnType<typeof Bun.serve>;
 /** A hub that cannot take records yet and knows no delivery — a spooled hint's view of the world. */
 let stuckHub: ReturnType<typeof Bun.serve>;
+/** The same database served as the hub IS since human provenance: a key's word is only drafted. */
+let draftingHub: ReturnType<typeof Bun.serve>;
 let hubUrl: string;
 let repo: string;
 let nick: { apiKey: string; id: string };
 let ken: { apiKey: string; id: string };
 const homes: string[] = [];
+
+/** The agent's own route on the hub as it runs since human provenance: the word waits as a draft. */
+const agentDrafts = async (apiKey: string, body: unknown): Promise<Response> =>
+  fetch(`http://127.0.0.1:${String(draftingHub.port)}/api/hint-outcomes`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
 
 const send = async (method: string, path: string, apiKey: string, body: unknown): Promise<Response> =>
   fetch(`${hubUrl}${path}`, {
@@ -173,8 +184,11 @@ const cli = (
 
 beforeAll(async () => {
   const db = await createDb();
-  server = serveLoopback({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
+  // A hub that applies the word at once, as every hub before 0.11 did: these
+  // tests pin how the CLI renders a word that took effect. Drafts: drafted-gestures-cli.test.ts.
+  server = serveLoopback({ port: 0, fetch: createServerConfirmingAtOnce({ db, adminToken: ADMIN_TOKEN }).fetch });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
+  draftingHub = serveLoopback({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
   oldHub = serveLoopback({
     port: 0,
     fetch: () => Response.json({ ok: false, error: { code: "not_found", message: "route not found" } }, { status: 404 }),
@@ -250,6 +264,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   server.stop(true);
+  draftingHub.stop(true);
   oldHub.stop(true);
   personlessHub.stop(true);
   recordlessHub.stop(true);
@@ -495,7 +510,9 @@ describe("crosscheck pilot --mine", () => {
     // Assert
     expect(result.exitCode).toBe(EXIT_OK);
     expect(result.stdout).toContain(QUOTED_DATA_NOTICE);
-    expect(result.stdout).toContain("hints that reached you unasked: 5 — followed 3 · overrode 1 · not relevant now 0 · noise 0 · unmarked 1");
+    expect(result.stdout).toContain(
+      "hints that reached you unasked: 5 — as you confirmed them with your passkey: followed 3 · overrode 1 · not relevant now 0 · noise 0 · unmarked 1",
+    );
     expect(result.stdout).toContain("from Ken: 5 — followed 3 · overrode 1");
     expect(result.stdout).toContain(`overrode, from Ken: «${OVERRIDE_REASON}»`);
   });
@@ -540,7 +557,7 @@ describe("crosscheck pilot --mine", () => {
 });
 
 describe("07 §13.12: a word said at a terminal is the person's", () => {
-  test("the person's crosscheck followed stands over their agent's later word, which is still recorded", async () => {
+  test("the person's crosscheck followed stands over their agent's later word, which since 0.11 only waits as a draft", async () => {
     // Arrange — a fresh pointer to the live session, and the person's word on it at a terminal
     const ref = "wc_ken_persons_word";
     await send("POST", "/api/records", ken.apiKey, {
@@ -558,20 +575,21 @@ describe("07 §13.12: a word said at a terminal is the person's", () => {
     const home = await homeWithLive(LIVE);
     await cli(home, ["followed", ref]);
 
-    // Act — the agent's word on the same hint, through the agent's own route
-    const agent = await send("POST", "/api/hint-outcomes", nick.apiKey, {
+    // Act — the agent's word on the same hint, through the agent's own route on the hub as it runs
+    const agent = await agentDrafts(nick.apiKey, {
       repo: REPO_ID,
       ref,
       outcome: "overrode",
       reason: "the agent went its own way",
     });
 
-    // Assert
+    // Assert — a draft waiting for the person, standing nowhere (07 §13.12's ranking of a stored
+    // agent word is retired with the channel, human provenance M1)
     expect(agent.status).toBe(201);
     expect(((await agent.json()) as { data: RecordedOutcome }).data).toMatchObject({
       outcome: "overrode",
-      replaced: "followed",
-      stands: "followed",
+      draft: true,
+      waiting: true,
     });
   });
 });
@@ -807,16 +825,16 @@ describe("07 §13.14 MEDIUM-2: inside an agent host's terminal, the word is the 
 
     // Act — a host's variable that is set in the person's own terminal too is no marker
     const result = await cli(home, ["followed", ref], { interactive: true, env: { TERM_PROGRAM: "vscode" } });
-    const agent = await send("POST", "/api/hint-outcomes", nick.apiKey, {
+    const agent = await agentDrafts(nick.apiKey, {
       repo: REPO_ID,
       ref,
       outcome: "overrode",
       reason: "the agent went its own way",
     });
 
-    // Assert — the person's word stands over the agent's
+    // Assert — the person's word is theirs; the agent's waits as a draft (human provenance M1)
     expect(result.stdout).not.toContain("recorded as your agent's word");
-    expect(((await agent.json()) as { data: RecordedOutcome }).data).toMatchObject({ stands: "followed" });
+    expect(((await agent.json()) as { data: RecordedOutcome }).data).toMatchObject({ draft: true, waiting: true });
   });
 });
 

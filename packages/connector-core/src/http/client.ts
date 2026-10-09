@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CLIENT_RELEASE, CLIENT_RELEASE_HEADER } from "@crosscheck/schema";
 
 import {
   classifyConnectionError,
@@ -266,6 +267,9 @@ const performRequest = async <T>(
       method: request.method,
       headers: {
         Authorization: `Bearer ${ctx.apiKey}`,
+        // Human provenance §10 (round 2): this client reads a drafted answer
+        // as a draft; a hub may refuse its drafting doors to one that says not.
+        [CLIENT_RELEASE_HEADER]: CLIENT_RELEASE,
         ...(request.body === undefined
           ? {}
           : { "Content-Type": "application/json" }),

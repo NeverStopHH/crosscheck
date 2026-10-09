@@ -44,6 +44,7 @@ const setup = async (): Promise<Fixture> => {
     checkRecipe: "bun test",
     captureMode: "human",
     createdAt: now,
+    provenance: "unknown_legacy",
   });
   const laptop = await seedPasskey(harness.db, nick.developerId, { createdAt: new Date(now.getTime() - 30 * 24 * HOUR) });
   const expiresAt = new Date(now.getTime() + HELD_HOURS * HOUR);
@@ -98,7 +99,7 @@ describe("every waiver surface says the passkey that approved it was revoked (04
 
     // Assert
     expect(response.status).toBe(200);
-    expect(((await response.json()) as { data: unknown }).data).toEqual({ revoked: true, terminatedWaivers: 1 });
+    expect(((await response.json()) as { data: unknown }).data).toMatchObject({ revoked: true, reason: "retired", terminatedWaivers: 1 });
   });
 
   test("the pin registry carries the closure while the grant would still have held", async () => {

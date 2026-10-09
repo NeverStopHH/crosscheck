@@ -46,6 +46,9 @@ li.entry, li.member, li.artifact, div.card {
   margin: 0 0 0.5rem 0;
 }
 .meta { color: var(--muted); font-size: 0.85rem; }
+/* human provenance, review M2: what a confirmation signs, in full — a long list scrolls, never cut */
+.signed-terms dd { margin: 0 0 0.3rem 1rem; overflow-wrap: anywhere; }
+.signed-list { max-height: 12rem; overflow-y: auto; margin: 0; }
 .label {
   display: inline-block;
   border: 1px solid var(--line);

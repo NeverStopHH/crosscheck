@@ -78,7 +78,7 @@ import {
   formatCloudAgentLink,
 } from "@crosscheck/connector-core/briefing/render.ts";
 import { bareUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
-import { presenceReenabledLine } from "@crosscheck/connector-core/briefing/presence-notice.ts";
+import { PRESENCE_ON_WAITING_LINE, presenceReenabledLine } from "@crosscheck/connector-core/briefing/presence-notice.ts";
 import { getCiVerdict } from "@crosscheck/connector-core/http/hub.ts";
 import type { CiCoverage } from "@crosscheck/connector-core/http/hub.ts";
 import { CI_PROVIDERS, CI_KNOWN_PROVIDERS } from "@crosscheck/schema";
@@ -141,6 +141,8 @@ import type {
 } from "@crosscheck/connector-core/http/hub.ts";
 import { DEFAULT_AGENT_KIND } from "@crosscheck/connector-core/constants.ts";
 import { hubTransportChecks } from "./doctor-hub-transport.ts";
+import { confirmChecks } from "./doctor-confirm.ts";
+import { getConfirmStatus } from "@crosscheck/connector-core/http/confirm.ts";
 import {
   contradictionDoctorLine,
   declarationDoctorLine,
@@ -1983,8 +1985,14 @@ const checkPrivacy = async (ctx: HubContext): Promise<Check> => {
     result.data.presenceReenabledAt === null
       ? null
       : presenceReenabledLine(result.data.presenceReenabledAt, result.data.presenceOptOut);
-  if (reenabled !== null) {
-    return check("WARN", "privacy settings", reenabled);
+  // §8: a request to show presence again waits for the passkey — told as a
+  // WARN too, since anything holding the key can make that request.
+  const notices = [
+    ...(reenabled === null ? [] : [reenabled]),
+    ...(result.data.presenceOnPending ? [PRESENCE_ON_WAITING_LINE] : []),
+  ];
+  if (notices.length > 0) {
+    return check("WARN", "privacy settings", notices.join("; "));
   }
   const presencePart = result.data.presenceOptOut
     ? "presence hidden (opt-out)"
@@ -4016,6 +4024,7 @@ export const runDoctor = async (
     pilotReport,
     passkeyAnnouncements,
     hubStatus,
+    confirmStatus,
   ] = await Promise.all([
     // ONE GET for both: the absence findings and the coverage record ride
     // the same response (03 §3.5), so reading them twice would be a second
@@ -4057,6 +4066,8 @@ export const runDoctor = async (
     // FETCHED, NOT CHECKED: two lines read it, the search rebuild and the
     // hub's transport WARNs (doctor-hub-transport.ts), so one GET.
     getHubStatus(hubCtx),
+    // Human provenance §9: whether a passkey can confirm anything here, and the caller's drafts.
+    getConfirmStatus(hubCtx),
   ]);
   const searchRebuildCheck = checkSearchRebuild(hubStatus);
   // SEQUENTIAL, and it has to be: this asks `suspect` about a pin whose id is
@@ -4094,6 +4105,7 @@ export const runDoctor = async (
     passkeyDoctorCheck(announcementAnswerOf(passkeyAnnouncements), config.hubUrl),
     ...(searchRebuildCheck === null ? [] : [searchRebuildCheck]),
     ...hubTransportChecks(hubStatus),
+    ...confirmChecks(confirmStatus, config.hubUrl),
   ];
 
   const skewCheck = ((): Check => {

@@ -25,12 +25,14 @@ import { sql } from "drizzle-orm";
 import type { HintOutcomeWithholding } from "@crosscheck/schema";
 
 import {
+  correctionLineOf,
   enrolledSpan,
   lastWholeMonth,
   readEnrolments,
   readPeriodAggregate,
   withholdingOf,
 } from "./outcome-population.ts";
+import type { CorrectionLine, LateCounts } from "./outcome-population.ts";
 import type { Db } from "../db/client.ts";
 
 interface Deps {
@@ -45,6 +47,18 @@ export interface OutcomeCounts {
   readonly notRelevantNow: number;
   readonly noise: number;
   readonly unmarked: number;
+}
+
+/**
+ * Words confirmed in this period about hints of an earlier one (review M6):
+ * counted here, marked late, never in the period they were about — which stays
+ * as it closed. Not part of `interventions` or the rates, and withheld APART
+ * (round-2 R2-H2): the late figure prints only when it passes the minimums on
+ * its own, and never lifts the period's own figure over them.
+ */
+export interface LateFigures {
+  readonly withheld: HintOutcomeWithholding | null;
+  readonly figures: LateCounts | null;
 }
 
 export interface OutcomeFigures {
@@ -62,6 +76,10 @@ export interface OutcomeFigures {
   /** Why no figure is shown, or null when it is — and then no count rides anywhere (review M1). */
   readonly withheld: HintOutcomeWithholding | null;
   readonly figures: OutcomeCounts | null;
+  /** The words confirmed late in the period, withheld on their own; absent when nothing was recordable. */
+  readonly late?: LateFigures;
+  /** The correction line: words of the period later declared compromised (round-2 R2-H1); null when none. */
+  readonly laterRetracted?: CorrectionLine | null;
 }
 
 const notRecordable = (
@@ -77,6 +95,9 @@ const notRecordable = (
   withheld: "not_recordable",
   figures: null,
 });
+
+/** What the team line asks of every figure it prints (§13.11, H1): people, their work, and enough words. */
+const TEAM_CHECKS = { sources: true, recorded: true, followers: false } as const;
 
 /** What a repo that never enrolled reports: no instant, nothing counted. */
 export const noOutcomeFigures = (now: Date): OutcomeFigures => notRecordable(lastWholeMonth(now), null);
@@ -97,7 +118,9 @@ export const readOutcomeFigures = async (
     who: sql`true`,
     sourceIs: null,
   });
-  const withheld = withholdingOf(aggregate, { sources: true, recorded: true, followers: false });
+  const withheld = withholdingOf(aggregate, TEAM_CHECKS);
+  const lateWithheld = withholdingOf(aggregate.late, TEAM_CHECKS);
+  const { followed, overrode, notRelevantNow, noise } = aggregate.late;
   return {
     periodStartIso: period.start.toISOString(),
     periodEndIso: period.end.toISOString(),
@@ -117,5 +140,7 @@ export const readOutcomeFigures = async (
             unmarked: aggregate.unmarked,
           }
         : null,
+    late: { withheld: lateWithheld, figures: lateWithheld === null ? { followed, overrode, notRelevantNow, noise } : null },
+    laterRetracted: correctionLineOf(aggregate.laterRetracted, TEAM_CHECKS),
   };
 };

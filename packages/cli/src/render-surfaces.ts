@@ -56,7 +56,7 @@ import {
   reasonPromptLine,
 } from "./cli/pilot-label-render.ts";
 import { quotingText } from "@crosscheck/connector-core/mcp/render.ts";
-import { HINT_OUTCOME_SURFACES } from "./render-surfaces-outcomes.ts";
+import { HINT_OUTCOME_SURFACES, PROVENANCE_SURFACES } from "./render-surfaces-outcomes.ts";
 import type { VerdictView } from "@crosscheck/connector-core/http/verdict.ts";
 
 const NOW = new Date("2026-08-25T12:00:00.000Z");
@@ -732,6 +732,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
         already: 1,
         refused: 1,
         notReached: 1,
+        drafted: 0,
       };
       return [
         walkHeaderLines(3, true, 1440),
@@ -778,7 +779,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
         ]),
       ].join("\n"),
   },
-  ...HINT_OUTCOME_SURFACES, // 07 §13, THE ARRAY TAIL: `followed` / `overrode` and `pilot --mine`
+  ...HINT_OUTCOME_SURFACES, ...PROVENANCE_SURFACES, // THE ARRAY TAIL: 07 §13's outcomes; 0.11's drafts and `confirm`
 ];
 
 /**

@@ -143,6 +143,9 @@ const labelled = async (
     markedBy: developer.developerId,
     captureMode: "human",
     createdAt: new Date(TEST_START_ISO),
+    // Any label of the person's leaves the walk, whoever confirmed it.
+    provenance: "unknown_legacy",
+    confirmationId: null,
   });
 };
 

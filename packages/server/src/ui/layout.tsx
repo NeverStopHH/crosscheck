@@ -54,6 +54,7 @@ export const Layout: FC<PropsWithChildren<LayoutProps>> = ({
             <span class="brand">crosscheck</span>
             <nav>
               <a href="/ui/feed">Feed</a>
+              <a href="/ui/confirm">Confirm</a>
               <a href="/ui/members">Members</a>
               <a href="/ui/approvals">Approvals</a>
               <a href="/ui/waivers">Waivers</a>

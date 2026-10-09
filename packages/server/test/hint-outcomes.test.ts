@@ -42,6 +42,9 @@ import {
 import type { OutcomeWorld } from "./fixtures/hint-outcome-world.ts";
 import { labelNoise } from "./fixtures/hint-outcome-crowd.ts";
 import { TEST_ADMIN_TOKEN, jsonRequest, postRecords, registerTestSession } from "./helpers.ts";
+import { seedHumanStamp } from "./fixtures/human-confirmation.ts";
+import { confirmPending, pendingOf, prepareConfirmer } from "./fixtures/confirm-driver.ts";
+import type { DraftRow } from "../src/services/human-drafts.ts";
 
 /** A synthetic AWS example key, the fixture every secret-scan test uses. */
 const CREDENTIAL = "AKIAIOSFODNN7EXAMPLE";
@@ -145,38 +148,11 @@ describe("POST /api/hint-outcomes", () => {
     expect(await world.harness.db.select().from(hintOutcomes)).toHaveLength(1);
   });
 
-  test("review H2 (P3): the word the person's noise label superseded, said again, writes nothing and says the label stands", async () => {
-    // Arrange — the agent said followed, then the person labelled it noise
-    const world = await createOutcomeWorld();
-    await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
-    world.harness.clock.advanceSeconds(60);
-    await labelNoise(world, world.nick, world.delivered.kenContext);
-    world.harness.clock.advanceSeconds(60);
-
-    // Act — the agent, re-reading the clause, says followed again. #11 wrote it, for good.
-    const again = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
-    const view = await mineOf(world);
-
-    // Assert
-    expect(again.status).toBe(200);
-    expect(await bodyOf(again)).toMatchObject({ repeated: true, stands: "noise" });
-    expect(await world.harness.db.select().from(hintOutcomes)).toHaveLength(1);
-    expect(view).toMatchObject({ followed: 0, noise: 1 });
-  });
-
-  test("review #11: a new word at the same instant as the noise label is written, and the answer says the label still stands", async () => {
-    // Arrange — the agent's word, said in the label's own instant: the label stands (D-O7, §13.12)
-    const world = await createOutcomeWorld();
-    await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
-    world.harness.clock.advanceSeconds(60);
-    await labelNoise(world, world.nick, world.delivered.kenContext);
-
-    // Act
-    const tied = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "overrode", reason: "kept mine" });
-
-    // Assert
-    expect(await bodyOf(tied)).toMatchObject({ repeated: false, replaced: "noise", stands: "noise" });
-  });
+  // RETIRED with 07 §13.12's agent channel (human provenance, review M1): "review H2 (P3)" and
+  // "review #11" pinned an AGENT's word written beside the person's noise label and ranked under
+  // it. Since 0.11 the agent's word is a draft until the person confirms it, and a confirmed word
+  // is the person's; what replaced them is pinned against the hub as it runs, in "an agent's word
+  // never overturns the person's: it waits as a draft" below.
 
   test("review H2: the person re-asserts noise over a later word, and the answer says what now stands", async () => {
     // Arrange — followed; the person: noise; the person again: overrode (their own later word, so it stands)
@@ -733,11 +709,14 @@ describe("round-5 LOW-5: a word from before the channel was stamped is the agent
       reason: outcome === "overrode" ? "kept mine" : null,
       recordedBy: world.nick.developerId,
       createdAt: at,
+      // A row from before the channel is from before provenance too: never a person's.
+      provenance: "unknown_legacy",
+      confirmationId: null,
     });
   };
 
-  test("Q1: the agent saying a pre-channel word again is a repeat — that row was the agent's", async () => {
-    // Arrange
+  test("Q1, since human provenance: a pre-channel word is nobody's — the same word confirmed after it is a new one", async () => {
+    // Arrange — round 5 read that row as the agent's; since 0.11 it is unknown_legacy and stands for nothing
     const world = await createOutcomeWorld();
     await legacyWord(world, "followed", world.harness.clock.now());
     world.harness.clock.advanceSeconds(60);
@@ -746,11 +725,11 @@ describe("round-5 LOW-5: a word from before the channel was stamped is the agent
     const agent = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
 
     // Assert
-    expect(agent.status).toBe(200);
-    expect(await bodyOf(agent)).toMatchObject({ repeated: true });
+    expect(agent.status).toBe(201);
+    expect(await bodyOf(agent)).toMatchObject({ repeated: false, replaced: null });
   });
 
-  test("Q2: the agent's newer word stands over a pre-channel word — that row was never the person's", async () => {
+  test("Q2, since human provenance: a word confirmed after a pre-channel word replaces nothing — that row never stood", async () => {
     // Arrange
     const world = await createOutcomeWorld();
     await legacyWord(world, "followed", world.harness.clock.now());
@@ -760,7 +739,7 @@ describe("round-5 LOW-5: a word from before the channel was stamped is the agent
     const agent = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "overrode", reason: "kept mine" });
 
     // Assert
-    expect(await bodyOf(agent)).toMatchObject({ replaced: "followed", stands: "overrode" });
+    expect(await bodyOf(agent)).toMatchObject({ replaced: null, stands: "overrode" });
   });
 
   test("Q3: a newer pre-channel word never ranks above the person's own in the view", async () => {
@@ -830,58 +809,80 @@ describe("survivors R10, R11: the order of words on one pointer", () => {
   });
 });
 
-describe("a person's word is never overturned by an agent's (07 §13.12)", () => {
-  test("the agent's later word is recorded, but the person's noise label still stands", async () => {
+/**
+ * 07 §13.12, AS 0.11 KEEPS IT: the agent's word never overturns the person's —
+ * no longer by a ranking between two channels of stored words, but because the
+ * agent's word is a DRAFT that stands nowhere until the person confirms it;
+ * discarded, it never existed. Against the hub as it runs: drafts left
+ * pending, decisions made with a real passkey assertion.
+ */
+describe("an agent's word never overturns the person's: it waits as a draft (07 §13.12, since 0.11)", () => {
+  const productionWorld = async () => {
+    const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
+    const confirmer = await prepareConfirmer(world.harness, world.nick, { pastCoolOff: true });
+    const decide = async (decision: (draft: DraftRow) => "confirm" | "discard" | "keep" = () => "confirm") => {
+      world.harness.clock.advanceSeconds(60);
+      expect((await confirmPending(world.harness, world.nick, confirmer, (draft) => ({ decision: decision(draft) }))).status).toBe(200);
+      world.harness.clock.advanceSeconds(60);
+    };
+    return { world, decide };
+  };
+
+  test("the agent's later word after the person's noise label is a draft; the label stands, and still does once it is discarded", async () => {
     // Arrange — the person labelled the hint noise
-    const world = await createOutcomeWorld();
-    await labelNoise(world, world.nick, world.delivered.kenContext);
-    world.harness.clock.advanceSeconds(60);
+    const { world, decide } = await productionWorld();
+    expect((await markNoise(world, world.delivered.kenContext)).status).toBe(201);
+    await decide();
 
     // Act — the agent, reading the clause, says followed
     const agent = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
-    const view = await mineOf(world);
+    const whileWaiting = await mineOf(world);
+    await decide(() => "discard");
 
     // Assert
     expect(agent.status).toBe(201);
-    expect(await bodyOf(agent)).toMatchObject({ repeated: false, stands: "noise" });
-    expect(view).toMatchObject({ followed: 0, noise: 1 });
-    expect(await world.harness.db.select().from(hintOutcomes)).toHaveLength(1);
+    expect(await bodyOf(agent)).toMatchObject({ draft: true, waiting: true, provenance: "agent_asserted" });
+    expect(whileWaiting).toMatchObject({ followed: 0, noise: 1 });
+    expect(await mineOf(world)).toMatchObject({ followed: 0, noise: 1 });
+    expect(await world.harness.db.select().from(hintOutcomes)).toHaveLength(0);
   });
 
-  test("the agent's later word never overturns the person's own followed", async () => {
-    // Arrange — the person said followed at a terminal (`crosscheck followed`)
-    const world = await createOutcomeWorld();
-    await recordPersonOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
-    world.harness.clock.advanceSeconds(60);
+  test("the agent's later word never overturns the person's own followed unless the person confirms it", async () => {
+    // Arrange — the person's followed, confirmed
+    const { world, decide } = await productionWorld();
+    expect((await recordPersonOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" })).status).toBe(201);
+    await decide();
 
-    // Act
-    const agent = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "overrode", reason: "kept mine" });
-    const view = await mineOf(world);
+    // Act — the agent says overrode; the person discards it
+    expect((await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "overrode", reason: "kept mine" })).status).toBe(201);
+    const whileWaiting = await mineOf(world);
+    await decide(() => "discard");
 
     // Assert
-    expect(await bodyOf(agent)).toMatchObject({ repeated: false, replaced: "followed", stands: "followed" });
-    expect(view).toMatchObject({ followed: 1, overrode: 0 });
+    expect(whileWaiting).toMatchObject({ followed: 1, overrode: 0 });
+    expect(await mineOf(world)).toMatchObject({ followed: 1, overrode: 0 });
   });
 
-  test("only the person's own later word changes what the person said", async () => {
-    // Arrange — the person: followed; the agent: overrode (recorded, not standing)
-    const world = await createOutcomeWorld();
-    await recordPersonOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
-    world.harness.clock.advanceSeconds(60);
-    await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "overrode", reason: "kept mine" });
-    world.harness.clock.advanceSeconds(60);
+  test("only what the person confirms changes what they said: their own later word supersedes the agent's waiting draft", async () => {
+    // Arrange — the person: followed (confirmed); the agent: overrode (a draft, waiting)
+    const { world, decide } = await productionWorld();
+    expect((await recordPersonOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" })).status).toBe(201);
+    await decide();
+    expect((await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "overrode", reason: "kept mine" })).status).toBe(201);
 
-    // Act — the person changes their own mind
-    const person = await recordPersonOutcome(world, world.nick, {
-      ref: KEN_CONTEXT,
-      outcome: "not_relevant_now",
-    });
-    const view = await mineOf(world);
+    // Act — the person changes their own mind: their word is the subject's newer version, and they confirm it
+    expect((await recordPersonOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "not_relevant_now" })).status).toBe(201);
+    const waiting = (await pendingOf(world.harness, world.nick)).drafts.map((draft) => draft.provenance);
+    await decide();
 
-    // Assert
-    expect(await bodyOf(person)).toMatchObject({ repeated: false, replaced: "followed", stands: "not_relevant_now" });
-    expect(view).toMatchObject({ followed: 0, overrode: 0, notRelevantNow: 1 });
+    // Assert — the agent's overrode never stood anywhere
+    expect(waiting).toEqual(["interactive_terminal_asserted"]);
+    expect(await mineOf(world)).toMatchObject({ followed: 0, overrode: 0, notRelevantNow: 1 });
   });
+});
+
+/** What the writers do with the person's words on one pointer, each confirmed as it is said. */
+describe("the person's words on one pointer", () => {
 
   test("survivor R19: the same word with a revised reason is a write, the revised reason lands, and the answer says it was revised", async () => {
     // Arrange — the owner overrode, with a first reason
@@ -918,6 +919,7 @@ describe("a person's word is never overturned by an agent's (07 §13.12)", () =>
       recordedBy: world.nick.developerId,
       createdAt: at,
       recordedVia: "person",
+      ...(await seedHumanStamp(world.harness.db, world.nick.developerId, "outcome")),
     });
     await world.harness.db.insert(pilotMarks).values({
       id: "pm_tied",
@@ -929,29 +931,31 @@ describe("a person's word is never overturned by an agent's (07 §13.12)", () =>
       captureMode: "human",
       createdAt: at,
       reason: null,
+      // Its own item, of its own kind: the database admits a row under no other (round-2 M5).
+      ...(await seedHumanStamp(world.harness.db, world.nick.developerId, "label")),
     });
     world.harness.clock.advanceSeconds(60);
 
-    // Act — the agent says something new
-    const agent = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "overrode", reason: "kept mine" });
+    // Act — the person says something new
+    const later = await recordPersonOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "overrode", reason: "kept mine" });
 
-    // Assert — what stood was the label (D-O7), and it still stands
-    expect(await bodyOf(agent)).toMatchObject({ repeated: false, replaced: "noise", stands: "noise" });
+    // Assert — what stood was the label (D-O7); the person's later word now stands over it
+    expect(await bodyOf(later)).toMatchObject({ repeated: false, replaced: "noise", stands: "overrode" });
   });
 
-  test("a repeat is judged within one channel: the agent agreeing with the person is its own word, recorded", async () => {
+  test("the agent saying what the person's word already stands at, once confirmed, writes nothing new", async () => {
     // Arrange — the person said followed at a terminal
     const world = await createOutcomeWorld();
     await recordPersonOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
     world.harness.clock.advanceSeconds(60);
 
-    // Act — the agent says the same
+    // Act — the agent says the same; confirmed, it is the person's same word again (J8)
     const agent = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
 
-    // Assert
-    expect(agent.status).toBe(201);
-    expect(await bodyOf(agent)).toMatchObject({ repeated: false, stands: "followed" });
-    expect(await world.harness.db.select().from(hintOutcomes)).toHaveLength(2);
+    // Assert — 07 §13.12's "the agent's own word, recorded beside it" is retired with the channel
+    expect(agent.status).toBe(200);
+    expect(await bodyOf(agent)).toMatchObject({ repeated: true, stands: "followed" });
+    expect(await world.harness.db.select().from(hintOutcomes)).toHaveLength(1);
   });
 
   test("the person's same word again, after their own noise label, is a new word that stands — not a repeat", async () => {
@@ -972,9 +976,10 @@ describe("a person's word is never overturned by an agent's (07 §13.12)", () =>
     expect(view).toMatchObject({ followed: 1, noise: 0 });
   });
 
-  test("round-5 LOW-4 (P3): the person's helpful label is never overturned by their agent's word", async () => {
-    // Arrange — the person labelled the hint helpful
-    const world = await createOutcomeWorld();
+  test("round-5 LOW-4 (P3), since 0.11: under the person's helpful label, their agent's not_relevant_now waits as a draft and counts for nothing", async () => {
+    // Arrange — the person labelled the hint helpful, against the hub as it runs
+    const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
+    const confirmer = await prepareConfirmer(world.harness, world.nick, { pastCoolOff: true });
     world.harness.clock.advanceSeconds(60);
     await world.harness.app.request(
       "/api/pilot-marks",
@@ -987,15 +992,17 @@ describe("a person's word is never overturned by an agent's (07 §13.12)", () =>
       }),
     );
     world.harness.clock.advanceSeconds(60);
+    expect((await confirmPending(world.harness, world.nick, confirmer)).status).toBe(200);
+    world.harness.clock.advanceSeconds(60);
 
     // Act — the agent says the hint was not needed
     const agent = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "not_relevant_now" });
     const view = await mineOf(world);
 
-    // Assert — recorded, but the person's helpful vetoes their agent's not_relevant_now (round-6
-    // HIGH-1 (b)): the intervention stays unmarked, where the label alone left it
-    expect(await bodyOf(agent)).toMatchObject({ repeated: false, replaced: null, stands: "helpful" });
-    expect(view).toMatchObject({ notRelevantNow: 0, unmarked: 3 });
+    // Assert — round-6 HIGH-1 (b)'s veto of the agent's word is retired with the channel (M1): the
+    // word is a draft, the intervention stays where the label left it until the person decides
+    expect(await bodyOf(agent)).toMatchObject({ repeated: false, draft: true, waiting: true });
+    expect(view).toMatchObject({ notRelevantNow: 0, helpful: 1 });
   });
 
   test("round-6 HIGH-1: an agent's followed under the person's helpful label stays the outcome", async () => {
@@ -1039,13 +1046,11 @@ describe("a person's word is never overturned by an agent's (07 §13.12)", () =>
     );
     world.harness.clock.advanceSeconds(60);
 
-    // Act — the agent says something too
-    const agent = await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed" });
+    // Act — the view (07 §13.12's "the agent says something too" is retired with the channel, M1)
     const view = await mineOf(world);
 
-    // Assert — the person's own outcome stands regardless of order
-    expect(await bodyOf(agent)).toMatchObject({ replaced: "overrode", stands: "overrode" });
-    expect(view).toMatchObject({ overrode: 1, followed: 0 });
+    // Assert — the person's own outcome stands under their later helpful label, with its reason
+    expect(view).toMatchObject({ overrode: 1, followed: 0, helpful: 1 });
     expect(JSON.stringify(view["reasons"])).toContain("kept my parser");
   });
 
@@ -1178,21 +1183,29 @@ describe("a person's word is never overturned by an agent's (07 §13.12)", () =>
     expect(view).toMatchObject({ followed: 1 });
   });
 
-  test("the channel is the route's, never the body's: an agent cannot claim to be the person", async () => {
-    // Arrange
-    const world = await createOutcomeWorld();
+  test("the class is the route's, never the body's: an agent cannot claim to be the person, and a confirmed word is always the person's", async () => {
+    // Arrange — against the hub as it runs
+    const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
+    const confirmer = await prepareConfirmer(world.harness, world.nick, { pastCoolOff: true });
 
-    // Act — the agent's route, with a body that claims otherwise
+    // Act — the agent's route, with a body that claims otherwise; and the person's, claiming the agent's
     await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "followed", recordedVia: "person" });
     await recordPersonOutcome(world, world.nick, { ref: KEN_CLAIM, outcome: "followed", recordedVia: "agent" });
+    const drafted = (await pendingOf(world.harness, world.nick)).drafts.map((draft) => [draft.payload["refId"], draft.provenance]);
+    world.harness.clock.advanceSeconds(60);
+    expect((await confirmPending(world.harness, world.nick, confirmer)).status).toBe(200);
 
-    // Assert
+    // Assert — drafted in each ROUTE's class; once confirmed, both are the person's (J8)
+    expect(drafted.sort()).toEqual([
+      [KEN_CLAIM, "interactive_terminal_asserted"],
+      [KEN_CONTEXT, "agent_asserted"],
+    ]);
     const rows = await world.harness.db.execute(
       sql`SELECT d.ref_id AS ref, o.recorded_via AS via FROM hint_outcomes o JOIN hint_deliveries d ON d.id = o.delivery_id ORDER BY d.ref_id`,
     );
     expect(rows.rows).toEqual([
       { ref: KEN_CLAIM, via: "person" },
-      { ref: KEN_CONTEXT, via: "agent" },
+      { ref: KEN_CONTEXT, via: "person" },
     ]);
   });
 });

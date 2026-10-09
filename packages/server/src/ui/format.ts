@@ -33,6 +33,29 @@ const ELLIPSIS = "…";
 export const capped = (value: string, maxChars: number): string =>
   value.length <= maxChars ? value : `${value.slice(0, maxChars)}${ELLIPSIS}`;
 
+/**
+ * Every character that acts instead of showing: bidi overrides, isolates and
+ * marks, zero-width and other format characters, C0/C1 controls, and the
+ * line and paragraph separators.
+ */
+const ACTING_CHARACTER = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
+
+const HEX = 16;
+const CODE_POINT_DIGITS = 4;
+
+const codePointLabel = (character: string): string =>
+  `⟨U+${(character.codePointAt(0) ?? 0).toString(HEX).toUpperCase().padStart(CODE_POINT_DIGITS, "0")}⟩`;
+
+/**
+ * Text on a page that says "exactly what your passkey signs" (round-1 review
+ * L4): capped like any untrusted text, and every acting character shown as
+ * its code point. Removing them would make the page differ from the signed
+ * bytes; leaving them would let a right-to-left override reverse what the
+ * person reads, or a separator forge a line beside the real word.
+ */
+export const shownAsSigned = (value: string, maxChars: number): string =>
+  capped(value, maxChars).replace(ACTING_CHARACTER, codePointLabel);
+
 /** href for a work-context page; the id is percent-encoded, never trusted. */
 export const workContextHref = (workContextId: string): string =>
   `/ui/work-contexts/${encodeURIComponent(workContextId)}`;

@@ -47,6 +47,40 @@ If nobody sets anything:
 - With an https origin listed, passkey prompts at `http://localhost:7100` are refused, so a person whose only passkey was enrolled at `localhost` can approve no waiver and release no artifact until they enrol at the https address. Without an https origin, a request through `tailscale serve` cannot use `localhost` either, and only the hub machine's own browser at `http://localhost:7100` can.
 - Approving an artifact on `/ui/approvals` is a passkey ceremony now, and the old approve form post answers 403. Revoking a release still takes no passkey: the owner uses the plain button, and the operator can re-hide any release during the passkey gap with `POST /api/artifacts/<id>/withdraw` (admin token).
 
+## Passkeys, drafts and a lost device
+
+Since 0.11 a key only drafts a person's judgements and settings: labels, ratings, pins, breaks, mutes and switching presence back on. Nothing counts, protects or changes until the person confirms it on `/ui/confirm` with a passkey (`crosscheck confirm` opens the page). Switching presence off is immediate. A new passkey waits 24 hours (its cool-off). What it confirms takes effect at once and counts in the figures from the moment the cool-off ends.
+
+A passkey is revoked for one of two reasons:
+
+- **retired**: the device is lost, replaced, or the hub moved to a new https name. Everything the passkey confirmed while it stood keeps counting. This is the default, and it is the only reason the operator's admin token can give.
+- **compromised**: someone else may have used it. Only its owner can say so, on `/ui/passkeys` ("Revoke with another passkey", reason "compromised"), signed with another of their passkeys that is past its cool-off. Everything it confirmed is retracted. Those drafts return to the confirm page marked "re-confirm", its effects are undone (a break it recorded is disarmed, presence it switched on is off again, mutes it changed are reverted, a pin it created protects nothing), and each closed month keeps its figures with a correction line beneath them.
+
+A passkey revoked during its cool-off, for either reason and by anyone, never counted. Its drafts return to the confirm page marked "re-confirm: the passkey that confirmed these was revoked before it counted", its effects are undone, and the person confirms them again with another passkey. Nothing is lost.
+
+### When someone loses a device
+
+The person tells the hub's operator, the holder of the admin token. The operator retires the passkey, which keeps the person's record:
+
+```sh
+# 1. the person's developer id
+curl -s -H "Authorization: Bearer $CROSSCHECK_ADMIN_TOKEN" https://<hub>/api/developers
+# 2. their passkeys, with labels and when each was created and last used
+curl -s -H "Authorization: Bearer $CROSSCHECK_ADMIN_TOKEN" https://<hub>/api/developers/<developer-id>/passkeys
+# 3. retire the lost one: what it confirmed keeps counting
+curl -s -X POST -H "Authorization: Bearer $CROSSCHECK_ADMIN_TOKEN" https://<hub>/api/developers/<developer-id>/passkeys/<passkey-id>/revoke
+# 4. a code for the replacement, which the person enrols on /ui/passkeys
+curl -s -X POST -H "Authorization: Bearer $CROSSCHECK_ADMIN_TOKEN" https://<hub>/api/developers/<developer-id>/passkey-enrollments
+```
+
+The person can also retire it themselves on `/ui/passkeys` with another passkey. If the device may have been used by someone else, the person declares it compromised there instead. A person with no other passkey has the operator retire it at once, which stops it signing, and then declares it compromised with the replacement once that passkey's cool-off ends. A retired passkey can still be declared compromised later.
+
+### Refusing writes from clients older than 0.11
+
+A 0.10 CLI says "recorded" over what the hub now only drafts, because it predates drafts and sends no version. With `CROSSCHECK_REFUSE_PRE_011_DRAFTS=1` in the hub's environment, the doors that draft (labels, ratings, pins, breaks, mutes and unmutes, presence back on) refuse a request without the `X-Crosscheck-Client` header that 0.11 clients send, or with an older version in it. The refusal is a sentence the 0.10 CLI prints as it is: upgrade crosscheck, nothing was recorded. Reads and switching presence off are never refused.
+
+This is not a security control. Any program can send the header. It only stops a 0.10 client from telling its user that something was recorded when it was only drafted. Unset, or `0`, the hub accepts every client as before. Any other value stops the hub at start-up.
+
 ## Running SQL against a hub's data dir
 
 A PGlite data dir (`CROSSCHECK_DATA_DIR`) is opened by one process at a time, so **stop the hub first**. Then, from a checkout of the hub's own version (a newer PGlite cannot open an older one's dir; `createDb` says so by name):

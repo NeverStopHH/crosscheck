@@ -57,7 +57,7 @@ import {
   getSolvedPointers,
   getWorkContexts,
 } from "../http/hub.ts";
-import { presenceReenabledBriefingLine } from "../briefing/presence-notice.ts";
+import { PRESENCE_ON_WAITING_BRIEFING_LINE, presenceReenabledBriefingLine } from "../briefing/presence-notice.ts";
 import { withBriefingOutcomeClause } from "../hints/outcome-clause.ts";
 import { unansweredReadsLine } from "../briefing/omission.ts";
 import { recordBriefingOmission } from "../state/briefing-omissions.ts";
@@ -265,10 +265,17 @@ export const assembleBriefing = async (
   const questions = questionsResult.ok ? questionsResult.data.inbox : [];
   const ghostChecks = ghostChecksResult.ok ? ghostChecksResult.data : [];
   const landedNotices = landedNoticesResult.ok ? landedNoticesResult.data : [];
-  const presenceNotice =
+  const reenabledNotice =
     privacyResult.ok && privacyResult.data.presenceReenabledAt !== null
       ? presenceReenabledBriefingLine(privacyResult.data.presenceReenabledAt, privacyResult.data.presenceOptOut)
       : null;
+  // §8: a request to show presence again that waits for the passkey is told
+  // beside the re-enable notice, in the same line the budget cannot cut.
+  const presenceSentences = [
+    ...(reenabledNotice === null ? [] : [reenabledNotice]),
+    ...(privacyResult.ok && privacyResult.data.presenceOnPending ? [PRESENCE_ON_WAITING_BRIEFING_LINE] : []),
+  ];
+  const presenceNotice = presenceSentences.length === 0 ? null : presenceSentences.join(" ");
 
   // Only the teammates that will actually be shown cost a git process; the
   // optional rider shares the fan-out window, so both together still cost one

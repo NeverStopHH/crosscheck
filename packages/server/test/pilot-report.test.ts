@@ -18,7 +18,7 @@
  * and the rule every figure obeys: measured, or `unavailable` with a reason.
  */
 import { describe, expect, test } from "bun:test";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 import {
   agentSessions,
@@ -49,6 +49,8 @@ import {
   jsonRequest,
 } from "./helpers.ts";
 import type { TestDeveloper, TestHarness } from "./helpers.ts";
+import { seedHumanStamp } from "./fixtures/human-confirmation.ts";
+import type { DraftKind } from "@crosscheck/schema";
 
 const REPO = "github.com/acme/api";
 const NOW = new Date(TEST_START_ISO);
@@ -181,8 +183,15 @@ const label = async (
     captureMode: "human",
     createdAt: at(hoursAgo),
     reason,
+    // A person's label is what a passkey confirmation leaves; 0.10's off_target never was one.
+    ...(mark === "off_target" ? LEGACY : await confirmedBy(world, "label")),
   });
 };
+
+const LEGACY = { provenance: "unknown_legacy" as const, confirmationId: null };
+
+/** The stamp a passkey confirmation by the test developer leaves on what it writes: an item of the row's own kind. */
+const confirmedBy = (world: World, kind: DraftKind) => seedHumanStamp(world.harness.db, world.developer.developerId, kind);
 
 /** A finished session in the set, in the cohort named. */
 const inCohort = async (
@@ -545,11 +554,29 @@ describe("proof 1 — what an open is", () => {
 });
 
 describe("proof 3 — attribution accuracy", () => {
+  /** A break recorded before provenance existed (0.10): the marker, no confirmation. */
+  const LEGACY_BREAK = { brokeProvenance: "unknown_legacy" } as const;
+
+  /** A confirmation whose passkey is still in its cool-off at the report's instant: it stands, but counts nowhere yet. */
+  const coolingStamp = async (world: World) => {
+    const stamp = await confirmedBy(world, "pin_broke");
+    await world.harness.db.execute(sql`UPDATE passkeys SET usable_from = ${new Date(NOW.getTime() + HOUR).toISOString()}::timestamptz
+      WHERE credential_id = (SELECT credential_id FROM human_confirmations WHERE id = ${stamp.confirmationId})`);
+    return stamp;
+  };
+
+  const breakStamp = (world: World, breakBy: "passkey" | "cooling") =>
+    (breakBy === "cooling" ? coolingStamp(world) : confirmedBy(world, "pin_broke")).then((stamp) => ({
+      brokeConfirmationId: stamp.confirmationId,
+      brokeConfirmationPosition: stamp.confirmationPosition,
+    }));
+
   const seedPin = async (
     world: World,
     id: string,
     commit: string,
     brokeAtCommit: string | null = "b0b0b0b",
+    breakBy: "passkey" | "cooling" | "legacy" = "passkey",
   ) => {
     await world.harness.db.insert(pins).values({
       id,
@@ -563,6 +590,11 @@ describe("proof 3 — attribution accuracy", () => {
       brokeAt: at(40),
       brokeAtCommit,
       createdAt: at(200),
+      // Proof 3 scores a break and a repair only when a passkey confirmed both.
+      ...(await confirmedBy(world, "pin")),
+      ...(breakBy === "legacy"
+        ? LEGACY_BREAK
+        : { brokeProvenance: "human_passkey_confirmed" as const, ...(await breakStamp(world, breakBy)) }),
     });
     await world.harness.db.insert(pinFiles).values({
       pinId: id,
@@ -572,7 +604,7 @@ describe("proof 3 — attribution accuracy", () => {
     });
   };
 
-  const repairPin = async (world: World, repairs: string, hoursAgo = 5) => {
+  const repairPin = async (world: World, repairs: string, hoursAgo = 5, repairBy: "passkey" | "legacy" = "passkey") => {
     await world.harness.db.insert(pins).values({
       id: `${repairs}_fix`,
       repo: REPO,
@@ -585,6 +617,7 @@ describe("proof 3 — attribution accuracy", () => {
       repairsPinId: repairs,
       repairsPinVersion: 1,
       createdAt: at(hoursAgo),
+      ...(repairBy === "legacy" ? { provenance: "unknown_legacy" as const } : await confirmedBy(world, "pin")),
     });
   };
 
@@ -675,6 +708,45 @@ describe("proof 3 — attribution accuracy", () => {
       },
     ]);
     expect(out.attribution.noRepairYet).toBe(0);
+  });
+
+  test("survivor M3: a break or a repair from before provenance is counted apart, never scored — each half alone", async () => {
+    // Arrange — pin_1: a 0.10 break, its repair confirmed; pin_2: a confirmed break, a 0.10 repair
+    const world = await setup();
+    await session(world, "s_x");
+    await context(world, "wc_x", "s_x", "rework playback");
+    await touch(world, "wc_x", ["src/player.ts", "src/config.ts"], 60);
+    await seedPin(world, "pin_1", "abc1234", "b0b0b0b", "legacy");
+    await repairPin(world, "pin_1");
+    await seedPin(world, "pin_2", "abc1234");
+    await repairPin(world, "pin_2", 5, "legacy");
+    await answer(world, "pa_1", "pin_1", "s_x", true);
+    await answer(world, "pa_2", "pin_2", "s_x", true);
+
+    // Act
+    const out = await report(world);
+
+    // Assert
+    expect(out.attribution.repaired).toEqual([]);
+    expect(out.attribution.notHumanConfirmed).toBe(2);
+  });
+
+  test("survivor R2: a break is judged by ITS signer — one confirmed with a passkey still cooling is not scored, whoever signed the pin", async () => {
+    // Arrange — the pin and its repair confirmed with passkeys that stand; the break with one still in its cool-off
+    const world = await setup();
+    await session(world, "s_x");
+    await context(world, "wc_x", "s_x", "rework playback");
+    await touch(world, "wc_x", ["src/player.ts", "src/config.ts"], 60);
+    await seedPin(world, "pin_1", "abc1234", "b0b0b0b", "cooling");
+    await repairPin(world, "pin_1");
+    await answer(world, "pa_1", "pin_1", "s_x", true);
+
+    // Act
+    const out = await report(world);
+
+    // Assert
+    expect(out.attribution.repaired).toEqual([]);
+    expect(out.attribution.notHumanConfirmed).toBe(1);
   });
 
   test("a break recorded without its commit is counted, never scored", async () => {
@@ -1113,7 +1185,7 @@ describe("proof 4 — the reasons people gave", () => {
     expect(JSON.stringify(out)).not.toContain("said about the other repo");
   });
 
-  test("a legacy word's reason is listed under noise", async () => {
+  test("human provenance: a legacy word's reason is not a person's — it is not listed, and its mark is counted apart", async () => {
     // Arrange
     const world = await setup();
     const ids = await interventions(world, 1, 1);
@@ -1123,7 +1195,8 @@ describe("proof 4 — the reasons people gave", () => {
     const out = await report(world, 1);
 
     // Assert
-    expect(out.precision.reasons).toEqual([{ label: "noise", reason: "stale pointer" }]);
+    expect(out.precision.reasons).toEqual([]);
+    expect(out.precision.legacyNoise).toBe(1);
   });
 });
 
@@ -1214,9 +1287,9 @@ describe("labels counted only from when they became available", () => {
     expect(out.precision.sessions).toBe(1);
   });
 
-  test("the noisy-sessions floor still counts a 0.10 off_target mark — it predates the labels", async () => {
-    // Arrange — the floor was the first pilot's figure; the word its era
-    // stored is a noise mark for it, even though precision leaves it out
+  test("human provenance: the noisy-sessions floor counts only confirmed noise — a 0.10 off_target mark is counted apart", async () => {
+    // Arrange — the floor read 0.10's word as noise; since 0.11 a row from
+    // before provenance is no person's judgement, and it is legacy noise instead
     const world = await setup({ labelsSinceHoursAgo: 10 });
     await session(world, "s_prior", 100);
     await context(world, "wc_prior", "s_prior", "prior work");
@@ -1228,7 +1301,7 @@ describe("labels counted only from when they became available", () => {
     const out = await report(world, 1);
 
     // Assert
-    expect(out.precision.noisySessionsPer100).toEqual({ kind: "measured", value: 100 });
+    expect(out.precision.noisySessionsPer100).toEqual({ kind: "measured", value: 0 });
     expect(out.precision.legacyNoise).toBe(1);
   });
 

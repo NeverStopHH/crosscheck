@@ -48,18 +48,19 @@ import {
   unstorableTextPath,
 } from "@crosscheck/schema";
 
+import { refusePreDraftingClient } from "../http/client-release.ts";
 import { fail, ok } from "../http/envelope.ts";
 import { formatIssues, readJsonBody } from "../http/request.ts";
 import { developerAuth } from "../middleware/auth.ts";
-import {
-  applyPinSweep,
-  createPin,
-  listPins,
-  markPinBroke,
-  untouchedByDeveloper,
-} from "../services/pins.ts";
+import { applyPinSweep, listPins, untouchedByDeveloper } from "../services/pins.ts";
+import { DRAFT_REFUSAL_SENTENCE, draftPin, draftPinBreak } from "../services/draft-doors.ts";
 import { readTeamSettings } from "../services/team-settings.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
+
+/** Accepted, not in effect: a draft waits for the person's passkey. */
+const HTTP_ACCEPTED = 202;
+/** Nothing new waits: the same draft is already on the page. */
+const HTTP_OK = 200;
 
 const RepoQuerySchema = z.object({ repo: z.string().min(1) });
 
@@ -122,6 +123,10 @@ export const pinsRoutes = (deps: AppDeps): Hono<AppEnv> => {
   router.use("*", developerAuth(deps));
 
   router.post("/", async (c) => {
+    const preDrafting = refusePreDraftingClient(c, deps);
+    if (preDrafting !== null) {
+      return preDrafting;
+    }
     const parsed = PinSchema.safeParse(await readJsonBody(c));
     if (!parsed.success) {
       return fail(c, 400, "validation_failed", formatIssues(parsed.error));
@@ -156,16 +161,26 @@ export const pinsRoutes = (deps: AppDeps): Hono<AppEnv> => {
         );
       }
     }
-    const outcome = await createPin(deps, c.get("developer").id, parsed.data);
-    if (outcome.outcome === "duplicate") {
-      return fail(
-        c,
-        409,
-        "pin_exists",
-        `a pin already exists under id ${parsed.data.id} — pin ids are minted by the caller, so this is a replay or a collision, never an overwrite`,
-      );
+    // A DRAFT, NEVER A PIN (human provenance §7). A pin is human protection —
+    // it arms suspect, the fence and the registry's denominator — so a key's
+    // pin waits in `human_drafts`, which none of those read, until the person
+    // confirms it with their passkey. 202: accepted, not yet in effect.
+    const outcome = await draftPin(deps, c.get("developer").id, parsed.data);
+    if ("refusal" in outcome) {
+      return outcome.refusal === "pin_exists"
+        ? fail(
+            c,
+            409,
+            "pin_exists",
+            `a pin already exists under id ${parsed.data.id} — pin ids are minted by the caller, so this is a replay or a collision, never an overwrite`,
+          )
+        : fail(c, 422, outcome.refusal, DRAFT_REFUSAL_SENTENCE[outcome.refusal]);
     }
-    return ok(c, { id: outcome.id });
+    return ok(
+      c,
+      { id: parsed.data.id, draft: true, waiting: outcome.waiting, provenance: outcome.provenance, notice: outcome.notice },
+      outcome.waiting ? HTTP_ACCEPTED : HTTP_OK,
+    );
   });
 
   router.get("/", async (c) => {
@@ -201,6 +216,10 @@ export const pinsRoutes = (deps: AppDeps): Hono<AppEnv> => {
   });
 
   router.post("/:id/broke", async (c) => {
+    const preDrafting = refusePreDraftingClient(c, deps);
+    if (preDrafting !== null) {
+      return preDrafting;
+    }
     const id = PinIdSchema.safeParse(c.req.param("id"));
     if (!id.success) {
       return fail(c, 400, "validation_failed", formatIssues(id.error));
@@ -214,7 +233,10 @@ export const pinsRoutes = (deps: AppDeps): Hono<AppEnv> => {
         `${formatIssues(parsed.error)} — retracting a pin is what lets crosscheck trace name sessions, so it needs the repo and evidence a person ran the check at a terminal`,
       );
     }
-    const outcome = await markPinBroke(
+    // A DRAFT, NEVER A BREAK (human provenance §7): a recorded break unlocks
+    // naming sessions and arms the fence, so a key's break waits for the
+    // person's passkey. An already broken pin needs nothing.
+    const outcome = await draftPinBreak(
       deps,
       c.get("developer").id,
       parsed.data.repo,
@@ -224,10 +246,19 @@ export const pinsRoutes = (deps: AppDeps): Hono<AppEnv> => {
         ? null
         : parsed.data.brokeAtCommit,
     );
-    if (outcome === "not_found") {
-      return fail(c, 404, "not_found", "no pin with that id in this repo");
+    if ("alreadyBroken" in outcome) {
+      return ok(c, { id: id.data, alreadyBroken: true });
     }
-    return ok(c, { id: id.data });
+    if ("refusal" in outcome) {
+      return outcome.refusal === "not_found"
+        ? fail(c, 404, "not_found", "no pin with that id in this repo")
+        : fail(c, 422, outcome.refusal, DRAFT_REFUSAL_SENTENCE[outcome.refusal]);
+    }
+    return ok(
+      c,
+      { id: id.data, draft: true, waiting: outcome.waiting, provenance: outcome.provenance, notice: outcome.notice },
+      outcome.waiting ? HTTP_ACCEPTED : HTTP_OK,
+    );
   });
 
   return router;

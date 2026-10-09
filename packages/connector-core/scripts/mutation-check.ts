@@ -4742,11 +4742,13 @@ export const MUTATIONS: readonly Mutation[
       "\"nothing is named yet\" into a ranked accusation on its own word",
   },
   {
-    // The same route's other scope. A retraction is not a global verb.
+    // The same route's other scope. A retraction is not a global verb. Since human provenance the
+    // door scopes it first — it drafts a break only for a pin of the repo it names — and the
+    // confirmation's own write (markPinBroke) keeps the repo scope as a second guard.
     label: "one key's retraction reaches a pin in any repo on the hub",
-    file: `${SERVER}/src/services/pins.ts`,
-    from: "and(eq(pins.id, pinId), eq(pins.repo, repo), isNull(pins.brokeAt))",
-    to: "and(eq(pins.id, pinId), isNull(pins.brokeAt))",
+    file: `${SERVER}/src/services/draft-doors.ts`,
+    from: "    .where(and(eq(pins.id, pinId), eq(pins.repo, repo)))",
+    to: "    .where(eq(pins.id, pinId))",
     test: `${SERVER}/test/pins.test.ts`,
     because:
       "any checkout retracts any other team's pin by id alone, and the row " +
@@ -8226,31 +8228,20 @@ export const MUTATIONS: readonly Mutation[
     // The whole link. Without it proof 3 has nothing to measure.
     label: "a repair is looked up and then thrown away",
     file: `${SERVER}/src/services/pins.ts`,
-    from: "        repairsPinId: repaired?.id ?? null,",
-    to: "        repairsPinId: null,",
+    from: "      repairsPinId: repaired?.id ?? null,",
+    to: "      repairsPinId: null,",
     test: `${SERVER}/test/pilot-repairs.test.ts`,
     because:
       "every break reads \"no repair pin yet\" for ever, so proof 3 can " +
       "never produce a hit or a miss — and the report says so in words that " +
       "sound like a fact about the team rather than about the hub",
   },
-  {
-    // 07 §3.2. The noise FIGURE has to count people, not keystrokes — and
-    // the unique key is the database's, but the service is what turns a
-    // second attempt into an answer rather than a second row.
-    label: "one person's second keystroke becomes a second complaint",
-    file: `${SERVER}/src/services/pilot.ts`,
-    from:
-      "    .onConflictDoNothing()\n" +
-      "    .returning({ id: pilotMarks.id });",
-    to: "    .returning({ id: pilotMarks.id });",
-    test: `${SERVER}/test/pilot-marks.test.ts`,
-    because:
-      "the one figure that says whether this product is worth installing is " +
-      "inflated by the gesture designed to make complaining cheap, so a " +
-      "single frustrated person reads as a team — and the target it is " +
-      "measured against was set before anybody could know that",
-  },
+  // ("one person's second keystroke becomes a second complaint" — the `.onConflictDoNothing()` on
+  // the label insert — is retired as equivalent since round 2 (R2-M1): "one label in effect" is
+  // decided by `labelInEffect` before the insert, in the confirmation's transaction, and the
+  // database key is per confirmation, so a conflict needs one confirmation to write one label
+  // twice, which no batch can. The obligation is anchored on the writer's rule instead: "a second
+  // keystroke becomes a second complaint", guarded by label-slot.test.ts.)
   {
     // AT-3 on the pilot's own surface. A mark IS the measurement of whether
     // this product is useful.
@@ -8270,8 +8261,9 @@ export const MUTATIONS: readonly Mutation[
     // A gesture that appears to do nothing is one a team stops making.
     label: "a typed gesture answers as though it had worked",
     file: `${SERVER}/src/services/pilot.ts`,
-    from: '    return { refusal: "not_enrolled" };',
-    to: "    return { id: input.refId, repeated: true };",
+    // Since human provenance the check is its own function, shared by the door and the confirmation.
+    from: '    return "not_enrolled";',
+    to: "    return null;",
     test: `${SERVER}/test/pilot-marks.test.ts`,
     because:
       "somebody marks an intervention off-target on a repo nobody enrolled " +
@@ -8452,8 +8444,8 @@ export const MUTATIONS: readonly Mutation[
     // 07 §3.4, corrected by adversarial review. The fix range starts at the RECORDED break.
     label: "the fix range starts where the surface last worked",
     file: `${SERVER}/src/services/pilot-report.ts`,
-    from: "            .select({ id: pins.id, brokeAtCommit: pins.brokeAtCommit })",
-    to: "            .select({ id: pins.id, brokeAtCommit: pins.verifiedAtCommit })",
+    from: "            .select({ id: pins.id, brokeAtCommit: pins.brokeAtCommit, breakCounts:",
+    to: "            .select({ id: pins.id, brokeAtCommit: pins.verifiedAtCommit, breakCounts:",
     test: `${SERVER}/test/pilot-report.test.ts`,
     because:
       "the range contains the breaking change itself, so every session that touched " +
@@ -9284,10 +9276,12 @@ export const MUTATIONS: readonly Mutation[
     // measured, the harness builds from bootstrap.sql, so weakening the
     // drizzle declaration leaves every test in this repository green.
     label: "a second keystroke becomes a second complaint",
-    file: `${SERVER}/src/db/bootstrap.sql`,
-    from: "CREATE UNIQUE INDEX IF NOT EXISTS pilot_marks_ref_marker_idx",
-    to: "CREATE INDEX IF NOT EXISTS pilot_marks_ref_marker_idx",
-    test: `${SERVER}/test/ddl-sync.test.ts`,
+    // Since round 2 (R2-M1) the database key is per confirmation, so a void
+    // label frees its place, and "one label in effect" is the writer's rule.
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "  if (await labelInEffect(deps.db, input)) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/label-slot.test.ts`,
     because:
       "one person typing `crosscheck noise` twice is counted as two people " +
       "finding this product noisy, so the one figure that measures whether " +
@@ -13020,9 +13014,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a passkey ceremony runs without the session's CSRF header",
     file: `${SERVER}/src/routes/ui-ceremony.ts`,
-    from:
-      '  if (!isCsrfValid(deps.uiSessionSecret, c.get("uiSessionToken"), c.req.header(CSRF_HEADER) ?? "")) {',
-    to: "  if (false) {",
+    // Since human provenance the rule is one function the ceremony and the batch route share.
+    from: '  isCsrfValid(deps.uiSessionSecret, c.get("uiSessionToken"), c.req.header(CSRF_HEADER) ?? "");',
+    to: "  true;",
     test: `${SERVER}/test/ui-passkeys.test.ts`,
     because: "another page in the person's browser starts ceremonies in their session",
   },
@@ -14079,12 +14073,14 @@ export const MUTATIONS: readonly Mutation[
       "the repo's report to everybody who runs `crosscheck pilot`",
   },
   {
-    // An older client still sends `off_target` for what is now `noise`.
+    // An older client still sends `off_target` for what is now `noise`. Since human provenance the
+    // door drafts the word that will be stored, so the spelling is decided there (the writer's own
+    // mapping in pilot.ts stays as a second guard, and so cannot fail a test on its own).
     label: "an older client's word is stored beside the new one",
-    file: `${SERVER}/src/services/pilot.ts`,
-    from: "  mark === PILOT_LEGACY_NOISE_MARK ? \"noise\" : mark;",
-    to: "  mark;",
-    test: `${SERVER}/test/pilot-marks.test.ts`,
+    file: `${SERVER}/src/services/draft-doors.ts`,
+    from: 'const labelWord = (mark: PilotMark): PilotMark => (mark === "off_target" ? "noise" : mark);',
+    to: "const labelWord = (mark: PilotMark): PilotMark => mark;",
+    test: `${SERVER}/test/draft-doors.test.ts`,
     because:
       "the table grows a fourth spelling for one label, and every reader of " +
       "it has to know the history to count noise right",
@@ -14192,17 +14188,9 @@ export const MUTATIONS: readonly Mutation[
       "a quiet repo that was shown nothing reads as a team that ignores the " +
       "label walk, a fact about people drawn from an absence of interventions",
   },
-  {
-    // Rows an older hub wrote as `off_target` are noise; nothing is rewritten.
-    label: "a label an older hub stored is lost from the noise count",
-    file: `${SERVER}/src/services/pilot-label-figures.ts`,
-    from: "const NOISE_WORDS = sql`('noise', ${PILOT_LEGACY_NOISE_MARK})`;",
-    to: "const NOISE_WORDS = sql`('noise')`;",
-    test: `${SERVER}/test/pilot-report.test.ts`,
-    because:
-      "every noise mark a hub held before the upgrade vanishes from the " +
-      "precision denominator, and precision jumps on the day of the upgrade",
-  },
+  // ("a label an older hub stored is lost from the noise count" is retired as equivalent since human
+  // provenance: an `off_target` row is only ever `unknown_legacy`, every reader of NOISE_WORDS filters
+  // to confirmed rows, and the 0.10 marks are counted apart as `legacyNoise` — anchored below.)
   {
     label: "an answer somebody asked for is counted as an intervention",
     file: `${SERVER}/src/services/pilot-label-figures.ts`,
@@ -14538,16 +14526,10 @@ export const MUTATIONS: readonly Mutation[
       "measured figures for eight weeks — artefacts of a vocabulary with no " +
       "`helpful` in it",
   },
-  {
-    label: "a 0.10 noise mark enters the precision denominator",
-    file: `${SERVER}/src/services/pilot-label-figures.ts`,
-    from: "           count(*) FILTER (WHERE mark = 'noise')::int AS noise,",
-    to: "           count(*) FILTER (WHERE mark IN ${NOISE_WORDS})::int AS noise,",
-    test: `${SERVER}/test/pilot-report.test.ts`,
-    because:
-      "an off_target from an era that could not say helpful is scored against " +
-      "precision, which then falls for a reason that is not about the product",
-  },
+  // ("a 0.10 noise mark enters the precision denominator" is retired as equivalent since human
+  // provenance: an `off_target` mark is only ever a 0.10 row, `unknown_legacy` — a confirmed label is
+  // written as `noise` — and the tally reads confirmed rows alone, which "legacy rows read as human"
+  // anchors.)
   {
     label: "a 0.10 team's complaints vanish from the report",
     file: `${SERVER}/src/services/pilot-label-figures.ts`,
@@ -14778,8 +14760,8 @@ export const MUTATIONS: readonly Mutation[
     to: "",
     test: `${CLI}/test/pilot-render.test.ts`,
     because:
-      "proof 4 presents its figures as people's verdicts while nothing at the " +
-      "hub can tell a person's label from an agent's",
+      "proof 4 presents its figures as people's verdicts without saying what " +
+      "makes a label a person's: their passkey, while a key only drafts one",
   },
   {
     // H1, M5 at the renderer.
@@ -15720,8 +15702,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a revoked passkey's live waivers keep their fences open",
     file: `${SERVER}/src/services/passkeys.ts`,
-    from: "    const terminated = await terminateWaiversSignedBy({ db: tx, credentialId: row.credentialId, now: input.now });\n",
-    to: "    const terminated = 0;\n",
+    from: "      row.revokedAt === null ? await terminateWaiversSignedBy({ db: tx, credentialId: row.credentialId, now: input.now }) : 0;\n",
+    to: "      0;\n",
     test: `${SERVER}/test/passkey-revocation-terminates.test.ts`,
     because: "a fence a lost or stolen device opened stays open for up to fourteen days after the device is revoked",
   },
@@ -15802,8 +15784,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a passkey ceremony revokes a device without saying which fences closed with it",
     file: `${SERVER}/src/routes/ui-ceremony.ts`,
-    from: "        : ok(c, { message: `Passkey revoked.${closedWithIt(outcome.terminated)}` });\n",
-    to: "        : ok(c, { message: \"Passkey revoked.\" });\n",
+    from: "      return ok(c, { message: `${revocationSentence(outcome, fields.reason)}${closedWithIt(outcome.terminated)}` });\n",
+    to: "      return ok(c, { message: revocationSentence(outcome, fields.reason) });\n",
     test: `${SERVER}/test/ui-passkeys.test.ts`,
     because: "the person revoking a lost device does not learn it also closed the fences it had opened",
   },
@@ -20533,8 +20515,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the oldest outcome of a delivery stands instead of the newest",
     file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "      ORDER BY spoken.by_person DESC, spoken.at DESC, spoken.is_label DESC, spoken.id DESC LIMIT 1",
-    to: "      ORDER BY spoken.by_person DESC, spoken.at ASC, spoken.is_label DESC, spoken.id ASC LIMIT 1",
+    from: "      ORDER BY spoken.at DESC, spoken.is_label DESC, spoken.id DESC LIMIT 1",
+    to: "      ORDER BY spoken.at ASC, spoken.is_label DESC, spoken.id ASC LIMIT 1",
     test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
     because: "a changed mind is never shown: the view keeps the first word, append-only reads as frozen",
   },
@@ -20549,10 +20531,10 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a later noise label does not supersede an earlier outcome",
     file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "      ORDER BY spoken.by_person DESC, spoken.at DESC, spoken.is_label DESC, spoken.id DESC LIMIT 1",
-    to: "      ORDER BY spoken.is_label ASC, spoken.by_person DESC, spoken.at DESC, spoken.id DESC LIMIT 1",
+    from: "      ORDER BY spoken.at DESC, spoken.is_label DESC, spoken.id DESC LIMIT 1",
+    to: "      ORDER BY spoken.is_label ASC, spoken.at DESC, spoken.id DESC LIMIT 1",
     test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
-    because: "the person's own verdict is overruled by whatever their agent said first",
+    because: "the person's own later noise is overruled by an outcome they confirmed first",
   },
   {
     label: "another person's deliveries reach my outcome view",
@@ -22358,8 +22340,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a word changed after the month moves the month's team figure",
     file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "          AND o.recorded_by = la.recipient ${before(sql`o.created_at`, until)}",
-    to: "          AND o.recorded_by = la.recipient",
+    from: '          AND o.recorded_by = la.recipient AND ${isHumanRow("o", at)} ${before(sql`o.created_at`, until)}',
+    to: '          AND o.recorded_by = la.recipient AND ${isHumanRow("o", at)}',
     test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
     because: "reading the closed month before and after a teammate switches a word shows which word they switched",
   },
@@ -22383,7 +22365,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a teammate's credit counts one or two recipients' words",
     file: `${SERVER}/src/services/hint-outcome-view.ts`,
-    from: "  const withheld = withholdingOf(aggregate, { sources: false, recorded: false, followers: true });",
+    from: "  const withheld = withholdingOf(aggregate, checks);",
     to: '  const withheld = aggregate.interventions === 0 ? "no_interventions" : null;',
     test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
     because: "with two recipients the author's count drops by one the moment one of them switches to overrode",
@@ -22446,22 +22428,12 @@ export const MUTATIONS: readonly Mutation[
     because: "every client prints the first of the month as when outcomes became recordable",
   },
   // ── 07 §13.10, review #11: a repeat reports what stands ──────────────────
-  {
-    label: "the word the person's noise label superseded, said again, overturns the label",
-    file: `${SERVER}/src/services/hint-outcomes.ts`,
-    from: '  return input.recordedVia === "agent" || personsOutcomeStanding(words) === input.outcome;',
-    to: "  return personsOutcomeStanding(words) === input.outcome;",
-    test: `${SERVER}/test/hint-outcomes.test.ts`,
-    because: "an agent re-reading the clause overturns the person's verdict for good, and precision still counts noise (P3)",
-  },
-  {
-    label: "a word that ties with the noise label is reported as standing",
-    file: `${SERVER}/src/services/hint-outcomes.ts`,
-    from: "      stands: after ?? input.outcome,\n    };",
-    to: "      stands: input.outcome,\n    };",
-    test: `${SERVER}/test/hint-outcomes.test.ts`,
-    because: "the label wins a tie (D-O7), so 'recorded' would claim a word took that every figure overrules",
-  },
+  // ("the word the person's noise label superseded, said again, overturns the label" is retired with
+  // 07 §13.12's agent channel: a confirmed word is always the person's, J8 — human provenance review M1.)
+  // ("a word that ties with the noise label is reported as standing" is retired as equivalent: a
+  // confirmed word is stamped strictly after every word on its pointer, the label included, so it can
+  // never tie with the label — that stamping is anchored as "an outcome said in the label's own
+  // millisecond ties with it".)
   {
     label: "crosscheck followed says the word took when the noise label still stands",
     file: `${CLI}/src/cli/outcome-render.ts`,
@@ -22722,16 +22694,16 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the sources minimum counts the viewer's own words",
     file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "        SELECT (SELECT count(DISTINCT w.source_id) FROM words w WHERE w.recipient <> r.recipient) AS k",
-    to: "        SELECT (SELECT count(DISTINCT w.source_id) FROM words w) AS k",
+    from: "        SELECT (SELECT count(DISTINCT w.source_id) FROM ${words} w WHERE w.recipient <> r.recipient) AS k",
+    to: "        SELECT (SELECT count(DISTINCT w.source_id) FROM ${words} w) AS k",
     test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
     because: "an author supplies the other sources himself and reads the rest as how the team treated his work",
   },
   {
     label: "the words minimum counts the words of whoever said most",
     file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "    wordsWithoutLargest: recorded - Number(row?.largest_recorder_words ?? 0),",
-    to: "    wordsWithoutLargest: recorded,",
+    from: '    wordsWithoutLargest: count("words") - count("largest_recorder_words"),',
+    to: '    wordsWithoutLargest: count("words"),',
     test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
     because: "one person pads the month alone, and the few words of everyone else print as a figure",
   },
@@ -22937,8 +22909,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a noise label made after the month moves the closed month (survivor M1)",
     file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "        AND m.marked_by = so.recipient AND m.mark IN ${NOISE_WORDS} ${before(sql`m.created_at`, until)}",
-    to: "        AND m.marked_by = so.recipient AND m.mark IN ${NOISE_WORDS}",
+    from: '          AND m.marked_by = so.recipient AND m.mark IN ${NOISE_WORDS} AND ${isHumanRow("m", at)}\n          ${before(sql`m.created_at`, until)}',
+    to: '          AND m.marked_by = so.recipient AND m.mark IN ${NOISE_WORDS} AND ${isHumanRow("m", at)}\n',
     test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
     because: "reading July before and after someone labels a July hint in August shows whose label it was",
   },
@@ -22953,8 +22925,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a recipient who recorded nothing counts as a recorder (survivor M3)",
     file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "      (SELECT count(DISTINCT recipient) FROM words)::int AS recorders,",
-    to: "      (SELECT count(DISTINCT recipient) FROM scoped)::int AS recorders,",
+    from: '      (SELECT count(DISTINCT recipient) FROM ${words})::int AS ${as("recorders")},',
+    to: '      (SELECT count(DISTINCT recipient) FROM scoped)::int AS ${as("recorders")},',
     test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
     because: "two silent teammates lift three people's words over the people-minimum, and a viewer subtracts",
   },
@@ -22969,8 +22941,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the view lets an outcome win a tie with the person's label (survivor M6)",
     file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "      ORDER BY spoken.by_person DESC, spoken.at DESC, spoken.is_label DESC, spoken.id DESC LIMIT 1",
-    to: "      ORDER BY spoken.by_person DESC, spoken.at DESC, spoken.is_label ASC, spoken.id DESC LIMIT 1",
+    from: "      ORDER BY spoken.at DESC, spoken.is_label DESC, spoken.id DESC LIMIT 1",
+    to: "      ORDER BY spoken.at DESC, spoken.is_label ASC, spoken.id DESC LIMIT 1",
     test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
     because: "the person's verdict loses to a word said in the same millisecond, against D-O7",
   },
@@ -22994,8 +22966,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a re-assertion made after the month is read into the closed month",
     file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "          AND r.marked_by = so.recipient ${before(sql`r.created_at`, until)}",
-    to: "          AND r.marked_by = so.recipient",
+    from: '          AND r.marked_by = so.recipient AND ${isHumanRow("r", at)} ${before(sql`r.created_at`, until)}',
+    to: '          AND r.marked_by = so.recipient AND ${isHumanRow("r", at)}',
     test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
     because: "the person saying noise in August turns a July that already printed followed into noise",
   },
@@ -23051,64 +23023,39 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an outcome is stored without the channel that said it",
     file: `${SERVER}/src/services/hint-outcomes.ts`,
-    from: "    recordedVia: input.recordedVia,\n",
+    from: "    recordedVia: CONFIRMED_CHANNEL,\n",
     to: "\n",
-    test: `${SERVER}/test/hint-outcomes.test.ts`,
-    because: "the hub forgets which door a word came through, and the person's word reads as the agent's",
+    test: `${SERVER}/test/review-survivors.test.ts`,
+    because: "a confirmed word is stored with no channel, and J8 no longer holds in the rows",
   },
-  {
-    label: "what stands on the write path is the newest word of anyone, the agent's included",
-    file: `${SERVER}/src/services/pointer-standing.ts`,
-    from: "  const persons = personsOutcomeStanding(words);",
-    to: "  const persons = personsOutcomeStanding({ ...words, person: words.agent ?? words.person });",
-    test: `${SERVER}/test/hint-outcomes.test.ts`,
-    because: "the agent's later word overturns the person's own followed, and the answer says it took",
-  },
-  {
-    label: "a repeat is judged across channels, so the agent agreeing with the person writes nothing",
-    file: `${SERVER}/src/services/hint-outcomes.ts`,
-    from: '  input.recordedVia === "person" ? words.person : words.agent;',
-    to: "  words.person ?? words.agent;",
-    test: `${SERVER}/test/hint-outcomes.test.ts`,
-    because: "the agent's own word is swallowed as the person's, and its history has a hole",
-  },
+  // Retired with 07 §13.12's agent channel (human provenance review M1, J8): no production path
+  // writes an agent-channel confirmed row, so "what stands on the write path is the newest word of
+  // anyone, the agent's included", "a repeat is judged across channels, …", "the view lets the
+  // agent's newer word overturn the person's" and "the view reads every outcome as the person's own"
+  // guard code that no longer exists.
   {
     label: "the person's same word after their own noise label is swallowed as a repeat",
     file: `${SERVER}/src/services/hint-outcomes.ts`,
-    from: '  return input.recordedVia === "agent" || personsOutcomeStanding(words) === input.outcome;',
+    from: "  return personsOutcomeStanding(words) === input.outcome;",
     to: "  return true;",
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "the person changes their mind back and the hub answers 'already recorded', leaving their noise standing",
-  },
-  {
-    label: "the view lets the agent's newer word overturn the person's",
-    file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "      ORDER BY spoken.by_person DESC, spoken.at DESC, spoken.is_label DESC, spoken.id DESC LIMIT 1",
-    to: "      ORDER BY spoken.at DESC, spoken.is_label DESC, spoken.id DESC LIMIT 1",
-    test: `${SERVER}/test/hint-outcomes.test.ts`,
-    because: "--mine, the credit and the team line count the agent's followed where the person said noise",
-  },
-  {
-    label: "the view reads every outcome as the person's own",
-    file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "               COALESCE(o.recorded_via = 'person', false) AS by_person, false AS is_label",
-    to: "               true AS by_person, false AS is_label",
-    test: `${SERVER}/test/hint-outcomes.test.ts`,
-    because: "an agent's later word outranks the person's noise label in every figure",
   },
   {
     label: "the client posts the person's word through the agent's door",
     file: `${CORE}/src/http/hint-outcomes.ts`,
     from: '  person: "/api/hint-outcomes/person",',
     to: '  person: "/api/hint-outcomes",',
-    test: `${CLI}/test/outcome-cli.test.ts`,
-    because: "crosscheck followed is filed as the agent's, and the agent's next word overturns the person",
+    // Since human provenance the door decides the draft's class; a hub that confirms at once (the
+    // outcome-cli suites) cannot tell the doors apart, so the guard is the CLI against the hub as it runs.
+    test: `${CLI}/test/drafted-gestures-cli.test.ts`,
+    because: "crosscheck followed at a terminal is drafted as the agent's, and the confirm page shows the person's word as their agent's",
   },
   {
     label: "crosscheck followed / overrode post as the agent",
     file: `${CLI}/src/cli/outcome.ts`,
-    from: '  if (gate.isPerson) {\n    return { via: "person", agentLine: "" };',
-    to: '  if (gate.isPerson) {\n    return { via: "agent", agentLine: AGENT_WORD_LINE };',
+    from: '  if (gate.isPerson) {\n    return { via: "person", agentLine: "", agentDraftLine: "" };',
+    to: '  if (gate.isPerson) {\n    return { via: "agent", agentLine: AGENT_WORD_LINE, agentDraftLine: AGENT_DRAFT_LINE };',
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "the person's terminal word is the agent's, and the agent's next word overturns it",
   },
@@ -23238,16 +23185,16 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the credit is shown over recorders, not followers (probe B)",
     file: `${SERVER}/src/services/hint-outcome-view.ts`,
-    from: "  const withheld = withholdingOf(aggregate, { sources: false, recorded: false, followers: true });",
-    to: "  const withheld = withholdingOf(aggregate, { sources: false, recorded: false, followers: false });",
+    from: "  const checks = { sources: false, recorded: false, followers: true } as const;",
+    to: "  const checks = { sources: false, recorded: false, followers: false } as const;",
     test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
     because: "four teammates who each overrode the author print 'followed 0' — four verdicts in one number",
   },
   {
     label: "the follower count counts everyone who recorded",
     file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "      count(DISTINCT recipient) FILTER (WHERE state = 'followed')::int AS followers,",
-    to: "      count(DISTINCT recipient)::int AS followers,",
+    from: "      count(DISTINCT recipient) FILTER (WHERE ${filter} AND state = 'followed')::int AS ${as(\"followers\")},",
+    to: "      count(DISTINCT recipient) FILTER (WHERE ${filter})::int AS ${as(\"followers\")},",
     test: `${SERVER}/test/hint-outcomes-mine.test.ts`,
     because: "a homogeneous override reads as enough followers, and 'followed 0' prints",
   },
@@ -23435,21 +23382,18 @@ export const MUTATIONS: readonly Mutation[
     because: "a team that left cannot read its last enrolled month",
   },
   // ── 07 §13.12, review LOW (probe E): one pointer, one month ──
+  // Since human provenance's review M6 the month's start is held by the LATE filter: a pointer first
+  // delivered before the month is late (lateColumn) and counts only by a word confirmed inside it.
+  // That makes "a pointer whose twin arrives next month counts in both months" (HAVING max) and "the
+  // month's population has no start" (HAVING true) equivalent mutations — both proven NOT-CAUGHT
+  // because nothing can change — so they are retired; the late filter's bound is anchored instead.
   {
-    label: "a pointer whose twin arrives next month counts in both months",
+    label: "a late pointer counts in the month by a word said before it",
     file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "sql`HAVING min(hd.delivered_at) >= ${since.toISOString()}::timestamptz`;",
-    to: "sql`HAVING max(hd.delivered_at) >= ${since.toISOString()}::timestamptz`;",
-    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
-    because: "July's followed is counted again in August when the same pointer is asked about on the first",
-  },
-  {
-    label: "the month's population has no start",
-    file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "sql`HAVING min(hd.delivered_at) >= ${since.toISOString()}::timestamptz`;",
-    to: "sql`HAVING true`;",
-    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
-    because: "every month counts every intervention since the pilot began",
+    from: "    WHERE NOT late OR (word IS NOT NULL AND outcome_at >= ${since.toISOString()}::timestamptz)",
+    to: "    WHERE NOT late OR word IS NOT NULL",
+    test: `${SERVER}/test/late-confirmation.test.ts`,
+    because: "July's followed is counted again in August because someone confirmed anything about that hint in August",
   },
   // ── 07 §13.12, review M-4: the round-3 survivors, killed ──
   {
@@ -23512,18 +23456,19 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an outcome said in the label's own millisecond ties with it",
     file: `${SERVER}/src/services/pointer-standing.ts`,
-    from: "  [words.person?.createdAt, words.agent?.createdAt, words.noise?.createdAt, words.helpful?.createdAt]",
-    to: "  [words.person?.createdAt, words.agent?.createdAt, words.helpful?.createdAt]",
+    from: "  [words.person?.createdAt, words.noise?.createdAt, words.helpful?.createdAt]",
+    to: "  [words.person?.createdAt, words.helpful?.createdAt]",
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "the person's followed is stamped at the label's instant, the label wins the tie, and noise stands",
   },
   {
-    label: "a word is stamped at the clock, under the agent's word stamped past it",
+    // Since human provenance the two words in one millisecond are the person's own (J8).
+    label: "a word is stamped at the clock, under the person's own word stamped past it",
     file: `${SERVER}/src/services/pointer-standing.ts`,
-    from: "  [words.person?.createdAt, words.agent?.createdAt, words.noise?.createdAt, words.helpful?.createdAt]",
-    to: "  [words.person?.createdAt, words.noise?.createdAt, words.helpful?.createdAt]",
+    from: "  [words.person?.createdAt, words.noise?.createdAt, words.helpful?.createdAt]",
+    to: "  [words.noise?.createdAt, words.helpful?.createdAt]",
     test: `${SERVER}/test/hint-outcomes.test.ts`,
-    because: "two agent words in one millisecond share a timestamp, and which stands is a coin toss",
+    because: "two confirmed words in one millisecond share a timestamp, and which stands is a coin toss",
   },
   // ── 07 §13.12, review LOW: the credit says when its month was paused ──
   {
@@ -23605,8 +23550,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an outcome recorded as the agent's never says so",
     file: `${CLI}/src/cli/outcome.ts`,
-    from: "gate.marker === null ? AGENT_WORD_LINE : agentHostLine(gate.marker)",
-    to: 'gate.marker === null ? "" : agentHostLine(gate.marker)',
+    from: '    ? { via: "agent", agentLine: AGENT_WORD_LINE, agentDraftLine: AGENT_DRAFT_LINE }',
+    to: '    ? { via: "agent", agentLine: "", agentDraftLine: AGENT_DRAFT_LINE }',
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "the person reads their word as standing when it was filed as their agent's",
   },
@@ -23647,52 +23592,20 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the figures never read the person's helpful label",
     file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "          AND h.marked_by = so.recipient AND h.mark = 'helpful' ${before(sql`h.created_at`, until)}",
+    from: "          AND h.marked_by = so.recipient AND h.mark = 'helpful' AND ${isHumanRow(\"h\", at)}",
     to: "          AND h.marked_by = so.recipient AND false",
     test: `${SERVER}/test/hint-outcomes.test.ts`,
-    because: "--mine counts the agent's not_relevant_now over the person's own helpful",
+    because: "--mine never shows the person's own helpful, and the noise it took back still counts",
   },
-  {
-    // round 6 (HIGH-1): helpful no longer becomes a standing word in the figures; its one effect on
-    // the outcome axis, besides cancelling older noise, is the veto of an agent's not_relevant_now
-    label: "the person's helpful vetoes nothing of the agent's (P3)",
-    file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "AND st.word = 'not_relevant_now' AND st.has_helpful) AS vetoed",
-    to: "AND false) AS vetoed",
-    test: `${SERVER}/test/hint-outcomes.test.ts`,
-    because: "the agent's not_relevant_now overturns the person's helpful in every figure",
-  },
-  // ── 07 §13.13, LOW-5: a pre-channel (NULL) word is the agent's ──
-  {
-    label: "write path: a pre-channel row is nobody's word (Q1)",
-    file: `${SERVER}/src/services/pointer-standing.ts`,
-    from: "sql`o.recorded_via IS DISTINCT FROM 'person'`",
-    to: "sql`o.recorded_via = 'agent'`",
-    test: `${SERVER}/test/hint-outcomes.test.ts`,
-    because: "an agent re-reading the clause writes its pre-channel word a second time",
-  },
-  {
-    label: "write path: a pre-channel row is the person's word (Q2)",
-    file: `${SERVER}/src/services/pointer-standing.ts`,
-    from: "channel === \"person\" ? sql`o.recorded_via = 'person'`",
-    to: "channel === \"person\" ? sql`o.recorded_via IS DISTINCT FROM 'agent'`",
-    test: `${SERVER}/test/hint-outcomes.test.ts`,
-    because: "an old agent word outranks every newer agent word as if the person had said it",
-  },
-  {
-    label: "view: a pre-channel row sorts above the person's word (Q3)",
-    file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "COALESCE(o.recorded_via = 'person', false) AS by_person",
-    to: "(o.recorded_via = 'person') AS by_person",
-    test: `${SERVER}/test/hint-outcomes.test.ts`,
-    because: "NULL sorts first under DESC, so an old agent word overturns the person's own in every figure",
-  },
+  // Retired with 07 §13.12's agent channel (human provenance review M1, J8): "the person's helpful
+  // vetoes nothing of the agent's (P3)", and 07 §13.13 LOW-5's pre-channel rows (Q1, Q2, Q3) — a
+  // pre-channel row is a 0.10 row now, `unknown_legacy`, which no figure and no write path reads.
   // ── 07 §13.13, MEDIUM-2: the person's repeat (Q4), and twins stay in their session (Q14) ──
   {
     label: "the person's exact repeat writes a second row (Q4)",
     file: `${SERVER}/src/services/hint-outcomes.ts`,
-    from: '  return input.recordedVia === "agent" || personsOutcomeStanding(words) === input.outcome;',
-    to: '  return input.recordedVia === "agent";',
+    from: "  return personsOutcomeStanding(words) === input.outcome;",
+    to: "  return false;",
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "a person typing crosscheck followed twice is told it was recorded twice, and the history doubles",
   },
@@ -23738,14 +23651,8 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "the person who took back their noise with helpful is still counted as noise",
   },
-  {
-    label: "the person's own not_relevant_now is vetoed by their own helpful",
-    file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "      SELECT st.*, (NOT COALESCE(st.by_person, false) AND st.word",
-    to: "      SELECT st.*, (st.word",
-    test: `${SERVER}/test/hint-outcomes.test.ts`,
-    because: "the person's own outcome is deleted by their own later verdict",
-  },
+  // ("the person's own not_relevant_now is vetoed by their own helpful" is retired with the veto
+  // itself: helpful vetoed only an agent-channel word, and there is none among confirmed rows — J8.)
   {
     label: "helpful competes with the person's own outcome on the write path",
     file: `${SERVER}/src/services/pointer-standing.ts`,
@@ -23754,20 +23661,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "a helpful label said after the person's own override is answered as what stands, not the override",
   },
-  {
-    label: "the write path never lets the person's helpful veto the agent's not_relevant_now",
-    file: `${SERVER}/src/services/pointer-standing.ts`,
-    from: '  return agents === "not_relevant_now" && words.helpful !== undefined ? "helpful" : agents;',
-    to: "  return agents;",
-    test: `${SERVER}/test/hint-outcomes.test.ts`,
-    because: "the agent is told its not_relevant_now stands over the person's helpful",
-  },
+  // ("the write path never lets the person's helpful veto the agent's not_relevant_now" is retired
+  // with the agent channel on the write path, J8.)
   // ── 07 §13.13, LOW-6: a re-assertion's sentence is read ──
   {
     label: "a re-asserted noise's sentence is never read",
     file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "        SELECT 'noise', r.reason, r.created_at, r.id, true FROM noise_reassertions r",
-    to: "        SELECT 'noise', NULL, r.created_at, r.id, true FROM noise_reassertions r",
+    from: "        SELECT 'noise', r.reason, r.created_at, r.id, true, ${effectiveAtOf(\"r\")}, r.confirmation_id FROM noise_reassertions r",
+    to: "        SELECT 'noise', NULL, r.created_at, r.id, true, ${effectiveAtOf(\"r\")}, r.confirmation_id FROM noise_reassertions r",
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "the person's 'still off target' is stored and never shown to them",
   },
@@ -23948,8 +23849,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a word demoted by a host's marker says it had no terminal",
     file: `${CLI}/src/cli/outcome.ts`,
-    from: ": agentHostLine(gate.marker) };",
-    to: ": AGENT_WORD_LINE };",
+    from: '    : { via: "agent", agentLine: agentHostLine(gate.marker), agentDraftLine: agentHostDraftLine(gate.marker) };',
+    to: '    : { via: "agent", agentLine: AGENT_WORD_LINE, agentDraftLine: agentHostDraftLine(gate.marker) };',
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "the person at a terminal is told there was none, and cannot see why their word is the agent's",
   },
@@ -23989,10 +23890,11 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the --mine footer credits the commands to the person wherever they ran",
     file: `${CLI}/src/cli/pilot-mine-render.ts`,
-    from: "by you (crosscheck followed / overrode, typed in your own shell) or by your agent (mark_hint_outcome, or those commands run by an agent's tool, a pipe or Claude Code's ! prefix)",
-    to: "by your agent (mark_hint_outcome) or by you (crosscheck followed / overrode)",
+    // Since human provenance: a terminal is a door any agent's tool reaches too; only the passkey is the person.
+    from: "your agent's words (mark_hint_outcome) and words typed at a terminal (crosscheck followed / overrode / noise / helpful) are drafts until then",
+    to: "your agent's words (mark_hint_outcome) are drafts until then; what you type (crosscheck followed / overrode / noise / helpful) counts at once",
     test: `${CLI}/test/pilot-mine-render.test.ts`,
-    because: "the person reads a word their agent's tool typed as their own",
+    because: "the person reads a word their agent's tool typed at a terminal as already their own",
   },
   // ── 07 §13.14, round-6 LOW-2: a clock that stepped back (D4) ──
   {
@@ -24023,8 +23925,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the agent's-word line only for followed (T4)",
     file: `${CLI}/src/cli/outcome.ts`,
-    from: "${outcomeRecordedLine(ref, answer.result.data)}${target.agentLine}`",
-    to: '${outcomeRecordedLine(ref, answer.result.data)}${outcome === "followed" ? target.agentLine : ""}`',
+    from: "  return { stdout: `${outcomeRecordedLine(ref, recorded)}${agentLine}`, exitCode: EXIT_OK };",
+    to: '  return { stdout: `${outcomeRecordedLine(ref, recorded)}${outcome === "followed" ? agentLine : ""}`, exitCode: EXIT_OK };',
     test: `${CLI}/test/outcome-cli.test.ts`,
     because: "an override filed as the agent's reads as the person's",
   },
@@ -24090,8 +23992,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a helpful label's sentence is never read",
     file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "        SELECT 'helpful', h.reason, h.created_at, h.id, false FROM pilot_marks h",
-    to: "        SELECT 'helpful', NULL, h.created_at, h.id, false FROM pilot_marks h",
+    from: "        SELECT 'helpful', h.reason, h.created_at, h.id, false, ${effectiveAtOf(\"h\")}, h.confirmation_id FROM pilot_marks h",
+    to: "        SELECT 'helpful', NULL, h.created_at, h.id, false, ${effectiveAtOf(\"h\")}, h.confirmation_id FROM pilot_marks h",
     test: `${SERVER}/test/hint-outcomes.test.ts`,
     because: "the person's own 'and why' is stored and never shown to them",
   },
@@ -28239,8 +28141,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "doctor passes a presence opt-out switched back off",
     file: `${CLI}/src/cli/doctor.ts`,
-    from: '  if (reenabled !== null) {\n    return check("WARN", "privacy settings", reenabled);',
-    to: '  if (false) {\n    return check("WARN", "privacy settings", reenabled);',
+    from: "    ...(reenabled === null ? [] : [reenabled]),\n    ...(result.data.presenceOnPending",
+    to: "    ...(result.data.presenceOnPending",
     test: `${CLI}/test/presence-reenabled-cli.test.ts`,
     because: "doctor prints PASS presence visible over an opt-out an agent undid",
   },
@@ -35000,6 +34902,803 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/key-binding.test.ts`,
     because: "a numeric keyOrigin is re-bound to whatever hubUrl says, so the key follows the next hubUrl edit",
   },
+  // Human provenance (0.11): a key only drafts; the person's passkey decides.
+  {
+    label: "an agent's rating counts as human",
+    file: `${SERVER}/src/services/confirmation-batch.ts`,
+    from: '    if (item.decision !== "confirm") {\n      continue;\n    }\n    // Each row names the item',
+    to: '    if (item.decision === "keep") {\n      continue;\n    }\n    // Each row names the item',
+    test: `${CLI}/test/human-provenance-e2e.test.ts`,
+    because: "the rating the person discarded on the confirm page is written as theirs, and pilot --mine counts the agent's word",
+  },
+  {
+    label: "a confirmation signs a different set than it stores",
+    file: `${SERVER}/src/services/confirmation-batch.ts`,
+    from: "    const applied = await DRAFT_KIND_REGISTRY[item.draft.kind].apply(deps, item.draft, item.content, stamp);",
+    to: "    const applied = await DRAFT_KIND_REGISTRY[item.draft.kind].apply(deps, item.draft, item.draft.payload, stamp);",
+    test: `${SERVER}/test/confirm-batch.test.ts`,
+    because: "the person signs their edit — overrode, with their reason — and the hub stores the agent's followed under their passkey",
+  },
+  {
+    label: "a confirmation's digest leaves out what was decided",
+    file: `${SERVER}/src/services/confirmation-batch.ts`,
+    from: "      items.map((item) => [item.draft.id, item.draft.version, item.draftDigest, item.decision, item.content]),",
+    to: "      items.map((item) => [item.draft.id, item.draft.version, item.draftDigest, item.content]),",
+    test: `${SERVER}/test/confirm-batch.test.ts`,
+    because: "an assertion over 'discard all' confirms the same set as 'confirm all': the signature no longer says which",
+  },
+  {
+    label: "a draft pin protects",
+    file: `${SERVER}/src/services/draft-doors.ts`,
+    from: "  const { presence: _claimed, ...body } = pin;\n  return drafted(",
+    to:
+      "  const { presence: _claimed, ...body } = pin;\n" +
+      '  await (await import("./pins.ts")).createPin(deps, developerId, pin, { provenance: "unknown_legacy", confirmationId: null } as never);\n' +
+      "  return drafted(",
+    test: `${SERVER}/test/draft-doors.test.ts`,
+    because: "an agent's pin fences a teammate's file and arms suspect before any person confirmed it",
+  },
+  {
+    label: "an agent mutes a teammate",
+    file: `${SERVER}/src/services/draft-doors.ts`,
+    from: '    return { outcome: "unchanged", developer };\n  }\n  const result = drafted(',
+    to:
+      '    return { outcome: "unchanged", developer };\n  }\n' +
+      '  if (kind === "mute") {\n' +
+      '    await (await import("./developer-settings.ts")).addMute(deps, readerId, ref, { provenance: "unknown_legacy", confirmationId: null } as never);\n' +
+      "  }\n" +
+      "  const result = drafted(",
+    test: `${SERVER}/test/draft-doors.test.ts`,
+    because: "a key silences a teammate's pointers and hints for the person, who never chose it",
+  },
+  {
+    label: "legacy rows read as human",
+    file: `${SERVER}/src/services/human-provenance.ts`,
+    from: "  sql`(${sql.raw(alias)}.provenance = ${HUMAN_PROVENANCE} AND ${signerStands(`${alias}.confirmation_id`, at)})`;",
+    to: "  sql`(${sql.raw(alias)}.provenance IN (${HUMAN_PROVENANCE}, 'unknown_legacy'))`;",
+    test: `${SERVER}/test/human-judgement-invariant.test.ts`,
+    because: "every word recorded before provenance existed — any of them an agent's — is counted as a person's confirmed judgement",
+  },
+  {
+    label: "a batch confirms a draft that changed after the person saw it",
+    file: `${SERVER}/src/services/confirmation-batch.ts`,
+    from: "    return now !== undefined && now.version === item.draft.version && draftDigest(now) === item.draftDigest;",
+    to: "    return true;",
+    test: `${SERVER}/test/confirm-batch.test.ts`,
+    because: "an agent edits or re-decides a draft between the page and the tap, and the stale signature confirms it",
+  },
+  {
+    label: "a confirmed batch can be signed again",
+    file: `${SERVER}/src/services/confirmation-batch.ts`,
+    from: "    batches.delete(batch.id);\n    try {\n      const { presenceOn, effects, items }",
+    to: "    try {\n      const { presenceOn, effects, items }",
+    test: `${SERVER}/test/confirm-batch.test.ts`,
+    because: "a spent batch stays signable, and a captured ceremony replays into a second confirmation",
+  },
+  {
+    // Cross-batch is held by two layers — the ceremony's own subject and the
+    // challenge's binding (PK-4 anchors that one) — so the test that isolates
+    // this layer signs the other batch's terms on this batch's nonce.
+    label: "an assertion over one batch confirms another",
+    file: `${SERVER}/src/services/webauthn.ts`,
+    from: "    if (ceremony.purpose !== expected.purpose || ceremony.subject !== expected.subject) {",
+    to: "    if (ceremony.purpose !== expected.purpose) {",
+    test: `${SERVER}/test/confirm-batch.test.ts`,
+    because: "a ceremony started for 'discard all' finishes the batch that confirms everything",
+  },
+  {
+    label: "a confirmation forgets the assertion that signed it",
+    file: `${SERVER}/src/services/confirmation-batch.ts`,
+    from: "    authenticatorData: assertion.authenticatorData,\n    clientDataJson: assertion.clientDataJSON,",
+    to: '    authenticatorData: "",\n    clientDataJson: assertion.clientDataJSON,',
+    test: `${SERVER}/test/confirmation-records.test.ts`,
+    because: "a person can no longer check on their own machine that the hub stored what their passkey signed",
+  },
+  {
+    label: "a producer of a human figure escapes the invariant walk",
+    file: `${SERVER}/test/human-judgement-producers.ts`,
+    from: "  \"the team line and the source credit (one closed period's aggregate)\": {\n    file: \"src/services/outcome-population.ts\",",
+    to: "  \"the team line and the source credit (one closed period's aggregate)\": {\n    file: \"src/services/hint-outcome-view.ts\",",
+    test: `${SERVER}/test/human-judgement-invariant.test.ts`,
+    because: "a figure that reads the judgement tables without the human filter is never walked, and nothing notices",
+  },
+  {
+    label: "a privileged batch is signed with a passkey still cooling off",
+    file: `${SERVER}/src/services/draft-kinds.ts`,
+    from: '  specs.some((spec) => spec.authority === "privileged") ? "privileged" : "normal";',
+    to: '  "normal";',
+    test: `${SERVER}/test/draft-kinds.test.ts`,
+    because: "a draft kind registered as privileged — code disclosure — is confirmed by a passkey an agent enrolled minutes ago",
+  },
+  {
+    label: "a batch nobody can read is signed with a passkey still cooling off",
+    file: `${SERVER}/src/routes/ui-ceremony-confirm.ts`,
+    from: '): DraftAuthority => batches.read(owner, fields.subjectId)?.authority ?? "privileged";',
+    to: '): DraftAuthority => batches.read(owner, fields.subjectId)?.authority ?? "normal";',
+    test: `${SERVER}/test/draft-kinds.test.ts`,
+    because: "an unknown batch fails open: the cooling passkey is offered for what nobody could check",
+  },
+  {
+    label: "confirming one's own drafts waits out the passkey's cool-off (Q19)",
+    file: `${SERVER}/src/routes/ui-ceremony.ts`,
+    from: '    fields.action === "confirm_batch" && confirmAuthorityOf(context.batches, context.owner, fields) === "normal";',
+    to: "    false;",
+    test: `${SERVER}/test/confirm-batch.test.ts`,
+    because: "a person who just enrolled cannot confirm their own labels for hours, and the drafts rot unconfirmed",
+  },
+  {
+    label: "a dead draft never leaves the confirm page",
+    file: `${SERVER}/src/services/draft-kinds.ts`,
+    from: "  return !spec.retirable || (await spec.isLive(deps, draft));",
+    to: "  return true;",
+    test: `${SERVER}/test/human-drafts.test.ts`,
+    because: "a draft that can never apply blocks every batch and holds a place under the pending bound forever",
+  },
+  {
+    label: "a draft of a kind the page does not show is in its batch",
+    file: `${SERVER}/src/services/human-drafts.ts`,
+    from: "  return keepLive(deps, options.scope === undefined ? rows : rows.filter((draft) => options.scope?.includes(draft.kind)));",
+    to: "  return keepLive(deps, rows);",
+    test: `${SERVER}/test/human-drafts.test.ts`,
+    because: "an unrelated draft arriving on another page invalidates the batch the person is about to sign",
+  },
+  {
+    label: "the confirm page names an opted-out colleague's branch",
+    file: `${SERVER}/src/services/confirm-page.ts`,
+    from: "  if (delivery.owner_developer_id === null) {\n    return delivery.title;\n  }",
+    to: "  if (true) {\n    return delivery.title;\n  }",
+    test: `${SERVER}/test/live-location-privacy.test.ts`,
+    because: "the work a hint pointed at shows its fallback title — her branch — to a teammate she opted out of",
+  },
+  {
+    label: "an agent switches presence back on",
+    file: `${SERVER}/src/routes/settings.ts`,
+    from:
+      "    if (parsed.data.optOut) {\n      await setPresenceOptOut(\n        { db: deps.db, now: deps.now, embedder: deps.embedder },\n        developerId,\n        true,",
+    to:
+      "    if (true) {\n      await setPresenceOptOut(\n        { db: deps.db, now: deps.now, embedder: deps.embedder },\n        developerId,\n        parsed.data.optOut,",
+    test: `${SERVER}/test/draft-doors.test.ts`,
+    because: "a key undoes a works-council opt-out at once, and the person is located before they confirmed anything",
+  },
+  {
+    label: "a drafted rating reads as recorded at the terminal",
+    file: `${CLI}/src/cli/outcome-render.ts`,
+    from: "  if (recorded.draft === true) {\n    return outcomeDraftedLine(shown, recorded);\n  }\n",
+    to: "",
+    test: `${CLI}/test/drafted-gestures-cli.test.ts`,
+    because: "the person reads 'recorded' and never confirms, so the word they think they gave never counts",
+  },
+  {
+    label: "a drafted agent's word never says it is the agent's",
+    file: `${CLI}/src/cli/outcome.ts`,
+    from: '    ? { via: "agent", agentLine: AGENT_WORD_LINE, agentDraftLine: AGENT_DRAFT_LINE }',
+    to: '    ? { via: "agent", agentLine: AGENT_WORD_LINE, agentDraftLine: "" }',
+    test: `${CLI}/test/drafted-gestures-cli.test.ts`,
+    because: "the confirm page shows the agent's class and the terminal said nothing, so the person cannot tell why",
+  },
+  {
+    label: "the agent is told its drafted rating was recorded",
+    file: `${CORE}/src/mcp/tools/mark-hint-outcome.ts`,
+    from: "  if (recorded.draft === true) {\n    return draftedText(shown, recorded);\n  }\n",
+    to: "",
+    test: `${CORE}/test/mark-hint-outcome-tool.test.ts`,
+    because: "the agent tells the person their rating is in, and the draft waits unconfirmed while they believe it counts",
+  },
+  // Human provenance, after the independent review (2026-10-09): each fix, and each surviving mutation.
+  {
+    label: "a word said again after it was decided is swallowed as a repeat (review H2)",
+    file: `${SERVER}/src/services/human-drafts.ts`,
+    from: '  if (newest.decision === null) {\n    return newest.draft.provenance === input.provenance ? "waiting" : null;',
+    to: '  if (true) {\n    return newest.draft.provenance === input.provenance ? "waiting" : null;',
+    test: `${SERVER}/test/draft-repeats.test.ts`,
+    because: "the person says noise again over their own later word, is told 'drafted', and nothing waits on the page",
+  },
+  {
+    label: "a repeat is judged across classes, so the person's word after the agent's is swallowed (review H3)",
+    file: `${SERVER}/src/services/human-drafts.ts`,
+    from: '    return newest.draft.provenance === input.provenance ? "waiting" : null;',
+    to: '    return "waiting";',
+    test: `${SERVER}/test/draft-repeats.test.ts`,
+    because: "the person types the word their agent drafted, and the page still shows it as the agent's",
+  },
+  {
+    label: "the agent's re-offer of a word the person discarded is put back on the page",
+    file: `${SERVER}/src/services/human-drafts.ts`,
+    from: '  return isAgentReoffer ? "discarded" : null;',
+    to: "  return null;",
+    test: `${SERVER}/test/draft-repeats.test.ts`,
+    because: "the person discards the agent's word and the agent drafts it again on every turn",
+  },
+  {
+    label: "a door answers 'drafted' when nothing waits on the page (review H2)",
+    file: `${SERVER}/src/services/human-drafts.ts`,
+    from: '        waiting: repeat === "waiting",',
+    to: "        waiting: true,",
+    test: `${SERVER}/test/draft-repeats.test.ts`,
+    because: "the agent is told its discarded word waits for the passkey, and the person finds nothing to confirm",
+  },
+  {
+    label: "a new version of a decided subject escapes the page's bound (survivor M5)",
+    file: `${SERVER}/src/services/human-drafts.ts`,
+    from: "    const opensSubject = newest === undefined || newest.decision !== null;",
+    to: "    const opensSubject = newest === undefined;",
+    test: `${SERVER}/test/review-survivors.test.ts`,
+    because: "a key re-says every decided word and the person's page grows past its bound without a refusal",
+  },
+  {
+    label: "superseded draft versions are kept for ever (review M8)",
+    file: `${SERVER}/src/services/human-drafts.ts`,
+    from: "    await pruneSuperseded(tx, input.developerId, input.subjectKey, version);\n",
+    to: "",
+    test: `${SERVER}/test/draft-versions-bound.test.ts`,
+    because: "two words alternated by a key store a row per call, never pruned (P12)",
+  },
+  {
+    label: "pruning drops a version a passkey ceremony named (review M8)",
+    file: `${SERVER}/src/services/human-drafts.ts`,
+    from: "\n      AND NOT EXISTS (SELECT 1 FROM human_confirmation_items i WHERE i.draft_id = d.id)`);",
+    to: "`);",
+    test: `${SERVER}/test/draft-versions-bound.test.ts`,
+    because: "a version the person signed as 'leave for later' is deleted from under its confirmation item",
+  },
+  {
+    label: "a confirmation counts while its passkey is still cooling off (review H1)",
+    file: `${SERVER}/src/services/human-provenance.ts`,
+    from: "    ${at === null ? sql`` : sql`AND p.usable_from <= ${at.toISOString()}::timestamptz`})`;",
+    to: "    )`;",
+    test: `${SERVER}/test/signer-standing.test.ts`,
+    because: "a passkey enrolled with a stolen code an hour ago confirms words that count in every figure at once",
+  },
+  {
+    // Round 2 (R2-H3): only a passkey declared compromised retracts; a retired one keeps counting by design.
+    label: "a compromised passkey's confirmations keep counting (review H1, R2-H3)",
+    file: `${SERVER}/src/services/human-provenance.ts`,
+    from: "  WHERE hc.id = ${sql.raw(confirmationColumn)} AND NOT ${NEVER_STOOD} AND NOT ${compromisedBy(at)}",
+    to: "  WHERE hc.id = ${sql.raw(confirmationColumn)} AND NOT ${NEVER_STOOD}",
+    test: `${SERVER}/test/signer-standing.test.ts`,
+    because: "declaring a planted passkey compromised leaves every word it confirmed counted as the person's",
+  },
+  {
+    label: "the reports never say a confirmation waits for its passkey's cool-off (review H1)",
+    file: `${CLI}/src/cli/uncounted-lines.ts`,
+    from: "    ...(cooling > 0",
+    to: "    ...(false",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because: "the person confirmed two words and sees neither counted, with no word of when they will be",
+  },
+  {
+    label: "the reports never say a revoked passkey's confirmations were retracted (review H1)",
+    file: `${CLI}/src/cli/uncounted-lines.ts`,
+    from: "    ...(retracted > 0",
+    to: "    ...(false",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because: "words the person confirmed vanish from every figure without a line saying why",
+  },
+  {
+    label: "the confirm page hides what a draft signs (review M2)",
+    file: `${SERVER}/src/ui/pages/confirm.tsx`,
+    from: "    <SignedTerms draft={draft} />\n",
+    to: "",
+    test: `${SERVER}/test/ui-confirm-signed.test.ts`,
+    because: "one tap signs a pin's check recipe, commit and thirty files the page never showed (P6)",
+  },
+  {
+    label: "the confirm page pre-selects 'confirm as mine' (survivor M10)",
+    file: `${SERVER}/src/ui/pages/confirm.tsx`,
+    from: '          <option value="confirm">confirm as mine</option>',
+    to: '          <option value="confirm" selected>confirm as mine</option>',
+    test: `${SERVER}/test/ui-confirm-signed.test.ts`,
+    because: "a person who taps without choosing confirms everything an agent drafted (R1 at full width)",
+  },
+  {
+    label: "at the hub's bound, the oldest batch of anyone is evicted (review M3)",
+    file: `${SERVER}/src/services/confirmation-batch.ts`,
+    from: "    const victim = [...batches.values()].find((batch) => held.get(batch.owner.developerId) === most);",
+    to: "    const victim = [...batches.values()][0];",
+    test: `${SERVER}/test/confirm-batch-limits.test.ts`,
+    because: "one member's empty batches fill the hub, and every other member's batch is evicted before they tap (P8)",
+  },
+  {
+    label: "a developer's bound evicts other members' batches (review M3)",
+    file: `${SERVER}/src/services/confirmation-batch.ts`,
+    from: "    evictOldestPast((batch) => batch.owner.developerId === owner.developerId, limits.perDeveloper);",
+    to: "    evictOldestPast(() => true, limits.perDeveloper);",
+    test: `${SERVER}/test/confirm-batch-limits.test.ts`,
+    because: "one member forming batches evicts a teammate's, whose tap then fails",
+  },
+  {
+    label: "a batch with nothing to sign is formed (review M3)",
+    file: `${SERVER}/src/services/confirmation-batch.ts`,
+    from: '    if (!items.some((item) => item.decision !== "keep")) {',
+    to: "    if (false) {",
+    test: `${SERVER}/test/confirm-batch-limits.test.ts`,
+    because: "empty batches cost nothing to form, so a key fills every bound with them",
+  },
+  {
+    label: "a confirmed reason outlives the pilot's retention in its draft and its item (review M4/P5)",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "  await pruneConfirmationReasons(deps, cutoff);\n",
+    to: "",
+    test: `${SERVER}/test/hint-outcome-retention.test.ts`,
+    because: "the outcome ages out and the person's private sentence stays in two tables for ever",
+  },
+  {
+    label: "a confirmation lists a row under an item that did not sign it (review P9)",
+    file: `${SERVER}/src/services/confirmation-records.ts`,
+    from: "          .filter((each) => each.confirmation_id === row.id && each.position === item.position)",
+    to: "          .filter((each) => each.confirmation_id === row.id)",
+    test: `${SERVER}/test/confirmation-records.test.ts`,
+    because: "a client checks a row against the wrong signed item, and a discard reads as having written it",
+  },
+  {
+    label: "a word confirmed after its month closed is never counted (review M6/P14)",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "    WHERE NOT late OR (word IS NOT NULL AND outcome_at >= ${since.toISOString()}::timestamptz)",
+    to: "    WHERE NOT late",
+    test: `${SERVER}/test/late-confirmation.test.ts`,
+    because: "drafts make confirmation lag structural, and every word confirmed a day after its month is lost",
+  },
+  {
+    label: "a word confirmed late counts as the month's own intervention (review M6/P14)",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "  until === null ? sql`false` : sql`min(hd.delivered_at) < ${since.toISOString()}::timestamptz`;",
+    to: "  sql`false`;",
+    test: `${SERVER}/test/late-confirmation.test.ts`,
+    because: "an earlier month's hint is counted in this month's interventions and rates, never marked late",
+  },
+  {
+    label: "the team report hides words confirmed late (review M6/P14)",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "    ...lateOutcomeLines(report),\n",
+    to: "",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because: "the hub counts late words and the report never says so",
+  },
+  {
+    label: "the agent is told its discarded word was drafted again",
+    file: `${SERVER}/src/services/draft-doors.ts`,
+    from: "        notice: result.discardedByPerson ? DRAFT_NOTICE.discardedByPerson : DRAFT_NOTICE.waiting,",
+    to: "        notice: DRAFT_NOTICE.waiting,",
+    test: `${SERVER}/test/door-notice.test.ts`,
+    because: "a client printing the hub's words tells the person a word waits that they already discarded",
+  },
+  {
+    label: "a drafted pin's answer carries no notice",
+    file: `${SERVER}/src/routes/pins.ts`,
+    from: "      { id: parsed.data.id, draft: true, waiting: outcome.waiting, provenance: outcome.provenance, notice: outcome.notice },",
+    to: "      { id: parsed.data.id, draft: true, waiting: outcome.waiting, provenance: outcome.provenance },",
+    test: `${SERVER}/test/door-notice.test.ts`,
+    because: "a client that prints the hub's words says nothing about a pin that protects nothing yet",
+  },
+  {
+    label: "no page links to the confirm page (review M7)",
+    file: `${SERVER}/src/ui/layout.tsx`,
+    from: '              <a href="/ui/confirm">Confirm</a>\n',
+    to: "",
+    test: `${SERVER}/test/ui-confirm-link.test.ts`,
+    because: "a person on the web UI never finds where their drafts wait",
+  },
+  {
+    label: "the feed never says drafts wait for the passkey (review M7)",
+    file: `${SERVER}/src/ui/pages/feed.tsx`,
+    from: "    {waiting.total === 0 ? null : <WaitingDraftsNotice waiting={waiting} />}",
+    to: "    {null}",
+    test: `${SERVER}/test/ui-confirm-link.test.ts`,
+    because: "drafts pile up unconfirmed while the person's landing page says nothing",
+  },
+  {
+    label: "the feed never says presence-on waits (spec §8)",
+    file: `${SERVER}/src/ui/pages/feed.tsx`,
+    from: "    {waiting.presenceOn ?",
+    to: "    {false ?",
+    test: `${SERVER}/test/ui-confirm-link.test.ts`,
+    because: "an agent asks to show the person again and the page they read never mentions it",
+  },
+  {
+    label: "status never says presence-on waits (spec §8)",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "        ...(privacy.data.presenceOnPending ? [PRESENCE_ON_WAITING_LINE] : []),\n",
+    to: "",
+    test: `${CLI}/test/drafted-gestures-cli.test.ts`,
+    because: "the person sees 'presence: hidden' and never learns a request to show them waits for a tap",
+  },
+  {
+    label: "doctor never says presence-on waits (spec §8)",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    ...(result.data.presenceOnPending ? [PRESENCE_ON_WAITING_LINE] : []),\n",
+    to: "",
+    test: `${CLI}/test/drafted-gestures-cli.test.ts`,
+    because: "doctor passes privacy while a key's request to show the person waits",
+  },
+  {
+    label: "the briefing never says presence-on waits (spec §8)",
+    file: `${CORE}/src/flows/briefing.ts`,
+    from: "    ...(privacyResult.ok && privacyResult.data.presenceOnPending ? [PRESENCE_ON_WAITING_BRIEFING_LINE] : []),\n",
+    to: "",
+    test: `${CLI}/test/drafted-gestures-cli.test.ts`,
+    because: "the session's own context never mentions the request its agent may have made",
+  },
+  {
+    label: "two logins in one instant share a session (review L1)",
+    file: `${SERVER}/src/ui/session.ts`,
+    from: '  const nonce = randomBytes(SESSION_NONCE_BYTES).toString("hex");',
+    to: "  const nonce = String(expiresAtMs);",
+    test: `${SERVER}/test/ui-session-nonce.test.ts`,
+    because: "an agent logging in with the person's key in their millisecond spends the person's batches (P7)",
+  },
+  {
+    label: "a revoked passkey may sign a batch (survivor M1)",
+    file: `${SERVER}/src/services/passkeys.ts`,
+    from:
+      "    .where(and(eq(passkeys.developerId, input.developerId), isNull(passkeys.revokedAt)));\n" +
+      "  return rows.map((row) => ({ passkeyId: row.id, credential: storedOf(row) }));",
+    to: "    .where(eq(passkeys.developerId, input.developerId));\n  return rows.map((row) => ({ passkeyId: row.id, credential: storedOf(row) }));",
+    test: `${SERVER}/test/review-survivors.test.ts`,
+    because: "a lost device's passkey, revoked by the admin, still confirms the person's drafts",
+  },
+  {
+    label: "a colleague's passkey may sign my batch (survivor M2)",
+    file: `${SERVER}/src/services/passkeys.ts`,
+    from:
+      "    .where(and(eq(passkeys.developerId, input.developerId), isNull(passkeys.revokedAt)));\n" +
+      "  return rows.map((row) => ({ passkeyId: row.id, credential: storedOf(row) }));",
+    to: "    .where(isNull(passkeys.revokedAt));\n  return rows.map((row) => ({ passkeyId: row.id, credential: storedOf(row) }));",
+    test: `${SERVER}/test/review-survivors.test.ts`,
+    because: "any member's tap turns my agent's drafts into my confirmed words",
+  },
+  {
+    label: "a confirmed repair of a legacy break is scored (survivor M3)",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "    if (!repair.counts || !humanBreak.has(pinId)) {",
+    to: "    if (!repair.counts) {",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because: "proof 3 scores an attribution whose break no passkey ever confirmed",
+  },
+  {
+    label: "a 0.10 re-assertion stands on the write path (survivor M4)",
+    file: `${SERVER}/src/services/pointer-standing.ts`,
+    from: '      WHERE ${ofPointer("rd", pointer)} AND r.marked_by = ${recipient} AND ${isConfirmedRow("r")}',
+    to: '      WHERE ${ofPointer("rd", pointer)} AND r.marked_by = ${recipient}',
+    test: `${SERVER}/test/review-survivors.test.ts`,
+    because: "the person's confirmed noise is swallowed as a repeat of a word nobody confirmed",
+  },
+  {
+    label: "a confirmed outcome is written in the agent's channel (survivor M7, J8)",
+    file: `${SERVER}/src/services/hint-outcomes.ts`,
+    from: 'const CONFIRMED_CHANNEL: HintOutcomeChannel = "person";',
+    to: 'const CONFIRMED_CHANNEL: HintOutcomeChannel = "agent";',
+    test: `${SERVER}/test/review-survivors.test.ts`,
+    because: "the person's passkey-confirmed word is stored as their agent's",
+  },
+  // ── Human provenance, round 2 (review-human-provenance-r2.md) ──────────────
+  {
+    label: "a passkey revoked in its cool-off still stood (R2-H3)",
+    file: `${SERVER}/src/services/human-provenance.ts`,
+    from: "const NEVER_STOOD = sql`(p.revoked_at IS NOT NULL AND p.revoked_at < p.usable_from)`;",
+    to: "const NEVER_STOOD = sql`false`;",
+    test: `${SERVER}/test/revocation-reasons.test.ts`,
+    because: "a key revoking the person's day-one passkey keeps their drafts decided, so the person loses them (N5, L8)",
+  },
+  {
+    label: "a retired passkey's confirmations are retracted (R2-H3)",
+    file: `${SERVER}/src/services/human-provenance.ts`,
+    from: "    ? sql`(p.revoke_reason IS NOT DISTINCT FROM 'compromised')`",
+    to: "    ? sql`(p.revoked_at IS NOT NULL)`",
+    test: `${SERVER}/test/revocation-reasons.test.ts`,
+    because: "the admin retiring a lost laptop erases the person's pilot history",
+  },
+  {
+    label: "a void confirmation still decides its drafts (R2-H3)",
+    file: `${SERVER}/src/services/human-drafts.ts`,
+    from: "  WHERE i.draft_id = d.id AND i.decision IN ('confirm', 'discard') AND ${confirmationInEffect(\"i.confirmation_id\")})`;",
+    to: "  WHERE i.draft_id = d.id AND i.decision IN ('confirm', 'discard'))`;",
+    test: `${SERVER}/test/revocation-reasons.test.ts`,
+    because: "a compromised passkey's words are retracted and the person can never say them again",
+  },
+  {
+    label: "a key or the admin may declare a passkey compromised (R2-H3)",
+    file: `${SERVER}/src/services/passkeys.ts`,
+    from: '  if (isCompromise && (by.kind !== "passkey" || input.signerCredentialId === row.credentialId)) {',
+    to: "  if (false) {",
+    test: `${SERVER}/test/revocation-reasons.test.ts`,
+    because: "an agent with the key retracts everything the person confirmed",
+  },
+  {
+    label: "a retired passkey can never be declared compromised later (R2-H3)",
+    file: `${SERVER}/src/services/passkeys.ts`,
+    from: '    return isCompromise && row.revokeReason !== "compromised" && !neverStood ? null : "already_revoked";',
+    to: '    return "already_revoked";',
+    test: `${SERVER}/test/revocation-reasons.test.ts`,
+    because: "a laptop retired as lost and then found used can never have its words retracted",
+  },
+  {
+    label: "the confirm page never says why a draft is back (R2-H3)",
+    file: `${SERVER}/src/ui/pages/confirm.tsx`,
+    from: '    {draft.reconfirm === null ? null : <p class="notice">{RECONFIRM_LINE[draft.reconfirm]}</p>}',
+    to: "    {null}",
+    test: `${SERVER}/test/revocation-reasons.test.ts`,
+    because: "a word the person already confirmed reappears with nothing saying why",
+  },
+  {
+    label: "a revoke in the cool-off rolls nothing back (R2-M3)",
+    file: `${SERVER}/src/services/passkeys.ts`,
+    from: '    const voided = reason === "compromised" || revokedAt.getTime() < row.usableFrom.getTime();',
+    to: '    const voided = reason === "compromised";',
+    test: `${SERVER}/test/revocation-rollback.test.ts`,
+    because: "a planted passkey revoked in its first day leaves its break armed and the person visible",
+  },
+  {
+    label: "a retired revoke rolls effects back (R2-M3)",
+    file: `${SERVER}/src/services/passkeys.ts`,
+    from: '    const voided = reason === "compromised" || revokedAt.getTime() < row.usableFrom.getTime();',
+    to: "    const voided = true;",
+    test: `${SERVER}/test/revocation-rollback.test.ts`,
+    because: "retiring a lost laptop un-breaks the person's pins and unmutes their mutes",
+  },
+  {
+    label: "a void confirmation's break stays armed (R2-M3)",
+    file: `${SERVER}/src/services/confirmation-rollback.ts`,
+    from: "    WHERE broke_confirmation_id IN ${signed}`);",
+    to: "    WHERE false`);",
+    test: `${SERVER}/test/revocation-rollback.test.ts`,
+    because: "a planted break keeps the fence open and the suspects named after its passkey is declared compromised",
+  },
+  {
+    label: "a void confirmation's mutes stay (R2-M3)",
+    file: `${SERVER}/src/services/confirmation-rollback.ts`,
+    from: "  await tx.execute(sql`DELETE FROM developer_mutes WHERE confirmation_id IN ${signed}`);",
+    to: "",
+    test: `${SERVER}/test/revocation-rollback.test.ts`,
+    because: "a teammate a planted passkey muted stays hidden from the person",
+  },
+  {
+    label: "a void confirmation's unmutes stay (R2-M3)",
+    file: `${SERVER}/src/services/confirmation-rollback.ts`,
+    from: "  await restoreUnmutes(tx, input);",
+    to: "",
+    test: `${SERVER}/test/revocation-rollback.test.ts`,
+    because: "a teammate the person muted stays unmuted by a planted passkey",
+  },
+  {
+    label: "a void confirmation's presence-on stays (R2-M3)",
+    file: `${SERVER}/src/services/confirmation-rollback.ts`,
+    from: "  return { presenceRestoredFor: await restoreOptOut(tx, input) };",
+    to: "  return { presenceRestoredFor: null };",
+    test: `${SERVER}/test/revocation-rollback.test.ts`,
+    because: "a planted passkey keeps a works-council opt-out switched off",
+  },
+  {
+    label: "a void confirmation's pin protects (R2-M3)",
+    file: `${SERVER}/src/services/pins.ts`,
+    from: 'export const pinInEffect = sql`(${pins.provenance} <> ${HUMAN_PROVENANCE} OR ${confirmationInEffect("pins.confirmation_id")})`;',
+    to: "export const pinInEffect = sql`true`;",
+    test: `${SERVER}/test/revocation-rollback.test.ts`,
+    because: "a planted pin keeps fencing a file and naming suspects after its passkey is declared compromised",
+  },
+  {
+    label: "a void label keeps the person's one label slot (R2-M1)",
+    file: `${SERVER}/src/services/noise-label.ts`,
+    from: '      AND ${isConfirmedRow("m")}',
+    to: "      AND m.provenance = 'human_passkey_confirmed'",
+    test: `${SERVER}/test/label-slot.test.ts`,
+    because: "after a planted helpful is voided, the person's own label can never be recorded (N4)",
+  },
+  {
+    label: "a closed month reads standing as of now (R2-H1)",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "    ${deliveryStates(input.repo, input.from, input.who, input.until, input.until)},",
+    to: "    ${deliveryStates(input.repo, input.from, input.who, input.until, null)},",
+    test: `${SERVER}/test/closed-month-snapshot.test.ts`,
+    because: "a revocation in August moves July, and two reads of July subtract to one person (N1)",
+  },
+  {
+    label: "a later compromise moves the closed month (R2-H1)",
+    file: `${SERVER}/src/services/human-provenance.ts`,
+    from: " AND p.revoked_at <= ${at.toISOString()}::timestamptz)`;",
+    to: ")`;",
+    test: `${SERVER}/test/closed-month-snapshot.test.ts`,
+    because: "July's figures change when a passkey is declared compromised in August",
+  },
+  {
+    label: "a word counts from its confirmation, not its passkey's standing (R2-H1)",
+    file: `${SERVER}/src/services/human-provenance.ts`,
+    from: "  WHERE hc.id = ${sql.raw(alias)}.confirmation_id))`;",
+    to: "  WHERE false))`;",
+    test: `${SERVER}/test/closed-month-snapshot.test.ts`,
+    because: "a July word whose passkey's cool-off ends in August moves closed July (N2)",
+  },
+  {
+    label: "a closed month carries no correction line (R2-H1)",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: "  return { count: withheld === null ? part.interventions : null, withheld };",
+    to: "  return null;",
+    test: `${SERVER}/test/closed-month-snapshot.test.ts`,
+    because: "a compromised passkey's words stay in July and nothing says they were retracted",
+  },
+  {
+    label: "the team report prints no correction line (R2-H1)",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "    ...correctionLines(report),",
+    to: "",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because: "the hub sends the correction and the report never prints it",
+  },
+  {
+    label: "the credit's correction is never printed by pilot --mine (R2-H1)",
+    file: `${CLI}/src/cli/pilot-mine-render.ts`,
+    from: "      correctionCreditWords(credit) +",
+    to: "",
+    test: `${CLI}/test/pilot-mine-render.test.ts`,
+    because: "a credit stands as if no word in it was later retracted",
+  },
+  {
+    label: "the team line's late figure rides the month's own minimums (R2-H2)",
+    file: `${SERVER}/src/services/pilot-outcome-figures.ts`,
+    from: "  const lateWithheld = withholdingOf(aggregate.late, TEAM_CHECKS);",
+    to: "  const lateWithheld = withholdingOf(aggregate, TEAM_CHECKS);",
+    test: `${SERVER}/test/minimums-per-figure.test.ts`,
+    because: "one person's late word prints because the month's own figure passed (N3)",
+  },
+  {
+    label: "the credit's late follows ride the month's own minimums (R2-H2)",
+    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    from: "  const lateWithheld = withholdingOf(aggregate.late, checks);",
+    to: "  const lateWithheld = withholdingOf(aggregate, checks);",
+    test: `${SERVER}/test/minimums-per-figure.test.ts`,
+    because: "a teammate's credit prints one person's late follow (N12)",
+  },
+  {
+    label: "the confirmation counts every confirmed item as written (R2-M2)",
+    file: `${SERVER}/src/routes/ui-ceremony-confirm.ts`,
+    from: "  const wrote = outcome.items.filter((item) => item.wrote).length;",
+    to: "  const wrote = outcome.confirmed;",
+    test: `${SERVER}/test/confirm-item-results.test.ts`,
+    because: "the page says 'Confirmed 1 of 1' over a label the writer refused (N8)",
+  },
+  {
+    label: "a label writer's no-op is reported as written (R2-M2)",
+    file: `${SERVER}/src/services/draft-apply.ts`,
+    from: "    : appliedAs(!written.repeated, isPin ? NOTHING_WRITTEN.pin_ok : NOTHING_WRITTEN.label, written);",
+    to: "    : appliedAs(true, isPin ? NOTHING_WRITTEN.pin_ok : NOTHING_WRITTEN.label, written);",
+    test: `${SERVER}/test/confirm-item-results.test.ts`,
+    because: "the person is told their helpful was recorded while noise still stands",
+  },
+  {
+    label: "a label is admitted under an outcome's item (round-1 M5)",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "      ('pilot_marks', 'pilot_marks_names_its_item', '', 'confirmation_id, confirmation_position', ARRAY['label', 'pin_ok']),",
+    to: "      ('pilot_marks', 'pilot_marks_names_its_item', '', 'confirmation_id, confirmation_position', ARRAY['label', 'pin_ok', 'outcome']),",
+    test: `${SERVER}/test/ddl-sync-provenance.test.ts`,
+    because: "a row moved under another confirmed item counts as signed (A-P9)",
+  },
+  {
+    label: "a row is admitted under a discarded item (round-1 M5)",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "  IF signed_decision IS DISTINCT FROM 'confirm' OR NOT COALESCE(signed_kind = ANY (TG_ARGV[1:]), false) THEN",
+    to: "  IF NOT COALESCE(signed_kind = ANY (TG_ARGV[1:]), false) THEN",
+    test: `${SERVER}/test/ddl-sync-provenance.test.ts`,
+    because: "a row names a draft the person discarded as their signed word",
+  },
+  {
+    label: "a break is admitted under a pin's item (round-1 M5)",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "ARRAY['pin_broke'])",
+    to: "ARRAY['pin_broke', 'pin'])",
+    test: `${SERVER}/test/ddl-sync-provenance.test.ts`,
+    because: "a break forged under the pin's own confirmation counts as the person's",
+  },
+  {
+    label: "the confirm page lets a bidi override act (round-1 L4)",
+    file: `${SERVER}/src/ui/format.ts`,
+    from: "  capped(value, maxChars).replace(ACTING_CHARACTER, codePointLabel);",
+    to: "  capped(value, maxChars);",
+    test: `${SERVER}/test/ui-confirm-controls.test.ts`,
+    because: "an agent's right-to-left override reverses what the person reads beside what they sign (N7)",
+  },
+  {
+    label: "the banners check liveness on every render (round-1 M8)",
+    file: `${SERVER}/src/services/human-drafts.ts`,
+    from: "  if (last !== undefined && last.fingerprint === fingerprint && nowMs - last.checkedAtMs < BANNER_LIVENESS_REUSE_MS) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/banner-liveness-reuse.test.ts`,
+    because: "the self-refreshing feed runs every pending draft's liveness under PGlite's one connection (R2-L4)",
+  },
+  {
+    label: "the banners reuse a count after the pending set changed (round-1 M8)",
+    file: `${SERVER}/src/services/human-drafts.ts`,
+    from: "  if (last !== undefined && last.fingerprint === fingerprint && nowMs - last.checkedAtMs < BANNER_LIVENESS_REUSE_MS) {",
+    to: "  if (last !== undefined && nowMs - last.checkedAtMs < BANNER_LIVENESS_REUSE_MS) {",
+    test: `${SERVER}/test/banner-liveness-reuse.test.ts`,
+    because: "a new draft waits for the person and the banner says nothing waits",
+  },
+  {
+    label: "a 0.11 client names no release (pre-0.11 refusal)",
+    file: `${CORE}/src/http/client.ts`,
+    from: "        [CLIENT_RELEASE_HEADER]: CLIENT_RELEASE,",
+    to: "",
+    test: `${CORE}/test/client-release-header.test.ts`,
+    because: "with the pilot's setting on, every 0.11 client is refused like a 0.10 one",
+  },
+  {
+    label: "an older client release passes the drafting doors (pre-0.11 refusal)",
+    file: `${SERVER}/src/http/client-release.ts`,
+    from: "  deps.refusePreDraftingClients && !isReleaseAtLeast(c.req.header(CLIENT_RELEASE_HEADER), FIRST_DRAFTING_CLIENT_RELEASE)",
+    to: "  deps.refusePreDraftingClients && c.req.header(CLIENT_RELEASE_HEADER) === undefined",
+    test: `${SERVER}/test/pre-011-drafts.test.ts`,
+    because: "a client that names 0.10 is let in to say 'recorded' over a draft",
+  },
+  {
+    label: "presence-on drafts from a 0.10 client (pre-0.11 refusal)",
+    file: `${SERVER}/src/routes/settings.ts`,
+    from: "    // Presence back on drafts, so a client older than 0.11 may be refused here — never above.\n    const preDrafting = refusePreDraftingClient(c, deps);",
+    to: "    const preDrafting = null;",
+    test: `${SERVER}/test/pre-011-drafts.test.ts`,
+    because: "a 0.10 CLI prints 'presence: visible to teammates' over a draft",
+  },
+  {
+    label: "the release floor refuses the floor itself (pre-0.11 refusal)",
+    file: `${SCHEMA}/src/client-release.ts`,
+    from: "  return differing === -1 || (given[differing] ?? 0) > (least[differing] ?? 0);",
+    to: "  return (given[differing] ?? 0) > (least[differing] ?? 0);",
+    test: `${SCHEMA}/test/client-release.test.ts`,
+    because: "a 0.11 client is refused by a hub set to refuse only older ones",
+  },
+  {
+    label: "a pin from before provenance is listed as the person's (round-1 L3)",
+    file: `${CLI}/src/cli/pin-render.ts`,
+    from: "  unknown_legacy: (name) => `pinned by ${name} before provenance was recorded — not proven to be theirs`,",
+    to: "",
+    test: `${CLI}/test/pins-cli.test.ts`,
+    because: "a 0.10 pin reads 'verified by Nick' as if he had proven it",
+  },
+  {
+    label: "a label's reason is kept for ever (R2-L3)",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "    UPDATE pilot_marks SET reason = NULL WHERE created_at < ${before}::timestamptz AND reason IS NOT NULL`);",
+    to: "    SELECT 1`);",
+    test: `${SERVER}/test/hint-outcome-retention.test.ts`,
+    because: "the item loses the sentence while the label keeps it, so nothing re-verifies and nothing is private",
+  },
+  {
+    label: "an undecided draft outlives the window (R2-L3)",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "      AND NOT EXISTS (SELECT 1 FROM human_confirmation_items i WHERE i.draft_id = d.id)`);",
+    to: "      AND false`);",
+    test: `${SERVER}/test/hint-outcome-retention.test.ts`,
+    because: "a draft waits past the pilot's window and is confirmed without the reason typed beside it",
+  },
+  {
+    label: "crosscheck confirm --help never says who retires a lost passkey (R2-H3)",
+    file: `${CLI}/src/cli/confirm.ts`,
+    from: "  \"  ask your hub's operator (whoever holds its admin token) to retire it:\",",
+    to: "",
+    test: `${CLI}/test/confirm-cli.test.ts`,
+    because: "a person with a lost device does not know who to call, and revokes as compromised",
+  },
+  {
+    label: "proof 3 judges a break by the pin's signer (survivor R2)",
+    file: `${SERVER}/src/services/human-provenance.ts`,
+    from: "${signerStands(`${alias}.broke_confirmation_id`, at)}",
+    to: "${signerStands(`${alias}.confirmation_id`, at)}",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because: "a break planted with a cooling passkey is scored, because the pin's own signer stands",
+  },
+  {
+    label: "the write path reads a retracted helpful (survivor R3)",
+    file: `${SERVER}/src/services/pointer-standing.ts`,
+    from: "      AND m.marked_by = ${recipient} AND m.mark = 'helpful' AND ${isConfirmedRow(\"m\")}",
+    to: "      AND m.marked_by = ${recipient} AND m.mark = 'helpful' AND m.provenance = 'human_passkey_confirmed'",
+    test: `${SERVER}/test/review-survivors-r2.test.ts`,
+    because: "a compromised passkey's helpful cancels the person's noise, and their own followed is dropped as a repeat",
+  },
+  {
+    label: "noise said again in a later month is no late word (survivor R7)",
+    file: `${SERVER}/src/services/outcome-population.ts`,
+    from: '      AND ${within(effectiveAtOf("lr"))})`;',
+    to: "      AND false)`;",
+    test: `${SERVER}/test/review-survivors-r2.test.ts`,
+    because: "the person's noise said again in August about a July hint counts nowhere",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -35108,6 +35807,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/ci-report.test.ts 6
  * PRINTS: packages/cli/test/ci-status-render.test.ts 3
  * PRINTS: packages/cli/test/conference-cli.test.ts 12
+ * PRINTS: packages/cli/test/confirm-cli.test.ts 1
  * PRINTS: packages/cli/test/connection-error.test.ts 2
  * PRINTS: packages/cli/test/connector-capture-health.test.ts 3
  * PRINTS: packages/cli/test/coverage-cli.test.ts 6
@@ -35135,6 +35835,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
  * PRINTS: packages/cli/test/doctor-verdict-legality.test.ts 2
  * PRINTS: packages/cli/test/doctor.test.ts 12
+ * PRINTS: packages/cli/test/drafted-gestures-cli.test.ts 6
  * PRINTS: packages/cli/test/e2e/bait-repo-isolation.e2e.test.ts 7
  * PRINTS: packages/cli/test/e2e/clean-restart.e2e.test.ts 4
  * PRINTS: packages/cli/test/e2e/npm-package.e2e.test.ts 1
@@ -35143,6 +35844,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/foreign-hub-lines.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
  * PRINTS: packages/cli/test/gitignored-advice.test.ts 11
+ * PRINTS: packages/cli/test/human-provenance-e2e.test.ts 1
  * PRINTS: packages/cli/test/init-backups.test.ts 7
  * PRINTS: packages/cli/test/init-global.test.ts 3
  * PRINTS: packages/cli/test/init-io-atomic.test.ts 2
@@ -35159,18 +35861,18 @@ interface Outcome {
  * PRINTS: packages/cli/test/landed-probe-cuts.test.ts 5
  * PRINTS: packages/cli/test/landing-fetch-doctor.test.ts 8
  * PRINTS: packages/cli/test/mcp-config.test.ts 1
- * PRINTS: packages/cli/test/outcome-cli.test.ts 35
+ * PRINTS: packages/cli/test/outcome-cli.test.ts 34
  * PRINTS: packages/cli/test/pack-reach.test.ts 3
  * PRINTS: packages/cli/test/passkey-status.test.ts 4
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
  * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 17
- * PRINTS: packages/cli/test/pilot-mine-render.test.ts 12
- * PRINTS: packages/cli/test/pilot-render.test.ts 32
+ * PRINTS: packages/cli/test/pilot-mine-render.test.ts 13
+ * PRINTS: packages/cli/test/pilot-render.test.ts 36
  * PRINTS: packages/cli/test/pin-denylist-door.test.ts 16
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pin-waive-hostile-hub.test.ts 1
- * PRINTS: packages/cli/test/pins-cli.test.ts 6
+ * PRINTS: packages/cli/test/pins-cli.test.ts 7
  * PRINTS: packages/cli/test/presence-reenabled-cli.test.ts 3
  * PRINTS: packages/cli/test/publish-workflow.test.ts 2
  * PRINTS: packages/cli/test/release-preflight.test.ts 5
@@ -35311,6 +36013,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/claim-surface.test.ts 1
  * PRINTS: packages/connector-core/test/claim-validity-parity.test.ts 2
  * PRINTS: packages/connector-core/test/claim-validity-render.test.ts 2
+ * PRINTS: packages/connector-core/test/client-release-header.test.ts 1
  * PRINTS: packages/connector-core/test/collision-count-only.test.ts 2
  * PRINTS: packages/connector-core/test/collision-indicator.test.ts 4
  * PRINTS: packages/connector-core/test/collision-notice-bounds.test.ts 1
@@ -35396,7 +36099,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/loopback-bind.test.ts 1
  * PRINTS: packages/connector-core/test/loss-ledger.test.ts 5
  * PRINTS: packages/connector-core/test/loss-report.test.ts 38
- * PRINTS: packages/connector-core/test/mark-hint-outcome-tool.test.ts 19
+ * PRINTS: packages/connector-core/test/mark-hint-outcome-tool.test.ts 20
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 5
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3
@@ -35478,6 +36181,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 9
  * PRINTS: packages/schema/test/causal-guarantees.test.ts 7
  * PRINTS: packages/schema/test/claim.test.ts 1
+ * PRINTS: packages/schema/test/client-release.test.ts 1
  * PRINTS: packages/schema/test/content-floor.test.ts 11
  * PRINTS: packages/schema/test/continuation.test.ts 16
  * PRINTS: packages/schema/test/default-branch.test.ts 1
@@ -35505,6 +36209,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/typing-slip.test.ts 11
  * PRINTS: packages/schema/test/weak-words.test.ts 5
  * PRINTS: packages/server/test/absences.test.ts 7
+ * PRINTS: packages/server/test/banner-liveness-reuse.test.ts 2
  * PRINTS: packages/server/test/calibration.test.ts 1
  * PRINTS: packages/server/test/causal-guarantees.test.ts 23
  * PRINTS: packages/server/test/ci-coverage.test.ts 3
@@ -35512,8 +36217,13 @@ interface Outcome {
  * PRINTS: packages/server/test/claim-binding-ingest.test.ts 1
  * PRINTS: packages/server/test/claim-revalidations.test.ts 10
  * PRINTS: packages/server/test/claim-validity.test.ts 2
+ * PRINTS: packages/server/test/closed-month-snapshot.test.ts 4
  * PRINTS: packages/server/test/commit-evidence-opt-out.test.ts 3
  * PRINTS: packages/server/test/conference.test.ts 14
+ * PRINTS: packages/server/test/confirm-batch-limits.test.ts 3
+ * PRINTS: packages/server/test/confirm-batch.test.ts 6
+ * PRINTS: packages/server/test/confirm-item-results.test.ts 2
+ * PRINTS: packages/server/test/confirmation-records.test.ts 2
  * PRINTS: packages/server/test/coverage-answer-sessions.test.ts 10
  * PRINTS: packages/server/test/coverage-compat-0.10.test.ts 2
  * PRINTS: packages/server/test/coverage-instant-privacy.test.ts 8
@@ -35524,10 +36234,11 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage-successor-session.test.ts 3
  * PRINTS: packages/server/test/coverage.test.ts 13
  * PRINTS: packages/server/test/ddl-sync-hint-outcomes.test.ts 22
+ * PRINTS: packages/server/test/ddl-sync-provenance.test.ts 3
  * PRINTS: packages/server/test/ddl-sync-record-receipts.test.ts 2
  * PRINTS: packages/server/test/ddl-sync-waiver-authority.test.ts 5
  * PRINTS: packages/server/test/ddl-sync-work-context-updater.test.ts 1
- * PRINTS: packages/server/test/ddl-sync.test.ts 13
+ * PRINTS: packages/server/test/ddl-sync.test.ts 12
  * PRINTS: packages/server/test/developer-branches.test.ts 5
  * PRINTS: packages/server/test/developer-emails.test.ts 5
  * PRINTS: packages/server/test/developer-listing.test.ts 5
@@ -35539,7 +36250,12 @@ interface Outcome {
  * PRINTS: packages/server/test/doc-upgrade-vectors.test.ts 5
  * PRINTS: packages/server/test/doc-upgrade-window.test.ts 6
  * PRINTS: packages/server/test/doc-upgrade.test.ts 6
+ * PRINTS: packages/server/test/door-notice.test.ts 2
+ * PRINTS: packages/server/test/draft-doors.test.ts 4
+ * PRINTS: packages/server/test/draft-kinds.test.ts 2
  * PRINTS: packages/server/test/draft-link-cleanup.test.ts 18
+ * PRINTS: packages/server/test/draft-repeats.test.ts 4
+ * PRINTS: packages/server/test/draft-versions-bound.test.ts 2
  * PRINTS: packages/server/test/draft-visibility.test.ts 8
  * PRINTS: packages/server/test/drafts.test.ts 4
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
@@ -35560,9 +36276,9 @@ interface Outcome {
  * PRINTS: packages/server/test/hint-floor-integrity.test.ts 4
  * PRINTS: packages/server/test/hint-harness-turn.test.ts 2
  * PRINTS: packages/server/test/hint-long-prompt.test.ts 8
- * PRINTS: packages/server/test/hint-outcome-retention.test.ts 4
+ * PRINTS: packages/server/test/hint-outcome-retention.test.ts 7
  * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 23
- * PRINTS: packages/server/test/hint-outcomes.test.ts 63
+ * PRINTS: packages/server/test/hint-outcomes.test.ts 50
  * PRINTS: packages/server/test/hint-pushable-ranking.test.ts 5
  * PRINTS: packages/server/test/hint-shell-command.test.ts 1
  * PRINTS: packages/server/test/hint-strong-match.test.ts 12
@@ -35571,27 +36287,32 @@ interface Outcome {
  * PRINTS: packages/server/test/hints-records-outcomes.test.ts 3
  * PRINTS: packages/server/test/hints.test.ts 6
  * PRINTS: packages/server/test/hub-status-transport.test.ts 2
+ * PRINTS: packages/server/test/human-drafts.test.ts 2
+ * PRINTS: packages/server/test/human-judgement-invariant.test.ts 2
  * PRINTS: packages/server/test/in-memory-db.test.ts 2
  * PRINTS: packages/server/test/intent-ladder.test.ts 7
  * PRINTS: packages/server/test/intent-ledger-authority.test.ts 2
  * PRINTS: packages/server/test/intent-ledger-write.test.ts 10
  * PRINTS: packages/server/test/key-rotation.test.ts 6
+ * PRINTS: packages/server/test/label-slot.test.ts 2
  * PRINTS: packages/server/test/landed-context.test.ts 22
  * PRINTS: packages/server/test/landed-notices.test.ts 34
  * PRINTS: packages/server/test/landed-repair.test.ts 20
  * PRINTS: packages/server/test/landed-topics.test.ts 11
  * PRINTS: packages/server/test/landed.test.ts 15
+ * PRINTS: packages/server/test/late-confirmation.test.ts 3
  * PRINTS: packages/server/test/listen-boot.test.ts 8
  * PRINTS: packages/server/test/listen.test.ts 16
  * PRINTS: packages/server/test/live-location-cost.test.ts 3
  * PRINTS: packages/server/test/live-location-differential.test.ts 6
- * PRINTS: packages/server/test/live-location-privacy.test.ts 27
+ * PRINTS: packages/server/test/live-location-privacy.test.ts 28
  * PRINTS: packages/server/test/live-location-projection.test.ts 9
  * PRINTS: packages/server/test/live-location-prose.test.ts 3
  * PRINTS: packages/server/test/live-location-surfaces.test.ts 41
  * PRINTS: packages/server/test/live-location-told.test.ts 1
  * PRINTS: packages/server/test/live-location-topics.test.ts 4
  * PRINTS: packages/server/test/location-index-rebuild.test.ts 7
+ * PRINTS: packages/server/test/minimums-per-figure.test.ts 2
  * PRINTS: packages/server/test/normalized-doc.test.ts 2
  * PRINTS: packages/server/test/passkey-announcements.test.ts 1
  * PRINTS: packages/server/test/passkey-revocation-terminates.test.ts 5
@@ -35600,8 +36321,8 @@ interface Outcome {
  * PRINTS: packages/server/test/pilot-attributions.test.ts 3
  * PRINTS: packages/server/test/pilot-counters.test.ts 6
  * PRINTS: packages/server/test/pilot-mark-candidates.test.ts 15
- * PRINTS: packages/server/test/pilot-marks.test.ts 16
- * PRINTS: packages/server/test/pilot-outcome-figures.test.ts 30
+ * PRINTS: packages/server/test/pilot-marks.test.ts 14
+ * PRINTS: packages/server/test/pilot-outcome-figures.test.ts 28
  * PRINTS: packages/server/test/pilot-repairs.test.ts 5
  * PRINTS: packages/server/test/pilot-report-window.test.ts 2
  * PRINTS: packages/server/test/pilot-report.test.ts 34
@@ -35609,6 +36330,7 @@ interface Outcome {
  * PRINTS: packages/server/test/pilot-sessions.test.ts 11
  * PRINTS: packages/server/test/pilot-substance-channel.test.ts 2
  * PRINTS: packages/server/test/pins.test.ts 4
+ * PRINTS: packages/server/test/pre-011-drafts.test.ts 2
  * PRINTS: packages/server/test/presence-optout.test.ts 2
  * PRINTS: packages/server/test/presence-reenable.test.ts 6
  * PRINTS: packages/server/test/presence.test.ts 1
@@ -35618,6 +36340,10 @@ interface Outcome {
  * PRINTS: packages/server/test/record-receipts.test.ts 17
  * PRINTS: packages/server/test/records.test.ts 2
  * PRINTS: packages/server/test/retention-registry.test.ts 3
+ * PRINTS: packages/server/test/review-survivors-r2.test.ts 2
+ * PRINTS: packages/server/test/review-survivors.test.ts 6
+ * PRINTS: packages/server/test/revocation-reasons.test.ts 6
+ * PRINTS: packages/server/test/revocation-rollback.test.ts 7
  * PRINTS: packages/server/test/search-filters.test.ts 10
  * PRINTS: packages/server/test/search-tokens.test.ts 5
  * PRINTS: packages/server/test/search.test.ts 3
@@ -35632,6 +36358,7 @@ interface Outcome {
  * PRINTS: packages/server/test/session-reaper.test.ts 3
  * PRINTS: packages/server/test/session-register-held.test.ts 3
  * PRINTS: packages/server/test/sessions.test.ts 1
+ * PRINTS: packages/server/test/signer-standing.test.ts 2
  * PRINTS: packages/server/test/similarity-gate.test.ts 5
  * PRINTS: packages/server/test/skeleton-identity.test.ts 19
  * PRINTS: packages/server/test/skeleton-sweep.test.ts 35
@@ -35652,8 +36379,12 @@ interface Outcome {
  * PRINTS: packages/server/test/tripwire-rows.test.ts 3
  * PRINTS: packages/server/test/ui-approvals.test.ts 11
  * PRINTS: packages/server/test/ui-ceremony-localhost.test.ts 6
+ * PRINTS: packages/server/test/ui-confirm-controls.test.ts 1
+ * PRINTS: packages/server/test/ui-confirm-link.test.ts 3
+ * PRINTS: packages/server/test/ui-confirm-signed.test.ts 2
  * PRINTS: packages/server/test/ui-feed.test.ts 3
  * PRINTS: packages/server/test/ui-passkeys.test.ts 9
+ * PRINTS: packages/server/test/ui-session-nonce.test.ts 1
  * PRINTS: packages/server/test/ui-work-context.test.ts 2
  * PRINTS: packages/server/test/unstorable-text.test.ts 2
  * PRINTS: packages/server/test/upgrade.test.ts 1

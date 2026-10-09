@@ -24,6 +24,7 @@
 import { sql } from "drizzle-orm";
 
 import { hintDeliveries } from "../src/db/schema.ts";
+import { draftOutcome } from "../src/services/draft-doors.ts";
 import {
   TEST_ADMIN_TOKEN,
   TEST_START_ISO,
@@ -635,6 +636,17 @@ export const seedOptedOutWorld = async (): Promise<OptedOutWorld> => {
     deliveredAt: harness.clock.now(),
     pulledAt: new Date(harness.clock.now().getTime() + MS_PER_SECOND),
   });
+  // His agent DRAFTED what came of it, through the agent's own door, and
+  // nobody confirmed it yet: his /ui/confirm shows the work that hint pointed
+  // at — hers — so her title is walked on that page too (human provenance §6).
+  const drafted = await draftOutcome(
+    { db: harness.db, now: () => harness.clock.now() },
+    { repo: REPO, ref: "hd_robin_1", outcome: "followed", reason: null, session: NICK_SESSION, recordedBy: nick.developerId, recordedVia: "agent" },
+    "agent_asserted",
+  );
+  if ("refusal" in drafted) {
+    throw new Error(`seed: Nick's outcome draft was refused (${drafted.refusal})`);
+  }
   await setPresenceOptOutViaApi(harness, robin.apiKey, true);
   await robinGoesOnWorking(harness, robin);
   await robinActsAfterOptOut(harness, robin);

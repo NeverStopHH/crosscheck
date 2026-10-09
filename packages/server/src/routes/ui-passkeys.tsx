@@ -36,6 +36,9 @@ import { PASSKEY_SCRIPT } from "../ui/passkey-script.ts";
 import { forbidden, isPostedCsrfValid, viewerChrome } from "../ui/route-helpers.tsx";
 import type { AppDeps, AppEnv } from "../types.ts";
 import { ceremonyOptions, ceremonyVerify } from "./ui-ceremony.ts";
+import { uiConfirmRoutes } from "./ui-confirm.tsx";
+import { createBatchStore } from "../services/confirmation-batch.ts";
+import { finishRevocation } from "../services/confirmation-rollback.ts";
 
 const PASSKEYS_PATH = "/ui/passkeys";
 
@@ -44,7 +47,9 @@ const OWNER_REVOKE_SENTENCE = {
   unknown_passkey: "You have no passkey with that id.",
   already_revoked: "That passkey has already been revoked.",
   passkey_required:
-    "That passkey is past its first day; revoke it with another passkey, or ask the admin.",
+    "That passkey is past its first day; revoke it with another passkey, or ask the admin. Retiring it — a lost or replaced device — keeps everything it confirmed; only declaring it compromised, with another of your passkeys, retracts that.",
+  compromised_needs_another_passkey:
+    "A passkey is declared compromised with another of your passkeys, never with the api key.",
 } as const;
 
 export const uiPasskeyRoutes = (deps: AppDeps): Hono<AppEnv> => {
@@ -53,6 +58,8 @@ export const uiPasskeyRoutes = (deps: AppDeps): Hono<AppEnv> => {
     origins: deps.webauthnOrigins,
     nowMs: () => deps.now().getTime(),
   });
+  // Frozen confirmation batches live beside the ceremonies that sign them, in this closure.
+  const batches = createBatchStore(() => deps.now().getTime());
   const hasOrigin = deps.webauthnOrigins.length > 0;
 
   router.get("/passkey.js", (c) =>
@@ -92,9 +99,11 @@ export const uiPasskeyRoutes = (deps: AppDeps): Hono<AppEnv> => {
       by: { kind: "owner", developerId: c.get("developer").id },
       now: deps.now(),
     });
-    return "refusal" in outcome
-      ? forbidden(c, OWNER_REVOKE_SENTENCE[outcome.refusal])
-      : c.redirect(PASSKEYS_PATH, 303);
+    if ("refusal" in outcome) {
+      return forbidden(c, OWNER_REVOKE_SENTENCE[outcome.refusal]);
+    }
+    await finishRevocation(deps, outcome);
+    return c.redirect(PASSKEYS_PATH, 303);
   });
 
   router.get("/waivers", async (c) => {
@@ -118,8 +127,11 @@ export const uiPasskeyRoutes = (deps: AppDeps): Hono<AppEnv> => {
     );
   });
 
-  router.post("/webauthn/options", (c) => ceremonyOptions(c, deps, webauthn));
-  router.post("/webauthn/verify", (c) => ceremonyVerify(c, deps, webauthn));
+  router.post("/webauthn/options", (c) => ceremonyOptions(c, deps, webauthn, batches));
+  router.post("/webauthn/verify", (c) => ceremonyVerify(c, deps, webauthn, batches));
+
+  // human provenance §6: the batches the `confirm_batch` ceremony confirms.
+  router.route("/", uiConfirmRoutes(deps, batches));
 
   return router;
 };

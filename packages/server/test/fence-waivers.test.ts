@@ -54,6 +54,7 @@ const setup = async (): Promise<{
     checkRecipe: "bun test packages/server/test/auth.test.ts",
     captureMode: "human",
     createdAt: new Date(NOW.getTime() - HOUR),
+    provenance: "unknown_legacy",
   });
   const { credentialId } = await seedPasskey(harness.db, nick.developerId);
   return { harness, nick, credentialId };

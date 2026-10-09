@@ -176,9 +176,33 @@ export type {
 export {
   ENROLMENT_SOURCES,
   MAX_PASSKEY_LABEL_CHARS,
+  PASSKEY_REVOKE_REASONS,
   PASSKEY_REVOKERS,
 } from "./passkey.ts";
-export type { EnrolmentSource, PasskeyRevoker } from "./passkey.ts";
+export type { EnrolmentSource, PasskeyRevokeReason, PasskeyRevoker } from "./passkey.ts";
+export {
+  CLIENT_RELEASE,
+  CLIENT_RELEASE_HEADER,
+  FIRST_DRAFTING_CLIENT_RELEASE,
+  isReleaseAtLeast,
+} from "./client-release.ts";
+export {
+  DRAFT_DECISIONS,
+  DRAFT_KINDS,
+  DRAFT_PROVENANCES,
+  HUMAN_PROVENANCE,
+  LEGACY_PROVENANCE,
+  PROVENANCE_CLASSES,
+  STORED_JUDGEMENT_PROVENANCES,
+  isHumanProvenance,
+} from "./provenance.ts";
+export type {
+  DraftDecision,
+  DraftKind,
+  DraftProvenance,
+  ProvenanceClass,
+  StoredProvenance,
+} from "./provenance.ts";
 export {
   MAX_PILOT_LABEL_REASON_CHARS,
   MAX_PILOT_LABEL_REASON_UTF16_UNITS,

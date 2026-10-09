@@ -26,7 +26,7 @@ import {
   min,
   sql,
 } from "drizzle-orm";
-import { MAX_SPEAKING_PIN_FILES, isSpeakingPin } from "@crosscheck/schema";
+import { HUMAN_PROVENANCE, MAX_SPEAKING_PIN_FILES, isSpeakingPin } from "@crosscheck/schema";
 import type { Pin } from "@crosscheck/schema";
 
 import {
@@ -46,8 +46,19 @@ import type { ClosedWaiver, PinFence } from "./waiver-terminations.ts";
 import { locationHiddenFrom, projectRow } from "./live-location.ts";
 import type { HiddenLocations } from "./live-location.ts";
 import { visiblePresenceCondition } from "./visibility.ts";
+import { confirmationInEffect } from "./human-provenance.ts";
+import type { HumanStamp } from "./human-provenance.ts";
 import type { Db, DbExecutor } from "../db/client.ts";
 import type { Clock } from "../types.ts";
+
+/**
+ * A PIN THAT PROTECTS: one from before provenance, or one whose confirmation is
+ * in effect (round-2 R2-M3). A pin a void confirmation created — its passkey
+ * revoked in the cool-off, or declared compromised — protects nothing: no
+ * registry, no suspect, no coverage reads it, and confirming its draft again
+ * revives the row (createPin).
+ */
+export const pinInEffect = sql`(${pins.provenance} <> ${HUMAN_PROVENANCE} OR ${confirmationInEffect("pins.confirmation_id")})`;
 
 /**
  * Read bound on one registry listing. A registry past this is not a registry,
@@ -82,7 +93,15 @@ export interface PinView {
   readonly verifiedAt: string;
   /** Which version of this invariant (04 §3.5) — what a waiver is granted against. */
   readonly version: number;
+  /**
+   * Who made it a pin (human provenance §7): `human_passkey_confirmed`, or
+   * `unknown_legacy` for a pin from before 0.11 — which keeps protecting and
+   * is listed as such, never as a person's proven word.
+   */
+  readonly provenance: string;
   readonly brokeAt: string | null;
+  /** The same for the break; null while unbroken. */
+  readonly brokeProvenance: string | null;
   readonly brokeByName: string | null;
   /** Pinned paths a sweep has rewritten — 0 on a pin nobody has moved. */
   readonly renamedPaths: number;
@@ -124,7 +143,8 @@ export type CreatePinOutcome =
   | { readonly outcome: "created"; readonly id: string }
   | { readonly outcome: "duplicate" };
 
-export type BreakPinOutcome = "broken" | "not_found";
+/** `already_broken`: the pin stood broken before this break, so nothing was written (round-2 R2-M2). */
+export type BreakPinOutcome = "broken" | "already_broken" | "not_found";
 
 /**
  * What the hub stores for a pin that arrived with terminal evidence. The one
@@ -150,7 +170,8 @@ const iso = (value: Date | null): string | null =>
  * files: "you may not pin that" with no path is a refusal nobody can act on.
  */
 export const untouchedByDeveloper = async (
-  deps: Deps,
+  // An open transaction too: a confirmation checks the policy again at the tap.
+  deps: { readonly db: DbExecutor },
   developerId: string,
   repo: string,
   files: readonly string[],
@@ -231,42 +252,60 @@ const findRepairedPin = async (
   return rows[0] ?? null;
 };
 
+/**
+ * A PIN ROW IS HUMAN PROTECTION, so only a passkey confirmation writes one
+ * (human provenance §7): `stamp` is the confirmation's. A key's pin is a draft
+ * in `human_drafts`, which nothing that protects ever reads.
+ */
 export const createPin = async (
-  deps: Deps,
+  deps: { readonly db: DbExecutor; readonly now: Clock },
   developerId: string,
   input: Pin,
+  stamp: HumanStamp,
 ): Promise<CreatePinOutcome> => {
   const now = deps.now();
   return deps.db.transaction(async (tx) => {
     const repaired = await findRepairedPin(tx, input.repo, input.surface);
+    const row = {
+      repo: input.repo,
+      surface: input.surface,
+      verifiedBy: developerId,
+      verifiedAtCommit: input.verifiedAtCommit,
+      verifiedAt: now,
+      checkRecipe: input.check ?? null,
+      // STAMPED BY THE HUB, never carried by the body: the caller states
+      // the evidence it observed (`presence`) and the hub decides what that
+      // is worth. A body that could set this field would be writing the
+      // trust label `pin list` prints about its own author.
+      captureMode: HUMAN_CAPTURE_MODE,
+      brokeAt: null,
+      brokeBy: null,
+      // 07 §3.4: LOOKED UP, NEVER ASKED. Re-pinning a surface somebody
+      // recorded broken is the repair, and the person typing it is not asked
+      // to say so — a question here would be the survey §8.3 refuses.
+      repairsPinId: repaired?.id ?? null,
+      repairsPinVersion: repaired?.version ?? null,
+      createdAt: now,
+      provenance: stamp.provenance,
+      confirmationId: stamp.confirmationId,
+      confirmationPosition: stamp.confirmationPosition,
+    };
     const inserted = await tx
       .insert(pins)
-      .values({
-        id: input.id,
-        repo: input.repo,
-        surface: input.surface,
-        verifiedBy: developerId,
-        verifiedAtCommit: input.verifiedAtCommit,
-        verifiedAt: now,
-        checkRecipe: input.check ?? null,
-        // STAMPED BY THE HUB, never carried by the body: the caller states
-        // the evidence it observed (`presence`) and the hub decides what that
-        // is worth. A body that could set this field would be writing the
-        // trust label `pin list` prints about its own author.
-        captureMode: HUMAN_CAPTURE_MODE,
-        brokeAt: null,
-        brokeBy: null,
-        // 07 §3.4: LOOKED UP, NEVER ASKED. Re-pinning a surface somebody
-        // recorded broken is the repair, and the person typing it is not asked
-        // to say so — a question here would be the survey §8.3 refuses.
-        repairsPinId: repaired?.id ?? null,
-        repairsPinVersion: repaired?.version ?? null,
-        createdAt: now,
-      })
+      .values({ id: input.id, ...row })
       .onConflictDoNothing({ target: pins.id })
       .returning({ id: pins.id });
-    if (inserted[0] === undefined) {
+    // A PIN A VOID CONFIRMATION CREATED (round-2 R2-M3) protects nothing, and
+    // its draft is back on its owner's page: confirming it again revives the row.
+    const revived =
+      inserted[0] === undefined
+        ? await tx.update(pins).set(row).where(and(eq(pins.id, input.id), sql`NOT ${pinInEffect}`)).returning({ id: pins.id })
+        : [];
+    if (inserted[0] === undefined && revived[0] === undefined) {
       return { outcome: "duplicate" } as const;
+    }
+    if (revived[0] !== undefined) {
+      await tx.delete(pinFiles).where(eq(pinFiles.pinId, input.id));
     }
     // Deduped here rather than in the schema: two spellings of the same path
     // in one file set are a typo, not two watched files, and letting them
@@ -303,18 +342,28 @@ export const createPin = async (
  * `suspect` reads that timestamp as the falsifier's date.
  */
 export const markPinBroke = async (
-  deps: Deps,
+  deps: { readonly db: DbExecutor; readonly now: Clock },
   developerId: string,
   repo: string,
   pinId: string,
-  brokeAtCommit: string | null = null,
+  brokeAtCommit: string | null,
+  // human provenance §7: the break unlocks naming sessions and opens the fence,
+  // so only a passkey confirmation records one. A key's break is a draft.
+  stamp: HumanStamp,
 ): Promise<BreakPinOutcome> => {
   // SCOPED BY REPO, like every other read on this table. Scoped by pin id
   // alone, one checkout's retraction reached any pin on the hub — and this
   // is the row `crosscheck suspect` reads before it names anybody.
   const updated = await deps.db
     .update(pins)
-    .set({ brokeAt: deps.now(), brokeBy: developerId, brokeAtCommit })
+    .set({
+      brokeAt: deps.now(),
+      brokeBy: developerId,
+      brokeAtCommit,
+      brokeProvenance: stamp.provenance,
+      brokeConfirmationId: stamp.confirmationId,
+      brokeConfirmationPosition: stamp.confirmationPosition,
+    })
     .where(and(eq(pins.id, pinId), eq(pins.repo, repo), isNull(pins.brokeAt)))
     .returning({ id: pins.id });
   if (updated[0] !== undefined) {
@@ -325,7 +374,7 @@ export const markPinBroke = async (
     .from(pins)
     .where(and(eq(pins.id, pinId), eq(pins.repo, repo)))
     .limit(1);
-  return existing[0] === undefined ? "not_found" : "broken";
+  return existing[0] === undefined ? "not_found" : "already_broken";
 };
 
 /** One aggregate over the LIVE pins of one repo — the printed denominator. */
@@ -346,18 +395,18 @@ const readCoverage = async (
     })
     .from(pins)
     .leftJoin(pinFiles, eq(pinFiles.pinId, pins.id))
-    .where(and(eq(pins.repo, repo), isNull(pins.brokeAt)));
+    .where(and(eq(pins.repo, repo), isNull(pins.brokeAt), pinInEffect));
   const [broken] = await deps.db
     .select({ broken: count() })
     .from(pins)
-    .where(and(eq(pins.repo, repo), sql`${pins.brokeAt} IS NOT NULL`));
+    .where(and(eq(pins.repo, repo), sql`${pins.brokeAt} IS NOT NULL`, pinInEffect));
   // "Speaking" is two facts — file count and a check recipe — so it is
   // counted from the file rows rather than guessed from a column.
   const speakingRows = await deps.db
     .select({ pinId: pinFiles.pinId, files: count(), check: min(pins.checkRecipe) })
     .from(pinFiles)
     .innerJoin(pins, eq(pinFiles.pinId, pins.id))
-    .where(and(eq(pins.repo, repo), isNull(pins.brokeAt)))
+    .where(and(eq(pins.repo, repo), isNull(pins.brokeAt), pinInEffect))
     .groupBy(pinFiles.pinId);
   const speaking = speakingRows.filter(
     (row) =>
@@ -394,6 +443,8 @@ const toPinView = (
     readonly brokeAt: Date | null;
     readonly renamedPaths: number;
     readonly renamedAt: Date | null;
+    readonly provenance: string;
+    readonly brokeProvenance: string | null;
   },
   files: readonly PinFileView[],
   brokeByName: string | null,
@@ -411,7 +462,9 @@ const toPinView = (
   verifiedAtCommit: row.verifiedAtCommit,
   verifiedAt: row.verifiedAt.toISOString(),
   version: row.version,
+  provenance: row.provenance,
   brokeAt: iso(row.brokeAt),
+  brokeProvenance: row.brokeProvenance,
   brokeByName,
   renamedPaths: Number(row.renamedPaths),
   renamedAt: iso(row.renamedAt),
@@ -483,7 +536,9 @@ export const listPins = async (
       // WHICH VERSION of this invariant (04 §3.5). A waiver is granted against
       // a version, so every reader that could resolve one needs it.
       version: pins.version,
+      provenance: pins.provenance,
       brokeAt: pins.brokeAt,
+      brokeProvenance: pins.brokeProvenance,
       brokeBy: pins.brokeBy,
       renamedPaths: pins.renamedPaths,
       renamedAt: pins.renamedAt,
@@ -491,7 +546,7 @@ export const listPins = async (
     })
     .from(pins)
     .innerJoin(developers, eq(pins.verifiedBy, developers.id))
-    .where(eq(pins.repo, repo))
+    .where(and(eq(pins.repo, repo), pinInEffect))
     .orderBy(desc(pins.createdAt), asc(pins.id))
     .limit(MAX_PINS_LISTED);
   const ids = rows.map((row) => row.id);
@@ -579,7 +634,9 @@ export const readPin = async (
       verifiedAtCommit: pins.verifiedAtCommit,
       verifiedAt: pins.verifiedAt,
       version: pins.version,
+      provenance: pins.provenance,
       brokeAt: pins.brokeAt,
+      brokeProvenance: pins.brokeProvenance,
       brokeBy: pins.brokeBy,
       renamedPaths: pins.renamedPaths,
       renamedAt: pins.renamedAt,
@@ -587,7 +644,7 @@ export const readPin = async (
     })
     .from(pins)
     .innerJoin(developers, eq(pins.verifiedBy, developers.id))
-    .where(eq(pins.id, pinId))
+    .where(and(eq(pins.id, pinId), pinInEffect))
     .limit(1);
   const row = rows[0];
   if (row === undefined) {

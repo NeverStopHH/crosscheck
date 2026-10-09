@@ -74,7 +74,9 @@ export type CeremonyPurpose =
   | "revoke_passkey"
   // Releasing or withdrawing a needs_approval artifact (routes/ui-ceremony-artifacts.ts).
   | "approve_artifact"
-  | "revoke_artifact";
+  | "revoke_artifact"
+  // Confirming one frozen batch of one's own drafts (services/confirmation-batch.ts).
+  | "confirm_batch";
 
 /** What a ceremony signs. Flat, so canonicalisation is a key sort. */
 export type CeremonyTerms = Readonly<Record<string, string | number>>;

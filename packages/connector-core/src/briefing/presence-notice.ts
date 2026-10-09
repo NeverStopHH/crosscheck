@@ -15,6 +15,18 @@
  * says whether presence is still on, from the `presenceOptOut` read beside it.
  */
 
+/**
+ * PRESENCE ON, WAITING (human provenance §8). Switching presence back on by
+ * key is a draft: presence stays hidden until the person confirms it with
+ * their passkey. Status and doctor say so; the briefing says it as a fact.
+ */
+export const PRESENCE_ON_WAITING_LINE =
+  "a request to show your presence again is waiting for your passkey — it changes nothing until you confirm it (crosscheck confirm opens the page)";
+
+/** For the briefing: a statement of fact, no imperative (DESIGN.md §4). */
+export const PRESENCE_ON_WAITING_BRIEFING_LINE =
+  "A request to show your presence again is waiting for your passkey; until it is confirmed, your presence stays hidden.";
+
 /** The instant as this client writes it, or null when the hub's value is no instant. */
 const instantOf = (iso: string): string | null => {
   const ms = Date.parse(iso);

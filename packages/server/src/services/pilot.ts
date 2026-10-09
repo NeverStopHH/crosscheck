@@ -39,7 +39,7 @@ import {
 } from "../db/schema.ts";
 import { PILOT_RETENTION_DAYS } from "../constants.ts";
 import { COVERAGE_SOURCES, isJudgeable, readCoverage } from "./coverage.ts";
-import { writeNoiseOnPointer } from "./noise-label.ts";
+import { labelInEffect, writeNoiseOnPointer } from "./noise-label.ts";
 import type { MarkRow } from "./noise-label.ts";
 import type { StandingWord } from "./pointer-standing.ts";
 import { readTeamSettings } from "./team-settings.ts";
@@ -47,7 +47,8 @@ import { PILOT_SET_COUNTERS, placeSession } from "./pilot-session-set.ts";
 import type { Placement } from "./pilot-session-set.ts";
 import type { CoverageRecord } from "./coverage.ts";
 import type { SuspectView } from "./suspect.ts";
-import type { Db } from "../db/client.ts";
+import type { HumanStamp } from "./human-provenance.ts";
+import type { Db, DbExecutor } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 import {
   PILOT_LEGACY_COHORT,
@@ -59,6 +60,15 @@ import type { PilotMark, PilotMarkRefKind } from "@crosscheck/schema";
 
 interface Deps {
   readonly db: Db;
+  readonly now: Clock;
+}
+
+/**
+ * A mark's deps may be an open transaction: a confirmation applies every item
+ * of its batch inside one, so the whole batch lands or none of it does.
+ */
+interface MarkDeps {
+  readonly db: DbExecutor;
   readonly now: Clock;
 }
 
@@ -489,7 +499,7 @@ interface MarkTarget {
 }
 
 const readMarkTarget = async (
-  deps: Deps,
+  deps: MarkDeps,
   refKind: PilotMarkRefKind,
   refId: string,
 ): Promise<MarkTarget | undefined> => {
@@ -547,7 +557,7 @@ const readMarkTarget = async (
  */
 const refuseMark = (
   target: MarkTarget | undefined,
-  input: WriteMarkInput,
+  input: CheckMarkInput,
 ): MarkRefusal | null => {
   if (target === undefined) {
     return "unknown_ref";
@@ -574,7 +584,7 @@ const refuseMark = (
   return null;
 };
 
-export interface WriteMarkInput {
+export interface CheckMarkInput {
   readonly repo: string;
   readonly refKind: PilotMarkRefKind;
   readonly refId: string;
@@ -582,6 +592,15 @@ export interface WriteMarkInput {
   readonly markedBy: string;
   /** One bounded sentence, or null — the ordinary case. */
   readonly reason: string | null;
+}
+
+/**
+ * A MARK THAT COUNTS IS A PERSON'S, PROVEN (human provenance §4): only a
+ * passkey confirmation writes one, so the writer takes the stamp a confirmed
+ * batch mints. A key's mark is a draft (routes/pilot-marks.ts).
+ */
+export interface WriteMarkInput extends CheckMarkInput {
+  readonly stamp: HumanStamp;
 }
 
 export type WriteMarkOutcome =
@@ -615,6 +634,10 @@ const markRow = (input: WriteMarkInput, id: string, createdAt: Date): MarkRow =>
   captureMode: HUMAN_CAPTURE_MODE,
   createdAt,
   reason: input.reason,
+  // human provenance §4: the confirmation that made this a person's label.
+  provenance: input.stamp.provenance,
+  confirmationId: input.stamp.confirmationId,
+  confirmationPosition: input.stamp.confirmationPosition,
 });
 
 /**
@@ -641,29 +664,43 @@ const markRow = (input: WriteMarkInput, id: string, createdAt: Date): MarkRow =>
  * label and redact the sentence": the person can say it again in a moment,
  * and a stored derivative of a secret still leaks its shape.
  */
-export const writePilotMark = async (
-  deps: Deps,
-  input: WriteMarkInput,
-): Promise<WriteMarkOutcome> => {
+export const checkPilotMark = async (
+  deps: MarkDeps,
+  input: CheckMarkInput,
+): Promise<MarkRefusal | null> => {
   const settings = await readTeamSettings(deps, input.repo);
   if (!settings.pilotEnrolled) {
     // NOT silence: a person typed this, and "nothing happened" is the one
     // answer a gesture must never get.
-    return { refusal: "not_enrolled" };
+    return "not_enrolled";
   }
   if (input.reason !== null && containsSecret(input.reason)) {
-    return { refusal: "reason_secret" };
+    return "reason_secret";
   }
-  const refusal = refuseMark(
-    await readMarkTarget(deps, input.refKind, input.refId),
-    input,
-  );
+  return refuseMark(await readMarkTarget(deps, input.refKind, input.refId), input);
+};
+
+/**
+ * THE LABEL, WRITTEN — by a passkey confirmation only (human provenance §6),
+ * which runs every check above again inside its own transaction: what was
+ * true when the key drafted it may not be true when the person confirms.
+ */
+export const writePilotMark = async (
+  deps: MarkDeps,
+  input: WriteMarkInput,
+): Promise<WriteMarkOutcome> => {
+  const refusal = await checkPilotMark(deps, input);
   if (refusal !== null) {
     return { refusal };
   }
   // 07 §13.11 (H2): noise on a delivery is decided against the pointer's outcomes, under its lock.
   if (input.refKind === "hint_delivery" && storedMark(input.mark) === "noise") {
     return writeNoiseOnPointer(deps, input.refId, input.markedBy, (id, createdAt) => markRow(input, id, createdAt));
+  }
+  // One label per person per delivery IN EFFECT (round-2 R2-M1): a retracted
+  // or voided one holds no place, so the person's own label is written.
+  if (await labelInEffect(deps.db, input)) {
+    return { id: input.refId, repeated: true };
   }
   const id = `pm_${randomUUID()}`;
   const inserted = await deps.db
@@ -736,4 +773,40 @@ export const prunePilotMeasurements = async (deps: Deps): Promise<void> => {
   await deps.db.delete(hintOutcomes).where(lt(hintOutcomes.createdAt, cutoff));
   // 07 §13.11 (H-B): the person's re-asserted noise stands beside those outcomes, under the same rule.
   await deps.db.delete(noiseReassertions).where(lt(noiseReassertions.createdAt, cutoff));
+  await pruneConfirmationReasons(deps, cutoff);
+};
+
+/**
+ * A WORD'S SENTENCE AGES OUT WHEREVER IT IS KEPT (human provenance, review M4;
+ * round-2 R2-L3). Past the pilot's window the reason is cleared from the
+ * confirmation item, from a decided draft, and from a label's own row — the
+ * label stays, its sentence goes, as an outcome's and a re-assertion's whole
+ * row already does. Every report window is at most that long, so no figure
+ * loses a sentence it could show. What was decided, the digest and the
+ * assertion stay; an item whose reason was cleared no longer re-verifies
+ * against the signed digest item by item — the confirmation still proves who
+ * signed, and when, not that sentence.
+ *
+ * A DRAFT NOBODY DECIDED IS NEVER EDITED: past the window it dies whole, so
+ * the person is never shown, and never signs, a word without the sentence
+ * they typed beside it. One that a batch kept for later is named by its item
+ * and stays as it is.
+ */
+const pruneConfirmationReasons = async (deps: Deps, cutoff: Date): Promise<void> => {
+  const before = cutoff.toISOString();
+  await deps.db.execute(sql`
+    DELETE FROM human_drafts d
+    WHERE d.created_at < ${before}::timestamptz
+      AND NOT EXISTS (SELECT 1 FROM human_confirmation_items i WHERE i.draft_id = d.id)`);
+  await deps.db.execute(sql`
+    UPDATE human_drafts d SET payload = jsonb_set(d.payload, '{reason}', 'null'::jsonb)
+    WHERE d.created_at < ${before}::timestamptz AND d.payload ? 'reason' AND d.payload->'reason' <> 'null'::jsonb
+      AND EXISTS (SELECT 1 FROM human_confirmation_items i WHERE i.draft_id = d.id AND i.decision IN ('confirm', 'discard'))`);
+  await deps.db.execute(sql`
+    UPDATE human_confirmation_items i SET content = jsonb_set(i.content, '{reason}', 'null'::jsonb)
+    FROM human_confirmations c
+    WHERE c.id = i.confirmation_id AND c.confirmed_at < ${before}::timestamptz
+      AND i.content ? 'reason' AND i.content->'reason' <> 'null'::jsonb`);
+  await deps.db.execute(sql`
+    UPDATE pilot_marks SET reason = NULL WHERE created_at < ${before}::timestamptz AND reason IS NOT NULL`);
 };

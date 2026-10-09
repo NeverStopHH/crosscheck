@@ -52,11 +52,13 @@ import {
 } from "./pointer-standing.ts";
 import type { LatestOutcome, PointerWords, StandingWord } from "./pointer-standing.ts";
 import { readTeamSettings } from "./team-settings.ts";
-import type { Db, DbExecutor } from "../db/client.ts";
+import type { HumanStamp } from "./human-provenance.ts";
+import type { DbExecutor } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
+/** Possibly the confirmation's open transaction (human provenance §6). */
 interface Deps {
-  readonly db: Db;
+  readonly db: DbExecutor;
   readonly now: Clock;
 }
 
@@ -75,7 +77,7 @@ export type HintOutcomeRefusal =
   | "past_window"
   | "reason_secret";
 
-export interface WriteHintOutcomeInput {
+export interface ResolveHintOutcomeInput {
   readonly repo: string;
   /** What the hint printed (a work-context or claim id), or a delivery id. */
   readonly ref: string;
@@ -87,6 +89,22 @@ export interface WriteHintOutcomeInput {
   /** Which channel said it — set by the route it arrived on, never by its body (07 §13.12). */
   readonly recordedVia: HintOutcomeChannel;
 }
+
+/**
+ * AN OUTCOME THAT COUNTS IS A PERSON'S, PROVEN (human provenance §4): only a
+ * passkey confirmation writes one, with its stamp. Both doors draft.
+ */
+/**
+ * What a confirmation writes. No channel: a word confirmed with the person's
+ * passkey is the PERSON's whichever door drafted it (J8), so the row is always
+ * `recorded_via = person` and 07 §13.12's agent channel has no writer (M1).
+ */
+export interface WriteHintOutcomeInput extends Omit<ResolveHintOutcomeInput, "recordedVia"> {
+  readonly stamp: HumanStamp;
+}
+
+/** The one channel a confirmed word is written in. */
+const CONFIRMED_CHANNEL: HintOutcomeChannel = "person";
 
 
 export type WriteHintOutcomeResult =
@@ -171,7 +189,7 @@ const readDeliveryById = async (
  */
 const readDeliveryByRef = async (
   deps: Deps,
-  input: WriteHintOutcomeInput,
+  input: ResolveHintOutcomeInput,
 ): Promise<ResolvedDelivery | undefined> => {
   const rows = await deps.db
     .select(deliveryColumns)
@@ -197,7 +215,7 @@ const readDeliveryByRef = async (
 /** In the order a person would want to be told: a mistyped id before a policy. */
 const refuse = (
   delivery: ResolvedDelivery | undefined,
-  input: WriteHintOutcomeInput,
+  input: ResolveHintOutcomeInput,
   countable: CountableSince,
 ): HintOutcomeRefusal | null => {
   if (delivery === undefined || delivery.recipient !== input.recordedBy) {
@@ -231,7 +249,7 @@ const TWIN_REFUSALS: ReadonlySet<HintOutcomeRefusal> = new Set(["before_outcomes
 const countableDeliveryOf = async (
   deps: Deps,
   named: ResolvedDelivery | undefined,
-  input: WriteHintOutcomeInput,
+  input: ResolveHintOutcomeInput,
   countable: CountableSince,
 ): Promise<ResolvedDelivery | undefined> => {
   const refusal = refuse(named, input, countable);
@@ -249,38 +267,31 @@ const countableDeliveryOf = async (
 
 type Recorded = Exclude<WriteHintOutcomeResult, { readonly refusal: HintOutcomeRefusal }>;
 
-/** The newest word the same channel said before — the agent's own, or the person's own. */
-const ownWord = (words: PointerWords, input: WriteHintOutcomeInput): LatestOutcome | undefined =>
-  input.recordedVia === "person" ? words.person : words.agent;
-
 /**
- * A REPEAT, by channel (07 §13.12). The agent's word is judged against the
- * agent's own newest, so re-reading the clause writes nothing twice, whatever
- * the person said since. The person's is judged against what the PERSON
- * stands at — their own newest word, noise included — so their same word said
- * after their own noise label is a new word, and it stands. The reason is part
- * of the word: said better, it is a write (survivor R19).
+ * A REPEAT is judged against what the person stands at — their own newest
+ * word, noise included — so their same word said after their own noise label
+ * is a new word, and it stands. The reason is part of the word: said better,
+ * it is a write (survivor R19).
  */
 const isRepeat = (words: PointerWords, input: WriteHintOutcomeInput): boolean => {
-  const own = ownWord(words, input);
+  const own = words.person;
   if (own === undefined || own.outcome !== input.outcome || own.reason !== input.reason) {
     return false;
   }
-  return input.recordedVia === "agent" || personsOutcomeStanding(words) === input.outcome;
+  return personsOutcomeStanding(words) === input.outcome;
 };
 
 /** The same word as before with a different reason — written, and the answer says the reason was revised. */
 const revisesReason = (words: PointerWords, input: WriteHintOutcomeInput): boolean => {
-  const own = ownWord(words, input);
+  const own = words.person;
   return own !== undefined && own.outcome === input.outcome && own.reason !== input.reason;
 };
 
 /**
- * THE WORD, DECIDED AND WRITTEN UNDER THE POINTER'S LOCK (reviews H2, §13.12).
- * What stands is the person's newest word whenever they said one; an agent's
- * word is recorded but never overturns it. A new word is stamped strictly
- * after the pointer's newest word of any kind, so the order of two words never
- * depends on a millisecond.
+ * THE WORD, DECIDED AND WRITTEN UNDER THE POINTER'S LOCK (review H2). What
+ * stands is the person's newest word. A new word is stamped strictly after the
+ * pointer's newest word of any kind, so the order of two words never depends
+ * on a millisecond.
  */
 const recordOnPointer = (deps: Deps, delivery: ResolvedDelivery, input: WriteHintOutcomeInput): Promise<Recorded> =>
   deps.db.transaction(async (tx) => {
@@ -302,7 +313,7 @@ const recordOnPointer = (deps: Deps, delivery: ResolvedDelivery, input: WriteHin
     const createdAt = instantAfter(deps.now(), newestInstant(words));
     const id = await appendOutcome(tx, delivery.id, input, createdAt);
     const said = { outcome: input.outcome, reason: input.reason, createdAt };
-    const after = standingOfWords({ ...words, [input.recordedVia]: said });
+    const after = standingOfWords({ ...words, person: said });
     return {
       ...answer,
       id,
@@ -329,15 +340,32 @@ const appendOutcome = async (
     reason: input.reason,
     recordedBy: input.recordedBy,
     createdAt,
-    recordedVia: input.recordedVia,
+    recordedVia: CONFIRMED_CHANNEL,
+    // human provenance §4: the confirmation that made this the person's word.
+    provenance: input.stamp.provenance,
+    confirmationId: input.stamp.confirmationId,
+    confirmationPosition: input.stamp.confirmationPosition,
   });
   return id;
 };
 
-export const writeHintOutcome = async (
+/** The delivery an outcome is about, as both the door and the confirmation resolve it. */
+export interface OutcomeDelivery {
+  readonly id: string;
+  readonly sessionId: string;
+  readonly refId: string;
+}
+
+/**
+ * WHICH DELIVERY THIS WORD IS ABOUT, OR WHY IT MAY NOT BE SAID — every refusal
+ * of 07 §13, run by the door before it drafts (so the person and the agent
+ * hear at once that a word could never count) and by the confirmation again
+ * before it writes.
+ */
+export const resolveHintOutcome = async (
   deps: Deps,
-  input: WriteHintOutcomeInput,
-): Promise<WriteHintOutcomeResult> => {
+  input: ResolveHintOutcomeInput,
+): Promise<{ readonly delivery: OutcomeDelivery } | { readonly refusal: HintOutcomeRefusal }> => {
   const settings = await readTeamSettings(deps, input.repo);
   if (!settings.pilotEnrolled) {
     return { refusal: "not_enrolled" };
@@ -356,6 +384,22 @@ export const writeHintOutcome = async (
   const refusal = refuse(delivery, input, countable);
   if (refusal !== null || delivery === undefined) {
     return { refusal: refusal ?? "unknown_ref" };
+  }
+  return { delivery: { id: delivery.id, sessionId: delivery.sessionId, refId: delivery.refId } };
+};
+
+/** THE WORD, WRITTEN — by a passkey confirmation only (human provenance §6), every check run again. */
+export const writeHintOutcome = async (
+  deps: Deps,
+  input: WriteHintOutcomeInput,
+): Promise<WriteHintOutcomeResult> => {
+  const resolved = await resolveHintOutcome(deps, { ...input, recordedVia: CONFIRMED_CHANNEL });
+  if ("refusal" in resolved) {
+    return resolved;
+  }
+  const delivery = await readDeliveryById(deps, resolved.delivery.id);
+  if (delivery === undefined) {
+    return { refusal: "unknown_ref" };
   }
   return recordOnPointer(deps, delivery, input);
 };

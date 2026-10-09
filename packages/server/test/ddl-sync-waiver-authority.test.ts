@@ -94,6 +94,7 @@ describe("bootstrap.sql DDL sync — the hub's closure authority (04a D-PK-1)", 
       checkRecipe: "bun test",
       captureMode: "human",
       createdAt: at,
+      provenance: "unknown_legacy",
     });
     const base = {
       repo: "github.com/acme/api",

@@ -98,9 +98,16 @@ export const enrol = async (harness: TestHarness, repo: string = REPO): Promise<
 };
 
 export const createOutcomeWorld = async (
-  options: { readonly enrolled: boolean } = { enrolled: true },
+  options: {
+    readonly enrolled: boolean;
+    readonly drafts?: "pending" | "confirmed_at_once";
+    readonly refusePreDraftingClients?: boolean;
+  } = { enrolled: true },
 ): Promise<OutcomeWorld> => {
-  const harness = await createTestHarness();
+  const harness = await createTestHarness({
+    ...(options.drafts === undefined ? {} : { drafts: options.drafts }),
+    ...(options.refusePreDraftingClients === undefined ? {} : { refusePreDraftingClients: options.refusePreDraftingClients }),
+  });
   const nick = await seat(harness, "Nick", "nick-outcomes@example.com", NICK_SESSION);
   const ken = await seat(harness, "Ken", "ken-outcomes@example.com", KEN_SESSION);
   const mike = await seat(harness, "Mike", "mike-outcomes@example.com", MIKE_SESSION);

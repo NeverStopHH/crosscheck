@@ -16,7 +16,8 @@ import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
-import { createDb, createServer } from "@crosscheck/server";
+import { createDb } from "@crosscheck/server";
+import { createServerConfirmingAtOnce } from "../../server/test/fixtures/immediate-confirmation.ts";
 import { deliveryIdFor, hintDeliveryId } from "@crosscheck/schema";
 
 import { getMyHintOutcomes } from "../src/http/hint-outcomes.ts";
@@ -108,7 +109,9 @@ const delivery = (sessionId: string): unknown =>
 
 beforeAll(async () => {
   const db = await createDb();
-  server = serveLoopback({ port: 0, fetch: createServer({ db, adminToken: ADMIN }).fetch });
+  // Applies the word at once, as every hub before 0.11 did: this pins which
+  // delivery it lands on. Drafts: mark-hint-outcome-tool.test.ts.
+  server = serveLoopback({ port: 0, fetch: createServerConfirmingAtOnce({ db, adminToken: ADMIN }).fetch });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
   nick = await developer("Nick", "nick-held-first@example.com");
   const ken = await developer("Ken", "ken-held-first@example.com");

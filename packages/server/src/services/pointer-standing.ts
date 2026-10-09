@@ -14,16 +14,20 @@
  * two words in one millisecond are never a coin toss between rows with equal
  * timestamps: the later one stands. The label wins a tie with an outcome (D-O7).
  *
- * THE PERSON OUTRANKS THE AGENT (§13.12). A word the person said — at a
- * terminal, `crosscheck noise / helpful / followed / overrode` — is never
- * overturned by their agent's (`mark_hint_outcome`); the hub knows which by
- * the route a word arrived on, never by a claim in its body.
+ * EVERY WORD READ HERE IS THE PERSON'S (human provenance, 0.11). 07 §13.12
+ * ranked the person's word above their agent's by the route each arrived on.
+ * Since 0.11 a word reaches these tables only through the person's passkey
+ * confirmation, always as the person's (J8), and a pre-0.11 row is read by no
+ * standing (`isConfirmedRow`): the agent's word is a DRAFT until the person
+ * makes it theirs, so the agent channel the ranking guarded can no longer
+ * occur here, and its branch is retired (review M1).
  */
 import { sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
-import type { HintOutcome, HintOutcomeChannel } from "@crosscheck/schema";
+import type { HintOutcome } from "@crosscheck/schema";
 
 import { NOISE_WORDS } from "./pilot-label-figures.ts";
+import { isConfirmedRow } from "./human-provenance.ts";
 import type { DbExecutor } from "../db/client.ts";
 
 /** One pointer in one session — one intervention. */
@@ -79,49 +83,37 @@ export const pointerOfDelivery = async (tx: DbExecutor, deliveryId: string): Pro
 
 type OutcomeRow = { readonly outcome: HintOutcome; readonly reason: string | null; readonly at: string | Date };
 
-/**
- * The person's words, or an agent's. A row from before the channel was stamped
- * (NULL) is an AGENT's, deliberately (round-5 LOW-5): that is the safer side for
- * "a person's word is never overturned by an agent's" — a word nobody can prove
- * the person said never outranks one they did. Hence `= 'person'` for the
- * person and `IS DISTINCT FROM 'person'` (NULL included) for the agent.
- */
-const ofChannel = (channel: HintOutcomeChannel): SQL =>
-  channel === "person" ? sql`o.recorded_via = 'person'` : sql`o.recorded_via IS DISTINCT FROM 'person'`;
-
+/** The person's newest confirmed outcome on the pointer. */
 export const readPointerOutcome = async (
   tx: DbExecutor,
   pointer: Pointer,
   recipient: string,
-  channel: HintOutcomeChannel,
 ): Promise<LatestOutcome | undefined> => {
   const rows = await tx.execute<OutcomeRow>(sql`
     SELECT o.outcome, o.reason, o.created_at AS at FROM hint_outcomes o
     JOIN hint_deliveries d ON d.id = o.delivery_id
-    WHERE ${ofPointer("d", pointer)} AND o.recorded_by = ${recipient} AND ${ofChannel(channel)}
+    WHERE ${ofPointer("d", pointer)} AND o.recorded_by = ${recipient} AND ${isConfirmedRow("o")}
     ORDER BY o.created_at DESC, o.id DESC LIMIT 1`);
   const row = rows.rows[0];
   return row === undefined ? undefined : { outcome: row.outcome, reason: row.reason, createdAt: new Date(row.at) };
 };
 
-/** Everything a recipient said about one pointer: their newest own word, their agent's, and their labels. */
+/** Everything a recipient said about one pointer: their newest outcome, and their labels. */
 export interface PointerWords {
   readonly person: LatestOutcome | undefined;
-  readonly agent: LatestOutcome | undefined;
   readonly noise: LatestNoise | undefined;
   readonly helpful: LatestNoise | undefined;
 }
 
 export const readPointerWords = async (tx: DbExecutor, pointer: Pointer, recipient: string): Promise<PointerWords> => ({
-  person: await readPointerOutcome(tx, pointer, recipient, "person"),
-  agent: await readPointerOutcome(tx, pointer, recipient, "agent"),
+  person: await readPointerOutcome(tx, pointer, recipient),
   noise: await readPointerNoise(tx, pointer, recipient),
   helpful: await readPointerHelpful(tx, pointer, recipient),
 });
 
 /** The newest instant any word on the pointer carries — the next word is stamped strictly after it. */
 export const newestInstant = (words: PointerWords): Date | undefined =>
-  [words.person?.createdAt, words.agent?.createdAt, words.noise?.createdAt, words.helpful?.createdAt]
+  [words.person?.createdAt, words.noise?.createdAt, words.helpful?.createdAt]
     .filter((at): at is Date => at !== undefined)
     .reduce<Date | undefined>((newest, at) => (newest === undefined || at.getTime() > newest.getTime() ? at : newest), undefined);
 
@@ -142,11 +134,11 @@ export const readPointerNoise = async (
       SELECT m.id, m.created_at AS at FROM pilot_marks m
       JOIN hint_deliveries d ON d.id = m.ref_id
       WHERE m.ref_kind = 'hint_delivery' AND ${ofPointer("d", pointer)}
-        AND m.marked_by = ${recipient} AND m.mark IN ${NOISE_WORDS}
+        AND m.marked_by = ${recipient} AND m.mark IN ${NOISE_WORDS} AND ${isConfirmedRow("m")}
       UNION ALL
       SELECT r.id, r.created_at AS at FROM noise_reassertions r
       JOIN hint_deliveries rd ON rd.id = r.delivery_id
-      WHERE ${ofPointer("rd", pointer)} AND r.marked_by = ${recipient}
+      WHERE ${ofPointer("rd", pointer)} AND r.marked_by = ${recipient} AND ${isConfirmedRow("r")}
     ) noise
     ORDER BY at DESC, id DESC LIMIT 1`);
   const row = rows.rows[0];
@@ -166,7 +158,7 @@ export const readPointerHelpful = async (
     SELECT m.id, m.created_at AS at FROM pilot_marks m
     JOIN hint_deliveries d ON d.id = m.ref_id
     WHERE m.ref_kind = 'hint_delivery' AND ${ofPointer("d", pointer)}
-      AND m.marked_by = ${recipient} AND m.mark = 'helpful'
+      AND m.marked_by = ${recipient} AND m.mark = 'helpful' AND ${isConfirmedRow("m")}
     ORDER BY m.created_at DESC, m.id DESC LIMIT 1`);
   const row = rows.rows[0];
   return row === undefined ? undefined : { id: row.id, createdAt: new Date(row.at) };
@@ -205,20 +197,12 @@ export const personsOutcomeStanding = (words: PointerWords): StandingWord | null
 };
 
 /**
- * WHAT STANDS (07 §13.12, §13.14): the person's own word on the outcome axis
- * whenever they said one; only otherwise the agent's newest — which a helpful
- * label of the person's leaves standing, except an agent's `not_relevant_now`:
- * that the person's helpful vetoes (b), and their label stands over it. An
- * agent's word is recorded but never overturns the person's.
+ * WHAT STANDS (07 §13.14): the person's own word on the outcome axis. Since
+ * 0.11 every word here is the person's (see the header), so 07 §13.12's
+ * fallback to the agent's newest word, and the helpful label's veto of it, are
+ * retired with the channel they ranked (review M1).
  */
-export const standingOfWords = (words: PointerWords): StandingWord | null => {
-  const persons = personsOutcomeStanding(words);
-  if (persons !== null) {
-    return persons;
-  }
-  const agents = words.agent?.outcome ?? null;
-  return agents === "not_relevant_now" && words.helpful !== undefined ? "helpful" : agents;
-};
+export const standingOfWords = (words: PointerWords): StandingWord | null => personsOutcomeStanding(words);
 
 /** One millisecond — the smallest step the hub's clock and the stored instants share. */
 const NEXT_INSTANT_MS = 1;

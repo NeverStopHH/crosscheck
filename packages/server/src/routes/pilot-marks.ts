@@ -21,6 +21,12 @@
  * in `~/.crosscheck/config.json`. The gate makes the claim explicit, required
  * and refusable AT THE HUB; it does not make it unforgeable. Every row names
  * who marked it, so a forged mark is at least an attributable one.
+ *
+ * SINCE 0.11 THIS DOOR DRAFTS (human provenance §3): the claim only says which
+ * door it was — `interactive_terminal_asserted`, never a proven person — and
+ * nothing it sends is a label until the person confirms it with their passkey
+ * at /ui/confirm. The checks below still run now, so a word that could never
+ * count is refused at once.
  */
 import { Hono } from "hono";
 import { z } from "zod";
@@ -32,10 +38,12 @@ import {
 
 import { NOISE_MARK_MAX_SESSIONS, PILOT_RETENTION_DAYS } from "../constants.ts";
 
+import { refusePreDraftingClient } from "../http/client-release.ts";
 import { fail, ok } from "../http/envelope.ts";
 import { formatIssues, readJsonBody } from "../http/request.ts";
 import { developerAuth } from "../middleware/auth.ts";
-import { writePilotMark } from "../services/pilot.ts";
+import { DRAFT_REFUSAL_SENTENCE, draftLabel } from "../services/draft-doors.ts";
+import type { DraftRefusal } from "../services/draft-doors.ts";
 import {
   readMarkCandidates,
   readUnlabeledInterventions,
@@ -82,7 +90,8 @@ const UnlabeledQuerySchema = z.object({
  * what to do next, because a person typed the command that produced it and a
  * refusal nobody can act on is the same as silence.
  */
-const REFUSAL_SENTENCE: Record<MarkRefusal, string> = {
+const REFUSAL_SENTENCE: Record<MarkRefusal | DraftRefusal, string> = {
+  ...DRAFT_REFUSAL_SENTENCE,
   not_enrolled:
     "this repo is not in the pilot, so nothing is being measured — ask whoever runs the hub to enrol it, or leave it as it is",
   // ALSO the answer for a delivery that exists but reached somebody else:
@@ -158,6 +167,10 @@ export const pilotMarkRoutes = (deps: AppDeps): Hono<AppEnv> => {
   });
 
   router.post("/", developerAuth(deps), async (c) => {
+    const preDrafting = refusePreDraftingClient(c, deps);
+    if (preDrafting !== null) {
+      return preDrafting;
+    }
     const parsed = PilotMarkSchema.safeParse(await readJsonBody(c));
     if (!parsed.success) {
       // The presence literal fails HERE, before anything reaches the
@@ -173,26 +186,41 @@ export const pilotMarkRoutes = (deps: AppDeps): Hono<AppEnv> => {
     if (unstorable !== null) {
       return fail(c, 400, "validation_failed", describeUnstorableText(unstorable));
     }
-    const outcome = await writePilotMark(deps, {
-      repo: parsed.data.repo,
-      refKind: parsed.data.refKind,
-      refId: parsed.data.refId,
-      mark: parsed.data.mark,
-      markedBy: c.get("developer").id,
-      reason: parsed.data.reason ?? null,
-    });
+    // A DRAFT, NEVER A LABEL (human provenance §3). The presence claim says
+    // which door this was — the CLI takes it only behind its person gate —
+    // and that door is `interactive_terminal_asserted`: a technical channel,
+    // never a proven person. The label counts once the person confirms it
+    // with their passkey; every refusal it could meet is said now.
+    const outcome = await draftLabel(
+      deps,
+      {
+        repo: parsed.data.repo,
+        refKind: parsed.data.refKind,
+        refId: parsed.data.refId,
+        mark: parsed.data.mark,
+        markedBy: c.get("developer").id,
+        reason: parsed.data.reason ?? null,
+      },
+      "interactive_terminal_asserted",
+    );
     if ("refusal" in outcome) {
       return fail(c, 422, outcome.refusal, REFUSAL_SENTENCE[outcome.refusal]);
     }
     // 200 AND NOT 201 ON A REPEAT, because nothing was created — and the
     // caller is told WHICH it was rather than having to infer it from a
-    // status code that would otherwise be identical either way.
-    // 07 §13.11 (H2): a noise label on a delivery also says what now stands.
-    const standing =
-      outcome.stands === undefined ? {} : { stands: outcome.stands, replaced: outcome.replaced ?? null };
+    // status code that would otherwise be identical either way. `id` and
+    // `repeated` are what an older CLI's parser requires; `draft` says what
+    // a newer one prints.
     return ok(
       c,
-      { id: outcome.id, repeated: outcome.repeated, ...standing },
+      {
+        id: outcome.draftId,
+        repeated: outcome.repeated,
+        draft: true,
+        waiting: outcome.waiting,
+        provenance: outcome.provenance,
+        notice: outcome.notice,
+      },
       outcome.repeated ? HTTP_OK : HTTP_CREATED,
     );
   });

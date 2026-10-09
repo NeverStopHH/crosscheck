@@ -57,6 +57,55 @@ describe("renderMyOutcomes' header", () => {
   });
 });
 
+describe("renderMyOutcomes' source credit, with follows confirmed late (review M6; round 2, R2-H2)", () => {
+  const OWN_LINE = "followed 3 times — shown once, leaving out any one person, at least 3 people followed it";
+  const GENERIC = "no count — below the disclosure minimums: leaving out any one person, at least 3 people must have followed it";
+
+  test("follows confirmed this month about earlier months' hints are counted here, said to be late, each part shown on its own", () => {
+    // Act
+    const line = creditLine({ ...JULY, followed: 3, withheld: null, late: { followed: 4, withheld: null } });
+
+    // Assert
+    expect(line).toBe(
+      `your own work, in teammates' hints, July 2026: ${OWN_LINE}; and confirmed late, about earlier months' hints: followed 4 times — shown once, leaving out any one person, at least 3 people followed them`,
+    );
+  });
+
+  test("N12: one teammate's follow and three late ones print neither number — each is withheld on its own", () => {
+    // Act
+    const line = creditLine({ ...JULY, followed: null, withheld: "below_minimums", late: { followed: null, withheld: "below_minimums" } });
+
+    // Assert
+    expect(line).toBe(
+      `your own work, in teammates' hints, July 2026: ${GENERIC}; and confirmed late, about earlier months' hints: no count — below the disclosure minimums`,
+    );
+  });
+
+  test("a month with only late follows never prints 'followed 0' — the generic sentence, then the late part on its own (review M-1)", () => {
+    // Act
+    const line = creditLine({ ...JULY, followed: 0, withheld: null, late: { followed: 4, withheld: null } });
+
+    // Assert
+    expect(line).toBe(
+      `your own work, in teammates' hints, July 2026: ${GENERIC}; and confirmed late, about earlier months' hints: followed 4 times — shown once, leaving out any one person, at least 3 people followed them`,
+    );
+  });
+
+  test("round-2 R2-H1: follows later retracted as compromised carry a correction, with a count only past the minimums", () => {
+    // Act
+    const withheld = creditLine({ ...JULY, followed: 3, withheld: null, laterRetracted: { count: null, withheld: "below_minimums" } });
+    const counted = creditLine({ ...JULY, followed: 3, withheld: null, laterRetracted: { count: 4, withheld: null } });
+
+    // Assert
+    expect(withheld).toBe(
+      `your own work, in teammates' hints, July 2026: ${OWN_LINE}; correction: some of these were later retracted — their passkey was declared compromised (no count: below the disclosure minimums)`,
+    );
+    expect(counted).toBe(
+      `your own work, in teammates' hints, July 2026: ${OWN_LINE}; correction: 4 of these were later retracted — their passkey was declared compromised`,
+    );
+  });
+});
+
 describe("renderMyOutcomes' source credit (review #10)", () => {
   test("a count names its closed month and the minimum it passed", () => {
     // Act
@@ -132,14 +181,15 @@ describe("renderMyOutcomes' source credit (review #10)", () => {
     );
   });
 
-  test("round-6 LOW-1: the footer says which of the commands are yours — typed in your own shell", () => {
+  test("round-6 LOW-1, since human provenance: the footer says only the passkey makes a word yours — a shell no longer does", () => {
     // Act
     const out = renderMyOutcomes(viewSince("2026-08-10T12:00:00.000Z"));
 
-    // Assert
+    // Assert — your own shell is a door any agent on the machine can reach (0.11 §2)
     expect(out).toContain(
-      "recorded with your key — by you (crosscheck followed / overrode, typed in your own shell) or by your agent (mark_hint_outcome, or those commands run by an agent's tool, a pipe or Claude Code's ! prefix); noise is your own label (crosscheck noise)\n",
+      "counted above: only what you confirmed with your passkey (crosscheck confirm); your agent's words (mark_hint_outcome) and words typed at a terminal (crosscheck followed / overrode / noise / helpful) are drafts until then\n",
     );
+    expect(out).not.toContain("typed in your own shell");
   });
 
   test("the footer's promise names both shared totals, their viewer-independent minimums, and the team of three (H1)", () => {

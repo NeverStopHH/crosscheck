@@ -33,7 +33,8 @@ import { UI_FEED_LIMIT, UI_MAX_ARTIFACTS, UI_PASSKEY_CSP } from "../ui/constants
 import { forbidden, isPostedCsrfValid, notFoundPage, viewerChrome } from "../ui/route-helpers.tsx";
 import { ApprovalsPage } from "../ui/pages/approvals.tsx";
 import { FeedPage } from "../ui/pages/feed.tsx";
-import type { FeedEntry, PresenceReenableBanner } from "../ui/pages/feed.tsx";
+import type { FeedEntry, PresenceReenableBanner, WaitingDrafts } from "../ui/pages/feed.tsx";
+import { countPendingForBanner } from "../services/human-drafts.ts";
 import { getDeveloperSettings, presenceReenableNotice } from "../services/developer-settings.ts";
 import { MembersPage } from "../ui/pages/members.tsx";
 import { RefereePage } from "../ui/pages/referee.tsx";
@@ -140,6 +141,19 @@ const presenceReenableBannerFor = async (
   return { at, isOptedOutNow: settings.presenceOptOut };
 };
 
+/**
+ * The viewer's own drafts waiting for their passkey, for the feed (review M7,
+ * spec §8). The feed refreshes itself, so its count reuses liveness while the
+ * pending set is unchanged (round-1 M8, round-2 R2-L4).
+ */
+const waitingDraftsFor = async (deps: AppDeps, developerId: string): Promise<WaitingDrafts> => {
+  const counts = await countPendingForBanner(deps, developerId);
+  return {
+    total: Object.values(counts).reduce((sum, n) => sum + n, 0),
+    presenceOn: (counts.presence_on ?? 0) > 0,
+  };
+};
+
 // ── Work-context assembly ───────────────────────────────────────────────────
 
 /** The context owner's display name — who OPENED the tree, one bounded row. */
@@ -237,6 +251,7 @@ export const uiPagesRoutes = (deps: AppDeps): Hono<AppEnv> => {
         viewer={viewerChrome(c, deps)}
         entries={entries}
         presenceReenable={await presenceReenableBannerFor(deps, c.get("developer").id)}
+        waiting={await waitingDraftsFor(deps, c.get("developer").id)}
       />,
     );
   });
