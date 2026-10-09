@@ -240,7 +240,7 @@ describe("doctor and status say why the hub rejected records", () => {
     await recordDrop(home, key, sessionSlug("rejected-cli-old"), 3, "rejected", now);
   };
 
-  test("doctor names each cause with its count, and the uncaused ones as such", async () => {
+  test("doctor names each cause with its count, and the uncaused ones once, on the legacy line (integration review L5)", async () => {
     // Arrange
     const { repo, home, env, key } = await fixture("doctor-rejected");
     await seedRejections(home, key);
@@ -250,9 +250,10 @@ describe("doctor and status say why the hub rejected records", () => {
 
     // Assert
     expect(result.stdout).toContain(
-      "WARN  hub rejected records  5 records rejected by the hub: 2 because the session delivering them was one the hub held as ended",
+      "WARN  hub rejected records  2 records rejected by the hub: 2 because the session delivering them was one the hub held as ended",
     );
-    expect(result.stdout).toContain(" · 3 with no cause recorded — written by a connector before 1.0");
+    expect(result.stdout).toContain("WARN  legacy losses  3 records lost by a connector before 1.0, whose ledgers kept only counts: 3 rejected by the hub with no cause recorded");
+    expect(result.stdout.match(/no cause/g) ?? []).toHaveLength(1);
   });
 
   test("a clean machine passes the line", async () => {
@@ -276,8 +277,12 @@ describe("doctor and status say why the hub rejected records", () => {
 
     // Assert
     expect(result.stdout).toContain(
-      "\nlosses: 5 records rejected by the hub: 2 because the session delivering them was one the hub held as ended",
+      "\nlosses: 2 records rejected by the hub: 2 because the session delivering them was one the hub held as ended",
     );
+    // ...and the three cause-less ones once, on the legacy fragment of the same line (integration review L5).
+    const lossesLine = result.stdout.split("\n").find((line) => line.startsWith("losses: ")) ?? "";
+    expect(lossesLine).toContain("3 rejected by the hub with no cause recorded");
+    expect(lossesLine.match(/no cause/g) ?? []).toHaveLength(1);
   });
 });
 

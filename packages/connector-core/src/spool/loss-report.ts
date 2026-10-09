@@ -40,7 +40,6 @@ import {
   LEGACY_LOSS_SENTENCE,
   REJECT_CAUSES,
   REJECT_CAUSE_SENTENCES,
-  UNRECORDED_CAUSE_SENTENCE,
   WITHHELD_SENTENCE,
 } from "./reject-cause.ts";
 
@@ -368,16 +367,22 @@ const droppedLine = (local: LocalLosses): string | null => {
   );
 };
 
+/** How many `rejected` records the ledger named a cause for — the rest are a 0.10 connector's (legacyLine). */
+const causedRejections = (local: LocalLosses): number =>
+  Object.values(local.drops.rejectedCauses).reduce((sum, count) => sum + count, 0);
+
 /**
  * WHY THE HUB REJECTED RECORDS (pilot, 2026-10-05): `433 dropped` was all the
  * pilot's machine could say, and only the hub's source told 225 of them
  * apart as a conversation the hub held as ended. Each cause a ledger line
- * names gets its count and its sentence; the rejected records no line names a
- * cause for — ledgers from before the field — are counted as such, never
- * guessed into one.
+ * names gets its count and its sentence. The rejected records no line names
+ * a cause for — ledgers from before the field — are NOT this line's (batch-2
+ * integration review, L5): they are a 0.10 connector's losses, counted once,
+ * on the legacy line below with its remedy. Counted here too, they were
+ * printed twice on status's one losses line, and its parts no longer summed.
  */
 const rejectedLine = (local: LocalLosses): string | null => {
-  const records = local.drops.byReason["rejected"] ?? 0;
+  const records = Math.min(local.drops.byReason["rejected"] ?? 0, causedRejections(local));
   if (records === 0) {
     return null;
   }
@@ -385,9 +390,7 @@ const rejectedLine = (local: LocalLosses): string | null => {
   const named = REJECT_CAUSES.filter((cause) => (causes[cause] ?? 0) > 0).map(
     (cause) => `${String(causes[cause] ?? 0)} ${REJECT_CAUSE_SENTENCES[cause]}`,
   );
-  const unnamed = records - Object.values(causes).reduce((sum, count) => sum + count, 0);
-  const parts = unnamed > 0 ? [...named, `${String(unnamed)} ${UNRECORDED_CAUSE_SENTENCE}`] : named;
-  return `${plural(records, "record")} rejected by the hub: ${parts.join(" · ")}`;
+  return `${plural(records, "record")} rejected by the hub: ${named.join(" · ")}`;
 };
 
 /**
@@ -401,8 +404,7 @@ const rejectedLine = (local: LocalLosses): string | null => {
  * instants, so coverage judges them by when they happened.
  */
 const legacyLine = (local: LocalLosses): string | null => {
-  const causes = Object.values(local.drops.rejectedCauses).reduce((sum, count) => sum + count, 0);
-  const rejected = Math.max(0, (local.drops.byReason["rejected"] ?? 0) - causes);
+  const rejected = Math.max(0, (local.drops.byReason["rejected"] ?? 0) - causedRejections(local));
   const archived = local.drops.byReason[LEGACY_DROP_REASON] ?? 0;
   if (rejected + archived === 0) {
     return null;
