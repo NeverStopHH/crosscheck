@@ -1319,7 +1319,8 @@ re-assertion. Said again while noise already stands, it is a repeat. A person's 
 own `helpful` makes noise stand in the outcome figures while precision keeps `helpful` (survivor R7).
 
 *The principle — a person's word is never overturned by an agent's (it also settles the ping-pong LOW, R7 and
-the label-vs-word order).* A word the PERSON says at a terminal — `crosscheck noise`, `helpful`, `followed`,
+the label-vs-word order).* (Retired by human provenance in 0.11, §13.15: no door writes a counted word any
+more, only the person's passkey does, so the ranking below never meets an agent's word.) A word the PERSON says at a terminal — `crosscheck noise`, `helpful`, `followed`,
 `overrode` — is theirs, and an AGENT's word (`mark_hint_outcome`) never overturns it. The agent's word is still
 recorded, as its own row, but what stands stays the person's, and the tool's answer says so ("the person's
 noise label still stands: an agent's word never overturns the person's own"); only the person's own later word
@@ -1536,7 +1537,7 @@ person's own override deleted the override and its reason, a helpful over an age
 and the credit and the team line fell below their minimums. **Helpful lives on the LABEL axis.** On the outcome
 axis it may only (a) cancel an older noise of the person's — noise stands only while it is their newest label —
 and (b) veto an AGENT's `not_relevant_now` to unmarked, the answer saying the person's helpful label stands
-(the P3 case). The person's own outcome stands regardless of order, an agent's followed or overrode stays the
+(the P3 case; (b) is retired with the agent channel in §13.15). The person's own outcome stands regardless of order, an agent's followed or overrode stays the
 outcome under a helpful label, and the write path's answer follows the same rule.
 
 *The helpful line.* What the person called helpful is now shown back to them: `--mine` prints, under each
@@ -1632,3 +1633,20 @@ the markers. With a marker present each behaves exactly as with no terminal — 
 gestures and the rotation are refused, `followed / overrode` take the agent's route — and the refusal's first
 line names the marker: "this command ran inside an agent's tool (CURSOR_AGENT is set), so its terminal is the
 agent's, not yours". The gate still answers "person" only when the probe does.
+
+**13.15 — The agent channel, retired by human provenance (0.11).** Since 0.11 neither door writes a word that
+counts. `mark_hint_outcome` (the agent's door) drafts as `agent_asserted`, `crosscheck followed / overrode` (the
+person's door) as `interactive_terminal_asserted`, and only the person's passkey on `/ui/confirm` makes a word
+theirs (`human_passkey_confirmed`). A confirmed outcome is always written `recorded_via = person`, whichever door
+drafted it, because the passkey is the person's word.
+
+So the §13.12 principle ("a person's word is never overturned by an agent's") no longer ranks anything. The
+agent-versus-person ranking of what stands, §13.14 HIGH-1's veto (b) of an agent's `not_relevant_now`, and
+§13.13's handling of rows from before the channel column all assumed an agent's word could count. None can now:
+every reader counts confirmed rows only, and those carry no agent's word. They are retired in the code, and
+their eleven mutation anchors are retired with them, each named in `mutation-check.ts`.
+
+Words from 0.10, from either door, read `unknown_legacy` and are counted apart as "recorded before provenance
+existed", never as anybody's judgement. The TTY gate and the agent-host markers still decide which door a CLI
+word drafts through. They decide the class shown on the confirm page ("drafted by your agent" or "typed at a
+terminal"), not whether the word counts. What a word counts for, and from when, is in `docs/DESIGN.md` §2.2.
