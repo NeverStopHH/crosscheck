@@ -92,11 +92,24 @@ const instantOf = (iso: string): string => {
  * it. Somebody who holds this developer's bearer key can state it too, which
  * is why the NAME is printed beside it — a claim under a name somebody can
  * ask about beats a claim under none.
+ *
+ * SINCE 0.11 THE HUB SAYS WHO MADE IT A PIN (human provenance §7, round-1
+ * L3): a key only drafts a pin, so a pin is the person's when their passkey
+ * confirmed it; one from before provenance keeps protecting and is listed as
+ * what it is. An older hub sends nothing and is read as before.
  */
-const trustLabel = (pin: PinEntry): string =>
-  pin.captureMode === "human"
-    ? `verified by ${bareUntrusted(pin.verifiedByName)} (a human, at a terminal)`
-    : `RECORDED BY ${bareUntrusted(pin.captureMode)} — not a human's word`;
+const HUMAN_PIN_LABEL: Readonly<Record<string, (name: string) => string>> = {
+  human_passkey_confirmed: (name) => `verified by ${name} (confirmed with their passkey)`,
+  unknown_legacy: (name) => `pinned by ${name} before provenance was recorded — not proven to be theirs`,
+};
+
+const trustLabel = (pin: PinEntry): string => {
+  if (pin.captureMode !== "human") {
+    return `RECORDED BY ${bareUntrusted(pin.captureMode)} — not a human's word`;
+  }
+  const name = bareUntrusted(pin.verifiedByName);
+  return HUMAN_PIN_LABEL[pin.provenance ?? ""]?.(name) ?? `verified by ${name} (a human, at a terminal)`;
+};
 
 /**
  * A repo-relative path is a BARE field, not an ID. `safeId`'s alphabet is

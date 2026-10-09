@@ -2703,6 +2703,12 @@ export const PinEntrySchema = z.looseObject({
   verifiedByName: z.string().min(1),
   verifiedAtCommit: z.string().min(1),
   verifiedAt: z.string().min(1),
+  /**
+   * Who made it a pin (human provenance §7, round-1 L3): the person, with a
+   * passkey, or `unknown_legacy` for a pin from before provenance. Absent from
+   * an older hub, and read as absent when it is not a string.
+   */
+  provenance: z.string().min(1).optional().catch(undefined),
   brokeAt: z.string().nullable().default(null),
   brokeByName: z.string().nullable().default(null),
   speaking: z.boolean().default(false),
