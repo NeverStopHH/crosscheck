@@ -29429,14 +29429,15 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/landed-probe-facts.test.ts`,
     because: "one git spawn per landing branch per edit for an answer that can never change",
   },
-  {
-    label: "a merge base is asked again on every probe",
-    file: `${CORE}/src/landed-changes/git-queries.ts`,
-    from: "  if (known !== undefined && known !== null) {\n    return known;",
-    to: "  if (false) {\n    return known;",
-    test: `${CORE}/test/landed-probe-facts.test.ts`,
-    because: "one git spawn per landing branch per missing file for an answer that can never change",
-  },
+  // RETIRED (track B merge): "a merge base is asked again on every probe"
+  // dropped `mergeBaseOf`'s own memo read. Its one caller,
+  // `hasNothingNetToUndo`, reads the same memo entry first (batch-2 review,
+  // M6, so the base's file joins the tips' one cat-file) and calls
+  // `mergeBaseOf` only when that entry is missing — in the same synchronous
+  // step, so no write can land between the two reads. The mutant is
+  // equivalent, on track B's own tip too. The caller's read is pinned by "the
+  // moot check reads each commit's copy of the file with its own ls-tree" and
+  // landed-probe-facts.test.ts's one-cat-file case.
   {
     label: "the moot check reads each commit's copy of the file with its own ls-tree",
     file: `${CORE}/src/landed-changes/probe.ts`,
@@ -37000,7 +37001,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/landed-changes.test.ts 7
  * PRINTS: packages/connector-core/test/landed-notice.test.ts 21
  * PRINTS: packages/connector-core/test/landed-probe-cuts.test.ts 6
- * PRINTS: packages/connector-core/test/landed-probe-facts.test.ts 10
+ * PRINTS: packages/connector-core/test/landed-probe-facts.test.ts 9
  * PRINTS: packages/connector-core/test/landed-render.test.ts 4
  * PRINTS: packages/connector-core/test/landed-why-render.test.ts 7
  * PRINTS: packages/connector-core/test/landed-worth-stopping.test.ts 1
