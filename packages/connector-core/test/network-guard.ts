@@ -27,8 +27,10 @@
  *     `{...process.env}` is pointed at the real hub or the real archive —
  *     keeping only what a test sets: an in-process hub on a port of its own,
  *     an archive under the OS temp directory;
- *   - points CROSSCHECK_HOME at a temp directory of its own unless it is one
- *     already, so no such child reads or writes ~/.crosscheck;
+ *   - (every process, `pointHomesAtTemp` below) points HOME, CROSSCHECK_HOME
+ *     and XDG_* at a temp directory of its own unless they are one already,
+ *     and writes the real home down for the resolvers' guard, so no test or
+ *     child reads or writes ~/.crosscheck;
  *   - exports `BUN_OPTIONS=--preload=<this file>`, so every bun child spawned
  *     with that env runs this guard before its own entry;
  *   - marks the env (GUARD_CHILD_ENV), so a child keeps what it was handed —
@@ -43,6 +45,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { TEST_REAL_HOME_ENV } from "../src/config/paths.ts";
 import {
   BLOCKED_FETCHES_KEY,
   GUARD_CHILD_ENV,
@@ -94,6 +97,76 @@ const TEMP_ROOTS: readonly string[] = [tmpdir(), "/tmp", "/private/tmp", "/var/f
 
 const isTempPath = (path: string | undefined): boolean => TEMP_ROOTS.some((root) => isUnderDir(path, root));
 
+/** The XDG base directories, each pointed under the test's own home with it. */
+const XDG_DIRS: Readonly<Record<string, string>> = {
+  XDG_CONFIG_HOME: ".config",
+  XDG_DATA_HOME: ".local/share",
+  XDG_CACHE_HOME: ".cache",
+  XDG_STATE_HOME: ".local/state",
+};
+
+/** A fresh temp directory this process removes on exit. */
+const freshTempDir = (prefix: string): string => {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  process.on("exit", () => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+  return dir;
+};
+
+/**
+ * The real user's home when HOME no longer says it — a child handed a temp
+ * HOME and no record — from the user name alone: a path, never a lookup.
+ */
+const homeOfUser = (): string | null => {
+  const user = process.env["USER"] ?? process.env["LOGNAME"];
+  return user === undefined || user === "" ? null : join(process.platform === "darwin" ? "/Users" : "/home", user);
+};
+
+/**
+ * NO TEST RESOLVES THE REAL HOME (integration review of batch 2, track A): a
+ * test that passed an empty env resolved the developer's own `~/.crosscheck`
+ * and wrote it. So, in every test process and every child, before any module
+ * reads them:
+ *
+ *   - the real home is written down in TEST_REAL_HOME_ENV — from HOME while it
+ *     still is the real one, inherited by every child — and nothing under it
+ *     is ever stat'ed or opened: the src home resolvers compare paths against
+ *     it and throw on a match (connector-core config/paths.ts refuseRealHome);
+ *   - HOME, CROSSCHECK_HOME and the XDG base directories point at a fresh temp
+ *     directory of this process's own, unless they point at one already —
+ *     a test that set its own home keeps it, and so does the child it hands
+ *     it to.
+ *
+ * Bun reads HOME for `os.homedir()` once, at process start, so this process's
+ * own `homedir()` keeps answering the real home: the resolvers read HOME from
+ * the environment first for exactly that reason, and the guard stands behind
+ * them. Every child starts with the temp HOME, and its `homedir()` with it.
+ */
+const pointHomesAtTemp = (): void => {
+  if ((process.env[TEST_REAL_HOME_ENV] ?? "").trim() === "") {
+    const home = process.env["HOME"];
+    const real = home !== undefined && home !== "" && !isTempPath(home) ? home : homeOfUser();
+    if (real !== null) {
+      process.env[TEST_REAL_HOME_ENV] = real;
+    }
+  }
+  if (!isTempPath(process.env["HOME"])) {
+    process.env["HOME"] = freshTempDir("cx-test-user-home-");
+  }
+  const home = process.env["HOME"] ?? tmpdir();
+  for (const [key, entry] of Object.entries(XDG_DIRS)) {
+    if (!isTempPath(process.env[key])) {
+      process.env[key] = join(home, entry);
+    }
+  }
+  if (!isTempPath(process.env["CROSSCHECK_HOME"])) {
+    process.env["CROSSCHECK_HOME"] = freshTempDir("cx-test-home-");
+  }
+};
+
+pointHomesAtTemp();
+
 /**
  * What the first run hands every child it spawns with `{...process.env}`: no
  * hub, a home of its own, this guard. What only a TEST could have set is
@@ -110,13 +183,6 @@ const guardTheChildren = (): void => {
   }
   if (!isTempPath(process.env[HUB_DATA_KEY])) {
     delete process.env[HUB_DATA_KEY];
-  }
-  if (!isTempPath(process.env["CROSSCHECK_HOME"])) {
-    const home = mkdtempSync(join(tmpdir(), "cx-test-home-"));
-    process.env["CROSSCHECK_HOME"] = home;
-    process.on("exit", () => {
-      rmSync(home, { recursive: true, force: true });
-    });
   }
   process.env["BUN_OPTIONS"] = withGuardPreload(process.env["BUN_OPTIONS"], import.meta.path);
   process.env[GUARD_CHILD_ENV] = "1";

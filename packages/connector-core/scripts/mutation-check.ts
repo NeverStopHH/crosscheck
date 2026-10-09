@@ -21148,16 +21148,16 @@ export const MUTATIONS: readonly Mutation[
     // Review 2026-10-06 (L6): `""` is not nullish.
     label: "an empty CROSSCHECK_HOME puts the home in the working directory",
     file: `${CORE}/src/config/paths.ts`,
-    from: "  return configured === undefined || configured.trim() === \"\"\n",
-    to: "  return configured === undefined\n",
+    from: "    configured === undefined || configured.trim() === \"\"\n",
+    to: "    configured === undefined\n",
     test: `${CORE}/test/crosscheck-home.test.ts`,
     because: "state/, spool/ and config.json are written into the developer's repo, and the temp sweep deletes from it",
   },
   {
     label: "a whitespace CROSSCHECK_HOME is taken as a path",
     file: `${CORE}/src/config/paths.ts`,
-    from: "  return configured === undefined || configured.trim() === \"\"\n",
-    to: "  return configured === undefined || configured === \"\"\n",
+    from: "    configured === undefined || configured.trim() === \"\"\n",
+    to: "    configured === undefined || configured === \"\"\n",
     test: `${CORE}/test/crosscheck-home.test.ts`,
     because: "an export with a stray space makes a directory named ' ' in the repo and keeps the home there",
   },
@@ -30202,7 +30202,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the test guard leaves children the shell's crosscheck home",
     file: `${CORE}/test/network-guard.ts`,
-    from: "    process.env[\"CROSSCHECK_HOME\"] = home;\n",
+    from: "    process.env[\"CROSSCHECK_HOME\"] = freshTempDir(\"cx-test-home-\");\n",
     to: "",
     test: `${CORE}/test/network-guard.test.ts`,
     because: "a child spawned with the runner's env reads and writes the developer's ~/.crosscheck",
@@ -35160,6 +35160,40 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/landed-probe-cuts.test.ts`,
     because: "L6: the binary exits on the runner's return and the abandoned handler's booking dies with it",
   },
+  // NO TEST RESOLVES THE REAL HOME (track A follow-up): a test with an empty
+  // env read and wrote the developer's own ~/.crosscheck.
+  {
+    label: "a home resolver in a test lands on the real home",
+    file: `${CORE}/src/config/paths.ts`,
+    from: "  if (target === real || (entry !== null && GUARDED_HOME_ENTRY.test(entry))) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/real-home-guard.test.ts`,
+    because: "a test that names the real ~/.crosscheck or ~/.claude reads and writes the developer's own",
+  },
+  {
+    label: "a resolver with no home of its own reads the home the process started with",
+    file: `${CORE}/src/config/paths.ts`,
+    from: 'const processHome = (): string => process.env["HOME"] ?? homedir();',
+    to: "const processHome = (): string => homedir();",
+    test: `${CORE}/test/real-home-guard.test.ts`,
+    because: "Bun caches HOME at start, so a test that passes an empty env resolves the real home the preload moved away from",
+  },
+  {
+    label: "the test preload leaves a test on the real HOME",
+    file: `${CORE}/test/network-guard.ts`,
+    from: '  if (!isTempPath(process.env["HOME"])) {\n    process.env["HOME"] = freshTempDir("cx-test-user-home-");\n  }\n',
+    to: "",
+    test: `${CORE}/test/real-home-guard.test.ts`,
+    because: "every child a test spawns — git, a hook, the cli — reads and writes the developer's own dotfiles",
+  },
+  {
+    label: "the test preload writes no record of the real home",
+    file: `${CORE}/test/network-guard.ts`,
+    from: "      process.env[TEST_REAL_HOME_ENV] = real;\n",
+    to: "",
+    test: `${CORE}/test/real-home-guard.test.ts`,
+    because: "the resolvers' guard has nothing to compare against, and stands down in every test",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -35580,6 +35614,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/question-delivery.test.ts 5
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3
  * PRINTS: packages/connector-core/test/read-text.test.ts 1
+ * PRINTS: packages/connector-core/test/real-home-guard.test.ts 4
  * PRINTS: packages/connector-core/test/register-base-on-default.test.ts 1
  * PRINTS: packages/connector-core/test/register-guarantees.test.ts 2
  * PRINTS: packages/connector-core/test/register-seq.test.ts 3

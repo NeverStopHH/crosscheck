@@ -168,7 +168,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 3631
+    # PRINTS: 3635
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -318,7 +318,7 @@ jobs:
     # PRINTS: config/launcher-check.ts 4
     # PRINTS: config/launcher.ts 4
     # PRINTS: config/origin.ts 2
-    # PRINTS: config/paths.ts 12
+    # PRINTS: config/paths.ts 14
     # PRINTS: config/repo-config.ts 1
     # PRINTS: config/runtime-isolation.ts 5
     # PRINTS: config/trusted-path.ts 2
@@ -455,7 +455,7 @@ jobs:
     # PRINTS: packages/connector-core/test/fixtures/hint-hub.ts 1
     # PRINTS: packages/connector-core/test/intent-budget.test.ts 1
     # PRINTS: packages/connector-core/test/network-guard-rules.ts 7
-    # PRINTS: packages/connector-core/test/network-guard.ts 7
+    # PRINTS: packages/connector-core/test/network-guard.ts 9
     # PRINTS: packages/connector-core/test/render-surface-registry.test.ts 1
     # PRINTS: packages/connector-core/test/spool-concurrency.test.ts 1
     # PRINTS: packages/connector-cursor/src/capabilities.ts 3
@@ -834,7 +834,7 @@ jobs:
     # PRINTS: manifest-doc.ts 2
     # PRINTS: mark-hint-outcome.ts 12
     # PRINTS: network-guard-rules.ts 7
-    # PRINTS: network-guard.ts 7
+    # PRINTS: network-guard.ts 9
     # PRINTS: noise-label.ts 3
     # PRINTS: noise.ts 11
     # PRINTS: normalized-doc.ts 6
@@ -851,7 +851,7 @@ jobs:
     # PRINTS: passkey-status.ts 4
     # PRINTS: passkeys.ts 8
     # PRINTS: passkeys.tsx 1
-    # PRINTS: paths.ts 12
+    # PRINTS: paths.ts 14
     # PRINTS: payload.ts 1
     # PRINTS: peer.ts 2
     # PRINTS: pilot-candidates.ts 16

@@ -8,12 +8,16 @@
  * resolutions: nothing here reads or writes any home, real or temporary.
  */
 import { describe, expect, test } from "bun:test";
-import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { crosscheckHome } from "../src/config/paths.ts";
 
-const DEFAULT_HOME = join(homedir(), ".crosscheck");
+/**
+ * `~/.crosscheck` of this process's HOME — a temp home the test preload set
+ * (test/network-guard.ts), never the developer's real one, which no test
+ * may resolve (test/real-home-guard.test.ts).
+ */
+const DEFAULT_HOME = join(process.env["HOME"] ?? "", ".crosscheck");
 
 describe("crosscheckHome", () => {
   test("a set CROSSCHECK_HOME is used exactly as given", () => {

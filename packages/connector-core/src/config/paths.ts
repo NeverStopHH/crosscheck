@@ -1,6 +1,6 @@
 import { chmod, mkdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 import {
   HOME_DIR_MODE,
@@ -21,10 +21,62 @@ export type Env = Readonly<Record<string, string | undefined>>;
  */
 export const crosscheckHome = (env: Env): string => {
   const configured = env["CROSSCHECK_HOME"];
-  return configured === undefined || configured.trim() === ""
-    ? join(homedir(), ".crosscheck")
-    : configured;
+  return refuseRealHome(
+    configured === undefined || configured.trim() === ""
+      ? join(processHome(), ".crosscheck")
+      : configured,
+  );
 };
+
+/**
+ * WHERE THE TEST PRELOAD WROTE DOWN THE REAL USER'S HOME (connector-core
+ * test/network-guard.ts), read from HOME before the preload pointed HOME,
+ * CROSSCHECK_HOME and XDG_* at a temp directory. Set in test processes and
+ * their children only; never by anything a user runs.
+ */
+export const TEST_REAL_HOME_ENV = "CROSSCHECK_TEST_REAL_HOME";
+
+/**
+ * The user's home as the environment says NOW, else the OS's. Not
+ * `os.homedir()` alone: Bun reads HOME once, at process start, so a home a
+ * process was pointed at later — the test preload's — never reached it, and
+ * a test that passed an env without HOME resolved the real one.
+ */
+const processHome = (): string => process.env["HOME"] ?? homedir();
+
+/**
+ * Entries of a home no test may resolve to: crosscheck's own (~/.crosscheck,
+ * ~/.crosscheck-hub and their kin) and the hosts' user-level wiring.
+ */
+const GUARDED_HOME_ENTRY = /^\.(?:crosscheck|claude|cursor|mcp\.json)/u;
+
+/**
+ * IN A TEST PROCESS, NO HOME RESOLVES TO THE REAL USER'S (integration review
+ * of batch 2, track A): a test that passed an empty env read — and, through
+ * the legacy key binding, wrote — the developer's own `~/.crosscheck`. Where
+ * the preload recorded the real home, a path that IS it, or lies in one of
+ * its guarded entries, throws instead of being used. Strings only: nothing
+ * here stats or opens any path, the real home least of all. Outside a test
+ * process the marker is absent and every path passes through unchanged.
+ */
+export const refuseRealHome = (path: string): string => {
+  const marked = process.env[TEST_REAL_HOME_ENV];
+  if (marked === undefined || marked.trim() === "") {
+    return path;
+  }
+  const real = resolve(marked);
+  const target = resolve(path);
+  const entry = target.startsWith(`${real}/`) ? (target.slice(real.length + 1).split("/")[0] ?? "") : null;
+  if (target === real || (entry !== null && GUARDED_HOME_ENTRY.test(entry))) {
+    throw new Error(
+      `test home guard: ${target} is the real user's home — point HOME and CROSSCHECK_HOME at a temp directory`,
+    );
+  }
+  return path;
+};
+
+/** The user's home a command resolves for `env`: its HOME, else the process's — never the real one in a test. */
+export const userHomeOf = (env: Env): string => refuseRealHome(env["HOME"] ?? processHome());
 
 /**
  * Path-safe and hub-scoped: the same repo on two hubs never shares a spool,

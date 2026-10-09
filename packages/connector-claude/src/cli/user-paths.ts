@@ -19,10 +19,10 @@
  * it). `HOME` comes from the passed env first so tests sandbox without
  * touching the real account, exactly as doctor's bunfig scan resolves it.
  */
-import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { CLAUDE_SETTINGS_FILE } from "@crosscheck/connector-core/constants.ts";
+import { userHomeOf } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 
 const USER_CLAUDE_DIR_NAME = ".claude";
@@ -31,7 +31,7 @@ const USER_MCP_FILE_NAME = ".claude.json";
 /** The user-scope settings directory (`~/.claude` or CLAUDE_CONFIG_DIR). */
 export const claudeUserDir = (env: Env): string =>
   env["CLAUDE_CONFIG_DIR"] ??
-  join(env["HOME"] ?? homedir(), USER_CLAUDE_DIR_NAME);
+  join(userHomeOf(env), USER_CLAUDE_DIR_NAME);
 
 export const claudeUserSettingsPath = (env: Env): string =>
   join(claudeUserDir(env), CLAUDE_SETTINGS_FILE);
@@ -39,5 +39,5 @@ export const claudeUserSettingsPath = (env: Env): string =>
 /** `~/.claude.json`, or `$CLAUDE_CONFIG_DIR/.claude.json` when relocated. */
 export const claudeUserMcpPath = (env: Env): string =>
   env["CLAUDE_CONFIG_DIR"] === undefined
-    ? join(env["HOME"] ?? homedir(), USER_MCP_FILE_NAME)
+    ? join(userHomeOf(env), USER_MCP_FILE_NAME)
     : join(env["CLAUDE_CONFIG_DIR"], USER_MCP_FILE_NAME);
