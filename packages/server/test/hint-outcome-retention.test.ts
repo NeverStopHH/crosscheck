@@ -15,14 +15,23 @@
  * nothing the skeleton sweep relies on.
  */
 import { describe, expect, test } from "bun:test";
+import { PIN_PRESENCE_TERMINAL } from "@crosscheck/schema";
 
 import { PILOT_RETENTION_DAYS } from "../src/constants.ts";
-import { hintOutcomes, humanConfirmationItems, humanConfirmations, humanDrafts, noiseReassertions } from "../src/db/schema.ts";
+import {
+  hintOutcomes,
+  humanConfirmationItems,
+  humanConfirmations,
+  humanDrafts,
+  noiseReassertions,
+  pilotMarks,
+} from "../src/db/schema.ts";
 import { RETENTION_REGISTRY } from "../src/services/retention-registry.ts";
 import { reapStaleSessions } from "../src/services/sessions.ts";
 import { BOOTSTRAP_SQL_URL } from "./fixtures/bootstrap-sql.ts";
-import { confirmPending, prepareConfirmer } from "./fixtures/confirm-driver.ts";
+import { confirmPending, pendingOf, prepareConfirmer } from "./fixtures/confirm-driver.ts";
 import { KEN_CONTEXT, NICK_SESSION, REPO, createOutcomeWorld, recordOutcome } from "./fixtures/hint-outcome-world.ts";
+import { jsonRequest } from "./helpers.ts";
 
 const MS_PER_DAY = 86_400_000;
 
@@ -145,6 +154,54 @@ describe("a confirmed word's reason ages out of its draft and its confirmation t
       ["human_drafts", "non_retaining_edge"],
       ["human_confirmation_items", "non_retaining_edge"],
     ]);
+  });
+});
+
+describe("a label's reason ages out like every other, and a pending draft is never edited (round-2 R2-L3)", () => {
+  test("past the window a label's reason leaves pilot_marks, its draft and its confirmation item alike; the label stays", async () => {
+    // Arrange — the person's noise with a reason, confirmed
+    const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
+    const confirmer = await prepareConfirmer(world.harness, world.nick);
+    const said = await world.harness.app.request(
+      "/api/pilot-marks",
+      jsonRequest("POST", world.nick.apiKey, {
+        repo: REPO,
+        refKind: "hint_delivery",
+        refId: world.delivered.kenContext,
+        mark: "noise",
+        reason: "label sentence plugh",
+        presence: PIN_PRESENCE_TERMINAL,
+      }),
+    );
+    expect(said.status).toBe(201);
+    expect((await confirmPending(world.harness, world.nick, confirmer)).status).toBe(200);
+
+    // Act — the pilot's window passes; the reaper's pass runs
+    world.harness.clock.advanceSeconds(((PILOT_RETENTION_DAYS + 2) * MS_PER_DAY) / 1000);
+    await reapStaleSessions({ db: world.harness.db, now: world.harness.clock.now });
+
+    // Assert
+    const marks = await world.harness.db.select({ mark: pilotMarks.mark, reason: pilotMarks.reason }).from(pilotMarks);
+    expect(marks).toEqual([{ mark: "noise", reason: null }]);
+    expect(JSON.stringify(await world.harness.db.select({ payload: humanDrafts.payload }).from(humanDrafts))).not.toContain("plugh");
+    expect(
+      JSON.stringify(await world.harness.db.select({ content: humanConfirmationItems.content }).from(humanConfirmationItems)),
+    ).not.toContain("plugh");
+  });
+
+  test("a draft nobody decided is never edited: past the window it leaves the page whole", async () => {
+    // Arrange — a word with a reason, left waiting
+    const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
+    await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "overrode", reason: "waiting sentence", session: NICK_SESSION });
+    expect(await world.harness.db.select().from(humanDrafts)).toHaveLength(1);
+
+    // Act
+    world.harness.clock.advanceSeconds(((PILOT_RETENTION_DAYS + 2) * MS_PER_DAY) / 1000);
+    await reapStaleSessions({ db: world.harness.db, now: world.harness.clock.now });
+
+    // Assert — gone, not shown again without the sentence the person typed
+    expect(await world.harness.db.select().from(humanDrafts)).toEqual([]);
+    expect((await pendingOf(world.harness, world.nick)).drafts).toEqual([]);
   });
 });
 
