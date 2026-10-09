@@ -168,7 +168,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 3607
+    # PRINTS: 3614
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -278,7 +278,7 @@ jobs:
     # PRINTS: hooks/pre-tool-use.ts 46
     # PRINTS: hooks/presence-refresh.ts 2
     # PRINTS: hooks/rest-recheck.ts 12
-    # PRINTS: hooks/runner.ts 17
+    # PRINTS: hooks/runner.ts 18
     # PRINTS: hooks/session-end.ts 1
     # PRINTS: hooks/session-start.ts 11
     # PRINTS: hooks/stop.ts 3
@@ -365,6 +365,7 @@ jobs:
     # PRINTS: git/head-history.ts 5
     # PRINTS: git/pin-paths.ts 8
     # PRINTS: git/pin-sweep.ts 2
+    # PRINTS: git/repo-identity-cache.ts 6
     # PRINTS: git/repo-identity.ts 2
     # PRINTS: git/ssh-hostname.ts 4
     # PRINTS: guarantees/check.ts 17
@@ -913,6 +914,7 @@ jobs:
     # PRINTS: render-surfaces.ts 2
     # PRINTS: render.ts 130
     # PRINTS: repo-config.ts 1
+    # PRINTS: repo-identity-cache.ts 6
     # PRINTS: repo-identity.ts 2
     # PRINTS: repo-path.ts 1
     # PRINTS: report.ts 12
@@ -923,7 +925,7 @@ jobs:
     # PRINTS: revalidate.ts 2
     # PRINTS: review-draft.ts 2
     # PRINTS: run.ts 9
-    # PRINTS: runner.ts 34
+    # PRINTS: runner.ts 35
     # PRINTS: runtime-isolation.ts 5
     # PRINTS: sanitize.ts 7
     # PRINTS: schema.ts 2

@@ -29143,6 +29143,63 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/hook-race.test.ts`,
     because: "a cut runs no undo, and every claim the lost output was to deliver stands",
   },
+  // ── Batch-2 review, M6: a directory's repo identity is resolved by git once ──
+  {
+    label: "a cached repo identity survives a checkout",
+    file: `${CORE}/src/git/repo-identity-cache.ts`,
+    from: '    stamp: JSON.stringify([root, head.gitDir, head.content, env[SSH_CANONICALIZE_ENV] ?? "", ...stamps]),',
+    to: '    stamp: JSON.stringify([root, head.gitDir, env[SSH_CANONICALIZE_ENV] ?? "", ...stamps]),',
+    test: `${CORE}/test/repo-identity-cache.test.ts`,
+    because: "every hook after a branch switch reports the old branch, and topics and lives are filed under it",
+  },
+  {
+    label: "a cached repo identity survives a re-remote",
+    file: `${CORE}/src/git/repo-identity-cache.ts`,
+    from: "  const stamps = await Promise.all([gitEntryStamp(root), ...configPaths(head, commonDir, env).map(fileStamp)]);",
+    to: "  const stamps = await Promise.all([gitEntryStamp(root)]);",
+    test: `${CORE}/test/repo-identity-cache.test.ts`,
+    because: "a checkout pointed at another remote keeps reporting into the old repo's space for as long as the entry lives",
+  },
+  {
+    label: "a cached repo identity outlives its TTL",
+    file: `${CORE}/src/git/repo-identity-cache.ts`,
+    from: "  if (!(ageMs >= 0 && ageMs < REPO_IDENTITY_CACHE_TTL_MS) || !(await isGovernedBy(cwd, identity.root))) {",
+    to: "  if (!(await isGovernedBy(cwd, identity.root))) {",
+    test: `${CORE}/test/repo-identity-cache.test.ts`,
+    because: "a change no stamp sees — an included config, the system config — is never noticed at all",
+  },
+  {
+    label: "a cached repo identity answers for a directory that became a repository of its own",
+    file: `${CORE}/src/git/repo-identity-cache.ts`,
+    from: '  return entries.every((entry) => entry === "-");',
+    to: "  return true;",
+    test: `${CORE}/test/repo-identity-cache.test.ts`,
+    because: "a nested repository's hooks report into the outer repo",
+  },
+  {
+    label: "a cached repo identity keeps the base commit it was resolved at",
+    file: `${CORE}/src/git/repo-identity-cache.ts`,
+    from: "  return facts === null || facts.stamp !== stamp ? null : { ...identity, baseCommit: facts.commit };",
+    to: "  return facts === null || facts.stamp !== stamp ? null : identity;",
+    test: `${CORE}/test/repo-identity-cache.test.ts`,
+    because: "every hook after a commit registers and drifts against the commit before it",
+  },
+  {
+    label: "an environment that steers git is answered from the cache",
+    file: `${CORE}/src/git/repo-identity-cache.ts`,
+    from: "  if (isGitSteered(env)) {\n    return resolve(cwd);",
+    to: "  if (false) {\n    return resolve(cwd);",
+    test: `${CORE}/test/repo-identity-cache.test.ts`,
+    because: "a hook run with GIT_DIR set reports the repo the files name, not the one git would",
+  },
+  {
+    label: "every hook resolves its repo with git again",
+    file: `${CONNECTOR}/src/hooks/runner.ts`,
+    from: "  const identity = await resolveRepoIdentityCached(crosscheckHome(env), payload.cwd);",
+    to: "  const identity = await resolveRepoIdentityCached(crosscheckHome(env), payload.cwd, { now: () => Number.NaN });",
+    test: `${CONNECTOR}/test/turn-end-hook.test.ts`,
+    because: "four git spawns and an ssh -G on every hook: 90–108 ms of PreToolUse's budget under load",
+  },
   {
     label: "a group the tripwire could not tell in time is never told",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
@@ -35251,7 +35308,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/topic-nick-shape.test.ts 19
  * PRINTS: packages/connector-claude/test/tripwire-claim-cut.test.ts 8
  * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 12
- * PRINTS: packages/connector-claude/test/turn-end-hook.test.ts 9
+ * PRINTS: packages/connector-claude/test/turn-end-hook.test.ts 10
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 4
  * PRINTS: packages/connector-core/test/abandoned-temps.test.ts 24
  * PRINTS: packages/connector-core/test/absence-render.test.ts 7
@@ -35391,6 +35448,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/release-clock.test.ts 10
  * PRINTS: packages/connector-core/test/remember-developer.test.ts 1
  * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 7
+ * PRINTS: packages/connector-core/test/repo-identity-cache.test.ts 6
  * PRINTS: packages/connector-core/test/repo-ssh-determinism.test.ts 2
  * PRINTS: packages/connector-core/test/review-draft.test.ts 2
  * PRINTS: packages/connector-core/test/runtime-isolation.test.ts 9

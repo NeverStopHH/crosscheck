@@ -31,7 +31,7 @@ import {
 } from "@crosscheck/connector-core/config/connected-repo.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { crosscheckHome, repoKey } from "@crosscheck/connector-core/config/paths.ts";
-import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
+import { resolveRepoIdentityCached } from "@crosscheck/connector-core/git/repo-identity-cache.ts";
 import type { RepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
 import { recordHookFired } from "@crosscheck/connector-core/state/fired-markers.ts";
@@ -165,7 +165,7 @@ const resolveHookRepo = async (
   payload: HookPayload,
   env: Env,
 ): Promise<RepoResolution> => {
-  const identity = await resolveRepoIdentity(payload.cwd);
+  const identity = await resolveRepoIdentityCached(crosscheckHome(env), payload.cwd);
   const cwdRung = identity === null ? SILENT : await resolveAt(identity, env);
   if (cwdRung.kind === "ready") {
     return cwdRung;
@@ -192,7 +192,7 @@ const fileDerivedHookRepo = async (payload: HookPayload, env: Env): Promise<Repo
   if (derivedRoot === null) {
     return SILENT;
   }
-  const derived = await resolveRepoIdentity(derivedRoot);
+  const derived = await resolveRepoIdentityCached(crosscheckHome(env), derivedRoot);
   return derived === null ? SILENT : resolveAt(derived, env);
 };
 
@@ -223,7 +223,7 @@ const stateDerivedHookRepo = async (
   if (state === null) {
     return SILENT;
   }
-  const identity = await resolveRepoIdentity(state.repoRoot);
+  const identity = await resolveRepoIdentityCached(crosscheckHome(env), state.repoRoot);
   if (identity === null || identity.repoId !== state.repoId) {
     return SILENT;
   }

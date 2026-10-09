@@ -4,7 +4,8 @@
  * random 127.0.0.1 port that reports Nick's live session on OVERLAP_FILE.
  * Each test file calls `cleanupCollisionFixtures` from its own afterEach.
  */
-import { rm } from "node:fs/promises";
+import { readdir, rm } from "node:fs/promises";
+import { join } from "node:path";
 
 import type { Env } from "../../src/index.ts";
 import { TRIPWIRE_RECHECK_TTL_MS } from "@crosscheck/connector-core/constants.ts";
@@ -104,6 +105,20 @@ export const collisionFixture = async (label: string, timing: CollisionTiming = 
       ...(timing.requestTimeoutMs === undefined ? {} : { CROSSCHECK_TIMEOUT_MS: timing.requestTimeoutMs }),
     },
   };
+};
+
+/**
+ * Forgets every repo identity the home cached (core git/repo-identity-cache.ts),
+ * so the next hook resolves its repo with git again — what a test that counts
+ * a full hook's git spawns needs, once an earlier hook of the same session
+ * has warmed the cache.
+ */
+export const forgetRepoIdentities = async (home: string): Promise<void> => {
+  const dir = join(home, "cache");
+  const names = await readdir(dir).catch((): string[] => []);
+  await Promise.all(
+    names.filter((name) => name.startsWith("identity-")).map((name) => rm(join(dir, name), { force: true })),
+  );
 };
 
 /** Registers a path (and a server to stop) that a test made by other means. */

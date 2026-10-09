@@ -203,6 +203,17 @@ export const SSH_CANONICALIZE_ENV = "CROSSCHECK_SSH_CANONICALIZE";
 export const SSH_CANONICALIZE_OFF = "off";
 
 /**
+ * How long a working directory's cached repo identity is trusted without git
+ * asking again (git/repo-identity-cache.ts; batch-2 review, M6): its stamps
+ * — the root's `.git`, HEAD and its commit, the repo, worktree, global and
+ * ssh configs — catch every change git itself makes, and this bounds what
+ * they cannot see (an included config file, the system config). Four git
+ * spawns and an `ssh -G` on every hook were 90–108 ms of PreToolUse under
+ * load; one full resolution per directory per ten minutes is not.
+ */
+export const REPO_IDENTITY_CACHE_TTL_MS = 10 * 60 * 1000;
+
+/**
  * Grace between the deadline's SIGTERM and the SIGKILL escalation for a git
  * that outlived its budget (git/git.ts). SIGTERM first so git can remove its
  * lock files; the escalation covers a git that ignores it. Nothing waits on

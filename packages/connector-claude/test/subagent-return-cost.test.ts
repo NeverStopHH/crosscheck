@@ -25,6 +25,7 @@ import {
   cleanupCollisionFixtures,
   collisionFixture,
   editPayload,
+  forgetRepoIdentities,
   trackForCleanup,
 } from "./fixtures/collision-fixture.ts";
 
@@ -135,9 +136,11 @@ describe("a subagent-return fire with nothing to relay spawns no git and writes 
   });
 
   test("with a relay queued, a completed return still drains it — the full hook runs", async () => {
-    // Arrange
+    // Arrange: the identity the subagent's edit cached is forgotten, so the
+    // full hook resolves its repo with git and the counter has git to see
     const fix = await collisionFixture("sc-drain");
     await runHook("pre-tool-use", editPayload(fix.repo, OVERLAP_FILE, SUBAGENT), fix.env);
+    await forgetRepoIdentities(fix.home);
 
     // Act: a roomy timeout, so a cold child's git spawns cannot spend the
     // spare the drain is made in (that bound is pinned in-process elsewhere)

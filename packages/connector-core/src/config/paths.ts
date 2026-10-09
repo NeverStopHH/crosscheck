@@ -317,6 +317,19 @@ export const generatedAttributesCachePath = (home: string, root: string): string
   );
 
 /**
+ * One working directory's resolved repo identity and the file stamps it was
+ * resolved under (git/repo-identity-cache.ts). Named by a digest of the
+ * DIRECTORY a hook fires in, which is what git was asked about. Flat in
+ * `cache/` beside the attribute caches, for the temp sweep's one level.
+ */
+export const repoIdentityCachePath = (home: string, cwd: string): string =>
+  join(
+    home,
+    "cache",
+    `identity-${new Bun.CryptoHasher("sha256").update(cwd).digest("hex").slice(0, REPO_KEY_CHARS)}.json`,
+  );
+
+/**
  * Where `crosscheck conference` leaves its reports (VISION.md §2). Under the
  * crosscheck home rather than in the repo: a report quotes teammates' claims,
  * so it is private-file material like every other state file here, and a

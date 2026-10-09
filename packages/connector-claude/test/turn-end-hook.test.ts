@@ -31,6 +31,7 @@ import {
   cleanupCollisionFixtures,
   collisionFixture,
   editPayload,
+  forgetRepoIdentities,
   kenSession,
   parsed,
   pastRecheckWindow,
@@ -218,9 +219,11 @@ describe("a turn with nothing resting costs one state read", () => {
   });
 
   test("with a file resting, the full hook runs — the counter sees its git", async () => {
-    // Arrange
+    // Arrange: the identity the settling edits cached is forgotten, so the
+    // full hook resolves its repo with git and the counter has git to see
     const fix = await settledFixture("te-full");
     fix.hub.setTripwireSessions([activeTeammateSession(), kenSession()]);
+    await forgetRepoIdentities(fix.home);
 
     // Act
     const { output, gitCalls } = await runInChild(turnEnded(fix.repo), fix.env);
@@ -228,5 +231,18 @@ describe("a turn with nothing resting costs one state read", () => {
     // Assert
     expect(parsed(output).systemMessage).toBe(KEN_NOTICE);
     expect(gitCalls).toBeGreaterThan(0);
+  });
+
+  test("the repo identity an earlier hook resolved is not paid for again: the full hook spawns no git (batch-2 M6)", async () => {
+    // Arrange: the settling edits resolved this directory's repo with git
+    const fix = await settledFixture("te-warm");
+    fix.hub.setTripwireSessions([activeTeammateSession(), kenSession()]);
+
+    // Act
+    const { output, gitCalls } = await runInChild(turnEnded(fix.repo), fix.env);
+
+    // Assert
+    expect(parsed(output).systemMessage).toBe(KEN_NOTICE);
+    expect(gitCalls).toBe(0);
   });
 });
