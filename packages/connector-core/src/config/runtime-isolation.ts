@@ -101,32 +101,12 @@ export const withoutRuntimeInjection = (env: Readonly<Record<string, string | un
   );
 
 /**
- * RUN ONCE, BEFORE ANYTHING ELSE LOADS, IN EVERY CROSSCHECK ENTRY.
- *
- * A bun variable is read before the first line of ours, so stripping it here
- * cannot undo it for THIS process: when one is present, the entry is started
- * again — isolated, with the variables removed, the same stdio — and this
- * process exits with its code. Whatever a `BUN_OPTIONS` preload did in the
- * first process has happened (it ran as the developer, before crosscheck read
- * any config); the process that loads the key never has these variables.
- * `NODE_OPTIONS` alone costs no restart, since bun ignores it: it is removed
- * from this process's environment, so no child inherits it.
+ * Whether this process was started with a variable bun reads at startup.
+ * Such a variable cannot be undone from inside, so the entry restarts without
+ * it (config/clean-restart.ts).
  */
-export const ensureCleanRuntime = (): void => {
-  if (!Object.keys(process.env).some((name) => BUN_STARTUP_KEY.test(name))) {
-    delete process.env["NODE_OPTIONS"];
-    return;
-  }
-  const [, entry = "", ...args] = process.argv;
-  const child = Bun.spawnSync({
-    cmd: [...selfSpawnCmd(entry, args)],
-    env: withoutRuntimeInjection(process.env),
-    stdin: "inherit",
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  process.exit(child.exitCode ?? 1);
-};
+export const hasBunStartupKey = (env: Readonly<Record<string, string | undefined>>): boolean =>
+  Object.keys(env).some((name) => BUN_STARTUP_KEY.test(name));
 
 /**
  * The one start that is deliberately NOT isolated: `crosscheck ci-report`

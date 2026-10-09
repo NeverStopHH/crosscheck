@@ -24833,27 +24833,64 @@ export const MUTATIONS: readonly Mutation[
   // ROUND 2, N2: environment a host passes, and the doctor line that names it.
   {
     label: "the entry keeps the bun startup variables a host passed",
-    file: `${CORE}/src/config/runtime-isolation.ts`,
-    from: "  if (!Object.keys(process.env).some((name) => BUN_STARTUP_KEY.test(name))) {",
+    file: `${CORE}/src/config/clean-restart.ts`,
+    from: "  if (!hasBunStartupKey(process.env)) {",
     to: "  if (true) {",
     test: `${CLI}/test/e2e/bait-repo-isolation.e2e.test.ts`,
     because: "an .mcp.json env block's BUN_OPTIONS preload wraps fetch inside the process that loads the key, and copies the bearer out",
   },
   {
     label: "the restart is not isolated",
-    file: `${CORE}/src/config/runtime-isolation.ts`,
+    file: `${CORE}/src/config/clean-restart.ts`,
     from: "    cmd: [...selfSpawnCmd(entry, args)],",
-    to: "    cmd: [process.execPath, entry, ...args],",
+    to: '    cmd: [selfSpawnCmd(entry)[0] ?? "", entry, ...args],',
     test: `${CORE}/test/runtime-isolation.test.ts`,
     because: "a host variable turns an isolated hook into one that reads the repo's bunfig and .env on its second start",
   },
   {
     label: "NODE_OPTIONS reaches crosscheck's children",
-    file: `${CORE}/src/config/runtime-isolation.ts`,
+    file: `${CORE}/src/config/clean-restart.ts`,
     from: '    delete process.env["NODE_OPTIONS"];\n',
     to: "",
     test: `${CORE}/test/runtime-isolation.test.ts`,
     because: "a host's --require runs inside the summarizer's model CLI, which crosscheck starts",
+  },
+  // BATCH-2 FOLLOW-UP: a restarted long-lived entry still stops when its host
+  // stops it (core config/clean-restart.ts).
+  {
+    label: "the restart blocks the supervisor's signals",
+    file: `${CORE}/src/config/clean-restart.ts`,
+    from: "  const child = Bun.spawn({\n    cmd: [...selfSpawnCmd(entry, args)],",
+    to:
+      '  const done = Bun.spawnSync({ cmd: [...selfSpawnCmd(entry, args)], env: withoutRuntimeInjection(process.env), stdin: "inherit", stdout: "inherit", stderr: "inherit" });\n' +
+      "  process.exit(done.exitCode ?? 1);\n" +
+      "  const child = Bun.spawn({\n    cmd: [...selfSpawnCmd(entry, args)],",
+    test: `${CLI}/test/e2e/clean-restart.e2e.test.ts`,
+    because: "an editor's SIGTERM ends only the first pid, and the restarted MCP server or ACP proxy outlives the editor",
+  },
+  {
+    label: "the supervisor forwards no signal",
+    file: `${CORE}/src/config/clean-restart.ts`,
+    from: "        child.kill(signal);",
+    to: "        void signal;",
+    test: `${CLI}/test/e2e/clean-restart.e2e.test.ts`,
+    because: "the first pid swallows the editor's SIGTERM, so neither it nor the restarted server ever stops",
+  },
+  {
+    label: "the supervisor reports a signal death as an exit",
+    file: `${CORE}/src/config/clean-restart.ts`,
+    from: "    if (child.signalCode !== null) {",
+    to: "    if (false) {",
+    test: `${CLI}/test/e2e/clean-restart.e2e.test.ts`,
+    because: "a host's waitpid sees a clean exit where the server was killed, unlike the same server unrestarted",
+  },
+  {
+    label: "a restarted process outlives a supervisor killed outright",
+    file: `${CORE}/src/config/clean-restart.ts`,
+    from: "    if (process.ppid !== supervisor) {",
+    to: "    if (false) {",
+    test: `${CLI}/test/e2e/clean-restart.e2e.test.ts`,
+    because: "a SIGKILL to the pid the editor started leaves the restarted MCP server running with no parent",
   },
   {
     label: "a worker entry loads before the runtime is cleaned",
@@ -25301,6 +25338,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-verdict-legality.test.ts 2
  * PRINTS: packages/cli/test/doctor.test.ts 1
  * PRINTS: packages/cli/test/e2e/bait-repo-isolation.e2e.test.ts 7
+ * PRINTS: packages/cli/test/e2e/clean-restart.e2e.test.ts 4
  * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
  * PRINTS: packages/cli/test/e2e/worker-spawn-isolation.e2e.test.ts 4
  * PRINTS: packages/cli/test/foreign-hub-lines.test.ts 1

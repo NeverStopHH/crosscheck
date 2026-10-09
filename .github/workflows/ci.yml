@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 2447
+    # PRINTS: 2451
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -286,6 +286,7 @@ jobs:
     # PRINTS: capture/touched-root.ts 5
     # PRINTS: claim-validity.ts 2
     # PRINTS: conference/report.ts 3
+    # PRINTS: config/clean-restart.ts 7
     # PRINTS: config/config.ts 7
     # PRINTS: config/connected-repo.ts 3
     # PRINTS: config/hook-budget.ts 2
@@ -294,7 +295,7 @@ jobs:
     # PRINTS: config/launcher.ts 3
     # PRINTS: config/origin.ts 2
     # PRINTS: config/paths.ts 11
-    # PRINTS: config/runtime-isolation.ts 5
+    # PRINTS: config/runtime-isolation.ts 2
     # PRINTS: config/trusted-path.ts 2
     # PRINTS: constants.ts 12
     # PRINTS: coverage/exempt-surfaces.ts 2
@@ -581,6 +582,7 @@ jobs:
     # PRINTS: claim-revalidations.ts 7
     # PRINTS: claim-surface.ts 1
     # PRINTS: claim-validity.ts 11
+    # PRINTS: clean-restart.ts 7
     # PRINTS: client.ts 16
     # PRINTS: cloud-agent-identity.ts 1
     # PRINTS: commit-evidence.ts 6
@@ -786,7 +788,7 @@ jobs:
     # PRINTS: review-draft.ts 2
     # PRINTS: run.ts 9
     # PRINTS: runner.ts 28
-    # PRINTS: runtime-isolation.ts 5
+    # PRINTS: runtime-isolation.ts 2
     # PRINTS: sanitize.ts 10
     # PRINTS: schema.ts 1
     # PRINTS: schemas.ts 1
