@@ -65,6 +65,8 @@ export interface TestHarnessOptions {
    * the writers do with a person's word.
    */
   readonly drafts?: "pending" | "confirmed_at_once";
+  /** CROSSCHECK_REFUSE_PRE_011_DRAFTS as the hub would read it. Omitted = off, the default. */
+  readonly refusePreDraftingClients?: boolean;
 }
 
 /** The origin the harness accepts passkeys at unless a test says otherwise. */
@@ -93,6 +95,7 @@ export const createTestHarness = async (
     peerAddress: () => (options.peerAddress === undefined ? TEST_LOOPBACK_PEER : options.peerAddress),
     trustedProxies: parseTrustedProxies(options.trustedProxies),
     ...(options.listen === undefined ? {} : { listen: options.listen }),
+    ...(options.refusePreDraftingClients === undefined ? {} : { refusePreDraftingClients: options.refusePreDraftingClients }),
   });
   return {
     app: options.drafts === "pending" ? app : confirmingAtOnce(app, { db, now: clock.now, embedder: options.embedder ?? null }),
