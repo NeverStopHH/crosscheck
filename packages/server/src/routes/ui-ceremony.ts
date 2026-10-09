@@ -23,7 +23,7 @@ import { createHash } from "node:crypto";
 import type { Context } from "hono";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
-import { MAX_PASSKEY_LABEL_CHARS, MAX_WAIVER_REASON_CHARS } from "@crosscheck/schema";
+import { MAX_PASSKEY_LABEL_CHARS, MAX_WAIVER_REASON_CHARS, PASSKEY_REVOKE_REASONS } from "@crosscheck/schema";
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from "@simplewebauthn/server";
 
 import { fenceWaivers } from "../db/schema.ts";
@@ -41,6 +41,7 @@ import {
 } from "../services/passkeys.ts";
 import type { UsableCredential } from "../services/passkeys.ts";
 import type { BatchStore } from "../services/confirmation-batch.ts";
+import { finishRevocation, revocationSentence } from "../services/confirmation-rollback.ts";
 import { BATCH_SENTENCE, confirmAuthorityOf, confirmTermsOf, performConfirm } from "./ui-ceremony-confirm.ts";
 import { amendWaiver, approveRequest, readPendingRequest } from "../services/waiver-requests.ts";
 import type { WaiverRequestRefusal } from "../services/waiver-requests.ts";
@@ -82,7 +83,8 @@ const CeremonyFieldsSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("approve"), subjectId: Subject, expiresAt: z.iso.datetime(), reason: Reason }),
   z.object({ action: z.literal("amend"), subjectId: Subject, expiresAt: z.iso.datetime(), reason: Reason }),
   z.object({ action: z.literal("revoke_waiver"), subjectId: Subject, reason: Reason }),
-  z.object({ action: z.literal("revoke_passkey"), subjectId: Subject }),
+  // round-2 R2-H3: why it is closed, signed — `compromised` retracts what it confirmed.
+  z.object({ action: z.literal("revoke_passkey"), subjectId: Subject, reason: z.enum(PASSKEY_REVOKE_REASONS).default("retired") }),
 ]);
 
 type CeremonyFields = z.infer<typeof CeremonyFieldsSchema>;
@@ -118,6 +120,8 @@ const CEREMONY_SENTENCE = {
   unknown_passkey: "you have no passkey with that id",
   already_revoked: "that passkey has already been revoked",
   passkey_required: "after its first day a passkey is revoked with a passkey",
+  compromised_needs_another_passkey:
+    "a passkey is declared compromised with ANOTHER of your passkeys, never with itself, a key or the admin token — the admin can retire it, which keeps what it confirmed",
   ...ARTIFACT_SENTENCE,
   ...BATCH_SENTENCE,
 } as const;
@@ -198,7 +202,7 @@ const signedTermsOf = async (
     case "revoke_waiver":
       return { purpose: fields.action, subject: fields.subjectId, terms: { reasonDigest: digest(fields.reason) } };
     case "revoke_passkey":
-      return { purpose: fields.action, subject: fields.subjectId, terms: {} };
+      return { purpose: fields.action, subject: fields.subjectId, terms: { reason: fields.reason } };
   }
 };
 
@@ -477,10 +481,14 @@ const perform = async (
         passkeyId: fields.subjectId,
         by: { kind: "passkey", developerId },
         now: deps.now(),
+        reason: fields.reason,
+        signerCredentialId: credentialId,
       });
-      return "refusal" in outcome
-        ? refuse(c, outcome.refusal)
-        : ok(c, { message: `Passkey revoked.${closedWithIt(outcome.terminated)}` });
+      if ("refusal" in outcome) {
+        return refuse(c, outcome.refusal);
+      }
+      await finishRevocation(deps, outcome);
+      return ok(c, { message: `${revocationSentence(outcome, fields.reason)}${closedWithIt(outcome.terminated)}` });
     }
     case "approve_artifact":
     case "revoke_artifact": {

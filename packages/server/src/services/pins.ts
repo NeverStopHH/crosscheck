@@ -26,7 +26,7 @@ import {
   min,
   sql,
 } from "drizzle-orm";
-import { MAX_SPEAKING_PIN_FILES, isSpeakingPin } from "@crosscheck/schema";
+import { HUMAN_PROVENANCE, MAX_SPEAKING_PIN_FILES, isSpeakingPin } from "@crosscheck/schema";
 import type { Pin } from "@crosscheck/schema";
 
 import {
@@ -46,9 +46,19 @@ import type { ClosedWaiver, PinFence } from "./waiver-terminations.ts";
 import { locationHiddenFrom, projectRow } from "./live-location.ts";
 import type { HiddenLocations } from "./live-location.ts";
 import { visiblePresenceCondition } from "./visibility.ts";
+import { confirmationInEffect } from "./human-provenance.ts";
 import type { HumanStamp } from "./human-provenance.ts";
 import type { Db, DbExecutor } from "../db/client.ts";
 import type { Clock } from "../types.ts";
+
+/**
+ * A PIN THAT PROTECTS: one from before provenance, or one whose confirmation is
+ * in effect (round-2 R2-M3). A pin a void confirmation created — its passkey
+ * revoked in the cool-off, or declared compromised — protects nothing: no
+ * registry, no suspect, no coverage reads it, and confirming its draft again
+ * revives the row (createPin).
+ */
+export const pinInEffect = sql`(${pins.provenance} <> ${HUMAN_PROVENANCE} OR ${confirmationInEffect("pins.confirmation_id")})`;
 
 /**
  * Read bound on one registry listing. A registry past this is not a registry,
@@ -255,37 +265,46 @@ export const createPin = async (
   const now = deps.now();
   return deps.db.transaction(async (tx) => {
     const repaired = await findRepairedPin(tx, input.repo, input.surface);
+    const row = {
+      repo: input.repo,
+      surface: input.surface,
+      verifiedBy: developerId,
+      verifiedAtCommit: input.verifiedAtCommit,
+      verifiedAt: now,
+      checkRecipe: input.check ?? null,
+      // STAMPED BY THE HUB, never carried by the body: the caller states
+      // the evidence it observed (`presence`) and the hub decides what that
+      // is worth. A body that could set this field would be writing the
+      // trust label `pin list` prints about its own author.
+      captureMode: HUMAN_CAPTURE_MODE,
+      brokeAt: null,
+      brokeBy: null,
+      // 07 §3.4: LOOKED UP, NEVER ASKED. Re-pinning a surface somebody
+      // recorded broken is the repair, and the person typing it is not asked
+      // to say so — a question here would be the survey §8.3 refuses.
+      repairsPinId: repaired?.id ?? null,
+      repairsPinVersion: repaired?.version ?? null,
+      createdAt: now,
+      provenance: stamp.provenance,
+      confirmationId: stamp.confirmationId,
+      confirmationPosition: stamp.confirmationPosition,
+    };
     const inserted = await tx
       .insert(pins)
-      .values({
-        id: input.id,
-        repo: input.repo,
-        surface: input.surface,
-        verifiedBy: developerId,
-        verifiedAtCommit: input.verifiedAtCommit,
-        verifiedAt: now,
-        checkRecipe: input.check ?? null,
-        // STAMPED BY THE HUB, never carried by the body: the caller states
-        // the evidence it observed (`presence`) and the hub decides what that
-        // is worth. A body that could set this field would be writing the
-        // trust label `pin list` prints about its own author.
-        captureMode: HUMAN_CAPTURE_MODE,
-        brokeAt: null,
-        brokeBy: null,
-        // 07 §3.4: LOOKED UP, NEVER ASKED. Re-pinning a surface somebody
-        // recorded broken is the repair, and the person typing it is not asked
-        // to say so — a question here would be the survey §8.3 refuses.
-        repairsPinId: repaired?.id ?? null,
-        repairsPinVersion: repaired?.version ?? null,
-        createdAt: now,
-        provenance: stamp.provenance,
-        confirmationId: stamp.confirmationId,
-        confirmationPosition: stamp.confirmationPosition,
-      })
+      .values({ id: input.id, ...row })
       .onConflictDoNothing({ target: pins.id })
       .returning({ id: pins.id });
-    if (inserted[0] === undefined) {
+    // A PIN A VOID CONFIRMATION CREATED (round-2 R2-M3) protects nothing, and
+    // its draft is back on its owner's page: confirming it again revives the row.
+    const revived =
+      inserted[0] === undefined
+        ? await tx.update(pins).set(row).where(and(eq(pins.id, input.id), sql`NOT ${pinInEffect}`)).returning({ id: pins.id })
+        : [];
+    if (inserted[0] === undefined && revived[0] === undefined) {
       return { outcome: "duplicate" } as const;
+    }
+    if (revived[0] !== undefined) {
+      await tx.delete(pinFiles).where(eq(pinFiles.pinId, input.id));
     }
     // Deduped here rather than in the schema: two spellings of the same path
     // in one file set are a typo, not two watched files, and letting them
@@ -375,18 +394,18 @@ const readCoverage = async (
     })
     .from(pins)
     .leftJoin(pinFiles, eq(pinFiles.pinId, pins.id))
-    .where(and(eq(pins.repo, repo), isNull(pins.brokeAt)));
+    .where(and(eq(pins.repo, repo), isNull(pins.brokeAt), pinInEffect));
   const [broken] = await deps.db
     .select({ broken: count() })
     .from(pins)
-    .where(and(eq(pins.repo, repo), sql`${pins.brokeAt} IS NOT NULL`));
+    .where(and(eq(pins.repo, repo), sql`${pins.brokeAt} IS NOT NULL`, pinInEffect));
   // "Speaking" is two facts — file count and a check recipe — so it is
   // counted from the file rows rather than guessed from a column.
   const speakingRows = await deps.db
     .select({ pinId: pinFiles.pinId, files: count(), check: min(pins.checkRecipe) })
     .from(pinFiles)
     .innerJoin(pins, eq(pinFiles.pinId, pins.id))
-    .where(and(eq(pins.repo, repo), isNull(pins.brokeAt)))
+    .where(and(eq(pins.repo, repo), isNull(pins.brokeAt), pinInEffect))
     .groupBy(pinFiles.pinId);
   const speaking = speakingRows.filter(
     (row) =>
@@ -526,7 +545,7 @@ export const listPins = async (
     })
     .from(pins)
     .innerJoin(developers, eq(pins.verifiedBy, developers.id))
-    .where(eq(pins.repo, repo))
+    .where(and(eq(pins.repo, repo), pinInEffect))
     .orderBy(desc(pins.createdAt), asc(pins.id))
     .limit(MAX_PINS_LISTED);
   const ids = rows.map((row) => row.id);
@@ -624,7 +643,7 @@ export const readPin = async (
     })
     .from(pins)
     .innerJoin(developers, eq(pins.verifiedBy, developers.id))
-    .where(eq(pins.id, pinId))
+    .where(and(eq(pins.id, pinId), pinInEffect))
     .limit(1);
   const row = rows[0];
   if (row === undefined) {

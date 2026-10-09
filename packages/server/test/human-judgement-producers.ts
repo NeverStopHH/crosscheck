@@ -155,6 +155,8 @@ export const JUDGEMENT_READERS_EXEMPT: Readonly<Record<string, string>> = {
   "src/services/draft-apply.ts": "applies a confirmed draft through the writers above",
   "src/services/confirmation-batch.ts": "writes the confirmation and its items",
   "src/services/confirmation-records.ts": "serves a person's own confirmations; counts nothing",
+  "src/services/confirmation-rollback.ts": "undoes a void confirmation's effects (round-2 R2-M3); counts nothing",
+  "src/services/confirm-page.ts": "says why a decided draft is back on the page (round-2 R2-H3); counts nothing",
   "src/services/human-drafts.ts": "the draft store: whether a draft was decided reads the confirmation items",
   "src/services/human-provenance.ts": "defines the one human predicate every producer above uses",
   "src/routes/pilot.ts": "serves proof 3 and proof 4 as the producers above compute them, beside where confirming is possible",

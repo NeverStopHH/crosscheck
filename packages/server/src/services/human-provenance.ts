@@ -29,16 +29,59 @@ export const humanStamp = (confirmationId: string, confirmationPosition: number)
   confirmationPosition,
 });
 
+/** The signing passkey (alias `p`) never stood: revoked during its cool-off (round-2 R2-H3). */
+const NEVER_STOOD = sql`(p.revoked_at IS NOT NULL AND p.revoked_at < p.usable_from)`;
+
+/** The signing passkey was revoked as compromised — by `at` when given, at any time when not. */
+const compromisedBy = (at: Date | null): SQL =>
+  at === null
+    ? sql`(p.revoke_reason IS NOT DISTINCT FROM 'compromised')`
+    : sql`(p.revoke_reason IS NOT DISTINCT FROM 'compromised' AND p.revoked_at <= ${at.toISOString()}::timestamptz)`;
+
 /**
- * THE PASSKEY THAT SIGNED `<confirmation>` (review H1, the owner's decision):
- * unrevoked always, and — for a figure — past its announced cool-off at `at`.
+ * THE PASSKEY THAT SIGNED `<confirmation>` STANDS (review H1; round 2, R2-H1
+ * and R2-H3, the owner's decisions):
+ *
+ *   - it gained standing: not revoked during its cool-off, which voids it;
+ *   - it was not revoked as `compromised` (by `at`, for a figure): a `retired`
+ *     passkey — a lost laptop, an RP move — keeps what it confirmed;
+ *   - for a figure, it is past its announced cool-off at `at`.
+ *
  * A fresh passkey's confirmation takes effect at once (Q19) but counts only
- * from its usable instant; revoking the passkey retracts everything it signed.
+ * from its usable instant. A closed period passes its own END as `at`, so no
+ * later revocation or cool-off ever moves it (R2-H1).
  */
 const signerStands = (confirmationColumn: string, at: Date | null): SQL => sql`EXISTS (
   SELECT 1 FROM human_confirmations hc JOIN passkeys p ON p.credential_id = hc.credential_id
-  WHERE hc.id = ${sql.raw(confirmationColumn)} AND p.revoked_at IS NULL
+  WHERE hc.id = ${sql.raw(confirmationColumn)} AND NOT ${NEVER_STOOD} AND NOT ${compromisedBy(at)}
     ${at === null ? sql`` : sql`AND p.usable_from <= ${at.toISOString()}::timestamptz`})`;
+
+/**
+ * A CONFIRMATION IN EFFECT: its passkey neither never stood nor was declared
+ * compromised. Its decisions resolve drafts and its rows decide the write
+ * path; a void one's drafts return to the person's page (R2-H3).
+ */
+export const confirmationInEffect = (confirmationColumn: string): SQL => signerStands(confirmationColumn, null);
+
+/**
+ * WHY A CONFIRMATION IS VOID, for the page that asks the person to confirm its
+ * drafts again: `cooling` (its passkey was revoked before it counted),
+ * `compromised`, or null while it is in effect.
+ */
+export const voidReasonOf = (confirmationColumn: string): SQL => sql`(
+  SELECT CASE WHEN ${NEVER_STOOD} THEN 'cooling' WHEN ${compromisedBy(null)} THEN 'compromised' END
+  FROM human_confirmations hc JOIN passkeys p ON p.credential_id = hc.credential_id
+  WHERE hc.id = ${sql.raw(confirmationColumn)})`;
+
+/**
+ * WHEN `<alias>` STARTS COUNTING: the later of its own instant and its passkey's
+ * usable instant (round-2 R2-H1). A word confirmed while its passkey cooled
+ * counts in the period its passkey gained standing — marked late there when its
+ * hint is an earlier period's — never in a period already closed.
+ */
+export const effectiveAtOf = (alias: string): SQL => sql`GREATEST(${sql.raw(alias)}.created_at, (
+  SELECT p.usable_from FROM human_confirmations hc JOIN passkeys p ON p.credential_id = hc.credential_id
+  WHERE hc.id = ${sql.raw(alias)}.confirmation_id))`;
 
 /**
  * `<alias>` COUNTS AS A PERSON'S JUDGEMENT at `at` — the predicate every figure
@@ -67,9 +110,14 @@ export const isConfirmedRow = (alias: string): SQL =>
 export const isCoolingRow = (alias: string, at: Date): SQL =>
   sql`(${isConfirmedRow(alias)} AND NOT ${signerStands(`${alias}.confirmation_id`, at)})`;
 
-/** Confirmed by a passkey since revoked: retracted from every figure, the row kept. */
-export const isRetractedRow = (alias: string): SQL =>
-  sql`(${sql.raw(alias)}.provenance = ${HUMAN_PROVENANCE} AND NOT ${signerStands(`${alias}.confirmation_id`, null)})`;
+/**
+ * Confirmed by a passkey since declared compromised: retracted from every
+ * figure, the row kept. (A passkey revoked in its cool-off never stood: its
+ * words are not "retracted" — their drafts are back on the person's page.)
+ */
+export const isRetractedRow = (alias: string): SQL => sql`(${sql.raw(alias)}.provenance = ${HUMAN_PROVENANCE} AND EXISTS (
+  SELECT 1 FROM human_confirmations hc JOIN passkeys p ON p.credential_id = hc.credential_id
+  WHERE hc.id = ${sql.raw(alias)}.confirmation_id AND NOT ${NEVER_STOOD} AND ${compromisedBy(null)}))`;
 
 /** When `<alias>`'s confirmation starts counting: its passkey's usable instant. */
 export const countingFromOf = (alias: string): SQL => sql`(

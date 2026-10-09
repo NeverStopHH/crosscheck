@@ -695,13 +695,15 @@ describe("bootstrap.sql DDL sync", () => {
     //
     // Since human provenance (0.11) the key carries the provenance too: a
     // mark recorded before provenance existed stays as it was, never
-    // upgraded, beside the one the person confirms with their passkey — one
-    // of each, never two of either (test/ddl-sync-provenance.test.ts).
+    // upgraded, beside the one the person confirms with their passkey — and
+    // since round 2 (R2-M1) the confirmation: one row per confirmation, so a
+    // retracted or voided label frees the person's place, while "one label in
+    // effect" is the writer's rule (test/label-slot.test.ts).
     const harness = await createTestHarness();
 
     // Act
     const rows = await harness.db.execute(
-      sql`SELECT indexdef AS d FROM pg_indexes WHERE indexname = 'pilot_marks_ref_marker_provenance_idx'`,
+      sql`SELECT indexdef AS d FROM pg_indexes WHERE indexname = 'pilot_marks_ref_marker_confirmation_idx'`,
     );
 
     // Assert
@@ -711,6 +713,7 @@ describe("bootstrap.sql DDL sync", () => {
     expect(definition).toContain("ref_id");
     expect(definition).toContain("marked_by");
     expect(definition).toContain("provenance");
+    expect(definition).toContain("confirmation_id");
   });
 
   test("a waiver's two kinds have a shape the DATABASE enforces", async () => {

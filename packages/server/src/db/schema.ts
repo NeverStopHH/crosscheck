@@ -80,6 +80,7 @@ import {
   SYSTEM_WAIVER_AUTHORITY,
   ENROLMENT_SOURCES,
   MAX_PASSKEY_LABEL_CHARS,
+  PASSKEY_REVOKE_REASONS,
   PASSKEY_REVOKERS,
   DRAFT_DECISIONS,
   DRAFT_KINDS,
@@ -1442,13 +1443,16 @@ export const pilotMarks = pgTable(
     ),
     check("pilot_marks_provenance_check", storedProvenanceCheck(table.provenance, table.confirmationId, table.confirmationPosition)),
     signedByItem("pilot_marks_confirmation_fk", table.confirmationId, table.confirmationPosition),
-    // One label per person per delivery PER PROVENANCE: a confirmed label never
-    // collides with the legacy one a 0.10 hub already holds.
-    uniqueIndex("pilot_marks_ref_marker_provenance_idx").on(
+    // One label per person per delivery PER CONFIRMATION (round-2 R2-M1): a
+    // retracted or voided label must not hold the person's one place, so "one
+    // label in effect" is the writer's rule (services/pilot.ts), and a
+    // confirmed label never collides with the legacy one a 0.10 hub holds.
+    uniqueIndex("pilot_marks_ref_marker_confirmation_idx").on(
       table.refKind,
       table.refId,
       table.markedBy,
       table.provenance,
+      table.confirmationId,
     ),
     // The report asks "this repo's marks in this window", newest first.
     index("pilot_marks_repo_created_idx").on(table.repo, table.createdAt.desc()),
@@ -1846,6 +1850,8 @@ export const passkeys = pgTable(
     revokedByKind: text("revoked_by_kind", { enum: PASSKEY_REVOKERS }),
     /** The developer who revoked it; null when the admin token did. */
     revokedBy: text("revoked_by"),
+    /** Why it was closed (round-2 R2-H3); null on a passkey closed before reasons, read as retired. */
+    revokeReason: text("revoke_reason", { enum: PASSKEY_REVOKE_REASONS }),
   },
   (table) => [
     uniqueIndex("passkeys_credential_id_idx").on(table.credentialId),
@@ -1860,6 +1866,10 @@ export const passkeys = pgTable(
       sql`(${table.revokedAt} IS NULL AND ${table.revokedByKind} IS NULL) OR (${table.revokedAt} IS NOT NULL AND ${table.revokedByKind} IS NOT NULL)`,
     ),
     check("passkeys_cooloff_check", sql`${table.usableFrom} >= ${table.createdAt}`),
+    check(
+      "passkeys_revoke_reason_check",
+      sql`${table.revokeReason} IS NULL OR (${table.revokedAt} IS NOT NULL AND ${table.revokeReason} IN (${sql.raw(PASSKEY_REVOKE_REASONS.map((value) => `'${value}'`).join(", "))}))`,
+    ),
     check(
       "passkeys_enrolled_via_check",
       sql`${table.enrolledVia} IN (${sql.raw(ENROLMENT_SOURCES.map((value) => `'${value}'`).join(", "))})`,

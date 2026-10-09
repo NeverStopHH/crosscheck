@@ -19,13 +19,13 @@ import { PASSKEY_COOLOFF_HOURS } from "../src/constants.ts";
 import {
   hintOutcomes,
   noiseReassertions,
-  passkeys,
   pilotAttributions,
   pilotMarks,
   pilotSessions,
   pinFiles,
   pins,
 } from "../src/db/schema.ts";
+import { assertViaUi, viewerOf } from "./fixtures/ceremony-driver.ts";
 import { confirmPending, prepareConfirmer } from "./fixtures/confirm-driver.ts";
 import type { Confirmer } from "./fixtures/confirm-driver.ts";
 import {
@@ -183,22 +183,40 @@ describe("only human_passkey_confirmed counts as a person's judgement", () => {
     expect(afterCoolOff).toEqual(EXACTLY_CONFIRMED);
   });
 
-  test("H1: revoking the passkey that confirmed retracts every producer's count to zero", async () => {
+  test("H1: declaring the passkey that confirmed compromised retracts every producer's count to zero", async () => {
+    // Arrange — every round confirmed; a second passkey of the person's
+    const { world, confirmer } = await confirmedWorld({ pastCoolOff: true });
+    const other = await prepareConfirmer(world.harness, world.nick, { pastCoolOff: true });
+
+    // Act — the second passkey declares the first compromised (round-2 R2-H3)
+    const revoked = await assertViaUi(
+      world.harness,
+      await viewerOf(world.harness, world.nick),
+      other.credential,
+      { action: "revoke_passkey", subjectId: confirmer.passkeyId, reason: "compromised" },
+      { signCount: other.nextCount() },
+    );
+    const counts = await readAll(world);
+
+    // Assert
+    expect(revoked.status).toBe(200);
+    expect(counts).toEqual(zeroesOf(EXACTLY_CONFIRMED));
+  });
+
+  test("R2-H3: retiring the passkey that confirmed (a lost device) keeps every producer's count", async () => {
     // Arrange
     const { world, confirmer } = await confirmedWorld({ pastCoolOff: true });
 
-    // Act — the admin revokes the passkey that signed every round (04a §4.5)
-    const [passkey] = await world.harness.db.select({ id: passkeys.id }).from(passkeys);
+    // Act — the admin retires it (04a §4.5)
     const revoked = await world.harness.app.request(
-      `/api/developers/${world.nick.developerId}/passkeys/${String(passkey?.id)}/revoke`,
+      `/api/developers/${world.nick.developerId}/passkeys/${confirmer.passkeyId}/revoke`,
       jsonRequest("POST", TEST_ADMIN_TOKEN, {}),
     );
     const counts = await readAll(world);
 
     // Assert
     expect(revoked.status).toBe(200);
-    expect(confirmer.viewer.developer.developerId).toBe(world.nick.developerId);
-    expect(counts).toEqual(zeroesOf(EXACTLY_CONFIRMED));
+    expect(counts).toEqual(EXACTLY_CONFIRMED);
   });
 });
 

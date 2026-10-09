@@ -14,7 +14,10 @@
  * after the pointer's newest word of any kind, and the answer says what
  * stands now and what stood before.
  */
+import { sql } from "drizzle-orm";
+
 import { pilotMarks, noiseReassertions } from "../db/schema.ts";
+import { isConfirmedRow } from "./human-provenance.ts";
 import {
   instantAfter,
   lockPointer,
@@ -46,6 +49,25 @@ export interface NoiseLabelOutcome {
 
 const NO_WORDS: PointerWords = { person: undefined, noise: undefined, helpful: undefined };
 
+/**
+ * WHETHER THE PERSON ALREADY HAS A LABEL IN EFFECT ON `refId` — the one label
+ * per person per delivery that precision counts. A label whose confirmation
+ * was retracted (compromised) or never stood (its passkey revoked in the
+ * cool-off) holds no place (round-2 R2-M1): the database keeps one row per
+ * confirmation, and this is the rule.
+ */
+export const labelInEffect = async (
+  db: DbExecutor,
+  input: { readonly refKind: string; readonly refId: string; readonly markedBy: string },
+): Promise<boolean> => {
+  const rows = await db.execute(sql`
+    SELECT 1 FROM pilot_marks m
+    WHERE m.ref_kind = ${input.refKind} AND m.ref_id = ${input.refId} AND m.marked_by = ${input.markedBy}
+      AND ${isConfirmedRow("m")}
+    LIMIT 1`);
+  return rows.rows.length > 0;
+};
+
 export const writeNoiseOnPointer = (
   deps: Deps,
   deliveryId: string,
@@ -62,7 +84,10 @@ export const writeNoiseOnPointer = (
     const before = standingOfWords(words);
     const at = instantAfter(deps.now(), newestInstant(words));
     const label = row(`pm_${crypto.randomUUID()}`, at);
-    const inserted = await tx.insert(pilotMarks).values(label).onConflictDoNothing().returning({ id: pilotMarks.id });
+    const holdsPlace = await labelInEffect(tx, { refKind: label.refKind, refId: label.refId, markedBy });
+    const inserted = holdsPlace
+      ? []
+      : await tx.insert(pilotMarks).values(label).onConflictDoNothing().returning({ id: pilotMarks.id });
     if (inserted[0] !== undefined) {
       return { id: inserted[0].id, repeated: false, stands: "noise", replaced: before };
     }

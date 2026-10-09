@@ -1387,10 +1387,16 @@ $$;
 ALTER TABLE pilot_marks ADD COLUMN IF NOT EXISTS provenance text NOT NULL DEFAULT 'unknown_legacy';
 ALTER TABLE pilot_marks ADD COLUMN IF NOT EXISTS confirmation_id text;
 
--- One label per person per delivery PER PROVENANCE, so a confirmed label never
--- collides with the legacy one a 0.10 hub holds. The old key goes once.
-CREATE UNIQUE INDEX IF NOT EXISTS pilot_marks_ref_marker_provenance_idx
-  ON pilot_marks (ref_kind, ref_id, marked_by, provenance);
+-- One label per person per delivery PER CONFIRMATION: a label whose
+-- confirmation was retracted (compromised) or never stood (its passkey revoked
+-- in the cool-off) must not hold the person's one place, so the "one label in
+-- effect" rule is the writer's (services/pilot.ts, under the pointer's lock),
+-- and the database keeps one row per confirmation (round-2 R2-M1). A
+-- confirmed label never collides with the legacy one a 0.10 hub holds. The
+-- older keys go once.
+CREATE UNIQUE INDEX IF NOT EXISTS pilot_marks_ref_marker_confirmation_idx
+  ON pilot_marks (ref_kind, ref_id, marked_by, provenance, confirmation_id);
+DROP INDEX IF EXISTS pilot_marks_ref_marker_provenance_idx;
 DROP INDEX IF EXISTS pilot_marks_ref_marker_idx;
 CREATE INDEX IF NOT EXISTS pilot_marks_repo_created_idx
   ON pilot_marks (repo, created_at DESC);
@@ -1673,6 +1679,22 @@ CREATE TABLE IF NOT EXISTS passkeys (
     CHECK ((revoked_at IS NULL AND revoked_by_kind IS NULL)
         OR (revoked_at IS NOT NULL AND revoked_by_kind IS NOT NULL))
 );
+
+-- WHY IT WAS CLOSED (round-2 R2-H3): `retired` keeps what the passkey
+-- confirmed while it stood; `compromised` retracts all of it. A passkey closed
+-- before this column existed reads as retired. keep in sync with
+-- PASSKEY_REVOKE_REASONS in @crosscheck/schema
+ALTER TABLE passkeys ADD COLUMN IF NOT EXISTS revoke_reason text;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'passkeys_revoke_reason_check' AND conrelid = 'passkeys'::regclass
+  ) THEN
+    ALTER TABLE passkeys ADD CONSTRAINT passkeys_revoke_reason_check CHECK (
+      revoke_reason IS NULL OR (revoked_at IS NOT NULL AND revoke_reason IN ('retired', 'compromised')));
+  END IF;
+END
+$$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS passkeys_credential_id_idx ON passkeys (credential_id);
 CREATE INDEX IF NOT EXISTS passkeys_developer_idx ON passkeys (developer_id);

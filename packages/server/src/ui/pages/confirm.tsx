@@ -138,6 +138,12 @@ const SignedTerms: FC<{ readonly draft: DraftContext }> = ({ draft }) => (
   </details>
 );
 
+/** Why a decided draft is back (round-2 R2-H3): nothing it said counted, so the person decides again. */
+const RECONFIRM_LINE: Readonly<Record<"cooling" | "compromised", string>> = {
+  cooling: "re-confirm: the passkey that confirmed these was revoked before it counted",
+  compromised: "re-confirm: the passkey that confirmed these was revoked as compromised",
+};
+
 const DraftCard: FC<{ readonly draft: DraftContext }> = ({ draft }) => (
   <li class="artifact" data-draft-id={draft.id} data-version={String(draft.version)}>
     <span class="label">{KIND_LABEL[draft.kind]}</span>{" "}
@@ -146,6 +152,7 @@ const DraftCard: FC<{ readonly draft: DraftContext }> = ({ draft }) => (
       {draft.repo === null ? "" : ` · ${capped(draft.repo, UI_MAX_LABEL_CHARS)}`}
     </span>{" "}
     <Subject draft={draft} />
+    {draft.reconfirm === null ? null : <p class="notice">{RECONFIRM_LINE[draft.reconfirm]}</p>}
     {text(draft, "reason") === "" ? null : <blockquote>{capped(text(draft, "reason"), UI_MAX_NOTE_CHARS)}</blockquote>}
     <SignedTerms draft={draft} />
     <div>

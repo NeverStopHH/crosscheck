@@ -99,7 +99,7 @@ describe("every waiver surface says the passkey that approved it was revoked (04
 
     // Assert
     expect(response.status).toBe(200);
-    expect(((await response.json()) as { data: unknown }).data).toEqual({ revoked: true, terminatedWaivers: 1 });
+    expect(((await response.json()) as { data: unknown }).data).toMatchObject({ revoked: true, reason: "retired", terminatedWaivers: 1 });
   });
 
   test("the pin registry carries the closure while the grant would still have held", async () => {

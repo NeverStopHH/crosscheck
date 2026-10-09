@@ -39,7 +39,7 @@ import {
 } from "../db/schema.ts";
 import { PILOT_RETENTION_DAYS } from "../constants.ts";
 import { COVERAGE_SOURCES, isJudgeable, readCoverage } from "./coverage.ts";
-import { writeNoiseOnPointer } from "./noise-label.ts";
+import { labelInEffect, writeNoiseOnPointer } from "./noise-label.ts";
 import type { MarkRow } from "./noise-label.ts";
 import type { StandingWord } from "./pointer-standing.ts";
 import { readTeamSettings } from "./team-settings.ts";
@@ -696,6 +696,11 @@ export const writePilotMark = async (
   // 07 §13.11 (H2): noise on a delivery is decided against the pointer's outcomes, under its lock.
   if (input.refKind === "hint_delivery" && storedMark(input.mark) === "noise") {
     return writeNoiseOnPointer(deps, input.refId, input.markedBy, (id, createdAt) => markRow(input, id, createdAt));
+  }
+  // One label per person per delivery IN EFFECT (round-2 R2-M1): a retracted
+  // or voided one holds no place, so the person's own label is written.
+  if (await labelInEffect(deps.db, input)) {
+    return { id: input.refId, repeated: true };
   }
   const id = `pm_${randomUUID()}`;
   const inserted = await deps.db

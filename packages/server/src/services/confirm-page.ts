@@ -13,6 +13,7 @@ import { DRAFT_KINDS } from "@crosscheck/schema";
 import type { DraftKind, DraftProvenance } from "@crosscheck/schema";
 
 import { pendingFingerprint, readPendingDrafts } from "./human-drafts.ts";
+import { voidReasonOf } from "./human-provenance.ts";
 import type { DraftPayload, DraftRow } from "./human-drafts.ts";
 import { locationHiddenFrom, projectRow, titleSourceOf } from "./live-location.ts";
 import type { HiddenLocations } from "./live-location.ts";
@@ -38,7 +39,21 @@ export interface DraftContext {
   readonly sourceName: string | null;
   /** A pin's surface, for a break or an ok. */
   readonly pinSurface: string | null;
+  /**
+   * Back on the page because the passkey that decided it is void (round-2
+   * R2-H3): `cooling` — revoked before it counted; `compromised`. Null for a
+   * draft no void confirmation decided.
+   */
+  readonly reconfirm: "cooling" | "compromised" | null;
 }
+
+/** Why a void confirmation's decision about `draftId` sent it back to the page, if one did. */
+const reconfirmOf = async (db: Db, draftId: string): Promise<DraftContext["reconfirm"]> => {
+  const rows = await db.execute<{ why: "cooling" | "compromised" | null }>(sql`
+    SELECT ${voidReasonOf("i.confirmation_id")} AS why FROM human_confirmation_items i
+    WHERE i.draft_id = ${draftId} AND i.decision IN ('confirm', 'discard')`);
+  return rows.rows.map((row) => row.why).find((why) => why !== null) ?? null;
+};
 
 export interface ConfirmPageView {
   readonly fingerprint: string;
@@ -112,6 +127,7 @@ const contextOf = async (db: Db, hidden: HiddenLocations, draft: DraftRow): Prom
     createdAt: draft.createdAt.toISOString(),
     repo: draft.repo,
     payload: draft.payload,
+    reconfirm: await reconfirmOf(db, draft.id),
   };
   const none = { channel: null, deliveredAt: null, pointedTitle: null, sourceName: null, pinSurface: null };
   if (draft.kind === "label" || draft.kind === "outcome") {

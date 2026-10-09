@@ -378,7 +378,7 @@ describe("revoking a passkey through the page closes the fences it opened (04a D
     // Assert
     expect(response.status).toBe(200);
     expect((await dataOf<{ message: string }>(response)).message).toBe(
-      "Passkey revoked. 1 open waiver it approved was closed with it.",
+      "Passkey retired: what it confirmed while it stood keeps counting. 1 open waiver it approved was closed with it.",
     );
     expect(await live(fx.harness)).toBeNull();
   });

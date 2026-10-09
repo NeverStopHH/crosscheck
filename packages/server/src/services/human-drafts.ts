@@ -33,6 +33,7 @@ import type { DraftKind, DraftProvenance } from "@crosscheck/schema";
 import { MAX_PENDING_DRAFT_SUBJECTS } from "../constants.ts";
 import { humanDrafts } from "../db/schema.ts";
 import { staysPending } from "./draft-kinds.ts";
+import { confirmationInEffect } from "./human-provenance.ts";
 import type { Db, DbExecutor } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
@@ -144,10 +145,15 @@ const rowOf = (raw: RawDraft): DraftRow => ({
   createdAt: new Date(raw.created_at),
 });
 
-/** Resolved: some CONFIRMED batch decided it (a batch exists only once its passkey verified). */
+/**
+ * Resolved: some CONFIRMED batch decided it (a batch exists only once its
+ * passkey verified) and that confirmation is still in effect. A void one — its
+ * passkey revoked in the cool-off, or declared compromised — decided nothing:
+ * its drafts return to the person's page (round-2 R2-H3).
+ */
 const RESOLVED = sql`EXISTS (
   SELECT 1 FROM human_confirmation_items i
-  WHERE i.draft_id = d.id AND i.decision IN ('confirm', 'discard'))`;
+  WHERE i.draft_id = d.id AND i.decision IN ('confirm', 'discard') AND ${confirmationInEffect("i.confirmation_id")})`;
 
 export interface PendingOptions {
   /** Take the person's drafts FOR UPDATE: the confirmation compares under it. */
@@ -210,7 +216,8 @@ const readNewest = async (db: DbExecutor, developerId: string, subjectKey: strin
   const rows = await db.execute<RawDraft & { readonly decision: DecidedAs | null }>(sql`
     SELECT d.*, false AS resolved,
       (SELECT i.decision FROM human_confirmation_items i
-       WHERE i.draft_id = d.id AND i.decision IN ('confirm', 'discard') LIMIT 1) AS decision
+       WHERE i.draft_id = d.id AND i.decision IN ('confirm', 'discard')
+         AND ${confirmationInEffect("i.confirmation_id")} LIMIT 1) AS decision
     FROM human_drafts d
     WHERE d.developer_id = ${developerId} AND d.subject_key = ${subjectKey}
     ORDER BY d.version DESC LIMIT 1 FOR UPDATE`);

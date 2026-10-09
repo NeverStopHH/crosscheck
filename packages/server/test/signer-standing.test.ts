@@ -16,7 +16,8 @@ import { describe, expect, test } from "bun:test";
 
 import { PASSKEY_COOLOFF_HOURS } from "../src/constants.ts";
 import { hintOutcomes, passkeys } from "../src/db/schema.ts";
-import { confirmPending, prepareConfirmer } from "./fixtures/confirm-driver.ts";
+import { assertViaUi, viewerOf } from "./fixtures/ceremony-driver.ts";
+import { confirmPending, pendingOf, prepareConfirmer } from "./fixtures/confirm-driver.ts";
 import type { Confirmer } from "./fixtures/confirm-driver.ts";
 import { KEN_CONTEXT, NICK_SESSION, REPO, createOutcomeWorld, recordOutcome } from "./fixtures/hint-outcome-world.ts";
 import type { OutcomeWorld } from "./fixtures/hint-outcome-world.ts";
@@ -85,15 +86,23 @@ describe("a confirmation by a passkey still cooling off", () => {
 });
 
 describe("revoking the passkey that confirmed", () => {
-  test("retracts what it confirmed from every figure — the row stays, and the view says it was retracted", async () => {
-    // Arrange — a passkey past its cool-off; a word confirmed with it and counted
+  test("declared compromised, it retracts what it confirmed from every figure — the row stays, and the view says it was retracted", async () => {
+    // Arrange — a passkey past its cool-off; a word confirmed with it and counted; a second passkey of the person's
     const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
     const confirmer = await prepareConfirmer(world.harness, world.nick, { pastCoolOff: true });
     await confirmFollowed(world, confirmer);
     expect(await mine(world)).toMatchObject({ followed: 1 });
+    const other = await prepareConfirmer(world.harness, world.nick, { pastCoolOff: true });
 
-    // Act — the admin revokes it (a lost device, or one nobody expected)
-    await revoke(world, confirmer, "admin");
+    // Act — the second passkey declares the first compromised (round-2 R2-H3: a retirement would keep it)
+    const declared = await assertViaUi(
+      world.harness,
+      await viewerOf(world.harness, world.nick),
+      other.credential,
+      { action: "revoke_passkey", subjectId: confirmer.passkeyId, reason: "compromised" },
+      { signCount: other.nextCount() },
+    );
+    expect(declared.status).toBe(200);
     const after = await mine(world);
 
     // Assert
@@ -104,7 +113,7 @@ describe("revoking the passkey that confirmed", () => {
     ]);
   });
 
-  test("a planted passkey revoked during its cool-off never counted, and never will", async () => {
+  test("a planted passkey revoked during its cool-off never counted, and never will — its draft is back on the page", async () => {
     // Arrange — the review's H1: a passkey enrolled with a leaked code confirms everything at once
     const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
     const confirmer = await prepareConfirmer(world.harness, world.nick);
@@ -115,8 +124,9 @@ describe("revoking the passkey that confirmed", () => {
     world.harness.clock.advanceSeconds(PASSKEY_COOLOFF_HOURS * SECONDS_PER_HOUR + MINUTE_S);
     const view = await mine(world);
 
-    // Assert
+    // Assert — never stood: not counted, not "retracted" either (round-2 R2-H3); the word waits again
     expect(view).toMatchObject({ followed: 0 });
-    expect(view["notConfirmed"]).toMatchObject({ retracted: 1, coolingOff: 0 });
+    expect(view["notConfirmed"]).toMatchObject({ retracted: 0, coolingOff: 0 });
+    expect((await pendingOf(world.harness, world.nick)).drafts).toHaveLength(1);
   });
 });

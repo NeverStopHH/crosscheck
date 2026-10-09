@@ -184,13 +184,15 @@ describe("human provenance DDL sync", () => {
   });
 
   test("a legacy label and a confirmed one on the same delivery do not collide", async () => {
-    // Arrange: the one-label-per-person key now includes the provenance
+    // Arrange: the one-label-per-person key includes the provenance, and since
+    // round 2 (R2-M1) the confirmation, so a voided label frees its place
     const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
 
     // Assert
     expect(bootstrapSql).toContain(
-      "CREATE UNIQUE INDEX IF NOT EXISTS pilot_marks_ref_marker_provenance_idx\n  ON pilot_marks (ref_kind, ref_id, marked_by, provenance);",
+      "CREATE UNIQUE INDEX IF NOT EXISTS pilot_marks_ref_marker_confirmation_idx\n  ON pilot_marks (ref_kind, ref_id, marked_by, provenance, confirmation_id);",
     );
+    expect(bootstrapSql).toContain("DROP INDEX IF EXISTS pilot_marks_ref_marker_provenance_idx;");
     expect(bootstrapSql).toContain("DROP INDEX IF EXISTS pilot_marks_ref_marker_idx;");
     expect(bootstrapSql).not.toContain("CREATE UNIQUE INDEX IF NOT EXISTS pilot_marks_ref_marker_idx");
   });

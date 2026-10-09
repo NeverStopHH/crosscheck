@@ -164,9 +164,10 @@ export type {
 export {
   ENROLMENT_SOURCES,
   MAX_PASSKEY_LABEL_CHARS,
+  PASSKEY_REVOKE_REASONS,
   PASSKEY_REVOKERS,
 } from "./passkey.ts";
-export type { EnrolmentSource, PasskeyRevoker } from "./passkey.ts";
+export type { EnrolmentSource, PasskeyRevokeReason, PasskeyRevoker } from "./passkey.ts";
 export {
   DRAFT_DECISIONS,
   DRAFT_KINDS,

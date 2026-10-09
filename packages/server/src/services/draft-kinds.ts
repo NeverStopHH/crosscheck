@@ -38,6 +38,7 @@ import type { ApplyDeps, ApplyKind } from "./draft-apply.ts";
 import { resolveHintOutcome } from "./hint-outcomes.ts";
 import type { DraftRow } from "./human-drafts.ts";
 import { checkPilotMark } from "./pilot.ts";
+import { pinInEffect } from "./pins.ts";
 
 export type DraftAuthority = "normal" | "privileged";
 
@@ -74,11 +75,12 @@ const outcomeIsLive = async (deps: ApplyDeps, draft: DraftRow): Promise<boolean>
   return !("refusal" in resolved);
 };
 
+/** The pin a draft names, as long as it protects (a void confirmation's pin does not: round-2 R2-M3). */
 const pinRow = async (deps: ApplyDeps, draft: DraftRow, key: string) => {
   const rows = await deps.db
     .select({ brokeAt: pins.brokeAt })
     .from(pins)
-    .where(and(eq(pins.id, payloadText(draft.payload, key)), eq(pins.repo, draft.repo ?? "")))
+    .where(and(eq(pins.id, payloadText(draft.payload, key)), eq(pins.repo, draft.repo ?? ""), pinInEffect))
     .limit(1);
   return rows[0];
 };
