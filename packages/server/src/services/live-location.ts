@@ -237,6 +237,8 @@ const INSTANT_OR_COMMIT_FIELD = /(?:At|Ms|Commit|Commits|Sha)$|^(?:sha|head)$/;
 /** Words a person or an agent wrote: never withheld for their shape. */
 const PROSE_FIELDS: ReadonlySet<string> = new Set([
   "body",
+  // An answer row's claim (services/questions.ts listUndeliveredAnswers).
+  "claimBody",
   "description",
   "summary",
   "reason",

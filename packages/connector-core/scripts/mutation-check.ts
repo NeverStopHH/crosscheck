@@ -26566,6 +26566,30 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/live-location-differential.test.ts`,
     because: "two worlds that differ only by where her rows sit on disk hint a colleague differently",
   },
+  {
+    label: "an answer to a colleague's question says when an opted-out answerer answered",
+    file: `${SERVER}/src/services/questions.ts`,
+    from: '    ...projectRow(hidden, { developerId: row.answererDeveloperId, kind: "claim" }, {',
+    to: '    ...projectRow(new Map(), { developerId: row.answererDeveloperId, kind: "claim" }, {',
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because: "the asker's briefing and prompt read the hub's stamp of her answer and her evidence's age, which every other route withholds",
+  },
+  {
+    label: "an answer to a colleague's question says when an opted-out answerer answered (differential)",
+    file: `${SERVER}/src/services/questions.ts`,
+    from: '    ...projectRow(hidden, { developerId: row.answererDeveloperId, kind: "claim" }, {',
+    to: '    ...projectRow(new Map(), { developerId: row.answererDeveloperId, kind: "claim" }, {',
+    test: `${SERVER}/test/live-location-differential.test.ts`,
+    because: "her answer action puts her instant on a line no residual accepts",
+  },
+  {
+    label: "the asker's answer page is cut by when an opted-out answerer answered",
+    file: `${SERVER}/src/services/questions.ts`,
+    from: "    .orderBy(sql`${answeredSeen} DESC`, asc(questionAnswers.claimId))",
+    to: "    .orderBy(desc(questionAnswers.createdAt), asc(questionAnswers.claimId))",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because: "four answers wait and three are handed out: hers is in or out by her own instant",
+  },
   // NOT ADDED, measured: an id tie-break on the two CLAIM tiers (hints'
   // pushable pass, search's claim pass). Both GROUP BY the context, and the
   // aggregate hands rows on by its group key, never by where they sit: a
@@ -35528,11 +35552,11 @@ interface Outcome {
  * PRINTS: packages/server/test/listen-boot.test.ts 8
  * PRINTS: packages/server/test/listen.test.ts 16
  * PRINTS: packages/server/test/live-location-cost.test.ts 3
- * PRINTS: packages/server/test/live-location-differential.test.ts 9
+ * PRINTS: packages/server/test/live-location-differential.test.ts 10
  * PRINTS: packages/server/test/live-location-privacy.test.ts 27
  * PRINTS: packages/server/test/live-location-projection.test.ts 9
  * PRINTS: packages/server/test/live-location-prose.test.ts 3
- * PRINTS: packages/server/test/live-location-surfaces.test.ts 44
+ * PRINTS: packages/server/test/live-location-surfaces.test.ts 46
  * PRINTS: packages/server/test/live-location-told.test.ts 1
  * PRINTS: packages/server/test/live-location-topics.test.ts 4
  * PRINTS: packages/server/test/location-index-rebuild.test.ts 7

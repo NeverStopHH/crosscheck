@@ -34,10 +34,12 @@ import {
   HOST_CREATED_AT,
   HOST_TITLE,
   NICK_CONTEXT,
+  NICK_TO_ROBIN_QUESTION,
   OLD_CREATED_AT,
   OLD_TITLE,
   REPO,
   ROBIN_CONTEXT,
+  ROBIN_FINGERPRINT,
   ROBIN_HOST_CONTEXT,
   ROBIN_LIVE,
   ROBIN_LOCAL,
@@ -217,6 +219,20 @@ const ACTIONS: readonly Action[] = [
     name: "change a context's status",
     content: true,
     run: (w) => records(w, [live("work_context", validWorkContextBody({ id: ROBIN_HOST_CONTEXT, sessionId: ROBIN_LIVE, title: HOST_TITLE, titleSource: "host", status: "testing", createdAt: HOST_CREATED_AT }))], "status"),
+  },
+  {
+    // Nick's question to her (seeded), answered: the answer is a claim — her
+    // shared work, created now — and the row Nick's briefing and prompt list
+    // for it carried when she answered and how old the failure it cites is
+    // (batch-2 integration review, M4).
+    // The claim is dated at a published instant, so only the answer's own
+    // row can carry hers.
+    name: "answer a colleague's question",
+    content: true,
+    run: (w) =>
+      post(w, `/api/questions/${NICK_TO_ROBIN_QUESTION}/answers`, {
+        claim: validClaimBody({ id: "clm_robin_diff_answer", workContextId: ROBIN_CONTEXT, authorSessionId: ROBIN_LIVE, kind: "observation", body: "The cache keeps the old key id for one refresh", verificationRef: `error_fingerprint:${ROBIN_FINGERPRINT}`, createdAt: CREATED_AT }),
+      }, "answer"),
   },
   {
     name: "publish a claim",

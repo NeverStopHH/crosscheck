@@ -35,6 +35,8 @@ import {
   ROBIN_PIN,
   NICK_CONTEXT,
   NICK_SESSION,
+  NICK_TITLE,
+  NICK_TO_ROBIN_QUESTION,
   REVALIDATED_AT,
   REPO,
   ROBIN_CONTEXT,
@@ -57,6 +59,7 @@ import {
   TIED_TOPIC_WORDS,
   UPDATED_AT,
   getAs,
+  leaksIn,
   openTiedTopics,
   postAs,
   rewriteTiedTopicInPlace,
@@ -98,10 +101,12 @@ describe("the conference", () => {
     const asRobin = await getAs(world, "robin", url("/api/conference", { repo: REPO }));
 
     expect(secretsIn(asNick.body)).toEqual([]);
-    expect(conferenceQuestionTitles(asNick.body)).toEqual({ q_ken_1: WITHHELD_TITLE, q_robin_1: WITHHELD_TITLE });
+    // Nick's own question to her is about HIS work: titled as his, for both.
+    expect(conferenceQuestionTitles(asNick.body)).toEqual({ q_ken_1: WITHHELD_TITLE, q_robin_1: WITHHELD_TITLE, [NICK_TO_ROBIN_QUESTION]: NICK_TITLE });
     expect(conferenceQuestionTitles(asRobin.body)).toEqual({
       q_ken_1: `${SECRET_BRANCH} @ api`,
       q_robin_1: `${SECRET_BRANCH} @ api`,
+      [NICK_TO_ROBIN_QUESTION]: NICK_TITLE,
     });
   });
 });
@@ -141,7 +146,84 @@ describe("the questions inbox (review round 3, H1)", () => {
     expect(secretsIn(answerable.body)).toEqual([]);
     expect(answerable.body).toContain(WITHHELD_TITLE);
   });
+
+  test("her answer to Nick's question carries neither when she answered nor her evidence's age (integration review M4)", async () => {
+    // The answer lands on the asker's briefing and prompt: the hub's stamp of
+    // her answer and the evidence rung's age (the failure her session observed)
+    // went out raw on both, where every other route withholds them.
+    const world = await seedOptedOutWorld();
+    world.harness.clock.advanceSeconds(ANSWER_DELAY_S);
+    const answered = await postAs(world, "robin", `/api/questions/${NICK_TO_ROBIN_QUESTION}/answers`, {
+      claim: validClaimBody({ id: "clm_robin_answer", workContextId: ROBIN_CONTEXT, authorSessionId: ROBIN_LIVE, kind: "observation", body: "The cache keeps the old key id for one refresh", verificationRef: `error_fingerprint:${ROBIN_FINGERPRINT}`, createdAt: CREATED_AT }),
+    });
+    world.harness.clock.advanceSeconds(ANSWER_DELAY_S);
+    const answeredAt = new Date(world.harness.clock.now().getTime() - ANSWER_DELAY_S * 1000).toISOString();
+
+    const reads = [
+      await getAs(world, "nick", url("/api/questions", { repo: REPO })),
+      await getAs(world, "nick", url("/api/hints/candidates", { repo: REPO, query: "where does the cache keep the key id" })),
+    ];
+    const answers = reads.map((read) => (JSON.parse(read.body) as { data: { answers: readonly AnswerRow[] } }).data.answers);
+
+    expect(answered.status).toBe(200);
+    for (const [index, read] of reads.entries()) {
+      expect(leaksIn(read.body, world.harness.clock.now())).toEqual([]);
+      expect(read.body).not.toContain(answeredAt);
+      expect(answers[index]?.map((answer) => [answer.claimId, answer.answeredAt, answer.axes?.observedAt ?? null])).toEqual([
+        ["clm_robin_answer", LOCATION_WITHHELD, null],
+      ]);
+    }
+  });
+
+  test("which answers Nick is handed first does not follow when she answered (integration review M4)", async () => {
+    // Four answers wait and a page holds three: ordered by when each was
+    // answered, hers was in or out by her own instant.
+    const page = async (isHersLast: boolean): Promise<readonly string[]> => {
+      const world = await seedOptedOutWorld();
+      const asKen = async (path: string, body: unknown): Promise<Response> =>
+        world.harness.app.request(path, jsonRequest("POST", world.ken.apiKey, body));
+      const hers = async (): Promise<void> => {
+        const answered = await postAs(world, "robin", `/api/questions/${NICK_TO_ROBIN_QUESTION}/answers`, {
+          claim: validClaimBody({ id: "clm_robin_answer", workContextId: ROBIN_CONTEXT, authorSessionId: ROBIN_LIVE, kind: "observation", body: "The cache keeps the old key id for one refresh", createdAt: CREATED_AT }),
+        });
+        expect(answered.status).toBe(200);
+      };
+      if (!isHersLast) {
+        await hers();
+      }
+      for (const part of [1, 2, 3]) {
+        world.harness.clock.advanceSeconds(ANSWER_DELAY_S);
+        const question = `q_nick_to_ken_${String(part)}`;
+        await postAs(world, "nick", "/api/questions", { id: question, repo: REPO, sessionId: NICK_SESSION, body: `Ken, where is the key id kept, part ${String(part)}?`, developer: "Ken", workContextId: NICK_CONTEXT });
+        const answered = await asKen(`/api/questions/${question}/answers`, {
+          claim: validClaimBody({ id: `clm_ken_answer_${String(part)}`, workContextId: "wc_ken", authorSessionId: KEN_SESSION, kind: "observation", body: `In the refresh cache, part ${String(part)}`, createdAt: world.harness.clock.now().toISOString() }),
+        });
+        expect(answered.status).toBe(200);
+      }
+      if (isHersLast) {
+        world.harness.clock.advanceSeconds(ANSWER_DELAY_S);
+        await hers();
+      }
+      world.harness.clock.advanceSeconds(ANSWER_DELAY_S);
+      const read = await getAs(world, "nick", url("/api/questions", { repo: REPO }));
+      return (JSON.parse(read.body) as { data: { answers: readonly AnswerRow[] } }).data.answers.map((answer) => answer.claimId);
+    };
+
+    const first = await page(false);
+    const last = await page(true);
+
+    expect(first).toHaveLength(3);
+    expect(last).toEqual(first);
+  });
 });
+
+const ANSWER_DELAY_S = 90;
+
+interface AnswerRow {
+  readonly claimId: string;
+  readonly answeredAt: string;
+  readonly axes?: { readonly observedAt?: string | null };
+}
 
 describe("the pilot surfaces (review round 3, H3)", () => {
   test("crosscheck pilot label lists the hint about Robin's context under the withheld title", async () => {

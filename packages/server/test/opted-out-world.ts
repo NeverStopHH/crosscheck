@@ -17,7 +17,9 @@
  *     on the local repo — and one host-written title that merely ENDS in
  *     ` @ api` (titleSource "host", which must stay)
  *   - a claim contradicting Nick's, a solved tree on the failure Nick is live
- *     on, two questions to Nick about her contexts (one hers, one Ken's)
+ *     on, two questions to Nick about her contexts (one hers, one Ken's), and
+ *     one of Nick's to her about his own — which the differential's answer
+ *     action answers
  *   - a pilot-enrolled repo with a prompt hint about her context delivered to
  *     Nick, and opened
  */
@@ -67,6 +69,7 @@ export const ROBIN_STALE = "cc_55555555-6666-4777-8888-999999999999";
 export const ROBIN_LOCAL = "cc_66666666-7777-4888-8999-aaaaaaaaaaaa";
 
 export const NICK_CONTEXT = "wc_nick_live";
+export const NICK_TITLE = "Key rotation";
 export const ROBIN_CONTEXT = "wc_robin_live";
 export const ROBIN_SOLVED = "wc_robin_solved";
 export const ROBIN_LOCAL_CONTEXT = "wc_robin_local";
@@ -401,7 +404,7 @@ const robinWork = (): readonly Record<string, unknown>[] => [
 ];
 
 const nickWork = (): readonly Record<string, unknown>[] => [
-  recordEnvelope("work_context", validWorkContextBody({ id: NICK_CONTEXT, sessionId: NICK_SESSION, title: "Key rotation" }), { sessionId: NICK_SESSION }),
+  recordEnvelope("work_context", validWorkContextBody({ id: NICK_CONTEXT, sessionId: NICK_SESSION, title: NICK_TITLE }), { sessionId: NICK_SESSION }),
   ...targetsOf(NICK_CONTEXT, NICK_SESSION),
   recordEnvelope(
     "claim",
@@ -416,8 +419,11 @@ const nickWork = (): readonly Record<string, unknown>[] => [
   ),
 ];
 
+/** Nick's question to her, about his own work: asked at a published instant, open until an action answers it. */
+export const NICK_TO_ROBIN_QUESTION = "q_nick_to_robin";
+
 const askNick = async (
-  world: Pick<OptedOutWorld, "harness" | "ken" | "robin">,
+  world: Pick<OptedOutWorld, "harness" | "nick" | "ken" | "robin">,
 ): Promise<void> => {
   await assertOk(
     await world.harness.app.request("/api/questions", jsonRequest("POST", world.robin.apiKey, {
@@ -430,6 +436,12 @@ const askNick = async (
       id: "q_ken_1", repo: REPO, sessionId: KEN_SESSION, body: "Do you know what this is about?", developer: "Nick", workContextId: ROBIN_SOLVED,
     })),
     "Ken's question",
+  );
+  await assertOk(
+    await world.harness.app.request("/api/questions", jsonRequest("POST", world.nick.apiKey, {
+      id: NICK_TO_ROBIN_QUESTION, repo: REPO, sessionId: NICK_SESSION, body: "Where does the cache keep the key id?", developer: "Robin", workContextId: NICK_CONTEXT,
+    })),
+    "Nick's question to Robin",
   );
 };
 
@@ -628,7 +640,7 @@ export const seedOptedOutWorld = async (): Promise<OptedOutWorld> => {
   const { nick, ken, robin } = await seedTeam(harness);
   await seedRobin(harness, robin);
   harness.clock.advanceSeconds(ASKED_OFFSET_S - CREATED_OFFSET_S);
-  await askNick({ harness, ken, robin });
+  await askNick({ harness, nick, ken, robin });
   // Nick was shown Robin's context by a prompt hint, and opened it.
   await harness.db.insert(hintDeliveries).values({
     id: "hd_robin_1",

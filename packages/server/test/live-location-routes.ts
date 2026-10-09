@@ -288,7 +288,7 @@ const GET_ROUTES: Readonly<Record<string, RouteSpec>> = {
       { path: "/api/questions", query: { repo: REPO, answerable: "1" } },
     ],
     colleague: "withheld",
-    self: { none: "her inbox: the seed asks her nothing; her own titles reach her through the listing" },
+    self: { none: "her inbox: Nick's question to her is about his own work, which names no location of hers; her own titles reach her through the listing" },
   },
   "GET /api/search": {
     variants: [
