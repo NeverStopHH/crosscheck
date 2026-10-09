@@ -11859,14 +11859,10 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/landed-context.test.ts`,
     because: "a follow-up begun just before the commit takes the credit for the work that made it",
   },
-  {
-    label: "an opted-out teammate's live work is shown",
-    file: `${SERVER}/src/services/landed-context.ts`,
-    from: "            not(visible),\n            or(isNotNull(agentSessions.endedAt), lte(agentSessions.lastHeartbeatAt, live)),\n",
-    to: "            not(visible),\n",
-    test: `${SERVER}/test/landed-context.test.ts`,
-    because: "an unasked stop reveals what a teammate who switched presence off is doing right now",
-  },
+  // RETIRED (batch-2 integration review, H4): "an opted-out teammate's live
+  // work is shown" guarded hiding her live work, and hiding it was the leak —
+  // matched or not said whether she was live. Its inverse is anchored with the
+  // review's other opt-out seams ("the landed stop hides … until she goes quiet").
   {
     label: "the file is matched only as it was spelled",
     file: `${SERVER}/src/services/landed-context.ts`,
@@ -11927,8 +11923,10 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a just-ended opted-out session is hidden as if live",
     file: `${SERVER}/src/services/landed-context.ts`,
-    from: "            or(isNotNull(agentSessions.endedAt), lte(agentSessions.lastHeartbeatAt, live)),\n          ),\n        ),",
-    to: "            or(sql`false`, lte(agentSessions.lastHeartbeatAt, live)),\n          ),\n        ),",
+    // RETARGETED (batch-2 integration review, H4): no liveness clause is left
+    // to weaken, so the mutation puts the end back in charge.
+    from: "          not(visible),\n",
+    to: "          and(not(visible), sql`${agentSessions.endedAt} is null`),\n",
     test: `${SERVER}/test/landed-context.test.ts`,
     because: "an opted-out teammate's finished work goes unnamed for the presence window after every session",
   },
@@ -24894,10 +24892,10 @@ export const MUTATIONS: readonly Mutation[
     // Review round 4, C1: the landed stop's commit time is the caller's word.
     label: "the landed stop compares a caller's commit time with an opted-out teammate's session start",
     file: `${SERVER}/src/services/landed-context.ts`,
-    from: "            or(isNotNull(agentSessions.endedAt), lte(agentSessions.lastHeartbeatAt, live)),\n",
-    to:
-      "            or(isNotNull(agentSessions.endedAt), lte(agentSessions.lastHeartbeatAt, live)),\n" +
-      "            lte(agentSessions.startedAt, startedBy),\n",
+    // RETARGETED (batch-2 integration review, H4): the hidden owner's clause
+    // is `not(visible)` alone now.
+    from: "          not(visible),\n",
+    to: "          and(not(visible), lte(agentSessions.startedAt, startedBy)),\n",
     test: `${SERVER}/test/live-location-surfaces.test.ts`,
     because:
       "Nick sweeps committedAt and reads Robin's session start back to the " +
@@ -26516,6 +26514,25 @@ export const MUTATIONS: readonly Mutation[
     because:
       "touching a file of her old context again brings that context into a colleague's " +
       "suspect window, which says when she was there",
+  },
+  // ── Batch-2 integration review, the opt-out seams (H3–H5, M4, M5, L7–L9) ──
+  // Each is a later branch reading what the opt-out withholds; each is caught
+  // by the two-world walk, and the cheap ones by a focused case beside it.
+  {
+    label: "the landed stop hides an opted-out teammate's live work until she goes quiet",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "          not(visible),\n",
+    to: "          and(not(visible), sql`(${agentSessions.endedAt} is not null or ${agentSessions.lastHeartbeatAt} <= ${new Date(deps.now().getTime() - 90_000).toISOString()}::timestamptz)`),\n",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because: "matched or not is whether she is live: polled, it reads her last heartbeat plus the TTL to the second",
+  },
+  {
+    label: "the landed stop hides an opted-out teammate's live work until she goes quiet (differential)",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "          not(visible),\n",
+    to: "          and(not(visible), sql`(${agentSessions.endedAt} is not null or ${agentSessions.lastHeartbeatAt} <= ${new Date(deps.now().getTime() - 90_000).toISOString()}::timestamptz)`),\n",
+    test: `${SERVER}/test/live-location-differential.test.ts`,
+    because: "one heartbeat of hers changes what the stop names, and no residual accepts it",
   },
   // THE GENERATED-TARGET RULE (release gate N2): every gate, from the signal
   // that names a file generated to the hub read that keeps it out of overlap.
@@ -35465,7 +35482,7 @@ interface Outcome {
  * PRINTS: packages/server/test/intent-ledger-authority.test.ts 2
  * PRINTS: packages/server/test/intent-ledger-write.test.ts 10
  * PRINTS: packages/server/test/key-rotation.test.ts 6
- * PRINTS: packages/server/test/landed-context.test.ts 22
+ * PRINTS: packages/server/test/landed-context.test.ts 21
  * PRINTS: packages/server/test/landed-notices.test.ts 34
  * PRINTS: packages/server/test/landed-repair.test.ts 20
  * PRINTS: packages/server/test/landed-topics.test.ts 11
@@ -35473,11 +35490,11 @@ interface Outcome {
  * PRINTS: packages/server/test/listen-boot.test.ts 8
  * PRINTS: packages/server/test/listen.test.ts 16
  * PRINTS: packages/server/test/live-location-cost.test.ts 3
- * PRINTS: packages/server/test/live-location-differential.test.ts 6
+ * PRINTS: packages/server/test/live-location-differential.test.ts 7
  * PRINTS: packages/server/test/live-location-privacy.test.ts 27
  * PRINTS: packages/server/test/live-location-projection.test.ts 9
  * PRINTS: packages/server/test/live-location-prose.test.ts 3
- * PRINTS: packages/server/test/live-location-surfaces.test.ts 41
+ * PRINTS: packages/server/test/live-location-surfaces.test.ts 42
  * PRINTS: packages/server/test/live-location-told.test.ts 1
  * PRINTS: packages/server/test/live-location-topics.test.ts 4
  * PRINTS: packages/server/test/location-index-rebuild.test.ts 7

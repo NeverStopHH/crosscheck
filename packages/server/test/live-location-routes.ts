@@ -440,6 +440,13 @@ const WRITE_ROUTES: Readonly<Record<string, RouteSpec>> = {
         path: "/api/landed/context",
         body: { repo: REPO, path: FILE, commits: [{ sha: "abcdef1234567", authorEmail: "robin@example.com", committedAt: CREATED_AT }] },
       },
+      // A file only her LIVE session touched (integration review H4): "matched
+      // or not" about it was "is she inside the presence window now", so a
+      // heartbeat of hers flipped the answer the differential compares.
+      {
+        path: "/api/landed/context",
+        body: { repo: REPO, path: ROBIN_NEW_FILE, commits: [{ sha: "abcdef1234567", authorEmail: "robin@example.com", committedAt: CREATED_AT }] },
+      },
     ],
     colleague: "withheld",
     self: { none: "the stop names OTHER developers' work; the caller's own is excluded" },

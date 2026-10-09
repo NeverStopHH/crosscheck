@@ -676,6 +676,38 @@ describe("the landed-change stop (review round 3, H2)", () => {
     expect(new Set(answers).size).toBe(1);
     expect(answers[0]).toContain(ROBIN_SOLVED);
   });
+
+  test("answers the same about her live session's file while she goes quiet and works again (integration review H4)", async () => {
+    // A file only her LIVE session touched: "matched or not" was "is she
+    // inside the presence window now". Polled once a second, it flipped at
+    // her last record plus the TTL, and one heartbeat flipped it back.
+    const world = await seedOptedOutWorld();
+    const ask = async (): Promise<string> =>
+      (
+        await postAs(world, "nick", "/api/landed/context", {
+          repo: REPO,
+          path: ROBIN_NEW_FILE,
+          commits: [{ sha: LANDED_SHA, authorEmail: "robin@example.com", committedAt: CREATED_AT }],
+        })
+      ).body;
+
+    const answers = [await ask()];
+    for (let poll = 0; poll < LIVENESS_POLLS; poll += 1) {
+      world.harness.clock.advanceSeconds(1);
+      answers.push(await ask());
+    }
+    const heartbeat = await world.harness.app.request(
+      `/api/sessions/${ROBIN_LIVE}/heartbeat`,
+      jsonRequest("POST", world.robin.apiKey, { status: "implementing" }),
+    );
+    answers.push(await ask());
+
+    expect(heartbeat.status).toBe(200);
+    expect(new Set(answers).size).toBe(1);
+    expect(answers[0]).toContain(ROBIN_HOST_CONTEXT);
+  });
 });
 
+/** Past the presence TTL from the read: her live session goes quiet inside the polls. */
+const LIVENESS_POLLS = 120;
 const MS_PER_DAY = 86_400_000;

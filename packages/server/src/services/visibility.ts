@@ -281,10 +281,13 @@
  *                                   opted-out developer cannot decide what
  *                                   the reader is shown either
  *  10. POST /api/landed/context  — the teammate work a landed-change stop
- *                                   names (step 3). Presence opt-out applies
- *                                   there only while that work's session is
- *                                   live: an ended session's work is
- *                                   published, a live one is presence
+ *                                   names (step 3). Presence opt-out does
+ *                                   not decide WHICH work is named: her work
+ *                                   is published, live or ended, and the
+ *                                   match reads no time and no state of her
+ *                                   sessions — "is it live" is presence
+ *                                   (integration review H4); its times are
+ *                                   withheld from the answer
  *  11. GET /api/landed/notices   — the author's notice (landed changes,
  *                                   step 4): X's stop at my landed change,
  *                                   in my briefing and, on the same list, in
