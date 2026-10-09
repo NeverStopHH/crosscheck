@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 2405
+    # PRINTS: 2446
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -179,6 +179,7 @@ jobs:
     # PRINTS: packages/cli/src/ci-report/run.ts 4
     # PRINTS: packages/cli/src/cli/agent-host.ts 7
     # PRINTS: packages/cli/src/cli/conference.ts 15
+    # PRINTS: packages/cli/src/cli/confirm.ts 1
     # PRINTS: packages/cli/src/cli/doctor-global.ts 4
     # PRINTS: packages/cli/src/cli/doctor-hub-transport.ts 2
     # PRINTS: packages/cli/src/cli/doctor-landed-authors.ts 9
@@ -203,12 +204,12 @@ jobs:
     # PRINTS: packages/cli/src/cli/pilot-label-render.ts 1
     # PRINTS: packages/cli/src/cli/pilot-label.ts 8
     # PRINTS: packages/cli/src/cli/pilot-mark.ts 4
-    # PRINTS: packages/cli/src/cli/pilot-mine-render.ts 13
+    # PRINTS: packages/cli/src/cli/pilot-mine-render.ts 14
     # PRINTS: packages/cli/src/cli/pilot-mine.ts 1
-    # PRINTS: packages/cli/src/cli/pilot-render.ts 36
+    # PRINTS: packages/cli/src/cli/pilot-render.ts 37
     # PRINTS: packages/cli/src/cli/pilot.ts 3
     # PRINTS: packages/cli/src/cli/pin-observability.ts 14
-    # PRINTS: packages/cli/src/cli/pin-render.ts 7
+    # PRINTS: packages/cli/src/cli/pin-render.ts 8
     # PRINTS: packages/cli/src/cli/pin.ts 10
     # PRINTS: packages/cli/src/cli/project-copy.ts 9
     # PRINTS: packages/cli/src/cli/revalidate.ts 2
@@ -325,7 +326,7 @@ jobs:
     # PRINTS: hints/precision.ts 2
     # PRINTS: hints/render.ts 21
     # PRINTS: hints/select.ts 16
-    # PRINTS: http/client.ts 4
+    # PRINTS: http/client.ts 5
     # PRINTS: http/coverage.ts 5
     # PRINTS: http/hint-outcomes.ts 4
     # PRINTS: http/hub.ts 18
@@ -400,6 +401,7 @@ jobs:
     # PRINTS: packages/connector-cursor/src/runner.ts 5
     # PRINTS: packages/schema/src/causal-guarantees.ts 9
     # PRINTS: packages/schema/src/claim-revalidation.ts 1
+    # PRINTS: packages/schema/src/client-release.ts 1
     # PRINTS: packages/schema/src/commit-evidence.ts 2
     # PRINTS: packages/schema/src/default-branch.ts 1
     # PRINTS: packages/schema/src/delivery-id.ts 2
@@ -421,9 +423,10 @@ jobs:
     # PRINTS: packages/schema/src/telemetry-loss.ts 6
     # PRINTS: packages/server/scripts/unland-false-landed.ts 12
     # PRINTS: packages/server/src/constants.ts 5
-    # PRINTS: packages/server/src/db/bootstrap.sql 44
+    # PRINTS: packages/server/src/db/bootstrap.sql 46
     # PRINTS: packages/server/src/db/client.ts 8
     # PRINTS: packages/server/src/db/schema.ts 1
+    # PRINTS: packages/server/src/http/client-release.ts 1
     # PRINTS: packages/server/src/http/forwarded.ts 10
     # PRINTS: packages/server/src/http/listen.ts 12
     # PRINTS: packages/server/src/http/peer.ts 2
@@ -443,12 +446,12 @@ jobs:
     # PRINTS: packages/server/src/routes/pins.ts 4
     # PRINTS: packages/server/src/routes/search.ts 1
     # PRINTS: packages/server/src/routes/sessions.ts 2
-    # PRINTS: packages/server/src/routes/settings.ts 2
+    # PRINTS: packages/server/src/routes/settings.ts 3
     # PRINTS: packages/server/src/routes/solved-matches.ts 1
     # PRINTS: packages/server/src/routes/suspect.ts 5
     # PRINTS: packages/server/src/routes/team-settings.ts 1
     # PRINTS: packages/server/src/routes/ui-ceremony-artifacts.ts 2
-    # PRINTS: packages/server/src/routes/ui-ceremony-confirm.ts 1
+    # PRINTS: packages/server/src/routes/ui-ceremony-confirm.ts 2
     # PRINTS: packages/server/src/routes/ui-ceremony.ts 9
     # PRINTS: packages/server/src/routes/ui-pages.tsx 7
     # PRINTS: packages/server/src/routes/ui-passkeys.tsx 1
@@ -468,6 +471,7 @@ jobs:
     # PRINTS: packages/server/src/services/confirm-page.ts 1
     # PRINTS: packages/server/src/services/confirmation-batch.ts 9
     # PRINTS: packages/server/src/services/confirmation-records.ts 1
+    # PRINTS: packages/server/src/services/confirmation-rollback.ts 4
     # PRINTS: packages/server/src/services/contradictions.ts 1
     # PRINTS: packages/server/src/services/coverage-order.ts 5
     # PRINTS: packages/server/src/services/coverage.ts 44
@@ -476,6 +480,7 @@ jobs:
     # PRINTS: packages/server/src/services/developers.ts 13
     # PRINTS: packages/server/src/services/diagnosis.ts 16
     # PRINTS: packages/server/src/services/doc-upgrade.ts 10
+    # PRINTS: packages/server/src/services/draft-apply.ts 1
     # PRINTS: packages/server/src/services/draft-doors.ts 5
     # PRINTS: packages/server/src/services/draft-kinds.ts 2
     # PRINTS: packages/server/src/services/draft-link-cleanup.ts 17
@@ -485,30 +490,30 @@ jobs:
     # PRINTS: packages/server/src/services/evidence-axes.ts 2
     # PRINTS: packages/server/src/services/ghost-overlap.ts 7
     # PRINTS: packages/server/src/services/hint-deliveries.ts 4
-    # PRINTS: packages/server/src/services/hint-outcome-view.ts 16
+    # PRINTS: packages/server/src/services/hint-outcome-view.ts 17
     # PRINTS: packages/server/src/services/hint-outcomes.ts 21
     # PRINTS: packages/server/src/services/hints.ts 16
     # PRINTS: packages/server/src/services/hub-install.ts 2
-    # PRINTS: packages/server/src/services/human-drafts.ts 8
-    # PRINTS: packages/server/src/services/human-provenance.ts 3
+    # PRINTS: packages/server/src/services/human-drafts.ts 11
+    # PRINTS: packages/server/src/services/human-provenance.ts 8
     # PRINTS: packages/server/src/services/intent-ledger.ts 12
     # PRINTS: packages/server/src/services/landed-context.ts 22
     # PRINTS: packages/server/src/services/landed-notices.ts 28
     # PRINTS: packages/server/src/services/landed-repair.ts 8
     # PRINTS: packages/server/src/services/landed.ts 11
     # PRINTS: packages/server/src/services/live-location.ts 35
-    # PRINTS: packages/server/src/services/noise-label.ts 3
+    # PRINTS: packages/server/src/services/noise-label.ts 4
     # PRINTS: packages/server/src/services/normalized-doc.ts 6
-    # PRINTS: packages/server/src/services/outcome-population.ts 39
-    # PRINTS: packages/server/src/services/passkeys.ts 9
+    # PRINTS: packages/server/src/services/outcome-population.ts 42
+    # PRINTS: packages/server/src/services/passkeys.ts 13
     # PRINTS: packages/server/src/services/pilot-candidates.ts 16
     # PRINTS: packages/server/src/services/pilot-label-figures.ts 10
-    # PRINTS: packages/server/src/services/pilot-outcome-figures.ts 5
+    # PRINTS: packages/server/src/services/pilot-outcome-figures.ts 6
     # PRINTS: packages/server/src/services/pilot-report.ts 25
     # PRINTS: packages/server/src/services/pilot-session-set.ts 9
-    # PRINTS: packages/server/src/services/pilot.ts 30
-    # PRINTS: packages/server/src/services/pins.ts 11
-    # PRINTS: packages/server/src/services/pointer-standing.ts 11
+    # PRINTS: packages/server/src/services/pilot.ts 33
+    # PRINTS: packages/server/src/services/pins.ts 12
+    # PRINTS: packages/server/src/services/pointer-standing.ts 12
     # PRINTS: packages/server/src/services/presence.ts 1
     # PRINTS: packages/server/src/services/questions.ts 9
     # PRINTS: packages/server/src/services/record-handlers.ts 26
@@ -537,8 +542,9 @@ jobs:
     # PRINTS: packages/server/src/services/waiver-terminations.ts 4
     # PRINTS: packages/server/src/services/waivers.ts 5
     # PRINTS: packages/server/src/services/webauthn.ts 13
+    # PRINTS: packages/server/src/ui/format.ts 1
     # PRINTS: packages/server/src/ui/layout.tsx 1
-    # PRINTS: packages/server/src/ui/pages/confirm.tsx 2
+    # PRINTS: packages/server/src/ui/pages/confirm.tsx 3
     # PRINTS: packages/server/src/ui/pages/feed.tsx 4
     # PRINTS: packages/server/src/ui/pages/passkeys.tsx 1
     # PRINTS: packages/server/src/ui/pages/waivers.tsx 2
@@ -558,7 +564,7 @@ jobs:
     # PRINTS: ask-teammate.ts 1
     # PRINTS: attempt.ts 5
     # PRINTS: before-submit-prompt.ts 1
-    # PRINTS: bootstrap.sql 44
+    # PRINTS: bootstrap.sql 46
     # PRINTS: briefing.ts 9
     # PRINTS: calibration.ts 1
     # PRINTS: capabilities.ts 9
@@ -579,16 +585,19 @@ jobs:
     # PRINTS: claim-revalidations.ts 7
     # PRINTS: claim-surface.ts 1
     # PRINTS: claim-validity.ts 11
-    # PRINTS: client.ts 12
+    # PRINTS: client-release.ts 2
+    # PRINTS: client.ts 13
     # PRINTS: cloud-agent-identity.ts 1
     # PRINTS: commit-evidence.ts 6
     # PRINTS: conference-cost.ts 1
     # PRINTS: conference.ts 27
     # PRINTS: config.ts 4
     # PRINTS: confirm-page.ts 1
-    # PRINTS: confirm.tsx 2
+    # PRINTS: confirm.ts 1
+    # PRINTS: confirm.tsx 3
     # PRINTS: confirmation-batch.ts 9
     # PRINTS: confirmation-records.ts 1
+    # PRINTS: confirmation-rollback.ts 4
     # PRINTS: connected-repo.ts 3
     # PRINTS: constants.ts 17
     # PRINTS: contradictions.ts 1
@@ -619,6 +628,7 @@ jobs:
     # PRINTS: doctor-retention.ts 3
     # PRINTS: doctor-sharing.ts 3
     # PRINTS: doctor.ts 78
+    # PRINTS: draft-apply.ts 1
     # PRINTS: draft-backlog.ts 8
     # PRINTS: draft-doors.ts 5
     # PRINTS: draft-kinds.ts 2
@@ -651,6 +661,7 @@ jobs:
     # PRINTS: fix-diff.ts 7
     # PRINTS: fixture.ts 1
     # PRINTS: flush.ts 3
+    # PRINTS: format.ts 1
     # PRINTS: forwarded.ts 10
     # PRINTS: gate.ts 9
     # PRINTS: gates.ts 1
@@ -663,7 +674,7 @@ jobs:
     # PRINTS: heartbeat.ts 1
     # PRINTS: held-deliveries.ts 13
     # PRINTS: hint-deliveries.ts 4
-    # PRINTS: hint-outcome-view.ts 16
+    # PRINTS: hint-outcome-view.ts 17
     # PRINTS: hint-outcome.ts 1
     # PRINTS: hint-outcomes.ts 27
     # PRINTS: hint.ts 13
@@ -672,9 +683,9 @@ jobs:
     # PRINTS: hub-install.ts 2
     # PRINTS: hub-status.ts 3
     # PRINTS: hub.ts 18
-    # PRINTS: human-drafts.ts 8
+    # PRINTS: human-drafts.ts 11
     # PRINTS: human-judgement-producers.ts 1
-    # PRINTS: human-provenance.ts 3
+    # PRINTS: human-provenance.ts 8
     # PRINTS: index.ts 15
     # PRINTS: init-global.ts 2
     # PRINTS: init-io.ts 10
@@ -710,17 +721,17 @@ jobs:
     # PRINTS: loss-report.ts 14
     # PRINTS: manifest-doc.ts 2
     # PRINTS: mark-hint-outcome.ts 13
-    # PRINTS: noise-label.ts 3
+    # PRINTS: noise-label.ts 4
     # PRINTS: noise.ts 11
     # PRINTS: normalized-doc.ts 6
     # PRINTS: outcome-clause.ts 2
-    # PRINTS: outcome-population.ts 39
+    # PRINTS: outcome-population.ts 42
     # PRINTS: outcome-render.ts 8
     # PRINTS: outcome.ts 16
     # PRINTS: output.ts 1
     # PRINTS: parse.ts 2
     # PRINTS: passkey-status.ts 4
-    # PRINTS: passkeys.ts 10
+    # PRINTS: passkeys.ts 14
     # PRINTS: passkeys.tsx 1
     # PRINTS: paths.ts 11
     # PRINTS: payload.ts 1
@@ -731,20 +742,20 @@ jobs:
     # PRINTS: pilot-label.ts 8
     # PRINTS: pilot-mark.ts 9
     # PRINTS: pilot-marks.ts 2
-    # PRINTS: pilot-mine-render.ts 13
+    # PRINTS: pilot-mine-render.ts 14
     # PRINTS: pilot-mine.ts 1
-    # PRINTS: pilot-outcome-figures.ts 5
-    # PRINTS: pilot-render.ts 36
+    # PRINTS: pilot-outcome-figures.ts 6
+    # PRINTS: pilot-render.ts 37
     # PRINTS: pilot-report.ts 25
     # PRINTS: pilot-session-set.ts 9
-    # PRINTS: pilot.ts 41
+    # PRINTS: pilot.ts 44
     # PRINTS: pin-observability.ts 14
     # PRINTS: pin-paths.ts 8
-    # PRINTS: pin-render.ts 7
+    # PRINTS: pin-render.ts 8
     # PRINTS: pin-sweep.ts 2
     # PRINTS: pin.ts 12
-    # PRINTS: pins.ts 15
-    # PRINTS: pointer-standing.ts 11
+    # PRINTS: pins.ts 16
+    # PRINTS: pointer-standing.ts 12
     # PRINTS: post-tool-use-failure.ts 5
     # PRINTS: post-tool-use.ts 11
     # PRINTS: post.ts 1
@@ -800,7 +811,7 @@ jobs:
     # PRINTS: sessions.ts 23
     # PRINTS: set-intent.ts 5
     # PRINTS: settings-merge.ts 2
-    # PRINTS: settings.ts 2
+    # PRINTS: settings.ts 3
     # PRINTS: shared.ts 2
     # PRINTS: sharing.ts 30
     # PRINTS: similarity-gate.ts 4
@@ -835,7 +846,7 @@ jobs:
     # PRINTS: transcript.ts 4
     # PRINTS: triggers.ts 6
     # PRINTS: ui-ceremony-artifacts.ts 2
-    # PRINTS: ui-ceremony-confirm.ts 1
+    # PRINTS: ui-ceremony-confirm.ts 2
     # PRINTS: ui-ceremony.ts 9
     # PRINTS: ui-pages.tsx 7
     # PRINTS: ui-passkeys.tsx 1

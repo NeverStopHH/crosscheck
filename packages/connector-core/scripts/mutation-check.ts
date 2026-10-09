@@ -25298,6 +25298,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/ci-report.test.ts 6
  * PRINTS: packages/cli/test/ci-status-render.test.ts 3
  * PRINTS: packages/cli/test/conference-cli.test.ts 12
+ * PRINTS: packages/cli/test/confirm-cli.test.ts 1
  * PRINTS: packages/cli/test/connector-capture-health.test.ts 3
  * PRINTS: packages/cli/test/coverage-cli.test.ts 6
  * PRINTS: packages/cli/test/cursor-doctor.test.ts 4
@@ -25340,12 +25341,12 @@ interface Outcome {
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
  * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 17
- * PRINTS: packages/cli/test/pilot-mine-render.test.ts 12
- * PRINTS: packages/cli/test/pilot-render.test.ts 35
+ * PRINTS: packages/cli/test/pilot-mine-render.test.ts 13
+ * PRINTS: packages/cli/test/pilot-render.test.ts 36
  * PRINTS: packages/cli/test/pin-denylist-door.test.ts 16
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pin-waive-hostile-hub.test.ts 1
- * PRINTS: packages/cli/test/pins-cli.test.ts 6
+ * PRINTS: packages/cli/test/pins-cli.test.ts 7
  * PRINTS: packages/cli/test/presence-reenabled-cli.test.ts 3
  * PRINTS: packages/cli/test/publish-workflow.test.ts 2
  * PRINTS: packages/cli/test/release-preflight.test.ts 5
@@ -25455,6 +25456,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/claim-surface.test.ts 1
  * PRINTS: packages/connector-core/test/claim-validity-parity.test.ts 2
  * PRINTS: packages/connector-core/test/claim-validity-render.test.ts 2
+ * PRINTS: packages/connector-core/test/client-release-header.test.ts 1
  * PRINTS: packages/connector-core/test/commit-evidence.test.ts 1
  * PRINTS: packages/connector-core/test/conference-cost.test.ts 1
  * PRINTS: packages/connector-core/test/conference-report.test.ts 3
@@ -25567,6 +25569,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/causal-guarantees.test.ts 7
  * PRINTS: packages/schema/test/claim.test.ts 1
+ * PRINTS: packages/schema/test/client-release.test.ts 1
  * PRINTS: packages/schema/test/default-branch.test.ts 1
  * PRINTS: packages/schema/test/fallback-title.test.ts 2
  * PRINTS: packages/schema/test/file-ref.test.ts 5
@@ -25578,6 +25581,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/schema/test/telemetry-loss.test.ts 2
  * PRINTS: packages/server/test/absences.test.ts 7
+ * PRINTS: packages/server/test/banner-liveness-reuse.test.ts 2
  * PRINTS: packages/server/test/calibration.test.ts 1
  * PRINTS: packages/server/test/causal-guarantees.test.ts 23
  * PRINTS: packages/server/test/ci-coverage.test.ts 3
@@ -25585,10 +25589,12 @@ interface Outcome {
  * PRINTS: packages/server/test/claim-binding-ingest.test.ts 1
  * PRINTS: packages/server/test/claim-revalidations.test.ts 10
  * PRINTS: packages/server/test/claim-validity.test.ts 2
+ * PRINTS: packages/server/test/closed-month-snapshot.test.ts 4
  * PRINTS: packages/server/test/commit-evidence-opt-out.test.ts 3
  * PRINTS: packages/server/test/conference.test.ts 10
  * PRINTS: packages/server/test/confirm-batch-limits.test.ts 3
  * PRINTS: packages/server/test/confirm-batch.test.ts 6
+ * PRINTS: packages/server/test/confirm-item-results.test.ts 2
  * PRINTS: packages/server/test/confirmation-records.test.ts 2
  * PRINTS: packages/server/test/coverage-answer-sessions.test.ts 10
  * PRINTS: packages/server/test/coverage-compat-0.10.test.ts 2
@@ -25600,9 +25606,10 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage-successor-session.test.ts 3
  * PRINTS: packages/server/test/coverage.test.ts 13
  * PRINTS: packages/server/test/ddl-sync-hint-outcomes.test.ts 22
+ * PRINTS: packages/server/test/ddl-sync-provenance.test.ts 3
  * PRINTS: packages/server/test/ddl-sync-waiver-authority.test.ts 5
  * PRINTS: packages/server/test/ddl-sync-work-context-updater.test.ts 1
- * PRINTS: packages/server/test/ddl-sync.test.ts 11
+ * PRINTS: packages/server/test/ddl-sync.test.ts 10
  * PRINTS: packages/server/test/developer-branches.test.ts 5
  * PRINTS: packages/server/test/developer-emails.test.ts 5
  * PRINTS: packages/server/test/developer-listing.test.ts 5
@@ -25628,7 +25635,7 @@ interface Outcome {
  * PRINTS: packages/server/test/ghost-overlap.test.ts 7
  * PRINTS: packages/server/test/hint-content-floor.test.ts 6
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
- * PRINTS: packages/server/test/hint-outcome-retention.test.ts 5
+ * PRINTS: packages/server/test/hint-outcome-retention.test.ts 7
  * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 23
  * PRINTS: packages/server/test/hint-outcomes.test.ts 50
  * PRINTS: packages/server/test/hints-records-outcomes.test.ts 3
@@ -25641,6 +25648,7 @@ interface Outcome {
  * PRINTS: packages/server/test/intent-ledger-authority.test.ts 2
  * PRINTS: packages/server/test/intent-ledger-write.test.ts 10
  * PRINTS: packages/server/test/key-rotation.test.ts 6
+ * PRINTS: packages/server/test/label-slot.test.ts 2
  * PRINTS: packages/server/test/landed-context.test.ts 22
  * PRINTS: packages/server/test/landed-notices.test.ts 34
  * PRINTS: packages/server/test/landed-repair.test.ts 20
@@ -25656,6 +25664,7 @@ interface Outcome {
  * PRINTS: packages/server/test/live-location-surfaces.test.ts 41
  * PRINTS: packages/server/test/live-location-told.test.ts 1
  * PRINTS: packages/server/test/location-index-rebuild.test.ts 7
+ * PRINTS: packages/server/test/minimums-per-figure.test.ts 2
  * PRINTS: packages/server/test/normalized-doc.test.ts 2
  * PRINTS: packages/server/test/passkey-announcements.test.ts 1
  * PRINTS: packages/server/test/passkey-revocation-terminates.test.ts 5
@@ -25667,18 +25676,22 @@ interface Outcome {
  * PRINTS: packages/server/test/pilot-marks.test.ts 14
  * PRINTS: packages/server/test/pilot-outcome-figures.test.ts 28
  * PRINTS: packages/server/test/pilot-repairs.test.ts 5
- * PRINTS: packages/server/test/pilot-report.test.ts 33
+ * PRINTS: packages/server/test/pilot-report.test.ts 34
  * PRINTS: packages/server/test/pilot-retention.test.ts 4
  * PRINTS: packages/server/test/pilot-sessions.test.ts 11
  * PRINTS: packages/server/test/pilot-substance-channel.test.ts 2
  * PRINTS: packages/server/test/pins.test.ts 4
+ * PRINTS: packages/server/test/pre-011-drafts.test.ts 2
  * PRINTS: packages/server/test/presence-optout.test.ts 2
  * PRINTS: packages/server/test/presence-reenable.test.ts 6
  * PRINTS: packages/server/test/presence.test.ts 1
  * PRINTS: packages/server/test/questions.test.ts 8
  * PRINTS: packages/server/test/records.test.ts 2
  * PRINTS: packages/server/test/retention-registry.test.ts 3
+ * PRINTS: packages/server/test/review-survivors-r2.test.ts 2
  * PRINTS: packages/server/test/review-survivors.test.ts 6
+ * PRINTS: packages/server/test/revocation-reasons.test.ts 6
+ * PRINTS: packages/server/test/revocation-rollback.test.ts 7
  * PRINTS: packages/server/test/search-filters.test.ts 10
  * PRINTS: packages/server/test/search-tokens.test.ts 5
  * PRINTS: packages/server/test/search.test.ts 3
@@ -25709,6 +25722,7 @@ interface Outcome {
  * PRINTS: packages/server/test/team-settings.test.ts 9
  * PRINTS: packages/server/test/ui-approvals.test.ts 11
  * PRINTS: packages/server/test/ui-ceremony-localhost.test.ts 6
+ * PRINTS: packages/server/test/ui-confirm-controls.test.ts 1
  * PRINTS: packages/server/test/ui-confirm-link.test.ts 3
  * PRINTS: packages/server/test/ui-confirm-signed.test.ts 2
  * PRINTS: packages/server/test/ui-feed.test.ts 3
