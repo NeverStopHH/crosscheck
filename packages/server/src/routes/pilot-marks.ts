@@ -38,6 +38,7 @@ import {
 
 import { NOISE_MARK_MAX_SESSIONS, PILOT_RETENTION_DAYS } from "../constants.ts";
 
+import { refusePreDraftingClient } from "../http/client-release.ts";
 import { fail, ok } from "../http/envelope.ts";
 import { formatIssues, readJsonBody } from "../http/request.ts";
 import { developerAuth } from "../middleware/auth.ts";
@@ -166,6 +167,10 @@ export const pilotMarkRoutes = (deps: AppDeps): Hono<AppEnv> => {
   });
 
   router.post("/", developerAuth(deps), async (c) => {
+    const preDrafting = refusePreDraftingClient(c, deps);
+    if (preDrafting !== null) {
+      return preDrafting;
+    }
     const parsed = PilotMarkSchema.safeParse(await readJsonBody(c));
     if (!parsed.success) {
       // The presence literal fails HERE, before anything reaches the

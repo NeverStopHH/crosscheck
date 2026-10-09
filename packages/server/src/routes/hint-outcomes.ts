@@ -23,6 +23,7 @@ import {
 import type { DraftProvenance, HintOutcomeChannel } from "@crosscheck/schema";
 
 import { PILOT_REPORT_DEFAULT_WINDOW_DAYS, PILOT_RETENTION_DAYS } from "../constants.ts";
+import { refusePreDraftingClient } from "../http/client-release.ts";
 import { fail, ok } from "../http/envelope.ts";
 import { formatIssues, readJsonBody } from "../http/request.ts";
 import { developerAuth } from "../middleware/auth.ts";
@@ -115,6 +116,10 @@ export const hintOutcomeRoutes = (deps: AppDeps): Hono<AppEnv> => {
    * overrode`). A person's word is never overturned by an agent's.
    */
   const record = (recordedVia: HintOutcomeChannel) => async (c: Context<AppEnv>) => {
+    const preDrafting = refusePreDraftingClient(c, deps);
+    if (preDrafting !== null) {
+      return preDrafting;
+    }
     const parsed = HintOutcomeSchema.safeParse(await readJsonBody(c));
     if (!parsed.success) {
       return fail(c, 400, "validation_failed", formatIssues(parsed.error));

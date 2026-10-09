@@ -9,6 +9,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { Context } from "hono";
 
+import { refusePreDraftingClient } from "../http/client-release.ts";
 import { fail, ok } from "../http/envelope.ts";
 import { readJsonBody, formatIssues } from "../http/request.ts";
 import { developerAuth } from "../middleware/auth.ts";
@@ -133,6 +134,11 @@ export const settingsRoutes = (deps: AppDeps): Hono<AppEnv> => {
       );
       return ok(c, { presenceOptOut: true });
     }
+    // Presence back on drafts, so a client older than 0.11 may be refused here — never above.
+    const preDrafting = refusePreDraftingClient(c, deps);
+    if (preDrafting !== null) {
+      return preDrafting;
+    }
     const outcome = await draftPresenceOn(deps, developerId);
     if ("refusal" in outcome) {
       return fail(c, 422, outcome.refusal, DRAFT_REFUSAL_SENTENCE[outcome.refusal]);
@@ -148,6 +154,10 @@ export const settingsRoutes = (deps: AppDeps): Hono<AppEnv> => {
   });
 
   router.post("/mutes", async (c) => {
+    const preDrafting = refusePreDraftingClient(c, deps);
+    if (preDrafting !== null) {
+      return preDrafting;
+    }
     const parsed = MuteBodySchema.safeParse(await readJsonBody(c));
     if (!parsed.success) {
       return fail(c, 400, "validation_failed", formatIssues(parsed.error));
@@ -183,6 +193,10 @@ export const settingsRoutes = (deps: AppDeps): Hono<AppEnv> => {
   });
 
   router.delete("/mutes/:ref", async (c) => {
+    const preDrafting = refusePreDraftingClient(c, deps);
+    if (preDrafting !== null) {
+      return preDrafting;
+    }
     const ref = c.req.param("ref");
     if (ref.length === 0 || ref.length > MAX_DEVELOPER_REF_CHARS) {
       return fail(c, 400, "validation_failed", "invalid developer reference");

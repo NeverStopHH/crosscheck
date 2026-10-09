@@ -169,6 +169,12 @@ export {
 } from "./passkey.ts";
 export type { EnrolmentSource, PasskeyRevokeReason, PasskeyRevoker } from "./passkey.ts";
 export {
+  CLIENT_RELEASE,
+  CLIENT_RELEASE_HEADER,
+  FIRST_DRAFTING_CLIENT_RELEASE,
+  isReleaseAtLeast,
+} from "./client-release.ts";
+export {
   DRAFT_DECISIONS,
   DRAFT_KINDS,
   DRAFT_PROVENANCES,

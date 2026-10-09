@@ -48,6 +48,7 @@ import {
   unstorableTextPath,
 } from "@crosscheck/schema";
 
+import { refusePreDraftingClient } from "../http/client-release.ts";
 import { fail, ok } from "../http/envelope.ts";
 import { formatIssues, readJsonBody } from "../http/request.ts";
 import { developerAuth } from "../middleware/auth.ts";
@@ -122,6 +123,10 @@ export const pinsRoutes = (deps: AppDeps): Hono<AppEnv> => {
   router.use("*", developerAuth(deps));
 
   router.post("/", async (c) => {
+    const preDrafting = refusePreDraftingClient(c, deps);
+    if (preDrafting !== null) {
+      return preDrafting;
+    }
     const parsed = PinSchema.safeParse(await readJsonBody(c));
     if (!parsed.success) {
       return fail(c, 400, "validation_failed", formatIssues(parsed.error));
@@ -211,6 +216,10 @@ export const pinsRoutes = (deps: AppDeps): Hono<AppEnv> => {
   });
 
   router.post("/:id/broke", async (c) => {
+    const preDrafting = refusePreDraftingClient(c, deps);
+    if (preDrafting !== null) {
+      return preDrafting;
+    }
     const id = PinIdSchema.safeParse(c.req.param("id"));
     if (!id.success) {
       return fail(c, 400, "validation_failed", formatIssues(id.error));

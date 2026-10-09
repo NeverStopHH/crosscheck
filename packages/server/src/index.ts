@@ -16,6 +16,7 @@ import {
   restoredOnLoopbackWarning,
   serveOnPlan,
 } from "./http/listen.ts";
+import { REFUSE_PRE_011_DRAFTS_ENV, parseRefusePreDraftingClients } from "./http/client-release.ts";
 import { NO_TRUSTED_PROXIES, TRUSTED_PROXIES_ENV, parseTrustedProxies } from "./http/forwarded.ts";
 import type { TrustedProxies } from "./http/forwarded.ts";
 import type { ListenKind } from "./http/listen.ts";
@@ -166,6 +167,12 @@ export interface CreateServerOptions {
   readonly trustedProxies?: TrustedProxies;
   /** How `startServer` decided where to listen; omitted = no socket of this app's own. */
   readonly listen?: ListenKind;
+  /**
+   * Refuse drafts from clients older than 0.11 (http/client-release.ts).
+   * Omitted = accept every client: `startServer` passes the parsed
+   * `CROSSCHECK_REFUSE_PRE_011_DRAFTS`.
+   */
+  readonly refusePreDraftingClients?: boolean;
 }
 
 /**
@@ -203,6 +210,7 @@ export const createServer = (options: CreateServerOptions): Hono<AppEnv> =>
     peerAddress: options.peerAddress ?? bunPeerAddress,
     trustedProxies: options.trustedProxies ?? NO_TRUSTED_PROXIES,
     listen: options.listen ?? null,
+    refusePreDraftingClients: options.refusePreDraftingClients ?? false,
   });
 
 const MIN_PORT = 1;
@@ -313,6 +321,8 @@ export const startServer = async (): Promise<void> => {
   if (hasLocalhostBesideHttps(webauthnOrigins)) {
     console.warn(localhostBesideHttpsWarning(webauthnOrigins));
   }
+  // Throws on a value that is neither on nor off, rather than guessing which was meant.
+  const refusePreDraftingClients = parseRefusePreDraftingClients(process.env[REFUSE_PRE_011_DRAFTS_ENV]);
   const app = createServer({
     db,
     adminToken: process.env["ADMIN_TOKEN"] ?? null,
@@ -322,6 +332,7 @@ export const startServer = async (): Promise<void> => {
     webauthnOrigins,
     trustedProxies,
     listen: listenPlan.kind,
+    refusePreDraftingClients,
   });
   // AN OPT-OUT FROM BEFORE THE INDEX FOLLOWED THE SETTING (review round 5,
   // M1): her docs still hold her branch titles, so they are rebuilt BEFORE
