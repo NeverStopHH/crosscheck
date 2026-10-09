@@ -34,39 +34,20 @@ export type Expectations = Readonly<Record<string, ExpectedFailure>>;
  * 0 of the 11 (L1). A finding, reported; the marker stays until it is fixed.
  */
 const H1_CAPTURE_ACROSS_LIVES: ExpectedFailure = { finding: "H1", track: "A", branch: "fix/b2-capture-across-lives" };
-/**
- * I1, decided by the owner: an opted-out teammate working on the file right
- * now is an anonymous live warning for the other side ("a teammate is working
- * on <file> right now"). Track C implemented it (merged at a5f569d8; its own
- * focused gate, release-gate-opted-out.e2e.test.ts, passes): a nameless
- * teammate is ONE group, told once. In this case Nick's subagents meet her
- * first, so the main thread's own edit — the moment P2.told reads — has
- * nothing new to tell, and the person hears it by relay instead. Which of the
- * two the decision means is for the owner: a finding, reported; the
- * assertion is not weakened to make it pass.
- */
-const I1_ANONYMOUS_LIVE_WARNING: ExpectedFailure = { finding: "I1", track: "C", branch: "fix/b2-privacy-seams" };
-/**
- * M5: an opted-out teammate's creation instants read as "last seen". Track C
- * fixed the statusline (P2.anonymous.when.statusline passes since its
- * merge); the briefing's age line ("Mike, 2s ago") is a separate render and
- * still says when. A finding, reported.
- */
-const M5_LAST_SEEN: ExpectedFailure = { finding: "M5", track: "C", branch: "fix/b2-privacy-seams" };
 
 /**
  * WHAT EVERY PROFILE SHOWS, timing or not: the opted-out case (P2,
- * release-gate/gate-opted-out.ts) — the owner's decision on I1 and the
- * review's M5, which P2 reads on two surfaces. The generous variant's whole
- * table.
+ * release-gate/gate-opted-out.ts). The generous variant's whole table.
+ *
+ * Empty since 2026-10-09 (fix/b2-integration-lows). Its two markers came off:
+ *  - I1 (P2.told): the owner's decision read as the coordinator decided it —
+ *    a nameless teammate is ONE group, told once, and Nick's subagents meet
+ *    Mike's file first, so the person hears it by relay before his own edit.
+ *    The assertion now reads from the first subagent hit through that edit.
+ *  - M5 (P2.anonymous.when.briefing): the briefing, the pointer hint and the
+ *    search line print no age off a row the hub marked withheld.
  */
-export const OWNER_DECISIONS_PENDING: Expectations = {
-  // Track C (I1, the owner's decision): Mike has opted out and is working on PlayerMappingGrid.tsx
-  // right now; Nick's main-thread edit of it must tell NICK that a teammate is on it.
-  "P2.told": I1_ANONYMOUS_LIVE_WARNING,
-  // Track C (M5): Nick's briefing reads "Mike, 2s ago" — an instant derived from Mike's work's creation.
-  "P2.anonymous.when.briefing": M5_LAST_SEEN,
-};
+export const OWNER_DECISIONS_PENDING: Expectations = {};
 
 /**
  * THE BATCH-2 FINDINGS the realistic gate shows (production and loaded lanes)
