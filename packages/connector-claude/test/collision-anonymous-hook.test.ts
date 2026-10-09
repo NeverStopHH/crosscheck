@@ -69,6 +69,20 @@ describe("a teammate the hub will not name, live on the file being edited", () =
     expect(stdout).not.toContain("get_diagnosis");
   });
 
+  test("a second edit of her file inside the window asks the hub nothing: a nameless teammate's file rests like a named one's", async () => {
+    // Arrange: Nick asked about her and told on the first edit
+    const fix = await anonymousFixture("ca-rest");
+    await runHook("pre-tool-use", editPayload(fix.repo, OVERLAP_FILE), fix.env);
+    const calls = fix.hub.calls.tripwire;
+
+    // Act
+    const second = await runHook("pre-tool-use", editPayload(fix.repo, OVERLAP_FILE), fix.env);
+
+    // Assert
+    expect(second).toBe("");
+    expect(fix.hub.calls.tripwire).toBe(calls);
+  });
+
   test("a second file asks the agent again, tells the person nothing new, and the statusline counts one teammate", async () => {
     const { repo, env } = await anonymousFixture("ca-second");
     await runHook("pre-tool-use", editPayload(repo, OVERLAP_FILE), env);
