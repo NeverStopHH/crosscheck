@@ -34,8 +34,8 @@ import { agentTexts, personLines } from "./release-gate/host.ts";
 import type { HookRun } from "./release-gate/host.ts";
 import { startHub } from "./release-gate/hub.ts";
 import type { TestHub } from "./release-gate/hub.ts";
-import { SHARED_FILES, runOptedOutCase } from "./release-gate/scenario-opted-out.ts";
-import type { OptedOutWorld } from "./release-gate/scenario-opted-out.ts";
+import { SHARED_FILES, runOptedOutCase } from "./release-gate/scenario-i1-opted-out.ts";
+import type { OptedOutWorld } from "./release-gate/scenario-i1-opted-out.ts";
 import { MIKE_BRANCH, TOPIC_BRANCH } from "./release-gate/scenario-long-session.ts";
 import { targetsOf } from "./release-gate/team.ts";
 

@@ -8,6 +8,8 @@ import {
   runStatusline,
   runSummarizeWorker,
 } from "@crosscheck/connector-claude";
+// Phase timing for hooks: node built-ins only, a null check when CX_HOOK_TRACE is off.
+import { startHookTrace, traceMark, traceSpan } from "@crosscheck/connector-core/trace/hook-trace.ts";
 // The MCP server, the CLI and its help are DYNAMIC imports in their own
 // branches below (batch-2 review, M6): every hook process paid their module
 // evaluation in its boot — the part of a hook's wall clock no budget covers.
@@ -56,7 +58,12 @@ const main = async (): Promise<void> => {
     if (name === undefined || !isHookName(name)) {
       process.exit(EXIT_OK);
     }
-    emitAndExit(await runHook(name, await readStdin(), process.env), EXIT_OK);
+    // Phase timing, only under CX_HOOK_TRACE=1 (connector-core trace/hook-trace.ts).
+    startHookTrace(name, process.env);
+    const stdin = await traceSpan("stdin", readStdin);
+    const output = await runHook(name, stdin, process.env);
+    traceMark("returned");
+    emitAndExit(output, EXIT_OK);
   }
 
   if (command === "statusline") {

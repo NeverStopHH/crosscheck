@@ -25,10 +25,16 @@ import { Glob } from "bun";
 import { join } from "node:path";
 import { z } from "zod";
 
-/** The CI jobs that must have succeeded on the tagged commit (ci.yml's `test` matrix). */
+/**
+ * The CI jobs that must have succeeded on the tagged commit: ci.yml's `test`
+ * matrix, and the release gate at production budgets (ci.yml `release-gate`)
+ * — no tag ships while the pilot's collision is not caught as a developer's
+ * machine runs it.
+ */
 export const REQUIRED_CI_JOBS = [
   "Test & Typecheck (ubuntu-latest)",
   "Test & Typecheck (macos-latest)",
+  "Release gate (production budgets)",
 ] as const;
 
 /** The `name:` of .github/workflows/ci.yml. */

@@ -47,7 +47,8 @@ came from.
    [`release-preflight.ts`](../packages/cli/scripts/release-preflight.ts)
    checks that the tag is `vMAJOR.MINOR.PATCH`, that every package carries
    that version, that the tagged commit is on `main`, and that the Test &
-   Typecheck legs of CI on that commit succeeded. Any failure stops the job
+   Typecheck legs and the release gate at production budgets ("Release gate
+   (production budgets)") of CI on that commit succeeded. Any failure stops the job
    with one line naming it. If CI was still running, re-run the job from the
    Actions tab once it is green.
 

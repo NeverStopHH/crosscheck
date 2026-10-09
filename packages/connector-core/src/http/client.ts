@@ -9,6 +9,7 @@ import {
 import type { ConnectionCause } from "./connection-error.ts";
 import { hubOrigin, isSameOrigin } from "../config/origin.ts";
 import { updateSyncState } from "../state/sync-state.ts";
+import { traceSpan } from "../trace/hook-trace.ts";
 
 const OkEnvelopeSchema = z.object({ ok: z.literal(true), data: z.unknown() });
 
@@ -253,7 +254,18 @@ const keyOriginRefusal = <T>(ctx: HubContext): HubResult<T> | null => {
   );
 };
 
-const performRequest = async <T>(
+/** A route's shape for a phase trace (trace/hook-trace.ts): method and fixed segments, every id `:id`, no query. */
+const routeOf = (method: string, path: string): string =>
+  `${method} ${(path.split("?")[0] ?? "")
+    .split("/")
+    .map((segment) => (/^[a-z][a-z-]*$/.test(segment) || segment === "" ? segment : ":id"))
+    .join("/")}`;
+
+/** Every hub request, timed by route when a hook trace is on. */
+const performRequest = async <T>(ctx: HubContext, request: HubRequest<T>): Promise<HubResult<T>> =>
+  traceSpan(`hub:${routeOf(request.method, request.path)}`, async () => performRequestUntimed(ctx, request));
+
+const performRequestUntimed = async <T>(
   ctx: HubContext,
   request: HubRequest<T>,
 ): Promise<HubResult<T>> => {

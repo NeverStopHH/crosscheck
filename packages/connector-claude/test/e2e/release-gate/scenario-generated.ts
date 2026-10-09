@@ -43,6 +43,10 @@
  *     classification that could not run (check-attr timed out) is counted as
  *     unknown and the target stays ORDINARY — fail toward warning, never
  *     toward silence.
+ *
+ * Under a parallel profile (release-gate/profile.ts) Nick's eight hand edits
+ * are eight subagents at once, so every tripwire ask races the others and a
+ * hit — there must be none — would travel the relay to Nick's main thread.
  */
 import { join } from "node:path";
 
@@ -50,9 +54,11 @@ import { MIKE, NICK } from "../../../../connector-core/test/fixtures/landing-rep
 import { checkoutFor, editEach, fileSource, seedCase } from "./case-kit.ts";
 import type { CaseRepo } from "./case-kit.ts";
 import { writeTree } from "./git.ts";
-import { openSession } from "./host.ts";
-import type { HookRun, HostSession } from "./host.ts";
+import { MAIN_THREAD, openSession } from "./host.ts";
+import type { Actor, HookRun, HostSession } from "./host.ts";
 import type { TestHub } from "./hub.ts";
+import { GENEROUS } from "./profile.ts";
+import type { GateProfile } from "./profile.ts";
 import { makeDeveloper } from "./team.ts";
 import type { GateDeveloper } from "./team.ts";
 
@@ -89,16 +95,51 @@ export interface GeneratedWorld {
   readonly cleanup: readonly string[];
 }
 
-export const runGeneratedCase = async (hub: TestHub): Promise<GeneratedWorld> => {
+/**
+ * Nick's hand edit of each generated file: the runs it got — one at a time on
+ * the main thread, or one subagent each, at once, and then the runs include
+ * that subagent's return to the main thread, where a relayed line would reach
+ * the person.
+ */
+const handEdits = async (
+  session: HostSession,
+  root: string,
+  profile: GateProfile,
+): Promise<ReadonlyMap<string, readonly HookRun[]>> => {
+  const editAs = async (entry: GeneratedClass, actor: Actor): Promise<readonly [string, readonly HookRun[]]> => [
+    entry.path,
+    await session.edit(join(root, entry.path), fileSource(entry.path, "patched by nick"), actor),
+  ];
+  if (!profile.isParallel) {
+    const edits: (readonly [string, readonly HookRun[]])[] = [];
+    for (const entry of GENERATED_CLASSES) {
+      edits.push(await editAs(entry, MAIN_THREAD));
+    }
+    return new Map(edits);
+  }
+  const edits = await Promise.all(
+    GENERATED_CLASSES.map(async (entry) => {
+      const held: { value: readonly HookRun[] } = { value: [] };
+      const returned = await session.subagent("hand-patch", async (actor) => {
+        held.value = (await editAs(entry, actor))[1];
+      });
+      return [entry.path, [...held.value, ...returned]] as const;
+    }),
+  );
+  return new Map(edits);
+};
+
+export const runGeneratedCase = async (hub: TestHub, profile: GateProfile = GENEROUS): Promise<GeneratedWorld> => {
+  const host = { isProcessHost: profile.isProcessHost };
   const repo = await seedCase("generated-only", hub.url, [...MIKE_OWN, ...NICK_OWN, ...GENERATED_CLASSES.map((entry) => entry.path)], {
     ".gitattributes": GITATTRIBUTES,
   });
-  const mike = await makeDeveloper(hub, MIKE, "n2-mike");
-  const nick = await makeDeveloper(hub, NICK, "n2-nick");
+  const mike = await makeDeveloper(hub, MIKE, "n2-mike", profile.budget);
+  const nick = await makeDeveloper(hub, NICK, "n2-nick", profile.budget);
   const mikeAt = await checkoutFor(repo, MIKE, "feat/streaming-deps", "mike");
   const nickAt = await checkoutFor(repo, NICK, "feat/numlabs-sync", "nick");
-  const mikeSession = openSession(mike, "n2-mike-deps", mikeAt.worktree);
-  const nickSession = openSession(nick, "n2-nick-sync", nickAt.worktree);
+  const mikeSession = openSession(mike, "n2-mike-deps", mikeAt.worktree, host);
+  const nickSession = openSession(nick, "n2-nick-sync", nickAt.worktree, host);
 
   mikeSession.label("mike-regenerates");
   await mikeSession.start();
@@ -115,22 +156,23 @@ export const runGeneratedCase = async (hub: TestHub): Promise<GeneratedWorld> =>
     { cwd: mikeAt.worktree },
   );
   await mikeSession.stop();
+  await mikeSession.settle();
 
   nickSession.label("nick-hand-edits");
   await nickSession.start();
   await nickSession.prompt("numlabs sync: retry policy, then fix the generated client by hand");
   await editEach(nickSession, nickAt.worktree, NICK_OWN, "numlabs");
-  const nickEdits = new Map<string, readonly HookRun[]>();
-  for (const entry of GENERATED_CLASSES) {
-    nickEdits.set(entry.path, await nickSession.edit(join(nickAt.worktree, entry.path), fileSource(entry.path, "patched by nick")));
-  }
+  const nickEdits = await handEdits(nickSession, nickAt.worktree, profile);
+  await nickSession.prompt("continue");
   await nickSession.stop();
+  await nickSession.settle();
   const nickStatusline = await nickSession.statusline();
 
   mikeSession.label("mike-next");
   await mikeSession.start("resume");
   await mikeSession.prompt("next: the queue backpressure");
   await editEach(mikeSession, mikeAt.worktree, ["apps/streaming/queue.ts"], "next morning");
+  await mikeSession.settle();
   const mikeStatusline = await mikeSession.statusline();
 
   return {

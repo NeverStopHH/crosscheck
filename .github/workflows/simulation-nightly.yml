@@ -24,6 +24,13 @@
 # as a standing method"). Run it by hand with a seed count, a starting seed,
 # or `rc` for the release-candidate sweep, 5000 seeds of each generator.
 #
+# Beside the sweep, the RELEASE GATE UNDER LOAD (job `release-gate-loaded`):
+# the realistic gate's scenario — production budgets, real hook processes,
+# twelve subagents at once, a compaction and a resume — with every core of
+# the runner already spinning (packages/connector-claude/test/e2e/
+# release-gate-loaded.e2e.test.ts). Pull requests run the same scenario
+# unloaded (ci.yml `release-gate`); a starved machine is a nightly question.
+#
 # INERT UNTIL MERGED. GitHub fires `schedule` only from the default branch.
 # Run it once by hand (Run workflow → `workflow_dispatch`) after it lands on
 # main, then check the first night's run appeared.
@@ -97,5 +104,46 @@ jobs:
         with:
           name: simulation-${{ matrix.generator }}-${{ github.run_number }}-${{ github.run_attempt }}
           path: sim-report/
+          if-no-files-found: warn
+          retention-days: 30
+
+  release-gate-loaded:
+    # The pilot's Nick/Mike collision and the negative controls N1–N5 at
+    # production budgets, with one burner process per core started after the
+    # hub is warm and stopped by PID when the file ends (release-gate/
+    # burners.ts; each burner also stops itself at a deadline and when the
+    # runner is gone). The standard under load: wherever a PERSON must be told
+    # of a collision, the line reaches them or the connector booked a line
+    # that says why; every other assertion and every silence is held as in
+    # the pull-request lane. Every night, and on the release-candidate run.
+    name: Release gate under load
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CX_GATE_LANE: loaded
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: The release gate with every core busy
+        run: |
+          set -o pipefail
+          bun test --timeout=60000 packages/connector-claude/test/e2e/release-gate-loaded.e2e.test.ts 2>&1 | tee release-gate-loaded.log
+      # As in ci.yml `release-gate`: which case failed, on which assertion,
+      # and the console log kept (connector-claude/scripts/release-gate-summary.ts).
+      - name: Which case failed
+        if: failure()
+        run: >-
+          bun run packages/connector-claude/scripts/release-gate-summary.ts
+          --log release-gate-loaded.log
+          --run-url ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          --artifact release-gate-loaded-${{ github.run_number }}-${{ github.run_attempt }}
+          --summary "$GITHUB_STEP_SUMMARY"
+      - name: Keep the gate's log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-gate-loaded-${{ github.run_number }}-${{ github.run_attempt }}
+          path: release-gate-loaded.log
           if-no-files-found: warn
           retention-days: 30

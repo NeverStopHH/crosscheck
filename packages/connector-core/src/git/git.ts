@@ -1,4 +1,5 @@
 import { GIT_KILL_GRACE_MS, GIT_TIMEOUT_MS } from "../constants.ts";
+import { traceSpan } from "../trace/hook-trace.ts";
 
 /** Race winner when the deadline beats git. */
 const TIMED_OUT = Symbol("crosscheck.git.timed-out");
@@ -287,7 +288,7 @@ export const runGit = (
   args: readonly string[],
   cwd: string,
   timeoutMs: number = GIT_TIMEOUT_MS,
-): Promise<string | null> => runBoundedCommand(pinnedGitArgv(args), cwd, timeoutMs);
+): Promise<string | null> => traceSpan("git", async () => runBoundedCommand(pinnedGitArgv(args), cwd, timeoutMs));
 
 /** `runGit` for the caller that needs empty-but-answered (see the outcome). */
 export const runGitOutcome = (
@@ -298,4 +299,4 @@ export const runGitOutcome = (
   options: CommandOptions = {},
 ): Promise<
   { readonly ok: true; readonly stdout: string } | CommandFailure
-> => runBoundedCommandOutcome(pinnedGitArgv(args), cwd, timeoutMs, extraEnv, options);
+> => traceSpan("git", async () => runBoundedCommandOutcome(pinnedGitArgv(args), cwd, timeoutMs, extraEnv, options));

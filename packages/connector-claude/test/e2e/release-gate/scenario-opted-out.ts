@@ -1,49 +1,49 @@
 /**
- * I1 — ONE OF THE TWO OPTED OUT (the owner's decision on the batch-2
- * integration review's I1). The pilot's two people, live on the same files at
- * the same time, and Mike has run `crosscheck presence off` first. Before the
- * decision Nick was told nothing, which is the pilot's failure again for every
- * opted-out person. Now Nick must be told THAT a teammate is on the file right
- * now and never who, where or when, and Mike, whose opt-out hides only
- * himself, must still be told about Nick by name.
+ * P2 — MIKE HAS OPTED OUT OF PRESENCE, and works on files Nick is about to
+ * change, right now.
  *
- * Nick works as the pilot did: a main-thread edit, a second one, then a
- * subagent on the third shared file, a prompt, a stop and a resume the next
- * time he opens the session (whose briefing carries the ghost check).
+ * THE OWNER'S DECISION (batch-2 integration review, I1): opting out hides WHO
+ * is working, WHERE (branch, topic) and WHEN; it no longer hides THAT someone
+ * is working on a file the other side is about to change. Nick is to get an
+ * anonymous live warning — "a teammate is working on <file> right now" —
+ * and nothing of Mike. Without it, an opted-out teammate recreates the
+ * pilot's failure for everyone who works beside them.
+ *
+ * Mike opts out, then works on four shared files on his branch and stays at
+ * his desk. Nick's subagents edit three of them (at once under a parallel
+ * profile), his main thread the fourth — the edit whose own PreToolUse must
+ * tell him; his next prompt and the turn's end are the relay's channels.
+ * Then Mike edits one more shared file: an opted-out person still SEES —
+ * opting out hides him, not his view.
+ *
+ * ITS OWN HUB: one account per person per hub, and an opt-out must not reach
+ * any other case's Mike.
  */
 import { join } from "node:path";
 
-import { PRESENCE_CACHE_TTL_MS } from "@crosscheck/connector-core/constants.ts";
-
 import { MIKE, NICK } from "../../../../connector-core/test/fixtures/landing-repos.ts";
-import { checkoutFor, editEach, fileSource, seedCase } from "./case-kit.ts";
+import { checkoutFor, editEach, fileSource, seedCase, whileAtDesk } from "./case-kit.ts";
 import type { CaseRepo } from "./case-kit.ts";
 import { openSession } from "./host.ts";
 import type { HookRun, HostSession } from "./host.ts";
 import type { TestHub } from "./hub.ts";
-import { MIKE_BRANCH, TOPIC_BRANCH } from "./scenario-long-session.ts";
+import { timed } from "./observe.ts";
+import type { Moment } from "./observe.ts";
+import type { GateProfile } from "./profile.ts";
 import { makeDeveloper } from "./team.ts";
 import type { GateDeveloper } from "./team.ts";
 
-/** The files both of them change: Mike first, then Nick while Mike is still live. */
-export const SHARED_FILES = [
+export const OPTED_OUT_BRANCH = "feat/streaming-quiet-mode";
+/** The four files both work on; Nick's main thread edits the first. */
+export const OPTED_OUT_FILES = [
   "apps/practice/mapping/PlayerMappingGrid.tsx",
-  "apps/practice/mapping/mappingConfig.ts",
+  "apps/practice/mapping/mappingApi.ts",
   "apps/practice/mapping/MappingRow.tsx",
+  "apps/practice/mapping/index.ts",
 ] as const;
-
-const MIKE_OWN = "apps/streaming/feed.ts";
-const NICK_OWN = "apps/numlabs/sync.ts";
-
-/**
- * How far past the presence cache's freshness Mike's next prompt comes. A
- * person's next prompt is minutes away, not the second this scenario would
- * take: without the pause his connector answers from a presence read made
- * before Nick existed, and a group no presence answer lists is shown without
- * its name (scenario-long-session.ts waits the same window for the same
- * reason).
- */
-const PROMPT_GAP_MS = PRESENCE_CACHE_TTL_MS + 1_500;
+export const OPTED_OUT_SHARED_FILE = OPTED_OUT_FILES[0];
+/** Mike's edit after Nick's turn: a file Nick's subagent edited. */
+const MIKE_LATER_FILE = OPTED_OUT_FILES[1];
 
 export interface OptedOutWorld {
   readonly repo: CaseRepo;
@@ -51,23 +51,18 @@ export interface OptedOutWorld {
   readonly nick: GateDeveloper;
   readonly mikeSession: HostSession;
   readonly nickSession: HostSession;
-  /** Nick's main-thread edit of the first shared file: the first he hears of the teammate. */
-  readonly nickFirstEdit: readonly HookRun[];
-  /** His main-thread edit of the second: the agent is asked again, the person already knows. */
-  readonly nickSecondEdit: readonly HookRun[];
-  /** The subagent's edit of the third, and the main thread's next prompt. */
-  readonly nickSubagent: readonly HookRun[];
-  /** The resumed session's start and first prompt: the briefing with its ghost check. */
-  readonly nickResume: readonly HookRun[];
-  /** Mike's edit of the first shared file once Nick is live on it. */
-  readonly mikeEditAfterNick: readonly HookRun[];
+  /** Nick's main-thread edit of the shared file: its runs, and when it began and ended. */
+  readonly nickSharedEdit: readonly HookRun[];
+  readonly nickSharedEditMoment: Moment;
+  /** Mike's edit after Nick's turn, of a file Nick's subagent edited. */
+  readonly mikeLaterEdit: readonly HookRun[];
   readonly nickStatusline: string;
   readonly mikeStatusline: string;
   readonly cleanup: readonly string[];
 }
 
-/** `crosscheck presence off`, as the CLI sends it (connector-core http/hub.ts putPresenceOptOut). */
-const optOutOfPresence = async (hub: TestHub, developer: GateDeveloper): Promise<void> => {
+/** Mike opts out of presence with his own key, as `crosscheck presence off` does. */
+const optOut = async (hub: TestHub, developer: GateDeveloper): Promise<void> => {
   const response = await fetch(`${hub.url}/api/settings/presence`, {
     method: "PUT",
     headers: { Authorization: `Bearer ${developer.account.apiKey}`, "Content-Type": "application/json" },
@@ -78,65 +73,67 @@ const optOutOfPresence = async (hub: TestHub, developer: GateDeveloper): Promise
   }
 };
 
-const editOne = (session: HostSession, root: string, path: string, note: string): Promise<readonly HookRun[]> =>
-  session.edit(join(root, path), fileSource(path, note));
+/** Nick's subagents over three of the files (one each, at once, under a parallel profile). */
+const nickSubagents = async (session: HostSession, root: string, profile: GateProfile): Promise<void> => {
+  const files = OPTED_OUT_FILES.slice(1);
+  const parts = profile.isParallel ? files.map((file) => [file]) : [files];
+  await Promise.all(
+    parts.map(async (part, index) =>
+      session.subagent(`mapping-fix-${String(index)}`, async (actor) => {
+        await editEach(session, root, part, "nick fix", actor);
+      }),
+    ),
+  );
+};
 
-/** Mike opts out and works on the shared files; Nick then works on them while Mike is still live. */
-export const runOptedOutCase = async (hub: TestHub): Promise<OptedOutWorld> => {
-  const [first, second, third] = SHARED_FILES;
-  const repo = await seedCase("opted-out", hub.url, [...SHARED_FILES, MIKE_OWN, NICK_OWN]);
-  const mike = await makeDeveloper(hub, MIKE, "i1-mike");
-  const nick = await makeDeveloper(hub, NICK, "i1-nick");
-  await optOutOfPresence(hub, mike);
-  const mikeAt = await checkoutFor(repo, MIKE, MIKE_BRANCH, "mike");
-  const nickAt = await checkoutFor(repo, NICK, TOPIC_BRANCH, "nick");
+export const runOptedOutCase = async (hub: TestHub, profile: GateProfile): Promise<OptedOutWorld> => {
+  const host = { isProcessHost: profile.isProcessHost };
+  const repo = await seedCase("opted-out", hub.url, [...OPTED_OUT_FILES, "apps/numlabs/sync.ts"]);
+  const mike = await makeDeveloper(hub, MIKE, "p2-mike", profile.budget);
+  const nick = await makeDeveloper(hub, NICK, "p2-nick", profile.budget);
+  await optOut(hub, mike);
+  const mikeAt = await checkoutFor(repo, MIKE, OPTED_OUT_BRANCH, "mike");
+  const nickAt = await checkoutFor(repo, NICK, "feat/mapping-fix", "nick");
+  const mikeSession = openSession(mike, "p2-mike-quiet", mikeAt.worktree, host);
+  const nickSession = openSession(nick, "p2-nick-fix", nickAt.worktree, host);
 
-  const mikeSession = openSession(mike, "i1-mike-streaming", mikeAt.worktree);
-  mikeSession.label("mike-opted-out");
+  mikeSession.label("mike-works");
   await mikeSession.start();
-  await mikeSession.prompt("streaming practice beta: the player mapping grid");
-  await editEach(mikeSession, mikeAt.worktree, [MIKE_OWN, ...SHARED_FILES], "streaming beta");
+  await mikeSession.prompt("streaming quiet mode: the mapping grid and its api");
+  await editEach(mikeSession, mikeAt.worktree, OPTED_OUT_FILES, "mike quiet");
+  await mikeSession.settle();
 
-  const nickSession = openSession(nick, "i1-nick-numlabs", nickAt.worktree);
-  nickSession.label("nick-start");
-  await nickSession.start();
-  await nickSession.prompt("numlabs practices: map the players");
-  await editEach(nickSession, nickAt.worktree, [NICK_OWN], "numlabs");
-  nickSession.label("nick-first-shared");
-  const nickFirstEdit = await editOne(nickSession, nickAt.worktree, first, "numlabs");
-  nickSession.label("nick-second-shared");
-  const nickSecondEdit = await editOne(nickSession, nickAt.worktree, second, "numlabs");
-  nickSession.label("nick-subagent");
-  await nickSession.subagent("mapping", async (actor) => {
-    await editEach(nickSession, nickAt.worktree, [third], "numlabs", actor);
+  const nickTurn = await whileAtDesk(mikeSession, mikeAt.worktree, async () => {
+    nickSession.label("nick-fix");
+    await nickSession.start();
+    await nickSession.prompt("fix the mapping grid row height and its api");
+    await nickSubagents(nickSession, nickAt.worktree, profile);
+    await nickSession.settle();
+    nickSession.label("nick-shared-edit");
+    const shared = await timed(async () =>
+      nickSession.edit(join(nickAt.worktree, OPTED_OUT_SHARED_FILE), fileSource(OPTED_OUT_SHARED_FILE, "nick fix")),
+    );
+    nickSession.label("nick-fix-after");
+    await nickSession.prompt("continue");
+    await nickSession.stop();
+    await nickSession.settle();
+    return shared;
   });
-  await nickSession.prompt("continue");
-  await nickSession.stop();
-  const nickStatusline = await nickSession.statusline();
-  nickSession.label("nick-resume");
-  const resumed = await nickSession.start("resume");
-  const resumedPrompt = await nickSession.prompt("pick the mapping up again");
 
-  mikeSession.label("mike-after-nick");
-  await Bun.sleep(PROMPT_GAP_MS);
-  await mikeSession.prompt("keep going on the grid");
-  const mikeEditAfterNick = await editOne(mikeSession, mikeAt.worktree, first, "streaming beta, again");
-  await mikeSession.stop();
-  const mikeStatusline = await mikeSession.statusline();
-
+  mikeSession.label("mike-later");
+  const mikeLaterEdit = await mikeSession.edit(join(mikeAt.worktree, MIKE_LATER_FILE), fileSource(MIKE_LATER_FILE, "mike later"));
+  await mikeSession.settle();
   return {
     repo,
     mike,
     nick,
     mikeSession,
     nickSession,
-    nickFirstEdit,
-    nickSecondEdit,
-    nickSubagent: nickSession.runs().filter((run) => run.label === "nick-subagent"),
-    nickResume: [...resumed, ...resumedPrompt],
-    mikeEditAfterNick,
-    nickStatusline,
-    mikeStatusline,
+    nickSharedEdit: nickTurn.value,
+    nickSharedEditMoment: nickTurn.moment,
+    mikeLaterEdit,
+    nickStatusline: await nickSession.statusline(),
+    mikeStatusline: await mikeSession.statusline(),
     cleanup: [repo.seed, mikeAt.parent, nickAt.parent, mike.home, nick.home],
   };
 };
