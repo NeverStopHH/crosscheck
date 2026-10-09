@@ -238,6 +238,37 @@ export const withDeriveFire = (
   deadlineMs: number,
 ): DeriveFire[] => [...fires, { at: firedAt.toISOString(), deadlineMs }].slice(-DERIVE_FIRES_KEPT);
 
+/**
+ * One worktree root the session resolved (`knownWorktreeRoots` below). Its
+ * own schema because the conversation's lineage carries the same entries
+ * across a SessionEnd (state/session-lineage.ts, review batch 2, H1).
+ */
+export const KnownWorktreeRootSchema = z.object({
+  root: z.string().min(1),
+  repoId: z.string().min(1).nullable(),
+  attempts: z.number().int().min(1).default(1),
+  stamp: z.string().min(1).nullable().default(null),
+  // THE ROOT'S TOPIC (capture/touched-root.ts `RootHead`): the branch
+  // read from its HEAD file, the bytes that were read, the commit at
+  // the session's first touch and the touch times — null on an entry
+  // written before topics existed, which reads as "not seen yet".
+  branch: z.string().min(1).nullable().default(null),
+  headStamp: z.string().min(1).nullable().default(null),
+  firstHead: z.string().min(1).nullable().default(null),
+  firstTouchedAt: z.string().min(1).nullable().default(null),
+  lastTouchedAt: z.string().min(1).nullable().default(null),
+  bashTouchedAt: z.string().min(1).nullable().default(null),
+  // When the Stop-time git lane last swept the root (flows/git-lane.ts):
+  // past MAX_GIT_LANE_ROOTS, the root swept longest ago goes next.
+  gitSweptAt: z.string().min(1).nullable().default(null),
+  // The life whose git lane already booked this root's untracked
+  // listing as cut at the bound (review M8): booked once per root per
+  // life, never once per Stop. Absent on entries written before it.
+  untrackedCutLife: z.string().min(1).nullable().optional(),
+});
+
+export type KnownWorktreeRoot = z.infer<typeof KnownWorktreeRootSchema>;
+
 const SessionStateObjectSchema = z.looseObject({
   /**
    * The HOST's own id for this session — for Claude Code the raw `session_id`
@@ -253,6 +284,16 @@ const SessionStateObjectSchema = z.looseObject({
   hubUrl: z.string().min(1),
   developerId: z.string().min(1).nullable().default(null),
   startedAt: z.string().min(1),
+  /**
+   * WHERE THE GIT LANE'S WINDOW OPENS when it reaches back past this life's
+   * own start (review batch 2, H1): the conversation's FIRST start, carried
+   * from its lineage when a SessionEnd ended the life before this one
+   * (state/session-lineage.ts). A resumed conversation's lane then sweeps
+   * the work its earlier lives left dirty, committed or Bash-created, and
+   * files it under the life that is live now — the one a teammate's
+   * tripwire can see. Absent: the window is `startedAt`.
+   */
+  captureSince: z.string().min(1).optional(),
   lastHeartbeatAt: z.string().nullable().default(null),
   seenTargets: z.array(z.string().min(1)).default([]),
   /**
@@ -356,33 +397,7 @@ const SessionStateObjectSchema = z.looseObject({
    * `stamp` existed reads as UNSTAMPED (capture/touched-root.ts: accepted
    * once, then bound to whatever checkout is at that path now).
    */
-  knownWorktreeRoots: z
-    .array(
-      z.object({
-        root: z.string().min(1),
-        repoId: z.string().min(1).nullable(),
-        attempts: z.number().int().min(1).default(1),
-        stamp: z.string().min(1).nullable().default(null),
-        // THE ROOT'S TOPIC (capture/touched-root.ts `RootHead`): the branch
-        // read from its HEAD file, the bytes that were read, the commit at
-        // the session's first touch and the touch times — null on an entry
-        // written before topics existed, which reads as "not seen yet".
-        branch: z.string().min(1).nullable().default(null),
-        headStamp: z.string().min(1).nullable().default(null),
-        firstHead: z.string().min(1).nullable().default(null),
-        firstTouchedAt: z.string().min(1).nullable().default(null),
-        lastTouchedAt: z.string().min(1).nullable().default(null),
-        bashTouchedAt: z.string().min(1).nullable().default(null),
-        // When the Stop-time git lane last swept the root (flows/git-lane.ts):
-        // past MAX_GIT_LANE_ROOTS, the root swept longest ago goes next.
-        gitSweptAt: z.string().min(1).nullable().default(null),
-        // The life whose git lane already booked this root's untracked
-        // listing as cut at the bound (review M8): booked once per root per
-        // life, never once per Stop. Absent on entries written before it.
-        untrackedCutLife: z.string().min(1).nullable().optional(),
-      }),
-    )
-    .default([]),
+  knownWorktreeRoots: z.array(KnownWorktreeRootSchema).default([]),
   /**
    * Capture observability (trial finding #17/#18/#20 — the counters `status`
    * and `doctor` read so "N edit-tool fires → 0 targets" stops being silent):
@@ -1213,9 +1228,8 @@ export const withCarriedCapture = (
         flooredPromptCount: previous.flooredPromptCount,
         harnessTurnCount: previous.harnessTurnCount,
         quietCallCount: previous.quietCallCount,
-        // The #17 root cache is the session's, not the fire's: dropping it
-        // makes the next tool call pay git again for a root already judged.
-        knownWorktreeRoots: previous.knownWorktreeRoots,
+        // ...and where the lanes look, and since when (routingFieldsOf).
+        ...routingFieldsOf(previous, state),
         // THE PAIR MOVES TOGETHER OR NOT AT ALL (spec 01 §3.4). The counter
         // alone under the incoming fire's fresh epoch would be harmless; the
         // EPOCH alone beside a counter reset to 0 re-issues positions this
@@ -1268,21 +1282,8 @@ export const withCarriedCapture = (
               workContextStatus: previous.workContextStatus ?? state.workContextStatus,
               // ...and what the hub acknowledged of it (L7).
               workContextAcked: previous.workContextAcked,
-              // ...and the topics it opened, whose work contexts are spooled
-              // already: a re-fire that dropped them would spool every one
-              // again, and one that re-read the start branch would move the
-              // life's own topic under it (DESIGN.md "One session, many topics").
-              topicContexts: previous.topicContexts,
-              startBranch: previous.startBranch ?? state.startBranch ?? null,
-              startHead: previous.startHead ?? state.startHead ?? null,
-              startBranches: previous.startBranches ?? state.startBranches ?? [],
-              sessionTouchedAt: previous.sessionTouchedAt,
             }
           : {}),
-        topicOverflowCount: previous.topicOverflowCount,
-        // ...and a shell's pending sweep and the lane's deferred count (review H2).
-        shellSweepSince: previous.shellSweepSince ?? null,
-        gitLaneRootsDeferred: previous.gitLaneRootsDeferred ?? 0,
         // ...and the collision lane's record of who the person was told
         // about, its queued relays and owed rechecks (round 3, F-L5).
         ...collisionFieldsOf(previous),
@@ -1325,6 +1326,54 @@ export const withCarriedCollisions = (
 ): SessionStateInput => (!isSameBinding(previous, state) ? state : { ...state, ...collisionFieldsOf(previous) });
 
 /**
+ * WHERE THE LANES LOOK, AND SINCE WHEN — the session's, not one fire's
+ * (review batch 2, H1 and L1).
+ *
+ *   - `startedAt` and `captureSince`: the git lane's window opens at the
+ *     session's FIRST start (flows/git-lane.ts). A compact or resume re-fire
+ *     that restamped it moved the window past every Bash-only file written
+ *     before the fire, and the turn's Stop never filed them: three to ten of
+ *     twelve in the review's storm, with no ledger moving.
+ *   - the #17 root cache: dropping it makes the next tool call pay git again
+ *     for a root already judged, and a sibling worktree only the cache knew
+ *     is never swept again;
+ *   - the topics this life opened, whose work contexts are spooled already: a
+ *     re-fire that dropped them would spool every one again, and one that
+ *     re-read the start branch would move the life's own topic under it
+ *     (DESIGN.md "One session, many topics") — this life's only;
+ *   - the overflow count, a shell's pending sweep and the lane's deferred
+ *     count (review H2).
+ *
+ * Unlike the sequence pair, none of these hands anything out, so the
+ * busy-lock fallback may carry them from its unlocked read too
+ * (`withCarriedRouting`): a stale root or an older stamp at worst sweeps
+ * once more.
+ */
+const routingFieldsOf = (previous: SessionState, state: SessionStateInput): Partial<SessionStateInput> => ({
+  startedAt: previous.startedAt,
+  ...(previous.captureSince === undefined ? {} : { captureSince: previous.captureSince }),
+  knownWorktreeRoots: previous.knownWorktreeRoots,
+  ...(previous.crosscheckSessionId === state.crosscheckSessionId
+    ? {
+        topicContexts: previous.topicContexts,
+        startBranch: previous.startBranch ?? state.startBranch ?? null,
+        startHead: previous.startHead ?? state.startHead ?? null,
+        startBranches: previous.startBranches ?? state.startBranches ?? [],
+        sessionTouchedAt: previous.sessionTouchedAt,
+      }
+    : {}),
+  topicOverflowCount: previous.topicOverflowCount,
+  shellSweepSince: previous.shellSweepSince ?? null,
+  gitLaneRootsDeferred: previous.gitLaneRootsDeferred ?? 0,
+});
+
+/** The routing fields ALONE carried across a re-fire of the same binding — the busy-lock fallback's (L1). */
+export const withCarriedRouting = (
+  state: SessionStateInput,
+  previous: SessionState | null,
+): SessionStateInput => (isSameBinding(previous, state) ? { ...state, ...routingFieldsOf(previous, state) } : state);
+
+/**
  * SessionStart's publication: create the state file, or replace one of the
  * SAME session while carrying its capture counters (withCarriedCapture).
  *
@@ -1333,10 +1382,11 @@ export const withCarriedCollisions = (
  * read-then-write outside the lock would drop whatever it recorded. A lock
  * that stays busy falls back to the plain create — publishing state is not
  * optional (spool reap infers "no writer left" from its absence), so the
- * counters lose rather than the file. The COLLISION fields are still carried
- * there, from a best-effort unlocked read (round 3, F-L5): without them a
- * compact under a busy lock lost every queued relay and the record of who
- * the person was told about.
+ * counters lose rather than the file. The COLLISION and ROUTING fields are
+ * still carried there, from a best-effort unlocked read (round 3, F-L5;
+ * review batch 2, L1): without them a compact under a busy lock lost every
+ * queued relay and the record of who the person was told about, and forgot
+ * the sibling worktrees and the window the next Stop sweeps.
  *
  * `startOf` answers the epoch and counter a publish that finds nothing to
  * carry starts on, read under the lock (review-2 round 8, L2): the register's
@@ -1365,7 +1415,7 @@ export const publishSessionState = async (
   );
   if (!published) {
     const unlocked = await readSessionState(home, state.hostSessionKey);
-    await writeSessionState(home, withCarriedCollisions(measuredFromStart(state), unlocked));
+    await writeSessionState(home, withCarriedRouting(withCarriedCollisions(measuredFromStart(state), unlocked), unlocked));
   }
 };
 

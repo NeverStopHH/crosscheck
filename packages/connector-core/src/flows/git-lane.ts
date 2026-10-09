@@ -26,7 +26,9 @@
  * target exactly as the tool lane does (flows/topic-contexts.ts).
  *
  * THE WINDOW. Files modified, and commits authored, since the session started
- * — for a root the session reached later, since its first recorded touch less
+ * — its FIRST start, kept across compacts and resumes, and reaching back over
+ * the conversation's earlier lives (`windowStartOf`, review batch 2, H1) —
+ * for a root the session reached later, since its first recorded touch less
  * GIT_LANE_TOUCH_SLACK_MS, because a shell command is marked only after it
  * ran. Never earlier: a sibling worktree's history before this session
  * touched it is somebody's, and naming this session for it is the false
@@ -99,7 +101,7 @@ export const discoverShellRoots = async (state: SessionState): Promise<readonly 
   if (commonDir === null) {
     return [];
   }
-  const changed = await changedWorktreesOf(commonDir, new Date(state.startedAt));
+  const changed = await changedWorktreesOf(commonDir, windowStartOf(state));
   return changed
     .filter((entry) => {
       const sweptAt = state.knownWorktreeRoots.find((known) => known.root === entry.root)?.gitSweptAt ?? null;
@@ -120,6 +122,17 @@ export const deferredRootsOf = async (
 };
 
 type KnownRoot = SessionState["knownWorktreeRoots"][number];
+
+/**
+ * WHERE THE WINDOW OPENS (review batch 2, H1): the conversation's first
+ * start when an earlier life of it ended (`captureSince`, carried from its
+ * lineage), else this session's own start — which a compact or resume
+ * re-fire keeps (state/session-state.ts routingFieldsOf). A restamped start
+ * dropped every Bash-only file written before the fire from the turn's
+ * Stop, and a resumed conversation's next life filed nothing its earlier
+ * life had left dirty or committed.
+ */
+export const windowStartOf = (state: SessionState): Date => new Date(state.captureSince ?? state.startedAt);
 
 /** Newest first; a root never stamped sorts last. */
 const newestFirst = (left: string | null, right: string | null): number =>
@@ -175,7 +188,7 @@ export const selectGitLaneRoots = async (
 ): Promise<readonly GitLaneRoot[]> => {
   const { ordered, sessionRoot } = await orderedCandidates(state, choice);
   const own = state.knownWorktreeRoots.filter((entry) => entry.repoId === state.repoId);
-  const started = new Date(state.startedAt);
+  const started = windowStartOf(state);
   return ordered.slice(0, MAX_GIT_LANE_ROOTS).map((root) => {
     const entry = own.find((known) => known.root === root);
     const isSessionRoot = root === sessionRoot;
