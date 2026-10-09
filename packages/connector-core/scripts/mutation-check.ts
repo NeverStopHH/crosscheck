@@ -14076,12 +14076,14 @@ export const MUTATIONS: readonly Mutation[
       "the repo's report to everybody who runs `crosscheck pilot`",
   },
   {
-    // An older client still sends `off_target` for what is now `noise`.
+    // An older client still sends `off_target` for what is now `noise`. Since human provenance the
+    // door drafts the word that will be stored, so the spelling is decided there (the writer's own
+    // mapping in pilot.ts stays as a second guard, and so cannot fail a test on its own).
     label: "an older client's word is stored beside the new one",
-    file: `${SERVER}/src/services/pilot.ts`,
-    from: "  mark === PILOT_LEGACY_NOISE_MARK ? \"noise\" : mark;",
-    to: "  mark;",
-    test: `${SERVER}/test/pilot-marks.test.ts`,
+    file: `${SERVER}/src/services/draft-doors.ts`,
+    from: 'const labelWord = (mark: PilotMark): PilotMark => (mark === "off_target" ? "noise" : mark);',
+    to: "const labelWord = (mark: PilotMark): PilotMark => mark;",
+    test: `${SERVER}/test/draft-doors.test.ts`,
     because:
       "the table grows a fourth spelling for one label, and every reader of " +
       "it has to know the history to count noise right",
