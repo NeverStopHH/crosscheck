@@ -20,6 +20,8 @@ import type { SoftCredential } from "./soft-authenticator.ts";
 export interface Confirmer {
   readonly viewer: Viewer;
   readonly credential: SoftCredential;
+  /** The passkey row this credential was enrolled as. */
+  readonly passkeyId: string;
   /** The authenticator's counter: every assertion counts higher. */
   readonly nextCount: () => number;
 }
@@ -47,15 +49,15 @@ export const prepareConfirmer = async (
     throw new Error(`enrolment failed with ${String(enrolled.status)}: ${await enrolled.text()}`);
   }
   if (options.pastCoolOff === true) {
-    // The one shortcut: the cool-off's instant moved back to the enrolment, as a day's wait would.
-    await harness.db.execute(
-      sql`UPDATE passkeys SET usable_from = created_at WHERE developer_id = ${developer.developerId} AND revoked_at IS NULL`,
-    );
+    // The one shortcut: THIS passkey's cool-off instant moved back to its enrolment, as a day's wait would.
+    await harness.db.execute(sql`UPDATE passkeys SET usable_from = created_at WHERE credential_id = ${credential.id}`);
   }
+  const rows = await harness.db.execute<{ id: string }>(sql`SELECT id FROM passkeys WHERE credential_id = ${credential.id}`);
   let count = 0;
   return {
     viewer,
     credential,
+    passkeyId: String(rows.rows[0]?.id),
     nextCount: () => {
       count += 1;
       return count;
