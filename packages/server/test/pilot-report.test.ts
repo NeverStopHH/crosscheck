@@ -18,7 +18,7 @@
  * and the rule every figure obeys: measured, or `unavailable` with a reason.
  */
 import { describe, expect, test } from "bun:test";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 import {
   agentSessions,
@@ -556,12 +556,26 @@ describe("proof 3 — attribution accuracy", () => {
   /** A break recorded before provenance existed (0.10): the marker, no confirmation. */
   const LEGACY_BREAK = { brokeProvenance: "unknown_legacy" } as const;
 
+  /** A confirmation whose passkey is still in its cool-off at the report's instant: it stands, but counts nowhere yet. */
+  const coolingStamp = async (world: World) => {
+    const stamp = await confirmedBy(world);
+    await world.harness.db.execute(sql`UPDATE passkeys SET usable_from = ${new Date(NOW.getTime() + HOUR).toISOString()}::timestamptz
+      WHERE credential_id = (SELECT credential_id FROM human_confirmations WHERE id = ${stamp.confirmationId})`);
+    return stamp;
+  };
+
+  const breakStamp = (world: World, breakBy: "passkey" | "cooling") =>
+    (breakBy === "cooling" ? coolingStamp(world) : confirmedBy(world)).then((stamp) => ({
+      brokeConfirmationId: stamp.confirmationId,
+      brokeConfirmationPosition: stamp.confirmationPosition,
+    }));
+
   const seedPin = async (
     world: World,
     id: string,
     commit: string,
     brokeAtCommit: string | null = "b0b0b0b",
-    breakBy: "passkey" | "legacy" = "passkey",
+    breakBy: "passkey" | "cooling" | "legacy" = "passkey",
   ) => {
     await world.harness.db.insert(pins).values({
       id,
@@ -579,13 +593,7 @@ describe("proof 3 — attribution accuracy", () => {
       ...(await confirmedBy(world)),
       ...(breakBy === "legacy"
         ? LEGACY_BREAK
-        : {
-            brokeProvenance: "human_passkey_confirmed" as const,
-            ...(await confirmedBy(world).then((stamp) => ({
-              brokeConfirmationId: stamp.confirmationId,
-              brokeConfirmationPosition: stamp.confirmationPosition,
-            }))),
-          }),
+        : { brokeProvenance: "human_passkey_confirmed" as const, ...(await breakStamp(world, breakBy)) }),
     });
     await world.harness.db.insert(pinFiles).values({
       pinId: id,
@@ -720,6 +728,24 @@ describe("proof 3 — attribution accuracy", () => {
     // Assert
     expect(out.attribution.repaired).toEqual([]);
     expect(out.attribution.notHumanConfirmed).toBe(2);
+  });
+
+  test("survivor R2: a break is judged by ITS signer — one confirmed with a passkey still cooling is not scored, whoever signed the pin", async () => {
+    // Arrange — the pin and its repair confirmed with passkeys that stand; the break with one still in its cool-off
+    const world = await setup();
+    await session(world, "s_x");
+    await context(world, "wc_x", "s_x", "rework playback");
+    await touch(world, "wc_x", ["src/player.ts", "src/config.ts"], 60);
+    await seedPin(world, "pin_1", "abc1234", "b0b0b0b", "cooling");
+    await repairPin(world, "pin_1");
+    await answer(world, "pa_1", "pin_1", "s_x", true);
+
+    // Act
+    const out = await report(world);
+
+    // Assert
+    expect(out.attribution.repaired).toEqual([]);
+    expect(out.attribution.notHumanConfirmed).toBe(1);
   });
 
   test("a break recorded without its commit is counted, never scored", async () => {
