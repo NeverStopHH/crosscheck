@@ -21161,21 +21161,18 @@ export const MUTATIONS: readonly Mutation[
     because: "a team that left cannot read its last enrolled month",
   },
   // ── 07 §13.12, review LOW (probe E): one pointer, one month ──
+  // Since human provenance's review M6 the month's start is held by the LATE filter: a pointer first
+  // delivered before the month is late (lateColumn) and counts only by a word confirmed inside it.
+  // That makes "a pointer whose twin arrives next month counts in both months" (HAVING max) and "the
+  // month's population has no start" (HAVING true) equivalent mutations — both proven NOT-CAUGHT
+  // because nothing can change — so they are retired; the late filter's bound is anchored instead.
   {
-    label: "a pointer whose twin arrives next month counts in both months",
+    label: "a late pointer counts in the month by a word said before it",
     file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "sql`HAVING min(hd.delivered_at) >= ${since.toISOString()}::timestamptz OR ${saidInPeriod(since, until)}`;",
-    to: "sql`HAVING max(hd.delivered_at) >= ${since.toISOString()}::timestamptz OR ${saidInPeriod(since, until)}`;",
-    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
-    because: "July's followed is counted again in August when the same pointer is asked about on the first",
-  },
-  {
-    label: "the month's population has no start",
-    file: `${SERVER}/src/services/outcome-population.ts`,
-    from: "sql`HAVING min(hd.delivered_at) >= ${since.toISOString()}::timestamptz OR ${saidInPeriod(since, until)}`;",
-    to: "sql`HAVING true`;",
-    test: `${SERVER}/test/pilot-outcome-figures.test.ts`,
-    because: "every month counts every intervention since the pilot began",
+    from: "    WHERE NOT late OR (word IS NOT NULL AND outcome_at >= ${since.toISOString()}::timestamptz)",
+    to: "    WHERE NOT late OR word IS NOT NULL",
+    test: `${SERVER}/test/late-confirmation.test.ts`,
+    because: "July's followed is counted again in August because someone confirmed anything about that hint in August",
   },
   // ── 07 §13.12, review M-4: the round-3 survivors, killed ──
   {
