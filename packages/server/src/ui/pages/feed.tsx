@@ -151,15 +151,35 @@ const PresenceReenabledNotice: FC<{ readonly banner: PresenceReenableBanner }> =
   </div>
 );
 
+/** The viewer's own drafts that wait for their passkey (review M7, spec §8). */
+export interface WaitingDrafts {
+  readonly total: number;
+  /** A request to show their presence again is among them. */
+  readonly presenceOn: boolean;
+}
+
+const WaitingDraftsNotice: FC<{ readonly waiting: WaitingDrafts }> = ({ waiting }) => (
+  <div class="card" role="status">
+    <p>
+      {String(waiting.total)} of your drafts {waiting.total === 1 ? "waits" : "wait"} for your passkey: nothing in{" "}
+      {waiting.total === 1 ? "it" : "them"} counts or changes anything until you{" "}
+      <a href="/ui/confirm">confirm or discard {waiting.total === 1 ? "it" : "them"}</a>.
+    </p>
+    {waiting.presenceOn ? <p>Among them, a request to show your presence again is waiting for your passkey.</p> : null}
+  </div>
+);
+
 interface FeedPageProps {
   readonly viewer: ViewerChrome;
   readonly entries: readonly FeedEntry[];
   readonly presenceReenable: PresenceReenableBanner | null;
+  readonly waiting: WaitingDrafts;
 }
 
-export const FeedPage: FC<FeedPageProps> = ({ viewer, entries, presenceReenable }) => (
+export const FeedPage: FC<FeedPageProps> = ({ viewer, entries, presenceReenable, waiting }) => (
   <Layout title="Feed" viewer={viewer} refreshSeconds={UI_FEED_REFRESH_SECONDS}>
     <h1>Recent activity</h1>
+    {waiting.total === 0 ? null : <WaitingDraftsNotice waiting={waiting} />}
     {presenceReenable === null ? null : <PresenceReenabledNotice banner={presenceReenable} />}
     {entries.length === 0 ? (
       <p class="notice">Nothing yet — activity appears as sessions report.</p>

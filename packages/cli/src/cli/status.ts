@@ -13,7 +13,7 @@ import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { renderIntent } from "@crosscheck/connector-core/briefing/intent.ts";
 import { formatQuestionCounts } from "@crosscheck/connector-core/briefing/questions.ts";
-import { presenceReenabledLine } from "@crosscheck/connector-core/briefing/presence-notice.ts";
+import { PRESENCE_ON_WAITING_LINE, presenceReenabledLine } from "@crosscheck/connector-core/briefing/presence-notice.ts";
 import { formatSolvedCounts } from "@crosscheck/connector-core/hints/precision.ts";
 import {
   countOf,
@@ -488,6 +488,8 @@ export const runStatus = async (
     ? [
         presenceStateLine(privacy.data.presenceOptOut),
         ...(reenabledLine === null ? [] : [reenabledLine]),
+        // §8: presence on by key is a draft; say that it waits for the passkey.
+        ...(privacy.data.presenceOnPending ? [PRESENCE_ON_WAITING_LINE] : []),
         `muted: ${
           privacy.data.mutes.length === 0
             ? "(none)"

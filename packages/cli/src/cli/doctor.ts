@@ -76,7 +76,7 @@ import {
   formatCloudAgentLink,
 } from "@crosscheck/connector-core/briefing/render.ts";
 import { bareUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
-import { presenceReenabledLine } from "@crosscheck/connector-core/briefing/presence-notice.ts";
+import { PRESENCE_ON_WAITING_LINE, presenceReenabledLine } from "@crosscheck/connector-core/briefing/presence-notice.ts";
 import { getCiVerdict } from "@crosscheck/connector-core/http/hub.ts";
 import type { CiCoverage } from "@crosscheck/connector-core/http/hub.ts";
 import { CI_PROVIDERS, CI_KNOWN_PROVIDERS } from "@crosscheck/schema";
@@ -1755,8 +1755,14 @@ const checkPrivacy = async (ctx: HubContext): Promise<Check> => {
     result.data.presenceReenabledAt === null
       ? null
       : presenceReenabledLine(result.data.presenceReenabledAt, result.data.presenceOptOut);
-  if (reenabled !== null) {
-    return check("WARN", "privacy settings", reenabled);
+  // §8: a request to show presence again waits for the passkey — told as a
+  // WARN too, since anything holding the key can make that request.
+  const notices = [
+    ...(reenabled === null ? [] : [reenabled]),
+    ...(result.data.presenceOnPending ? [PRESENCE_ON_WAITING_LINE] : []),
+  ];
+  if (notices.length > 0) {
+    return check("WARN", "privacy settings", notices.join("; "));
   }
   const presencePart = result.data.presenceOptOut
     ? "presence hidden (opt-out)"

@@ -2243,9 +2243,13 @@ export const PrivacySettingsSchema = z
     // An older hub sends nothing, and a value that is not an ISO instant
     // reads as nothing: tolerant, so it never costs the settings read.
     presenceReenabledAt: z.iso.datetime().nullable().optional().catch(null),
+    // A request to show presence again waits for the passkey (human
+    // provenance §8). An older hub sends nothing; anything else reads as no.
+    presenceOnPending: z.boolean().optional().catch(false),
   })
   .transform((value) => ({
     presenceReenabledAt: value.presenceReenabledAt ?? null,
+    presenceOnPending: value.presenceOnPending ?? false,
     presenceOptOut: value.presenceOptOut,
     mutes: value.mutes
       .map((item) => MutedDeveloperSchema.safeParse(item))
@@ -2263,6 +2267,8 @@ export interface PrivacySettings {
   readonly emails: readonly OwnEmail[];
   /** ISO instant the opt-out was last switched back off while presence is on, or null. */
   readonly presenceReenabledAt: string | null;
+  /** A request to show presence again waits for the person's passkey (§8). */
+  readonly presenceOnPending: boolean;
 }
 
 export const getPrivacySettings = (
