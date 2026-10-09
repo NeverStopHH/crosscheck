@@ -553,11 +553,15 @@ describe("proof 1 — what an open is", () => {
 });
 
 describe("proof 3 — attribution accuracy", () => {
+  /** A break recorded before provenance existed (0.10): the marker, no confirmation. */
+  const LEGACY_BREAK = { brokeProvenance: "unknown_legacy" } as const;
+
   const seedPin = async (
     world: World,
     id: string,
     commit: string,
     brokeAtCommit: string | null = "b0b0b0b",
+    breakBy: "passkey" | "legacy" = "passkey",
   ) => {
     await world.harness.db.insert(pins).values({
       id,
@@ -573,11 +577,15 @@ describe("proof 3 — attribution accuracy", () => {
       createdAt: at(200),
       // Proof 3 scores a break and a repair only when a passkey confirmed both.
       ...(await confirmedBy(world)),
-      brokeProvenance: "human_passkey_confirmed",
-      ...(await confirmedBy(world).then((stamp) => ({
-        brokeConfirmationId: stamp.confirmationId,
-        brokeConfirmationPosition: stamp.confirmationPosition,
-      }))),
+      ...(breakBy === "legacy"
+        ? LEGACY_BREAK
+        : {
+            brokeProvenance: "human_passkey_confirmed" as const,
+            ...(await confirmedBy(world).then((stamp) => ({
+              brokeConfirmationId: stamp.confirmationId,
+              brokeConfirmationPosition: stamp.confirmationPosition,
+            }))),
+          }),
     });
     await world.harness.db.insert(pinFiles).values({
       pinId: id,
@@ -587,7 +595,7 @@ describe("proof 3 — attribution accuracy", () => {
     });
   };
 
-  const repairPin = async (world: World, repairs: string, hoursAgo = 5) => {
+  const repairPin = async (world: World, repairs: string, hoursAgo = 5, repairBy: "passkey" | "legacy" = "passkey") => {
     await world.harness.db.insert(pins).values({
       id: `${repairs}_fix`,
       repo: REPO,
@@ -600,7 +608,7 @@ describe("proof 3 — attribution accuracy", () => {
       repairsPinId: repairs,
       repairsPinVersion: 1,
       createdAt: at(hoursAgo),
-      ...(await confirmedBy(world)),
+      ...(repairBy === "legacy" ? { provenance: "unknown_legacy" as const } : await confirmedBy(world)),
     });
   };
 
@@ -691,6 +699,27 @@ describe("proof 3 — attribution accuracy", () => {
       },
     ]);
     expect(out.attribution.noRepairYet).toBe(0);
+  });
+
+  test("survivor M3: a break or a repair from before provenance is counted apart, never scored — each half alone", async () => {
+    // Arrange — pin_1: a 0.10 break, its repair confirmed; pin_2: a confirmed break, a 0.10 repair
+    const world = await setup();
+    await session(world, "s_x");
+    await context(world, "wc_x", "s_x", "rework playback");
+    await touch(world, "wc_x", ["src/player.ts", "src/config.ts"], 60);
+    await seedPin(world, "pin_1", "abc1234", "b0b0b0b", "legacy");
+    await repairPin(world, "pin_1");
+    await seedPin(world, "pin_2", "abc1234");
+    await repairPin(world, "pin_2", 5, "legacy");
+    await answer(world, "pa_1", "pin_1", "s_x", true);
+    await answer(world, "pa_2", "pin_2", "s_x", true);
+
+    // Act
+    const out = await report(world);
+
+    // Assert
+    expect(out.attribution.repaired).toEqual([]);
+    expect(out.attribution.notHumanConfirmed).toBe(2);
   });
 
   test("a break recorded without its commit is counted, never scored", async () => {
