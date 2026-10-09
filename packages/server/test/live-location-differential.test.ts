@@ -17,6 +17,11 @@
 import { describe, expect, test } from "bun:test";
 import { deliveryIdFor } from "@crosscheck/schema";
 
+// The CONNECTOR's own statusline derivation, over the listing Nick reads — a
+// test-only import, as live-location-privacy.test.ts makes for its parity check.
+import { WorkContextEntrySchema } from "../../connector-core/src/http/hub.ts";
+import { deriveLastSeen } from "../../connector-core/src/state/presence-cache.ts";
+
 import {
   jsonRequest,
   postRecords,
@@ -86,6 +91,8 @@ interface Action {
  * an author's): those are not the claim's creation.
  */
 const CLAIM_CREATION = /\.(?:claims|evidence|ruledOut)\[\]\.createdAt=|^[-+] data\.claim\.createdAt=/;
+/** Where a work context's own creation instant sits: a listing row's, a search result's, a candidate's, a conference row's. */
+const CONTEXT_CREATION = /^[-+] data\.(?:workContexts|results|contexts|conference\.contexts)\[\]\.createdAt=|^[-+] data\.candidates\[\]\.workContext\.createdAt=/;
 
 const nowIso = (world: OptedOutWorld): string => world.harness.clock.now().toISOString();
 const MS_PER_HOUR = 3_600_000;
@@ -184,12 +191,16 @@ const ACTIONS: readonly Action[] = [
     // DESIGN.md "One session, many topics": her one session edits a sibling
     // worktree on another branch, and its context names that branch and its
     // base — her location as much as the session's own branch. Shared work
-    // like any context; her branch and base never.
+    // like any context; her branch and base never. Created NOW, as her
+    // connector creates it at her first edit there: a creation the policy
+    // publishes, which the statusline then read as "last seen" (batch-2
+    // integration review, M5).
     name: "open a topic in a sibling worktree",
     content: true,
+    creates: CONTEXT_CREATION,
     run: (w) =>
       records(w, [
-        live("work_context", validWorkContextBody({ id: ROBIN_TOPIC, sessionId: ROBIN_LIVE, title: `${SECRET_TOPIC_BRANCH} @ api`, titleSource: "fallback", status: "implementing", branch: SECRET_TOPIC_BRANCH, baseCommit: SECRET_TOPIC_SHA, baseOnDefault: true, description: "rotation window refresh topic", createdAt: CREATED_AT })),
+        live("work_context", validWorkContextBody({ id: ROBIN_TOPIC, sessionId: ROBIN_LIVE, title: `${SECRET_TOPIC_BRANCH} @ api`, titleSource: "fallback", status: "implementing", branch: SECRET_TOPIC_BRANCH, baseCommit: SECRET_TOPIC_SHA, baseOnDefault: true, description: "rotation window refresh topic", createdAt: nowIso(w) })),
         live("target", { workContextId: ROBIN_TOPIC, kind: "file", value: FILE }),
       ], "topic"),
   },
@@ -277,6 +288,26 @@ interface Walked {
   readonly actionAt: string;
 }
 
+/**
+ * WHAT HIS CONNECTOR MAKES OF IT (batch-2 integration review, M5): the
+ * statusline's "<name> last seen <age> ago", derived by the connector's own
+ * code from the listing SessionStart fetches. A presence line by another
+ * name, so it is compared like any route's answer.
+ */
+const STATUSLINE = "statusline last-seen (connector-core deriveLastSeen)";
+
+const withStatusline = (world: OptedOutWorld, answers: readonly Answer[]): readonly Answer[] => {
+  const listing = answers.find(
+    (answer) => answer.key === "GET /api/work-contexts" && JSON.stringify(answer.variant.query) === JSON.stringify({ repo: REPO }),
+  );
+  const rows = listing === undefined ? [] : (JSON.parse(listing.body) as { data: { workContexts: readonly unknown[] } }).data.workContexts;
+  const lastSeen = deriveLastSeen(rows.map((row) => WorkContextEntrySchema.parse(row)), world.nick.developerId);
+  return [...answers, { key: STATUSLINE, variant: { path: STATUSLINE }, status: listing?.status ?? 0, headers: "", body: JSON.stringify({ lastSeen }) }];
+};
+
+/** Nick's walk of every route, and what his statusline makes of it. */
+const colleagueReads = async (world: OptedOutWorld): Promise<readonly Answer[]> => withStatusline(world, await walk(world, "nick"));
+
 /** A world, her action (or none) at ACTION_DELAY_S, and Nick's walk READ_DELAY_S later. */
 const walkWorld = async (action: Action | null): Promise<Walked> => {
   const world = await seedOptedOutWorld();
@@ -286,7 +317,7 @@ const walkWorld = async (action: Action | null): Promise<Walked> => {
     await action.run(world);
   }
   world.harness.clock.advanceSeconds(READ_DELAY_S);
-  return { answers: await walk(world, "nick"), world, actionAt };
+  return { answers: await colleagueReads(world), world, actionAt };
 };
 
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
@@ -549,7 +580,7 @@ const timedWorld = async (action: Action, beforeReadS: number): Promise<Walked> 
   const actionAt = nowIso(world);
   await action.run(world);
   world.harness.clock.advanceSeconds(beforeReadS);
-  return { answers: await walk(world, "nick"), world, actionAt };
+  return { answers: await colleagueReads(world), world, actionAt };
 };
 
 /** «coverage» and «pilot»: the window's honest coverage and the team's integrity counters that count it. */
@@ -600,7 +631,7 @@ const tiedWorld = async (isRewritten: boolean): Promise<Walked> => {
     await rewriteTiedTopicInPlace(world);
   }
   world.harness.clock.advanceSeconds(READ_DELAY_S);
-  return { answers: await walk(world, "nick"), world, actionAt };
+  return { answers: await colleagueReads(world), world, actionAt };
 };
 
 describe("her rows' place on disk orders nothing a colleague reads", () => {

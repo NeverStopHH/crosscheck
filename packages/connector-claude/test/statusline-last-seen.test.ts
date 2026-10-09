@@ -103,6 +103,22 @@ describe("deriveLastSeen", () => {
     );
   });
 
+  test("a teammate whose location the hub withholds is never 'last seen' (integration review M5)", () => {
+    // Arrange: an opted-out teammate's rows carry no update time, so the date
+    // was their newest CREATION — and a topic context is created the moment
+    // they first edit a sibling worktree. The hub marks such rows.
+    const contexts = [
+      contextRow("dev_robin", "Robin", 2 * 60 * 1000, { locationWithheld: true }),
+      contextRow("dev_ken", "Ken", HOUR_MS),
+    ];
+
+    // Act
+    const lastSeen = deriveLastSeen(contexts, "dev_self");
+
+    // Assert: presence has no row of hers, and neither has its stand-in
+    expect(lastSeen.map((entry) => entry.name)).toEqual(["Ken"]);
+  });
+
   test("rows with no name or no usable date are dropped, not guessed at", () => {
     // Arrange
     const contexts = [

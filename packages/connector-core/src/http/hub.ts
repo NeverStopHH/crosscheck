@@ -120,6 +120,13 @@ export const WorkContextEntrySchema = z.looseObject({
   createdAt: z.string().min(1),
   updatedAt: z.string().nullable().optional(),
   /**
+   * The hub's word that this row's owner opted out of presence, so its
+   * activity is withheld and `createdAt` is the only time left on it (batch-2
+   * integration review, M5): nothing that dates a teammate's activity — the
+   * statusline's "last seen" — may read it. Tolerant: an older hub sends none.
+   */
+  locationWithheld: z.literal(true).optional().catch(undefined),
+  /**
    * Cheap aggregates the briefing and `doctor` read (audit row M15-rest,
    * trial findings #20 + M1): how many claims and deterministic targets the
    * tree carries. Both OPTIONAL and both `.catch(undefined)` — an older hub

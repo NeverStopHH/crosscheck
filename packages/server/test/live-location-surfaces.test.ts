@@ -370,6 +370,20 @@ describe("when Robin last touched her work (review round 3, M1)", () => {
     expect(robinsRows(world, listed(asRobin.body))[0]?.id).toBe(ROBIN_CONTEXT);
   });
 
+  test("the listing marks her rows withheld, and nobody else's: no reader dates her by creation (integration review M5)", async () => {
+    const world = await seedOptedOutWorld();
+    const marked = async (who: "nick" | "robin"): Promise<readonly string[]> => [
+      ...new Set(
+        (JSON.parse((await getAs(world, who, url("/api/work-contexts", { repo: REPO }))).body) as { data: { workContexts: readonly { developerId: string; locationWithheld?: unknown }[] } }).data.workContexts
+          .filter((row) => row.locationWithheld !== undefined)
+          .map((row) => (row.locationWithheld === true ? row.developerId : `not true: ${JSON.stringify(row.locationWithheld)}`)),
+      ),
+    ];
+
+    expect(await marked("nick")).toEqual([world.robin.developerId]);
+    expect(await marked("robin")).toEqual([]);
+  });
+
   test("the hint pool ranks her trees by creation, never by her last touch (integration review H5)", async () => {
     // Her old context, created ninety days back, moved again twenty days or
     // two minutes before Nick's prompt. The pool decays every tier by

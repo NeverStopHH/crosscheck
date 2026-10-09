@@ -24881,8 +24881,9 @@ export const MUTATIONS: readonly Mutation[
     // secrets, which must include her instants and not only branch and HEAD.
     label: "survivor N: the listing adds a raw last-touch field under a new name past the projection (guard)",
     file: `${SERVER}/src/services/diagnosis.ts`,
-    from: "      branch: row.branch,\n    }),\n  );",
-    to: "      branch: row.branch,\n    }),\n  ).map((view, index) => ({ ...view, seenAt: rows[index]?.workContext.updatedAt?.toISOString() ?? null }));",
+    // RETARGETED (batch-2 integration review, M5): the row carries the withheld marker after its projection.
+    from: "    ...(hidden.has(row.developerId) ? { locationWithheld: true as const } : {}),\n  }));",
+    to: "    ...(hidden.has(row.developerId) ? { locationWithheld: true as const } : {}),\n  })).map((view, index) => ({ ...view, seenAt: rows[index]?.workContext.updatedAt?.toISOString() ?? null }));",
     test: `${SERVER}/test/live-location-privacy.test.ts`,
     because:
       "the guard's secrets were branch and HEAD only, so an instant of hers " +
@@ -26605,6 +26606,38 @@ export const MUTATIONS: readonly Mutation[
     to: "  false && (row as { readonly provenance?: unknown }).provenance === DERIVED_PROVENANCE\n",
     test: `${SERVER}/test/live-location-differential.test.ts`,
     because: "her connector's derivation puts her instant on her tree, on a line no residual accepts",
+  },
+  {
+    label: "the listing leaves an opted-out teammate's rows unmarked",
+    file: `${SERVER}/src/services/diagnosis.ts`,
+    from: "    ...(hidden.has(row.developerId) ? { locationWithheld: true as const } : {}),\n",
+    to: "    ...({}),\n",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because: "no connector can tell her creation-dated row from an active one, and the statusline says she was last seen",
+  },
+  {
+    label: "the listing leaves an opted-out teammate's rows unmarked (differential)",
+    file: `${SERVER}/src/services/diagnosis.ts`,
+    from: "    ...(hidden.has(row.developerId) ? { locationWithheld: true as const } : {}),\n",
+    to: "    ...({}),\n",
+    test: `${SERVER}/test/live-location-differential.test.ts`,
+    because: "a topic her connector opens now reaches a colleague's statusline as \"last seen\" at that instant",
+  },
+  {
+    label: "the statusline dates an opted-out teammate by her newest creation",
+    file: `${CORE}/src/state/presence-cache.ts`,
+    from: "    if (entry.developerId === selfDeveloperId || entry.locationWithheld === true) {",
+    to: "    if (entry.developerId === selfDeveloperId) {",
+    test: `${CONNECTOR}/test/statusline-last-seen.test.ts`,
+    because: "\"Robin last seen 2m ago\" is the presence line she turned off, read off a topic created at her first edit",
+  },
+  {
+    label: "the statusline dates an opted-out teammate by her newest creation (differential)",
+    file: `${CORE}/src/state/presence-cache.ts`,
+    from: "    if (entry.developerId === selfDeveloperId || entry.locationWithheld === true) {",
+    to: "    if (entry.developerId === selfDeveloperId) {",
+    test: `${SERVER}/test/live-location-differential.test.ts`,
+    because: "the colleague's own connector, over the listing he read, names the instant she opened a topic",
   },
   // NOT ADDED, measured: an id tie-break on the two CLAIM tiers (hints'
   // pushable pass, search's claim pass). Both GROUP BY the context, and the
@@ -35258,6 +35291,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/settings-merge.test.ts 5
  * PRINTS: packages/connector-claude/test/solved-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/state-reap.test.ts 1
+ * PRINTS: packages/connector-claude/test/statusline-last-seen.test.ts 1
  * PRINTS: packages/connector-claude/test/statusline-person-strip.test.ts 4
  * PRINTS: packages/connector-claude/test/stop-gate.test.ts 6
  * PRINTS: packages/connector-claude/test/stop-git-touches.test.ts 1
@@ -35568,11 +35602,11 @@ interface Outcome {
  * PRINTS: packages/server/test/listen-boot.test.ts 8
  * PRINTS: packages/server/test/listen.test.ts 16
  * PRINTS: packages/server/test/live-location-cost.test.ts 3
- * PRINTS: packages/server/test/live-location-differential.test.ts 11
+ * PRINTS: packages/server/test/live-location-differential.test.ts 13
  * PRINTS: packages/server/test/live-location-privacy.test.ts 27
  * PRINTS: packages/server/test/live-location-projection.test.ts 9
  * PRINTS: packages/server/test/live-location-prose.test.ts 3
- * PRINTS: packages/server/test/live-location-surfaces.test.ts 47
+ * PRINTS: packages/server/test/live-location-surfaces.test.ts 48
  * PRINTS: packages/server/test/live-location-told.test.ts 1
  * PRINTS: packages/server/test/live-location-topics.test.ts 4
  * PRINTS: packages/server/test/location-index-rebuild.test.ts 7
