@@ -19,14 +19,19 @@
  * installed under that name. No build, no bundler: Bun runs the shipped
  * TypeScript sources directly.
  *
- * WHAT SHIPS. Per package: src/ (the .sql runtime asset included), LICENSE,
- * NOTICE — the FSL/Apache split stays legible per shipped directory, with the
- * root LICENSE (the map) beside them. No tests, no docs, no per-package
- * manifests, no lockfile. The whitelist is enforced from the OTHER side by
- * the e2e's mustShip/mustNotShip audit against the installed tree.
+ * WHAT SHIPS. Per package: the src/ files a runtime entry or an export
+ * reaches, plus the assets loaded by path (pack-reach.ts — test-only modules
+ * under src/ stay out), LICENSE and NOTICE — the FSL/Apache split stays
+ * legible per shipped directory, with the root LICENSE (the map) beside them.
+ * No tests, no docs, no per-package manifests, no lockfile. The whitelist is
+ * enforced from the OTHER side by the e2e's mustShip/mustNotShip audit
+ * against the installed tree.
  */
+import { existsSync } from "node:fs";
 import { cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+
+import { PATH_LOADED_ASSETS, reachedSources, runtimeEntries, shipsSource, withTypeImports } from "./pack-reach.ts";
 
 const REPO_ROOT = resolve(import.meta.dir, "..", "..", "..");
 const STAGING = join(REPO_ROOT, "dist", "npm");
@@ -178,6 +183,35 @@ const assertNoLeftoverSpecifiers = async (dir: string): Promise<void> => {
   }
 };
 
+/** The files the manifest's exports promise, repo-relative; the wildcard is not a file. */
+const exportTargets = (manifest: Record<string, unknown>): readonly string[] => [
+  ...new Set(
+    Object.values(manifest["exports"] as Record<string, string>)
+      .filter((target) => !target.includes("*"))
+      .map((target) => target.replace(/^\.\//, "")),
+  ),
+];
+
+/**
+ * One package's `src/`, only the files that ship (pack-reach.ts): reached
+ * from a runtime entry or an export, or loaded by path. Returns how many
+ * files stayed out.
+ */
+const copyShippedSources = async (name: string, reached: ReadonlySet<string>): Promise<number> => {
+  let leftOut = 0;
+  for (const file of new Bun.Glob("**/*").scanSync({ cwd: join(REPO_ROOT, "packages", name, "src"), dot: true })) {
+    const repoRelative = `packages/${name}/src/${file}`;
+    if (!shipsSource(reached, repoRelative)) {
+      leftOut += 1;
+      continue;
+    }
+    const target = join(STAGING, "packages", name, "src", file);
+    await mkdir(dirname(target), { recursive: true });
+    await cp(join(REPO_ROOT, repoRelative), target);
+  }
+  return leftOut;
+};
+
 const copyIfExists = async (from: string, to: string): Promise<void> => {
   try {
     await cp(from, to, { recursive: true });
@@ -255,16 +289,28 @@ const main = async (): Promise<void> => {
   const version = resolvePublishVersion(manifests);
   const dependencies = mergeDependencies(manifests);
 
+  const manifest = buildManifest(version, dependencies);
+  const missingAssets = PATH_LOADED_ASSETS.filter((asset) => !existsSync(join(REPO_ROOT, asset)));
+  if (missingAssets.length > 0) {
+    throw new Error(`a runtime asset loaded by path is gone (${missingAssets.join(", ")}) — update pack-reach.ts`);
+  }
+  const reached = await withTypeImports(
+    REPO_ROOT,
+    await reachedSources(REPO_ROOT, [...runtimeEntries(REPO_ROOT), ...exportTargets(manifest)]),
+  );
+
   await rm(STAGING, { recursive: true, force: true });
   await mkdir(join(STAGING, "bin"), { recursive: true });
 
+  let leftOut = 0;
   for (const name of WORKSPACE_PACKAGES) {
     const from = join(REPO_ROOT, "packages", name);
     const to = join(STAGING, "packages", name);
-    await cp(join(from, "src"), join(to, "src"), { recursive: true });
+    leftOut += await copyShippedSources(name, reached);
     await cp(join(from, "LICENSE"), join(to, "LICENSE"));
     await copyIfExists(join(from, "NOTICE"), join(to, "NOTICE"));
   }
+  console.log(`${String(leftOut)} src files reach no runtime entry or export and do not ship`);
   await cp(join(REPO_ROOT, "LICENSE"), join(STAGING, "LICENSE"));
   await cp(
     join(REPO_ROOT, "packaging", "npm-README.md"),
@@ -281,7 +327,7 @@ const main = async (): Promise<void> => {
 
   await writeFile(
     join(STAGING, "package.json"),
-    `${JSON.stringify(buildManifest(version, dependencies), null, 2)}\n`,
+    `${JSON.stringify(manifest, null, 2)}\n`,
     "utf8",
   );
 
