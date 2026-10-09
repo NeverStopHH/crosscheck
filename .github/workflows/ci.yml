@@ -234,7 +234,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 3841
+    # PRINTS: 3854
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -272,7 +272,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/doctor-repo-runtime.ts 2
     # PRINTS: packages/cli/src/cli/doctor-retention.ts 3
     # PRINTS: packages/cli/src/cli/doctor-sharing.ts 3
-    # PRINTS: packages/cli/src/cli/doctor.ts 82
+    # PRINTS: packages/cli/src/cli/doctor.ts 83
     # PRINTS: packages/cli/src/cli/foreign-hub.ts 1
     # PRINTS: packages/cli/src/cli/index.ts 6
     # PRINTS: packages/cli/src/cli/init-global.ts 2
@@ -346,7 +346,7 @@ jobs:
     # PRINTS: hooks/landed-why.ts 2
     # PRINTS: hooks/landing-fetch.ts 2
     # PRINTS: hooks/post-tool-use-failure.ts 5
-    # PRINTS: hooks/post-tool-use.ts 15
+    # PRINTS: hooks/post-tool-use.ts 16
     # PRINTS: hooks/pre-tool-use.ts 51
     # PRINTS: hooks/presence-refresh.ts 2
     # PRINTS: hooks/rest-recheck.ts 14
@@ -369,7 +369,7 @@ jobs:
     # PRINTS: briefing/landed-notices.ts 5
     # PRINTS: briefing/presence-notice.ts 2
     # PRINTS: briefing/questions.ts 2
-    # PRINTS: briefing/render.ts 44
+    # PRINTS: briefing/render.ts 45
     # PRINTS: briefing/sanitize.ts 7
     # PRINTS: briefing/topic-group.ts 11
     # PRINTS: capture/authoritative-generated.ts 6
@@ -383,7 +383,7 @@ jobs:
     # PRINTS: capture/touched-root.ts 6
     # PRINTS: claim-validity.ts 2
     # PRINTS: conference/report.ts 4
-    # PRINTS: config/clean-restart.ts 7
+    # PRINTS: config/clean-restart.ts 8
     # PRINTS: config/config.ts 8
     # PRINTS: config/connected-repo.ts 5
     # PRINTS: config/hook-budget.ts 4
@@ -393,7 +393,7 @@ jobs:
     # PRINTS: config/origin.ts 2
     # PRINTS: config/paths.ts 14
     # PRINTS: config/repo-config.ts 1
-    # PRINTS: config/runtime-isolation.ts 2
+    # PRINTS: config/runtime-isolation.ts 3
     # PRINTS: config/trusted-path.ts 2
     # PRINTS: constants.ts 16
     # PRINTS: coverage/exempt-surfaces.ts 2
@@ -448,7 +448,7 @@ jobs:
     # PRINTS: hints/delivery.ts 8
     # PRINTS: hints/outcome-clause.ts 2
     # PRINTS: hints/precision.ts 2
-    # PRINTS: hints/render.ts 31
+    # PRINTS: hints/render.ts 32
     # PRINTS: hints/select.ts 44
     # PRINTS: http/client.ts 9
     # PRINTS: http/connection-error.ts 2
@@ -471,7 +471,7 @@ jobs:
     # PRINTS: mcp/context.ts 1
     # PRINTS: mcp/render-intent-chain.ts 1
     # PRINTS: mcp/render-referee.ts 3
-    # PRINTS: mcp/render.ts 32
+    # PRINTS: mcp/render.ts 33
     # PRINTS: mcp/session.ts 1
     # PRINTS: mcp/tools/answer-question.ts 1
     # PRINTS: mcp/tools/ask-teammate.ts 1
@@ -480,7 +480,7 @@ jobs:
     # PRINTS: mcp/tools/mark-hint-outcome.ts 13
     # PRINTS: mcp/tools/publish-claim.ts 2
     # PRINTS: mcp/tools/review-draft.ts 2
-    # PRINTS: mcp/tools/search-related-work.ts 1
+    # PRINTS: mcp/tools/search-related-work.ts 2
     # PRINTS: mcp/tools/set-intent.ts 6
     # PRINTS: mcp/tools/shared.ts 4
     # PRINTS: model/gates.ts 1
@@ -498,7 +498,7 @@ jobs:
     # PRINTS: spool/held-deliveries.ts 13
     # PRINTS: spool/ledger-read.ts 2
     # PRINTS: spool/lock.ts 2
-    # PRINTS: spool/loss-report.ts 20
+    # PRINTS: spool/loss-report.ts 21
     # PRINTS: spool/owed-work-context.ts 21
     # PRINTS: spool/ownership.ts 16
     # PRINTS: spool/reap.ts 15
@@ -667,7 +667,7 @@ jobs:
     # PRINTS: packages/server/src/services/hint-deliveries.ts 6
     # PRINTS: packages/server/src/services/hint-outcome-view.ts 18
     # PRINTS: packages/server/src/services/hint-outcomes.ts 21
-    # PRINTS: packages/server/src/services/hints.ts 89
+    # PRINTS: packages/server/src/services/hints.ts 92
     # PRINTS: packages/server/src/services/hub-install.ts 2
     # PRINTS: packages/server/src/services/human-drafts.ts 11
     # PRINTS: packages/server/src/services/human-provenance.ts 8
@@ -700,7 +700,7 @@ jobs:
     # PRINTS: packages/server/src/services/retention-registry.ts 11
     # PRINTS: packages/server/src/services/retention.ts 24
     # PRINTS: packages/server/src/services/search-tokens.ts 4
-    # PRINTS: packages/server/src/services/search.ts 27
+    # PRINTS: packages/server/src/services/search.ts 28
     # PRINTS: packages/server/src/services/session-events.ts 9
     # PRINTS: packages/server/src/services/session-order.ts 9
     # PRINTS: packages/server/src/services/session-window.ts 1
@@ -768,7 +768,7 @@ jobs:
     # PRINTS: claim-revalidations.ts 7
     # PRINTS: claim-surface.ts 1
     # PRINTS: claim-validity.ts 11
-    # PRINTS: clean-restart.ts 7
+    # PRINTS: clean-restart.ts 8
     # PRINTS: client-release.ts 2
     # PRINTS: client.ts 17
     # PRINTS: cloud-agent-identity.ts 1
@@ -825,7 +825,7 @@ jobs:
     # PRINTS: doctor-repo-runtime.ts 2
     # PRINTS: doctor-retention.ts 3
     # PRINTS: doctor-sharing.ts 3
-    # PRINTS: doctor.ts 100
+    # PRINTS: doctor.ts 101
     # PRINTS: draft-apply.ts 1
     # PRINTS: draft-backlog.ts 8
     # PRINTS: draft-doors.ts 5
@@ -893,7 +893,7 @@ jobs:
     # PRINTS: hint-outcome.ts 1
     # PRINTS: hint-outcomes.ts 27
     # PRINTS: hint.ts 43
-    # PRINTS: hints.ts 94
+    # PRINTS: hints.ts 97
     # PRINTS: hook-budget.ts 4
     # PRINTS: hub-install.ts 2
     # PRINTS: hub-status.ts 5
@@ -941,7 +941,7 @@ jobs:
     # PRINTS: login.ts 6
     # PRINTS: loss-ledger.ts 13
     # PRINTS: loss-refusals.ts 2
-    # PRINTS: loss-report.ts 20
+    # PRINTS: loss-report.ts 21
     # PRINTS: manifest-doc.ts 2
     # PRINTS: mark-hint-outcome.ts 13
     # PRINTS: network-guard-rules.ts 7
@@ -988,7 +988,7 @@ jobs:
     # PRINTS: pins.ts 16
     # PRINTS: pointer-standing.ts 12
     # PRINTS: post-tool-use-failure.ts 5
-    # PRINTS: post-tool-use.ts 16
+    # PRINTS: post-tool-use.ts 17
     # PRINTS: post.ts 1
     # PRINTS: pre-tool-use.ts 51
     # PRINTS: precision.ts 2
@@ -1028,7 +1028,7 @@ jobs:
     # PRINTS: render-referee.ts 3
     # PRINTS: render-surface-registry.test.ts 1
     # PRINTS: render-surfaces.ts 2
-    # PRINTS: render.ts 131
+    # PRINTS: render.ts 134
     # PRINTS: repo-config.ts 1
     # PRINTS: repo-identity-cache.ts 7
     # PRINTS: repo-identity.ts 2
@@ -1042,13 +1042,13 @@ jobs:
     # PRINTS: review-draft.ts 2
     # PRINTS: run.ts 9
     # PRINTS: runner.ts 36
-    # PRINTS: runtime-isolation.ts 2
+    # PRINTS: runtime-isolation.ts 3
     # PRINTS: sanitize.ts 7
     # PRINTS: schema.ts 2
     # PRINTS: schemas.ts 1
-    # PRINTS: search-related-work.ts 1
+    # PRINTS: search-related-work.ts 2
     # PRINTS: search-tokens.ts 4
-    # PRINTS: search.ts 28
+    # PRINTS: search.ts 29
     # PRINTS: secret-scan.ts 1
     # PRINTS: select.ts 44
     # PRINTS: seq-cost.ts 9

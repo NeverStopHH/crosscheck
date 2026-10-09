@@ -3445,8 +3445,8 @@ export const MUTATIONS: readonly Mutation[
     // carry this guard is the second lock and no test can see it alone.
     label: "the hint wire ships an unpromoted draft's body",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "        pushableClaimCondition(),\n      ),\n    )\n    .orderBy(desc(claims.createdAt))",
-    to: "      ),\n    )\n    .orderBy(desc(claims.createdAt))",
+    from: "        pushableClaimCondition(),\n      ),\n    )\n    // Equally old claims to their id, never to the order the scan met them\n    // in (integration review L7): the window and the hint read them as stored.\n    .orderBy(desc(claims.createdAt), asc(claims.id))",
+    to: "      ),\n    )\n    .orderBy(desc(claims.createdAt), asc(claims.id))",
     test: `${SERVER}/test/hints.test.ts`,
     because:
       "a machine guess nobody reviewed — including a ghost draft a THIRD " +
@@ -24447,8 +24447,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "search names an opted-out teammate's branch through a fallback title",
     file: `${SERVER}/src/services/search.ts`,
-    from: "      projectRow(hidden, {\n        developerId: row.developerId,\n        titleFacts: { repo: row.repo, branch: row.branch, titleSource: row.titleSource },",
-    to: "      projectRow(new Set<string>(), {\n        developerId: row.developerId,\n        titleFacts: { repo: row.repo, branch: row.branch, titleSource: row.titleSource },",
+    from: "      ...projectRow(hidden, {\n        developerId: row.developerId,\n        titleFacts: { repo: row.repo, branch: row.branch, titleSource: row.titleSource },",
+    to: "      ...projectRow(new Set<string>(), {\n        developerId: row.developerId,\n        titleFacts: { repo: row.repo, branch: row.branch, titleSource: row.titleSource },",
     test: `${SERVER}/test/live-location-privacy.test.ts`,
     because:
       "search_related_work hands a colleague `feat/robin-relocates-to-zurich " +
@@ -28137,7 +28137,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the legacy line leaves out the rejections a 0.10 ledger kept without a cause",
     file: `${CORE}/src/spool/loss-report.ts`,
-    from: '  const rejected = Math.max(0, (local.drops.byReason["rejected"] ?? 0) - causes);',
+    from: '  const rejected = Math.max(0, (local.drops.byReason["rejected"] ?? 0) - causedRejections(local));',
     to: "  const rejected = 0;",
     test: `${CORE}/test/loss-report.test.ts`,
     because: "the 1.0 release gate: the 0.10 late-write losses read only as this connector's rejections, never as what was lost before the fix",
@@ -35511,7 +35511,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the npm shim hands bun a host's runtime variables",
     file: "packaging/bin/crosscheck.cjs",
-    from: '      { stdio: "inherit", env: withoutRuntimeInjection(process.env) },',
+    from: '      { stdio: "inherit", env: restartedEnv(process.env) },',
     to: '      { stdio: "inherit" },',
     test: `${CLI}/test/e2e/bait-repo-isolation.e2e.test.ts`,
     because: "a .mcp.json env block's BUN_OPTIONS preloads the repo's code in the bun the shim starts",
@@ -37264,7 +37264,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-subagent-return.test.ts 10
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
  * PRINTS: packages/cli/test/doctor-verdict-legality.test.ts 2
- * PRINTS: packages/cli/test/doctor.test.ts 12
+ * PRINTS: packages/cli/test/doctor.test.ts 13
  * PRINTS: packages/cli/test/drafted-gestures-cli.test.ts 6
  * PRINTS: packages/cli/test/e2e/bait-repo-isolation.e2e.test.ts 7
  * PRINTS: packages/cli/test/e2e/clean-restart.e2e.test.ts 4
@@ -37373,6 +37373,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/detached-title.test.ts 3
  * PRINTS: packages/connector-claude/test/double-wiring.test.ts 1
  * PRINTS: packages/connector-claude/test/draft-nudge-hook.test.ts 2
+ * PRINTS: packages/connector-claude/test/e2e/heal-sweeps-again.e2e.test.ts 1
  * PRINTS: packages/connector-claude/test/e2e/release-gate-opted-out.e2e.test.ts 2
  * PRINTS: packages/connector-claude/test/failure-hook.test.ts 2
  * PRINTS: packages/connector-claude/test/fingerprint.test.ts 1
@@ -37441,6 +37442,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/briefing-presence-notice.test.ts 3
  * PRINTS: packages/connector-core/test/briefing-presence-topics.test.ts 6
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 5
+ * PRINTS: packages/connector-core/test/briefing-withheld-age.test.ts 1
  * PRINTS: packages/connector-core/test/capture-across-lives.test.ts 11
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 5
  * PRINTS: packages/connector-core/test/capture-losses.test.ts 7
@@ -37504,7 +37506,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-intent-fallback.test.ts 8
  * PRINTS: packages/connector-core/test/hint-old-hub-floor.test.ts 15
  * PRINTS: packages/connector-core/test/hint-query-window.test.ts 5
- * PRINTS: packages/connector-core/test/hint-render.test.ts 5
+ * PRINTS: packages/connector-core/test/hint-render.test.ts 6
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
  * PRINTS: packages/connector-core/test/hint-substance-flow.test.ts 12
  * PRINTS: packages/connector-core/test/hint-substance-render.test.ts 3
@@ -37539,16 +37541,16 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/ledger-concurrency.test.ts 5
  * PRINTS: packages/connector-core/test/loopback-bind.test.ts 1
  * PRINTS: packages/connector-core/test/loss-ledger.test.ts 5
- * PRINTS: packages/connector-core/test/loss-report.test.ts 38
+ * PRINTS: packages/connector-core/test/loss-report.test.ts 39
  * PRINTS: packages/connector-core/test/mark-hint-outcome-tool.test.ts 20
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 5
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3
- * PRINTS: packages/connector-core/test/mcp-render.test.ts 16
+ * PRINTS: packages/connector-core/test/mcp-render.test.ts 17
  * PRINTS: packages/connector-core/test/mcp-seq-e2e.test.ts 2
  * PRINTS: packages/connector-core/test/mcp-seq.test.ts 8
  * PRINTS: packages/connector-core/test/mcp-solved-render.test.ts 4
- * PRINTS: packages/connector-core/test/mcp-tools.test.ts 4
+ * PRINTS: packages/connector-core/test/mcp-tools.test.ts 5
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
  * PRINTS: packages/connector-core/test/network-guard.test.ts 15
@@ -37578,7 +37580,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/repo-ssh-determinism.test.ts 2
  * PRINTS: packages/connector-core/test/rest-unchecked-scope.test.ts 3
  * PRINTS: packages/connector-core/test/review-draft.test.ts 2
- * PRINTS: packages/connector-core/test/runtime-isolation.test.ts 9
+ * PRINTS: packages/connector-core/test/runtime-isolation.test.ts 11
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
@@ -37758,7 +37760,7 @@ interface Outcome {
  * PRINTS: packages/server/test/live-location-privacy.test.ts 28
  * PRINTS: packages/server/test/live-location-projection.test.ts 9
  * PRINTS: packages/server/test/live-location-prose.test.ts 3
- * PRINTS: packages/server/test/live-location-surfaces.test.ts 48
+ * PRINTS: packages/server/test/live-location-surfaces.test.ts 52
  * PRINTS: packages/server/test/live-location-told.test.ts 1
  * PRINTS: packages/server/test/live-location-topics.test.ts 5
  * PRINTS: packages/server/test/location-index-boot.test.ts 6
