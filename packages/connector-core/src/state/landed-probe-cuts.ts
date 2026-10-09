@@ -53,29 +53,39 @@ export interface LandedProbeCutBooking {
 }
 
 /**
- * The tool calls this PROCESS has booked a cut for. Two writers can see one
- * cut — the pre-edit handler when its probe came back cut, and the runner
- * when the budget abandoned the handler — and a handler the race abandoned
- * keeps running until the process exits, so without this a cut booked by
- * the handler a moment before the race resolved would be booked again by
- * the runner. One hook process handles one tool call, so the set stays at
- * most one entry; it is module state on purpose, the one thing both writers
- * share.
+ * The tool calls this PROCESS has booked a cut for, each with its booking's
+ * writes. Two writers can see one cut — the pre-edit handler when its probe
+ * came back cut, and the runner when the budget abandoned the handler — and
+ * a handler the race abandoned keeps running until the process exits, so
+ * without this a cut booked by the handler a moment before the race
+ * resolved would be booked again by the runner. One hook process handles one
+ * tool call, so the map stays at most one entry; it is module state on
+ * purpose, the one thing both writers share.
  */
-const booked = new Set<string>();
+const bookings = new Map<string, Promise<void>>();
+
+/** The cut's two writes: the session's counter, then the ledger line. */
+const writeCut = async (booking: LandedProbeCutBooking): Promise<void> => {
+  await updateSessionState(booking.home, booking.sessionId, withLandedProbeCut);
+  await recordLandedProbeCut(booking.home, { key: booking.key, reason: booking.reason, now: booking.now });
+};
 
 /**
  * ONE cut, booked in both places it is read from — the session's counter
  * (its next prompt tells it once) and the ledger `doctor` and `status`
  * count — at most once per tool call. Marked before the first write, so the
- * second writer stops at the mark however the two interleave.
+ * second writer finds the mark however the two interleave — and WAITS for
+ * the first writer's writes (batch-2 review, L6): it used to return at the
+ * mark, and the runner, the second writer, then exited the process with the
+ * handler's writes still in flight, so the cut was never written at all.
  */
-export const bookLandedProbeCut = async (booking: LandedProbeCutBooking): Promise<void> => {
+export const bookLandedProbeCut = (booking: LandedProbeCutBooking): Promise<void> => {
   const id = `${booking.sessionId}\n${booking.toolUseId ?? ""}`;
-  if (booked.has(id)) {
-    return;
+  const inFlight = bookings.get(id);
+  if (inFlight !== undefined) {
+    return inFlight;
   }
-  booked.add(id);
-  await updateSessionState(booking.home, booking.sessionId, withLandedProbeCut);
-  await recordLandedProbeCut(booking.home, { key: booking.key, reason: booking.reason, now: booking.now });
+  const writing = writeCut(booking);
+  bookings.set(id, writing);
+  return writing;
 };

@@ -237,6 +237,34 @@ describe("the cut-checks ledger", () => {
     expect(counts.byReason).toEqual({ deadline: 1, unanswered: 0, budget: 1 });
   });
 
+  test("the second writer of one cut waits for the first one's writes — a runner never exits between them (batch-2 L6)", async () => {
+    // Arrange
+    const h = await home("cuts-inflight");
+    await writeSessionState(
+      h,
+      SessionStateSchema.parse({
+        hostSessionKey: "s-flight",
+        crosscheckSessionId: "cc_s-flight",
+        workContextId: "wc_cc_s-flight",
+        repoId: "github.com/acme/api",
+        repoRoot: "/tmp/repo",
+        hubUrl: "http://127.0.0.1:1",
+        developerId: "dev_1",
+        startedAt: NOW.toISOString(),
+      }),
+    );
+    const booking = { home: h, sessionId: "s-flight", toolUseId: "toolu_flight", key: KEY, now: NOW } as const;
+
+    // Act — the handler's booking still in flight when the runner books the same cut
+    const handlers = bookLandedProbeCut({ ...booking, reason: "deadline" });
+    await bookLandedProbeCut({ ...booking, reason: "budget" });
+
+    // Assert — by the time the runner's call returns, the cut is written
+    expect((await readLandedProbeCuts(h, KEY, NOW)).total).toBe(1);
+    expect((await readSessionState(h, "s-flight"))?.landedProbeCuts).toBe(1);
+    await handlers;
+  });
+
   test("another repo's cut is not this repo's, and one older than the window stopped counting", async () => {
     // Arrange
     const h = await home("cuts-scope");

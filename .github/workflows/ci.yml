@@ -168,7 +168,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 3625
+    # PRINTS: 3628
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -202,7 +202,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/doctor-repo-runtime.ts 2
     # PRINTS: packages/cli/src/cli/doctor-retention.ts 3
     # PRINTS: packages/cli/src/cli/doctor-sharing.ts 3
-    # PRINTS: packages/cli/src/cli/doctor.ts 77
+    # PRINTS: packages/cli/src/cli/doctor.ts 78
     # PRINTS: packages/cli/src/cli/foreign-hub.ts 1
     # PRINTS: packages/cli/src/cli/index.ts 6
     # PRINTS: packages/cli/src/cli/init-global.ts 2
@@ -231,7 +231,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/pin.ts 10
     # PRINTS: packages/cli/src/cli/project-copy.ts 9
     # PRINTS: packages/cli/src/cli/revalidate.ts 2
-    # PRINTS: packages/cli/src/cli/status.ts 23
+    # PRINTS: packages/cli/src/cli/status.ts 24
     # PRINTS: packages/cli/src/cli/suspect-render.ts 4
     # PRINTS: packages/cli/src/cli/terminal.ts 3
     # PRINTS: packages/cli/src/cli/verdict-render.ts 3
@@ -440,7 +440,7 @@ jobs:
     # PRINTS: state/draft-nudge-spent.ts 5
     # PRINTS: state/foreign-hub.ts 9
     # PRINTS: state/git-lane-cost.ts 2
-    # PRINTS: state/landed-probe-cuts.ts 3
+    # PRINTS: state/landed-probe-cuts.ts 4
     # PRINTS: state/loss-ledger.ts 11
     # PRINTS: state/loss-refusals.ts 1
     # PRINTS: state/omission-ledger.ts 3
@@ -723,7 +723,7 @@ jobs:
     # PRINTS: doctor-repo-runtime.ts 2
     # PRINTS: doctor-retention.ts 3
     # PRINTS: doctor-sharing.ts 3
-    # PRINTS: doctor.ts 95
+    # PRINTS: doctor.ts 96
     # PRINTS: draft-backlog.ts 8
     # PRINTS: draft-link-cleanup.ts 17
     # PRINTS: draft-nudge-spent.ts 5
@@ -814,7 +814,7 @@ jobs:
     # PRINTS: landed-evidence.ts 1
     # PRINTS: landed-notice.ts 5
     # PRINTS: landed-notices.ts 33
-    # PRINTS: landed-probe-cuts.ts 6
+    # PRINTS: landed-probe-cuts.ts 7
     # PRINTS: landed-repair.ts 9
     # PRINTS: landed-why.ts 2
     # PRINTS: landed.ts 27
@@ -970,7 +970,7 @@ jobs:
     # PRINTS: stale-docs.ts 2
     # PRINTS: startup-upgrades.ts 5
     # PRINTS: stats.ts 1
-    # PRINTS: status.ts 23
+    # PRINTS: status.ts 24
     # PRINTS: statusline.ts 8
     # PRINTS: stop-words.ts 2
     # PRINTS: stop.ts 4

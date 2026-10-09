@@ -28618,10 +28618,34 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "one cut is booked twice when the handler and the runner both see it",
     file: `${CORE}/src/state/landed-probe-cuts.ts`,
-    from: "  if (booked.has(id)) {\n    return;\n  }\n",
+    from: "  if (inFlight !== undefined) {\n    return inFlight;\n  }\n",
     to: "",
     test: `${CORE}/test/landed-probe-cuts.test.ts`,
     because: "a handler that booked just before the race resolved is counted again by the runner, and the line overstates",
+  },
+  {
+    label: "doctor never reads the collision warnings a person may have missed",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    collisionOmissionsCheck(await readRestOmissions(config.home, key, now)),\n",
+    to: "",
+    test: `${CLI}/test/collision-omissions.test.ts`,
+    because: "a tripwire line the budget cut shows in doctor only as a landed-check cut (batch-2 L2, H2)",
+  },
+  {
+    label: "status never prints the collision warnings a person may have missed",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "      ...collisionOmissionLines,\n",
+    to: "",
+    test: `${CLI}/test/collision-omissions.test.ts`,
+    because: "the ledger is written and nothing a person reads counts it (batch-2 L2)",
+  },
+  {
+    label: "the runner's cut booking returns before the handler's writes land",
+    file: `${CORE}/src/state/landed-probe-cuts.ts`,
+    from: "    return inFlight;",
+    to: "    return Promise.resolve();",
+    test: `${CORE}/test/landed-probe-cuts.test.ts`,
+    because: "the runner exits the process with the handler's writes in flight, and the cut is never written (batch-2 L6)",
   },
   {
     label: "a pre-edit hook the budget abandoned books no cut",
@@ -35220,6 +35244,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/ci-report-workflow.test.ts 3
  * PRINTS: packages/cli/test/ci-report.test.ts 6
  * PRINTS: packages/cli/test/ci-status-render.test.ts 3
+ * PRINTS: packages/cli/test/collision-omissions.test.ts 2
  * PRINTS: packages/cli/test/conference-cli.test.ts 12
  * PRINTS: packages/cli/test/connection-error.test.ts 2
  * PRINTS: packages/cli/test/connector-capture-health.test.ts 3
@@ -35494,7 +35519,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/landed-changes-edges.test.ts 19
  * PRINTS: packages/connector-core/test/landed-changes.test.ts 7
  * PRINTS: packages/connector-core/test/landed-notice.test.ts 21
- * PRINTS: packages/connector-core/test/landed-probe-cuts.test.ts 5
+ * PRINTS: packages/connector-core/test/landed-probe-cuts.test.ts 6
  * PRINTS: packages/connector-core/test/landed-probe-facts.test.ts 8
  * PRINTS: packages/connector-core/test/landed-render.test.ts 4
  * PRINTS: packages/connector-core/test/landed-why-render.test.ts 7
