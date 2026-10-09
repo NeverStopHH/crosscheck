@@ -31,6 +31,7 @@ import { warmHub } from "./release-gate/case-kit.ts";
 import { BATCH_2_FINDINGS, unregisteredExpectations } from "./release-gate/expected.ts";
 import type { Expectations } from "./release-gate/expected.ts";
 import { describeGenerated, describeLanded, describeSelf, describeSweep } from "./release-gate/gate-controls.ts";
+import { describeOptedOut } from "./release-gate/gate-opted-out.ts";
 import { describePilot, describeScaleTwin } from "./release-gate/gate-pilot.ts";
 import type { GateContext } from "./release-gate/gate-pilot.ts";
 import { startHub } from "./release-gate/hub.ts";
@@ -84,6 +85,7 @@ describe.skipIf(!inGateLane("loaded"))("release gate under load — production b
   describeLanded(ctx);
   describeSelf(ctx);
   describeSweep(ctx);
+  describeOptedOut(ctx);
 
   test("every expected failure in the table names a test this file registered", () => {
     expect(unregisteredExpectations(EXPECTED)).toEqual([]);

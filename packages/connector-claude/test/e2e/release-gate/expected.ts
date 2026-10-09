@@ -23,20 +23,46 @@ export interface ExpectedFailure {
 /** Test id (the prefix of its name, e.g. "1d") → why it is expected to fail. */
 export type Expectations = Readonly<Record<string, ExpectedFailure>>;
 
-export const NONE_EXPECTED: Expectations = {};
-
 /** H1: a compaction or a resume restarts the git lane's window, so work from before it is never filed again. */
 const H1_CAPTURE_ACROSS_LIVES: ExpectedFailure = { finding: "H1", track: "A", branch: "fix/b2-capture-across-lives" };
 /** H2: PreToolUse writes the person's record last, after its spare budget or a second lock round is gone. */
 const H2_PERSON_RECORD_LAST: ExpectedFailure = { finding: "H2", track: "B", branch: "fix/b2-hook-order-budgets" };
+/**
+ * I1, decided by the owner: an opted-out teammate working on the file right
+ * now is an anonymous live warning for the other side ("a teammate is working
+ * on <file> right now"). On 5a544fff the hub drops a hidden owner's sessions
+ * from the tripwire whole, so Nick is told nothing.
+ */
+const I1_ANONYMOUS_LIVE_WARNING: ExpectedFailure = { finding: "I1", track: "C", branch: "fix/b2-privacy-seams" };
+/** M5: an opted-out teammate's creation instants read as "last seen" (statusline, briefing). */
+const M5_LAST_SEEN: ExpectedFailure = { finding: "M5", track: "C", branch: "fix/b2-privacy-seams" };
+
+/**
+ * WHAT EVERY PROFILE SHOWS, timing or not: the opted-out case (P2,
+ * release-gate/gate-opted-out.ts) — the owner's decision on I1, decided after
+ * 5a544fff, and the review's M5, which P2 reads on two surfaces. The generous
+ * variant's whole table.
+ */
+export const OWNER_DECISIONS_PENDING: Expectations = {
+  // Track C, fix/b2-privacy-seams (I1, the owner's decision): Mike has opted out and is working on
+  // PlayerMappingGrid.tsx right now; Nick's edit of it must tell NICK that a teammate is on it.
+  "P2.told": I1_ANONYMOUS_LIVE_WARNING,
+  // Track C, fix/b2-privacy-seams (M5): Nick's statusline reads "Mike last seen 3s ago" and his
+  // briefing "Mike, 1s ago" — instants derived from Mike's work's creation. e061fb94 on that branch
+  // fixes the statusline (presence-cache.ts); the briefing's age line is a separate render.
+  "P2.anonymous.when.statusline": M5_LAST_SEEN,
+  "P2.anonymous.when.briefing": M5_LAST_SEEN,
+};
 
 /**
  * THE BATCH-2 FINDINGS the realistic gate shows (production and loaded lanes),
- * on feat/crosscheck-batch-1006 at 5a544fff. Each line goes when its branch
- * merges. Track C (fix/b2-privacy-seams: H3–H5) has no line: no gate case
- * reads a route as an opted-out developer's colleague.
+ * on feat/crosscheck-batch-1006 at 5a544fff, plus the owner's pending I1
+ * decision. Each line goes when its branch merges. Track C's H3–H5 have no
+ * line: no gate case hashes topic ids, polls the landed stop or ranks hints
+ * as an opted-out developer's colleague; P2's anonymity check (plain) holds.
  */
 export const BATCH_2_FINDINGS: Expectations = {
+  ...OWNER_DECISIONS_PENDING,
   // Track A, fix/b2-capture-across-lives (H1, compaction): the codegen worker's six Bash-only files
   // land after the turn's lane and before the compaction; every later lane's window starts at the
   // compaction, so none of them is ever filed. The same case without the compaction passes all four.

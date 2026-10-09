@@ -7,6 +7,7 @@
 import { dirname, join } from "node:path";
 
 import { renderRepoConfig } from "@crosscheck/connector-core/config/repo-config.ts";
+import { PRESENCE_TTL_MS } from "@crosscheck/connector-core/constants.ts";
 
 import { addWorktree, cloneFor, daysAgo, makeSeed } from "./git.ts";
 import type { Person } from "./git.ts";
@@ -53,6 +54,42 @@ export const checkoutFor = async (repo: CaseRepo, person: Person, branch: string
   const clone = await cloneFor(repo.seed, `${repo.label}-${tag}`, repo.remoteUrl, person);
   const worktree = await addWorktree(clone, join(dirname(clone), tag), branch, "origin/main");
   return { clone, worktree, parent: dirname(clone) };
+};
+
+/**
+ * A third of the presence window (PRESENCE_TTL_MS): however slow the machine,
+ * a developer at their desk never ages out of presence.
+ */
+const AT_DESK_EVERY_MS = PRESENCE_TTL_MS / 3;
+
+/**
+ * `session`'s developer STAYS AT THEIR DESK while `body` runs — "both at their
+ * desks" held by what keeps a person live rather than by how fast the machine
+ * is: every AT_DESK_EVERY_MS their agent runs their tests (a Bash call: its
+ * PostToolUse capture carries the heartbeat, and it asks no tripwire, so a
+ * case's tripwire answers are exactly what they would be without it). On a
+ * starved machine a teammate's fan-out outlasts the presence window, and a
+ * teammate the presence answer no longer lists is counted, never named — by
+ * design, and not what such a phase is about.
+ */
+export const whileAtDesk = async <T>(session: HostSession, worktree: string, body: () => Promise<T>): Promise<T> => {
+  const finished = Promise.withResolvers<boolean>();
+  const desk = (async (): Promise<void> => {
+    for (;;) {
+      const isStillWorking = await Promise.race([Bun.sleep(AT_DESK_EVERY_MS).then(() => true), finished.promise]);
+      if (!isStillWorking) {
+        return;
+      }
+      session.label("at-desk");
+      await session.bash("bun test", async () => undefined, { cwd: worktree });
+    }
+  })();
+  try {
+    return await body();
+  } finally {
+    finished.resolve(false);
+    await desk;
+  }
 };
 
 const WARM_UP: Person = { name: "Warm Up", email: "warm-up@example.com" };

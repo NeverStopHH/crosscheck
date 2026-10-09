@@ -40,9 +40,9 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { renderRepoConfig } from "@crosscheck/connector-core/config/repo-config.ts";
-import { PRESENCE_TTL_MS } from "@crosscheck/connector-core/constants.ts";
 
 import { MIKE, NICK } from "../../../../connector-core/test/fixtures/landing-repos.ts";
+import { whileAtDesk } from "./case-kit.ts";
 import {
   SEED_AUTHOR,
   addDetachedWorktree,
@@ -327,42 +327,6 @@ const mikeEdits = async (
 };
 
 /**
- * A third of the presence window (PRESENCE_TTL_MS): however slow the machine,
- * Mike's heartbeat never ages out while he is at his desk.
- */
-const AT_DESK_EVERY_MS = PRESENCE_TTL_MS / 3;
-
-/**
- * MIKE STAYS AT HIS DESK while `body` runs — the premise of the day-2 phase
- * ("both at their desks"), held by what keeps a person live rather than by
- * how fast the machine is: every AT_DESK_EVERY_MS his agent runs his tests
- * (a Bash call: its PostToolUse capture carries his heartbeat, and it asks no
- * tripwire, so the case's tripwire answers are exactly what they were). On a
- * starved machine Nick's fan-out outlasts the presence window, and a
- * teammate the presence answer no longer lists is counted, never named — by
- * design, and not what this phase is about.
- */
-const whileMikeWorks = async <T>(session: HostSession, worktree: string, body: () => Promise<T>): Promise<T> => {
-  const finished = Promise.withResolvers<boolean>();
-  const desk = (async (): Promise<void> => {
-    for (;;) {
-      const isStillWorking = await Promise.race([Bun.sleep(AT_DESK_EVERY_MS).then(() => true), finished.promise]);
-      if (!isStillWorking) {
-        return;
-      }
-      session.label("mike-at-desk");
-      await session.bash("bun test apps/practice/streaming", async () => undefined, { cwd: worktree });
-    }
-  })();
-  try {
-    return await body();
-  } finally {
-    finished.resolve(false);
-    await desk;
-  }
-};
-
-/**
  * THE LIVES (profile.hasCompactAndResume): Nick's editor reloads mid-work —
  * SessionEnd, then the same conversation resumes — his workers carry on with
  * modules he already had, and the turn ends. Nothing he does after the
@@ -430,7 +394,8 @@ export const runLongSessionCase = async (
   // Nick's subagents: the eight shared files Mike just worked on (the hits) and the bulk.
   const work = { session: nickSession, topic: at.nickTopic, scratch, files, plan, secret };
   const nick = profile.isParallel
-    ? await whileMikeWorks(mikeSession, at.mikeWorktree, async () => nickWorksInParallel(work, profile.hasCompactAndResume))
+    ? // Mike stays at his desk while Nick's workers run (the day-2 premise; case-kit.ts `whileAtDesk`).
+      await whileAtDesk(mikeSession, at.mikeWorktree, async () => nickWorksInParallel(work, profile.hasCompactAndResume))
     : await nickWorksSequentially(work);
 
   const tinaLanding = await tinaLands(tinaSession, seed, at.tinaClone);

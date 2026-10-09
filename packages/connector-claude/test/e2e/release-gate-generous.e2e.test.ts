@@ -30,23 +30,31 @@
  * subagents, whose tripwire hits reached only the subagent; hints reached
  * only agents, never a person (157 delivered, 0 opened).
  *
- * NO EXPECTED FAILURES: on feat/crosscheck-batch-1006 every assertion passes
- * here; each case's comment keeps its provenance.
+ * ONE EXPECTED FAILURE (release-gate/expected.ts OWNER_DECISIONS_PENDING):
+ * P2.told, the owner's decision on I1 that an opted-out teammate is an
+ * anonymous live warning, which fix/b2-privacy-seams (track C) implements.
+ * Every other assertion passes here on feat/crosscheck-batch-1006; each
+ * case's comment keeps its provenance.
  *
  * RUNTIME: about two and a half minutes — some 1,400 in-process hook runs,
  * plus one deliberate wait per long session (a subagent that outlasts the
  * presence cache; release-gate/scenario-nick-work.ts says why).
  */
-import { afterAll, beforeAll } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
-import { NONE_EXPECTED } from "./release-gate/expected.ts";
+import { OWNER_DECISIONS_PENDING, unregisteredExpectations } from "./release-gate/expected.ts";
+import type { Expectations } from "./release-gate/expected.ts";
 import { describeGenerated, describeLanded, describeSelf, describeSweep } from "./release-gate/gate-controls.ts";
+import { describeOptedOut } from "./release-gate/gate-opted-out.ts";
 import { describePilot, describeScaleTwin } from "./release-gate/gate-pilot.ts";
 import type { GateContext } from "./release-gate/gate-pilot.ts";
 import { startHub } from "./release-gate/hub.ts";
 import type { TestHub } from "./release-gate/hub.ts";
 import { GENEROUS } from "./release-gate/profile.ts";
+
+/** This file's own copy of the pending owner's decisions (release-gate/expected.ts). */
+const EXPECTED: Expectations = { ...OWNER_DECISIONS_PENDING };
 
 const held: { hub: TestHub | null } = { hub: null };
 const cleanups: string[] = [];
@@ -69,7 +77,7 @@ const ctx: GateContext = {
     return held.hub;
   },
   cleanups,
-  expected: NONE_EXPECTED,
+  expected: EXPECTED,
 };
 
 describePilot(ctx);
@@ -78,3 +86,8 @@ describeGenerated(ctx);
 describeLanded(ctx);
 describeSelf(ctx);
 describeSweep(ctx);
+describeOptedOut(ctx);
+
+test("every expected failure in the table names a test this file registered", () => {
+  expect(unregisteredExpectations(EXPECTED)).toEqual([]);
+});
