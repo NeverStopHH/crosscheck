@@ -258,8 +258,10 @@ describe("the cut-checks ledger", () => {
     // Act
     await recordLandedProbeCut(h, { key: KEY, reason: "deadline", now: NOW });
 
-    // Assert
+    // Assert: the full file moved aside whole, and the cut started a new one
+    // (review batch 2, M7, test/omission-ledger-rotation.test.ts).
     expect(path.endsWith("landed-probe-cuts.jsonl")).toBe(true);
-    expect((await stat(path)).size).toBe(MAX_BRIEFING_OMISSION_LEDGER_BYTES);
+    expect((await stat(`${path}.1`)).size).toBe(MAX_BRIEFING_OMISSION_LEDGER_BYTES);
+    expect((await stat(path)).size).toBeLessThan(MAX_BRIEFING_OMISSION_LEDGER_BYTES);
   });
 });
