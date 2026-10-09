@@ -153,6 +153,49 @@ jobs:
             packages/connector-claude/test/capture-latency.test.ts \
             packages/connector-acp/test/capture-latency.test.ts
 
+  release-gate:
+    # THE RELEASE GATE AS A DEVELOPER'S MACHINE RUNS IT (review of batch 2,
+    # M12: at 10x budget, one hook at a time and with no session ever
+    # resumed, the gate passed 51/51 while the merged batch brought the
+    # pilot's failure back). The pilot's Nick/Mike collision and the negative
+    # controls N1-N5 with: no CROSSCHECK_TIMEOUT_MS (400 ms per request, each
+    # hook its ratio of it); every hook a real `crosscheck hook` process, an
+    # event's hooks at once, async hooks left running; twelve subagents at
+    # once with the turn's end and the relays racing them; a compaction
+    # before a Stop; a session that ends and resumes mid-work.
+    #
+    # ITS OWN JOB, alone on the runner: a production budget judges whatever
+    # else the machine is doing, so inside the ordinary suite the file skips
+    # loudly (release-gate/lane.ts) and release-gate-generous.e2e.test.ts
+    # stands in there, on both platforms.
+    #
+    # DETERMINISTIC: the hub is read after a phase's async hooks have settled
+    # (the one earlier read, Nick's statusline at his turn's end, reads what
+    # only sync hooks write), and the races are ordered where an outcome
+    # depends on them (the Bash work lands after the turn's lanes and before
+    # the compaction; every life boundary comes after the lanes before it).
+    # Plain setup tests check that every moment an expected failure reads
+    # really happened and that no hook process crashed. An assertion that
+    # fails only because of a finding a fixing branch owns is `test.failing`,
+    # named in the file's table with its track and branch, so the job is
+    # green today and goes red the day a fix lands without its marker being
+    # removed.
+    # RUNTIME: 309-407 s in five consecutive runs on a 16-core laptop shared
+    # with other work (load 16-37; 64 tests; P1 and N1 alone start about 500
+    # hook processes each). Not yet measured on a hosted runner: the bound
+    # below leaves a 4-vCPU one more than four times the slowest run.
+    name: Release gate (production budgets)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CX_GATE_LANE: production
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Nick and Mike, at production budgets, in parallel, across a compaction and a resume
+        run: bun test --timeout=60000 packages/connector-claude/test/e2e/release-gate-nick-mike.e2e.test.ts
+
   mutation:
     # A check nobody proved can fail is decoration. This re-introduces the
     # budget-reserve defect, the sanitizer defects the injection corpus guards,
