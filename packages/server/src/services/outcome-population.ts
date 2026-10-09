@@ -36,7 +36,7 @@ import { HINT_OUTCOME_DISCLOSURE_MINIMUMS, PULLED_DELIVERY_CHANNEL } from "@cros
 import type { HintOutcome, HintOutcomeWithholding } from "@crosscheck/schema";
 
 import { NOISE_WORDS } from "./pilot-label-figures.ts";
-import { isHumanRow } from "./human-provenance.ts";
+import { effectiveAtOf, isHumanRow } from "./human-provenance.ts";
 import type { Db } from "../db/client.ts";
 
 /** What one delivery stands at: an outcome, the noise label, or nothing said. */
@@ -192,19 +192,35 @@ const rollingWindow = (since: Date, until: Date | null): SQL =>
 const saidInPeriod = (since: Date, until: Date): SQL => {
   const within = (column: SQL): SQL =>
     sql`${column} >= ${since.toISOString()}::timestamptz AND ${column} < ${until.toISOString()}::timestamptz`;
+  // round-2 R2-H1: a word counts from its EFFECTIVE instant — the later of its
+  // own and its passkey's usable instant — so a confirmation whose passkey
+  // gained standing after its month closed lands late in the next one.
   return sql`EXISTS (
     SELECT 1 FROM hint_outcomes lo JOIN hint_deliveries lod ON lod.id = lo.delivery_id
     WHERE lod.session_id = hd.session_id AND lod.ref_id = hd.ref_id AND lo.recorded_by = s.developer_id
-      AND ${within(sql`lo.created_at`)}
+      AND ${within(effectiveAtOf("lo"))}
     UNION ALL
     SELECT 1 FROM pilot_marks lm JOIN hint_deliveries lmd ON lmd.id = lm.ref_id
     WHERE lm.ref_kind = 'hint_delivery' AND lmd.session_id = hd.session_id AND lmd.ref_id = hd.ref_id
-      AND lm.marked_by = s.developer_id AND ${within(sql`lm.created_at`)}
+      AND lm.marked_by = s.developer_id AND ${within(effectiveAtOf("lm"))}
     UNION ALL
     SELECT 1 FROM noise_reassertions lr JOIN hint_deliveries lrd ON lrd.id = lr.delivery_id
     WHERE lrd.session_id = hd.session_id AND lrd.ref_id = hd.ref_id AND lr.marked_by = s.developer_id
-      AND ${within(sql`lr.created_at`)})`;
+      AND ${within(effectiveAtOf("lr"))})`;
 };
+
+/**
+ * A word in a CLOSED period's snapshot whose passkey was declared compromised
+ * after the period ended (round-2 R2-H1): the period never moves, but it
+ * carries a correction line counting such words.
+ */
+const laterRetracted = (confirmationColumn: SQL, until: Date | null): SQL =>
+  until === null
+    ? sql`false`
+    : sql`EXISTS (
+        SELECT 1 FROM human_confirmations hc JOIN passkeys p ON p.credential_id = hc.credential_id
+        WHERE hc.id = ${confirmationColumn} AND p.revoke_reason IS NOT DISTINCT FROM 'compromised'
+          AND p.revoked_at >= ${until.toISOString()}::timestamptz)`;
 
 const closedMonthStart = (since: Date, until: Date | null): SQL =>
   until === null
@@ -257,12 +273,13 @@ export const deliveryStates = (
     -- 07 §13.14 (round-6 HIGH-1): the person's newest LABEL on the pointer — noise, noise said
     -- again, or helpful — read on its own axis
     SELECT so.*, lab.word AS label_word, lab.reason AS label_reason, lab.at AS label_at, lab.id AS label_id,
-      lab.reasserted AS label_reasserted
+      lab.reasserted AS label_reasserted, lab.eff AS label_eff, lab.conf AS label_conf
     FROM sourced so
     LEFT JOIN LATERAL (
-      SELECT l.word, l.reason, l.at, l.id, l.reasserted FROM (
+      SELECT l.word, l.reason, l.at, l.id, l.reasserted, l.eff, l.conf FROM (
         -- round-6 LOW-6: each label's own sentence, the person's alone (marked_by = the recipient)
-        SELECT 'noise' AS word, m.reason AS reason, m.created_at AS at, m.id, false AS reasserted FROM pilot_marks m
+        SELECT 'noise' AS word, m.reason AS reason, m.created_at AS at, m.id, false AS reasserted,
+          ${effectiveAtOf("m")} AS eff, m.confirmation_id AS conf FROM pilot_marks m
         JOIN hint_deliveries md ON md.id = m.ref_id
         WHERE m.ref_kind = 'hint_delivery' AND md.session_id = so.session_id AND md.ref_id = so.ref_id
           AND m.marked_by = so.recipient AND m.mark IN ${NOISE_WORDS} AND ${isHumanRow("m", at)}
@@ -270,12 +287,12 @@ export const deliveryStates = (
         UNION ALL
         -- review H-B: the person saying noise again is a row of its own, read before the month's end too —
         -- with the sentence said with it, which --mine reads (round-5 LOW-6)
-        SELECT 'noise', r.reason, r.created_at, r.id, true FROM noise_reassertions r
+        SELECT 'noise', r.reason, r.created_at, r.id, true, ${effectiveAtOf("r")}, r.confirmation_id FROM noise_reassertions r
         JOIN hint_deliveries rd ON rd.id = r.delivery_id
         WHERE rd.session_id = so.session_id AND rd.ref_id = so.ref_id
           AND r.marked_by = so.recipient AND ${isHumanRow("r", at)} ${before(sql`r.created_at`, until)}
         UNION ALL
-        SELECT 'helpful', h.reason, h.created_at, h.id, false FROM pilot_marks h
+        SELECT 'helpful', h.reason, h.created_at, h.id, false, ${effectiveAtOf("h")}, h.confirmation_id FROM pilot_marks h
         JOIN hint_deliveries hd2 ON hd2.id = h.ref_id
         WHERE h.ref_kind = 'hint_delivery' AND hd2.session_id = so.session_id AND hd2.ref_id = so.ref_id
           AND h.marked_by = so.recipient AND h.mark = 'helpful' AND ${isHumanRow("h", at)}
@@ -285,13 +302,14 @@ export const deliveryStates = (
     ) lab ON true
   ), stated AS (
     SELECT la.id, la.recipient, la.source_id, la.late, la.label_word, la.label_reason, la.label_at,
-           said.word, said.reason, said.at AS outcome_at, said.reasserted
+           said.word, said.reason, said.eff AS outcome_at, said.reasserted, said.conf
     FROM labelled la
     LEFT JOIN LATERAL (
-      SELECT spoken.word, spoken.reason, spoken.at, spoken.reasserted FROM (
+      SELECT spoken.word, spoken.reason, spoken.at, spoken.reasserted, spoken.eff, spoken.conf FROM (
         -- every word counted here is the person's own (human provenance, J8): 07 §13.12's agent
         -- channel and its ranking are retired (review M1)
-        SELECT o.outcome AS word, o.reason, o.created_at AS at, o.id, false AS is_label, false AS reasserted
+        SELECT o.outcome AS word, o.reason, o.created_at AS at, o.id, false AS is_label, false AS reasserted,
+          ${effectiveAtOf("o")} AS eff, o.confirmation_id AS conf
         FROM hint_outcomes o
         JOIN hint_deliveries od ON od.id = o.delivery_id
         WHERE od.session_id = la.session_id AND od.ref_id = la.ref_id
@@ -299,14 +317,15 @@ export const deliveryStates = (
         UNION ALL
         -- (a) the person's noise competes only while it is their newest label — a newer helpful cancels
         -- it — and only the newest noise ever could: helpful itself never competes with an outcome
-        SELECT 'noise', la.label_reason, la.label_at, la.label_id, true, la.label_reasserted
+        SELECT 'noise', la.label_reason, la.label_at, la.label_id, true, la.label_reasserted, la.label_eff, la.label_conf
         WHERE la.label_word = 'noise'
       ) spoken
-      -- the person's newest word, the label on a tie (D-O7)
+      -- the person's newest word, the label on a tie (D-O7); it counts from its effective instant (R2-H1)
       ORDER BY spoken.at DESC, spoken.is_label DESC, spoken.id DESC LIMIT 1
     ) said ON true
   ), states AS (
     SELECT id, recipient, source_id, outcome_at, late,
+      ${laterRetracted(sql`conf`, until)} AS later_retracted,
       COALESCE(word, 'unmarked') AS state,
       reason,
       COALESCE(reasserted, false) AS reasserted,
@@ -324,71 +343,102 @@ export const deliveryStates = (
   )`;
 
 /**
- * One closed period's counts, and what its words would still cover with any
+ * ONE PRINTED FIGURE'S COUNTS, and what its words would still cover with any
  * single recorder left out (review H1) — the viewer subtracting their own
- * words, or one colleague telling the viewer theirs.
+ * words, or one colleague telling the viewer theirs. A period prints up to
+ * three figures — its own interventions, the words confirmed late in it, and
+ * the words later retracted as compromised — and each passes the minimums ON
+ * ITS OWN (round-2 R2-H2): late words never lift a month whose own figure is
+ * one person's verdict, nor the reverse.
  */
-export interface PeriodAggregate {
+export interface PartAggregate {
+  /** The part's rows: the period's own interventions, or its late (or retracted) words. */
   readonly interventions: number;
   readonly followed: number;
   readonly overrode: number;
   readonly notRelevantNow: number;
   readonly noise: number;
   readonly unmarked: number;
-  /** People who recorded at least one word. */
+  /** People who recorded at least one word in this part. */
   readonly recorders: number;
-  /** People whose word on at least one intervention stands at followed (review M-1). */
+  /** People whose word on at least one of this part's interventions stands at followed (review M-1). */
   readonly followers: number;
   /** The fewest distinct people's work the words cover once any one recorder's words are left out. */
   readonly sourcesWithoutAnyOne: number;
   /** The words left once the recorder who said most is left out — the dominance rule. */
   readonly wordsWithoutLargest: number;
-  /**
-   * Words CONFIRMED in this period about hints of an earlier one (review M6),
-   * apart from the period's own interventions and counts, and inside every
-   * minimum above: they are people's words this period discloses.
-   */
-  readonly late: LateCounts;
+}
+
+/**
+ * One closed period, as it stood at its end (round-2 R2-H1): its own figure at
+ * the top level; the words CONFIRMED in it about hints of an earlier one
+ * (review M6), apart; and the words of its snapshot whose passkey was declared
+ * compromised after it closed — the correction line — apart again.
+ */
+export interface PeriodAggregate extends PartAggregate {
+  readonly late: PartAggregate;
+  readonly laterRetracted: PartAggregate;
 }
 
 /** The words a period carries late, by what they stand at. */
-export interface LateCounts {
-  readonly followed: number;
-  readonly overrode: number;
-  readonly notRelevantNow: number;
-  readonly noise: number;
-}
+export type LateCounts = Pick<PartAggregate, "followed" | "overrode" | "notRelevantNow" | "noise">;
 
-type AggregateRow = {
-  readonly interventions: number;
-  readonly followed: number;
-  readonly overrode: number;
-  readonly not_relevant_now: number;
-  readonly noise: number;
-  readonly unmarked: number;
-  readonly recorders: number;
-  readonly followers: number;
-  readonly sources_without_any_one: number;
-  readonly largest_recorder_words: number;
-  readonly words: number;
-  readonly late_followed: number;
-  readonly late_overrode: number;
-  readonly late_not_relevant_now: number;
-  readonly late_noise: number;
+type PartName = "own" | "late" | "retracted";
+
+const PART_FILTER: Readonly<Record<PartName, SQL>> = {
+  own: sql`NOT late`,
+  late: sql`late`,
+  retracted: sql`later_retracted`,
 };
 
 /**
- * The words (what is not unmarked) and, per recorder, what the OTHERS' words
- * cover: subtracting one person's own contribution must never isolate anyone.
+ * One part's counts and, over its words (what is not unmarked), what the
+ * OTHERS' words cover per recorder: subtracting one person's own contribution
+ * must never isolate anyone.
  */
-const subtractionSafeColumns = sql`
-      (SELECT count(DISTINCT recipient) FROM words)::int AS recorders,
+const partColumns = (part: PartName): SQL => {
+  const filter = PART_FILTER[part];
+  const words = sql.raw(`words_${part}`);
+  const as = (name: string): SQL => sql.raw(`${part}_${name}`);
+  return sql`
+      count(*) FILTER (WHERE ${filter})::int AS ${as("interventions")},
+      count(*) FILTER (WHERE ${filter} AND state = 'followed')::int AS ${as("followed")},
+      count(*) FILTER (WHERE ${filter} AND state = 'overrode')::int AS ${as("overrode")},
+      count(*) FILTER (WHERE ${filter} AND state = 'not_relevant_now')::int AS ${as("not_relevant_now")},
+      count(*) FILTER (WHERE ${filter} AND state = 'noise')::int AS ${as("noise")},
+      count(*) FILTER (WHERE ${filter} AND state = 'unmarked')::int AS ${as("unmarked")},
+      count(DISTINCT recipient) FILTER (WHERE ${filter} AND state = 'followed')::int AS ${as("followers")},
+      (SELECT count(*) FROM ${words})::int AS ${as("words")},
+      (SELECT count(DISTINCT recipient) FROM ${words})::int AS ${as("recorders")},
       COALESCE((SELECT min(k) FROM (
-        SELECT (SELECT count(DISTINCT w.source_id) FROM words w WHERE w.recipient <> r.recipient) AS k
-        FROM (SELECT DISTINCT recipient FROM words) r) per_left_out), 0)::int AS sources_without_any_one,
+        SELECT (SELECT count(DISTINCT w.source_id) FROM ${words} w WHERE w.recipient <> r.recipient) AS k
+        FROM (SELECT DISTINCT recipient FROM ${words}) r) per_left_out), 0)::int AS ${as("sources_without_any_one")},
       COALESCE((SELECT max(n) FROM (
-        SELECT count(*) AS n FROM words GROUP BY recipient) per_recorder), 0)::int AS largest_recorder_words`;
+        SELECT count(*) AS n FROM ${words} GROUP BY recipient) per_recorder), 0)::int AS ${as("largest_recorder_words")}`;
+};
 
+const partOf = (row: Readonly<Record<string, unknown>> | undefined, part: PartName): PartAggregate => {
+  const count = (name: string): number => Number(row?.[`${part}_${name}`] ?? 0);
+  return {
+    interventions: count("interventions"),
+    followed: count("followed"),
+    overrode: count("overrode"),
+    notRelevantNow: count("not_relevant_now"),
+    noise: count("noise"),
+    unmarked: count("unmarked"),
+    recorders: count("recorders"),
+    followers: count("followers"),
+    sourcesWithoutAnyOne: count("sources_without_any_one"),
+    wordsWithoutLargest: count("words") - count("largest_recorder_words"),
+  };
+};
+
+/**
+ * A CLOSED PERIOD, READ AS OF ITS END (round-2 R2-H1): a word counts only if
+ * the passkey that confirmed it stood at `until` — so a later revocation, a
+ * cool-off ending later, or a later compromise never moves it. The same read
+ * at any later instant is the same answer; that is the snapshot.
+ */
 export const readPeriodAggregate = async (
   db: Db,
   input: {
@@ -398,48 +448,40 @@ export const readPeriodAggregate = async (
     readonly who: SQL;
     /** Only deliveries pointing at this developer's work; null for all. */
     readonly sourceIs: string | null;
-    /** When it is read: a word counts only if the passkey that confirmed it stands then (H1). */
-    readonly at: Date;
   },
 ): Promise<PeriodAggregate> => {
-  const rows = await db.execute<AggregateRow>(sql`
-    ${deliveryStates(input.repo, input.from, input.who, input.until, input.at)},
+  const rows = await db.execute<Record<string, unknown>>(sql`
+    ${deliveryStates(input.repo, input.from, input.who, input.until, input.until)},
     scoped AS (SELECT * FROM states ${input.sourceIs === null ? sql`` : sql`WHERE source_id = ${input.sourceIs}`}),
-    words AS (SELECT recipient, source_id FROM scoped WHERE state <> 'unmarked')
-    SELECT count(*) FILTER (WHERE NOT late)::int AS interventions,
-      count(*) FILTER (WHERE NOT late AND state = 'followed')::int AS followed,
-      count(*) FILTER (WHERE NOT late AND state = 'overrode')::int AS overrode,
-      count(*) FILTER (WHERE NOT late AND state = 'not_relevant_now')::int AS not_relevant_now,
-      count(*) FILTER (WHERE NOT late AND state = 'noise')::int AS noise,
-      count(*) FILTER (WHERE NOT late AND state = 'unmarked')::int AS unmarked,
-      count(*) FILTER (WHERE late AND state = 'followed')::int AS late_followed,
-      count(*) FILTER (WHERE late AND state = 'overrode')::int AS late_overrode,
-      count(*) FILTER (WHERE late AND state = 'not_relevant_now')::int AS late_not_relevant_now,
-      count(*) FILTER (WHERE late AND state = 'noise')::int AS late_noise,
-      count(DISTINCT recipient) FILTER (WHERE state = 'followed')::int AS followers,
-      (SELECT count(*) FROM words)::int AS words,
-      ${subtractionSafeColumns}
+    words_own AS (SELECT recipient, source_id FROM scoped WHERE NOT late AND state <> 'unmarked'),
+    words_late AS (SELECT recipient, source_id FROM scoped WHERE late AND state <> 'unmarked'),
+    words_retracted AS (SELECT recipient, source_id FROM scoped WHERE later_retracted AND state <> 'unmarked')
+    SELECT ${partColumns("own")}, ${partColumns("late")}, ${partColumns("retracted")}
     FROM scoped`);
   const row = rows.rows[0];
-  const recorded = Number(row?.words ?? 0);
-  return {
-    interventions: Number(row?.interventions ?? 0),
-    followed: Number(row?.followed ?? 0),
-    overrode: Number(row?.overrode ?? 0),
-    notRelevantNow: Number(row?.not_relevant_now ?? 0),
-    noise: Number(row?.noise ?? 0),
-    unmarked: Number(row?.unmarked ?? 0),
-    recorders: Number(row?.recorders ?? 0),
-    followers: Number(row?.followers ?? 0),
-    sourcesWithoutAnyOne: Number(row?.sources_without_any_one ?? 0),
-    wordsWithoutLargest: recorded - Number(row?.largest_recorder_words ?? 0),
-    late: {
-      followed: Number(row?.late_followed ?? 0),
-      overrode: Number(row?.late_overrode ?? 0),
-      notRelevantNow: Number(row?.late_not_relevant_now ?? 0),
-      noise: Number(row?.late_noise ?? 0),
-    },
-  };
+  return { ...partOf(row, "own"), late: partOf(row, "late"), laterRetracted: partOf(row, "retracted") };
+};
+
+/**
+ * THE CORRECTION LINE beneath a closed period (round-2 R2-H1): how many of its
+ * words were declared compromised after it closed — a figure like any other,
+ * so its count prints only when it passes the minimums on its own; one
+ * person's compromise prints the line without a number. Null when there is none.
+ */
+export interface CorrectionLine {
+  readonly count: number | null;
+  readonly withheld: HintOutcomeWithholding | null;
+}
+
+export const correctionLineOf = (
+  part: PartAggregate,
+  checks: { readonly sources: boolean; readonly recorded: boolean; readonly followers: boolean },
+): CorrectionLine | null => {
+  if (part.interventions === 0) {
+    return null;
+  }
+  const withheld = withholdingOf(part, checks);
+  return { count: withheld === null ? part.interventions : null, withheld };
 };
 
 /** "Any one person": how many recorders the minimums must survive losing (review H1). */
@@ -457,7 +499,7 @@ const LEFT_OUT = 1;
  * one who overrode. Whichever fails, the answer is ONE generic word (review M1).
  */
 export const withholdingOf = (
-  aggregate: PeriodAggregate,
+  aggregate: PartAggregate,
   checks: { readonly sources: boolean; readonly recorded: boolean; readonly followers: boolean },
 ): HintOutcomeWithholding | null => {
   const meetsMinimums =

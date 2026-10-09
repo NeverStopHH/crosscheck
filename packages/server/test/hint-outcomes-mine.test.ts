@@ -41,6 +41,9 @@ const JULY = {
   periodEndIso: "2026-08-01T00:00:00.000Z",
   pausedInPeriod: false,
   reconstructed: false,
+  // round-2 R2-H2, R2-H1: no late follows in these months, and nothing later retracted
+  late: { followed: null, withheld: "below_minimums" },
+  laterRetracted: null,
 };
 const OVERRIDE_REASON = "kept the developer key; the repo key mixes two people's caches";
 

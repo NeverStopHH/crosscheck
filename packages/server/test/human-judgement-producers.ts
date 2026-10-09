@@ -124,10 +124,10 @@ export const HUMAN_JUDGEMENT_PRODUCERS: Readonly<Record<string, HumanJudgementPr
       const aggregate = await readPeriodAggregate(world.harness.db, {
         repo: REPO,
         from: new Date(now.getTime() - 30 * DAY_MS),
-        until: new Date(now.getTime() + DAY_MS),
+        // A period that closes NOW: standing is read as of its end (round-2 R2-H1).
+        until: now,
         who: sql`true`,
         sourceIs: null,
-        at: now,
       });
       return {
         followed: aggregate.followed,

@@ -31,6 +31,7 @@ import { HINT_OUTCOME_MAX_REASONS, HINT_OUTCOME_MAX_SOURCES } from "../constants
 import {
   EMPTY_TALLY,
   addToTally,
+  correctionLineOf,
   deliveryStates,
   enrolledSpan,
   lastWholeMonth,
@@ -39,7 +40,7 @@ import {
   readPeriodAggregate,
   withholdingOf,
 } from "./outcome-population.ts";
-import type { DeliveryState, Enrolment, HintOutcomeTally } from "./outcome-population.ts";
+import type { CorrectionLine, DeliveryState, Enrolment, HintOutcomeTally } from "./outcome-population.ts";
 import { countingFromOf, isCoolingRow, isRetractedRow } from "./human-provenance.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
@@ -179,13 +180,16 @@ export interface YourWork {
   readonly periodStartIso: string;
   readonly periodEndIso: string;
   readonly followed: number | null;
+  readonly withheld: HintOutcomeWithholding | null;
   /**
    * Follows of your work CONFIRMED in this month about hints of an earlier one
-   * (review M6), apart from `followed` — present only when there are some and
-   * `followed` is shown.
+   * (review M6), apart from `followed` and withheld APART (round-2 R2-H2): it
+   * prints only when its own followers pass the minimum. Absent when the month
+   * was never recordable.
    */
-  readonly followedLate?: number;
-  readonly withheld: HintOutcomeWithholding | null;
+  readonly late?: { readonly followed: number | null; readonly withheld: HintOutcomeWithholding | null };
+  /** The correction line: follows of this month later declared compromised (round-2 R2-H1); null when none. */
+  readonly laterRetracted?: CorrectionLine | null;
   /** The pilot paused inside the month: only its enrolled time was counted (review LOW). */
   readonly pausedInPeriod: boolean;
   /** The month is counted over an enrolment an upgrade reconstructed from what was recorded (review M-3). */
@@ -297,15 +301,18 @@ const readYourWork = async (
     until: period.end,
     who: sql`s.developer_id <> ${input.developerId}`,
     sourceIs: input.developerId,
-    at: now,
   });
-  // review M-1: a count only once, with any one person left out, three people FOLLOWED — never "followed 0"
-  const withheld = withholdingOf(aggregate, { sources: false, recorded: false, followers: true });
+  // review M-1: a count only once, with any one person left out, three people FOLLOWED — never "followed 0";
+  // round-2 R2-H2: the month's own follows and its late ones each pass that on their own
+  const checks = { sources: false, recorded: false, followers: true } as const;
+  const withheld = withholdingOf(aggregate, checks);
+  const lateWithheld = withholdingOf(aggregate.late, checks);
   return {
     ...stamps,
     followed: withheld === null ? aggregate.followed : null,
-    ...(withheld === null && aggregate.late.followed > 0 ? { followedLate: aggregate.late.followed } : {}),
     withheld,
+    late: { followed: lateWithheld === null ? aggregate.late.followed : null, withheld: lateWithheld },
+    laterRetracted: correctionLineOf(aggregate.laterRetracted, { sources: false, recorded: false, followers: false }),
     pausedInPeriod: span.paused,
     reconstructed: span.reconstructed,
   };

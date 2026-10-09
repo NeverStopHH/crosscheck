@@ -94,7 +94,6 @@ const julyInterventions = async (world: OutcomeWorld): Promise<number> => {
     until: july.end,
     who: sql`true`,
     sourceIs: null,
-    at: world.harness.clock.now(),
   });
   return aggregate.interventions;
 };
@@ -127,6 +126,9 @@ describe("the team report's outcomes block (D-O5, review #4)", () => {
       reconstructed: false,
       withheld: null,
       figures: { interventions: 24, followed: 9, overrode: 3, notRelevantNow: 2, noise: 1, unmarked: 9 },
+      // round-2 R2-H2: the late figure is its own, withheld on its own — no late words here
+      late: { withheld: "below_minimums", figures: null },
+      laterRetracted: null,
     });
   });
 
@@ -285,6 +287,8 @@ describe("the team report's outcomes block (D-O5, review #4)", () => {
     expect(Object.keys(outcomes).sort()).toEqual([
       "countedFromIso",
       "figures",
+      "late",
+      "laterRetracted",
       "pausedInPeriod",
       "periodEndIso",
       "periodStartIso",
@@ -292,6 +296,8 @@ describe("the team report's outcomes block (D-O5, review #4)", () => {
       "recordableSinceIso",
       "withheld",
     ]);
+    expect(outcomes["late"]).toEqual({ withheld: "below_minimums", figures: null });
+    expect(outcomes["laterRetracted"]).toBeNull();
   });
 
   test("review H1: three people with plenty of words about plenty of work still print nothing", async () => {
@@ -544,7 +550,6 @@ describe("a pointer across a month boundary (review LOW, probe E)", () => {
       until: month.end,
       who: sql`true`,
       sourceIs: null,
-      at: world.harness.clock.now(),
     });
   };
 

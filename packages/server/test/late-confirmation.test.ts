@@ -33,7 +33,7 @@ const JULY = { from: new Date("2026-07-01T00:00:00.000Z"), until: new Date("2026
 const AUGUST = { from: new Date("2026-08-01T00:00:00.000Z"), until: new Date("2026-09-01T00:00:00.000Z") };
 
 const aggregate = (world: OutcomeWorld, period: { readonly from: Date; readonly until: Date }) =>
-  readPeriodAggregate(world.harness.db, { repo: REPO, ...period, who: sql`true`, sourceIs: null, at: world.harness.clock.now() });
+  readPeriodAggregate(world.harness.db, { repo: REPO, ...period, who: sql`true`, sourceIs: null });
 
 /** The agent's followed on a July hint, confirmed by the person `wait` seconds later. */
 const confirmedAfter = async (wait: number): Promise<OutcomeWorld> => {
@@ -58,7 +58,7 @@ describe("a word confirmed after its hint's month closed", () => {
     // Assert — July stays as it closed; August carries it as late, not as an August intervention
     expect(july).toMatchObject({ followed: 0 });
     expect(august).toMatchObject({ followed: 0, interventions: 0, late: { followed: 1, overrode: 0, notRelevantNow: 0, noise: 0 } });
-    expect(august.recorders).toBe(1);
+    expect(august.late.recorders).toBe(1);
   });
 
   test("confirmed inside its own month, it is that month's word and nobody's late one", async () => {
@@ -74,10 +74,10 @@ describe("a word confirmed after its hint's month closed", () => {
     expect(august).toMatchObject({ followed: 0, late: { followed: 0 } });
   });
 
-  test("a word confirmed in August that counts nowhere yet drags July's word into August by nothing", async () => {
-    // Arrange — July's word confirmed in July; in August a fresh passkey, still cooling, confirms overrode
+  test("a word confirmed at August's end that counts only from September drags July's word into August by nothing", async () => {
+    // Arrange — July's word confirmed in July; on 31 August a fresh passkey, cooling into September, confirms overrode
     const world = await confirmedAfter(DAY_S);
-    world.harness.clock.advanceSeconds(9 * DAY_S);
+    world.harness.clock.advanceSeconds(37 * DAY_S);
     const cooling = await prepareConfirmer(world.harness, world.nick);
     expect(
       (await recordPersonOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "overrode", reason: "kept the old key" })).status,
