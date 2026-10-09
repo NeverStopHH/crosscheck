@@ -15,14 +15,20 @@
  * the node shim re-execs under bun, and under load (about 20) it ran past the
  * 3 s probe: init quietly wrote the absolute launcher (batch 2). A silent bin
  * is now asked again within the caller's budget, and a fallback names the bin
- * that stayed silent. A foreign answer is final. Each budget fake books every
- * run, so the retry count is measured.
+ * that stayed silent. A foreign answer is final.
  *
  * Deterministic: the hanging launcher never answers, so its deadline fires
- * at any load; the classification cases inject the probe outright.
+ * at any load; the classification cases inject the probe outright; and the
+ * retry cases drive the rule with a SCRIPTED probe that books its asks
+ * (resolveLauncher's `probe` seam). They used to count a fake bin's runs
+ * under a 400 ms deadline, and at load ~13 a shell could not start inside
+ * it, so two asks booked one run (batch-2 integration review's load flake).
+ * The 400 ms is nothing the product waits on — its budgets are 3 s and 10 s
+ * (DEFAULT_IDENTITY_PROBE, INIT_IDENTITY_PROBE) — only the value the rule
+ * must hand the probe, which is asserted.
  */
-import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { afterEach, describe, expect, test } from "bun:test";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -35,6 +41,7 @@ import {
   resolveLauncher,
   silentBareNote,
 } from "../src/config/launcher.ts";
+import type { BinIdentity, BinIdentityProbe } from "../src/config/launcher.ts";
 
 const paths: string[] = [];
 
@@ -110,75 +117,72 @@ describe("doctor's launcher line says which answer it got", () => {
 });
 
 const ENTRY = new URL("../../cli/src/bin/crosscheck.ts", import.meta.url).pathname;
-/** Short enough to keep the suite fast, long past what a fake that answers at once needs. */
+/** What the rule must hand the probe on every ask — asserted, never waited on. */
 const TEST_BUDGET = { timeoutMs: 400, attempts: 2 };
 
-let base = "";
-
-beforeAll(async () => {
-  base = await mkdtemp(join(tmpdir(), "cx-launcher-identity-"));
-});
-
-afterAll(async () => {
-  await rm(base, { recursive: true, force: true });
-});
-
-/** A `crosscheck` in its own bin dir that books each run, then runs `body`. */
-const fakeBin = async (label: string, body: string): Promise<{ readonly dir: string; readonly runs: () => Promise<number> }> => {
-  const dir = join(base, label);
-  const count = join(base, `${label}.runs`);
-  await Bun.write(join(dir, ".keep"), "");
-  await writeFile(join(dir, "crosscheck"), `#!/bin/sh\necho run >> "${count}"\n${body}\n`, "utf8");
-  await chmod(join(dir, "crosscheck"), 0o755);
+/**
+ * A probe that answers from a script, one answer per ask, and books the
+ * deadline each ask was given — no process, no clock, so the retry rule reads
+ * the same at any load. The real probe's three answers are proven above.
+ */
+const scriptedProbe = (
+  answers: readonly BinIdentity[],
+): { readonly probe: BinIdentityProbe; readonly asks: readonly number[] } => {
+  const asks: number[] = [];
   return {
-    dir,
-    runs: async () => (await readFile(count, "utf8").catch(() => "")).split("\n").filter((line) => line.length > 0).length,
+    probe: (_binPath, timeoutMs) => {
+      asks.push(timeoutMs);
+      return Promise.resolve(answers[asks.length - 1] ?? "silent");
+    },
+    asks,
   };
 };
 
 const pathWith = (dir: string): Record<string, string> => ({ PATH: [dir, "/usr/bin", "/bin"].join(":") });
 
 describe("the PATH bin's identity probe", () => {
-  test("a bin that stays silent is asked once more, then the absolute launcher is wired and says why", async () => {
-    // Arrange — never answers before the deadline
-    const bin = await fakeBin("silent", "exec sleep 5");
+  test("a bin that stays silent is asked once more, on the budget's deadline, then the absolute launcher is wired and says why", async () => {
+    // Arrange — a bin on PATH, and a probe that never hears it answer
+    const dir = await fakeBinDir('echo "crosscheck 9.9.9"');
+    const { probe, asks } = scriptedProbe(["silent", "silent"]);
 
     // Act
-    const launcher = await resolveLauncher(undefined, pathWith(bin.dir), ENTRY, TEST_BUDGET);
+    const launcher = await resolveLauncher(undefined, pathWith(dir), ENTRY, TEST_BUDGET, probe);
 
-    // Assert
-    expect(await bin.runs()).toBe(2);
-    expect(launcher).toMatchObject({ kind: "entry", silentBare: join(bin.dir, "crosscheck") });
+    // Assert: asked exactly twice, each ask on the budget's deadline
+    expect(asks).toEqual([TEST_BUDGET.timeoutMs, TEST_BUDGET.timeoutMs]);
+    expect(launcher).toMatchObject({ kind: "entry", silentBare: join(dir, "crosscheck") });
     if (launcher.kind !== "entry") {
       throw new Error("expected the absolute launcher");
     }
     expect(silentBareNote(launcher)).toBe(
-      `crosscheck on PATH (${join(bin.dir, "crosscheck")}) didn't answer in time; wired the absolute launcher ${resolveCommandPrefix(launcher)} instead; rerun init to switch`,
+      `crosscheck on PATH (${join(dir, "crosscheck")}) didn't answer in time; wired the absolute launcher ${resolveCommandPrefix(launcher)} instead; rerun init to switch`,
     );
   });
 
-  test("a bin silent on the first try and answering on the retry is wired by its bare name", async () => {
-    // Arrange — the first run stalls, the second answers like ours
-    const count = join(base, "late.runs");
-    const bin = await fakeBin("late", `if [ "$(wc -l < "${count}")" -le 1 ]; then exec sleep 5; fi\necho 'crosscheck 0.11.0'`);
+  test("a bin silent on the first ask and answering on the retry is wired by its bare name", async () => {
+    // Arrange — the first ask hears nothing, the second hears our banner
+    const dir = await fakeBinDir('echo "crosscheck 9.9.9"');
+    const { probe, asks } = scriptedProbe(["silent", "own"]);
 
     // Act
-    const launcher = await resolveLauncher(undefined, pathWith(bin.dir), ENTRY, TEST_BUDGET);
+    const launcher = await resolveLauncher(undefined, pathWith(dir), ENTRY, TEST_BUDGET, probe);
 
     // Assert
-    expect(await bin.runs()).toBe(2);
-    expect(launcher).toEqual({ kind: "bare", path: join(bin.dir, "crosscheck") });
+    expect(asks).toHaveLength(2);
+    expect(launcher).toEqual({ kind: "bare", path: join(dir, "crosscheck") });
   });
 
   test("a foreign answer is final: not asked again, and no silence is reported", async () => {
     // Arrange
-    const bin = await fakeBin("foreign", "echo 'crosscheck-cli 9.9.9 by somebody else'");
+    const dir = await fakeBinDir('echo "othertool 1.2.3"');
+    const { probe, asks } = scriptedProbe(["foreign", "own"]);
 
     // Act
-    const launcher = await resolveLauncher(undefined, pathWith(bin.dir), ENTRY, TEST_BUDGET);
+    const launcher = await resolveLauncher(undefined, pathWith(dir), ENTRY, TEST_BUDGET, probe);
 
     // Assert
-    expect(await bin.runs()).toBe(1);
+    expect(asks).toEqual([TEST_BUDGET.timeoutMs]);
     expect(launcher.kind).toBe("entry");
     if (launcher.kind !== "entry") {
       throw new Error("expected the absolute launcher");

@@ -185,11 +185,23 @@ export const probeCrosscheckBin = async (
 export const isOwnCrosscheckBin = async (binPath: string): Promise<boolean> =>
   (await probeCrosscheckBin(binPath)) === "own";
 
+/**
+ * How a PATH bin is asked who it is: `probeCrosscheckBin`, or a test's
+ * scripted answers. The retry rule below is the product's; the process and
+ * its deadline are the probe's, so a test of the rule needs neither a
+ * process nor a clock (test/launcher-identity.test.ts).
+ */
+export type BinIdentityProbe = (binPath: string, timeoutMs: number) => Promise<BinIdentity>;
+
 /** The probe within a budget: asked again only while it stays silent. */
-const identifyWithin = async (binPath: string, budget: IdentityProbeBudget): Promise<BinIdentity> => {
+const identifyWithin = async (
+  binPath: string,
+  budget: IdentityProbeBudget,
+  probe: BinIdentityProbe,
+): Promise<BinIdentity> => {
   let identity: BinIdentity = "silent";
   for (let attempt = 0; attempt < budget.attempts && identity === "silent"; attempt += 1) {
-    identity = await probeCrosscheckBin(binPath, budget.timeoutMs);
+    identity = await probe(binPath, budget.timeoutMs);
   }
   return identity;
 };
@@ -245,6 +257,7 @@ export const resolveLauncher = async (
   env: Env,
   entryPath: string,
   identityBudget: IdentityProbeBudget = DEFAULT_IDENTITY_PROBE,
+  probe: BinIdentityProbe = probeCrosscheckBin,
 ): Promise<Launcher> => {
   if (override !== undefined && override.length > 0) {
     return { kind: "override", prefix: override };
@@ -257,7 +270,7 @@ export const resolveLauncher = async (
     hit !== null &&
     untrustedPathEntries(env["PATH"] ?? "", process.cwd()).length === 0 &&
     !isEphemeralInstallPath(await realpathOrSelf(hit))
-      ? await identifyWithin(hit, identityBudget)
+      ? await identifyWithin(hit, identityBudget, probe)
       : null;
   if (hit !== null && identity === "own") {
     return { kind: "bare", path: hit };
