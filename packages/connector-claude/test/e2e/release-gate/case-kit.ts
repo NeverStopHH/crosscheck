@@ -11,7 +11,9 @@ import { renderRepoConfig } from "@crosscheck/connector-core/config/repo-config.
 import { addWorktree, cloneFor, daysAgo, makeSeed } from "./git.ts";
 import type { Person } from "./git.ts";
 import type { Actor, HostSession } from "./host.ts";
-import { MAIN_THREAD } from "./host.ts";
+import { MAIN_THREAD, openSession } from "./host.ts";
+import type { TestHub } from "./hub.ts";
+import { makeDeveloper } from "./team.ts";
 
 export interface CaseRepo {
   readonly label: string;
@@ -51,6 +53,34 @@ export const checkoutFor = async (repo: CaseRepo, person: Person, branch: string
   const clone = await cloneFor(repo.seed, `${repo.label}-${tag}`, repo.remoteUrl, person);
   const worktree = await addWorktree(clone, join(dirname(clone), tag), branch, "origin/main");
   return { clone, worktree, parent: dirname(clone) };
+};
+
+const WARM_UP: Person = { name: "Warm Up", email: "warm-up@example.com" };
+
+/**
+ * A WARM HUB. A team's hub has served for days, so the first plan of every
+ * statement it runs is not the product's latency — on a fresh PGlite it is
+ * hundreds of milliseconds, which a production budget would book as a loss
+ * the product never has. One unmeasured session in a throwaway repo, in
+ * process and at the generous budget, walks every route a hook calls
+ * (register, briefing, prompt hint, tripwire, capture, the turn's lane,
+ * statusline, end). Returns what to delete afterwards.
+ */
+export const warmHub = async (hub: TestHub): Promise<readonly string[]> => {
+  const repo = await seedCase("warm-up", hub.url, ["src/warm.ts", "src/cold.ts"]);
+  const developer = await makeDeveloper(hub, WARM_UP, "warm-up");
+  const at = await checkoutFor(repo, WARM_UP, "feat/warm-up", "warm-up");
+  const session = openSession(developer, "warm-up", at.worktree);
+  await session.start();
+  await session.prompt("warm the hub up");
+  await editEach(session, at.worktree, ["src/warm.ts", "src/new.ts"], "warm");
+  await session.subagent("warm-up", async (actor) => {
+    await editEach(session, at.worktree, ["src/cold.ts"], "warm", actor);
+  });
+  await session.stop();
+  await session.statusline();
+  await session.end();
+  return [repo.seed, at.parent, developer.home];
 };
 
 /** One Edit/Write per path, in order, as `actor`. */

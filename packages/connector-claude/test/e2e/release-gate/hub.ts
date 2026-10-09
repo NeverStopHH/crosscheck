@@ -52,6 +52,12 @@ export interface TestHub {
   readonly createDeveloper: (name: string, email: string) => Promise<HubDeveloper>;
   /** GET as a developer; throws on a non-2xx with the status in the message. */
   readonly getAs: <T>(developer: HubDeveloper, path: string) => Promise<T>;
+  /**
+   * The same GET handed straight to the app, NOT through the listening port:
+   * the gate's own look at what a developer WOULD be answered, kept out of
+   * `wire`, so no assertion over what a connector asked ever counts it.
+   */
+  readonly peekAs: <T>(developer: HubDeveloper, path: string) => Promise<T>;
   readonly close: () => Promise<void>;
 }
 
@@ -117,13 +123,22 @@ export const startHub = async (): Promise<TestHub> => {
     return account;
   };
 
-  const getAs = async <T>(developer: HubDeveloper, path: string): Promise<T> => {
-    const response = await fetch(`${url}${path}`, { headers: { Authorization: `Bearer ${developer.apiKey}` } });
+  const dataOf = async <T>(response: Response, path: string, developer: HubDeveloper): Promise<T> => {
     if (!response.ok) {
       throw new Error(`GET ${path} as ${developer.name} failed: ${String(response.status)}`);
     }
     return ((await response.json()) as { data: T }).data;
   };
+
+  const getAs = async <T>(developer: HubDeveloper, path: string): Promise<T> =>
+    dataOf<T>(await fetch(`${url}${path}`, { headers: { Authorization: `Bearer ${developer.apiKey}` } }), path, developer);
+
+  const peekAs = async <T>(developer: HubDeveloper, path: string): Promise<T> =>
+    dataOf<T>(
+      await app.fetch(new Request(`${url}${path}`, { headers: { Authorization: `Bearer ${developer.apiKey}` } })),
+      path,
+      developer,
+    );
 
   const close = async (): Promise<void> => {
     await server.stop(true);
@@ -131,7 +146,7 @@ export const startHub = async (): Promise<TestHub> => {
     await (db as unknown as { $client: { close: () => Promise<void> } }).$client.close().catch(() => undefined);
   };
 
-  return { url, db, clock, wire, createDeveloper, getAs, close };
+  return { url, db, clock, wire, createDeveloper, getAs, peekAs, close };
 };
 
 /** Every row of every public table as one string — what the hub holds, for a content scan. */
