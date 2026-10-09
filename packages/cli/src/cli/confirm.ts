@@ -26,11 +26,23 @@ import type { ConfirmStatus } from "@crosscheck/connector-core/http/confirm.ts";
 
 import type { CliResult } from "./login.ts";
 
+/**
+ * THE LOST-DEVICE PATH (round-2 R2-H3), where a person looks when a passkey is
+ * gone: who to call, the exact revoke the operator runs, and that retiring
+ * keeps the record. docs/OPERATIONS.md has the operator's side in full.
+ */
 export const CONFIRM_USAGE = [
   "usage: crosscheck confirm",
   "",
   "  open the page where your drafts become yours: what your agent and your",
   "  terminal recorded counts for nothing until you confirm it with your passkey",
+  "",
+  "lost the device a passkey is on?",
+  "  ask your hub's operator (whoever holds its admin token) to retire it:",
+  '    curl -X POST -H "Authorization: Bearer $CROSSCHECK_ADMIN_TOKEN" <hub>/api/developers/<your id>/passkeys/<passkey id>/revoke',
+  "  a retired passkey keeps your record: what it confirmed while it stood keeps counting",
+  "  if someone else may have used it, revoke it yourself as compromised on <hub>/ui/passkeys,",
+  "  signed with another of your passkeys: what it confirmed is retracted and its drafts wait for you again",
   "",
 ].join("\n");
 
