@@ -36041,6 +36041,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/real-home-guard.test.ts`,
     because: "the resolvers' guard has nothing to compare against, and stands down in every test",
   },
+  {
+    label: "doctor's hub separation reads a real HOME in a test",
+    file: `${CLI}/src/cli/doctor-hub-separation.ts`,
+    from: "  return home === null ? null : refuseRealHome(home);",
+    to: "  return home;",
+    test: `${CLI}/test/doctor-hub-separation.test.ts`,
+    because: "a test that hands doctor the real HOME reads the developer's own ~/.crosscheck-hub, the one look the guard exists to stop",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -36164,7 +36172,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-global.test.ts 5
  * PRINTS: packages/cli/test/doctor-home-repo.test.ts 3
  * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1
- * PRINTS: packages/cli/test/doctor-hub-separation.test.ts 3
+ * PRINTS: packages/cli/test/doctor-hub-separation.test.ts 4
  * PRINTS: packages/cli/test/doctor-hub-transport.test.ts 4
  * PRINTS: packages/cli/test/doctor-last-sync.test.ts 1
  * PRINTS: packages/cli/test/doctor-latency.test.ts 2

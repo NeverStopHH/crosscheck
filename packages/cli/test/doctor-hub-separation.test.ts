@@ -28,6 +28,7 @@ import {
   serveBackendPort,
 } from "../src/cli/hub-separation-probes.ts";
 import type { CommandOutcome, ListenerLookup, RunCommand } from "../src/cli/hub-separation-probes.ts";
+import { TEST_REAL_HOME_ENV } from "@crosscheck/connector-core/config/paths.ts";
 import { makeRepo } from "../../connector-core/test/helpers.ts";
 
 /** The uid this test process really has: the owner of every file it writes. */
@@ -38,6 +39,8 @@ const LOCAL_HUB = "http://127.0.0.1:7100";
 const SECRET_MARKER = "secret-marker-never-printed";
 const TAILNET_IP = "100.101.4.7";
 const MAGIC_DNS_HOST = "mac.tail1234.ts.net";
+/** A real home that does not exist, so not even a test without the guard could look at a real one. */
+const ABSENT_REAL_HOME = "/cx-absent-real-home/someone";
 
 const paths: string[] = [];
 
@@ -175,6 +178,23 @@ describe("operator token", () => {
     expect(named(withoutHome, "operator token").level).toBe("SKIP");
     expect(named(withoutHome, "hub state").level).toBe("SKIP");
     expect(named(withoutHome, "hub LaunchAgent").level).toBe("SKIP");
+  });
+
+  test("in a test process, a HOME that is the real user's throws before any line looks at it", async () => {
+    // Arrange: a recorded real home that does not exist — the guard decides on the path alone
+    const recorded = process.env[TEST_REAL_HOME_ENV];
+    process.env[TEST_REAL_HOME_ENV] = ABSENT_REAL_HOME;
+
+    try {
+      // Act + Assert
+      await expect(separation({ HOME: ABSENT_REAL_HOME })).rejects.toThrow("test home guard");
+    } finally {
+      if (recorded === undefined) {
+        delete process.env[TEST_REAL_HOME_ENV];
+      } else {
+        process.env[TEST_REAL_HOME_ENV] = recorded;
+      }
+    }
   });
 });
 

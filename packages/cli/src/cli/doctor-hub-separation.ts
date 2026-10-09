@@ -30,6 +30,7 @@ import { constants } from "node:fs";
 import { access, lstat, opendir, stat } from "node:fs/promises";
 import { join } from "node:path";
 
+import { refuseRealHome } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 
 import type { Check, CheckLevel } from "./doctor.ts";
@@ -297,13 +298,25 @@ const launchAgentCheck = async (home: string | null, platform: NodeJS.Platform):
 };
 
 /**
+ * The HOME `env` names, through the test home guard (config/paths.ts
+ * `refuseRealHome`, integration review of batch 2, track A): in a test
+ * process, a HOME that is the real user's throws here, before the probes'
+ * net below could turn it into a SKIP line. Not `userHomeOf`: that falls back
+ * to the process's home, and these lines must SKIP when `env` names none.
+ */
+const declaredHome = (env: Env): string | null => {
+  const home = nonEmpty(env["HOME"]);
+  return home === null ? null : refuseRealHome(home);
+};
+
+/**
  * The separation lines, for a configured hub. HOME comes from `env` alone —
  * never from the OS — so a caller that names no HOME gets SKIP lines, not a
  * look at whichever real home the process happens to have.
  */
 export const hubSeparationChecks = async (input: HubSeparationInput): Promise<readonly Check[]> => {
   const probes: SeparationProbes = { ...defaultSeparationProbes(), ...input.probes };
-  const home = nonEmpty(input.env["HOME"]);
+  const home = declaredHome(input.env);
   try {
     const [token, state, hubProcess, agent] = await Promise.all([
       operatorTokenCheck(home, input.env, probes.myUid),

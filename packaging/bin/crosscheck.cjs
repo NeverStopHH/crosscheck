@@ -153,6 +153,10 @@ if (process.versions.bun !== undefined) {
     return null;
   };
 
+  // `homedir()`, not config/paths.ts `userHomeOf`, on purpose: this is the
+  // CommonJS npm launcher, which runs under Node before Bun is found and cannot
+  // import the TypeScript sources, and it only looks for Bun's own install
+  // (~/.bun/bin/bun), never a crosscheck path the test home guard protects.
   const CANDIDATES = [bunOnTrustedPath(), path.join(homedir(), ".bun", "bin", "bun")].filter(function (candidate) {
     return candidate !== null;
   });
