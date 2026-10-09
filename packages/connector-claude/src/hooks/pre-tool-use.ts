@@ -203,8 +203,8 @@ const resolveEditedFile = async (
   return root === undefined || file === null ? null : { file, root };
 };
 
-/** Neighbours one edit hands the attribute call: a directory's worth, never a tree. */
-const MAX_EDIT_NEIGHBOURS = 64;
+/** Neighbours one edit hands the attribute call: a directory's worth, never a tree (core generated-attributes.ts says why so many). */
+const MAX_EDIT_NEIGHBOURS = 512;
 
 /**
  * The edited file's neighbours — the other files in its directory,

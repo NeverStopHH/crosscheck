@@ -155,8 +155,13 @@ export interface AttributeSignalsInput {
   readonly prefetch?: readonly string[];
 }
 
-/** Neighbours one miss may ask about besides itself: a directory's worth, not a tree. */
-const MAX_ATTRIBUTE_PREFETCH = 64;
+/**
+ * Neighbours one miss may ask about besides itself: a directory's worth, not
+ * a tree. Measured: one `check-attr` over 500 paths took the time of one over
+ * a single path (about 20 ms either way), and an eighth of a 411-file
+ * directory left most of its next edits a miss.
+ */
+const MAX_ATTRIBUTE_PREFETCH = 512;
 
 /** Each path's answer: the cache's when it has one, else git's, else null. */
 export const readAttributeSignals = async (
