@@ -15,7 +15,7 @@
 import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
 
 import { BATCH_SENTENCE } from "../services/confirmation-batch.ts";
-import type { BatchRefusal, BatchStore, StoredAssertion } from "../services/confirmation-batch.ts";
+import type { BatchRefusal, BatchStore, ConfirmedBatch, StoredAssertion } from "../services/confirmation-batch.ts";
 import type { DraftAuthority } from "../services/draft-kinds.ts";
 import { finishPresenceChange } from "../services/developer-settings.ts";
 import type { CeremonyOwner, CeremonyPurpose, CeremonyTerms, StoredCredential } from "../services/webauthn.ts";
@@ -66,6 +66,46 @@ const assertionOf = (response: AuthenticationResponseJSON): StoredAssertion => (
   userHandle: response.response.userHandle ?? null,
 });
 
+/** One confirmed item as the page reports it: its kind, whether its writer wrote anything, and why not. */
+export interface ItemAnswer {
+  readonly kind: string;
+  readonly wrote: boolean;
+  readonly why: string | null;
+}
+
+/**
+ * THE SENTENCE AFTER A CONFIRMATION (round-2 review R2-M2): how many of the
+ * confirmed items wrote, and, for the rest, the writers' own reasons — never
+ * a blanket "confirmed N" over a writer that wrote nothing.
+ */
+export const confirmSentence = (outcome: ConfirmedBatch): string => {
+  const wrote = outcome.items.filter((item) => item.wrote).length;
+  const whys = outcome.items.flatMap((item) => (item.wrote ? [] : [item.why]));
+  const nothing =
+    whys.length === 0 ? "," : ` — ${String(whys.length)} had nothing to write: ${[...new Set(whys)].join("; ")};`;
+  return (
+    `Confirmed ${String(wrote)} of ${String(outcome.confirmed)} as yours${nothing} discarded ${String(outcome.discarded)}` +
+    (outcome.kept === 0 ? "." : `, left ${String(outcome.kept)} for later.`)
+  );
+};
+
+/**
+ * THE INDEX AFTER A CONFIRMED PRESENCE-ON (round-1 review L6): the batch has
+ * committed, so a failed rebuild must not answer as if nothing was confirmed.
+ * It is logged with its context and said, and what was confirmed stands.
+ */
+const PRESENCE_INDEX_FAILED = " Re-indexing your work for your presence failed (the hub logged it); what you confirmed stands.";
+
+const finishPresenceOn = async (deps: AppDeps, developerId: string): Promise<string> => {
+  try {
+    await finishPresenceChange(deps, developerId, false);
+    return "";
+  } catch (error) {
+    console.error(`[crosscheck] re-indexing developer ${developerId} after a confirmed presence-on failed`, error);
+    return PRESENCE_INDEX_FAILED;
+  }
+};
+
 /** What a verified confirmation does, and the sentence the page shows after it. */
 export const performConfirm = async (
   deps: AppDeps,
@@ -74,7 +114,10 @@ export const performConfirm = async (
   fields: ConfirmFields,
   credential: StoredCredential,
   signed: { readonly terms: CeremonyTerms; readonly response: AuthenticationResponseJSON },
-): Promise<{ readonly message: string; readonly confirmed: number } | { readonly ceremonyRefusal: BatchRefusal }> => {
+): Promise<
+  | { readonly message: string; readonly confirmed: number; readonly items: readonly ItemAnswer[] }
+  | { readonly ceremonyRefusal: BatchRefusal }
+> => {
   const batch = batches.read(owner, fields.subjectId);
   // The signature covered this digest; a batch that is gone or differs confirms nothing.
   if (batch === null || batch.digest !== signed.terms["batchDigest"]) {
@@ -89,13 +132,10 @@ export const performConfirm = async (
   if ("refusal" in outcome) {
     return { ceremonyRefusal: outcome.refusal };
   }
-  if (outcome.presenceOn) {
-    await finishPresenceChange(deps, owner.developerId, false);
-  }
+  const indexed = outcome.presenceOn ? await finishPresenceOn(deps, owner.developerId) : "";
   return {
     confirmed: outcome.confirmed,
-    message:
-      `Confirmed ${String(outcome.confirmed)} as yours, discarded ${String(outcome.discarded)}` +
-      (outcome.kept === 0 ? "." : `, left ${String(outcome.kept)} for later.`),
+    message: confirmSentence(outcome) + indexed,
+    items: outcome.items.map(({ kind, wrote, why }) => ({ kind, wrote, why })),
   };
 };

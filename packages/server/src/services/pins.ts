@@ -143,7 +143,8 @@ export type CreatePinOutcome =
   | { readonly outcome: "created"; readonly id: string }
   | { readonly outcome: "duplicate" };
 
-export type BreakPinOutcome = "broken" | "not_found";
+/** `already_broken`: the pin stood broken before this break, so nothing was written (round-2 R2-M2). */
+export type BreakPinOutcome = "broken" | "already_broken" | "not_found";
 
 /**
  * What the hub stores for a pin that arrived with terminal evidence. The one
@@ -373,7 +374,7 @@ export const markPinBroke = async (
     .from(pins)
     .where(and(eq(pins.id, pinId), eq(pins.repo, repo)))
     .limit(1);
-  return existing[0] === undefined ? "not_found" : "broken";
+  return existing[0] === undefined ? "not_found" : "already_broken";
 };
 
 /** One aggregate over the LIVE pins of one repo — the printed denominator. */

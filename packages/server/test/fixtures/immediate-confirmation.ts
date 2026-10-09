@@ -16,9 +16,11 @@
  *     the draft's payload, `recordedVia = person` for every confirmed word
  *     (J8) — with only the WebAuthn signature replaced by a seeded credential
  *     past its cool-off (the `seedPasskey` precedent);
- *   - the answer is the writer's own (what stands, what it replaced, a repeat)
- *     for a label or an outcome, and for a pin, a break, a mute, an unmute or
- *     presence-on the answer an older client read.
+ *   - the answer is the writer's own (what stands, what it replaced) for a
+ *     label or an outcome, and for a pin, a break, a mute, an unmute or
+ *     presence-on the answer an older client read; whether it was a repeat
+ *     (`repeated`, `alreadyMuted`, `wasMuted`) is the per-item result the
+ *     confirm page reports (round-2 R2-M2), so these suites assert that too.
  *
  * Production behaviour, drafts left pending, is `drafts: "pending"`
  * (helpers.ts) — what every human-provenance suite uses.
@@ -34,7 +36,7 @@ import { developers } from "../../src/db/schema.ts";
 import type { Db } from "../../src/db/client.ts";
 import type { Embedder } from "../../src/services/embedder.ts";
 import { createBatchStore } from "../../src/services/confirmation-batch.ts";
-import type { ConfirmedBatch, ConfirmRefused } from "../../src/services/confirmation-batch.ts";
+import type { ConfirmedBatch, ConfirmedItem, ConfirmRefused } from "../../src/services/confirmation-batch.ts";
 import { CONFIRM_PAGE_SCOPE } from "../../src/services/confirm-page.ts";
 import { finishPresenceChange } from "../../src/services/developer-settings.ts";
 import { pendingFingerprint, readPendingDrafts } from "../../src/services/human-drafts.ts";
@@ -73,6 +75,7 @@ const NOTHING_CONFIRMED: ConfirmedBatch = {
   kept: 0,
   presenceOn: false,
   effects: new Map(),
+  items: [],
 };
 
 /** Every pending draft of the developer, confirmed through the real batch store. */
@@ -125,11 +128,21 @@ const labelAnswer = (effect: Body): Body => {
   return { id: effect["id"], repeated: effect["repeated"], ...standing };
 };
 
-/** The answer an older client read from each door that now drafts, once the draft took effect. */
-const effectAnswer = (path: string, data: Body): Body => {
+/** The newest confirmed item of a kind: the per-item result production reports for it (R2-M2). */
+const itemOf = (confirmed: ConfirmedBatch, matches: (item: ConfirmedItem) => boolean): ConfirmedItem | undefined =>
+  [...confirmed.items].reverse().find(matches);
+
+/**
+ * The answer an older client read from each door that now drafts, once the
+ * draft took effect — whether it wrote anything taken from the per-item
+ * result the confirm page reports (round-2 R2-M2), never assumed.
+ */
+const effectAnswer = (path: string, data: Body, confirmed: ConfirmedBatch): Body => {
   const { draft: _draft, provenance: _provenance, waiting: _waiting, ...rest } = data;
   if (path.startsWith("/api/settings/mutes")) {
-    return "unmuted" in rest ? { ...rest, wasMuted: true } : { ...rest, alreadyMuted: false };
+    const isUnmute = "unmuted" in rest;
+    const wrote = itemOf(confirmed, (item) => item.kind === (isUnmute ? "unmute" : "mute"))?.wrote ?? true;
+    return isUnmute ? { ...rest, wasMuted: wrote } : { ...rest, alreadyMuted: !wrote };
   }
   if (path === "/api/settings/presence") {
     return { presenceOptOut: false };
@@ -155,11 +168,13 @@ const judgementAtOnce = async (
     return refused(confirmed.cause ?? confirmed.refusal);
   }
   const effect = confirmed.effects.get(draftId) as Body | undefined;
-  if (effect === undefined) {
+  const item = itemOf(confirmed, (entry) => entry.draftId === draftId);
+  if (effect === undefined || item === undefined) {
     return fallback;
   }
-  const answer = kind === "label" ? labelAnswer(effect) : effect;
-  return json(answer, answer["repeated"] === true ? 200 : 201);
+  // A repeat is what the confirm page reports as "nothing to write" (R2-M2): the suites assert production's per-item answer.
+  const answer = { ...(kind === "label" ? labelAnswer(effect) : effect), repeated: !item.wrote };
+  return json(answer, item.wrote ? 201 : 200);
 };
 
 /**
@@ -209,7 +224,7 @@ export const confirmingAtOnce = (app: App, deps: Deps): App => {
     if ("refusal" in confirmed) {
       throw new Error(`confirming at once was refused: ${confirmed.refusal} (${String(confirmed.cause)})`);
     }
-    return json(effectAnswer(path, data), 200);
+    return json(effectAnswer(path, data, confirmed), 200);
   };
   // The same, for a hub on a real socket (`Bun.serve({ fetch })`): the
   // connector and CLI suites from before 0.11 talk to one over HTTP.

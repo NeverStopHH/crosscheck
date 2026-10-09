@@ -206,13 +206,14 @@ export const setPresenceOptOut = async (
  * to the person, because the hub cannot tell who made it; an opt-in can only
  * be a confirmation. The re-enable event carries the class too.
  */
-export const applyPresenceOptOut = async (
+export const applyPresenceOptOut = (
   deps: { readonly db: DbExecutor; readonly now: Clock },
   developerId: string,
   optOut: boolean,
   provenance: ProvenanceClass,
-): Promise<void> => {
-  await deps.db.transaction(async (tx) => {
+): Promise<boolean> =>
+  // Whether the setting changed: a confirmation that found it already so says it wrote nothing (round-2 R2-M2).
+  deps.db.transaction(async (tx): Promise<boolean> => {
     // FOR UPDATE: two toggles at once must not both read "opted out" and
     // record one re-enable, or neither.
     const before = await tx
@@ -237,8 +238,8 @@ export const applyPresenceOptOut = async (
     if (before[0]?.presenceOptOut === true && !optOut) {
       await appendEvent({ db: tx, now: deps.now }, EVENT_KINDS.PRESENCE_REENABLED, { developerId, provenance });
     }
+    return before[0] !== undefined && before[0].presenceOptOut !== optOut;
   });
-};
 
 /** What a toggle leaves to do once its transaction committed: her index, for the setting she has. */
 export const finishPresenceChange = (deps: IndexDeps, developerId: string, optOut: boolean): Promise<void> =>

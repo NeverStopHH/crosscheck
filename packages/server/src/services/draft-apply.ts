@@ -33,14 +33,38 @@ export interface ApplyDeps {
 /** Why one item could not be applied — the writer's own refusal word. */
 export type ApplyRefusal = string;
 
+/**
+ * WHAT ONE CONFIRMED ITEM WROTE (round-2 review R2-M2): a writer may write
+ * nothing — one label per hint, a word already said, a teammate already
+ * muted — and the person is told so, with the writer's reason, never a
+ * blanket "confirmed".
+ */
+export type ItemResult = { readonly wrote: true; readonly why: null } | { readonly wrote: false; readonly why: string };
+
+/** Why a writer wrote nothing for a confirmed item, per kind — the sentence the confirm page shows. */
+export const NOTHING_WRITTEN = {
+  label: "you had already labelled that hint (one label per hint is yours)",
+  pin_ok: "you had already marked that pin ok",
+  outcome: "you had already said exactly that about that hint",
+  pin_broke: "that pin was already marked broken",
+  mute: "that teammate was already muted",
+  unmute: "that teammate was not muted",
+  presence_on: "your presence was already on",
+} as const;
+
+const WROTE: ItemResult = { wrote: true, why: null };
+
+const resultOf = (didWrite: boolean, why: string): ItemResult => (didWrite ? WROTE : { wrote: false, why });
+
 export type ApplyOutcome =
   | {
       readonly applied: true;
       readonly presenceOn: boolean;
+      /** Whether the writer wrote anything, and why not (R2-M2): reported per item to the person. */
+      readonly result: ItemResult;
       /**
        * What the kind's writer answered — what stands now, what it replaced,
-       * whether it was a repeat. The confirmation reports it per item; nothing
-       * decides on it.
+       * whether it was a repeat. Nothing decides on it.
        */
       readonly effect?: unknown;
     }
@@ -53,7 +77,15 @@ export type ApplyKind = (
   stamp: HumanStamp,
 ) => Promise<ApplyOutcome>;
 
-const APPLIED = { applied: true, presenceOn: false } as const;
+const APPLIED = { applied: true, presenceOn: false, result: WROTE } as const;
+
+/** Applied, with the writer's answer of whether it wrote anything. */
+const appliedAs = (didWrite: boolean, why: string, effect?: unknown): ApplyOutcome => ({
+  applied: true,
+  presenceOn: false,
+  result: resultOf(didWrite, why),
+  ...(effect === undefined ? {} : { effect }),
+});
 
 export const payloadText = (payload: DraftPayload, key: string): string => String(payload[key] ?? "");
 
@@ -74,7 +106,9 @@ export const applyLabel: ApplyKind = async (deps, draft, content, stamp) => {
     reason: isPin ? null : payloadTextOrNull(content, "reason"),
     stamp,
   });
-  return "refusal" in written ? { refusal: written.refusal } : { ...APPLIED, effect: written };
+  return "refusal" in written
+    ? { refusal: written.refusal }
+    : appliedAs(!written.repeated, isPin ? NOTHING_WRITTEN.pin_ok : NOTHING_WRITTEN.label, written);
 };
 
 export const applyOutcome: ApplyKind = async (deps, draft, content, stamp) => {
@@ -88,7 +122,7 @@ export const applyOutcome: ApplyKind = async (deps, draft, content, stamp) => {
     recordedBy: draft.developerId,
     stamp,
   });
-  return "refusal" in written ? { refusal: written.refusal } : { ...APPLIED, effect: written };
+  return "refusal" in written ? { refusal: written.refusal } : appliedAs(!written.repeated, NOTHING_WRITTEN.outcome, written);
 };
 
 export const applyPin: ApplyKind = async (deps, draft, content, stamp) => {
@@ -114,22 +148,22 @@ export const applyBreak: ApplyKind = async (deps, draft, content, stamp) => {
     payloadTextOrNull(content, "brokeAtCommit"),
     stamp,
   );
-  return outcome === "not_found" ? { refusal: "unknown_pin" } : APPLIED;
+  return outcome === "not_found" ? { refusal: "unknown_pin" } : appliedAs(outcome === "broken", NOTHING_WRITTEN.pin_broke);
 };
 
 export const applyMuteChange: ApplyKind = async (deps, draft, content, stamp) => {
   const target = payloadText(content, "developerId");
   if (draft.kind === "unmute") {
     const removed = await removeMute(deps.db, draft.developerId, target);
-    return removed.outcome === "unmuted" ? APPLIED : { refusal: "unknown_developer" };
+    return removed.outcome === "unmuted" ? appliedAs(removed.wasMuted, NOTHING_WRITTEN.unmute) : { refusal: "unknown_developer" };
   }
   const added = await addMute(deps, draft.developerId, target, stamp);
   return added.outcome === "muted"
-    ? APPLIED
+    ? appliedAs(!added.alreadyMuted, NOTHING_WRITTEN.mute)
     : { refusal: added.outcome === "limit_reached" ? "mute_limit_reached" : "unknown_developer" };
 };
 
 export const applyPresenceOn: ApplyKind = async (deps, draft) => {
-  await applyPresenceOptOut(deps, draft.developerId, false, HUMAN_PROVENANCE);
-  return { applied: true, presenceOn: true };
+  const changed = await applyPresenceOptOut(deps, draft.developerId, false, HUMAN_PROVENANCE);
+  return { applied: true, presenceOn: true, result: resultOf(changed, NOTHING_WRITTEN.presence_on) };
 };

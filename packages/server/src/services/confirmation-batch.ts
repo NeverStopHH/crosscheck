@@ -41,6 +41,7 @@ import { CONFIRM_BATCH_TTL_MS, MAX_PENDING_DRAFT_SUBJECTS } from "../constants.t
 import { humanConfirmationItems, humanConfirmations } from "../db/schema.ts";
 import { DRAFT_KIND_REGISTRY, batchAuthority } from "./draft-kinds.ts";
 import type { DraftAuthority } from "./draft-kinds.ts";
+import type { ItemResult } from "./draft-apply.ts";
 import { canonicalJson, draftDigest, pendingFingerprint, readPendingDrafts, sha256Hex } from "./human-drafts.ts";
 import type { DraftPayload, DraftRow } from "./human-drafts.ts";
 import { humanStamp } from "./human-provenance.ts";
@@ -262,11 +263,16 @@ export interface ConfirmedBatch {
   readonly presenceOn: boolean;
   /** What each confirmed item's writer answered, by draft id (draft-apply.ts `effect`). */
   readonly effects: ReadonlyMap<string, unknown>;
+  /** Each confirmed item, in the batch's order: whether its writer wrote anything, and why not (R2-M2). */
+  readonly items: readonly ConfirmedItem[];
 }
+
+export type ConfirmedItem = { readonly draftId: string; readonly kind: DraftKind } & ItemResult;
 
 interface Applied {
   readonly presenceOn: boolean;
   readonly effects: ReadonlyMap<string, unknown>;
+  readonly items: readonly ConfirmedItem[];
 }
 
 export type ConfirmRefused = {
@@ -279,6 +285,7 @@ export type ConfirmRefused = {
 const applyConfirmed = async (deps: { readonly db: DbTransaction; readonly now: Clock }, batch: FrozenBatch): Promise<Applied> => {
   let presenceOn = false;
   const effects = new Map<string, unknown>();
+  const items: ConfirmedItem[] = [];
   for (const [position, item] of batch.items.entries()) {
     if (item.decision !== "confirm") {
       continue;
@@ -291,8 +298,9 @@ const applyConfirmed = async (deps: { readonly db: DbTransaction; readonly now: 
     }
     presenceOn ||= applied.presenceOn;
     effects.set(item.draft.id, applied.effect);
+    items.push({ draftId: item.draft.id, kind: item.draft.kind, ...applied.result });
   }
-  return { presenceOn, effects };
+  return { presenceOn, effects, items };
 };
 
 /** The confirmation's own rows: who, which device, what was signed, and the assertion that signed it. */
@@ -448,7 +456,7 @@ export const createBatchStore = (nowMs: () => number, limits: BatchLimits = BATC
   ): Promise<ConfirmedBatch | ConfirmRefused> => {
     batches.delete(batch.id);
     try {
-      const { presenceOn, effects } = await deps.db.transaction(async (tx) => {
+      const { presenceOn, effects, items } = await deps.db.transaction(async (tx) => {
         const scoped = { db: tx, now: deps.now };
         const pending = await readPendingDrafts(scoped, batch.owner.developerId, { lock: true, scope: batch.scope });
         if (!isUnchanged(pending, batch.items)) {
@@ -459,7 +467,7 @@ export const createBatchStore = (nowMs: () => number, limits: BatchLimits = BATC
       });
       const count = (decision: DraftDecision): number =>
         batch.items.filter((item) => item.decision === decision).length;
-      return { confirmed: count("confirm"), discarded: count("discard"), kept: count("keep"), presenceOn, effects };
+      return { confirmed: count("confirm"), discarded: count("discard"), kept: count("keep"), presenceOn, effects, items };
     } catch (error) {
       if (error instanceof BatchRefused) {
         return { refusal: error.refusal, draftId: error.draftId, cause: error.itemCause };
