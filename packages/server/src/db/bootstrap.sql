@@ -1937,3 +1937,59 @@ BEGIN
   END IF;
 END
 $$;
+
+-- Round-2 M5: a confirmed row is admitted only under a CONFIRMED item of its
+-- own kind. The foreign keys above bind the item, not what it signed, so a
+-- row moved under another kind's item (A-P9: a label under an outcome's item)
+-- or under a discarded one passed them. This is the check a reader of
+-- GET /api/confirm/confirmations would make by hand, made by the database on
+-- every write. It is not authenticity: whoever can write the database can
+-- write the item too (§11, R3) — it makes a forgery two coherent rows, not one.
+-- TG_ARGV[0] is the column prefix ('' or 'broke_'), the rest the kinds that
+-- write the table. keep in sync with DRAFT_KINDS in @crosscheck/schema
+CREATE OR REPLACE FUNCTION human_row_names_its_item() RETURNS trigger LANGUAGE plpgsql AS $fn$
+DECLARE
+  fields jsonb := to_jsonb(NEW);
+  signed_by text := fields ->> (TG_ARGV[0] || 'confirmation_id');
+  signed_kind text;
+  signed_decision text;
+BEGIN
+  IF signed_by IS NULL THEN
+    RETURN NEW;
+  END IF;
+  SELECT d.kind, i.decision INTO signed_kind, signed_decision
+    FROM human_confirmation_items i JOIN human_drafts d ON d.id = i.draft_id
+    WHERE i.confirmation_id = signed_by
+      AND i.position = (fields ->> (TG_ARGV[0] || 'confirmation_position'))::integer;
+  IF signed_decision IS DISTINCT FROM 'confirm' OR NOT COALESCE(signed_kind = ANY (TG_ARGV[1:]), false) THEN
+    RAISE EXCEPTION 'a % row names confirmation item %/% — not a confirmed % draft',
+      TG_TABLE_NAME, signed_by, fields ->> (TG_ARGV[0] || 'confirmation_position'), array_to_string(TG_ARGV[1:], ' or ')
+      USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END
+$fn$;
+-- Once each, like the constraints: a restart takes no lock to re-create them.
+DO $$
+DECLARE
+  target record;
+BEGIN
+  FOR target IN
+    SELECT * FROM (VALUES
+      ('pilot_marks', 'pilot_marks_names_its_item', '', 'confirmation_id, confirmation_position', ARRAY['label', 'pin_ok']),
+      ('noise_reassertions', 'noise_reassertions_names_its_item', '', 'confirmation_id, confirmation_position', ARRAY['label']),
+      ('hint_outcomes', 'hint_outcomes_names_its_item', '', 'confirmation_id, confirmation_position', ARRAY['outcome']),
+      ('developer_mutes', 'developer_mutes_names_its_item', '', 'confirmation_id, confirmation_position', ARRAY['mute']),
+      ('pins', 'pins_names_its_item', '', 'confirmation_id, confirmation_position', ARRAY['pin']),
+      ('pins', 'pins_break_names_its_item', 'broke_', 'broke_confirmation_id, broke_confirmation_position', ARRAY['pin_broke'])
+    ) AS t(tbl, trg, prefix, cols, kinds)
+  LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = target.trg AND tgrelid = target.tbl::regclass) THEN
+      EXECUTE format(
+        'CREATE TRIGGER %I BEFORE INSERT OR UPDATE OF %s ON %I FOR EACH ROW EXECUTE FUNCTION human_row_names_its_item(%L, %s)',
+        target.trg, target.cols, target.tbl, target.prefix,
+        (SELECT string_agg(quote_literal(kind), ', ') FROM unnest(target.kinds) AS kind));
+    END IF;
+  END LOOP;
+END
+$$;
