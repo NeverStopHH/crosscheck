@@ -83,7 +83,7 @@ describe("human drafts", () => {
     expect(pending.map((draft) => [draft.kind, draft.version, draft.provenance])).toEqual([["mute", 1, "agent_asserted"]]);
   });
 
-  test("a different word on the same subject is its next version; only the newest is pending, the older kept", async () => {
+  test("a different word on the same subject is its next version; only the newest is pending, the older (never signed) dropped — review M8", async () => {
     // Arrange
     const harness = await createTestHarness();
     const nick = await createTestDeveloper(harness, "Nick", "nick-drafts-2@example.com");
@@ -98,7 +98,7 @@ describe("human drafts", () => {
     // Assert
     expect(second).toMatchObject({ version: 2, repeated: false });
     expect(pending.map((draft) => draft.payload["name"])).toEqual(["Ken K."]);
-    expect(stored).toHaveLength(2);
+    expect(stored.map((draft) => draft.version)).toEqual([2]);
   });
 
   test("the same draft again is a repeat and writes nothing", async () => {
