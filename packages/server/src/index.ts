@@ -31,7 +31,7 @@ import { reapStaleSessions } from "./services/sessions.ts";
 import { hasLocalhostBesideHttps, localhostBesideHttpsWarning, parseWebAuthnOrigins } from "./services/webauthn.ts";
 import { backfillSkeletonIdentity } from "./services/skeleton-identity.ts";
 import { runStartupUpgrades } from "./services/startup-upgrades.ts";
-import { rebuildOptedOutLocationIndexes } from "./services/developer-settings.ts";
+import { withholdPendingLocationTitles } from "./services/developer-settings.ts";
 import type { Db } from "./db/client.ts";
 import type { Embedder } from "./services/embedder.ts";
 import type { AppEnv, Clock } from "./types.ts";
@@ -339,12 +339,19 @@ export const startServer = async (): Promise<void> => {
     refusePreDraftingClients,
   });
   // AN OPT-OUT FROM BEFORE THE INDEX FOLLOWED THE SETTING (review round 5,
-  // M1): her docs still hold her branch titles, so they are rebuilt BEFORE
+  // M1): her docs still hold her branch titles, so they are EMPTIED before
   // serving — a colleague's first search must not find her by a guessed
-  // branch. Once per opt-out (developers.location_index_built_at).
-  const indexesRebuilt = await rebuildOptedOutLocationIndexes({ db, now: () => new Date(), embedder });
-  if (indexesRebuilt > 0) {
-    console.log(`[crosscheck] search index: rebuilt for ${String(indexesRebuilt)} opted-out developer(s)`);
+  // branch — in one statement; the rebuild itself is a start-up pass after
+  // serving, a page and one embedder call at a time. Rebuilding here kept a
+  // pilot-scale hub's port closed 17–26 s, and with an embedder for one
+  // call per doc (batch-2 integration review, M11). Once per opt-out
+  // (developers.location_index_built_at, set when the rebuild is done).
+  const indexesPending = await withholdPendingLocationTitles(db);
+  if (indexesPending > 0) {
+    console.log(
+      `[crosscheck] search index: location titles withheld for ${String(indexesPending)} opted-out developer(s); ` +
+        "their docs are rebuilt in the background",
+    );
   }
   const servers = serveOnPlan(listenPlan, port, app.fetch);
   const listeningPort = servers[0]?.port ?? port;
@@ -354,44 +361,54 @@ export const startServer = async (): Promise<void> => {
   if (listenPlan.kind === "loopback_default" && (await holdsMembersFromBeforeInstall(db))) {
     console.warn(restoredOnLoopbackWarning(listeningPort));
   }
-  // THE SKELETON'S IDENTITY FOR ROWS THAT PREDATE ITS COLUMNS (01a §4.1).
-  // After serving, not before: until it has run, a missing identity reads as
-  // UNRESOLVED and the retention sweep keeps what it cannot resolve, so
-  // nothing depends on it finishing first — and a large hub is not held
-  // offline while it does. Idempotent; each start finishes what the last left.
-  void backfillSkeletonIdentity({ db, now: () => new Date() }).then(
-    (report) => {
-      console.log(
-        `[crosscheck] skeleton identity: ${String(report.pinPathsCanonicalised)} legacy pin path(s) respelled, ` +
-          `${String(report.pinsSeeded)} pin(s) seeded, ` +
-          `${String(report.fileRefs)} file identities filled, ` +
-          `${String(report.unresolvedFileRefs)} unresolved (kept)`,
-      );
-    },
-    (error: unknown) => {
-      console.error("[crosscheck] skeleton identity backfill failed; unresolved rows are kept", error);
-    },
-  );
-  // DRAFTS OUT OF WHAT AN OLDER HUB BUILT: the auto links its gate made into
-  // teammates' trees on a draft's strength, the docs that still fold drafts
-  // in, and — with an embedder — every vector missing or from another model
-  // (services/startup-upgrades.ts runs them apart, each logging its own
-  // outcome). After serving, for the same reason: until they have run the
-  // old rows behave as they did before the upgrade, and nothing waits on
-  // them. All idempotent; each start finishes what the last left.
-  void runStartupUpgrades({ db, embedder });
-  // THE RECEIPTS PAST THEIR RETENTION, once at boot (review-2 round 9, M4):
-  // the timer's first pass comes SESSION_REAP_INTERVAL_MS from now, and a hub
-  // restarted after weeks off would carry the backlog until then. A chunk at
-  // a time, so the requests served meanwhile wait out one chunk at most.
-  void pruneRecordReceipts({ db, now: () => new Date() }).then(
-    (pruned) => {
-      console.log(`[crosscheck] record receipts: ${String(pruned)} past their retention pruned at boot`);
-    },
-    (error: unknown) => {
-      console.error("[crosscheck] record receipts prune at boot failed; the reaper pass retries", error);
-    },
-  );
+  // THE PASSES AFTER SERVING, ONE AFTER ANOTHER (batch-2 integration review).
+  // Each pass takes a turn of the event loop only between its own pages, so
+  // side by side their pages ran back to back, and the request that arrived
+  // as the port opened waited out all of them: 0.6–3 s on a loaded machine.
+  // The upgrades first, as what a teammate's searches and hints read; the
+  // skeleton identity and the receipts prune after, as nothing waits on them.
+  void (async (): Promise<void> => {
+    // DRAFTS OUT OF WHAT AN OLDER HUB BUILT: the auto links its gate made into
+    // teammates' trees on a draft's strength, the opted-out docs emptied above,
+    // the docs that still fold drafts in, the hint floor's words an upgrade
+    // left empty, and — with an embedder — every vector missing or from
+    // another model (services/startup-upgrades.ts runs them apart, each
+    // logging its own outcome, each a page at a time). After serving, for the
+    // same reason: until they have run the old rows behave as they did before
+    // the upgrade, and nothing waits on them. All idempotent; each start
+    // finishes what the last left.
+    await runStartupUpgrades({ db, embedder });
+    // THE SKELETON'S IDENTITY FOR ROWS THAT PREDATE ITS COLUMNS (01a §4.1).
+    // After serving, not before: until it has run, a missing identity reads as
+    // UNRESOLVED and the retention sweep keeps what it cannot resolve, so
+    // nothing depends on it finishing first — and a large hub is not held
+    // offline while it does. Idempotent; each start finishes what the last left.
+    await backfillSkeletonIdentity({ db, now: () => new Date() }).then(
+      (report) => {
+        console.log(
+          `[crosscheck] skeleton identity: ${String(report.pinPathsCanonicalised)} legacy pin path(s) respelled, ` +
+            `${String(report.pinsSeeded)} pin(s) seeded, ` +
+            `${String(report.fileRefs)} file identities filled, ` +
+            `${String(report.unresolvedFileRefs)} unresolved (kept)`,
+        );
+      },
+      (error: unknown) => {
+        console.error("[crosscheck] skeleton identity backfill failed; unresolved rows are kept", error);
+      },
+    );
+    // THE RECEIPTS PAST THEIR RETENTION, once at boot (review-2 round 9, M4):
+    // the timer's first pass comes SESSION_REAP_INTERVAL_MS from now, and a hub
+    // restarted after weeks off would carry the backlog until then. A chunk at
+    // a time, so the requests served meanwhile wait out one chunk at most.
+    await pruneRecordReceipts({ db, now: () => new Date() }).then(
+      (pruned) => {
+        console.log(`[crosscheck] record receipts: ${String(pruned)} past their retention pruned at boot`);
+      },
+      (error: unknown) => {
+        console.error("[crosscheck] record receipts prune at boot failed; the reaper pass retries", error);
+      },
+    );
+  })();
   // The hub's own reaper (trial finding M6). HERE and not in `createApp`:
   // every test that builds an app would otherwise leak a timer, and the
   // registration path already reaps the registering developer's own sessions

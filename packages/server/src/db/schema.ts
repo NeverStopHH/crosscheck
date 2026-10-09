@@ -1,5 +1,4 @@
 import { sql } from "drizzle-orm";
-import { DOTTED_NAME_DOT_SQL } from "@crosscheck/schema";
 import type { SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import type { FoldedLossKinds } from "@crosscheck/schema";
@@ -366,10 +365,15 @@ export const workContexts = pgTable("work_contexts", {
   tsv: tsvector("tsv").generatedAlwaysAs(
     sql`to_tsvector('english', coalesce(normalized_doc, ''))`,
   ),
-  /** The document's words AND its dotted names' parts, for the hint floor's known words (round 5, L2). */
-  wordsTsv: tsvector("words_tsv").generatedAlwaysAs(
-    sql`to_tsvector('english', coalesce(normalized_doc, '')) || to_tsvector('english', regexp_replace(coalesce(normalized_doc, ''), ${sql.raw(`'${DOTTED_NAME_DOT_SQL}'`)}, ' ', 'g'))`,
-  ),
+  /**
+   * The document's words AND its dotted names' parts, for the hint floor's
+   * known words (round 5, L2). Filled by the database on every write of
+   * normalized_doc (bootstrap.sql trigger work_contexts_words_tsv_fill), and
+   * null only on a row an upgrade found until the background backfill
+   * reaches it (services/words-index.ts; batch-2 integration review, M10).
+   * Never written by a service.
+   */
+  wordsTsv: tsvector("words_tsv"),
   /** Null until an embedder is configured and has embedded the current doc. */
   embedding: vector("embedding", { dimensions: EMBEDDING_DIMENSIONS }),
   embeddingModel: text("embedding_model"),
@@ -441,6 +445,10 @@ export const workContexts = pgTable("work_contexts", {
   index("work_contexts_activity_idx").on(
     sql`coalesce(${table.updatedAt}, ${table.createdAt}) DESC`,
   ),
+  // The hint floor's known-word prefilter, and the rows the words backfill
+  // has yet to fill (M10). Mirrored in db/bootstrap.sql.
+  index("work_contexts_words_tsv_idx").using("gin", table.wordsTsv),
+  index("work_contexts_words_tsv_pending_idx").on(table.id).where(sql`${table.wordsTsv} IS NULL`),
 ]);
 
 export const workContextTargets = pgTable(
@@ -562,10 +570,13 @@ export const claims = pgTable(
       .notNull()
       .default(sql`'[]'::jsonb`),
     tsv: tsvector("tsv").generatedAlwaysAs(sql`to_tsvector('english', body)`),
-    /** The body's words AND its dotted names' parts, for the hint floor (round 5, L2). */
-    wordsTsv: tsvector("words_tsv").generatedAlwaysAs(
-      sql`to_tsvector('english', body) || to_tsvector('english', regexp_replace(body, ${sql.raw(`'${DOTTED_NAME_DOT_SQL}'`)}, ' ', 'g'))`,
-    ),
+    /**
+     * The body's words AND its dotted names' parts, for the hint floor (round
+     * 5, L2). Filled by the database on every write of body (bootstrap.sql
+     * trigger claims_words_tsv_fill); null only on a row an upgrade found
+     * until the background backfill reaches it (services/words-index.ts, M10).
+     */
+    wordsTsv: tsvector("words_tsv"),
     /** Null until an embedder is configured; written once at ingest (append-only). */
     embedding: vector("embedding", { dimensions: EMBEDDING_DIMENSIONS }),
     embeddingModel: text("embedding_model"),
@@ -629,6 +640,10 @@ export const claims = pgTable(
       "hnsw",
       table.embedding.op("vector_cosine_ops"),
     ),
+    // The hint floor's claim words, and the rows the words backfill has yet
+    // to fill (M10). Mirrored in db/bootstrap.sql.
+    index("claims_words_tsv_idx").using("gin", table.wordsTsv),
+    index("claims_words_tsv_pending_idx").on(table.id).where(sql`${table.wordsTsv} IS NULL`),
   ],
 );
 
@@ -705,12 +720,24 @@ export const artifacts = pgTable("artifacts", {
 });
 
 /** Outbox table — the bigserial id is the SSE replay cursor (DESIGN.md §2). */
-export const events = pgTable("events", {
-  id: bigserial("id", { mode: "number" }).primaryKey(),
-  kind: text("kind").notNull(),
-  payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
-  createdAt: timestamptz("created_at").notNull().defaultNow(),
-});
+export const events = pgTable(
+  "events",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    kind: text("kind").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+  },
+  // The start-up draft-link cleanup's wire-record lookup (H6), and the
+  // session_started events every boot's branch backfill reads (L13)
+  // (bootstrap.sql; batch-2 integration review).
+  (table) => [
+    index("events_claim_edge_added_edge_idx")
+      .on(sql`(${table.payload}->>'edgeId')`)
+      .where(sql`${table.kind} = 'claim_edge_added'`),
+    index("events_session_started_idx").on(table.id).where(sql`${table.kind} = 'session_started'`),
+  ],
+);
 
 /**
  * Similarity-detected contradiction candidates only (ingest gate, DESIGN.md

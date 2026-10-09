@@ -10,7 +10,7 @@
 import { describe, expect, test } from "bun:test";
 import { sql } from "drizzle-orm";
 
-import { DOTTED_NAME_DOT_SQL, dottedNamePartsText, knownTermsIn, promptTerms } from "@crosscheck/schema";
+import { DOTTED_NAME_PARTS_SQL, DOTTED_NAME_PARTS_SQL_REPLACEMENT, dottedNamePartsText, knownTermsIn, promptTerms } from "@crosscheck/schema";
 
 import { BOOTSTRAP_SQL_URL } from "./fixtures/bootstrap-sql.ts";
 import { hubFloorTermsOf } from "../src/services/hints.ts";
@@ -89,17 +89,22 @@ describe("one pattern, two dialects", () => {
     ["café.menu größe.wert\nnext.line"],
     ["foo. bar baz."],
   ])("the database splits %p where the shared rule does", async (text) => {
-    // Arrange
+    // Arrange — the database's spelling keeps a slash or "@" word whole with
+    // a space after it, which splits no word; the words are what must agree
     const harness = await createTestHarness();
+    const wordsOf = (parts: string): readonly string[] => parts.split(/\s+/u).filter((word) => word.length > 0);
 
     // Act
-    const result = await harness.db.execute<{ parts: string }>(sql`SELECT regexp_replace(${text}, ${DOTTED_NAME_DOT_SQL}, ' ', 'g') AS parts`);
+    const result = await harness.db.execute<{ parts: string; words: boolean }>(sql`
+      SELECT regexp_replace(${text}, ${DOTTED_NAME_PARTS_SQL}, ${DOTTED_NAME_PARTS_SQL_REPLACEMENT}, 'g') AS parts,
+             crosscheck_words_tsv(${text}) = (to_tsvector('english', ${text}) || to_tsvector('english', ${dottedNamePartsText(text)})) AS words`);
 
     // Assert
-    expect(result.rows[0]?.parts).toBe(dottedNamePartsText(text));
+    expect(wordsOf(result.rows[0]?.parts ?? "")).toEqual(wordsOf(dottedNamePartsText(text)));
+    expect(result.rows[0]?.words).toBe(true);
   });
 
-  test("bootstrap.sql stores both word columns on the pattern, verbatim, and indexes them", async () => {
+  test("bootstrap.sql spells the pattern once, verbatim, fills both word columns on write and indexes them", async () => {
     // Arrange
     const bootstrap = await Bun.file(BOOTSTRAP_SQL_URL).text();
     const harness = await createTestHarness();
@@ -109,12 +114,16 @@ describe("one pattern, two dialects", () => {
       sql`SELECT indexname AS name FROM pg_indexes WHERE indexname IN ('claims_words_tsv_idx', 'work_contexts_words_tsv_idx') ORDER BY indexname`,
     );
     const columns = await harness.db.execute<{ name: string }>(
-      sql`SELECT table_name AS name FROM information_schema.columns WHERE column_name = 'words_tsv' AND is_generated = 'ALWAYS' ORDER BY table_name`,
+      sql`SELECT table_name AS name FROM information_schema.columns WHERE column_name = 'words_tsv' AND is_generated = 'NEVER' ORDER BY table_name`,
+    );
+    const triggers = await harness.db.execute<{ name: string }>(
+      sql`SELECT tgname AS name FROM pg_trigger WHERE tgname IN ('claims_words_tsv_fill', 'work_contexts_words_tsv_fill') ORDER BY tgname`,
     );
 
     // Assert
-    expect(bootstrap.split(`'${DOTTED_NAME_DOT_SQL}'`).length - 1).toBe(2);
+    expect(bootstrap.split(`'${DOTTED_NAME_PARTS_SQL}', '${DOTTED_NAME_PARTS_SQL_REPLACEMENT}'`).length - 1).toBe(1);
     expect(indexes.rows.map((row) => row.name)).toEqual(["claims_words_tsv_idx", "work_contexts_words_tsv_idx"]);
     expect(columns.rows.map((row) => row.name)).toEqual(["claims", "work_contexts"]);
+    expect(triggers.rows.map((row) => row.name)).toEqual(["claims_words_tsv_fill", "work_contexts_words_tsv_fill"]);
   });
 });

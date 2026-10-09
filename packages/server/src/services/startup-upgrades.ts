@@ -4,15 +4,21 @@
  *
  * After the hub is serving (index.ts) it runs, in the background:
  *   1. the draft link cleanup (draft-link-cleanup.ts),
- *   2. the doc upgrade (doc-upgrade.ts),
- *   3. with an embedder, the vector backfill (embedding-backfill.ts).
+ *   2. the opted-out location index rebuild (developer-settings.ts; her
+ *      docs were emptied before serving),
+ *   3. the doc upgrade (doc-upgrade.ts),
+ *   4. the words index backfill (words-index.ts),
+ *   5. with an embedder, the vector backfill (embedding-backfill.ts).
  * They used to be one promise chain, so a cleanup that threw skipped the doc
  * upgrade, and one error line covered all of them. Each now runs whatever
  * the one before it did — none needs another's result — and each logs its
  * own outcome or its own error. Each is idempotent: the next start retries
- * whatever failed.
+ * whatever failed. Each works a page at a time with a turn of the event loop
+ * between pages, so a request waits out one page, never a pass (batch-2
+ * integration review, H6, M10, M11).
  */
 import type { Db } from "../db/client.ts";
+import { rebuildOptedOutLocationIndexes } from "./developer-settings.ts";
 import { upgradeNormalizedDocs } from "./doc-upgrade.ts";
 import type { DocUpgradeReport } from "./doc-upgrade.ts";
 import { describeDraftLinkCleanup, removeCrossDeveloperDraftLinks } from "./draft-link-cleanup.ts";
@@ -20,6 +26,8 @@ import type { DraftLinkCleanupReport } from "./draft-link-cleanup.ts";
 import { backfillEmbeddings } from "./embedding-backfill.ts";
 import type { EmbedOutcome } from "./embedding-backfill.ts";
 import type { Embedder } from "./embedder.ts";
+import { backfillWordsIndex, describeWordsBackfill } from "./words-index.ts";
+import type { WordsBackfillReport } from "./words-index.ts";
 
 export interface StartupLog {
   readonly info: (line: string) => void;
@@ -38,7 +46,10 @@ const CONSOLE_LOG: StartupLog = {
 export interface StartupUpgradeReport {
   /** Null when the pass failed (its error is logged). */
   readonly links: DraftLinkCleanupReport | null;
+  /** How many opted-out developers' indexes were rebuilt. */
+  readonly locations: number | null;
   readonly docs: DocUpgradeReport | null;
+  readonly words: WordsBackfillReport | null;
   /** Null without an embedder, or when the pass failed. */
   readonly vectors: EmbedOutcome | null;
 }
@@ -87,11 +98,31 @@ export const runStartupUpgrades = async (deps: {
     run: () => removeCrossDeveloperDraftLinks(db),
     describe: describeDraftLinkCleanup,
   });
+  const locations = await runPass(log, {
+    name: "location index",
+    onFailure: "her docs stay emptied, and the next start rebuilds them",
+    run: () => rebuildOptedOutLocationIndexes({ db, embedder, now: () => new Date() }),
+    describe: (rebuilt: number) => `rebuilt for ${String(rebuilt)} opted-out developer(s)`,
+  });
   const docs = await runPass(log, {
     name: "doc upgrade",
     onFailure: "the next start resumes it",
     run: () => upgradeNormalizedDocs({ db, embedder }, { progress: docUpgradeProgress }),
     describe: describeDocUpgrade,
+  });
+  const words = await runPass(log, {
+    name: "words index",
+    onFailure: "the next start resumes it",
+    run: () =>
+      backfillWordsIndex(
+        { db },
+        {
+          progress: (line) => {
+            log.info(`[crosscheck] words index: ${line}`);
+          },
+        },
+      ),
+    describe: describeWordsBackfill,
   });
   const vectors =
     embedder === null
@@ -102,5 +133,5 @@ export const runStartupUpgrades = async (deps: {
           run: () => backfillEmbeddings({ db, embedder }),
           describe: describeBackfill,
         });
-  return { links, docs, vectors };
+  return { links, locations, docs, words, vectors };
 };

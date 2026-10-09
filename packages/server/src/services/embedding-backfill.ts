@@ -16,7 +16,8 @@
  * (the array form), and only vectors actually stored are counted; a failed
  * call is logged with its count and retried by the next start.
  */
-import { and, asc, eq, gt, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
+import { and, asc, count, eq, gt, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
 
 import { DOC_UPGRADE_BATCH } from "../constants.ts";
 import type { Db, DbExecutor } from "../db/client.ts";
@@ -101,22 +102,34 @@ export const embedContextDocs = async (
   return { embedded, failed: docs.length - embedded };
 };
 
+/** A context with a doc but no vector of `model`. */
+const missingVector = (model: string): SQL | undefined =>
+  and(
+    isNotNull(workContexts.normalizedDoc),
+    ne(workContexts.normalizedDoc, ""),
+    or(isNull(workContexts.embedding), sql`${workContexts.embeddingModel} IS DISTINCT FROM ${model}`),
+  );
+
 /** One page of contexts with a doc but no vector of the current model. */
 const missingPage = async (db: Db, model: string, after: string, batch: number): Promise<readonly string[]> => {
   const rows = await db
     .select({ id: workContexts.id })
     .from(workContexts)
-    .where(
-      and(
-        gt(workContexts.id, after),
-        isNotNull(workContexts.normalizedDoc),
-        ne(workContexts.normalizedDoc, ""),
-        or(isNull(workContexts.embedding), sql`${workContexts.embeddingModel} IS DISTINCT FROM ${model}`),
-      ),
-    )
+    .where(and(gt(workContexts.id, after), missingVector(model)))
     .orderBy(asc(workContexts.id))
     .limit(batch);
   return rows.map((row) => row.id);
+};
+
+/**
+ * How many contexts the vector backfill has yet to embed — what GET
+ * /api/hub-status reports and `crosscheck doctor` prints while it runs
+ * (batch-2 integration review, M11). Counted over every developer's
+ * contexts, never one person's.
+ */
+export const countMissingVectors = async (db: DbExecutor, model: string): Promise<number> => {
+  const [row] = await db.select({ missing: count() }).from(workContexts).where(missingVector(model));
+  return row?.missing ?? 0;
 };
 
 /** No id sorts before this, so the first page starts at the beginning. */

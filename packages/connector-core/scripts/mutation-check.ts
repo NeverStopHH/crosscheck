@@ -19159,7 +19159,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a receipts prune leaves its dead rows behind (H3)",
     file: `${SERVER}/src/services/record-receipts.ts`,
-    from: "    await deps.db.execute(sql`VACUUM record_receipts`);\n",
+    // RETARGETED (batch-2 review, follow-up to M10): one VACUUM call, at the words backfill's cadence.
+    from: "    await vacuumTable(deps.db, \"record_receipts\");\n",
     to: "",
     test: `${SERVER}/test/record-receipts-bloat.test.ts`,
     because: "review-2 round 9, H3: PGlite runs no autovacuum, and the table grows six times its retention's size in half a year",
@@ -19355,16 +19356,18 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a receipts prune stops after its first chunk (M4)",
     file: `${SERVER}/src/services/record-receipts.ts`,
-    from: "    if (chunk < RECORD_RECEIPT_PRUNE_CHUNK) {\n      return pruned;\n    }\n",
-    to: "    return pruned;\n",
+    // RETARGETED (batch-2 review, follow-up to M10): the prune recurses a chunk at a time.
+    from: "  return isLast ? pruned : pruneFrom(deps, cutoff, pruned, counted);",
+    to: "  return pruned;",
     test: `${SERVER}/test/record-receipts.test.ts`,
     because: "review-2 round 9, M4: a backlog larger than one chunk outlives its retention by a pass per chunk",
   },
   {
     label: "the hub prunes no receipts at boot (M4)",
     file: `${SERVER}/src/index.ts`,
-    from: "  void pruneRecordReceipts({ db, now: () => new Date() }).then(",
-    to: "  void Promise.resolve(0).then(",
+    // RETARGETED (batch-2 review): the passes after serving run one after another.
+    from: "    await pruneRecordReceipts({ db, now: () => new Date() }).then(",
+    to: "    await Promise.resolve(0).then(",
     test: `${SERVER}/test/record-receipts-boot.test.ts`,
     because: "review-2 round 9, M4: a hub restarted after weeks off keeps their receipts until its timer's first pass",
   },
@@ -21890,7 +21893,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the start-up cleanup deletes a person's own relates_to edge",
     file: `${SERVER}/src/services/draft-link-cleanup.ts`,
-    from: "      AND e.note = ${AUTO_SIMILARITY_NOTE}\n",
+    // RETARGETED (batch-2 review, H6): the older rows are a selection of their own.
+    from: "        AND g.note = ${AUTO_SIMILARITY_NOTE}\n",
     to: "",
     test: `${SERVER}/test/draft-link-cleanup.test.ts`,
     because: "a link a human drew between two trees is erased as if the gate had guessed it",
@@ -22058,15 +22062,17 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the start-up cleanup removes gate-noted edges of any kind",
     file: `${SERVER}/src/services/draft-link-cleanup.ts`,
-    from: "    e.kind = ${RELATES_TO}\n    AND ${WRITTEN_BY_GATE}\n",
-    to: "    ${WRITTEN_BY_GATE}\n",
+    // RETARGETED (batch-2 review, H6): the selector is paged.
+    from: "    e.kind = ${RELATES_TO}\n    AND ${inPage(sql`e.id`, bounds)}\n",
+    to: "    ${inPage(sql`e.id`, bounds)}\n",
     test: `${SERVER}/test/draft-link-cleanup.test.ts`,
     because: "a supports or contradicts edge that happens to carry the gate's note is erased with the gate's links",
   },
   {
     label: "the start-up cleanup takes a noted edge for the gate's whoever authored it",
     file: `${SERVER}/src/services/draft-link-cleanup.ts`,
-    from: "      AND e.author_session_id = fc.author_session_id\n",
+    // RETARGETED (batch-2 review, H6): the older rows are a selection of their own.
+    from: "        AND g.author_session_id = gc.author_session_id\n",
     to: "",
     test: `${SERVER}/test/draft-link-cleanup.test.ts`,
     because: "an edge a teammate authored from someone else's claim is erased though the gate never writes one",
@@ -22074,7 +22080,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the start-up cleanup takes a wire-posted edge with the gate's note for the gate's",
     file: `${SERVER}/src/services/draft-link-cleanup.ts`,
-    from: "ev.payload->>'edgeId' = e.id",
+    // RETARGETED (batch-2 review, H6): the anti-join's own alias.
+    from: "ev.payload->>'edgeId' = g.id",
     to: "false",
     test: `${SERVER}/test/draft-link-cleanup.test.ts`,
     because: "a link a person drew by hand and noted like the gate is erased on the next start",
@@ -22082,8 +22089,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the start-up cleanup ignores the gate's structural origin",
     file: `${SERVER}/src/services/draft-link-cleanup.ts`,
-    from: "    e.origin = ${SIMILARITY_GATE_ORIGIN}\n    OR (e.origin IS NULL",
-    to: "    false\n    OR (e.origin IS NULL",
+    // RETARGETED (batch-2 review, H6): the origin rows are a selection of their own.
+    from: "      WHERE g.origin = ${SIMILARITY_GATE_ORIGIN} AND",
+    to: "      WHERE false AND",
     test: `${SERVER}/test/draft-link-cleanup.test.ts`,
     because: "a link the current gate marks as its own is matched only if its free-text note survives",
   },
@@ -22106,8 +22114,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the start-up cleanup drops a confirmed draft's link instead of moving it",
     file: `${SERVER}/src/services/draft-link-cleanup.ts`,
-    from: "    const repointed = await repointConfirmedDrafts(tx);",
-    to: "    const repointed: readonly string[] = [];",
+    // RETARGETED (batch-2 review, H6): a page's transaction.
+    from: "    repointed: await repointConfirmedDrafts(tx, bounds),",
+    to: "    repointed: [] as readonly string[],",
     test: `${SERVER}/test/draft-link-cleanup.test.ts`,
     because: "a teammate's tree loses its reference to a finding that is now vouched for",
   },
@@ -22151,6 +22160,247 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/draft-link-cleanup.test.ts`,
     because: "a moved link loses the structural mark that tells it from a person's",
   },
+  // ── Batch-2 integration review: the hub's boot and upgrade (H6, M10, M11) ──
+  {
+    label: "the draft-link cleanup scans every event per legacy edge again",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "CREATE INDEX IF NOT EXISTS events_claim_edge_added_edge_idx\n",
+    to: "CREATE INDEX IF NOT EXISTS events_claim_edge_added_edge_idx_gone\n",
+    test: `${SERVER}/test/draft-link-cleanup-bounded.test.ts`,
+    because: "every start of a hub that had an embedder holds every request for 9–86 s (H6)",
+  },
+  {
+    label: "the draft-link cleanup never takes a turn of the event loop",
+    file: `${SERVER}/src/services/draft-link-cleanup.ts`,
+    from: "  await yieldToRequests();\n  return cleanFrom(",
+    to: "  return cleanFrom(",
+    test: `${SERVER}/test/draft-link-cleanup-bounded.test.ts`,
+    because: "a request that arrives during the cleanup waits for the whole pass, not one page (H6)",
+  },
+  {
+    label: "every boot's branch backfill scans every event again",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "CREATE INDEX IF NOT EXISTS events_session_started_idx\n",
+    to: "CREATE INDEX IF NOT EXISTS events_session_started_idx_gone\n",
+    test: `${SERVER}/test/ddl-sync-boot-upgrade.test.ts`,
+    because: "the port stays closed for a scan of the whole outbox at every start, growing with it (L13)",
+  },
+  {
+    label: "an upgrade rewrites both tables to add the words column",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "ALTER TABLE claims ADD COLUMN IF NOT EXISTS words_tsv tsvector;\n",
+    to: "ALTER TABLE claims ADD COLUMN IF NOT EXISTS words_tsv tsvector GENERATED ALWAYS AS (crosscheck_words_tsv(body)) STORED;\n",
+    test: `${SERVER}/test/words-index.test.ts`,
+    because: "a pilot-scale hub keeps its port closed for 79 s while claims and work contexts are rewritten (M10)",
+  },
+  {
+    label: "a hub that ran the generated words column keeps computing it",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "    ALTER TABLE claims ALTER COLUMN words_tsv DROP EXPRESSION;\n",
+    to: "",
+    test: `${SERVER}/test/words-index.test.ts`,
+    because: "a hub from this batch keeps the lookbehind expression, and its words column is never the one a fresh hub has (M10)",
+  },
+  {
+    label: "a claim written after the upgrade has no words",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "  NEW.words_tsv := crosscheck_words_tsv(NEW.body);\n",
+    to: "  NEW.words_tsv := to_tsvector('english', NEW.body);\n",
+    test: `${SERVER}/test/words-index.test.ts`,
+    because: "a new finding's dotted names are never split, though the floor counts their parts (M10, round 5 L2)",
+  },
+  {
+    label: "a rebuilt doc keeps the words of the doc before it",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "  BEFORE INSERT OR UPDATE OF normalized_doc ON work_contexts\n",
+    to: "  BEFORE INSERT ON work_contexts\n",
+    test: `${SERVER}/test/words-index.test.ts`,
+    because: "the floor's prefilter knows a context by words its doc no longer says (M10)",
+  },
+  {
+    label: "the words backfill leaves every work context empty",
+    file: `${SERVER}/src/services/words-index.ts`,
+    from: "  const workContexts = await backfillTable(deps.db, WORK_CONTEXTS, progress);",
+    to: "  const workContexts = 0;",
+    test: `${SERVER}/test/words-index.test.ts`,
+    because: "every context an upgrade found matches its dotted names whole for good (M10)",
+  },
+  {
+    label: "the words backfill never takes a turn of the event loop",
+    file: `${SERVER}/src/services/words-index.ts`,
+    from: "  await yieldToRequests();\n  const total = done + filled;",
+    to: "  const total = done + filled;",
+    test: `${SERVER}/test/words-index.test.ts`,
+    because: "a request that arrives during the backfill waits for a whole table, not one chunk (M10)",
+  },
+  {
+    label: "the words backfill VACUUMs a table only once it is filled",
+    file: `${SERVER}/src/services/words-index.ts`,
+    from: "  if (chunk % CHUNKS_PER_VACUUM === 0) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/words-index.test.ts`,
+    because: "no chunk reuses the space the last ones freed: +346 MB instead of +185 MB, and one 666 ms VACUUM at the end (M10)",
+  },
+  {
+    label: "a VACUUM may map a parallel shared memory segment again",
+    file: `${SERVER}/src/db/vacuum.ts`,
+    from: "VACUUM (PARALLEL 0) ${sql.identifier(table)}",
+    to: "VACUUM ${sql.identifier(table)}",
+    test: `${SERVER}/test/vacuum.test.ts`,
+    because: "a long-lived hub's VACUUMs fail once PGlite can no longer map the segment: out of memory after a few hundred (follow-up to M10)",
+  },
+  {
+    label: "a server pass spells its own VACUUM around db/vacuum.ts",
+    file: `${SERVER}/src/services/skeleton-identity.ts`,
+    from: "    await vacuumTable(deps.db, \"session_events\");\n",
+    to: "    await deps.db.execute(sql`VACUUM session_events`);\n",
+    test: `${SERVER}/test/vacuum.test.ts`,
+    because: "that VACUUM may plan parallel workers again, and nothing outside db/vacuum.ts says it must not (follow-up to M10)",
+  },
+  {
+    label: "the receipts prune VACUUMs only once it is done",
+    file: `${SERVER}/src/services/record-receipts.ts`,
+    from: "  const isDue = deleted > 0 && counted % CHUNKS_PER_VACUUM === 0;",
+    to: "  const isDue = false;",
+    test: `${SERVER}/test/vacuum.test.ts`,
+    because: "a long backlog's dead rows pile up until its end, and one VACUUM of all of them holds a request (follow-up to M10)",
+  },
+  {
+    label: "the receipts prune VACUUMs after every chunk again",
+    file: `${SERVER}/src/services/record-receipts.ts`,
+    from: "  const isDue = deleted > 0 && counted % CHUNKS_PER_VACUUM === 0;",
+    to: "  const isDue = deleted > 0;",
+    test: `${SERVER}/test/vacuum.test.ts`,
+    because: "ten times the VACUUMs in a process that runs them every day (follow-up to M10)",
+  },
+  {
+    label: "the receipts prune leaves its last chunks' dead rows behind",
+    file: `${SERVER}/src/services/record-receipts.ts`,
+    from: "  const owesLast = isLast && pruned > 0 && counted % CHUNKS_PER_VACUUM !== 0;",
+    to: "  const owesLast = false;",
+    test: `${SERVER}/test/vacuum.test.ts`,
+    because: "a day's prune of fewer than ten chunks never VACUUMs, and the table grows again (follow-up to M10)",
+  },
+  {
+    label: "the floor drops a row the words backfill has not reached",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "        says: (query) => sql`(${stored} @@ ${query} OR (${column} IS NULL AND ${plain} @@ ${query}))`,",
+    to: "        says: (query) => sql`${stored} @@ ${query}`,",
+    test: `${SERVER}/test/words-index.test.ts`,
+    because: "after an upgrade no tree is found by any word until the backfill reaches it (M10)",
+  },
+  {
+    label: "the floor reads the stored words alone while the backfill runs",
+    file: `${SERVER}/src/services/words-index.ts`,
+    from: "  return rows.rows[0]?.pending !== true;",
+    to: "  return true;",
+    test: `${SERVER}/test/words-index.test.ts`,
+    because: "after an upgrade no tree is found by any word until the backfill reaches it (M10)",
+  },
+  {
+    label: "hub-status never counts the rows still waiting for their words",
+    file: `${SERVER}/src/routes/hub-status.ts`,
+    from: "      wordsIndexPending: await countWordsIndexPending(deps.db),\n",
+    to: "      wordsIndexPending: 0,\n",
+    test: `${SERVER}/test/words-index.test.ts`,
+    because: "nothing tells a teammate why a dotted name matches only whole after an upgrade (M10)",
+  },
+  {
+    label: "the start-up passes never fill the words an upgrade left empty",
+    file: `${SERVER}/src/services/startup-upgrades.ts`,
+    from: "  const words = await runPass(log, {",
+    to: "  const words = null && await runPass(log, {",
+    test: `${SERVER}/test/startup-upgrades.test.ts`,
+    because: "the column an upgrade adds empty stays empty, and the floor reads plain words for good (M10)",
+  },
+  {
+    label: "the passes after serving run side by side again",
+    file: `${SERVER}/src/index.ts`,
+    from: "    await runStartupUpgrades({ db, embedder });\n",
+    to: "    void runStartupUpgrades({ db, embedder });\n",
+    test: `${SERVER}/test/startup-boot.test.ts`,
+    because: "the request that arrives as the port opens waits out every pass's first page at once: 0.6–3 s on a loaded machine",
+  },
+  {
+    label: "the hub listens with an opted-out developer's old titles in the index",
+    file: `${SERVER}/src/index.ts`,
+    from: "  const indexesPending = await withholdPendingLocationTitles(db);",
+    to: "  const indexesPending = 0;",
+    test: `${SERVER}/test/startup-boot.test.ts`,
+    because: "a colleague's first search after the start finds her by a guessed branch (M11, round 5 M1)",
+  },
+  {
+    label: "withholding an opt-out empties no doc",
+    file: `${SERVER}/src/services/developer-settings.ts`,
+    from: "    SET normalized_doc = '', embedding = NULL, embedding_model = NULL\n",
+    to: "    SET embedding = NULL, embedding_model = NULL\n",
+    test: `${SERVER}/test/location-index-boot.test.ts`,
+    because: "her branch title is matchable until the background pass reaches her docs (M11)",
+  },
+  {
+    label: "an opt-out's rebuild serves her old docs between pages",
+    file: `${SERVER}/src/services/developer-settings.ts`,
+    from: "  if (isOptedOut) {\n    await withholdLocationTitles(deps.db, sql`s.developer_id = ${developerId}`);\n  }\n",
+    to: "",
+    test: `${SERVER}/test/location-index-boot.test.ts`,
+    because: "a request served while the toggle rebuilds finds her by her branch (M11)",
+  },
+  {
+    label: "the opt-out rebuild calls the embedder once per doc again",
+    file: `${SERVER}/src/services/developer-settings.ts`,
+    from: "    await embedContextDocs(deps.db, deps.embedder, rows.map((row) => row.id));",
+    to: "    for (const row of rows) {\n      await embedContextDocs(deps.db, deps.embedder, [row.id]);\n    }",
+    test: `${SERVER}/test/location-index-boot.test.ts`,
+    because: "10 000 opted-out contexts are 10 000 embedder round trips: 17–50 minutes at a real one's latency (M11)",
+  },
+  {
+    label: "the opt-out rebuild never takes a turn of the event loop",
+    file: `${SERVER}/src/services/developer-settings.ts`,
+    from: "  await yieldToRequests();\n  await reindexLocationTitlesFrom(",
+    to: "  await reindexLocationTitlesFrom(",
+    test: `${SERVER}/test/location-index-boot.test.ts`,
+    because: "every request waits out her whole rebuild, 17–26 s at 10 000 contexts (M11)",
+  },
+  {
+    label: "a page of the opt-out rebuild is one stall",
+    file: `${SERVER}/src/services/developer-settings.ts`,
+    from: "    if ((index + 1) % LOCATION_INDEX_REBUILD_TURN === 0) {",
+    to: "    if (false) {",
+    test: `${SERVER}/test/location-index-boot.test.ts`,
+    because: "a request waits out 100 doc rebuilds at once, 2.6 s on a loaded machine (M11)",
+  },
+  {
+    label: "the start-up passes never rebuild an opted-out index",
+    file: `${SERVER}/src/services/startup-upgrades.ts`,
+    from: "    run: () => rebuildOptedOutLocationIndexes({ db, embedder, now: () => new Date() }),",
+    to: "    run: () => Promise.resolve(0),",
+    test: `${SERVER}/test/startup-upgrades.test.ts`,
+    because: "the docs emptied before serving stay empty: her work is found by its claims only, for good (M11)",
+  },
+  {
+    label: "hub-status never counts the vectors still to mint",
+    file: `${SERVER}/src/routes/hub-status.ts`,
+    from: "      vectorsPending: deps.embedder === null ? null : await countMissingVectors(deps.db, deps.embedder.model),\n",
+    to: "      vectorsPending: null,\n",
+    test: `${SERVER}/test/location-index-boot.test.ts`,
+    because: "nothing tells a teammate why the vector tier misses work while the hub re-embeds it (M11)",
+  },
+  {
+    label: "doctor never says the words index is still being filled",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "  const words = result.data.wordsIndexPending ?? 0;",
+    to: "  const words = 0;",
+    test: `${CLI}/test/doctor-search-rebuild.test.ts`,
+    because: "a dotted name matches only whole after an upgrade and nothing says why (M10)",
+  },
+  {
+    label: "doctor never says the hub is still embedding",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "  const vectors = result.data.vectorsPending ?? 0;",
+    to: "  const vectors = 0;",
+    test: `${CLI}/test/doctor-search-rebuild.test.ts`,
+    because: "the vector tier misses work while the hub re-embeds it and nothing says why (M11)",
+  },
   {
     label: "the gate writes its edges without a structural origin",
     file: `${SERVER}/src/services/similarity-gate.ts`,
@@ -22162,7 +22412,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the boot never runs the start-up upgrade passes",
     file: `${SERVER}/src/index.ts`,
-    from: "  void runStartupUpgrades({ db, embedder });\n",
+    // RETARGETED (batch-2 review): the passes after serving run one after another.
+    from: "    await runStartupUpgrades({ db, embedder });\n",
     to: "",
     test: `${SERVER}/test/startup-boot.test.ts`,
     because: "an upgraded hub keeps every draft in its search docs and every old gate link, and no test notices",
@@ -25032,8 +25283,14 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "opting out leaves the docs built before it in the index",
     file: `${SERVER}/src/services/developer-settings.ts`,
-    from: "  const rebuilt = await reindexLocationTitles(deps.db, developerId);",
-    to: "  const rebuilt: readonly string[] = [];",
+    // RETARGETED (batch-2 review, M11): her docs are emptied, then rebuilt a
+    // page at a time; neither happening is the defect.
+    from:
+      "  if (isOptedOut) {\n" +
+      "    await withholdLocationTitles(deps.db, sql`s.developer_id = ${developerId}`);\n" +
+      "  }\n" +
+      "  await reindexLocationTitlesFrom(deps, developerId, batch, BEFORE_EVERY_CONTEXT);\n",
+    to: "",
     test: `${SERVER}/test/live-location-surfaces.test.ts`,
     because:
       "every context she wrote before the toggle stays searchable by its " +
@@ -25431,7 +25688,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the boot pass marks an index it never rebuilt",
     file: `${SERVER}/src/services/developer-settings.ts`,
-    from: "    await rebuildLocationIndex(deps, row.id, true);",
+    from: "    await rebuildLocationIndex(deps, row.id, true, options.batch);",
     to: "    await deps.db.update(developers).set({ locationIndexBuiltAt: deps.now() }).where(eq(developers.id, row.id));",
     test: `${SERVER}/test/location-index-rebuild.test.ts`,
     because: "the mark says built and her branch title still matches a guess",
@@ -25447,8 +25704,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the toggle never marks the index it rebuilt",
     file: `${SERVER}/src/services/developer-settings.ts`,
-    from: "  if (isOptedOut) {",
-    to: "  if (false) {",
+    // RETARGETED (batch-2 review, M11): the opt-out empties her docs first, under its own `if`.
+    from: "  if (isOptedOut) {\n    await deps.db\n",
+    to: "  if (false) {\n    await deps.db\n",
     test: `${SERVER}/test/location-index-rebuild.test.ts`,
     because: "the next boot rebuilds what the toggle just built, once per opt-out no longer",
   },
@@ -25464,8 +25722,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a doc the opt-out rebuild cleared is never re-embedded",
     file: `${SERVER}/src/services/developer-settings.ts`,
-    from: "  if (deps.embedder !== null) {\n    for (const workContextId of rebuilt) {",
-    to: "  if (false) {\n    for (const workContextId of rebuilt) {",
+    // RETARGETED (batch-2 review, M11): one embedder call per page.
+    from: "  if (deps.embedder !== null) {\n    await embedContextDocs(",
+    to: "  if (false) {\n    await embedContextDocs(",
     test: `${SERVER}/test/location-index-rebuild.test.ts`,
     because: "on a hub with an embedder the vector tier misses her work until each context's next ingest",
   },
@@ -31103,8 +31362,9 @@ export const MUTATIONS: readonly Mutation[
     label: "the floor counts a retracted claim's words",
     file: `${SERVER}/src/services/hints.ts`,
     // RETARGETED (round 5, L2): a claim's words are its dotted names' parts too.
-    from: "        sql`${claimWords} @@ ${anyToken}`,\n        notSuperseded(db),\n",
-    to: "        sql`${claimWords} @@ ${anyToken}`,\n",
+    // RETARGETED (batch-2 review, M10): read through the backfill window's fallback.
+    from: "        words.says(anyToken),\n        notSuperseded(db),\n",
+    to: "        words.says(anyToken),\n",
     test: `${SERVER}/test/hint-floor-integrity.test.ts`,
     because: "a tree is pointed at through words its author took back, in a claim the reader is never shown (M5)",
   },
@@ -33165,8 +33425,9 @@ export const MUTATIONS: readonly Mutation[
     file: `${SERVER}/src/services/hints.ts`,
     // RETARGETED (round 5, L2): the document's words are its dotted names' parts too.
     // RETARGETED (hint-substance merge): the statement is read as the reader may read it.
-    from: "        sql`${documentWords} @@ ${lexeme}`,\n        sql`${statementDocument(titleSeenBy(readerDeveloperId))} @@ ${lexeme}`,\n",
-    to: "        sql`${documentWords} @@ ${lexeme}`,\n",
+    // RETARGETED (batch-2 review, M10): read through the backfill window's fallback.
+    from: "        documentFloorWords(isComplete).says(lexeme),\n        sql`${statementDocument(titleSeenBy(readerDeveloperId))} @@ ${lexeme}`,\n",
+    to: "        documentFloorWords(isComplete).says(lexeme),\n",
     test: `${SERVER}/test/hint-long-prompt.test.ts`,
     because: "\"analyzing\", \"observation\" and a path's parts take counted slots no statement says (round 4, L1)",
   },
@@ -33174,8 +33435,9 @@ export const MUTATIONS: readonly Mutation[
     label: "the hub knows a draft's words",
     file: `${SERVER}/src/services/hints.ts`,
     // RETARGETED (round 5, L2): a claim's words are its dotted names' parts too.
-    from: "        sql`${claimWords} @@ ${lexeme}`,\n        pushableClaimCondition(),\n",
-    to: "        sql`${claimWords} @@ ${lexeme}`,\n",
+    // RETARGETED (batch-2 review, M10): read through the backfill window's fallback.
+    from: "        claimFloorWords(isComplete).says(lexeme),\n        pushableClaimCondition(),\n",
+    to: "        claimFloorWords(isComplete).says(lexeme),\n",
     test: `${SERVER}/test/hint-long-prompt.test.ts`,
     because: "an unreviewed draft's words make a prompt long on the hub and not on a connector's recount (round 4, L1)",
   },
@@ -33819,8 +34081,9 @@ export const MUTATIONS: readonly Mutation[
     label: "the hub reads a statement's dotted name whole only",
     file: `${SERVER}/src/services/hints.ts`,
     // RETARGETED (hint-substance merge): the statement document takes the title the reader may read.
-    from: "  return sql`(to_tsvector('english', ${text}) || ${dottedNameParts(text)})`;",
-    to: "  return sql`(to_tsvector('english', ${text}))`;",
+    // RETARGETED (batch-2 review, M10): the database function that fills the stored words spells it.
+    from: "  return sql`crosscheck_words_tsv(${text})`;",
+    to: "  return sql`to_tsvector('english', ${text})`;",
     test: `${SERVER}/test/hint-dotted-names.test.ts`,
     because: "a description's \"products.title\" never says \"title\" to the hub (round 5, L2)",
   },
@@ -36180,7 +36443,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-mcp-probe-trust.test.ts 6
  * PRINTS: packages/cli/test/doctor-pilot.test.ts 6
  * PRINTS: packages/cli/test/doctor-repo-runtime.test.ts 2
- * PRINTS: packages/cli/test/doctor-search-rebuild.test.ts 2
+ * PRINTS: packages/cli/test/doctor-search-rebuild.test.ts 4
  * PRINTS: packages/cli/test/doctor-sharing.test.ts 4
  * PRINTS: packages/cli/test/doctor-subagent-return.test.ts 10
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
@@ -36590,6 +36853,7 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage-order.test.ts 11
  * PRINTS: packages/server/test/coverage-successor-session.test.ts 3
  * PRINTS: packages/server/test/coverage.test.ts 13
+ * PRINTS: packages/server/test/ddl-sync-boot-upgrade.test.ts 1
  * PRINTS: packages/server/test/ddl-sync-hint-outcomes.test.ts 22
  * PRINTS: packages/server/test/ddl-sync-provenance.test.ts 3
  * PRINTS: packages/server/test/ddl-sync-record-receipts.test.ts 2
@@ -36610,6 +36874,7 @@ interface Outcome {
  * PRINTS: packages/server/test/door-notice.test.ts 2
  * PRINTS: packages/server/test/draft-doors.test.ts 4
  * PRINTS: packages/server/test/draft-kinds.test.ts 2
+ * PRINTS: packages/server/test/draft-link-cleanup-bounded.test.ts 2
  * PRINTS: packages/server/test/draft-link-cleanup.test.ts 18
  * PRINTS: packages/server/test/draft-repeats.test.ts 4
  * PRINTS: packages/server/test/draft-versions-bound.test.ts 2
@@ -36668,6 +36933,7 @@ interface Outcome {
  * PRINTS: packages/server/test/live-location-surfaces.test.ts 41
  * PRINTS: packages/server/test/live-location-told.test.ts 1
  * PRINTS: packages/server/test/live-location-topics.test.ts 4
+ * PRINTS: packages/server/test/location-index-boot.test.ts 6
  * PRINTS: packages/server/test/location-index-rebuild.test.ts 7
  * PRINTS: packages/server/test/minimums-per-figure.test.ts 2
  * PRINTS: packages/server/test/normalized-doc.test.ts 2
@@ -36726,8 +36992,8 @@ interface Outcome {
  * PRINTS: packages/server/test/solved-intent.test.ts 4
  * PRINTS: packages/server/test/solved-probe.test.ts 1
  * PRINTS: packages/server/test/solved-ranking.test.ts 4
- * PRINTS: packages/server/test/startup-boot.test.ts 3
- * PRINTS: packages/server/test/startup-upgrades.test.ts 3
+ * PRINTS: packages/server/test/startup-boot.test.ts 5
+ * PRINTS: packages/server/test/startup-upgrades.test.ts 5
  * PRINTS: packages/server/test/suspect.test.ts 9
  * PRINTS: packages/server/test/target-last-seen.test.ts 1
  * PRINTS: packages/server/test/team-settings.test.ts 9
@@ -36745,12 +37011,14 @@ interface Outcome {
  * PRINTS: packages/server/test/ui-work-context.test.ts 2
  * PRINTS: packages/server/test/unstorable-text.test.ts 2
  * PRINTS: packages/server/test/upgrade.test.ts 1
+ * PRINTS: packages/server/test/vacuum.test.ts 5
  * PRINTS: packages/server/test/verdict-latency.test.ts 1
  * PRINTS: packages/server/test/verdict.test.ts 3
  * PRINTS: packages/server/test/waiver-closure-surfaces.test.ts 4
  * PRINTS: packages/server/test/waiver-requests.test.ts 5
  * PRINTS: packages/server/test/waivers.test.ts 3
  * PRINTS: packages/server/test/webauthn.test.ts 11
+ * PRINTS: packages/server/test/words-index.test.ts 10
  * PRINTS: packages/server/test/work-context-listing.test.ts 10
  */
 const greenGuards = new Map<string, boolean>();

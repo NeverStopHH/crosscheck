@@ -20,7 +20,7 @@
  * outbox, and the gate never wrote one. So a person who typed the gate's note
  * by hand keeps their edge.
  *
- * WHAT HAPPENS TO THEM (review round 4, H3), in one transaction:
+ * WHAT HAPPENS TO THEM (review round 4, H3), in one transaction per page:
  *   - a derived end since CONFIRMED (review_draft: a declared revision
  *     supersedes the draft) has a vouched claim to point at: the edge moves
  *     to the head of the draft's revision chain, so the teammate's tree keeps
@@ -31,11 +31,22 @@
  *     docs/OPERATIONS.md restores a pass with one INSERT … SELECT.
  * Idempotent — a second run finds nothing — and run in the background after
  * the hub is serving (index.ts), beside the doc upgrade.
+ *
+ * BOUNDED (batch-2 integration review, H6). The older row's "no wire record"
+ * test was a NOT EXISTS inside an OR, which the planner cannot make an
+ * anti-join: it scanned all of `events` once per legacy edge, twice per pass,
+ * and every request waited 9–86 s on a pilot-scale hub at every start. Now
+ * the legacy rows are found by an anti-join of their own, which reads
+ * events_claim_edge_added_edge_idx, and the work goes a page of
+ * DRAFT_LINK_CLEANUP_BATCH edges at a time — one transaction each, a turn of
+ * the event loop between pages — so a request waits out one page at most.
  */
 import { sql } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
 
-import { EVENT_KINDS } from "../constants.ts";
+import { DRAFT_LINK_CLEANUP_BATCH, EVENT_KINDS } from "../constants.ts";
 import type { Db, DbExecutor } from "../db/client.ts";
+import { yieldToRequests } from "../db/yield-to-requests.ts";
 import { AUTO_SIMILARITY_NOTE, DECLARED_PROVENANCE, SIMILARITY_GATE_ORIGIN } from "./similarity-gate.ts";
 
 const RELATES_TO = "relates_to";
@@ -58,22 +69,56 @@ const EDGE_ENDS = sql`
   JOIN agent_sessions fs ON fs.id = fc.author_session_id
   JOIN agent_sessions ts ON ts.id = tc.author_session_id`;
 
-/** The gate's: by origin from round 4 on; an older row by note, authorship and no wire record. */
-const WRITTEN_BY_GATE = sql`(
-    e.origin = ${SIMILARITY_GATE_ORIGIN}
-    OR (e.origin IS NULL
-      AND e.note = ${AUTO_SIMILARITY_NOTE}
-      AND e.author_session_id = fc.author_session_id
-      AND NOT EXISTS (
-        SELECT 1 FROM events ev
-        WHERE ev.kind = ${EVENT_KINDS.CLAIM_EDGE_ADDED} AND ev.payload->>'edgeId' = e.id)))`;
+/**
+ * The edge ids one page covers: after `after`, and up to `last` once the page
+ * is known (null while it is being selected).
+ */
+interface PageBounds {
+  readonly after: string;
+  readonly last: string | null;
+}
 
-/** A gate link between two developers with a non-declared end. */
-const DRAFT_LINK_INTO_TEAMMATES_TREE = sql`
+const inPage = (id: SQL, bounds: PageBounds): SQL =>
+  bounds.last === null ? sql`${id} > ${bounds.after}` : sql`${id} > ${bounds.after} AND ${id} <= ${bounds.last}`;
+
+/**
+ * The wire record's kind as a LITERAL, not a parameter: the planner may read
+ * events_claim_edge_added_edge_idx (partial, `WHERE kind = 'claim_edge_added'`)
+ * only when it can prove the query's kind is that one at plan time.
+ */
+const WIRE_RECORD_KIND = sql.raw(`'${EVENT_KINDS.CLAIM_EDGE_ADDED}'`);
+
+/**
+ * The gate's: by origin from round 4 on; an older row by note, authorship and
+ * no wire record. Two selections joined by UNION ALL, not one OR: the older
+ * rows' NOT EXISTS then stands on its own and is planned as an anti-join over
+ * the wire-record index, where inside an OR it was a scan of `events` per row
+ * (H6).
+ */
+const writtenByGate = (bounds: PageBounds): SQL => sql`e.id IN (
+      SELECT g.id FROM claim_edges g
+      WHERE g.origin = ${SIMILARITY_GATE_ORIGIN} AND ${inPage(sql`g.id`, bounds)}
+      UNION ALL
+      SELECT g.id FROM claim_edges g JOIN claims gc ON gc.id = g.from_claim_id
+      WHERE g.origin IS NULL
+        AND g.note = ${AUTO_SIMILARITY_NOTE}
+        AND g.author_session_id = gc.author_session_id
+        AND ${inPage(sql`g.id`, bounds)}
+        AND NOT EXISTS (
+          SELECT 1 FROM events ev
+          WHERE ev.kind = ${WIRE_RECORD_KIND} AND ev.payload->>'edgeId' = g.id))`;
+
+/** A gate link between two developers with a non-declared end, within the page. */
+const draftLinkIntoTeammatesTree = (bounds: PageBounds): SQL => sql`
     e.kind = ${RELATES_TO}
-    AND ${WRITTEN_BY_GATE}
+    AND ${inPage(sql`e.id`, bounds)}
+    AND ${writtenByGate(bounds)}
     AND fs.developer_id <> ts.developer_id
     AND (fc.provenance <> ${DECLARED_PROVENANCE} OR tc.provenance <> ${DECLARED_PROVENANCE})`;
+
+/** The next page: the first `batch` offending edges after `after`, by id. */
+export const draftLinkPageQuery = (after: string, batch: number): SQL =>
+  sql`SELECT e.id ${EDGE_ENDS} WHERE ${draftLinkIntoTeammatesTree({ after, last: null })} ORDER BY e.id LIMIT ${batch}`;
 
 const idsOf = (result: { readonly rows: readonly unknown[] }): readonly string[] =>
   result.rows.map((row) => (row as { readonly id: string }).id);
@@ -85,7 +130,7 @@ const idsOf = (result: { readonly rows: readonly unknown[] }): readonly string[]
  * as the gate would have written it. An edge whose moved pair is already
  * linked, either way round, stays offending and is archived next.
  */
-const repointConfirmedDrafts = async (tx: DbExecutor): Promise<readonly string[]> =>
+const repointConfirmedDrafts = async (tx: DbExecutor, bounds: PageBounds): Promise<readonly string[]> =>
   idsOf(
     await tx.execute(sql`
       WITH RECURSIVE offending AS (
@@ -93,7 +138,7 @@ const repointConfirmedDrafts = async (tx: DbExecutor): Promise<readonly string[]
                fc.provenance = ${DECLARED_PROVENANCE} AS from_vouched,
                tc.provenance = ${DECLARED_PROVENANCE} AS to_vouched
         ${EDGE_ENDS}
-        WHERE ${DRAFT_LINK_INTO_TEAMMATES_TREE}
+        WHERE ${draftLinkIntoTeammatesTree(bounds)}
       ),
       derived_ends AS (
         SELECT from_claim_id AS claim_id FROM offending WHERE NOT from_vouched
@@ -146,12 +191,12 @@ const repointConfirmedDrafts = async (tx: DbExecutor): Promise<readonly string[]
  * no row can be deleted without its archive copy. The columns are named, not
  * `gone.*`, so a column claim_edges gains later cannot shift the archive's.
  */
-const archiveAndRemove = async (tx: DbExecutor, passId: string): Promise<readonly string[]> =>
+const archiveAndRemove = async (tx: DbExecutor, passId: string, bounds: PageBounds): Promise<readonly string[]> =>
   idsOf(
     await tx.execute(sql`
       WITH gone AS (
         DELETE FROM claim_edges
-        WHERE id IN (SELECT e.id ${EDGE_ENDS} WHERE ${DRAFT_LINK_INTO_TEAMMATES_TREE})
+        WHERE id IN (SELECT e.id ${EDGE_ENDS} WHERE ${draftLinkIntoTeammatesTree(bounds)})
         RETURNING *
       )
       INSERT INTO claim_edges_removed
@@ -176,12 +221,43 @@ export const describeDraftLinkCleanup = (report: DraftLinkCleanupReport): string
   `${String(report.repointed.length)} moved to the confirmed revision` +
   (report.repointed.length === 0 ? "" : ` (${listIds(report.repointed)})`);
 
-/** Re-points the confirmed drafts' links, archives and removes the rest. */
-export const removeCrossDeveloperDraftLinks = (db: Db): Promise<DraftLinkCleanupReport> => {
-  const passId = `dlc_${crypto.randomUUID()}`;
-  return db.transaction(async (tx) => {
-    const repointed = await repointConfirmedDrafts(tx);
-    const removed = await archiveAndRemove(tx, passId);
-    return { passId, repointed, removed };
+/** No edge id sorts before this, so the first page starts at the beginning. */
+const BEFORE_EVERY_EDGE = "";
+
+interface Done {
+  readonly repointed: readonly string[];
+  readonly removed: readonly string[];
+}
+
+/**
+ * One page at a time from `after`: its edges are found, then re-pointed and
+ * archived in one transaction, then the event loop takes a turn. Every edge
+ * of a page leaves the offending set (moved onto vouched ends, or archived),
+ * and the next page starts after the last id of this one, so the pass ends.
+ */
+const cleanFrom = async (db: Db, passId: string, batch: number, after: string, done: Done): Promise<DraftLinkCleanupReport> => {
+  const last = idsOf(await db.execute(draftLinkPageQuery(after, batch))).at(-1);
+  if (last === undefined) {
+    return { passId, ...done };
+  }
+  const bounds: PageBounds = { after, last };
+  const page = await db.transaction(async (tx) => ({
+    repointed: await repointConfirmedDrafts(tx, bounds),
+    removed: await archiveAndRemove(tx, passId, bounds),
+  }));
+  await yieldToRequests();
+  return cleanFrom(db, passId, batch, last, {
+    repointed: [...done.repointed, ...page.repointed],
+    removed: [...done.removed, ...page.removed],
   });
 };
+
+/** Re-points the confirmed drafts' links, archives and removes the rest, a page at a time. */
+export const removeCrossDeveloperDraftLinks = (
+  db: Db,
+  options: { readonly batch?: number } = {},
+): Promise<DraftLinkCleanupReport> =>
+  cleanFrom(db, `dlc_${crypto.randomUUID()}`, options.batch ?? DRAFT_LINK_CLEANUP_BATCH, BEFORE_EVERY_EDGE, {
+    repointed: [],
+    removed: [],
+  });

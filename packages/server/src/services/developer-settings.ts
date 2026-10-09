@@ -26,13 +26,20 @@
  * why). There is no presence signal to protect at that moment: from then on
  * the person is visible anyway.
  */
-import { and, asc, desc, eq, gte, isNull, notInArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, isNull, notInArray, or, sql } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
 
 import { randomUUID } from "node:crypto";
 
 import type { ProvenanceClass } from "@crosscheck/schema";
 
-import { EVENT_KINDS, MS_PER_DAY, PRESENCE_REENABLE_NOTICE_DAYS } from "../constants.ts";
+import {
+  EVENT_KINDS,
+  LOCATION_INDEX_REBUILD_BATCH,
+  LOCATION_INDEX_REBUILD_TURN,
+  MS_PER_DAY,
+  PRESENCE_REENABLE_NOTICE_DAYS,
+} from "../constants.ts";
 import {
   agentSessions,
   developerEmails,
@@ -42,10 +49,12 @@ import {
   privacyChanges,
   workContexts,
 } from "../db/schema.ts";
+import { yieldToRequests } from "../db/yield-to-requests.ts";
 import type { HumanStamp } from "./human-provenance.ts";
 import { appendEvent } from "./events.ts";
 import { resolvesToDeveloper } from "./cloud-agent-identity.ts";
-import { embedContextDoc, refreshNormalizedDoc } from "./normalized-doc.ts";
+import { embedContextDocs } from "./embedding-backfill.ts";
+import { refreshNormalizedDoc } from "./normalized-doc.ts";
 import { listDeveloperEmails } from "./developers.ts";
 import type { DeveloperEmailView } from "./developers.ts";
 import type { Embedder } from "./embedder.ts";
@@ -249,27 +258,35 @@ export const finishPresenceChange = (deps: IndexDeps, developerId: string, optOu
  * Her location-titled docs rebuilt for the setting she has, and their vectors
  * with them (review round 5, M2): a rebuild clears a context's embedding
  * (normalized-doc.ts), and with an embedder configured the vector tier would
- * miss her work until each context's next ingest. Re-embedded here instead,
- * one context at a time like an ingest's touched contexts; a failure costs
- * that context's vector, never the toggle (embedContextDoc). An opt-out is
- * marked built.
+ * miss her work until each context's next ingest. An opt-out is marked built
+ * — only while she is still opted out, since the mark means "built for her
+ * opt-out".
+ *
+ * A PAGE AT A TIME (batch-2 integration review, M11): at 10 000 contexts the
+ * rebuild held every request for 17–26 s, and re-embedded one embedder call
+ * per context (88 s with a 5 ms embedder, 17–50 minutes at a real one's
+ * latency). Each page of LOCATION_INDEX_REBUILD_BATCH docs is rebuilt, then
+ * re-embedded in ONE call (embedContextDocs; a failure costs that page's
+ * vectors, which the next start's vector backfill re-mints, never the
+ * toggle), then the event loop takes a turn. For an opt-out her docs are
+ * EMPTIED first, in one statement (withholdLocationTitles): a request served
+ * between two pages then finds an emptied or a rebuilt doc, never her title.
  */
 const rebuildLocationIndex = async (
   deps: IndexDeps,
   developerId: string,
   isOptedOut: boolean,
+  batch: number = LOCATION_INDEX_REBUILD_BATCH,
 ): Promise<void> => {
-  const rebuilt = await reindexLocationTitles(deps.db, developerId);
-  if (deps.embedder !== null) {
-    for (const workContextId of rebuilt) {
-      await embedContextDoc(deps.db, deps.embedder, workContextId);
-    }
+  if (isOptedOut) {
+    await withholdLocationTitles(deps.db, sql`s.developer_id = ${developerId}`);
   }
+  await reindexLocationTitlesFrom(deps, developerId, batch, BEFORE_EVERY_CONTEXT);
   if (isOptedOut) {
     await deps.db
       .update(developers)
       .set({ locationIndexBuiltAt: deps.now() })
-      .where(eq(developers.id, developerId));
+      .where(and(eq(developers.id, developerId), eq(developers.presenceOptOut, true)));
   }
 };
 
@@ -285,19 +302,55 @@ const rebuildLocationIndex = async (
  * THE DRAFTS BRANCH'S DOC UPGRADE (merged in the batch): its `doc_version`
  * stamp step marks a declared-only doc current WITHOUT rebuilding it, and
  * her location-titled docs from before both releases are declared-only. So
- * this pass runs BEFORE the hub serves and the upgrades after (index.ts):
- * her docs are rebuilt, and stamped, before anything reads them. Her rebuild
- * is keyed on `location_index_built_at`, never on `doc_version`, so a stamp
- * that somehow ran first still could not spare her docs it
+ * this pass runs before the doc upgrade (services/startup-upgrades.ts), and
+ * her docs are EMPTIED before the hub serves (withholdPendingLocationTitles,
+ * index.ts): nothing reads one of her old docs. Her rebuild is keyed on
+ * `location_index_built_at`, never on `doc_version`, so a stamp that somehow
+ * ran first still could not spare her docs it
  * (test/location-index-rebuild.test.ts, both orders).
+ *
+ * AFTER SERVING, A PAGE AT A TIME (batch-2 integration review, M11): it held
+ * the port closed for 17–26 s at 10 000 contexts, and with an embedder for
+ * one embedder call per context. It runs now among the start-up passes,
+ * paged and re-embedding a page per call (rebuildLocationIndex).
  */
-export const rebuildOptedOutLocationIndexes = async (deps: IndexDeps): Promise<number> => {
-  const pending = await deps.db
+export const rebuildOptedOutLocationIndexes = async (
+  deps: IndexDeps,
+  options: { readonly batch?: number } = {},
+): Promise<number> => {
+  const pending = await pendingLocationIndexes(deps.db);
+  for (const row of pending) {
+    await rebuildLocationIndex(deps, row.id, true, options.batch);
+  }
+  return pending.length;
+};
+
+/** The opted-out developers whose index was not yet built for their opt-out. */
+const pendingLocationIndexes = (db: Db): Promise<readonly { readonly id: string }[]> =>
+  db
     .select({ id: developers.id })
     .from(developers)
     .where(and(eq(developers.presenceOptOut, true), isNull(developers.locationIndexBuiltAt)));
-  for (const row of pending) {
-    await rebuildLocationIndex(deps, row.id, true);
+
+/**
+ * BEFORE THE HUB SERVES (batch-2 integration review, M11): every location-
+ * titled doc of every developer whose index is not yet built for her opt-out
+ * is emptied — in one statement, where the rebuild took 17–26 s per 10 000
+ * contexts — and its vector cleared with it. An empty doc matches no guess
+ * at her branch, so a colleague's first search after the start finds
+ * nothing by her title, exactly as when the rebuild ran here; the rebuild
+ * itself runs after serving (rebuildOptedOutLocationIndexes), and until it
+ * reaches a context, that context is found by its claims. Returns how many
+ * developers are pending: the mark is set only by the rebuild, so a start
+ * that dies first empties them again and the next pass rebuilds them all.
+ */
+export const withholdPendingLocationTitles = async (db: Db): Promise<number> => {
+  const pending = await pendingLocationIndexes(db);
+  if (pending.length > 0) {
+    await withholdLocationTitles(
+      db,
+      sql`s.developer_id IN (${sql.join(pending.map((row) => sql`${row.id}`), sql`, `)})`,
+    );
   }
   return pending.length;
 };
@@ -305,18 +358,52 @@ export const rebuildOptedOutLocationIndexes = async (deps: IndexDeps): Promise<n
 /** Titles a person or a host wrote: never a location, so never re-indexed. */
 const AUTHORED_TITLE_SOURCES = ["host", "person"] as const;
 
+/** A doc of `owners` whose title CAN be a location: its source unmarked, or neither a host's nor a person's. */
+const locationTitled = sql`(w.title_source IS NULL OR w.title_source NOT IN (${sql.join(
+  AUTHORED_TITLE_SOURCES.map((source) => sql`${source}`),
+  sql`, `,
+)}))`;
+
+/**
+ * Empties `owners`' location-titled docs and their vectors, in one statement.
+ * A doc already empty is left alone, so a second run writes nothing.
+ */
+const withholdLocationTitles = async (db: Db, owners: SQL): Promise<void> => {
+  await db.execute(sql`
+    UPDATE work_contexts w
+    SET normalized_doc = '', embedding = NULL, embedding_model = NULL
+    FROM agent_sessions s
+    WHERE s.id = w.session_id AND ${owners} AND ${locationTitled}
+      AND w.normalized_doc IS DISTINCT FROM ''`);
+};
+
+/** No id sorts before this, so the first page starts at the beginning. */
+const BEFORE_EVERY_CONTEXT = "";
+
 /**
  * THE SEARCH INDEX FOLLOWS THE SETTING, both ways (review round 4, H4): an
  * opted-out owner's location title is kept out of the normalized doc
  * (services/live-location.ts isTitleWithheldFromIndex), and her docs were
  * built before she opted out. Only contexts whose title CAN be her location
  * are rebuilt — a `host` or `person` title never is — once per toggle, which
- * is rare by nature, and once at boot for an opt-out from before the index
- * followed the setting (above). Returns the contexts it rebuilt, whose
- * embeddings the rebuild cleared (rebuildLocationIndex re-embeds them).
+ * is rare by nature, and once after boot for an opt-out from before the
+ * index followed the setting (above). Page by page from `after`: each page
+ * rebuilt with a turn of the event loop every LOCATION_INDEX_REBUILD_TURN
+ * docs (a doc is a few queries and its words; a page of 100 held a request
+ * 2.6 s on a loaded machine), its vectors re-minted in one embedder call
+ * when the hub has one, then a turn again.
  */
-const reindexLocationTitles = async (db: Db, developerId: string): Promise<readonly string[]> => {
-  const rows = await db
+const refreshPage = async (db: Db, ids: readonly string[]): Promise<void> => {
+  for (const [index, id] of ids.entries()) {
+    await refreshNormalizedDoc(db, id);
+    if ((index + 1) % LOCATION_INDEX_REBUILD_TURN === 0) {
+      await yieldToRequests();
+    }
+  }
+};
+
+const reindexLocationTitlesFrom = async (deps: IndexDeps, developerId: string, batch: number, after: string): Promise<void> => {
+  const rows = await deps.db
     .select({ id: workContexts.id })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
@@ -324,12 +411,21 @@ const reindexLocationTitles = async (db: Db, developerId: string): Promise<reado
       and(
         eq(agentSessions.developerId, developerId),
         or(isNull(workContexts.titleSource), notInArray(workContexts.titleSource, [...AUTHORED_TITLE_SOURCES])),
+        gt(workContexts.id, after),
       ),
-    );
-  for (const row of rows) {
-    await refreshNormalizedDoc(db, row.id);
+    )
+    .orderBy(asc(workContexts.id))
+    .limit(batch);
+  const last = rows.at(-1);
+  if (last === undefined) {
+    return;
   }
-  return rows.map((row) => row.id);
+  await refreshPage(deps.db, rows.map((row) => row.id));
+  if (deps.embedder !== null) {
+    await embedContextDocs(deps.db, deps.embedder, rows.map((row) => row.id));
+  }
+  await yieldToRequests();
+  await reindexLocationTitlesFrom(deps, developerId, batch, last.id);
 };
 
 /**

@@ -11,6 +11,7 @@ import { describe, expect, test } from "bun:test";
 import { sql } from "drizzle-orm";
 
 import { rebuildOptedOutLocationIndexes } from "../src/services/developer-settings.ts";
+import { upgradeNormalizedDocs } from "../src/services/doc-upgrade.ts";
 import type { Embedder } from "../src/services/embedder.ts";
 import { NORMALIZED_DOC_VERSION } from "../src/services/normalized-doc.ts";
 import { runStartupUpgrades } from "../src/services/startup-upgrades.ts";
@@ -242,17 +243,30 @@ describe("a pre-upgrade hub: her declared-only, location-titled doc ends without
   });
 
   test("in the other order: a stamp first does not spare her doc the rebuild", async () => {
+    // Arrange — the doc upgrade alone first (the start-up passes now run her
+    // rebuild themselves, before the doc upgrade; batch-2 review, M11)
+    const world = await preUpgradeHub();
+
+    // Act
+    const upgrade = await upgradeNormalizedDocs({ db: world.harness.db, embedder: null });
+    const stampedWithHerTitle = await docOf(world);
+    await rebuildOptedOutLocationIndexes(deps(world));
+
+    // Assert
+    expect(upgrade.stamped).toBe(1);
+    expect(stampedWithHerTitle.doc).toContain("lisbon");
+    await expectRebuiltWithoutHerTitle(world);
+  });
+
+  test("the start-up passes alone end the same: her rebuild is one of them", async () => {
     // Arrange
     const world = await preUpgradeHub();
 
     // Act
     const upgrades = await runStartupUpgrades({ db: world.harness.db, embedder: null, log: SILENT });
-    const stampedWithHerTitle = await docOf(world);
-    await rebuildOptedOutLocationIndexes(deps(world));
 
     // Assert
-    expect(upgrades.docs?.stamped).toBe(1);
-    expect(stampedWithHerTitle.doc).toContain("lisbon");
+    expect(upgrades.locations).toBe(1);
     await expectRebuiltWithoutHerTitle(world);
   });
 });

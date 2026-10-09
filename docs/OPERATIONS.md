@@ -97,13 +97,30 @@ CROSSCHECK_DATA_DIR=/path/to/data bun -e '
 
 ## Start-up passes
 
+Before the hub listens it runs `bootstrap.sql`, which rewrites no table, and empties the search documents of every developer who opted out of presence before the index followed that setting, in one statement. An empty document matches no guess at her branch from the first request on.
+
 After the hub is serving it runs, in the background and in this order:
 
-1. **Draft link cleanup** (`services/draft-link-cleanup.ts`): the relates_to links an older similarity gate made between two developers' claims on a draft's strength. A link whose draft was since confirmed moves to the confirmed claim; every other one is archived in `claim_edges_removed` and removed, in one statement. The log line names the pass id and the edge ids.
-2. **Doc upgrade** (`services/doc-upgrade.ts`): rebuilds the search documents that still fold drafts in, a page at a time, letting requests through between pages.
-3. **Vector backfill** (`services/embedding-backfill.ts`, only with an embedder configured): embeds every work context whose vector is missing or was minted by another model.
+1. **Draft link cleanup** (`services/draft-link-cleanup.ts`): the relates_to links an older similarity gate made between two developers' claims on a draft's strength. A link whose draft was since confirmed moves to the confirmed claim; every other one is archived in `claim_edges_removed` and removed, by the same statement. The log line names the pass id and the edge ids.
+2. **Location index** (`services/developer-settings.ts`): rebuilds the documents emptied before serving, without the opted-out developer's location titles, and with an embedder re-embeds each page in one call. Until it reaches a work context, that context is found by its claims only.
+3. **Doc upgrade** (`services/doc-upgrade.ts`): rebuilds the search documents that still fold drafts in.
+4. **Words index** (`services/words-index.ts`): fills the hint floor's words (a row's words and its dotted names' parts) of the rows an upgrade found. Until it reaches a row, the floor matches that row by its plain words, so a dotted name such as `products.name` in it matches only whole. Rows written since the upgrade never wait: the database fills theirs as it writes them.
+5. **Vector backfill** (`services/embedding-backfill.ts`, only with an embedder configured): embeds every work context whose vector is missing or was minted by another model, one embedder call per page.
 
-Each pass is idempotent and resumable: a start that is killed mid-pass leaves the next start the rest.
+Every pass works a page at a time, one statement or transaction per page, with a turn of the event loop between pages, so a request that arrives meanwhile waits out one page, never a pass. Each pass is idempotent and resumable: a start that is killed mid-pass leaves the next start the rest.
+
+While the doc upgrade, the words index or the vector backfill has work left, `crosscheck doctor` prints a WARN with the count (`GET /api/hub-status`: `searchDocsPending`, `wordsIndexPending`, `vectorsPending`). The location index is not counted there: a count that rises when someone opts out would say that someone did.
+
+### The first start after upgrading from 0.10
+
+What to expect, measured on a synthetic pilot-scale 0.10.0 data dir (1.7 GB: 50 000 work contexts, 10 000 claims, 119 380 events, a million session events, one opted-out developer with 10 000 contexts) on a machine at load 20–55:
+
+- The port opens 2–5 s after the start. Before this, it opened after 73–105 s.
+- The passes above take about a minute without an embedder: the opted-out docs 20–40 s, the doc upgrade a few seconds, the words index 30 s for the claims and 40 s for the work contexts. With an embedder, the vector backfill adds one call per 100 work contexts that lack a vector.
+- Requests are answered meanwhile. A request waits out one page of a pass, not the pass.
+- The database grows by about 150 MB. The words index rewrites each row once, and PGlite reuses the freed space rather than giving it back to the filesystem.
+
+A later start finds nothing left to do and opens its port in well under a second.
 
 ## Restoring links the cleanup archived
 

@@ -155,6 +155,65 @@ export const DOC_UPGRADE_PROGRESS_PAGES = 10;
 export const DOC_UPGRADE_STAMP_BATCH = 1000;
 
 /**
+ * Offending edges per page of the start-up draft-link cleanup
+ * (services/draft-link-cleanup.ts), one transaction each with a turn of the
+ * event loop between pages. As one statement over the whole table, the
+ * batch-2 integration review measured every request held 9–86 s on a
+ * pilot-scale hub (H6). A page of 500 archived edges still held one 817 ms
+ * on a machine at load 40; 100 keeps a page to tens of milliseconds at
+ * ordinary load.
+ */
+export const DRAFT_LINK_CLEANUP_BATCH = 100;
+
+/**
+ * Work contexts per chunk of the start-up words backfill
+ * (services/words-index.ts), one UPDATE each with a turn of the event loop
+ * between chunks. A row's words cost ~0.3 ms to compute plus its index
+ * entries, so a chunk of 50 keeps a request's wait to tens of milliseconds.
+ */
+export const WORDS_INDEX_BACKFILL_BATCH = 50;
+
+/**
+ * Claims per chunk of the same backfill. Smaller: on a hub with an embedder a
+ * filled claim re-enters the HNSW graph of claim vectors, ~3 ms a row on the
+ * pilot-scale synthetic hub (load 28): a chunk of 50 took 160 ms at the
+ * median and up to 607 ms, a chunk of 10 took 26 ms. 20 keeps the median
+ * near 60 ms and 10 000 claims to about 30 s.
+ */
+export const WORDS_INDEX_CLAIMS_BATCH = 20;
+
+/** Chunks of the words backfill between its progress lines: one per 5 000 rows. */
+export const WORDS_INDEX_PROGRESS_CHUNKS = 100;
+
+/**
+ * Chunks of a pass between two VACUUMs of the table it deletes from or fills
+ * (services/words-index.ts, services/record-receipts.ts; db/vacuum.ts), and
+ * one more after its last chunk: often enough that the next chunks reuse the
+ * space the last ones freed, rarely enough that the VACUUMs cost less than
+ * the growth they save. Measured on the words backfill of the review's
+ * synthetic hub: every 10 chunks, 38 s and +185 MB; once at the end, 67 s
+ * and +346 MB; every chunk, 47 s and +180 MB for ten times the VACUUMs.
+ */
+export const CHUNKS_PER_VACUUM = 10;
+
+/**
+ * An opted-out developer's location-titled docs rebuilt per page, re-embedded
+ * in one embedder call per page, with a turn of the event loop between pages
+ * (services/developer-settings.ts; batch-2 integration review, M11). A doc's
+ * rebuild is ~2 ms on a pilot-scale hub, so a page is a few hundred ms at
+ * most; one call per page is 100 times fewer embedder round trips than one
+ * per doc.
+ */
+export const LOCATION_INDEX_REBUILD_BATCH = 100;
+
+/**
+ * Docs of a LOCATION_INDEX_REBUILD_BATCH page rebuilt between two turns of
+ * the event loop: a page of 100 rebuilt in one go held a request 2.6 s on a
+ * machine at load 40 (pilot-scale synthetic hub); 10 keeps it to a tenth.
+ */
+export const LOCATION_INDEX_REBUILD_TURN = 10;
+
+/**
  * THE RETENTION THIS HUB APPLIES TO `session_events`, declared on
  * `GET /api/sessions/order` so that `doctor` prints the hub's own statement
  * rather than a connector's assumption about it (schema session-event.ts says
