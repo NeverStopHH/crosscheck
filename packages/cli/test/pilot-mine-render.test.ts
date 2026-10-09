@@ -67,6 +67,16 @@ describe("renderMyOutcomes' source credit, with follows confirmed late (review M
       "your own work, in teammates' hints, July 2026: followed 3 times (and 1 confirmed late, about earlier months' hints) — shown once, leaving out any one person, at least 3 people followed it",
     );
   });
+
+  test("a month with only late follows never prints 'followed 0' — the same generic sentence (review M-1)", () => {
+    // Act
+    const line = creditLine({ ...JULY, followed: 0, followedLate: 2, withheld: null });
+
+    // Assert
+    expect(line).toBe(
+      "your own work, in teammates' hints, July 2026: no count — below the disclosure minimums: leaving out any one person, at least 3 people must have followed it",
+    );
+  });
 });
 
 describe("renderMyOutcomes' source credit (review #10)", () => {
