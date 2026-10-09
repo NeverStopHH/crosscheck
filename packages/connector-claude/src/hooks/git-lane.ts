@@ -4,10 +4,11 @@
  * root and the roots a shell touched. One spelling for both, because the
  * bookkeeping around the sweep is where a lane goes silently dead.
  *
- * ON THE SPARE BUDGET, and skipped rather than shortened when it is gone: the
- * sweep reads every root in parallel, each git call on its own
- * GIT_TOUCHES_TIMEOUT_MS deadline, so it is affordable whenever one deadline
- * is.
+ * ON THE SPARE BUDGET — which for Stop and SubagentStop, hooks that answer
+ * nothing, is the hook's whole remainder (runner.ts ANSWERLESS_HOOKS) — and
+ * skipped rather than shortened when it is gone: the sweep reads every root
+ * in parallel, each git call on its own GIT_TOUCHES_TIMEOUT_MS deadline, so
+ * it is affordable whenever one deadline is.
  *
  * TWO WAYS THE LANE PRODUCES NOTHING, and BOTH are counted (state
  * gitLaneSkipped): the budget was gone before it started, or git did not

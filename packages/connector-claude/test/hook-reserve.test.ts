@@ -150,3 +150,32 @@ describe("the hook reserve", () => {
     expect(spareWith(-REMAINING_MS, LATENCY_TIMEOUT_MAX_MS)).toBe(0);
   });
 });
+
+/**
+ * WHAT THE RESERVE CARRIES OUT IS THE HOOK'S ANSWER — and Stop and
+ * SubagentStop have none (cli/settings-merge.ts: async, their response
+ * ignored). Holding one request timeout back on them starved exactly the
+ * work they exist for (release gate, loaded lane, 2026-10-09): the git lane
+ * needs one git deadline of the hook's 800 ms left and the drain after it
+ * ships a resumed life's re-filing in two hub batches; with 400 ms held
+ * back for an answer nobody reads, a lane that started 150 ms in was skipped
+ * and a drain that started at 140 ms shipped one batch of two. An answerless
+ * hook's spare is its whole remainder, floored the same way.
+ */
+describe("an answerless hook holds nothing back", () => {
+  test("its spare is the whole remainder", () => {
+    // Arrange / Act
+    const spare = hookBudget(NOW_MS + REMAINING_MS, HTTP_TIMEOUT_MS, frozen(NOW_MS), false).spareMs();
+
+    // Assert
+    expect(spare).toBe(REMAINING_MS);
+  });
+
+  test("and still floors at zero once its deadline is gone", () => {
+    expect(hookBudget(NOW_MS - 1, HTTP_TIMEOUT_MS, frozen(NOW_MS), false).spareMs()).toBe(0);
+  });
+
+  test("a hook with an answer holds the reserve by default", () => {
+    expect(hookBudget(NOW_MS + REMAINING_MS, HTTP_TIMEOUT_MS, frozen(NOW_MS)).spareMs()).toBe(REMAINING_MS - HTTP_TIMEOUT_MS);
+  });
+});

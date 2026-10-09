@@ -382,6 +382,17 @@ const CAPTURE_HOOKS: ReadonlySet<HookName> = new Set([
   "subagent-stop",
 ]);
 
+/**
+ * THE HOOKS THAT ANSWER NOTHING — wired async, their response ignored
+ * (cli/settings-merge.ts), so the reserve every other hook holds back to
+ * carry its answer out protects nothing here and their spare is the whole
+ * remainder (core config/hook-budget.ts). Both run the git lane, which the
+ * reserve starved on a loaded machine (release gate, loaded lane,
+ * 2026-10-09). The async PostToolUse capture answers nothing either, but its
+ * envelope is twice theirs and it was never short.
+ */
+const ANSWERLESS_HOOKS: ReadonlySet<HookName> = new Set(["stop", "subagent-stop"]);
+
 interface LossOwner {
   readonly home: string;
   readonly key: string | null;
@@ -556,7 +567,7 @@ export const runHookWith = async (
     // The handler's deadline is taken a fraction BEFORE the race timer starts,
     // so what the handler believes it has left is never more than the truth.
     const deadlineMs = Date.now() + budgetMs;
-    const race = hookRace(deadlineMs, timeoutMs);
+    const race = hookRace(deadlineMs, timeoutMs, Date.now, !ANSWERLESS_HOOKS.has(name));
     const outcome = await traceSpan("race", async () => raceHookBudget(
       prepareAndRun(
         name,
