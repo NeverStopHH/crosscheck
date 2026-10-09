@@ -96,7 +96,7 @@
  *    1516, is 2200 - 684 and follows from the two below it.
  *
  * VERIFY: bun -e 'const {INJECTION_CORPUS}=await import("./packages/connector-core/test/fixtures/injection-corpus.ts");console.log(INJECTION_CORPUS.length)'
- * PRINTS: 67
+ * PRINTS: 68
  *
  * VERIFY: sed -n '/^const SLOTS: readonly Slot\[\] = \[/,/^\];/p' packages/connector-core/test/injection-corpus.test.ts | grep -c '^  "'
  * PRINTS: 11
@@ -538,8 +538,9 @@ const CORPUS_SHAPE: Readonly<Record<InjectionCategory, number>> = {
   instruction: 12,
   // Each of the next four +1 for the substance hint's sentence cut (2026-10):
   // a forged line after the break, a frame close riding the terminator, a
-  // U+2028 break, a fullwidth stop NFKC folds only after the cut.
-  "frame-escape": 5,
+  // U+2028 break, a fullwidth stop NFKC folds only after the cut. +1 for the
+  // confirm page (human provenance L4): a quote close, a separator and an override.
+  "frame-escape": 6,
   "boundary-forgery": 5,
   invisible: 22,
   homoglyph: 4,
