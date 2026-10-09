@@ -23,6 +23,7 @@ import {
 import {
   allocateToolSeq,
   closedToolWindow,
+  owesSweepToLife,
   readSessionState,
   updateSessionState,
   withSeenTargets,
@@ -32,7 +33,7 @@ import { commonDirOfRoot, rootsNamedByCommand } from "@crosscheck/connector-core
 import { realpathBestEffort, userHomeOf } from "@crosscheck/connector-core/config/paths.ts";
 import { toolWindowKey } from "@crosscheck/connector-core/state/tool-window-key.ts";
 import { seqAt } from "@crosscheck/connector-core/capture/seq.ts";
-import { MAX_TARGETS_PER_INVOCATION } from "@crosscheck/connector-core/constants.ts";
+import { GIT_TOUCHES_TIMEOUT_MS, MAX_TARGETS_PER_INVOCATION } from "@crosscheck/connector-core/constants.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { healerFor, onRefusedHeartbeat } from "./heal.ts";
 import { resolveSessionWorkContextTitle } from "./session-start.ts";
@@ -357,6 +358,9 @@ export const handlePostToolUse = async (
   const shellRoots = isBashTool(ctx.payload.tool_name) ? await shellRootsOf(ctx) : null;
   const withShell = (fresh: SessionState): SessionState =>
     shellRoots === null ? fresh : withShellRun(fresh, shellRoots, ctx.identity.repoId, now.toISOString());
+  // Whether the flush above healed the life away from the lane's last sweep
+  // (L10): read off the freshest state, inside the write that happens anyway.
+  let owesSweep = false;
   await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => ({
     // Files this call captured into a life the flush then healed away from
     // were withheld with it: they stay unseen, so the next life captures them
@@ -373,6 +377,16 @@ export const handlePostToolUse = async (
     ...(didHeartbeat ? { lastHeartbeatAt: now.toISOString() } : {}),
     ...(closesWindow ? closeOwnWindow(fresh) : {}),
     ...(lostBracket ? { toolWindowMisses: fresh.toolWindowMisses + 1 } : {}),
+    ...((owesSweep = owesSweepToLife(fresh)) ? {} : {}),
   }));
+  // A SWEEP OWED TO A HEALED LIFE, paid here when the spare budget covers
+  // the lane (hooks/git-lane.ts sweepIfLifeMoved): the refused life's files
+  // reach the hub under the new life inside this hook, not a turn later.
+  // Loaded only then — every PostToolUse would otherwise pay the lane's
+  // modules in its boot (batch-2 review, M6).
+  if (owesSweep && budget.spareMs() >= GIT_TOUCHES_TIMEOUT_MS) {
+    const { sweepIfLifeMoved } = await import("./git-lane.ts");
+    await sweepIfLifeMoved(ctx, budget);
+  }
   return "";
 };

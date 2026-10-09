@@ -568,6 +568,9 @@ export const registerSessionFlow = async (
     startedAt: input.now.toISOString(),
     lastHeartbeatAt: input.now.toISOString(),
     seenTargets: [],
+    // A fresh life owes no sweep (L10): the lane records the life it swept
+    // under, and a heal moves the life away from it.
+    gitLaneSweptLife: crosscheckSessionId,
     deliveredHintRefs: [],
     deliveredHintHashes: [],
     tripwireAskedFiles: [],

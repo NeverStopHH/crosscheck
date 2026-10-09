@@ -37118,6 +37118,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/doctor.test.ts`,
     because: "L12: a BUN_CONFIG_REGISTRY in the shell costs every hook about 75 ms, and nothing says so",
   },
+  {
+    label: "a healed life waits for the next Stop before its files are filed again",
+    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
+    from: '  if (owesSweep && budget.spareMs() >= GIT_TOUCHES_TIMEOUT_MS) {\n    const { sweepIfLifeMoved } = await import("./git-lane.ts");\n    await sweepIfLifeMoved(ctx, budget);\n  }\n',
+    to: "",
+    test: `${CONNECTOR}/test/e2e/heal-sweeps-again.e2e.test.ts`,
+    because: "L10: the refused life's files sit on the hub under an ended life, invisible to every teammate's tripwire, for the rest of the turn",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {

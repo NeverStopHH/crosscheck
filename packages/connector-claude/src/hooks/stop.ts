@@ -33,7 +33,7 @@ import { SUMMARIZER_PROMPT, resolveSummarizerTimeoutMs } from "@crosscheck/conne
 import { extractSliceText, readTurnSlice } from "../summarizer/transcript.ts";
 import type { TurnSlice } from "../summarizer/transcript.ts";
 import { spawnDeriveWorker } from "@crosscheck/connector-core/derive/spawn.ts";
-import { ownCwdRoot, runGitLane } from "./git-lane.ts";
+import { ownCwdRoot, runGitLane, sweepIfLifeMoved } from "./git-lane.ts";
 import { healerFor } from "./heal.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
@@ -171,5 +171,9 @@ export const handleStop = async (
     },
     budget.spareMs(),
   );
+  // The flush may have healed the life away from the lane above (L10): the
+  // turn's files are then on the hub under an ended life only, until swept
+  // again under the new one — here, when the spare budget covers it.
+  await sweepIfLifeMoved(ctx, budget);
   return "";
 };
