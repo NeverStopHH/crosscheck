@@ -53,29 +53,41 @@ export interface LandedProbeCutBooking {
 }
 
 /**
- * The tool calls this PROCESS has booked a cut for. Two writers can see one
- * cut — the pre-edit handler when its probe came back cut, and the runner
- * when the budget abandoned the handler — and a handler the race abandoned
- * keeps running until the process exits, so without this a cut booked by
- * the handler a moment before the race resolved would be booked again by
- * the runner. One hook process handles one tool call, so the set stays at
- * most one entry; it is module state on purpose, the one thing both writers
- * share.
+ * The tool calls this PROCESS has booked a cut for, each with its booking
+ * still in flight or done. Two writers can see one cut — the pre-edit handler
+ * when its probe came back cut, and the runner when the budget abandoned the
+ * handler — and a handler the race abandoned keeps running until the process
+ * exits, so without this a cut booked by the handler a moment before the race
+ * resolved would be booked again by the runner. One hook process handles one
+ * tool call, so the map stays at most one entry; it is module state on
+ * purpose, the one thing both writers share.
  */
-const booked = new Set<string>();
+const booked = new Map<string, Promise<void>>();
+
+/** The two writes of one cut. */
+const writeCut = async (booking: LandedProbeCutBooking): Promise<void> => {
+  await updateSessionState(booking.home, booking.sessionId, withLandedProbeCut);
+  await recordLandedProbeCut(booking.home, { key: booking.key, reason: booking.reason, now: booking.now });
+};
 
 /**
  * ONE cut, booked in both places it is read from — the session's counter
  * (its next prompt tells it once) and the ledger `doctor` and `status`
  * count — at most once per tool call. Marked before the first write, so the
- * second writer stops at the mark however the two interleave.
+ * second writer stops at the mark however the two interleave — and WAITS
+ * there for the first writer's writes (review batch 2, L6): the runner books
+ * after the race and the binary exits the moment it returns, so returning at
+ * the mark while the abandoned handler's lock round and append were still in
+ * flight let the cut vanish with the process.
  */
 export const bookLandedProbeCut = async (booking: LandedProbeCutBooking): Promise<void> => {
   const id = `${booking.sessionId}\n${booking.toolUseId ?? ""}`;
-  if (booked.has(id)) {
+  const inFlight = booked.get(id);
+  if (inFlight !== undefined) {
+    await inFlight;
     return;
   }
-  booked.add(id);
-  await updateSessionState(booking.home, booking.sessionId, withLandedProbeCut);
-  await recordLandedProbeCut(booking.home, { key: booking.key, reason: booking.reason, now: booking.now });
+  const writing = writeCut(booking);
+  booked.set(id, writing);
+  await writing;
 };

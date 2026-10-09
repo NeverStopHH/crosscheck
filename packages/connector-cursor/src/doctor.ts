@@ -28,13 +28,12 @@
  * is the one a cloud agent loads); otherwise the user's is the install
  * described, and the hooks line says which file it read.
  */
-import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { checkLauncherCommand } from "@crosscheck/connector-core/config/launcher-check.ts";
 import { isOwnedMcpEntry } from "@crosscheck/connector-core/config/mcp-config.ts";
 import { MCP_SERVER_KEY } from "@crosscheck/connector-core/constants.ts";
-import { readText } from "@crosscheck/connector-core/config/paths.ts";
+import { readText, userHomeOf } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { summarizeStateCosts } from "@crosscheck/connector-core/derive/summarizer/cost.ts";
 import { bareSummarizerLine } from "@crosscheck/connector-core/model/runner.ts";
@@ -427,7 +426,7 @@ const INIT_COMMAND: Readonly<Record<InstallScope, string>> = {
  * in this tree.
  */
 const cursorUserDir = (env: Env): string =>
-  join(env["HOME"] ?? homedir(), CURSOR_DIR);
+  join(userHomeOf(env), CURSOR_DIR);
 
 const mcpCheck = async (
   cursorDir: string,

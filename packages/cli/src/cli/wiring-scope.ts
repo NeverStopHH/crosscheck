@@ -12,7 +12,6 @@
  * `findUserLevelCollision` before they touch anything, and refuse.
  */
 import { realpath } from "node:fs/promises";
-import { homedir } from "node:os";
 import { basename, dirname, join, sep } from "node:path";
 
 import {
@@ -20,6 +19,7 @@ import {
   CLAUDE_SETTINGS_FILE,
   MCP_CONFIG_FILE,
 } from "@crosscheck/connector-core/constants.ts";
+import { userHomeOf } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { claudeUserMcpPath, claudeUserSettingsPath } from "@crosscheck/connector-claude";
 import { wiringPaths } from "./wiring-removal.ts";
@@ -27,7 +27,7 @@ import type { WiringFiles } from "./wiring-removal.ts";
 
 /** Cursor's user-level configuration directory (cursor.com/docs/agent/hooks). */
 export const userCursorDir = (env: Env): string =>
-  join(env["HOME"] ?? homedir(), ".cursor");
+  join(userHomeOf(env), ".cursor");
 
 /** The four user-level wiring files `init --global` writes. */
 export const userWiringFiles = (env: Env): WiringFiles => ({
@@ -112,7 +112,7 @@ export const readOneInstall = async (root: string, env: Env): Promise<OneInstall
   if (collision === null) {
     return null;
   }
-  const home = await canonicalPath(env["HOME"] ?? homedir());
+  const home = await canonicalPath(userHomeOf(env));
   return { root, collision, homeRoot: (await canonicalPath(root)) === home };
 };
 

@@ -18,6 +18,7 @@ import {
   readBriefingOmissions,
   recordBriefingOmission,
 } from "../src/state/briefing-omissions.ts";
+import { withLock } from "../src/spool/lock.ts";
 import { makeHome } from "./helpers.ts";
 
 const NOW = new Date("2026-10-08T09:00:00.000Z");
@@ -89,15 +90,27 @@ describe("the briefing-omission ledger", () => {
     await recordBriefingOmission(home, { key: KEY, reason: "hub", now: NOW });
   });
 
-  test("the ledger stops growing at its cap", async () => {
-    // Arrange: a ledger already at the cap.
+  test("the ledger never grows past its cap, even when it cannot rotate", async () => {
+    // Arrange: a ledger already at the cap, and its rotation lock held by
+    // another writer for the whole record (review batch 2, M7).
     const home = await freshHome("omit-cap");
     const path = briefingOmissionsPath(home);
     await mkdir(dirname(path), { recursive: true });
     await Bun.write(path, "x".repeat(MAX_BRIEFING_OMISSION_LEDGER_BYTES));
+    const release: { value: () => void } = { value: () => undefined };
+    const held = withLock(`${path}.lock`, undefined, () =>
+      new Promise<void>((done) => {
+        release.value = done;
+      }),
+    );
 
     // Act
-    await recordBriefingOmission(home, { key: KEY, reason: "hub", now: NOW });
+    try {
+      await recordBriefingOmission(home, { key: KEY, reason: "hub", now: NOW });
+    } finally {
+      release.value();
+      await held;
+    }
 
     // Assert
     expect((await stat(path)).size).toBe(MAX_BRIEFING_OMISSION_LEDGER_BYTES);

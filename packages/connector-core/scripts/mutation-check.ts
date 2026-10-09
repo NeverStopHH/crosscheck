@@ -13792,7 +13792,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the refused capture losses are charged to no repo",
     file: `${CORE}/src/state/loss-ledger.ts`,
-    from: "  const summary = withRefusals(lines, refusals);",
+    from: '  const summary = withRefusals(lines, refusals === null || scope === "all" ? refusals : withoutLocalKinds(refusals));',
     to: "  const summary = lines;",
     test: `${CORE}/test/loss-report.test.ts`,
     because: "the marker counts the refusal and no report ever carries it",
@@ -14016,8 +14016,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a bare repo with no committed config is read as a connected one",
     file: `${CORE}/src/config/connected-repo.ts`,
-    from: "      (env[\"CROSSCHECK_HUB_URL\"] !== undefined || (await readRepoConfig(root)) !== null)\n",
-    to: "      true\n",
+    from: "  if (env[\"CROSSCHECK_HUB_URL\"] === undefined && (await readRepoConfig(root)) === null) {\n",
+    to: "  if (false) {\n",
     test: `${CORE}/test/connected-repo.test.ts`,
     because: "every checkout on the machine owns a cut hook, and the M4 gate charges every connected repo again",
   },
@@ -17286,8 +17286,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an end no longer writes down the life it closed",
     file: `${CORE}/src/flows/end-session.ts`,
-    from: "  await recordEndedLife(\n    input.home,\n    input.hostSessionKey,\n    end.sessionId,\n    input.now(),\n    isSeqStamp(end.seq) ? end.seq.epoch : null,\n    isSeqStamp(end.seq) ? end.seq.n : null,\n  );\n",
-    to: "",
+    from: "  return recordEndedLife(\n    input.home,\n    input.hostSessionKey,\n    end.sessionId,\n    input.now(),\n    isSeqStamp(end.seq) ? end.seq.epoch : null,\n    isSeqStamp(end.seq) ? end.seq.n : null,\n    capture,\n  );\n",
+    to: "  return true;\n",
     test: `${CONNECTOR}/test/resumed-session.test.ts`,
     because: "every resume walks every ended life again from the base id, one register call each, on the hook whose latency the developer feels",
   },
@@ -17880,8 +17880,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a deferred SessionEnd never writes down the healed life's end (M8)",
     file: `${CORE}/src/flows/end-session.ts`,
-    from: "    await writeDownEnd(input, healed, standing);\n",
-    to: "",
+    from: "await writeDownEnd(input, healed, standing, capture)",
+    to: "isOwnWritten",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review-2 LOW-6: the healed life is never ended from its marker, and the next resume lands on it under a fresh epoch",
   },
@@ -18474,8 +18474,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the lineage drops the epoch it was handed",
     file: `${CORE}/src/state/session-lineage.ts`,
-    from: "      `${JSON.stringify({ crosscheckSessionId, ...(epoch === null ? {} : { epoch, ...(n === null ? {} : { n }) }), at: now.toISOString() })}\\n`,",
-    to: "      `${JSON.stringify({ crosscheckSessionId, at: now.toISOString() })}\\n`,",
+    from: "        ...(epoch === null ? {} : { epoch, ...(n === null ? {} : { n }) }),\n",
+    to: "",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review-2 round 8, L2 (seed 11974): the epoch written at the end never reaches the resume",
   },
@@ -21130,16 +21130,16 @@ export const MUTATIONS: readonly Mutation[
     // Review 2026-10-06 (L6): `""` is not nullish.
     label: "an empty CROSSCHECK_HOME puts the home in the working directory",
     file: `${CORE}/src/config/paths.ts`,
-    from: "  return configured === undefined || configured.trim() === \"\"\n",
-    to: "  return configured === undefined\n",
+    from: "    configured === undefined || configured.trim() === \"\"\n",
+    to: "    configured === undefined\n",
     test: `${CORE}/test/crosscheck-home.test.ts`,
     because: "state/, spool/ and config.json are written into the developer's repo, and the temp sweep deletes from it",
   },
   {
     label: "a whitespace CROSSCHECK_HOME is taken as a path",
     file: `${CORE}/src/config/paths.ts`,
-    from: "  return configured === undefined || configured.trim() === \"\"\n",
-    to: "  return configured === undefined || configured === \"\"\n",
+    from: "    configured === undefined || configured.trim() === \"\"\n",
+    to: "    configured === undefined || configured === \"\"\n",
     test: `${CORE}/test/crosscheck-home.test.ts`,
     because: "an export with a stray space makes a directory named ' ' in the repo and keeps the home there",
   },
@@ -25993,8 +25993,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a cut SessionStart speaks in a checkout no connected repo owns",
     file: `${CONNECTOR}/src/hooks/runner.ts`,
-    from: "  const owner = resolvedOwner ?? (await unresolvedOwner(stdin, env));\n  if (owner === null) {\n    return null;\n  }\n  await recordBriefingOmission(owner.home",
-    to: "  const owner = resolvedOwner ?? { home: crosscheckHome(env), key: null };\n  await recordBriefingOmission(owner.home",
+    from: "  const owner = resolvedOwner ?? (await unresolvedOwner(stdin, env));\n  if (owner === null) {\n    // A REPO OF ANOTHER HUB",
+    to: "  const owner = resolvedOwner ?? { home: crosscheckHome(env), key: null };\n  if (owner === null) {\n    // A REPO OF ANOTHER HUB",
     test: `${CONNECTOR}/test/briefing-omission-hook.test.ts`,
     because: "under a user-level install every directory's session starts with a line about a briefing nobody owed it",
   },
@@ -26097,7 +26097,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the briefing-omission ledger grows for ever",
     file: `${CORE}/src/state/omission-ledger.ts`,
-    from: "      if (size >= MAX_BRIEFING_OMISSION_LEDGER_BYTES) {\n        return;\n      }\n",
+    from: "      if ((await sizeOf(at)) >= MAX_BRIEFING_OMISSION_LEDGER_BYTES) {\n        // The rotation could not run: the cap holds rather than the file growing.\n        return;\n      }\n",
     to: "",
     test: `${CORE}/test/briefing-omissions.test.ts`,
     because: "a hub that never answers grows a file in the home on every session start",
@@ -28522,7 +28522,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "one cut is booked twice when the handler and the runner both see it",
     file: `${CORE}/src/state/landed-probe-cuts.ts`,
-    from: "  if (booked.has(id)) {\n    return;\n  }\n",
+    from: "  if (inFlight !== undefined) {\n    await inFlight;\n    return;\n  }\n",
     to: "",
     test: `${CORE}/test/landed-probe-cuts.test.ts`,
     because: "a handler that booked just before the race resolved is counted again by the runner, and the line overstates",
@@ -29901,7 +29901,7 @@ export const MUTATIONS: readonly Mutation[
     file: `${CORE}/src/state/session-state.ts`,
     from:
       "    const unlocked = await readSessionState(home, state.hostSessionKey);\n" +
-      "    await writeSessionState(home, withCarriedCollisions(measuredFromStart(state), unlocked));\n",
+      "    await writeSessionState(home, withCarriedRouting(withCarriedCollisions(measuredFromStart(state), unlocked), unlocked));\n",
     to: "    await writeSessionState(home, measuredFromStart(state));\n",
     test: `${CORE}/test/collision-publish-busy-lock.test.ts`,
     because: "a subagent's hit waiting for the main thread is never said, and a ghost row already told is told again",
@@ -30106,7 +30106,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the test guard leaves children the shell's crosscheck home",
     file: `${CORE}/test/network-guard.ts`,
-    from: "    process.env[\"CROSSCHECK_HOME\"] = home;\n",
+    from: "    process.env[\"CROSSCHECK_HOME\"] = freshTempDir(\"cx-test-home-\");\n",
     to: "",
     test: `${CORE}/test/network-guard.test.ts`,
     because: "a child spawned with the runner's env reads and writes the developer's ~/.crosscheck",
@@ -30323,7 +30323,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the reaper drops a dead session's owed rechecks unbooked",
     file: `${CORE}/src/state/session-reap.ts`,
-    from: "      await bookOwedRests(home, parsed.data, now);\n",
+    from: "    await bookOwedRests(home, parsed.data, now);\n",
     to: "",
     test: `${CORE}/test/collision-rest-reap.test.ts`,
     because: "a session killed mid-turn takes its unpaid rechecks into the deleted corpse",
@@ -30331,8 +30331,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a dead session's owed rechecks are dated at the reap",
     file: `${CORE}/src/state/session-reap.ts`,
-    from: "    now: Number.isFinite(newest) && newest <= now.getTime() ? new Date(newest) : now,",
-    to: "    now,",
+    from: "  const at = Number.isFinite(newest) && newest <= now.getTime() ? new Date(newest) : now;",
+    to: "  const at = now;",
     test: `${CORE}/test/collision-rest-reap.test.ts`,
     because: "a loss a week old reads as today's, inside every coverage window for another week",
   },
@@ -34161,7 +34161,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a repo connected to another hub is refused uncounted",
     file: `${CORE}/src/state/foreign-hub.ts`,
-    from: '    await writePrivateFile(path, fitToCap(refusals, floorAt, now).map(serialize).join(""));',
+    from: "    await writePrivateFile(path, next);",
     to: "",
     test: `${CONNECTOR}/test/global-wiring-silence.test.ts`,
     because:
@@ -34792,16 +34792,16 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "every refused hook of a session is counted",
     file: `${CORE}/src/state/foreign-hub.ts`,
-    from: "    const isCounted = inWindow.some((line) => isSameRefusal(line, wanted));",
-    to: "    const isCounted = false;",
+    from: "  const isCounted = inWindow.some((line) => isSameRefusal(line, wanted));",
+    to: "  const isCounted = false;",
     test: `${CORE}/test/foreign-hub-ledger.test.ts`,
     because: "one long refused session fills the ledger, which then counts no later bait repo",
   },
   {
     label: "the ledger keeps refusals that left the window",
     file: `${CORE}/src/state/foreign-hub.ts`,
-    from: "    const inWindow = lines.filter((line) => line.at >= since);",
-    to: "    const inWindow = lines;",
+    from: "  const inWindow = lines.filter((line) => line.at >= since);",
+    to: "  const inWindow = lines;",
     test: `${CORE}/test/foreign-hub-ledger.test.ts`,
     because: "old bait repos stay in the file for ever, and the cap is reached by history instead of by this week",
   },
@@ -34840,16 +34840,16 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a floor marker outlives the window",
     file: `${CORE}/src/state/foreign-hub.ts`,
-    from: '    const floors = inWindow.filter((line): line is FloorLine => line.kind === "floor");',
-    to: '    const floors = lines.filter((line): line is FloorLine => line.kind === "floor");',
+    from: '  const floors = inWindow.filter((line): line is FloorLine => line.kind === "floor");',
+    to: '  const floors = lines.filter((line): line is FloorLine => line.kind === "floor");',
     test: `${CORE}/test/foreign-hub-ledger.test.ts`,
     because: "one overflow keeps a marker in the file for ever",
   },
   {
     label: "the ledger stores the raw session key",
     file: `${CORE}/src/state/foreign-hub.ts`,
-    from: "      session: sessionDigest(refusal.sessionKey),",
-    to: "      session: refusal.sessionKey,",
+    from: "    session: sessionDigest(refusal.sessionKey),",
+    to: "    session: refusal.sessionKey,",
     test: `${CORE}/test/foreign-hub-ledger.test.ts`,
     because: "host session ids land on disk in a file doctor reads back, and every line fails the reader's screen",
   },
@@ -35740,6 +35740,307 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/pilot-mine-render.test.ts`,
     because: "the person's own newer word, confirmed with a fresh passkey, is shown nowhere until it counts",
   },
+  // THE INTEGRATION REVIEW OF BATCH 2, TRACK A (designs/review-batch2-integration.md):
+  // capture across compacts, resumes and lives (H1, L1), and loss coherence
+  // (M1, M2, M3, M7, M8, M9, L2, L3, L4, L6).
+  {
+    label: "a compact restamps the window the turn's Stop sweeps",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  startedAt: previous.startedAt,\n",
+    to: "",
+    test: `${CORE}/test/capture-across-lives.test.ts`,
+    because: "H1: a Bash-only file written before a compact or resume falls out of the turn's Stop, and nothing counts it",
+  },
+  {
+    label: "a compact under a busy state lock forgets the roots, the shell mark and the window",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "withCarriedRouting(withCarriedCollisions(measuredFromStart(state), unlocked), unlocked)",
+    to: "withCarriedCollisions(measuredFromStart(state), unlocked)",
+    test: `${CORE}/test/capture-across-lives.test.ts`,
+    because: "L1: a sibling worktree only the dropped cache knew is never swept again, and its Bash-only files are lost",
+  },
+  {
+    label: "the git lane's window ignores the conversation's first start",
+    file: `${CORE}/src/flows/git-lane.ts`,
+    from: "new Date(state.captureSince ?? state.startedAt)",
+    to: "new Date(state.startedAt)",
+    test: `${CORE}/test/capture-across-lives.test.ts`,
+    because: "H1: a resumed life sweeps only what changed after the resume, and the ended life's work never warns a teammate again",
+  },
+  {
+    label: "an end leaves the next life no capture",
+    file: `${CORE}/src/flows/end-session.ts`,
+    from: "  const capture = state === null ? null : carriedCaptureOf(state);",
+    to: "  const capture = null;",
+    test: `${CORE}/test/capture-across-lives.test.ts`,
+    because: "H1: with the state file gone nothing knows the window or the roots, and the resume sweeps neither",
+  },
+  {
+    label: "a resume starts its window and its roots afresh",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "    ...(await carriedFromLineage(input)),\n",
+    to: "",
+    test: `${CORE}/test/capture-across-lives.test.ts`,
+    because: "H1: 0 of 6 pre-resume shared files reach the teammate's tripwire after a SessionEnd and a resume",
+  },
+  {
+    label: "a resume carries another binding's roots",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "  if (capture === null || capture.repoId !== input.repoId || capture.hubUrl !== input.hubUrl) {",
+    to: "  if (capture === null) {",
+    test: `${CORE}/test/capture-across-lives.test.ts`,
+    because: "another repo's worktrees are swept and filed under this session",
+  },
+  {
+    label: "a lineage that could not be written books nothing it would have carried",
+    file: `${CORE}/src/flows/end-session.ts`,
+    from: "  if (capture !== null && !isCaptureKept) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/capture-across-lives.test.ts`,
+    because: "H1: the sweeps the ended life still owed are lost with no line in any ledger",
+  },
+  {
+    label: "a conversation that never came back drops its owed sweeps with its lineage",
+    file: `${CORE}/src/state/session-lineage.ts`,
+    from: "      await bookUnsweptCapture(home, capture, instantOr(lineage.data.at, now));\n",
+    to: "",
+    test: `${CORE}/test/capture-across-lives.test.ts`,
+    because: "H1: Bash-only work no lane ever swept is never filed and never counted",
+  },
+  {
+    label: "a lineage swept clean books a loss",
+    file: `${CORE}/src/state/session-lineage.ts`,
+    from: "  const marked = capture.roots.filter((root) => root.bashTouchedAt !== null).length;",
+    to: "  const marked = capture.roots.length;",
+    test: `${CORE}/test/capture-across-lives.test.ts`,
+    because: "every ended conversation reads as lost telemetry, though its work was filed",
+  },
+  {
+    label: "an end in another binding drops the capture it replaces unbooked",
+    file: `${CORE}/src/state/session-lineage.ts`,
+    from: "    if (capture !== null && priorCapture !== null && !isSameCaptureBinding(priorCapture, capture)) {",
+    to: "    if (false) {",
+    test: `${CORE}/test/capture-across-lives.test.ts`,
+    because: "H1: a capture no resume of this conversation can carry any more vanishes silently",
+  },
+  {
+    label: "a heal's end erases the capture on file",
+    file: `${CORE}/src/state/session-lineage.ts`,
+    from: "    const kept = capture ?? priorCapture;",
+    to: "    const kept = capture;",
+    test: `${CORE}/test/capture-across-lives.test.ts`,
+    because: "a heal that retires an orphan life writes the lineage again, and the resume after it sweeps nothing",
+  },
+  {
+    label: "an unanswered tripwire owes no recheck",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "    isLiveUnanswered: !answered.isLiveFresh && hub === null,",
+    to: "    isLiveUnanswered: false,",
+    test: `${CONNECTOR}/test/rest-recheck-guarantee.test.ts`,
+    because: "M1: an edit the hub did not answer tells nobody, rests nothing and counts nothing",
+  },
+  {
+    label: "the recheck an unanswered tripwire owes waits out a whole rest",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "withTripwireChecked(state, file, new Date(now.getTime() - TRIPWIRE_RECHECK_TTL_MS))",
+    to: "withTripwireChecked(state, file, now)",
+    test: `${CONNECTOR}/test/rest-recheck-guarantee.test.ts`,
+    because: "M1: the next edit of the file asks nothing for 30 s and the next prompt pays no debt, after an answer nobody got",
+  },
+  {
+    label: "a repo of another hub owns a cut hook again",
+    file: `${CORE}/src/config/connected-repo.ts`,
+    from: '  return foreignHub === null ? { kind: "connected" } : { kind: "foreign_hub", foreignHub };',
+    to: '  return { kind: "connected" };',
+    test: `${CORE}/test/connected-repo.test.ts`,
+    because: "M2: a bait repo's slow git charges every repo of the machine a lost hook, sent to the developer's own hub",
+  },
+  {
+    label: "a candidate connected here loses to a foreign one",
+    file: `${CORE}/src/config/connected-repo.ts`,
+    from: '    if (owned.kind === "connected") {',
+    to: "    if (false) {",
+    test: `${CORE}/test/connected-repo.test.ts`,
+    because: "a cut hook in the developer's own repo goes uncounted when the cwd sits in a bait repo",
+  },
+  {
+    label: "deciding a cut hook's hub writes the stored login",
+    file: `${CORE}/src/config/config.ts`,
+    from: "  const stored = await readStoredConfig(crosscheckHome(env));\n  const hubCandidate = hubCandidateOf(env, await readRepoConfig(repoRoot), stored);",
+    to: "  const stored = await readBoundStoredConfig(crosscheckHome(env));\n  const hubCandidate = hubCandidateOf(env, await readRepoConfig(repoRoot), stored);",
+    test: `${CORE}/test/connected-repo.test.ts`,
+    because: "a hook the budget abandoned rewrites the developer's login on its way out",
+  },
+  {
+    label: "a cut SessionStart in a repo of another hub says nothing",
+    file: `${CONNECTOR}/src/hooks/runner.ts`,
+    from: "    return foreign === null ? null : output(foreignHubAgentLine(foreign));",
+    to: "    return null;",
+    test: `${CONNECTOR}/test/foreign-hub-cut.test.ts`,
+    because: "M2: the session looks quiet instead of saying it reports to no hub from here",
+  },
+  {
+    label: "a rest whose recheck never ran is sent as telemetry lost",
+    file: `${CORE}/src/spool/loss-report.ts`,
+    from: '    readCaptureLosses(home, key, "wire"),',
+    to: "    readCaptureLosses(home, key),",
+    test: `${CORE}/test/rest-unchecked-scope.test.ts`,
+    because: "M3: one unwarned person on one file marks the repo's whole coverage incomplete for fourteen days",
+  },
+  {
+    label: "the wire scope still charges the local kinds",
+    file: `${CORE}/src/state/loss-ledger.ts`,
+    from: '      if (scope === "wire" && LOCAL_CAPTURE_LOSS_KINDS.has(entry.kind)) {',
+    to: "      if (false) {",
+    test: `${CORE}/test/rest-unchecked-scope.test.ts`,
+    because: "M3: a rest whose recheck never ran reaches the hub's coverage as telemetry lost",
+  },
+  {
+    label: "refused rechecks are refused telemetry on the wire",
+    file: `${CORE}/src/state/loss-ledger.ts`,
+    from: 'scope === "all" ? refusals : withoutLocalKinds(refusals)',
+    to: 'scope === "all" ? refusals : refusals',
+    test: `${CORE}/test/rest-unchecked-scope.test.ts`,
+    because: "M3: a full ledger that refused only rests still marks the repo's coverage lost",
+  },
+  {
+    label: "a full omission ledger goes blind for good",
+    file: `${CORE}/src/state/omission-ledger.ts`,
+    from: "        await rotate(at);\n",
+    to: "",
+    test: `${CORE}/test/omission-ledger-rotation.test.ts`,
+    because: "M7: once its lines age out, doctor reads 0 omissions for ever while every new one is refused",
+  },
+  {
+    label: "the lines a rotation moved aside are no longer counted",
+    file: `${CORE}/src/state/omission-ledger.ts`,
+    from: "readTextOrNull(rotatedPathOf(path(home)))",
+    to: "Promise.resolve(null)",
+    test: `${CORE}/test/omission-ledger-rotation.test.ts`,
+    because: "M7: a week of omissions vanishes from doctor at every rotation",
+  },
+  {
+    label: "two hooks that find the ledger full rotate it twice",
+    file: `${CORE}/src/state/omission-ledger.ts`,
+    from: "    if ((await sizeOf(path)) >= MAX_BRIEFING_OMISSION_LEDGER_BYTES) {\n      await rename(",
+    to: "    if (true) {\n      await rename(",
+    test: `${CORE}/test/omission-ledger-rotation.test.ts`,
+    because: "the second rename throws the first one's lines away",
+  },
+  {
+    label: "SessionEnd under a busy lock drops owed rests unbooked",
+    file: `${CONNECTOR}/src/hooks/rest-recheck.ts`,
+    from: "    const unlocked = isWritten ? null : await readSessionState(ctx.config.home, ctx.payload.session_id);",
+    to: "    const unlocked = null;",
+    test: `${CONNECTOR}/test/rest-recheck-guarantee.test.ts`,
+    because: "M8: the unlocked delete after it takes the debts with it, and no ledger moves",
+  },
+  {
+    label: "racing refused losses are counted without a lock",
+    file: `${CORE}/src/state/loss-refusals.ts`,
+    from: "  const isWritten = await withLock(\n    `${lossRefusalsPath(home)}.lock`,",
+    to: "  const isWritten = false && await withLock(\n    `${lossRefusalsPath(home)}.lock`,",
+    test: `${CORE}/test/ledger-concurrency.test.ts`,
+    because: "M9: twelve refusals at once count as one: the 'refused, never dropped' floor drops",
+  },
+  {
+    label: "racing foreign-hub refusals are written without a lock",
+    file: `${CORE}/src/state/foreign-hub.ts`,
+    from: "    const isWritten = await withLock(\n      `${path}.lock`,",
+    to: "    const isWritten = false && await withLock(\n      `${path}.lock`,",
+    test: `${CORE}/test/ledger-concurrency.test.ts`,
+    because: "M9: twelve refused sessions starting at once leave one line",
+  },
+  {
+    label: "the per-hook fired stamps are never read",
+    file: `${CORE}/src/state/fired-markers.ts`,
+    from: "  const perHook = await readPerHookStamps(home, key);",
+    to: "  const perHook: HooksFired = {};",
+    test: `${CORE}/test/ledger-concurrency.test.ts`,
+    because: "M9: every hook reads as never fired",
+  },
+  {
+    label: "every hook rewrites one shared fired record",
+    file: `${CORE}/src/state/fired-markers.ts`,
+    from: "    await writePrivateFile(hookFiredPath(home, key, hookName), `${JSON.stringify({ at: now.toISOString() })}\\n`);",
+    to: "    await writePrivateFile(hooksFiredPath(home, key), `${JSON.stringify({ ...(await readHooksFired(home, key)), [hookName]: now.toISOString() })}\\n`);",
+    test: `${CORE}/test/ledger-concurrency.test.ts`,
+    because: "M9: twelve hooks at once leave one key, and eleven read as never fired",
+  },
+  {
+    label: "the fired record an earlier connector wrote is no longer read",
+    file: `${CORE}/src/state/fired-markers.ts`,
+    from: "    legacy,\n  );",
+    to: "    {},\n  );",
+    test: `${CORE}/test/ledger-concurrency.test.ts`,
+    because: "after the upgrade doctor reads every hook the old connector stamped as never fired",
+  },
+  {
+    label: "the reaper books no rest omission",
+    file: `${CORE}/src/state/session-reap.ts`,
+    from: '  await recordRestOmission(home, { key, reason: "rest_unchecked", now });\n',
+    to: "",
+    test: `${CORE}/test/collision-rest-reap.test.ts`,
+    because: "L2: the two rest ledgers disagree by construction",
+  },
+  {
+    label: "the reaper books a state it could not remove",
+    file: `${CORE}/src/state/session-reap.ts`,
+    from: "      // A file that will not go stays; the next SessionStart tries again.\n      continue;\n",
+    to: "      // A file that will not go stays; the next SessionStart tries again.\n",
+    test: `${CORE}/test/collision-rest-reap.test.ts`,
+    because: "L3: one rest is booked again on every run until the state goes",
+  },
+  {
+    label: "a re-fire bound elsewhere drops the owed rechecks unbooked",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "        await bookRestsLeftBehind(home, previous, new Date(state.startedAt));\n",
+    to: "",
+    test: `${CORE}/test/collision-rest-reap.test.ts`,
+    because: "L4: a re-fire that changes hub or repo erases its debts with no line in any ledger",
+  },
+  {
+    label: "the runner returns before the handler's cut is on disk",
+    file: `${CORE}/src/state/landed-probe-cuts.ts`,
+    from: "    await inFlight;\n",
+    to: "",
+    test: `${CORE}/test/landed-probe-cuts.test.ts`,
+    because: "L6: the binary exits on the runner's return and the abandoned handler's booking dies with it",
+  },
+  // NO TEST RESOLVES THE REAL HOME (track A follow-up): a test with an empty
+  // env read and wrote the developer's own ~/.crosscheck.
+  {
+    label: "a home resolver in a test lands on the real home",
+    file: `${CORE}/src/config/paths.ts`,
+    from: "  if (target === real || (entry !== null && GUARDED_HOME_ENTRY.test(entry))) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/real-home-guard.test.ts`,
+    because: "a test that names the real ~/.crosscheck or ~/.claude reads and writes the developer's own",
+  },
+  {
+    label: "a resolver with no home of its own reads the home the process started with",
+    file: `${CORE}/src/config/paths.ts`,
+    from: 'const processHome = (): string => process.env["HOME"] ?? homedir();',
+    to: "const processHome = (): string => homedir();",
+    test: `${CORE}/test/real-home-guard.test.ts`,
+    because: "Bun caches HOME at start, so a test that passes an empty env resolves the real home the preload moved away from",
+  },
+  {
+    label: "the test preload leaves a test on the real HOME",
+    file: `${CORE}/test/network-guard.ts`,
+    from: '  if (!isTempPath(process.env["HOME"])) {\n    process.env["HOME"] = freshTempDir("cx-test-user-home-");\n  }\n',
+    to: "",
+    test: `${CORE}/test/real-home-guard.test.ts`,
+    because: "every child a test spawns — git, a hook, the cli — reads and writes the developer's own dotfiles",
+  },
+  {
+    label: "the test preload writes no record of the real home",
+    file: `${CORE}/test/network-guard.ts`,
+    from: "      process.env[TEST_REAL_HOME_ENV] = real;\n",
+    to: "",
+    test: `${CORE}/test/real-home-guard.test.ts`,
+    because: "the resolvers' guard has nothing to compare against, and stands down in every test",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -35985,6 +36286,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/draft-nudge-hook.test.ts 2
  * PRINTS: packages/connector-claude/test/failure-hook.test.ts 2
  * PRINTS: packages/connector-claude/test/fingerprint.test.ts 1
+ * PRINTS: packages/connector-claude/test/foreign-hub-cut.test.ts 1
  * PRINTS: packages/connector-claude/test/foreign-model.test.ts 2
  * PRINTS: packages/connector-claude/test/ghost-notice.test.ts 1
  * PRINTS: packages/connector-claude/test/ghost-worker.test.ts 5
@@ -36011,7 +36313,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/recovery-epoch.test.ts 2
  * PRINTS: packages/connector-claude/test/recovery-losses.test.ts 1
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
- * PRINTS: packages/connector-claude/test/rest-recheck-guarantee.test.ts 15
+ * PRINTS: packages/connector-claude/test/rest-recheck-guarantee.test.ts 18
  * PRINTS: packages/connector-claude/test/resumed-session.test.ts 10
  * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
  * PRINTS: packages/connector-claude/test/settings-merge-removal.test.ts 1
@@ -36046,6 +36348,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/briefing-presence-notice.test.ts 3
  * PRINTS: packages/connector-core/test/briefing-presence-topics.test.ts 6
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 5
+ * PRINTS: packages/connector-core/test/capture-across-lives.test.ts 11
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 5
  * PRINTS: packages/connector-core/test/capture-losses.test.ts 7
  * PRINTS: packages/connector-core/test/claim-drift.test.ts 4
@@ -36063,7 +36366,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/collision-person-strip.test.ts 11
  * PRINTS: packages/connector-core/test/collision-publish-busy-lock.test.ts 3
  * PRINTS: packages/connector-core/test/collision-relay-presence.test.ts 8
- * PRINTS: packages/connector-core/test/collision-rest-reap.test.ts 3
+ * PRINTS: packages/connector-core/test/collision-rest-reap.test.ts 6
  * PRINTS: packages/connector-core/test/collision-state-eviction.test.ts 6
  * PRINTS: packages/connector-core/test/collision-state.test.ts 4
  * PRINTS: packages/connector-core/test/commit-evidence.test.ts 1
@@ -36071,7 +36374,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/conference-report.test.ts 5
  * PRINTS: packages/connector-core/test/confidence-gates-nothing.test.ts 1
  * PRINTS: packages/connector-core/test/config-parse.test.ts 1
- * PRINTS: packages/connector-core/test/connected-repo.test.ts 3
+ * PRINTS: packages/connector-core/test/connected-repo.test.ts 6
  * PRINTS: packages/connector-core/test/coverage-empty-answers.test.ts 5
  * PRINTS: packages/connector-core/test/coverage-fire-rate.test.ts 1
  * PRINTS: packages/connector-core/test/coverage-hints.test.ts 2
@@ -36128,7 +36431,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/landed-changes-edges.test.ts 19
  * PRINTS: packages/connector-core/test/landed-changes.test.ts 7
  * PRINTS: packages/connector-core/test/landed-notice.test.ts 21
- * PRINTS: packages/connector-core/test/landed-probe-cuts.test.ts 5
+ * PRINTS: packages/connector-core/test/landed-probe-cuts.test.ts 6
  * PRINTS: packages/connector-core/test/landed-render.test.ts 4
  * PRINTS: packages/connector-core/test/landed-why-render.test.ts 7
  * PRINTS: packages/connector-core/test/landed-worth-stopping.test.ts 1
@@ -36138,6 +36441,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/landing-fetch-worker.test.ts 20
  * PRINTS: packages/connector-core/test/latency.test.ts 3
  * PRINTS: packages/connector-core/test/launcher-identity.test.ts 4
+ * PRINTS: packages/connector-core/test/ledger-concurrency.test.ts 5
  * PRINTS: packages/connector-core/test/loopback-bind.test.ts 1
  * PRINTS: packages/connector-core/test/loss-ledger.test.ts 5
  * PRINTS: packages/connector-core/test/loss-report.test.ts 38
@@ -36153,6 +36457,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
  * PRINTS: packages/connector-core/test/network-guard.test.ts 15
+ * PRINTS: packages/connector-core/test/omission-ledger-rotation.test.ts 3
  * PRINTS: packages/connector-core/test/outcome-clause.test.ts 2
  * PRINTS: packages/connector-core/test/owed-debt-rules.test.ts 22
  * PRINTS: packages/connector-core/test/owed-work-context.test.ts 17
@@ -36165,6 +36470,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/question-delivery.test.ts 5
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3
  * PRINTS: packages/connector-core/test/read-text.test.ts 1
+ * PRINTS: packages/connector-core/test/real-home-guard.test.ts 4
  * PRINTS: packages/connector-core/test/register-base-on-default.test.ts 1
  * PRINTS: packages/connector-core/test/register-guarantees.test.ts 2
  * PRINTS: packages/connector-core/test/register-seq.test.ts 3
@@ -36173,6 +36479,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/remember-developer.test.ts 1
  * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 7
  * PRINTS: packages/connector-core/test/repo-ssh-determinism.test.ts 2
+ * PRINTS: packages/connector-core/test/rest-unchecked-scope.test.ts 3
  * PRINTS: packages/connector-core/test/review-draft.test.ts 2
  * PRINTS: packages/connector-core/test/runtime-isolation.test.ts 9
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1

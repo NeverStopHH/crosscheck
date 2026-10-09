@@ -43,6 +43,7 @@ import {
   ladderStart,
   lifeRungOf,
   lifeSessionId,
+  readCarriedCapture,
   readEndedLifeEpoch,
   readEndedLifePosition,
   readEndedLifeRung,
@@ -56,7 +57,7 @@ import {
   underSessionStateLock,
   workContextIdFor,
 } from "../state/session-state.ts";
-import type { SeqStart, SessionState } from "../state/session-state.ts";
+import type { SeqStart, SessionState, SessionStateInput } from "../state/session-state.ts";
 import { readNudgeSpent } from "../state/draft-nudge-spent.ts";
 
 const HTTP_CONFLICT = 409;
@@ -404,6 +405,27 @@ const readUnnamedEpoch = async (input: RegisterSessionFlowInput): Promise<string
   (await readMarkedPosition(input, await firstRungLife(input)))?.epoch ??
   (await readEndedLifeEpoch(input.home, input.hostSessionKey));
 
+/**
+ * WHAT THE CONVERSATION'S LAST END LEFT FOR THIS LIFE'S GIT LANE (review
+ * batch 2, H1): its first start, which becomes this life's window, its roots
+ * — with any shell mark no sweep spent, so the first lane, a subagent's too,
+ * sweeps those — and a shell's pending discovery. Only for the SAME binding:
+ * another repo's roots are not this session's to sweep. A publish that finds
+ * a state to carry keeps that state's instead (withCarriedCapture).
+ *
+ * Without it a resume after SessionEnd started its window at the resume:
+ * the ended life's contexts had left every collision surface, and its dirty,
+ * committed and Bash-created files reached a teammate again only when
+ * touched again — 0 of 6 in the review's run, 4 of 6 for good.
+ */
+const carriedFromLineage = async (input: RegisterSessionFlowInput): Promise<Partial<SessionStateInput>> => {
+  const capture = await readCarriedCapture(input.home, input.hostSessionKey);
+  if (capture === null || capture.repoId !== input.repoId || capture.hubUrl !== input.hubUrl) {
+    return {};
+  }
+  return { captureSince: capture.since, knownWorktreeRoots: capture.roots, shellSweepSince: capture.shellSweepSince };
+};
+
 /** The epoch a fire's register sends, the state it was read from, and the fire's own fresh one. */
 interface WireEpoch {
   readonly previous: SessionState | null;
@@ -594,6 +616,9 @@ export const registerSessionFlow = async (
     // session carries its own slot instead (withCarriedCapture).
     draftNudge: await readNudgeSpent(input.home, input.hostSessionKey),
     ...(input.briefingPending === true ? { briefingPending: true } : {}),
+    // Where the next lane sweeps, when an earlier life of this conversation
+    // ended (review batch 2, H1).
+    ...(await carriedFromLineage(input)),
   };
   const startsAt = {
     ...stateInput,

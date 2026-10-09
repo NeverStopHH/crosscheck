@@ -205,7 +205,9 @@ the entries' own `at` the way `newestDropMs` already does (`drops.ts:254-261`). 
 `~/.crosscheck/state/losses.jsonl`, one line per event — `{"at", "kind", "count", "key", "detail"}` — where
 `kind` is one of `hook_timed_out`, `host_contract_drift`, `wire_unobserved`, `rest_unchecked` (round 3 of the
 collision review: a 30 s tripwire rest whose recheck no hook could make — the hub did not answer the next hook's
-recheck, the session ended still owing it, or its corpse was reaped; `detail` names the hook, counted per file);
+recheck, the session ended still owing it, or its corpse was reaped; `detail` names the hook, counted per file —
+LOCAL ONLY since the integration review of batch 2, M3: no record was lost, so `toLossReport` never sees it and
+the hub's coverage is not marked `telemetry_lost` for one file's unwarned person; doctor and status still print it);
 `key` is the repo key when the
 writer knows it and `null` when it does not (a hook that timed out before repo identity resolved, a Cursor
 payload with no workspace root); `detail` is the hook name or host event name from the writer's own enum,

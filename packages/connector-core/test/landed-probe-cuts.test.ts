@@ -237,6 +237,36 @@ describe("the cut-checks ledger", () => {
     expect(counts.byReason).toEqual({ deadline: 1, unanswered: 0, budget: 1 });
   });
 
+  test("the runner's booking returns only once the handler's booking of the same call is on disk (review batch 2, L6)", async () => {
+    // Arrange — the handler's booking still in flight when the race resolves
+    const h = await home("cuts-door");
+    await writeSessionState(
+      h,
+      SessionStateSchema.parse({
+        hostSessionKey: "s-door",
+        crosscheckSessionId: "cc_s-door",
+        workContextId: "wc_cc_s-door",
+        repoId: "github.com/acme/api",
+        repoRoot: "/tmp/repo",
+        hubUrl: "http://127.0.0.1:1",
+        developerId: "dev_1",
+        startedAt: NOW.toISOString(),
+      }),
+    );
+    const booking = { home: h, sessionId: "s-door", toolUseId: "toolu_door", key: KEY, now: NOW } as const;
+    const handler = bookLandedProbeCut({ ...booking, reason: "deadline" });
+
+    // Act — the runner books the same call; the binary exits right after it returns
+    await bookLandedProbeCut({ ...booking, reason: "budget" });
+    const whenRunnerReturns = await readLandedProbeCuts(h, KEY, NOW);
+    const countWhenRunnerReturns = (await readSessionState(h, "s-door"))?.landedProbeCuts;
+    await handler;
+
+    // Assert — on disk already, and once
+    expect(whenRunnerReturns.byReason).toEqual({ deadline: 1, unanswered: 0, budget: 0 });
+    expect(countWhenRunnerReturns).toBe(1);
+  });
+
   test("another repo's cut is not this repo's, and one older than the window stopped counting", async () => {
     // Arrange
     const h = await home("cuts-scope");
@@ -248,7 +278,7 @@ describe("the cut-checks ledger", () => {
     expect((await readLandedProbeCuts(h, KEY, NOW)).total).toBe(0);
   });
 
-  test("the cuts are their own file, beside the briefing omissions, and stop growing at the cap", async () => {
+  test("the cuts are their own file, beside the briefing omissions, and a full one rotates instead of growing", async () => {
     // Arrange
     const h = await home("cuts-cap");
     const path = landedProbeCutsPath(h);
@@ -258,8 +288,10 @@ describe("the cut-checks ledger", () => {
     // Act
     await recordLandedProbeCut(h, { key: KEY, reason: "deadline", now: NOW });
 
-    // Assert
+    // Assert: the full file moved aside whole, and the cut started a new one
+    // (review batch 2, M7, test/omission-ledger-rotation.test.ts).
     expect(path.endsWith("landed-probe-cuts.jsonl")).toBe(true);
-    expect((await stat(path)).size).toBe(MAX_BRIEFING_OMISSION_LEDGER_BYTES);
+    expect((await stat(`${path}.1`)).size).toBe(MAX_BRIEFING_OMISSION_LEDGER_BYTES);
+    expect((await stat(path)).size).toBeLessThan(MAX_BRIEFING_OMISSION_LEDGER_BYTES);
   });
 });

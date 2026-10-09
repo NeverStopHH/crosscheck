@@ -15,9 +15,10 @@
  * window fourteen days after its last refusal instead of freezing.
  *
  * A whole-file write through `writePrivateFile`, like `unrecorded.dropmarker`
- * (spool/drops.ts), and a read-modify-write: two hooks racing on it can lose
- * an increment, never the marker, so its counts are FLOORS and the reader
- * says so. A marker that will not parse reads as absent, and an absent marker
+ * (spool/drops.ts), and a read-modify-write under the marker's own lock
+ * (review batch 2, M9): racing hooks take turns. Only a lock that stays busy
+ * past its patience can still lose an increment, never the marker, so its
+ * counts stay FLOORS and the reader says so. A marker that will not parse reads as absent, and an absent marker
  * beside a full ledger makes the reader's newest unknown (spool/loss-report.ts).
  */
 import { dirname, join } from "node:path";
@@ -25,8 +26,10 @@ import { z } from "zod";
 
 import { UNATTRIBUTED_LOSS_KIND } from "@crosscheck/schema";
 
+import { SESSION_STATE_LOCK_RETRIES } from "../constants.ts";
 import { ensureDir, writePrivateFile } from "../config/paths.ts";
 import { addCount } from "../spool/counts.ts";
+import { withLock } from "../spool/lock.ts";
 import type { Counts } from "../spool/counts.ts";
 import { ledgerInstant, readLedgerText } from "../spool/ledger-read.ts";
 
@@ -93,13 +96,39 @@ const writeRefusals = async (home: string, refusals: LossRefusals): Promise<void
 
 const later = (left: string, right: string): string => (right > left ? right : left);
 
+/**
+ * ONE WRITER AT A TIME (review batch 2, M9). Both writes below read the marker,
+ * change it and write it back whole, and twelve hooks refused at once used to
+ * leave a count of 1, once 2: every writer read the marker before any wrote
+ * it. Under the marker's own lock they take turns — with the state lock's
+ * patience, enough for a dozen at once — and a lock that stays busy past it
+ * still writes, unlocked, as before: a count that may lose an increment, never
+ * a refusal with no trace.
+ */
+const underRefusalsLock = async (home: string, write: () => Promise<void>): Promise<void> => {
+  const isWritten = await withLock(
+    `${lossRefusalsPath(home)}.lock`,
+    false,
+    async () => {
+      await write();
+      return true;
+    },
+    SESSION_STATE_LOCK_RETRIES,
+  );
+  if (!isWritten) {
+    await write();
+  }
+};
+
 /** The append that filled the ledger: the instant detail stopped, once. */
 export const markLossLedgerFull = async (home: string, now: Date): Promise<void> => {
-  if ((await readLossRefusals(home)) !== null) {
-    return;
-  }
-  const at = now.toISOString();
-  await writeRefusals(home, { fullSince: at, newestAt: at, refused: {} });
+  await underRefusalsLock(home, async () => {
+    if ((await readLossRefusals(home)) !== null) {
+      return;
+    }
+    const at = now.toISOString();
+    await writeRefusals(home, { fullSince: at, newestAt: at, refused: {} });
+  });
 };
 
 /** One refused append: counted per kind, dated, charged by the reader to every repo. */
@@ -109,11 +138,13 @@ export const recordRefusedLoss = async (
   count: number,
   now: Date,
 ): Promise<void> => {
-  const prior = await readLossRefusals(home);
-  const at = now.toISOString();
-  await writeRefusals(home, {
-    fullSince: prior?.fullSince ?? at,
-    newestAt: prior === null ? at : later(prior.newestAt, at),
-    refused: addCount(prior?.refused ?? {}, kind, count),
+  await underRefusalsLock(home, async () => {
+    const prior = await readLossRefusals(home);
+    const at = now.toISOString();
+    await writeRefusals(home, {
+      fullSince: prior?.fullSince ?? at,
+      newestAt: prior === null ? at : later(prior.newestAt, at),
+      refused: addCount(prior?.refused ?? {}, kind, count),
+    });
   });
 };

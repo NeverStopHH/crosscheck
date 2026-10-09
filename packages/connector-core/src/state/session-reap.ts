@@ -34,6 +34,7 @@ import { writeEndMarker } from "../spool/end-marker.ts";
 import { stampReleased } from "../spool/release.ts";
 import { lastWorkContextRecords } from "../spool/work-context-ack.ts";
 import { recordCaptureLoss } from "./loss-ledger.ts";
+import { recordRestOmission } from "./rest-omissions.ts";
 import { listSessionStateFiles, sessionSilentForMs } from "./session-scan.ts";
 import { lifeRungOf } from "./session-lineage.ts";
 import { crosscheckSessionIdFor, SessionStateSchema, updateSessionState } from "./session-state.ts";
@@ -151,14 +152,18 @@ const REAPED_REST_DETAIL = "reap";
 const bookOwedRests = async (home: string, state: SessionState, now: Date): Promise<void> => {
   const owed = state.tripwireCheckedFiles ?? [];
   const count = owed.length + (state.tripwireRestsDropped ?? 0);
+  if (count === 0) {
+    return;
+  }
   const newest = Math.max(...owed.map((check) => Date.parse(check.at)).filter((ms) => !Number.isNaN(ms)));
-  await recordCaptureLoss(home, {
-    kind: "rest_unchecked",
-    count,
-    key: repoKey(state.hubUrl, state.repoId),
-    detail: REAPED_REST_DETAIL,
-    now: Number.isFinite(newest) && newest <= now.getTime() ? new Date(newest) : now,
-  });
+  const at = Number.isFinite(newest) && newest <= now.getTime() ? new Date(newest) : now;
+  const key = repoKey(state.hubUrl, state.repoId);
+  await recordCaptureLoss(home, { kind: "rest_unchecked", count, key, detail: REAPED_REST_DETAIL, now: at });
+  // ...and in the local "the person was not told" ledger, as every hook that
+  // books one does (review batch 2, L2): the two ledgers agree by construction.
+  // Dated when it is booked, like a hook's: a corpse is reaped only once older
+  // than that ledger's whole window, so its rest's own date would never count.
+  await recordRestOmission(home, { key, reason: "rest_unchecked", now });
 };
 
 export interface StateReapOptions {
@@ -221,12 +226,16 @@ export const reapStaleSessionStates = async (
     await stampReleased(home, key, slug, now);
     await writeDownReapedLife(home, key, slug, parsed.data, now);
     try {
-      await bookOwedRests(home, parsed.data, now);
       await rm(file.path, { force: true });
       reaped += 1;
     } catch {
       // A file that will not go stays; the next SessionStart tries again.
+      continue;
     }
+    // Booked once the state is gone, never before (review batch 2, L3): a
+    // state that would not go was booked again on every run — three bookings
+    // for one rest — and the run that finally removes it books it once.
+    await bookOwedRests(home, parsed.data, now);
   }
   return reaped;
 };

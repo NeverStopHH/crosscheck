@@ -40,10 +40,12 @@ import { z } from "zod";
 import {
   FOREIGN_HUB_WINDOW_DAYS,
   MAX_FOREIGN_HUB_LEDGER_BYTES,
+  SESSION_STATE_LOCK_RETRIES,
 } from "../constants.ts";
 import type { ForeignHub } from "../config/key-binding.ts";
 import { hubOrigin } from "../config/origin.ts";
 import { readTextOrNull, writePrivateFile } from "../config/paths.ts";
+import { withLock } from "../spool/lock.ts";
 
 const LEDGER_FILE = "foreign-hub.jsonl";
 
@@ -188,35 +190,74 @@ const fitToCap = (refusals: readonly RefusalLine[], floorAt: number | null, now:
   return [...floor, ...kept];
 };
 
+/**
+ * The ledger as it should read with `refusal` counted, or null when it
+ * already does — counted, and nothing aged out.
+ */
+const ledgerWith = (text: string, refusal: ForeignHubRefusal): string | null => {
+  const now = refusal.now.getTime();
+  const since = now - FOREIGN_HUB_WINDOW_DAYS * MS_PER_DAY;
+  const lines = parseLedger(text);
+  const inWindow = lines.filter((line) => line.at >= since);
+  const wanted: RefusalLine = {
+    kind: "refusal",
+    at: now,
+    repoId: refusal.repoId,
+    hub: refusal.foreignHub.hubOrigin,
+    key: refusal.foreignHub.keyOrigin,
+    surface: SURFACE_PATTERN.test(refusal.surface) ? refusal.surface : OTHER_SURFACE,
+    session: sessionDigest(refusal.sessionKey),
+  };
+  const isCounted = inWindow.some((line) => isSameRefusal(line, wanted));
+  if (isCounted && inWindow.length === lines.length) {
+    return null;
+  }
+  const refusals = [...inWindow, ...(isCounted ? [] : [wanted])].filter(
+    (line): line is RefusalLine => line.kind === "refusal",
+  );
+  const floors = inWindow.filter((line): line is FloorLine => line.kind === "floor");
+  const floorAt = floors.length === 0 ? null : Math.max(...floors.map((line) => line.at));
+  return fitToCap(refusals, floorAt, now).map(serialize).join("");
+};
+
+/** Reads the ledger and writes it back with `refusal` counted, when it is not yet. */
+const rewriteWith = async (path: string, refusal: ForeignHubRefusal): Promise<void> => {
+  const next = ledgerWith((await readTextOrNull(path)) ?? "", refusal);
+  if (next !== null) {
+    await writePrivateFile(path, next);
+  }
+};
+
+/**
+ * ONE WRITER AT A TIME (review batch 2, M9): the rewrite reads the ledger and
+ * writes it back whole, and twelve refused sessions starting at once used to
+ * leave ONE line — every writer read before any wrote. The common answer, a
+ * session already counted, still costs one read and no lock; a write takes
+ * the ledger's own lock, with the state lock's patience, and decides again on
+ * what it reads there. A lock that stays busy past it writes unlocked, as
+ * before: one count lost at worst, never the file.
+ */
 export const recordForeignHubRefusal = async (
   home: string,
   refusal: ForeignHubRefusal,
 ): Promise<void> => {
   try {
     const path = foreignHubLedgerPath(home);
-    const now = refusal.now.getTime();
-    const since = now - FOREIGN_HUB_WINDOW_DAYS * MS_PER_DAY;
-    const lines = parseLedger((await readTextOrNull(path)) ?? "");
-    const inWindow = lines.filter((line) => line.at >= since);
-    const wanted: RefusalLine = {
-      kind: "refusal",
-      at: now,
-      repoId: refusal.repoId,
-      hub: refusal.foreignHub.hubOrigin,
-      key: refusal.foreignHub.keyOrigin,
-      surface: SURFACE_PATTERN.test(refusal.surface) ? refusal.surface : OTHER_SURFACE,
-      session: sessionDigest(refusal.sessionKey),
-    };
-    const isCounted = inWindow.some((line) => isSameRefusal(line, wanted));
-    if (isCounted && inWindow.length === lines.length) {
+    if (ledgerWith((await readTextOrNull(path)) ?? "", refusal) === null) {
       return;
     }
-    const refusals = [...inWindow, ...(isCounted ? [] : [wanted])].filter(
-      (line): line is RefusalLine => line.kind === "refusal",
+    const isWritten = await withLock(
+      `${path}.lock`,
+      false,
+      async () => {
+        await rewriteWith(path, refusal);
+        return true;
+      },
+      SESSION_STATE_LOCK_RETRIES,
     );
-    const floors = inWindow.filter((line): line is FloorLine => line.kind === "floor");
-    const floorAt = floors.length === 0 ? null : Math.max(...floors.map((line) => line.at));
-    await writePrivateFile(path, fitToCap(refusals, floorAt, now).map(serialize).join(""));
+    if (!isWritten) {
+      await rewriteWith(path, refusal);
+    }
   } catch {
     // Fail open: the count is for doctor and status, never a failure source.
   }

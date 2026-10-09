@@ -1,5 +1,5 @@
 import { readdir, readlink, realpath, stat } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { z } from "zod";
 import type { SessionEventRetentionMode } from "@crosscheck/schema";
@@ -70,6 +70,7 @@ import {
   repoKey,
   spoolDir,
   spoolFlushLockPath,
+  userHomeOf,
 } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import {
@@ -379,7 +380,7 @@ const BUNFIG_NAMES = ["bunfig.toml", ".bunfig.toml"] as const;
 const DEBUG_LOG_LEVEL_PATTERN = /^\s*logLevel\s*=\s*["'](debug|verbose)["']/m;
 
 const bunfigCandidates = (env: Env, cwd: string, repoRoot: string | null): readonly string[] => {
-  const homeDir = env["HOME"] ?? homedir();
+  const homeDir = userHomeOf(env);
   const roots = [cwd, ...(repoRoot === null ? [] : [repoRoot]), homeDir];
   const xdg = env["XDG_CONFIG_HOME"];
   const paths = [

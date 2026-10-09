@@ -1,6 +1,5 @@
 import { UNKNOWN_DEVELOPER_ID } from "@crosscheck/connector-core/capture/records.ts";
 import type { Producer } from "@crosscheck/connector-core/capture/records.ts";
-import { homedir } from "node:os";
 
 import {
   extractBashCommand,
@@ -30,7 +29,7 @@ import {
   withShellRun,
 } from "@crosscheck/connector-core/state/session-state.ts";
 import { commonDirOfRoot, rootsNamedByCommand } from "@crosscheck/connector-core/git/shell-roots.ts";
-import { realpathBestEffort } from "@crosscheck/connector-core/config/paths.ts";
+import { realpathBestEffort, userHomeOf } from "@crosscheck/connector-core/config/paths.ts";
 import { toolWindowKey } from "@crosscheck/connector-core/state/tool-window-key.ts";
 import { seqAt } from "@crosscheck/connector-core/capture/seq.ts";
 import { MAX_TARGETS_PER_INVOCATION } from "@crosscheck/connector-core/constants.ts";
@@ -135,7 +134,7 @@ const shellRootsOf = async (ctx: HookContext): Promise<readonly string[]> => {
   const named =
     command === null || commonDir === null
       ? []
-      : await rootsNamedByCommand(command, ctx.payload.cwd ?? cwdRoot, homedir(), commonDir);
+      : await rootsNamedByCommand(command, ctx.payload.cwd ?? cwdRoot, userHomeOf(ctx.env), commonDir);
   return [...new Set([cwdRoot, ...named])];
 };
 
