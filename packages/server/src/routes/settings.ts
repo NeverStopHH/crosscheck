@@ -14,7 +14,7 @@ import { fail, ok } from "../http/envelope.ts";
 import { readJsonBody, formatIssues } from "../http/request.ts";
 import { developerAuth } from "../middleware/auth.ts";
 import { getDeveloperSettings, setPresenceOptOut } from "../services/developer-settings.ts";
-import { readPendingDrafts } from "../services/human-drafts.ts";
+import { countPendingForBanner } from "../services/human-drafts.ts";
 import {
   DRAFT_REFUSAL_SENTENCE,
   draftMuteChange,
@@ -99,16 +99,17 @@ export const settingsRoutes = (deps: AppDeps): Hono<AppEnv> => {
 
   router.get("/", async (c) => {
     const developerId = c.get("developer").id;
+    // A banner's count: liveness reused while the pending set is unchanged (round-1 M8).
     const [settings, pending] = await Promise.all([
       getDeveloperSettings(deps.db, developerId, deps.now()),
-      readPendingDrafts(deps, developerId),
+      countPendingForBanner(deps, developerId),
     ]);
     return ok(c, {
       ...settings,
       // human provenance §8: a key's request to show the caller again waits for their passkey.
-      presenceOnPending: pending.some((draft) => draft.kind === "presence_on"),
+      presenceOnPending: (pending.presence_on ?? 0) > 0,
       // How many of the caller's drafts wait at /ui/confirm.
-      pendingDrafts: pending.length,
+      pendingDrafts: Object.values(pending).reduce((total, count) => total + count, 0),
     });
   });
 

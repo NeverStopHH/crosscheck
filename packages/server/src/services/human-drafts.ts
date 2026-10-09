@@ -174,9 +174,16 @@ export const readPendingDrafts = async (
   options: PendingOptions = {},
 ): Promise<readonly DraftRow[]> => {
   const rows = await readPendingRows(deps.db, developerId, options);
-  const scoped = options.scope === undefined ? rows : rows.filter((draft) => options.scope?.includes(draft.kind));
+  return keepLive(deps, options.scope === undefined ? rows : rows.filter((draft) => options.scope?.includes(draft.kind)));
+};
+
+/** The drafts their kinds still call live, in order — one liveness check each. */
+const keepLive = async (
+  deps: { readonly db: DbExecutor; readonly now: Clock },
+  drafts: readonly DraftRow[],
+): Promise<readonly DraftRow[]> => {
   const kept: DraftRow[] = [];
-  for (const draft of scoped) {
+  for (const draft of drafts) {
     if (await staysPending(deps, draft)) {
       kept.push(draft);
     }
@@ -311,14 +318,55 @@ export const writeDraft = (deps: Deps, input: WriteDraftInput): Promise<WriteDra
     return { id, version, repeated: false, waiting: true, discardedByPerson: false };
   });
 
+export type PendingCounts = Readonly<Partial<Record<DraftKind, number>>>;
+
+const countByKind = (drafts: readonly DraftRow[]): PendingCounts =>
+  drafts.reduce<Partial<Record<DraftKind, number>>>(
+    (counts, draft) => ({ ...counts, [draft.kind]: (counts[draft.kind] ?? 0) + 1 }),
+    {},
+  );
+
 /** How many drafts await this person, by kind — the count `crosscheck confirm` and doctor print. */
 export const countPendingByKind = async (
   deps: { readonly db: DbExecutor; readonly now: Clock },
   developerId: string,
-): Promise<Readonly<Partial<Record<DraftKind, number>>>> => {
-  const counts: Partial<Record<DraftKind, number>> = {};
-  for (const draft of await readPendingDrafts(deps, developerId)) {
-    counts[draft.kind] = (counts[draft.kind] ?? 0) + 1;
+): Promise<PendingCounts> => countByKind(await readPendingDrafts(deps, developerId));
+
+/**
+ * HOW LONG A BANNER REUSES WHAT LIVENESS SAID (round-1 review M8, round-2
+ * R2-L4). The settings read and the self-refreshing feed both count the
+ * waiting drafts; each count ran every pending draft's liveness check under
+ * PGlite's one connection. While a person's undecided drafts are unchanged —
+ * same ids, versions and contents — a banner reuses the last answer this
+ * long. A new, edited or decided draft changes the set and is counted at
+ * once. The confirm page and the confirmation always check afresh.
+ */
+const BANNER_LIVENESS_REUSE_MS = 30_000;
+
+interface BannerCount {
+  readonly fingerprint: string;
+  readonly checkedAtMs: number;
+  readonly counts: PendingCounts;
+}
+
+/** Per database, per developer: the last banner count. Never read for anything but a banner. */
+const bannerCounts = new WeakMap<DbExecutor, Map<string, BannerCount>>();
+
+/** The waiting drafts by kind, for a banner: liveness reused while the undecided set is unchanged. */
+export const countPendingForBanner = async (
+  deps: { readonly db: DbExecutor; readonly now: Clock },
+  developerId: string,
+): Promise<PendingCounts> => {
+  const undecided = await readPendingRows(deps.db, developerId);
+  const fingerprint = pendingFingerprint(undecided);
+  const nowMs = deps.now().getTime();
+  const perDeveloper = bannerCounts.get(deps.db) ?? new Map<string, BannerCount>();
+  bannerCounts.set(deps.db, perDeveloper);
+  const last = perDeveloper.get(developerId);
+  if (last !== undefined && last.fingerprint === fingerprint && nowMs - last.checkedAtMs < BANNER_LIVENESS_REUSE_MS) {
+    return last.counts;
   }
+  const counts = countByKind(await keepLive(deps, undecided));
+  perDeveloper.set(developerId, { fingerprint, checkedAtMs: nowMs, counts });
   return counts;
 };

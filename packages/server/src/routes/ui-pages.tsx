@@ -34,7 +34,7 @@ import { forbidden, isPostedCsrfValid, notFoundPage, viewerChrome } from "../ui/
 import { ApprovalsPage } from "../ui/pages/approvals.tsx";
 import { FeedPage } from "../ui/pages/feed.tsx";
 import type { FeedEntry, PresenceReenableBanner, WaitingDrafts } from "../ui/pages/feed.tsx";
-import { countPendingByKind } from "../services/human-drafts.ts";
+import { countPendingForBanner } from "../services/human-drafts.ts";
 import { getDeveloperSettings, presenceReenableNotice } from "../services/developer-settings.ts";
 import { MembersPage } from "../ui/pages/members.tsx";
 import { RefereePage } from "../ui/pages/referee.tsx";
@@ -141,9 +141,13 @@ const presenceReenableBannerFor = async (
   return { at, isOptedOutNow: settings.presenceOptOut };
 };
 
-/** The viewer's own drafts waiting for their passkey, for the feed (review M7, spec §8). */
+/**
+ * The viewer's own drafts waiting for their passkey, for the feed (review M7,
+ * spec §8). The feed refreshes itself, so its count reuses liveness while the
+ * pending set is unchanged (round-1 M8, round-2 R2-L4).
+ */
 const waitingDraftsFor = async (deps: AppDeps, developerId: string): Promise<WaitingDrafts> => {
-  const counts = await countPendingByKind(deps, developerId);
+  const counts = await countPendingForBanner(deps, developerId);
   return {
     total: Object.values(counts).reduce((sum, n) => sum + n, 0),
     presenceOn: (counts.presence_on ?? 0) > 0,
