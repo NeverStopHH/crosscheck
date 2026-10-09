@@ -28,7 +28,7 @@
  * reads as WITHHELD_TITLE on every surface. Done here, on the hub, so a
  * connector too old to know about it cannot print the branch anyway.
  */
-import { and, eq, ne, sql } from "drizzle-orm";
+import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import {
@@ -71,6 +71,29 @@ export const locationHiddenFrom = async (
     return new Map();
   }
   return branchesOf(db, rows.map((row) => row.id));
+};
+
+/**
+ * The same set, among `ownerIds` only and WITHOUT their branches: for rows
+ * that carry no title, which is the one field the branches judge
+ * (projectTitle). A read beside another that already looked the branches up
+ * — the prompt's answers beside its hint candidates — does not look them up
+ * again (test/live-location-cost.test.ts).
+ */
+export const locationHiddenAmong = async (
+  db: Db,
+  viewerDeveloperId: string,
+  ownerIds: readonly string[],
+): Promise<HiddenLocations> => {
+  const others = [...new Set(ownerIds)].filter((id) => id !== viewerDeveloperId);
+  if (others.length === 0) {
+    return new Map();
+  }
+  const rows = await db
+    .select({ id: developers.id })
+    .from(developers)
+    .where(and(eq(developers.presenceOptOut, true), inArray(developers.id, others)));
+  return new Map(rows.map((row) => [row.id, []]));
 };
 
 /**

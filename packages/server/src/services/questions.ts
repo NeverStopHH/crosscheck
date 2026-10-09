@@ -62,7 +62,7 @@ import { ingestClaimWithin, prepareClaimVector } from "./record-handlers.ts";
 import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
 import type { EvidenceAxes } from "@crosscheck/schema";
 import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
-import { locationHiddenFrom, projectRow } from "./live-location.ts";
+import { locationHiddenAmong, locationHiddenFrom, projectRow } from "./live-location.ts";
 import type { Db, DbExecutor } from "../db/client.ts";
 import type { Embedder } from "./embedder.ts";
 import type { Clock } from "../types.ts";
@@ -879,7 +879,7 @@ export const listUndeliveredAnswers = async (
   // own creation, which every route publishes, and her part of the row is
   // projected below.
   const answeredSeen = sql`coalesce((case when ${visiblePresenceCondition(developerId, questionAnswers.answererDeveloperId)} then ${questionAnswers.createdAt} end), ${claims.createdAt})`;
-  const [rows, hidden] = await Promise.all([deps.db
+  const rows = await deps.db
     .select({
       questionId: questionAnswers.questionId,
       questionBody: questions.body,
@@ -909,7 +909,10 @@ export const listUndeliveredAnswers = async (
       ),
     )
     .orderBy(sql`${answeredSeen} DESC`, asc(questionAnswers.claimId))
-    .limit(MAX_QUESTION_ANSWERS_LISTED), locationHiddenFrom(deps.db, developerId)]);
+    .limit(MAX_QUESTION_ANSWERS_LISTED);
+  // The answerers among them whose location this asker may not be told: an
+  // answer row carries no title, so their branches are never read for it.
+  const hidden = await locationHiddenAmong(deps.db, developerId, rows.map((row) => row.answererDeveloperId));
   // An answer IS a declared claim, and it arrives unsolicited in a briefing
   // carrying a confidence — so the evidence labels travel with it for the same
   // reason they travel with a hint (08 §3.6, EV-5). One batched read for the
