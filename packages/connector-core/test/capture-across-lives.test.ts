@@ -231,10 +231,31 @@ describe("a compact or resume re-fire keeps the window the turn's Stop sweeps (H
       const world = await worldFor(label);
       const firstStart = isoAgo(10 * MINUTE_MS);
       const touched = isoAgo(8 * MINUTE_MS);
+      const life = stateFor(world, firstStart, label);
       const before: SessionStateInput = {
-        ...stateFor(world, firstStart, label),
+        ...life,
         knownWorktreeRoots: [knownRoot(world.sibling, touched, touched)],
         shellSweepSince: touched,
+        // ...and the topic the life opened in the sibling, with the count of
+        // touches its topic cap turned away (the review's L1 names both).
+        topicContexts: [
+          {
+            key: "~t1",
+            sessionId: life.crosscheckSessionId,
+            workContextId: `${life.workContextId}~t1`,
+            branch: "feat/sibling",
+            branches: [],
+            head: null,
+            title: "feat/sibling @ api",
+            status: "implementing",
+            baseCommit: null,
+            root: world.sibling,
+            registeredAt: touched,
+            lastTouchedAt: touched,
+            ackedStatus: null,
+          },
+        ],
+        topicOverflowCount: 3,
       };
       await writeSessionState(world.home, before);
       await bashWrote(world.sibling, "src/by-bash.ts", 7);
@@ -252,6 +273,8 @@ describe("a compact or resume re-fire keeps the window the turn's Stop sweeps (H
       expect(state.startedAt).toBe(firstStart);
       expect(state.knownWorktreeRoots.map((entry) => entry.root)).toEqual([world.sibling]);
       expect(state.shellSweepSince).toBe(touched);
+      expect(state.topicContexts.map((topic) => topic.key)).toEqual(["~t1"]);
+      expect(state.topicOverflowCount).toBe(3);
       expect(await laneFiles(world, state, SUBAGENT_STOP)).toContain("src/by-bash.ts");
     },
     BUSY_LOCK_TEST_TIMEOUT_MS,
