@@ -50,6 +50,8 @@
 import { dirname, resolve, sep } from "node:path";
 import { stat } from "node:fs/promises";
 
+import { foreignHubAt } from "./config.ts";
+import type { ForeignHub } from "./key-binding.ts";
 import type { Env } from "./paths.ts";
 import { readRepoConfig } from "./repo-config.ts";
 
@@ -183,19 +185,54 @@ export const mayBeConnectedRepo = async (
   cwd: string,
   dirs: readonly string[],
   files: readonly string[],
-): Promise<boolean> => {
+): Promise<boolean> => (await connectedRepoOwnership(env, cwd, dirs, files)).kind === "connected";
+
+/**
+ * Which kind of repo the candidates sit in, by the same no-git walk: one
+ * connected to the developer's own hub, one whose config names ANOTHER hub
+ * than the key's (config/key-binding.ts), or none.
+ *
+ * A REPO CONNECTED TO ANOTHER HUB IS NOT CONNECTED (review batch 2, M2): no
+ * run of a hook there captures anything — the key stays home — so a budget
+ * cut there loses nothing, and booking it unkeyed charged a `hook_timed_out`
+ * and a briefing omission to every repo of the machine, which then travelled
+ * to the developer's own hub as `telemetry_lost`. A bait repo with a slow git
+ * set it off on purpose. The answer carries the foreign hub so the session
+ * can still be told why nothing is reported from here. A candidate connected
+ * here wins over a foreign one, as the hook's own resolution has it.
+ */
+export type RepoOwnership =
+  | { readonly kind: "connected" }
+  | { readonly kind: "foreign_hub"; readonly foreignHub: ForeignHub }
+  | { readonly kind: "none" };
+
+const ownershipAt = async (env: Env, root: string): Promise<RepoOwnership> => {
+  if (env["CROSSCHECK_HUB_URL"] === undefined && (await readRepoConfig(root)) === null) {
+    return { kind: "none" };
+  }
+  // Read-only: a cut hook writes nothing it was not asked to (config.ts foreignHubAt).
+  const foreignHub = await foreignHubAt(env, root);
+  return foreignHub === null ? { kind: "connected" } : { kind: "foreign_hub", foreignHub };
+};
+
+export const connectedRepoOwnership = async (
+  env: Env,
+  cwd: string,
+  dirs: readonly string[],
+  files: readonly string[],
+): Promise<RepoOwnership> => {
   const starts = [
     ...dirs.map((dir) => resolve(cwd, dir)),
     ...files.map((file) => dirname(resolve(cwd, file))),
   ].slice(0, CONNECTED_ROOT_MAX_CANDIDATE_PATHS + 1);
+  let foreign: RepoOwnership = { kind: "none" };
   for (const start of starts) {
     const root = await repoBoundaryAbove(start);
-    if (
-      root !== null &&
-      (env["CROSSCHECK_HUB_URL"] !== undefined || (await readRepoConfig(root)) !== null)
-    ) {
-      return true;
+    const owned: RepoOwnership = root === null ? foreign : await ownershipAt(env, root);
+    if (owned.kind === "connected") {
+      return owned;
     }
+    foreign = owned.kind === "foreign_hub" && foreign.kind === "none" ? owned : foreign;
   }
-  return false;
+  return foreign;
 };

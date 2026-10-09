@@ -245,6 +245,25 @@ export const loadConfig = async (
 };
 
 /**
+ * The hub a repo's hooks would be refused for, decided as `loadConfig` decides
+ * it — the same hub precedence, the same key binding — but READ-ONLY: a legacy
+ * login is bound in memory and never written back. For the one caller that
+ * asks on a hook the budget already abandoned, about a repo it never resolved
+ * (config/connected-repo.ts connectedRepoOwnership, review batch 2, M2): that
+ * path writes nothing it was not asked to. Null when the hub is the key's own,
+ * or when there is no hub or no key to compare.
+ */
+export const foreignHubAt = async (env: Env, repoRoot: string): Promise<ForeignHub | null> => {
+  const stored = await readStoredConfig(crosscheckHome(env));
+  const hubCandidate = hubCandidateOf(env, await readRepoConfig(repoRoot), stored);
+  const binding = resolveKeyBinding(env, stored);
+  const hubUrl = hubCandidate === null ? null : normalizeHubUrl(hubCandidate.url);
+  return hubCandidate === null || binding === null || hubUrl === null
+    ? null
+    : foreignHubOf(hubUrl, hubCandidate.source, binding);
+};
+
+/**
  * `loadConfig` for the surfaces that REPORT — hooks, capture engines, the
  * MCP tools (finding #11). Under a user-level ("global") install the wiring
  * fires in every directory on the machine, so the §2.1 trust rule must hold

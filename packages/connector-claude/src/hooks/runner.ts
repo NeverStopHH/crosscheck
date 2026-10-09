@@ -26,6 +26,7 @@ import { foreignHubAgentLine } from "@crosscheck/connector-core/config/key-bindi
 import type { ForeignHub } from "@crosscheck/connector-core/config/key-binding.ts";
 import { recordForeignHubRefusal } from "@crosscheck/connector-core/state/foreign-hub.ts";
 import {
+  connectedRepoOwnership,
   findConnectedRepoRootForPaths,
   mayBeConnectedRepo,
 } from "@crosscheck/connector-core/config/connected-repo.ts";
@@ -442,10 +443,27 @@ const skippedBriefing = async (
   }
   const owner = resolvedOwner ?? (await unresolvedOwner(stdin, env));
   if (owner === null) {
-    return null;
+    // A REPO OF ANOTHER HUB KEEPS ITS WARNING (review batch 2, M2): the cut
+    // hook never reached the refusal that says so, and "the hub or git did not
+    // answer" would send the person after the wrong cause. Nothing is booked:
+    // nothing is captured there, so nothing was lost. The refusal itself is
+    // counted by the session's first hook the budget does not cut — once per
+    // session (state/foreign-hub.ts) — since this one never learned the repo.
+    const foreign = resolvedOwner === null ? await unresolvedForeignHub(stdin, env) : null;
+    return foreign === null ? null : output(foreignHubAgentLine(foreign));
   }
   await recordBriefingOmission(owner.home, { key: owner.key, reason, now: new Date() });
   return output(briefingSkippedLine(reason));
+};
+
+/** The hub a never-resolved hook's repo names when it is not the key's, read without git. */
+const unresolvedForeignHub = async (stdin: string, env: Env): Promise<ForeignHub | null> => {
+  const payload = parseHookPayload(stdin);
+  if (payload === null) {
+    return null;
+  }
+  const owned = await connectedRepoOwnership(env, payload.cwd, [payload.cwd], extractFilePaths(payload.tool_input));
+  return owned.kind === "foreign_hub" ? owned.foreignHub : null;
 };
 
 /**
