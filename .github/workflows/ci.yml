@@ -168,7 +168,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 3585
+    # PRINTS: 3598
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -346,12 +346,12 @@ jobs:
     # PRINTS: flows/claim-revalidation.ts 2
     # PRINTS: flows/claim-surface.ts 1
     # PRINTS: flows/draft-nudge.ts 13
-    # PRINTS: flows/end-session.ts 15
+    # PRINTS: flows/end-session.ts 16
     # PRINTS: flows/git-lane.ts 16
-    # PRINTS: flows/heal-session.ts 22
+    # PRINTS: flows/heal-session.ts 23
     # PRINTS: flows/heartbeat.ts 3
     # PRINTS: flows/hint.ts 38
-    # PRINTS: flows/register-session.ts 33
+    # PRINTS: flows/register-session.ts 38
     # PRINTS: flows/solved-hint.ts 4
     # PRINTS: flows/topic-base-word.ts 1
     # PRINTS: flows/topic-contexts.ts 13
@@ -401,7 +401,7 @@ jobs:
     # PRINTS: mcp/tools/answer-question.ts 1
     # PRINTS: mcp/tools/ask-teammate.ts 1
     # PRINTS: mcp/tools/get-diagnosis.ts 2
-    # PRINTS: mcp/tools/intent-write.ts 15
+    # PRINTS: mcp/tools/intent-write.ts 16
     # PRINTS: mcp/tools/mark-hint-outcome.ts 12
     # PRINTS: mcp/tools/publish-claim.ts 2
     # PRINTS: mcp/tools/review-draft.ts 2
@@ -444,8 +444,8 @@ jobs:
     # PRINTS: state/omission-ledger.ts 3
     # PRINTS: state/presence-cache.ts 1
     # PRINTS: state/rest-omissions.ts 1
-    # PRINTS: state/seq-cost.ts 8
-    # PRINTS: state/session-lineage.ts 3
+    # PRINTS: state/seq-cost.ts 9
+    # PRINTS: state/session-lineage.ts 4
     # PRINTS: state/session-reap.ts 11
     # PRINTS: state/session-scan.ts 2
     # PRINTS: state/session-state.ts 71
@@ -538,7 +538,7 @@ jobs:
     # PRINTS: packages/server/src/routes/pilot-marks.ts 2
     # PRINTS: packages/server/src/routes/pins.ts 3
     # PRINTS: packages/server/src/routes/search.ts 1
-    # PRINTS: packages/server/src/routes/sessions.ts 2
+    # PRINTS: packages/server/src/routes/sessions.ts 3
     # PRINTS: packages/server/src/routes/settings.ts 1
     # PRINTS: packages/server/src/routes/solved-matches.ts 1
     # PRINTS: packages/server/src/routes/suspect.ts 5
@@ -614,7 +614,7 @@ jobs:
     # PRINTS: packages/server/src/services/session-events.ts 9
     # PRINTS: packages/server/src/services/session-order.ts 9
     # PRINTS: packages/server/src/services/session-window.ts 1
-    # PRINTS: packages/server/src/services/sessions.ts 25
+    # PRINTS: packages/server/src/services/sessions.ts 27
     # PRINTS: packages/server/src/services/similarity-gate.ts 4
     # PRINTS: packages/server/src/services/skeleton-identity.ts 9
     # PRINTS: packages/server/src/services/solved-counts.ts 1
@@ -731,7 +731,7 @@ jobs:
     # PRINTS: drops.ts 14
     # PRINTS: embedding-backfill.ts 5
     # PRINTS: end-marker.ts 2
-    # PRINTS: end-session.ts 15
+    # PRINTS: end-session.ts 16
     # PRINTS: engine.ts 31
     # PRINTS: english-stem.ts 4
     # PRINTS: entry.ts 1
@@ -775,7 +775,7 @@ jobs:
     # PRINTS: git.ts 10
     # PRINTS: harness-turn.ts 28
     # PRINTS: head-history.ts 5
-    # PRINTS: heal-session.ts 22
+    # PRINTS: heal-session.ts 23
     # PRINTS: heartbeat.ts 3
     # PRINTS: held-deliveries.ts 13
     # PRINTS: hint-deliveries.ts 6
@@ -802,7 +802,7 @@ jobs:
     # PRINTS: intent-budget.test.ts 1
     # PRINTS: intent-ledger-authority.test.ts 1
     # PRINTS: intent-ledger.ts 12
-    # PRINTS: intent-write.ts 15
+    # PRINTS: intent-write.ts 16
     # PRINTS: intent.ts 1
     # PRINTS: junit.ts 2
     # PRINTS: key-binding.ts 9
@@ -903,7 +903,7 @@ jobs:
     # PRINTS: referee.ts 4
     # PRINTS: refusal.ts 3
     # PRINTS: refused-lives.ts 7
-    # PRINTS: register-session.ts 33
+    # PRINTS: register-session.ts 38
     # PRINTS: reject-cause.ts 3
     # PRINTS: release-preflight.ts 5
     # PRINTS: release.ts 1
@@ -933,11 +933,11 @@ jobs:
     # PRINTS: search.ts 28
     # PRINTS: secret-scan.ts 1
     # PRINTS: select.ts 44
-    # PRINTS: seq-cost.ts 8
+    # PRINTS: seq-cost.ts 9
     # PRINTS: session-control.ts 9
     # PRINTS: session-end.ts 1
     # PRINTS: session-events.ts 9
-    # PRINTS: session-lineage.ts 3
+    # PRINTS: session-lineage.ts 4
     # PRINTS: session-order.ts 9
     # PRINTS: session-reap.ts 11
     # PRINTS: session-scan.ts 2
@@ -945,7 +945,7 @@ jobs:
     # PRINTS: session-state.ts 71
     # PRINTS: session-window.ts 1
     # PRINTS: session.ts 5
-    # PRINTS: sessions.ts 27
+    # PRINTS: sessions.ts 30
     # PRINTS: set-intent.ts 6
     # PRINTS: settings-merge.ts 7
     # PRINTS: settings.ts 1

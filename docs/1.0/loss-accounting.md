@@ -480,6 +480,11 @@ Residuals the invariants allow for, each counted, never silent:
   before the duplicate;
 - the ledger may over-count after a crash between a ledger append and the cursor write past it, the honest direction
   §4.3 already accepts;
+- the ledger may over-count after a reap killed between removing a spool's cursor and removing its data file
+  (`spool/reap.ts` removeSessionData). The cursor goes first on purpose: a crash there leaves lines with no cursor,
+  which re-send rather than skip, and skipping is the unrecoverable direction. The lines it re-exposes are delivered
+  ones too. A live or ended conversation re-sends them and hears `duplicate`, but a conversation whose life the hub
+  ended withholds them, and they are counted lost though the hub holds them (sleep seed 3851, residual `I1r`);
 - a record delivered into a session whose end only a sibling saw is filed past that end, because no flusher here was
   told;
 - an older connector's flush neither honours ownership nor reads the refused-lives note. It spends a live
@@ -539,6 +544,11 @@ seed.
 One class is a documented residual, I1u, and the sweep counts it without failing. It is a drop the disk refused to
 write down anywhere: the ledger line and its fallback marker both failed, so nothing on that disk can count it. Each
 `io` seed that found it is a fixed scenario asserting that this, and nothing else, happened.
+
+A second one, I1r, is the reap's removal window above. The checker allows it only for lines that were in the spool
+data file at the moment a step died between that file's cursor removal and its own removal (`sim-hooks.ts`
+logRemoval). Those lines must then have been withheld or expired, never re-sent. Every other record counted though the
+hub holds it is still I1. Sleep seed 3851 is its fixed scenario.
 
 **The simulation as a standing method** (review-2 round 9). Each review round found its bugs in a few thousand seeds
 across the generators, a few per thousand, so the sweep runs at three widths:
@@ -810,6 +820,19 @@ accepted for now, because nothing is silent:
 The fix is an installation discriminator in the life id: a per-machine id minted once into the crosscheck home and
 folded into `cc_<key>`. Two machines would then register two lives of one conversation, never one life twice.
 Alternatively, the hub could refuse a live re-register that comes from another installation.
+
+**A life resumed after every trace of it here aged out goes on from the hub's order** (all seed 31214, sleep seed
+4286). Two weeks away retire the life's end marker into the unclosed count, expire its spool and its lineage, and the
+resume then registers with no epoch of its own, onto a session the hub's reaper had ended. The register used to mint
+one, and the session's order split for good. The hub now answers a register that revives a reaped session with
+`held`: the epoch its `session.started` was filed under and the highest position in it. A register with no epoch of
+its own goes on from there, and one with an epoch of its own (a state, a reservation, a marker or a lineage) keeps
+it. A LIVE session is answered `held: null`, because another machine may be on the same life (M6 above), and its
+epoch handed to a second writer would turn that residual's split into two writers handing out one position. One
+residual is left, counted: a hub from before `held` leaves the field out, the register mints as it always did, and
+when the hub had started the session well before its answer (its `Date` header against `startedAt`) the state counts
+`epochUnconfirmed`. Doctor's event-sequence line prints those lives. The remedy is the hub's upgrade
+(`server/test/session-register-held.test.ts`, `connector-core/test/session-lives.test.ts`).
 
 **A SessionStart re-fire keeps the status set_intent writes beside it** (review-2 round 8, L1). The re-fire read
 the life's status before its register POST and published it after. A `set_intent` that ran in between was put back,

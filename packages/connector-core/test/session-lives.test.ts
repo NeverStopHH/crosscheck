@@ -10,14 +10,18 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { z } from "zod";
 
+import { isSeqStamp } from "@crosscheck/schema";
 import { createDb, createServer, readSessionCausalOrder } from "@crosscheck/server";
 import type { Db } from "@crosscheck/server";
+import { reapStaleSessions } from "../../server/src/services/sessions.ts";
 
 import { MAX_SPOOL_AGE_DAYS, MS_PER_DAY, MS_PER_SECOND, REFUSED_END_GRACE_MS, SECONDS_PER_MINUTE } from "../src/constants.ts";
 import {
   repoKey,
   sessionEpochPathForSlug,
+  sessionLineagePathForSlug,
   sessionSlug,
   sessionStatePath,
   spoolDataPath,
@@ -52,6 +56,7 @@ import {
 } from "../src/state/session-state.ts";
 import { readSessionSpool } from "../src/spool/files.ts";
 import { withLock } from "../src/spool/lock.ts";
+import { formatSeqCost, summarizeSeqCost } from "../src/state/seq-cost.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
 import { serveLoopback } from "./fixtures/loopback-serve.ts";
 
@@ -80,6 +85,14 @@ const COMMIT_POSITION = 7;
 const LOCK_PAST_PATIENCE_MS = 900;
 /** Past the switch's patience, inside the retirement's: the retirement gets the lock. */
 const LOCK_FREES_FOR_RETIREMENT_MS = 600;
+/**
+ * Booting the in-process hub (PGlite) outlasted bun's 5 s hook default on a
+ * loaded machine, and the mutation proof read the file as red unmutated; the
+ * boot is not what this file measures (claim-revalidation-pull.test.ts).
+ */
+const HUB_BOOT_TIMEOUT_MS = 60_000;
+/** A request timeout and a walk deadline no load runs out: the test itself holds the walk where it must be. */
+const PATIENT_MS = 60_000;
 
 let db: Db;
 let server: ReturnType<typeof Bun.serve>;
@@ -99,6 +112,10 @@ let recordsLate = false;
 let registerDelayMs = 0;
 /** One answer per register, in arrival order, ahead of the dials above: a race's script. */
 let registerScript: readonly ("slow" | "refused")[] = [];
+/** Registers answered as a hub from before `held` answers them: the field left out. */
+let registersAsOldHub = false;
+/** The next register, held at the proxy until the test lets it go: a walk caught in flight, at no particular speed. */
+let registerHold: { readonly reached: () => void; readonly released: Promise<void> } | null = null;
 const registerIds: string[] = [];
 const cleanups: string[] = [];
 
@@ -227,6 +244,14 @@ const isEnded = async (sessionId: string): Promise<boolean | undefined> =>
 
 const stateOf = (fx: Fixture) => readSessionState(fx.home, fx.hostSessionKey);
 
+/** Holds the next register at the proxy: `isReached` once it is there, `release` lets it go on. */
+const holdNextRegister = (): { readonly isReached: Promise<void>; readonly release: () => void } => {
+  const reached = Promise.withResolvers<void>();
+  const released = Promise.withResolvers<void>();
+  registerHold = { reached: reached.resolve, released: released.promise };
+  return { isReached: reached.promise, release: released.resolve };
+};
+
 /** The statuses of the work-context records waiting in the conversation's spool. */
 const spooledStatuses = async (fx: Fixture): Promise<readonly unknown[]> =>
   (await readSessionSpool(fx.home, fx.key, sessionSlug(fx.hostSessionKey))).lines
@@ -245,6 +270,12 @@ beforeAll(async () => {
       const body = request.method === "GET" ? undefined : await request.arrayBuffer();
       if (request.method === "POST" && pathname === "/api/sessions") {
         registerIds.push((JSON.parse(new TextDecoder().decode(body)) as { id: string }).id);
+        const hold = registerHold;
+        if (hold !== null) {
+          registerHold = null;
+          hold.reached();
+          await hold.released;
+        }
         const scripted = registerScript[0];
         registerScript = registerScript.slice(1);
         if (refuseRegisters || scripted === "refused") {
@@ -255,6 +286,13 @@ beforeAll(async () => {
         }
         if (registerDelayMs > 0) {
           await Bun.sleep(registerDelayMs);
+        }
+        if (registersAsOldHub) {
+          // A hub from before `held`: the same answer without the field.
+          const answer = await fetch(`${hubUrl}${pathname}${search}`, { method: request.method, headers: request.headers, body });
+          const parsed = (await answer.json()) as { data?: Record<string, unknown> };
+          const { held: _held, ...data } = parsed.data ?? {};
+          return Response.json({ ...parsed, ...(parsed.data === undefined ? {} : { data }) }, { status: answer.status });
         }
       }
       if (request.method === "POST" && pathname === "/api/records" && refuseRecords) {
@@ -283,7 +321,7 @@ beforeAll(async () => {
   const body = (await response.json()) as { data: { developer: { id: string }; apiKey: string } };
   apiKey = body.data.apiKey;
   developerId = body.data.developer.id;
-});
+}, HUB_BOOT_TIMEOUT_MS);
 
 afterAll(async () => {
   proxy.stop(true);
@@ -620,6 +658,48 @@ describe("a heal racing a SessionEnd (review finding 6)", () => {
     }
     expect(await targetsOf(resumed.workContextId)).toEqual(["src/after-resume.ts"]);
   });
+
+  test("writes the life it retires down as refused before the end, so a successor withholds its work context (sleep seed 52221)", async () => {
+    // Arrange: a life the hub ended; a heal's walk held at the proxy, with no
+    // timing, on the register of the next life
+    const fx = await fixture("heal-retires");
+    const life = await register(fx);
+    await flushAsHook(fx);
+    await endSession(fx.hub, life.crosscheckSessionId);
+    const patient = { ...fx.proxied, timeoutMs: PATIENT_MS };
+    const hold = holdNextRegister();
+    const walking = healerFor(fx, patient)({ sessionId: life.crosscheckSessionId, cause: "session_ended" }, Date.now() + PATIENT_MS);
+    await hold.isReached;
+
+    // Act: SessionEnd deletes the state while the register is out; the walk
+    // registers the next life, finds nobody to hand it to, and retires it;
+    // then that life's work context, as the SessionStart that moved the state
+    // to it spooled it, and a successor's drain
+    await endViaFlow(fx);
+    hold.release();
+    await walking;
+    const late = `${life.crosscheckSessionId}~r1`;
+    await appendRecords(
+      fx.home,
+      fx.key,
+      fx.hostSessionKey,
+      [
+        workContextRecord(
+          { workContextId: `wc_${late}`, sessionId: late, title: fallbackWorkContextTitle(BRANCH, REPO_ID), status: "analyzing" },
+          producerOf(late),
+          new Date(),
+        ),
+      ],
+      new Date(),
+    );
+    const successor = await register(fx, fx.hub, "acp-lives--heal-retires-successor");
+    await flushSpool(fx.hub, { sessionId: successor.crosscheckSessionId, developerId }, BUDGET_MS);
+
+    // Assert: retired, written down, and the work context withheld rather than filed into it
+    expect(await isEnded(late)).toBe(true);
+    expect(await readRefusedLives(fx.home, fx.key, new Date())).toContain(late);
+    expect((await readDropDetail(fx.home, fx.key)).byReason["withheld"]).toBe(1);
+  }, 2 * PATIENT_MS);
 });
 
 describe("a heal asked from a hook in another repo (review finding 7)", () => {
@@ -1368,6 +1448,26 @@ describe("a resume onto a life session-reap took over (review-2 round 9, M1+M2)"
     expect(await readSessionCausalOrder(db, life.crosscheckSessionId)).toMatchObject({ state: "usable", epochs: 1 });
   });
 
+  test("keeps the status set_intent left in that life's state, not SessionStart's (sleep seed 2687)", async () => {
+    // Arrange: a life whose state set_intent moved to blocked; its host went
+    // quiet, and another conversation's SessionStart reaped its state
+    const fx = await fixture("reaped-resume-status");
+    const life = await register(fx);
+    await flushAsHook(fx);
+    await updateSessionState(fx.home, fx.hostSessionKey, (fresh) => ({ ...fresh, workContextStatus: "blocked" }));
+    await reapStaleSessionStates(fx.home, AFTER_A_WEEK());
+
+    // Act: the conversation resumes — SessionStart registers it "analyzing" — and drains
+    const resumed = await register(fx);
+    await flushAsHook(fx);
+
+    // Assert: the life, on disk and on the hub, keeps the status its end marker kept
+    const onHub = await raw<{ status: string }>("select status from work_contexts where id = $1", [life.workContextId]);
+    expect(resumed.crosscheckSessionId).toBe(life.crosscheckSessionId);
+    expect((await stateOf(fx))?.workContextStatus).toBe("blocked");
+    expect(onHub.map((row) => row.status)).toEqual(["blocked"]);
+  });
+
   test("keeps the position a resumed life reached, its epoch reused from the life before it (probe E1)", async () => {
     // Arrange: life 0 ended; the resume's life took its epoch from the
     // lineage and positioned two edits; then its state was reaped
@@ -1413,6 +1513,159 @@ describe("a resume onto a life session-reap took over (review-2 round 9, M1+M2)"
     expect(resumed.crosscheckSessionId).toBe(life.crosscheckSessionId);
     expect((await stateOf(fx))?.seqEpoch).toBe(epoch);
     expect(await readSessionCausalOrder(db, life.crosscheckSessionId)).toMatchObject({ state: "usable", epochs: 1 });
+  });
+});
+
+/**
+ * A RESUME THIS MACHINE KEPT NOTHING OF (seeds 31214, 4286): the life's state,
+ * marker and lineage all aged out, and the hub still holds it. The register
+ * mints, and the hub's answer says which epoch it holds and how far.
+ */
+describe("a resume onto a life the hub holds and this machine kept nothing of", () => {
+  /** Every trace of the conversation on this machine gone, as after two weeks away. */
+  const forgetLocally = async (fx: Fixture): Promise<void> => {
+    await rm(sessionStatePath(fx.home, fx.hostSessionKey), { force: true });
+  };
+  const OLD_START_MS = 2 * MINUTE_MS * 60;
+  /** Past the hub's reap bound: the life went quiet, and the hub's reaper ended it. */
+  const REAPED_LATER_MS = 2 * MS_PER_DAY;
+  const reapOnHub = () =>
+    reapStaleSessions({ db, now: () => new Date(Date.now() + REAPED_LATER_MS) }, { developerId });
+
+  test("goes on from the epoch and the position the hub holds, in one epoch with no position twice", async () => {
+    // Arrange: a life with two positioned edits on the hub, which the hub then
+    // reaped; nothing of it here
+    const fx = await fixture("held-resume");
+    const life = await register(fx);
+    await captureTarget(fx, "src/one.ts");
+    await captureTarget(fx, "src/two.ts");
+    await flushAsHook(fx);
+    const epoch = (await stateOf(fx))?.seqEpoch;
+    await reapOnHub();
+    await forgetLocally(fx);
+
+    // Act: the conversation resumes, and edits
+    const resumed = await register(fx);
+    const adopted = await stateOf(fx);
+    await captureTarget(fx, "src/three.ts");
+    await flushAsHook(fx);
+
+    // Assert
+    const conflicts = await raw<{ id: string }>(
+      "select id from session_events where session_id = $1 and seq_reason = 'epoch_conflict'",
+      [life.crosscheckSessionId],
+    );
+    expect(resumed.crosscheckSessionId).toBe(life.crosscheckSessionId);
+    expect(adopted).toMatchObject({ seqEpoch: epoch, eventSeq: 2 });
+    expect(adopted?.epochUnconfirmed).toBeUndefined();
+    expect(conflicts).toEqual([]);
+    expect(await readSessionCausalOrder(db, life.crosscheckSessionId)).toMatchObject({ state: "usable", epochs: 1 });
+  });
+
+  test("against a hub too old to say, mints as before and counts the split it cannot avoid", async () => {
+    // Arrange: as above, through a proxy answering as a hub from before `held`;
+    // the life started two hours ago on the hub's clock
+    const fx = await fixture("held-old-hub");
+    const life = await register(fx, fx.proxied);
+    await flushAsHook(fx, fx.proxied);
+    const epoch = (await stateOf(fx))?.seqEpoch;
+    await raw("update agent_sessions set started_at = started_at - ($1::bigint * interval '1 millisecond') where id = $2", [
+      OLD_START_MS,
+      life.crosscheckSessionId,
+    ]);
+    await forgetLocally(fx);
+    registersAsOldHub = true;
+
+    // Act
+    const resumed = await register(fx, fx.proxied);
+    registersAsOldHub = false;
+    const state = await stateOf(fx);
+
+    // Assert: today's behaviour, and doctor's event-sequence line says so
+    expect(resumed.crosscheckSessionId).toBe(life.crosscheckSessionId);
+    expect(state?.seqEpoch).not.toBe(epoch);
+    expect(state?.epochUnconfirmed).toBe(1);
+    expect(formatSeqCost(summarizeSeqCost(state === null ? [] : [state]))).toContain("1 life resumed on an epoch the hub could not confirm");
+  });
+
+  test("against a hub too old to say, counts nothing for a session that hub had never seen", async () => {
+    // Arrange: a first SessionStart, through the same old-hub proxy
+    const fx = await fixture("held-old-hub-new");
+    registersAsOldHub = true;
+
+    // Act
+    await register(fx, fx.proxied);
+    registersAsOldHub = false;
+
+    // Assert
+    expect((await stateOf(fx))?.epochUnconfirmed).toBeUndefined();
+  });
+
+  test("mints for a LIVE life the hub holds: another machine may be writing it (M6)", async () => {
+    // Arrange: a life the hub still holds live; nothing of it here
+    const fx = await fixture("held-live");
+    await register(fx);
+    await flushAsHook(fx);
+    const epoch = (await stateOf(fx))?.seqEpoch;
+    await forgetLocally(fx);
+
+    // Act
+    await register(fx);
+
+    // Assert: a split, as that residual costs — never the other writer's positions
+    expect((await stateOf(fx))?.seqEpoch).not.toBe(epoch);
+  });
+
+  test("keeps an epoch of its own though the hub holds another", async () => {
+    // Arrange: the hub holds the life under one epoch, reaped; this machine reserved another for it
+    const fx = await fixture("held-own-epoch");
+    await register(fx);
+    await flushAsHook(fx);
+    const held = (await stateOf(fx))?.seqEpoch;
+    await reapOnHub();
+    await forgetLocally(fx);
+    const own = crypto.randomUUID();
+    await writeFile(
+      sessionEpochPathForSlug(fx.home, sessionSlug(fx.hostSessionKey)),
+      `${JSON.stringify({ epoch: own, at: new Date().toISOString() })}\n`,
+    );
+
+    // Act
+    await register(fx);
+
+    // Assert
+    expect((await stateOf(fx))?.seqEpoch).toBe(own);
+    expect(own).not.toBe(held);
+  });
+
+  test("an older connector reads this hub's answer as it always did", async () => {
+    // Arrange: the answer schema connectors shipped with before `held`
+    const OldSessionResponseSchema = z.looseObject({
+      session: z.looseObject({ id: z.string().min(1), developerId: z.string().min(1) }),
+    });
+    const fx = await fixture("held-old-connector");
+    const life = await register(fx);
+    const body = {
+      id: life.crosscheckSessionId,
+      agentKind: "acp:test",
+      repo: REPO_ID,
+      branch: BRANCH,
+      baseCommit: BASE_COMMIT,
+      status: "analyzing",
+    };
+
+    // Act: the session registers again, as an older connector's re-fire would
+    const response = await fetch(`${hubUrl}/api/sessions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const answer = (await response.json()) as { data: unknown };
+
+    // Assert: the old schema takes it, and the new field is there beside it
+    expect(response.status).toBe(200);
+    expect(OldSessionResponseSchema.safeParse(answer.data).success).toBe(true);
+    expect(answer.data).toHaveProperty("held");
   });
 });
 
@@ -1494,23 +1747,25 @@ describe("a SessionStart beside another SessionStart or a SessionEnd (review-2 r
     expect(await readSessionCausalOrder(db, life.crosscheckSessionId)).toMatchObject({ state: "usable", epochs: 1 });
   });
 
-  test("and without a readable end marker, starts that life on a fresh mint rather than its positions again", async () => {
-    // Arrange: as above
+  test("and with neither a readable end marker nor a readable lineage, starts that life on a fresh mint rather than its positions again", async () => {
+    // Arrange: as above, the re-fire's register held at the proxy, with no timing
     const fx = await fixture("own-life-torn-marker");
     const life = await register(fx, fx.proxied);
     await captureTarget(fx, "src/one.ts");
     await captureTarget(fx, "src/two.ts");
     await flushAsHook(fx, fx.proxied);
-    registerDelayMs = WALK_DELAY_MS;
     refuseEnds = true;
+    const hold = holdNextRegister();
 
-    // Act: the SessionEnd beside the re-fire leaves a marker nothing can read
+    // Act: the SessionEnd beside the re-fire leaves a marker and a lineage nothing can
+    // read — either one keeps the end's position (all seed 30495)
     const refire = register(fx, fx.proxied);
-    await Bun.sleep(WALK_HEAD_START_MS);
+    await hold.isReached;
     await endViaFlow(fx, fx.proxied);
     await writeFile(spoolPendingEndPath(fx.home, fx.key, sessionSlug(fx.hostSessionKey)), "{torn");
+    await writeFile(sessionLineagePathForSlug(fx.home, sessionSlug(fx.hostSessionKey)), "{torn");
+    hold.release();
     await refire;
-    registerDelayMs = 0;
     refuseEnds = false;
     await captureTarget(fx, "src/three.ts");
     await flushAsHook(fx, fx.proxied);
@@ -1550,6 +1805,52 @@ describe("a SessionStart beside another SessionStart or a SessionEnd (review-2 r
     expect(resumed.crosscheckSessionId).toBe(next);
     expect((await stateOf(fx))?.seqEpoch).toBe(epoch);
     expect(order).toMatchObject({ state: "usable", epochs: 1 });
+  });
+
+  test("a re-fire that settles back on the life a SessionEnd beside it ended goes on from the end's position (all seed 30495)", async () => {
+    // Arrange: life 0 on epoch E, two edits positioned; a heal's register of
+    // ~r1 under E landed after the heal stopped listening, so the state never moved
+    const fx = await fixture("refire-after-landed-end");
+    const life = await register(fx);
+    await captureTarget(fx, "src/one.ts");
+    await captureTarget(fx, "src/two.ts");
+    await flushAsHook(fx);
+    const epoch = (await stateOf(fx))?.seqEpoch ?? "";
+    const next = `${life.crosscheckSessionId}~r1`;
+    await registerSession(fx.hub, {
+      id: next,
+      agentKind: "acp:test",
+      repo: REPO_ID,
+      branch: BRANCH,
+      baseCommit: BASE_COMMIT,
+      status: "analyzing",
+      seq: { epoch, n: 0 },
+    });
+    const hold = holdNextRegister();
+    registerScript = ["refused"];
+
+    // Act: SessionStart re-fires, its register held in flight; SessionEnd ends
+    // life 0 on the hub — the end lands, its marker goes — and deletes the
+    // state; the register is then refused, so the re-fire settles back on
+    // life 0. Its next edit is refused as ended and the heal walks to ~r1.
+    const refire = register(fx, fx.proxied);
+    await hold.isReached;
+    const ended = await endViaFlow(fx);
+    hold.release();
+    const same = await refire;
+    registerScript = [];
+    const refired = await stateOf(fx);
+    await captureTarget(fx, "src/three.ts");
+    await flushAsHook(fx, fx.proxied);
+    await captureTarget(fx, "src/four.ts");
+    await flushAsHook(fx, fx.proxied);
+
+    // Assert: the state went on from the end's position under E, and ~r1 holds that one epoch
+    expect(ended.ended).toBe(true);
+    expect(same.crosscheckSessionId).toBe(life.crosscheckSessionId);
+    expect(refired).toMatchObject({ seqEpoch: epoch, eventSeq: isSeqStamp(ended.seq) ? ended.seq.n : -1 });
+    expect((await stateOf(fx))?.crosscheckSessionId).toBe(next);
+    expect(await readSessionCausalOrder(db, next)).toMatchObject({ state: "usable", epochs: 1 });
   });
 
   test("a re-fire reserves the epoch it carries, so a register killed after its POST names it on disk", async () => {

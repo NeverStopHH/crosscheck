@@ -98,6 +98,14 @@ export interface SeqCost {
    * answer `predeclared`.
    */
   readonly windowMisses: number;
+  /**
+   * LIVES RESUMED ON AN EPOCH THEIR HUB COULD NOT CONFIRM (seeds 31214,
+   * 4286): every trace of the life on this machine had aged out, the hub still
+   * held it, and the hub was too old to hand its epoch back — so the life's
+   * order on that hub is split. The known residual against an older hub, NOT
+   * A WARN: the remedy is the hub's upgrade, and a newer hub never costs it.
+   */
+  readonly epochUnconfirmed: number;
 }
 
 const NO_COST: SeqCost = {
@@ -108,6 +116,7 @@ const NO_COST: SeqCost = {
   ambiguousRoots: 0,
   windowEvictions: 0,
   windowMisses: 0,
+  epochUnconfirmed: 0,
 };
 
 /**
@@ -136,6 +145,7 @@ export const summarizeSeqCost = (states: readonly SessionState[]): SeqCost => ({
       allocated: total.allocated + state.eventSeq,
       windowEvictions: total.windowEvictions + state.toolWindowEvictions,
       windowMisses: total.windowMisses + state.toolWindowMisses,
+      epochUnconfirmed: total.epochUnconfirmed + (state.epochUnconfirmed ?? 0),
     }),
     NO_COST,
   ),
@@ -238,6 +248,12 @@ export const formatSeqCost = (
     cost.windowMisses === 0
       ? ""
       : ` · ${String(cost.windowMisses)} edit(s) recorded with no window of their own (unbracketed: the hub refuses every \`declared before\` question against them)`;
+  // A SPLIT THIS MACHINE COULD NOT AVOID, against a hub too old to say which
+  // epoch it holds. Silent at zero like its neighbours.
+  const unconfirmed =
+    cost.epochUnconfirmed === 0
+      ? ""
+      : ` · ${String(cost.epochUnconfirmed)} ${cost.epochUnconfirmed === 1 ? "life" : "lives"} resumed on an epoch the hub could not confirm (a hub that old cannot hand its epoch back, so that life's order on it is split; a newer hub keeps it whole)`;
   // ABSENT IS NOT ZERO. A hub too old for the route, or one that did not
   // answer, says nothing — and printing "0 broken" there would be an assertion
   // nobody made. The line stays silent about what it could not ask.
@@ -247,7 +263,7 @@ export const formatSeqCost = (
       : ` · ${plural(broken.length, "session")} on the hub cannot be ordered (${reasonsOf(broken)})`;
   return (
     `${String(cost.allocated)} position(s) allocated · ` +
-    `${String(cost.unsequenced)} with no position at all ${sessions}${ambiguous}${evicted}${unbracketed}${hub}` +
+    `${String(cost.unsequenced)} with no position at all ${sessions}${ambiguous}${evicted}${unbracketed}${unconfirmed}${hub}` +
     " — order holds inside one session only: two sessions, two machines and a" +
     " CI run are not comparable by construction"
   );

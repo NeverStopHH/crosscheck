@@ -981,6 +981,16 @@ const SessionStateObjectSchema = z.looseObject({
   shellSweepSince: z.string().min(1).nullable().optional(),
   /** Candidate roots the git lane's root cap left for a later Stop — counted, never silently skipped (review H2). */
   gitLaneRootsDeferred: z.number().int().min(0).optional(),
+  /**
+   * A LIFE RESUMED ON AN EPOCH ITS HUB COULD NOT CONFIRM (seeds 31214, 4286):
+   * a register with no epoch of its own, onto a session the hub already held,
+   * answered by a hub too old to say which epoch it holds. The life's order on
+   * that hub is split between the epoch it started under and this one — the
+   * known residual against an older hub; a newer one hands its epoch back and
+   * the life goes on from it. Counted, never a WARN: the remedy is the hub's
+   * upgrade, and nothing on this machine can do better. Absent reads as none.
+   */
+  epochUnconfirmed: z.number().int().min(0).optional(),
 });
 
 /**
@@ -1237,6 +1247,9 @@ export const withCarriedCapture = (
         // for a "first" finished turn the session had long ago, and doctor
         // counts a compacted session as a short one.
         stopTurnCount: previous.stopTurnCount,
+        // ...and the life it fires in stays on the epoch it resumed on, so the
+        // count of an epoch the hub could not confirm stays too.
+        ...(previous.epochUnconfirmed === undefined ? {} : { epochUnconfirmed: previous.epochUnconfirmed }),
         // A RE-FIRE ON THE SAME LIFE KEEPS ITS WORK CONTEXT'S TITLE AND STATUS
         // (review-2 round 8, L1): set_intent writes the status into this file
         // first, and one that ran while this fire's register was out would

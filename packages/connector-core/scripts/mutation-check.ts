@@ -15,9 +15,11 @@
  * the other two. Those run on every pull request.
  *
  * Each guarding test is run UNMUTATED first, and an already-red one aborts the
- * run. Without that, `caught: exitCode !== 0` reports a defect as detected when
- * the guard was simply broken to begin with — see assertGuardIsGreen for the
- * container in which this script did exactly that.
+ * run. Without that, a failing guard reports a defect as detected when the
+ * guard was simply broken to begin with — see assertGuardIsGreen for the
+ * container in which this script did exactly that. And a mutated run counts
+ * as caught only when it failed on an assertion or a thrown error, never on a
+ * timeout or a silent death (failedOnAssertion).
  *
  * Every file is restored in a `finally`, so a run that dies half-way leaves the
  * tree as it found it. If one ever does not, `git checkout -- packages .github`
@@ -10112,11 +10114,13 @@ export const MUTATIONS: readonly Mutation[
       "the table grows without bound while doctor prints a PASS about a sweep that is not running",
   },
   {
-    // 01a §5. A hub's sweep failures are that hub's.
+    // 01a §5. A hub's sweep failures are that hub's. Every hub keyed by the
+    // one module-level object there is: EMPTY_LEDGER was renamed EMPTY_STATE,
+    // and a mutation naming it only crashed the module.
     label: "one hub reports another hub's sweep failures",
     file: `${SERVER}/src/services/retention.ts`,
     from: "const ledgerKey = (db: Db): object => db;",
-    to: "const ledgerKey = (_db: Db): object => EMPTY_LEDGER;",
+    to: "const ledgerKey = (_db: Db): object => EMPTY_STATE;",
     test: `${SERVER}/test/skeleton-sweep.test.ts`,
     because:
       "a healthy hub WARNs about a failure it never had, and a person goes looking for a broken sweep that is somebody else's",
@@ -17300,7 +17304,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an end no longer writes down the life it closed",
     file: `${CORE}/src/flows/end-session.ts`,
-    from: "  await recordEndedLife(\n    input.home,\n    input.hostSessionKey,\n    end.sessionId,\n    input.now(),\n    isSeqStamp(end.seq) ? end.seq.epoch : null,\n  );\n",
+    from: "  await recordEndedLife(\n    input.home,\n    input.hostSessionKey,\n    end.sessionId,\n    input.now(),\n    isSeqStamp(end.seq) ? end.seq.epoch : null,\n    isSeqStamp(end.seq) ? end.seq.n : null,\n  );\n",
     to: "",
     test: `${CONNECTOR}/test/resumed-session.test.ts`,
     because: "every resume walks every ended life again from the base id, one register call each, on the hook whose latency the developer feels",
@@ -17546,10 +17550,12 @@ export const MUTATIONS: readonly Mutation[
     because: "review P5: a parallel hook's flush drops the records the sibling's walk was about to give a life",
   },
   {
+    // With the `counted` every other answer carries: without it the mutated
+    // flush only crashed reading it, and the guard caught the TypeError.
     label: "a flush told to wait for a walk drops its batch anyway",
     file: `${CORE}/src/spool/flush-heal.ts`,
     from: '  if (result.outcome === "pending") {\n    return null;',
-    to: '  if (result.outcome === "pending") {\n    return { summary: input.first, heal: null, asked: true };',
+    to: '  if (result.outcome === "pending") {\n    return { summary: input.first, heal: null, asked: true, counted };',
     test: `${CORE}/test/session-lives.test.ts`,
     because: "the pending answer is ignored and the records a landing walk would have carried are dropped",
   },
@@ -18486,7 +18492,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the lineage drops the epoch it was handed",
     file: `${CORE}/src/state/session-lineage.ts`,
-    from: "      `${JSON.stringify({ crosscheckSessionId, ...(epoch === null ? {} : { epoch }), at: now.toISOString() })}\\n`,",
+    from: "      `${JSON.stringify({ crosscheckSessionId, ...(epoch === null ? {} : { epoch, ...(n === null ? {} : { n }) }), at: now.toISOString() })}\\n`,",
     to: "      `${JSON.stringify({ crosscheckSessionId, at: now.toISOString() })}\\n`,",
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review-2 round 8, L2 (seed 11974): the epoch written at the end never reaches the resume",
@@ -18530,6 +18536,14 @@ export const MUTATIONS: readonly Mutation[
     to: "",
     test: `${CORE}/test/set-intent.test.ts`,
     because: "review-2 round 7, simulation seed 1033 (I2): a successor files the ended life's records into it",
+  },
+  {
+    label: "set_intent puts the status back before it writes the refusal down (sleep 31110)",
+    file: `${CORE}/src/mcp/tools/intent-write.ts`,
+    from: "  if (result?.status === \"rejected\") {\n    if (rejectCauseOf(issuesOf(result)) === \"session_ended\") {\n",
+    to: "  if (result?.status === \"rejected\") {\n    await keepOldStatus();\n    if (rejectCauseOf(issuesOf(result)) === \"session_ended\") {\n",
+    test: `${CORE}/test/spool-simulation.test.ts`,
+    because: "a hook killed as it puts the status back leaves the refusal unwritten, and session-reap sends the dead host's last word into the ended life (I2)",
   },
   {
     label: "a spooled work context goes with the status it was spooled with",
@@ -18950,6 +18964,14 @@ export const MUTATIONS: readonly Mutation[
     because: "review-2 round 8, L5: every read clamps to its own now, and the cooldown never runs out",
   },
   {
+    label: "a heal retires a life without writing it down as refused (sleep 52221)",
+    file: `${CORE}/src/flows/heal-session.ts`,
+    from: '      await recordRefusedLife(input.home, input.repoKey, sessionId, now, "end");\n',
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "the work context the SessionStart spooled for the retired life is sent by a successor into the life the retirement ended (I2)",
+  },
+  {
     label: "SessionEnd never sends the work context the hub is behind on",
     file: `${CORE}/src/flows/end-session.ts`,
     from: "  await spoolLastWorkContext(input);\n",
@@ -19040,6 +19062,14 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/session-lives.test.ts`,
     because: "review-2 round 8, L7: SessionEnd has no acknowledged status to compare the state's with, and sends none",
   },
+  // CAUGHT ONLY SOMETIMES, until its own test (CI Mutation proof, PR #75):
+  // release-clock.test.ts's backlog probe meets this write only when the
+  // successor's first SessionStart drain has its first batch answered inside
+  // HTTP_TIMEOUT_MS. On a loaded runner the flush gives up on a batch the hub
+  // took, session-reap deletes the dead host's state, the re-send is answered
+  // `duplicate` — and the mutated write never runs. "the silence of a dead host
+  // (L7)", in the same file, cuts no request short: the acknowledgement always
+  // reaches the flush while the dead host's state is there.
   {
     label: "a flush writes its acknowledgement into another conversation's state",
     file: `${CORE}/src/spool/work-context-ack.ts`,
@@ -19175,6 +19205,98 @@ export const MUTATIONS: readonly Mutation[
     to: "  const restored = null as SeqStamp | null;",
     test: `${CORE}/test/spool-simulation.test.ts`,
     because: "review-2 round 9, M1+M2 (probes E2, E4): a PostToolUse recovery after a week issues the life's positions twice",
+  },
+  // Option A for all 31214 / sleep 4286: the hub hands back the order it holds,
+  // and a register with no epoch of its own goes on from it.
+  {
+    label: "the hub answers a register without the order it holds (31214)",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "    held: existing.endedAt === null ? null : await readHeldSeq(deps.db, input.id),\n",
+    to: "    held: null,\n",
+    test: `${SERVER}/test/session-register-held.test.ts`,
+    because: "a connector that resumes a life it kept nothing of mints a second epoch into it, and its order is split for good (I3)",
+  },
+  {
+    label: "the hub hands a live session's order to a second writer (M6)",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "    held: existing.endedAt === null ? null : await readHeldSeq(deps.db, input.id),\n",
+    to: "    held: await readHeldSeq(deps.db, input.id),\n",
+    test: `${SERVER}/test/session-register-held.test.ts`,
+    because: "two machines on one life both hand out the same positions: the split that residual costs becomes a conflict",
+  },
+  {
+    label: "the register route leaves the held order out (31214)",
+    file: `${SERVER}/src/routes/sessions.ts`,
+    from: "    return ok(c, { session: result.session, held: result.held });",
+    to: "    return ok(c, { session: result.session });",
+    test: `${SERVER}/test/session-register-held.test.ts`,
+    because: "every answer reads as an older hub's, and a resume onto a held life splits its order",
+  },
+  {
+    label: "a register with no epoch of its own ignores the order the hub holds (31214)",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "  const adopted = isMinted && restored === null ? (registration?.held ?? null) : null;",
+    to: "  const adopted = null as SeqStamp | null;",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "a resume onto a life this machine kept nothing of mints a second epoch into it, and its order is split for good (I3)",
+  },
+  {
+    label: "a register with an epoch of its own takes the hub's instead (31214)",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "  const isMinted = previous === null && fresh === mintedEpoch;",
+    to: "  const isMinted = previous === null;",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "the epoch a register reserved and sent is thrown away for the hub's, and the session.started it filed is split from the state",
+  },
+  {
+    label: "a split against an older hub is counted nowhere (31214)",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "    ...(isUnconfirmed ? { epochUnconfirmed: 1 } : {}),\n",
+    to: "",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "the known residual against a hub too old to hand its epoch back goes silent",
+  },
+  {
+    label: "every first register against an older hub reads as a split (31214)",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "  return Number.isFinite(started) && Number.isFinite(answered) && answered - started > PREEXISTING_SESSION_MIN_AGE_MS;",
+    to: "  return true;",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "doctor counts a split for every session a hub too old to say had never seen",
+  },
+  {
+    label: "doctor drops the lives an older hub could not confirm (31214)",
+    file: `${CORE}/src/state/seq-cost.ts`,
+    from: "      epochUnconfirmed: total.epochUnconfirmed + (state.epochUnconfirmed ?? 0),",
+    to: "      epochUnconfirmed: total.epochUnconfirmed,",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "the event-sequence line says nothing of a split this machine counted",
+  },
+  {
+    label: "a resume onto a marked life takes SessionStart's status (sleep 2687)",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "      : ((await readMarkedStatus(input, crosscheckSessionId)) ?? input.status);",
+    to: "      : input.status;",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "the M3 family again: a resume onto a life session-reap took over puts SessionStart's status back over the one set_intent left (I4)",
+  },
+  // All seed 30495: an end that LANDED removes its marker, so the position a
+  // re-fire beside it goes on from is the lineage's.
+  {
+    label: "an end writes down the life it closed without its position (all 30495)",
+    file: `${CORE}/src/flows/end-session.ts`,
+    from: "    isSeqStamp(end.seq) ? end.seq.n : null,\n",
+    to: "    null,\n",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "a re-fire beside a SessionEnd whose end landed starts the life on a fresh mint, and the heal after it splits the next life's order",
+  },
+  {
+    label: "a publish that finds the state and the marker gone ignores the lineage's position (all 30495)",
+    file: `${CORE}/src/state/session-lineage.ts`,
+    from: "  return epoch === undefined || n === undefined ? null : { epoch, n };",
+    to: "  return null;",
+    test: `${CORE}/test/session-lives.test.ts`,
+    because: "a re-fire beside a SessionEnd whose end landed starts the life on a fresh mint, and the heal after it splits the next life's order",
   },
   {
     label: "a publish that finds the state gone ignores the life's end marker (L4)",
@@ -34785,26 +34907,73 @@ const readOriginal = async (mutation: Mutation): Promise<string> => {
   return original;
 };
 
-const runTest = async (testPath: string): Promise<number> => {
+/**
+ * The per-test timeout of every run here: the unit-test job's own (ci.yml,
+ * PR #74), so a guard slow on a shared runner is not red for being slow.
+ */
+const TEST_TIMEOUT_MS = 20_000;
+
+interface TestRun {
+  readonly exitCode: number;
+  readonly output: string;
+}
+
+const runTest = async (testPath: string): Promise<TestRun> => {
   const proc = Bun.spawn({
     // process.execPath, not "bun": this has to work from a checkout where the
     // runtime is not on PATH, which is how it is invoked in CI.
-    cmd: [process.execPath, "test", testPath],
+    cmd: [process.execPath, "test", `--timeout=${String(TEST_TIMEOUT_MS)}`, testPath],
     cwd: REPO_ROOT,
-    stdout: "ignore",
-    stderr: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
     // A guard gated to the Hook budgets lane (connector-core/test/fixtures/
     // budget-lane.ts) must run when it is the guard: one guard file at a
     // time is the same isolation that lane gives it. Set here rather than
     // only in ci.yml so a local run proves the same anchors CI does.
     env: { ...process.env, CX_BUDGET_LANE: "1" },
   });
-  return proc.exited;
+  const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+  return { exitCode: await proc.exited, output: `${stdout}\n${stderr}` };
+};
+
+/**
+ * A CATCH IS AN ASSERTION OR A THROWN ERROR — never a test that only timed
+ * out, nor a process that died saying nothing: on a loaded runner either one
+ * turns a decorative guard into a "caught". Read the way bun lays its report
+ * out: an assertion or a throw prints its header before its `(fail)` line; a
+ * timeout prints `^ this test timed out after …` after it; an error while a
+ * file loads prints `# Unhandled error between tests` and no `(fail)` at all.
+ *
+ * THE HEADER NAMES THE ERROR (bun 1.3.13): `error: …` only for a failed
+ * expect and a thrown non-Error; a thrown Error by its class — `TypeError: …`,
+ * `ZodError: …` — and a system error by its code — `ENOENT: …`, `EACCES: …`.
+ * Read as `error: ` alone, a guard that caught a deleted file by failing to
+ * read it, or a crash the anchor names, read as a silent death
+ * (test/mutation-runner.test.ts runs each shape through bun).
+ */
+const ERROR_HEADER = /^(?:error|[A-Z][A-Za-z0-9]*(?:Error|Exception)|E[A-Z][A-Z0-9]+): /;
+
+export const failedOnAssertion = (output: string): boolean => {
+  const lines = output.split("\n");
+  let pendingError = false;
+  for (const [index, line] of lines.entries()) {
+    if (ERROR_HEADER.test(line)) {
+      pendingError = true;
+    } else if (line.startsWith("(fail) ")) {
+      if (pendingError && !/^\s*\^ this test timed out after \d+ms\./.test(lines[index + 1] ?? "")) {
+        return true;
+      }
+      pendingError = false;
+    }
+  }
+  return output.includes("# Unhandled error between tests") && lines.some((line) => ERROR_HEADER.test(line));
 };
 
 interface Outcome {
   readonly label: string;
   readonly caught: boolean;
+  /** The mutated run failed, but only by timing out or dying silently. */
+  readonly failedWithoutAssertion: boolean;
 }
 
 /**
@@ -35156,7 +35325,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/session-flows.test.ts 1
  * PRINTS: packages/connector-core/test/session-heal.test.ts 32
  * PRINTS: packages/connector-core/test/session-lineage.test.ts 4
- * PRINTS: packages/connector-core/test/session-lives.test.ts 64
+ * PRINTS: packages/connector-core/test/session-lives.test.ts 73
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 9
@@ -35167,7 +35336,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/spool-ignored.test.ts 2
  * PRINTS: packages/connector-core/test/spool-lock.test.ts 2
  * PRINTS: packages/connector-core/test/spool-ownership.test.ts 12
- * PRINTS: packages/connector-core/test/spool-simulation.test.ts 9
+ * PRINTS: packages/connector-core/test/spool-simulation.test.ts 10
  * PRINTS: packages/connector-core/test/ssh-hostname-deadline.test.ts 2
  * PRINTS: packages/connector-core/test/staleness-axis.test.ts 1
  * PRINTS: packages/connector-core/test/target-paths.test.ts 1
@@ -35350,6 +35519,7 @@ interface Outcome {
  * PRINTS: packages/server/test/session-order.test.ts 7
  * PRINTS: packages/server/test/session-reap-liveness.test.ts 2
  * PRINTS: packages/server/test/session-reaper.test.ts 3
+ * PRINTS: packages/server/test/session-register-held.test.ts 3
  * PRINTS: packages/server/test/sessions.test.ts 1
  * PRINTS: packages/server/test/similarity-gate.test.ts 5
  * PRINTS: packages/server/test/skeleton-identity.test.ts 19
@@ -35422,7 +35592,7 @@ const assertGuardIsGreen = async (testPath: string): Promise<void> => {
   if (greenGuards.get(testPath) === true) {
     return;
   }
-  const exitCode = await runTest(testPath);
+  const { exitCode } = await runTest(testPath);
   greenGuards.set(testPath, exitCode === 0);
   if (exitCode !== 0) {
     throw new Error(
@@ -35443,8 +35613,9 @@ const applyAndRun = async (mutation: Mutation): Promise<Outcome> => {
   await assertGuardIsGreen(mutation.test);
   try {
     await Bun.write(path, original.replace(mutation.from, mutation.to));
-    const exitCode = await runTest(mutation.test);
-    return { label: mutation.label, caught: exitCode !== 0 };
+    const run = await runTest(mutation.test);
+    const caught = run.exitCode !== 0 && failedOnAssertion(run.output);
+    return { label: mutation.label, caught, failedWithoutAssertion: run.exitCode !== 0 && !caught };
   } finally {
     await Bun.write(path, original);
   }
@@ -35469,7 +35640,9 @@ const main = async (): Promise<number> => {
     process.stdout.write(
       outcome.caught
         ? `  caught by ${mutation.test}\n`
-        : `::error::NOT CAUGHT by ${mutation.test} — ${mutation.because}\n`,
+        : outcome.failedWithoutAssertion
+          ? `::error::NOT CAUGHT by ${mutation.test} — it failed only by timing out or dying silently, which is no assertion — ${mutation.because}\n`
+          : `::error::NOT CAUGHT by ${mutation.test} — ${mutation.because}\n`,
     );
   }
   const missed = outcomes.filter((outcome) => !outcome.caught);

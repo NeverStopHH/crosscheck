@@ -33,6 +33,7 @@ import {
   hubEnd,
   intent,
   ioFail,
+  NIGHT,
   oldFlush,
   par,
   recover,
@@ -44,7 +45,7 @@ import {
 } from "./sim-events.ts";
 
 /** The residual classes the sweep counts instead of failing on (test/spool-simulation.test.ts residualOf). */
-export type ResidualClass = "I1u" | "L1";
+export type ResidualClass = "I1u" | "L1" | "I1r";
 
 export interface CorpusSeed {
   readonly seed: number;
@@ -205,7 +206,129 @@ const L7_LAST_WORD: readonly CorpusSeed[] = [
   },
 ];
 
-export const SEED_CORPUS: readonly CorpusSeed[] = [...ROUND_7_SWEEP, ...ROUND_7_REVIEW, ...ROUND_8_REVIEW, ...L7_LAST_WORD];
+/**
+ * The PR #75 review's sweeps. A re-fire beside a SessionEnd whose end LANDED
+ * (`all` seed 30495): behind a slow hub a heal's register of the next life
+ * landed unheard under the life's epoch; the re-fire's register timed out,
+ * and it settled back on the ended life with neither the state nor the end's
+ * marker to carry, on a fresh mint. The heal carried that epoch into the next
+ * life, which the hub had filed under the old one. And a set_intent refused
+ * as ended whose hook died before it wrote the refusal down (`sleep` seed
+ * 31110, found by the 2000-seed sweep around 30495). And a heal's retirement
+ * of a life, an end sent without writing the life down (`sleep` seed 52221,
+ * found by the 3000-seed sweep of every generator from 50001). And from the
+ * release-candidate sweep: a resume onto a reaped life that took SessionStart's
+ * status (`sleep` seed 2687), and a status the hub took unheard that I4 read
+ * as a revert (`sleep` seed 4643, the checker's).
+ */
+const PR75_REVIEW: readonly CorpusSeed[] = [
+  {
+    seed: 30495,
+    generator: "all",
+    invariant: "I3",
+    fix: "2b901082",
+    bug: "a re-fire beside a landed SessionEnd settled back on the ended life on a fresh mint, and the heal split the next life",
+    events: [start(0), slow(1400, 2, 1), hubEnd(0), edit(0), par(start(0), end(0))],
+  },
+  { seed: 30495, generator: "all", invariant: "I3", fix: "2b901082", bug: "the generated scenario", events: scenarioOf(30495, GENERATORS.all) },
+  {
+    seed: 31110,
+    generator: "sleep",
+    invariant: "I2",
+    fix: "1c4130f5",
+    bug: "set_intent refused as ended, killed before it wrote the refusal down: session-reap sent the dead host's last word into the ended life",
+    events: [start(1), hubEnd(1), crash(3, "after"), intent(1, "done"), abandon(1)],
+  },
+  { seed: 31110, generator: "sleep", invariant: "I2", fix: "1c4130f5", bug: "the generated scenario", events: scenarioOf(31110, GENERATORS.sleep) },
+  {
+    seed: 52221,
+    generator: "sleep",
+    invariant: "I2",
+    fix: "c693f3d1",
+    bug: "a heal retired the life a re-fire beside SessionEnd had moved to, without writing it down, and a successor filed its work context into it (some interleavings only)",
+    events: [
+      start(0),
+      fault("recordsLate", 1, 0),
+      edit(0),
+      flush(0),
+      intent(0, "reviewing"),
+      edit(0),
+      fault("registersDown", 1, 2),
+      end(0),
+      edit(0),
+      edit(0),
+      recover(0),
+      hubEnd(0),
+      par(end(0), start(0)),
+    ],
+  },
+  { seed: 52221, generator: "sleep", invariant: "I2", fix: "c693f3d1", bug: "the generated scenario", events: scenarioOf(52221, GENERATORS.sleep) },
+  {
+    seed: 2687,
+    generator: "sleep",
+    invariant: "I4",
+    fix: "c577be72",
+    bug: "a resume onto a life session-reap took over put SessionStart's status back over the one its end marker kept",
+    events: [start(0), intent(0, "blocked"), abandon(0), start(2), wake(0), par(start(0), edit(1))],
+  },
+  { seed: 2687, generator: "sleep", invariant: "I4", fix: "c577be72", bug: "the generated scenario", events: scenarioOf(2687, GENERATORS.sleep) },
+  {
+    seed: 4643,
+    generator: "sleep",
+    invariant: "checker",
+    fix: "9143fe41",
+    bug: "a status the hub took from set_intent with its answer lost, the newest it could take before another process ended the life, read as a revert",
+    events: [
+      start(1),
+      intent(1, "blocked"),
+      fault("recordsLate", 2, 1),
+      edit(1),
+      intent(1, "implementing"),
+      hubEnd(1),
+      intent(1, "done"),
+    ],
+  },
+  { seed: 4643, generator: "sleep", invariant: "checker", fix: "9143fe41", bug: "the generated scenario", events: scenarioOf(4643, GENERATORS.sleep) },
+  {
+    seed: 31214,
+    generator: "all",
+    invariant: "I3",
+    fix: "4e0e9e89",
+    bug: "a life resumed after every trace of it aged out minted a second epoch into the session the hub's reaper had ended",
+    events: [
+      start(1),
+      age(1),
+      start(2),
+      wake(1),
+      VACATION,
+      crash(1, "before"),
+      start(1),
+      start(0),
+      par(end(1), start(1)),
+    ],
+  },
+  { seed: 31214, generator: "all", invariant: "I3", fix: "4e0e9e89", bug: "the generated scenario", events: scenarioOf(31214, GENERATORS.all) },
+  { seed: 4286, generator: "sleep", invariant: "I3", fix: "4e0e9e89", bug: "the same class, two vacations apart (the generated scenario)", events: scenarioOf(4286, GENERATORS.sleep) },
+  {
+    seed: 3851,
+    generator: "sleep",
+    invariant: "I1",
+    fix: "49424d96",
+    residual: ["I1r"],
+    bug: "a reap killed between removing a delivered spool's cursor and its data file re-exposed a line its ended life then withheld, counted though the hub holds it",
+    events: [start(1), end(1), fault("recordsLate", 2, 0), crash(8, "after"), NIGHT, start(0)],
+    shows: (run) => run.reexposed.size > 0,
+  },
+  { seed: 3851, generator: "sleep", invariant: "I1", fix: "49424d96", residual: ["I1r"], bug: "the generated scenario", events: scenarioOf(3851, GENERATORS.sleep) },
+];
+
+export const SEED_CORPUS: readonly CorpusSeed[] = [
+  ...ROUND_7_SWEEP,
+  ...ROUND_7_REVIEW,
+  ...ROUND_8_REVIEW,
+  ...L7_LAST_WORD,
+  ...PR75_REVIEW,
+];
 
 /** A corpus entry as its fixed scenario's title names it. */
 export const corpusName = (entry: CorpusSeed): string =>
