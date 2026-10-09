@@ -193,6 +193,8 @@ import { readForeignHubRefusals } from "@crosscheck/connector-core/state/foreign
 import { readBriefingOmissions } from "@crosscheck/connector-core/state/briefing-omissions.ts";
 import { landedProbeCutsCheck } from "./landed-probe-cuts.ts";
 import { readLandedProbeCuts } from "@crosscheck/connector-core/state/landed-probe-cuts.ts";
+import { collisionOmissionsCheck } from "./collision-omissions.ts";
+import { readRestOmissions } from "@crosscheck/connector-core/state/rest-omissions.ts";
 import { readSharingInput, sharingChecks } from "./doctor-sharing.ts";
 import { checkLandedChanges } from "./doctor-landed.ts";
 import { checkLandingFetch } from "./doctor-landing-fetch.ts";
@@ -4357,6 +4359,10 @@ export const runDoctor = async (
     // How many pre-edit landed-change checks were cut short this week — each
     // session was told once at its next prompt (landed-probe-cuts.ts).
     landedProbeCutsCheck(await readLandedProbeCuts(config.home, key, now)),
+    // How many teammate collisions may have reached the agent and not the
+    // person this week — a cut tripwire line, a rest never rechecked
+    // (collision-omissions.ts; batch-2 review, L2).
+    collisionOmissionsCheck(await readRestOmissions(config.home, key, now)),
     ...hubChecks,
     skewCheck,
     bunfigCheck,

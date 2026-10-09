@@ -73,6 +73,8 @@
  * about where a subagent hook's `systemMessage` shows, and the subagent's
  * context is not the conversation the person reads.
  */
+import { readdir } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { isDeniedUnlessAuthoritative, resolveDenylist } from "@crosscheck/connector-core/capture/denylist.ts";
 import { classifyGenerated, wireGeneratedSignal } from "@crosscheck/connector-core/capture/generated.ts";
 import type { GeneratedClassification } from "@crosscheck/connector-core/capture/generated.ts";
@@ -110,11 +112,14 @@ import {
   withLandedAsked,
   withLandedClean,
   withQueuedCollisionRelays,
+  withOverdueRest,
   withTripwireAsked,
   withTripwireChecked,
   withTripwireGroupAsked,
+  withoutCollisionNotices,
 } from "@crosscheck/connector-core/state/session-state.ts";
 import type { CollisionNotice, SessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import { recordRestOmission } from "@crosscheck/connector-core/state/rest-omissions.ts";
 import { toolWindowKey } from "@crosscheck/connector-core/state/tool-window-key.ts";
 import { resolveTouchedRoots } from "@crosscheck/connector-core/capture/touched-root.ts";
 import { toRepoRelative } from "@crosscheck/connector-core/capture/target-paths.ts";
@@ -198,15 +203,36 @@ const resolveEditedFile = async (
   return root === undefined || file === null ? null : { file, root };
 };
 
+/** Neighbours one edit hands the attribute call: a directory's worth, never a tree (core generated-attributes.ts says why so many). */
+const MAX_EDIT_NEIGHBOURS = 512;
+
+/**
+ * The edited file's neighbours — the other files in its directory,
+ * repo-relative — which the classification's `check-attr` answers in the same
+ * call when the file misses the cache (batch-2 review, M6): agents edit a
+ * directory's files one after another, and each of those edits is then a
+ * cache hit instead of a git spawn on this hook's critical path.
+ */
+const neighboursOf = async (edited: EditedFile): Promise<readonly string[]> => {
+  const dir = dirname(edited.file);
+  const entries = await readdir(join(edited.root, dir), { withFileTypes: true }).catch(() => []);
+  return entries
+    .filter((entry) => entry.isFile())
+    .map((entry) => (dir === "." ? entry.name : `${dir}/${entry.name}`))
+    .filter((path) => path !== edited.file)
+    .slice(0, MAX_EDIT_NEIGHBOURS);
+};
+
 /** The edited file as the generated-target rule classifies it — the rule capture applies. */
 const classifyEditedFile = async (
   home: string,
   edited: EditedFile,
   declared: AuthoritativeGenerated,
-): Promise<GeneratedClassification> =>
-  (await classifyGenerated({ home, root: edited.root, paths: [edited.file], authoritative: declared })).get(
-    edited.file,
-  ) ?? "unknown";
+): Promise<GeneratedClassification> => {
+  const prefetch = await neighboursOf(edited);
+  const classified = await classifyGenerated({ home, root: edited.root, paths: [edited.file], authoritative: declared, prefetch });
+  return classified.get(edited.file) ?? "unknown";
+};
 
 /** What one edit's own tripwire found to say: the ask's reason, and the groups its person is told of. */
 interface EditAnswer {
@@ -276,6 +302,7 @@ const askBeforeEdit = async (ctx: HookContext, budget: HookBudget): Promise<Edit
   // nothing.
   const askedLanded = state.landedAskedFiles.includes(file);
   const isLiveFresh = isTripwireFresh(state, file, ctx.now());
+  const probing = startLandedProbe(ctx, edited, askedLanded, state.landedCleanKeys);
   // A mechanically generated, non-authoritative file is skipped exactly as a
   // denied one: a lockfile or a regenerated client is not anybody's plan
   // (capture/generated.ts). Asked the way capture asks, so the attribute
@@ -291,7 +318,7 @@ const askBeforeEdit = async (ctx: HookContext, budget: HookBudget): Promise<Edit
     budget,
     { ...edited, authoritative: classification === "authoritative" },
     { askedLanded, isLiveFresh },
-    state.landedCleanKeys,
+    probing,
   );
   if (found.cleanKey !== null && !state.landedCleanKeys.includes(found.cleanKey)) {
     await rememberClean(ctx, found.cleanKey);
@@ -323,17 +350,14 @@ const stopFor = async (
   if (found.sessions.length === 0 && found.landed === null) {
     return NO_EDIT_ANSWER;
   }
-  const won = await claimReasons(ctx, file, found);
+  const groups = onePerKey(found.sessions.map((session) => tripwireCollision(session, file, found.coverage)));
+  const claim = await claimStop(ctx, budget, { file, sessions: found.sessions, groups }, found.landed);
   // A sibling hook may have booked both reasons: then there is no ask to
-  // state and no why to wait for — but a teammate group untold so far may
-  // still be told below.
+  // state and no why to wait for — but a teammate group untold so far is
+  // still told.
+  const { won } = claim;
   const reason = won.teammate === null && won.landed === null ? null : await statedReason(ctx, state, file, found, won);
-  // THE PERSON'S LINE IS CLAIMED LAST (review L3): everything the output
-  // needs is in hand, so no slow step sits between marking a group told and
-  // the line leaving the hook.
-  const groups = found.sessions.map((session) => tripwireCollision(session, file, found.coverage));
-  const notices = await tellPerson(ctx, budget, { file, sessions: found.sessions, groups: onePerKey(groups) });
-  return { reason, notices };
+  return { reason, notices: claim.told };
 };
 
 /**
@@ -396,37 +420,6 @@ const isAllAsked = (state: SessionState, answer: LiveAnswer): boolean =>
 /** The collision fields a tell can change: nothing to write when none of them did. */
 const collisionFieldsOf = (state: SessionState): string =>
   JSON.stringify([state.collisionNotices, state.collisionRelayQueue, state.collisionRelayDropped, state.tripwireCheckedFiles]);
-
-/**
- * Every group the hub named is recorded — a new file of a told group grows
- * it, which is what the statusline counts — and the groups new to this
- * session are returned as the ones to tell, in ONE locked check-and-set, so
- * two racing hooks never both tell the same group. Made only while the spare
- * budget lasts (review L3): a group not claimed now is still untold, and the
- * hub is asked again on the next edit of the file. Once every teammate on
- * the file is asked about AND told, the answer is dealt with and the file
- * rests for TRIPWIRE_RECHECK_TTL_MS; and when nothing changed at all, nothing
- * is written (round 2, L1).
- */
-const tellPerson = async (
-  ctx: HookContext,
-  budget: HookBudget,
-  answer: LiveAnswer,
-): Promise<readonly CollisionNotice[]> => {
-  const { groups } = answer;
-  if (groups.length === 0 || budget.spareMs() <= 0) {
-    return [];
-  }
-  const told: { value: readonly CollisionNotice[] } = { value: [] };
-  const isWritten = await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => {
-    const fresher = newCollisionKeys(fresh, groups);
-    told.value = groups.filter((group) => fresher.includes(group.key));
-    const remembered = rememberGroups(ctx, fresh, groups, fresher);
-    const next = isAllAsked(fresh, answer) ? withTripwireChecked(remembered, answer.file, ctx.now()) : remembered;
-    return collisionFieldsOf(next) === collisionFieldsOf(fresh) ? null : next;
-  });
-  return isWritten ? told.value : [];
-};
 
 export const handlePreToolUse = async (ctx: HookContext, budget: HookBudget): Promise<string> => {
   if (!isEditTool(ctx.payload.tool_name)) {
@@ -495,24 +488,21 @@ interface Answered {
 }
 
 /**
- * Asks only the questions this session has not been stopped for yet, in
- * parallel, and neither waits on the other: the live tripwire's hub call is
- * bounded by its own timeout, the landed probe by its own deadline — never
- * longer than one hub call, so the live ask keeps the budget it always had —
- * and a failure of either is silence for that half only. The moment the
- * probe finds a landed change, the second hub call, its why, starts beside
- * them (`why`, bounded by what the budget spares; hooks/landed-why.ts).
+ * THE LANDED PROBE STARTS THE MOMENT THE FILE IS KNOWN (batch-2 review, M6):
+ * it asks only the reader's own clone, and nothing it asks depends on how the
+ * file is classified, so it runs beside the classification's `check-attr`
+ * instead of after it — under load, a git spawn of the hook's critical path.
+ * A generated file's answer is never read. ONE REQUEST of deadline
+ * (LANDED_PROBE_BUDGET_MS says why), so it ends no later than the live call
+ * that starts after the classification.
  */
-const findReasons = async (
+const startLandedProbe = (
   ctx: HookContext,
-  budget: HookBudget,
   edited: EditedFile,
-  answered: Answered,
+  askedLanded: boolean,
   knownCleanKeys: readonly string[],
-): Promise<FoundReasons> => {
-  // ONE REQUEST, the very window the live call beside it already holds
-  // (LANDED_PROBE_BUDGET_MS says why): started with it, ended no later.
-  const probing = answered.askedLanded
+): Promise<LandedProbe> => {
+  const probing = askedLanded
     ? Promise.resolve(NOT_PROBED)
     : probeLandedChanges({
         root: edited.root,
@@ -521,7 +511,28 @@ const findReasons = async (
         timeZone: resolveTimeZone(ctx.env),
         budgetMs: ctx.config.timeoutMs,
         knownCleanKeys,
+        cacheHome: ctx.config.home,
       });
+  return probing;
+};
+
+/**
+ * Asks only the questions this session has not been stopped for yet, in
+ * parallel, and neither waits on the other: the live tripwire's hub call is
+ * bounded by its own timeout, the landed probe (already under way,
+ * `startLandedProbe`) by its own deadline — never longer than one hub call,
+ * so the live ask keeps the budget it always had — and a failure of either
+ * is silence for that half only. The moment the probe finds a landed change,
+ * the second hub call, its why, starts beside them (`why`, bounded by what
+ * the budget spares; hooks/landed-why.ts).
+ */
+const findReasons = async (
+  ctx: HookContext,
+  budget: HookBudget,
+  edited: EditedFile,
+  answered: Answered,
+  probing: Promise<LandedProbe>,
+): Promise<FoundReasons> => {
   const live = answered.isLiveFresh
     ? Promise.resolve(null)
     : getTripwireSessions(ctx.hub, ctx.identity.repoId, edited.file, edited.authoritative === true).then((result) =>
@@ -583,39 +594,146 @@ const rememberClean = async (ctx: HookContext, key: string): Promise<void> => {
   );
 };
 
+/** What one claim won: the reasons it may state, and the groups its person is told of. */
+interface Claim {
+  readonly won: Reasons;
+  readonly told: readonly CollisionNotice[];
+}
+
+const NO_CLAIM: Claim = { won: NO_REASONS, told: [] };
+
+/** What a claim wrote, as its undo needs it (`releaseCutStop`). */
+interface ClaimMade {
+  readonly file: string;
+  /** The live half's once-per key this claim won, or null. */
+  readonly askKey: string | null;
+  /** This claim won the landed half. */
+  readonly isLandedWon: boolean;
+  /** The groups this claim recorded told. */
+  readonly toldKeys: readonly string[];
+  /** The hub named a live teammate on the file: a cut leaves its recheck owed. */
+  readonly isLive: boolean;
+}
+
 /**
- * The markers are CLAIMED atomically — check-and-set under the state lock,
- * on the freshest state: a sibling PreToolUse racing this one finds a marker
- * already present and drops that reason, and a slower PostToolUse writing
- * after us can no longer erase it (test/state-race.test.ts). Claimed BEFORE
- * emitting, same honest direction as the hint delivery: a crash between the
- * two costs one ask, never a nag loop. Returns only the reasons THIS call
- * won — the only ones it may state.
+ * THE STOP AND THE PERSON'S LINE ARE ONE CLAIM (batch-2 review, H2):
+ * check-and-set under the state lock, on the freshest state, in ONE write.
  *
- * The LIVE half is won by the first session in the hub's order whose (file,
- * work context) pair this session has not asked about yet (review M4) — the
- * ask names one teammate, as it always did, and the next edit of the file
- * asks about the next one. The PERSON'S notice is claimed separately and
- * last (`tellPerson`).
+ * The ASK markers: a sibling PreToolUse racing this one finds a marker
+ * already present and drops that reason, and a slower PostToolUse writing
+ * after us can no longer erase it (test/state-race.test.ts). The LIVE half is
+ * won by the first session in the hub's order whose (file, work context) pair
+ * this session has not asked about yet (review M4) — the ask names one
+ * teammate, and the next edit of the file asks about the next one.
+ *
+ * The PERSON'S LINE, in the same write: every group the hub named is
+ * recorded — a new file of a told group grows it, which is what the
+ * statusline counts — and the groups new to this session are the ones to
+ * tell, queued for the main thread too when this is a subagent's hook. Once
+ * every teammate on the file is asked about AND told, the file rests for
+ * TRIPWIRE_RECHECK_TTL_MS; when nothing changed at all, nothing is written
+ * (round 2, L1).
+ *
+ * NOT GATED ON THE SPARE BUDGET. It was (review L3, "told only when it can
+ * be said"), and under load the spare was spent by the time the hub
+ * answered: a subagent's agent was warned and nothing else happened — no
+ * relay, no rest, nothing counted, the pilot's defect (H2). What L3 guarded
+ * against — a group marked told by a hook the race then abandons — is now
+ * the race's to settle: the claim registers its undo (`releaseCutStop`)
+ * inside this very transform, so no cut can fall between the two, and a
+ * transform that runs after the cut claims nothing. Returns only what THIS
+ * call won and told — the only things it may say.
  */
-const claimReasons = async (ctx: HookContext, file: string, found: FoundReasons): Promise<Reasons> => {
+const claimStop = async (
+  ctx: HookContext,
+  budget: HookBudget,
+  answer: LiveAnswer,
+  found: LandedChanges | null,
+): Promise<Claim> => {
+  const { file } = answer;
   // A holder rather than a plain `let`, so the assignment inside the
   // callback is visible after it.
-  const won: { value: Reasons } = { value: NO_REASONS };
+  const claimed: { value: Claim } = { value: NO_CLAIM };
   const isWritten = await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => {
-    const askedGroups = fresh.tripwireAskedGroups ?? [];
-    const teammate = found.sessions.find((session) => !askedGroups.includes(liveAskKey(file, session))) ?? null;
-    const landed = found.landed !== null && !fresh.landedAskedFiles.includes(file) ? found.landed : null;
-    won.value = { teammate, landed };
-    if (teammate === null && landed === null) {
+    if (budget.isCut?.() === true) {
       return null;
     }
+    const askedGroups = fresh.tripwireAskedGroups ?? [];
+    const teammate = answer.sessions.find((session) => !askedGroups.includes(liveAskKey(file, session))) ?? null;
+    const landed = found !== null && !fresh.landedAskedFiles.includes(file) ? found : null;
     const withLive =
       teammate === null ? fresh : withTripwireGroupAsked(withTripwireAsked(fresh, file), liveAskKey(file, teammate));
-    return landed === null ? withLive : withLandedAsked(withLive, file);
+    const asked = landed === null ? withLive : withLandedAsked(withLive, file);
+    const fresher = newCollisionKeys(asked, answer.groups);
+    const told = answer.groups.filter((group) => fresher.includes(group.key));
+    const remembered = answer.groups.length === 0 ? asked : rememberGroups(ctx, asked, answer.groups, fresher);
+    const isSettled = answer.sessions.length > 0 && isAllAsked(remembered, answer);
+    const next = isSettled ? withTripwireChecked(remembered, file, ctx.now()) : remembered;
+    if (teammate === null && landed === null && collisionFieldsOf(next) === collisionFieldsOf(fresh)) {
+      return null;
+    }
+    claimed.value = { won: { teammate, landed }, told };
+    budget.onCut?.(() =>
+      releaseCutStop(ctx, {
+        file,
+        askKey: teammate === null ? null : liveAskKey(file, teammate),
+        isLandedWon: landed !== null,
+        toldKeys: told.map((group) => group.key),
+        isLive: answer.sessions.length > 0,
+      }),
+    );
+    return next;
   });
-  return isWritten ? won.value : NO_REASONS;
+  return isWritten ? claimed.value : NO_CLAIM;
 };
+
+/**
+ * A CLAIM WHOSE OUTPUT NEVER LEFT IS GIVEN BACK (batch-2 review, H2): the
+ * race abandoned the hook after `claimStop` wrote, so the agent saw no ask
+ * and the person no line. Undone under the same lock — re-asked, or booked,
+ * never lost:
+ *
+ *   - the ask is released, so the file's next edit asks again;
+ *   - the landed stop is released the same way;
+ *   - a MAIN-THREAD group goes back to untold; a subagent's stays told, its
+ *     relay still queued for the main thread, which tells the person
+ *     whatever became of the subagent's output;
+ *   - a live file owes its recheck NOW (an already-overdue rest): the next
+ *     sync hook asks the hub about it and tells the person, or books
+ *     `rest_unchecked` (hooks/rest-recheck.ts) — so a subagent that edits a
+ *     file once is not the end of it;
+ *   - and the cut itself is booked, `tripwire_cut` in the local ledger of
+ *     moments a collision's person may not have been told — whether or not
+ *     the lock let the undo through.
+ *
+ * A claim that only grew a group already told lost nothing, and leaves its
+ * write as it is. `tripwireAskedFiles` keeps the file: it records every file
+ * asked at least once and decides nothing. Fail open: the runner's settle
+ * swallows a throw.
+ */
+const releaseCutStop = async (ctx: HookContext, claim: ClaimMade): Promise<void> => {
+  const isLiveLost = claim.isLive && (claim.askKey !== null || claim.toldKeys.length > 0);
+  if (!isLiveLost && !claim.isLandedWon) {
+    return;
+  }
+  await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => {
+    const unasked =
+      claim.askKey === null
+        ? fresh
+        : { ...fresh, tripwireAskedGroups: (fresh.tripwireAskedGroups ?? []).filter((key) => key !== claim.askKey) };
+    const unstopped = claim.isLandedWon
+      ? { ...unasked, landedAskedFiles: unasked.landedAskedFiles.filter((file) => file !== claim.file) }
+      : unasked;
+    const untold = ctx.payload.agent_id === undefined ? withoutCollisionNotices(unstopped, claim.toldKeys) : unstopped;
+    return isLiveLost ? withOverdueRest(untold, claim.file, ctx.now()) : untold;
+  });
+  if (isLiveLost) {
+    await recordRestOmission(ctx.config.home, { key: ctx.repoKey, reason: TRIPWIRE_CUT, now: ctx.now() });
+  }
+};
+
+/** The rest-omission reason a cut tripwire answer is booked under (core state/rest-omissions.ts). */
+const TRIPWIRE_CUT = "tripwire_cut";
 
 /**
  * The groups recorded as told — and, when this hook runs inside a SUBAGENT,

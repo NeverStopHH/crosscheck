@@ -203,6 +203,17 @@ export const SSH_CANONICALIZE_ENV = "CROSSCHECK_SSH_CANONICALIZE";
 export const SSH_CANONICALIZE_OFF = "off";
 
 /**
+ * How long a working directory's cached repo identity is trusted without git
+ * asking again (git/repo-identity-cache.ts; batch-2 review, M6): its stamps
+ * — the root's `.git`, HEAD and its commit, the repo, worktree, global and
+ * ssh configs — catch every change git itself makes, and this bounds what
+ * they cannot see (an included config file, the system config). Four git
+ * spawns and an `ssh -G` on every hook were 90–108 ms of PreToolUse under
+ * load; one full resolution per directory per ten minutes is not.
+ */
+export const REPO_IDENTITY_CACHE_TTL_MS = 10 * 60 * 1000;
+
+/**
  * Grace between the deadline's SIGTERM and the SIGKILL escalation for a git
  * that outlived its budget (git/git.ts). SIGTERM first so git can remove its
  * lock files; the escalation covers a git that ignores it. Nothing waits on
@@ -965,6 +976,21 @@ export const MAX_LANDING_BRANCHES = 8;
  * (decision 4). A team that lands elsewhere names its branches instead.
  */
 export const WELL_KNOWN_LANDING_BRANCHES: readonly string[] = ["staging", "develop"];
+/**
+ * How long one root's landed-probe facts — the landing tips, partial clone,
+ * the reader's own address — are trusted without git asking again
+ * (landed-changes/probe-facts.ts; batch-2 review, M6). Their stamps catch
+ * every ref and config file git itself writes; this bounds what no stamp
+ * sees (an included config, the system config). The identity cache's own
+ * bound, for the same reason.
+ */
+export const LANDED_PROBE_FACTS_TTL_MS = REPO_IDENTITY_CACHE_TTL_MS;
+/**
+ * Never-changing answers one root keeps for its probes (a branch tip as of a
+ * moment, a merge base): enough for every landing branch across a week of
+ * HEADs, and a few kilobytes on disk.
+ */
+export const MAX_LANDED_PROBE_MEMO_ENTRIES = 64;
 /**
  * The whole landed-change probe's deadline when a caller names none — ONE hub
  * request, exactly. PreToolUse passes its own configured per-request timeout

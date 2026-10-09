@@ -49,6 +49,19 @@ export const quietGitRunner =
     return outcome.ok ? outcome.stdout : null;
   };
 
+/**
+ * Answers that can never change, kept per root across probes
+ * (landed-changes/probe-facts.ts; batch-2 review, M6): a landing branch's
+ * tip as it stood at an instant, and the merge base of two commits. Filled
+ * as git answers; a question git could not answer is never kept.
+ */
+export interface ProbeMemo {
+  /** `<tip>@<instant>` → the newest first-parent commit that old, or null for none. */
+  readonly tipAt: Map<string, string | null>;
+  /** `<a>..<b>` → their merge base, or null for none. */
+  readonly mergeBase: Map<string, string | null>;
+}
+
 export interface GitContext {
   readonly root: string;
   /** Repo-relative, as git names it. */
@@ -56,6 +69,14 @@ export interface GitContext {
   readonly run: GitRunner;
   /** True once the probe's deadline has passed: no further git is spawned. */
   readonly isCancelled: () => boolean;
+  /** Absent: every question goes to git, as before the memo. */
+  readonly memo?: ProbeMemo;
+  /**
+   * The file at several commits in ONE git call (`quietFileBatch`), or null
+   * when it could not say; absent — a staged runner, a partial clone — and
+   * each commit is its own `ls-tree`, as before (batch-2 review, M6).
+   */
+  readonly filesAt?: (revs: readonly string[]) => Promise<readonly FileAtRev[] | null>;
 }
 
 export const gitStdout = (context: GitContext, args: readonly string[]): Promise<string | null> =>
@@ -337,6 +358,51 @@ export const fileAt = async (context: GitContext, rev: string): Promise<FileAtRe
 export const isSameContent = (a: FileAtRev, b: FileAtRev): boolean =>
   (a.kind === "absent" && b.kind === "absent") || (a.kind === "blob" && b.kind === "blob" && a.id === b.id);
 
+/** One `cat-file --batch-check` answer line: an object id, or `<rev>:<path> missing`. */
+const parseBatchLine = (line: string | undefined): FileAtRev => {
+  if (line === undefined) {
+    return { kind: "unknown" };
+  }
+  if (line.endsWith(" missing")) {
+    return { kind: "absent" };
+  }
+  const id = line.split(" ")[0];
+  return isFullSha(id) ? { kind: "blob", id } : { kind: "unknown" };
+};
+
+/**
+ * THE FILE AT SEVERAL COMMITS IN ONE GIT CALL (batch-2 review, M6): `git
+ * cat-file --batch-check` reads `<rev>:<path>` lines and answers each with
+ * the object's id or `missing` — the two answers `fileAt`'s `ls-tree` tells
+ * apart, and a call that fails is still "unknown" for every commit. One
+ * spawn where the moot check paid three. The path is literal in `<rev>:<path>`
+ * (no pathspec magic); a path with a line break cannot be said in the line
+ * protocol, and answers null — each commit is then its own `ls-tree`. Real
+ * git only, and never on a partial clone, where reading an object's type
+ * would need the network (probe.ts decides).
+ */
+export const quietFileBatch =
+  (root: string, file: string, timeoutMs: number) =>
+  async (revs: readonly string[]): Promise<readonly FileAtRev[] | null> => {
+    if (file.includes("\n") || revs.length === 0) {
+      return null;
+    }
+    const outcome = await runGitOutcome(["cat-file", "--batch-check"], root, timeoutMs, QUIET_GIT_ENV, {
+      stdin: `${revs.map((rev) => `${rev}:${file}`).join("\n")}\n`,
+    });
+    if (!outcome.ok) {
+      return null;
+    }
+    const lines = outcome.stdout.split("\n");
+    return lines.length === revs.length ? revs.map((_, index) => parseBatchLine(lines[index])) : null;
+  };
+
+/** The file at each of `revs`: one batch when the context can, else one `ls-tree` each. */
+const filesAtRevs = async (context: GitContext, revs: readonly string[]): Promise<readonly FileAtRev[]> => {
+  const batched = context.filesAt === undefined || context.isCancelled() ? null : await context.filesAt(revs);
+  return batched ?? Promise.all(revs.map((rev) => fileAt(context, rev)));
+};
+
 /** Does anyone but the reader have a commit to the file between `base` and HEAD? */
 const othersOnReaderSide = async (
   context: GitContext,
@@ -365,6 +431,24 @@ const othersOnReaderSide = async (
 };
 
 /**
+ * The merge base of two commits — the memo's when a probe of this root asked
+ * before: two commits name one base forever (ProbeMemo). Only a base git
+ * named is kept; "none" and "no answer" both read as no base, every time.
+ */
+const mergeBaseOf = async (context: GitContext, a: string, b: string): Promise<string | null> => {
+  const key = `${a}..${b}`;
+  const known = context.memo?.mergeBase.get(key);
+  if (known !== undefined && known !== null) {
+    return known;
+  }
+  const stdout = await gitStdout(context, ["merge-base", a, b]);
+  if (isFullSha(stdout)) {
+    context.memo?.mergeBase.set(key, stdout);
+  }
+  return stdout;
+};
+
+/**
  * Nothing an edit could undo, known for certain:
  *
  *   1. the file on `ref` is byte-identical to HEAD's (a stacked branch, a
@@ -384,10 +468,12 @@ export const hasNothingNetToUndo = async (
   ref: LandingRef,
   options: { readonly headSha: string; readonly selfEmail: string | null },
 ): Promise<boolean> => {
-  const [onRef, onHead, base] = await Promise.all([
-    fileAt(context, ref.tip),
-    fileAt(context, options.headSha),
-    gitStdout(context, ["merge-base", ref.tip, options.headSha]),
+  // A merge base the memo already holds is read in the same batch as the two
+  // tips (batch-2 review, M6): one git call for all three files.
+  const knownBase = context.memo?.mergeBase.get(`${ref.tip}..${options.headSha}`) ?? null;
+  const [[onRef = UNKNOWN_FILE, onHead = UNKNOWN_FILE, onKnownBase], base] = await Promise.all([
+    filesAtRevs(context, knownBase === null ? [ref.tip, options.headSha] : [ref.tip, options.headSha, knownBase]),
+    knownBase === null ? mergeBaseOf(context, ref.tip, options.headSha) : Promise.resolve(knownBase),
   ]);
   if (isSameContent(onRef, onHead)) {
     return true;
@@ -395,12 +481,16 @@ export const hasNothingNetToUndo = async (
   if (!isFullSha(base)) {
     return false;
   }
-  const [onBase, others] = await Promise.all([
-    fileAt(context, base),
-    othersOnReaderSide(context, { base, headSha: options.headSha }, options.selfEmail),
-  ]);
+  const onBase = onKnownBase ?? (await fileAt(context, base));
+  // Who else touched the file on HEAD's side matters only when `ref` made no
+  // net change to it — asked then, and only then.
+  const others = isSameContent(onBase, onRef)
+    ? await othersOnReaderSide(context, { base, headSha: options.headSha }, options.selfEmail)
+    : null;
   return isSameContent(onBase, onRef) && others === false;
 };
+
+const UNKNOWN_FILE: FileAtRev = { kind: "unknown" };
 
 /** The landing commits on `ref`'s first-parent line since `since`. */
 export const landingsOn = async (
@@ -436,6 +526,12 @@ export const tipAt = async (
   ref: LandingRef,
   before: Date,
 ): Promise<{ readonly isAnswered: boolean; readonly tip: string | null }> => {
+  // A commit and an instant name one answer forever (ProbeMemo): asked once per root.
+  const key = `${ref.tip}@${before.toISOString()}`;
+  const known = context.memo?.tipAt.get(key);
+  if (known !== undefined) {
+    return { isAnswered: true, tip: known };
+  }
   const stdout = await gitStdout(context, [
     "rev-list",
     "-1",
@@ -443,6 +539,9 @@ export const tipAt = async (
     `--before=${before.toISOString()}`,
     ref.tip,
   ]);
+  if (stdout !== null) {
+    context.memo?.tipAt.set(key, isFullSha(stdout) ? stdout : null);
+  }
   return { isAnswered: stdout !== null, tip: isFullSha(stdout) ? stdout : null };
 };
 

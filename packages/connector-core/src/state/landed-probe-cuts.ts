@@ -64,7 +64,7 @@ export interface LandedProbeCutBooking {
  */
 const booked = new Map<string, Promise<void>>();
 
-/** The two writes of one cut. */
+/** The cut's two writes: the session's counter, then the ledger line. */
 const writeCut = async (booking: LandedProbeCutBooking): Promise<void> => {
   await updateSessionState(booking.home, booking.sessionId, withLandedProbeCut);
   await recordLandedProbeCut(booking.home, { key: booking.key, reason: booking.reason, now: booking.now });

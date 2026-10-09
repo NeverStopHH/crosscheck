@@ -284,6 +284,25 @@ describe("fail toward warning: a classification that cannot run keeps the target
     expect(retried.get("packages/proto/src/messages.ts")).toBe("attribute");
   });
 
+  test("a sibling asked about in the same check-attr is answered from the cache next time (batch-2 review, M6)", async () => {
+    // Arrange: the edit of one file asks about its directory's other files too
+    const fx = await fixture("gen-prefetch");
+    await writeRepoFile(fx.repo, "packages/proto/src/messages.ts", "export {};\n");
+    await writeRepoFile(fx.repo, "packages/proto/src/hand-written.ts", "export {};\n");
+    await classifyGenerated({
+      home: fx.home,
+      root: fx.repo,
+      paths: ["packages/proto/src/messages.ts"],
+      prefetch: ["packages/proto/src/hand-written.ts"],
+    });
+
+    // Act: the sibling's own edit, with a deadline no git could meet
+    const sibling = await classify(fx, ["packages/proto/src/hand-written.ts"], UNMEETABLE_MS);
+
+    // Assert: the rules' answer for it, from the cache — git was not asked again
+    expect(sibling.get("packages/proto/src/hand-written.ts")).toBe("ordinary");
+  });
+
   test("an unreadable file is unknown, not generated and not a measured ordinary", async () => {
     // Arrange: attributes say no, and the header cannot be read.
     const fx = await fixture("gen-unknown-unreadable");

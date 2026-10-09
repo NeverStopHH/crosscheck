@@ -10803,8 +10803,8 @@ export const MUTATIONS: readonly Mutation[
     // Landed changes. One stop per file per reason.
     label: "a landed-change stop uses up the live one",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "    return landed === null ? withLive : withLandedAsked(withLive, file);",
-    to: "    return landed === null ? withLive : withTripwireAsked(withLive, file);",
+    from: "    const asked = landed === null ? withLive : withLandedAsked(withLive, file);",
+    to: "    const asked = landed === null ? withLive : withTripwireAsked(withLive, file);",
     test: `${CONNECTOR}/test/landed-change-hook.test.ts`,
     because:
       "a teammate who starts on the file later in the session is never named, because an old landed change already spent the stop",
@@ -26356,10 +26356,20 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the briefing-omission ledger grows for ever",
     file: `${CORE}/src/state/omission-ledger.ts`,
-    from: "      if ((await sizeOf(at)) >= MAX_BRIEFING_OMISSION_LEDGER_BYTES) {\n        // The rotation could not run: the cap holds rather than the file growing.\n        return;\n      }\n",
+    from: "      if ((await sizeOf(at)) >= MAX_BRIEFING_OMISSION_LEDGER_BYTES) {\n        // Neither the prune nor the rotation could run: the cap holds rather than the file growing.\n        return;\n      }\n",
     to: "",
     test: `${CORE}/test/briefing-omissions.test.ts`,
     because: "a hub that never answers grows a file in the home on every session start",
+  },
+  {
+    label: "a full omission ledger stops counting for good",
+    file: `${CORE}/src/state/omission-ledger.ts`,
+    from: "      const room = size < MAX_BRIEFING_OMISSION_LEDGER_BYTES ? size : await prunedToWindow(at, entry.now);",
+    to: "      const room = size;",
+    test: `${CORE}/test/omission-ledger-cap.test.ts`,
+    because:
+      "a ledger full of stale lines rotates instead of pruning them, and the rotation throws away the lines " +
+      "an earlier one moved aside that the window still counts (batch-2 M7: prune first, then rotate)",
   },
   // The tripwire takes the large-change rule too (release gate, 2026-10-08):
   // the ask names the hub's first row, so the order is the decision.
@@ -28787,6 +28797,29 @@ export const MUTATIONS: readonly Mutation[
     because: "a handler that booked just before the race resolved is counted again by the runner, and the line overstates",
   },
   {
+    label: "doctor never reads the collision warnings a person may have missed",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    collisionOmissionsCheck(await readRestOmissions(config.home, key, now)),\n",
+    to: "",
+    test: `${CLI}/test/collision-omissions.test.ts`,
+    because: "a tripwire line the budget cut shows in doctor only as a landed-check cut (batch-2 L2, H2)",
+  },
+  {
+    label: "status never prints the collision warnings a person may have missed",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "      ...collisionOmissionLines,\n",
+    to: "",
+    test: `${CLI}/test/collision-omissions.test.ts`,
+    because: "the ledger is written and nothing a person reads counts it (batch-2 L2)",
+  },
+  // RETIRED (track B merge): "the runner's cut booking returns before the
+  // handler's writes land" was track B's anchor for its L6 fix. Track A made
+  // the same fix in `bookLandedProbeCut`, and the merge kept A's code, where
+  // the second writer awaits the first one's writes instead of returning its
+  // promise. The same mutation on A's code — the second writer returning
+  // without waiting — is the anchor "the runner returns before the handler's
+  // cut is on disk"; both sides' L6 tests stay in landed-probe-cuts.test.ts.
+  {
     label: "a pre-edit hook the budget abandoned books no cut",
     file: `${CONNECTOR}/src/hooks/runner.ts`,
     from: "    if (outcome.timedOut && name === \"pre-tool-use\") {\n      await bookCutEditCheck(resolved.value, stdin, env);\n    }\n",
@@ -28907,8 +28940,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the person is told about the same teammate's work on every file",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "    told.value = groups.filter((group) => fresher.includes(group.key));",
-    to: "    told.value = groups;",
+    from: "    const told = answer.groups.filter((group) => fresher.includes(group.key));",
+    to: "    const told = answer.groups;",
     test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
     because: "one teammate on eleven files is eleven warnings, and a notice that nags is a notice that gets ignored",
   },
@@ -29178,16 +29211,16 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a teammate new on an already-asked file is never asked about",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "    const teammate = found.sessions.find((session) => !askedGroups.includes(liveAskKey(file, session))) ?? null;",
-    to: "    const teammate = fresh.tripwireAskedFiles.includes(file) ? null : (found.sessions[0] ?? null);",
+    from: "    const teammate = answer.sessions.find((session) => !askedGroups.includes(liveAskKey(file, session))) ?? null;",
+    to: "    const teammate = fresh.tripwireAskedFiles.includes(file) ? null : (answer.sessions[0] ?? null);",
     test: `${CONNECTOR}/test/collision-teammates-hook.test.ts`,
     because: "the asked marker is per file again, and Ken, who started on it after Nick, is never named to anybody",
   },
   {
     label: "only the first teammate on a file is told to the person",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "  const groups = found.sessions.map((session) => tripwireCollision(session, file, found.coverage));",
-    to: "  const groups = won.teammate === null ? [] : [tripwireCollision(won.teammate, file, found.coverage)];",
+    from: "  const groups = onePerKey(found.sessions.map((session) => tripwireCollision(session, file, found.coverage)));",
+    to: "  const groups = onePerKey(found.sessions.slice(0, 1).map((session) => tripwireCollision(session, file, found.coverage)));",
     test: `${CONNECTOR}/test/collision-teammates-hook.test.ts`,
     because: "two teammates on the file, and the person hears about one",
   },
@@ -29224,14 +29257,265 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/generated-targets.test.ts`,
     because: "the hints service asks for ordinary targets and the exact tier ranks its tree on the generated file anyway",
   },
-  // ── Review of feat/collision-visible, L3: told only when it can be said ──
+  // ── Review of feat/collision-visible, L3, superseded by the batch-2 review, H2:
+  // the person's line is part of the claim, and a cut undoes the claim ──
   {
-    label: "the tripwire marks a group told with no time left to say it",
+    label: "a tripwire answer that came late tells nobody and queues nothing",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "  if (groups.length === 0 || budget.spareMs() <= 0) {",
-    to: "  if (groups.length === 0) {",
-    test: `${CONNECTOR}/test/collision-order-hook.test.ts`,
-    because: "the race abandons the hook after the marker is written, and the person is never told about that teammate",
+    from: "    const remembered = answer.groups.length === 0 ? asked : rememberGroups(ctx, asked, answer.groups, fresher);",
+    to: "    const remembered = answer.groups.length === 0 || budget.spareMs() <= 0 ? asked : rememberGroups(ctx, asked, answer.groups, fresher);",
+    test: `${CONNECTOR}/test/tripwire-claim-cut.test.ts`,
+    because: "a subagent's agent is warned and the main thread never hears of it: no relay, no rest, nothing counted — the pilot's defect under load",
+  },
+  {
+    label: "a hook the race already abandoned still claims the stop",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "    if (budget.isCut?.() === true) {",
+    to: "    if (false) {",
+    test: `${CONNECTOR}/test/tripwire-claim-cut.test.ts`,
+    because: "a claim made after the cut is never undone: the ask is spent and the group told with nothing shown",
+  },
+  {
+    label: "a cut tripwire keeps the claim its output never delivered",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "      releaseCutStop(ctx, {",
+    to: "      Promise.resolve({",
+    test: `${CONNECTOR}/test/tripwire-claim-cut.test.ts`,
+    because: "the ask is spent and the group told for the rest of the session, and nobody saw either",
+  },
+  {
+    label: "a cut tripwire's ask is never asked again",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "        : { ...fresh, tripwireAskedGroups: (fresh.tripwireAskedGroups ?? []).filter((key) => key !== claim.askKey) };",
+    to: "        : fresh;",
+    test: `${CONNECTOR}/test/tripwire-claim-cut.test.ts`,
+    because: "the agent whose hook was cut is never warned about that teammate on that file",
+  },
+  {
+    label: "a cut main-thread tripwire leaves its group told",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "    const untold = ctx.payload.agent_id === undefined ? withoutCollisionNotices(unstopped, claim.toldKeys) : unstopped;",
+    to: "    const untold = unstopped;",
+    test: `${CONNECTOR}/test/tripwire-claim-cut.test.ts`,
+    because: "the recheck finds the group already told and says nothing: the person never hears of the teammate",
+  },
+  {
+    label: "a cut tripwire leaves no recheck owed",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "    return isLiveLost ? withOverdueRest(untold, claim.file, ctx.now()) : untold;",
+    to: "    return untold;",
+    test: `${CONNECTOR}/test/tripwire-claim-cut.test.ts`,
+    because: "a subagent edits most files once: with no debt, no later hook asks about the file again",
+  },
+  {
+    label: "a cut tripwire is never booked",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "    await recordRestOmission(ctx.config.home, { key: ctx.repoKey, reason: TRIPWIRE_CUT, now: ctx.now() });\n",
+    to: "",
+    test: `${CONNECTOR}/test/tripwire-claim-cut.test.ts`,
+    because: "doctor shows a landed-check cut instead of the collision warning the person never saw",
+  },
+  {
+    label: "the runner never settles a race it lost",
+    file: `${CONNECTOR}/src/hooks/runner.ts`,
+    from: "      await race.cut();",
+    to: "      await Promise.resolve();",
+    test: `${CONNECTOR}/test/tripwire-claim-cut.test.ts`,
+    because: "every claim a cut hook made stands, and a handler still running keeps claiming",
+  },
+  {
+    label: "a lost race still takes claims",
+    file: `${CORE}/src/config/hook-budget.ts`,
+    from: "      lost.value = true;\n",
+    to: "",
+    test: `${CORE}/test/hook-race.test.ts`,
+    because: "a handler the race abandoned claims after the cut, and nothing ever undoes that claim",
+  },
+  {
+    label: "a claim's undo is never registered with the race",
+    file: `${CORE}/src/config/hook-budget.ts`,
+    from: "        undos.push(undo);",
+    to: "        void undo;",
+    test: `${CORE}/test/hook-race.test.ts`,
+    because: "a cut runs no undo, and every claim the lost output was to deliver stands",
+  },
+  // ── Batch-2 review, M6: a directory's repo identity is resolved by git once ──
+  {
+    label: "a cached repo identity survives a checkout",
+    file: `${CORE}/src/git/repo-identity-cache.ts`,
+    from: '    stamp: JSON.stringify([root, head.gitDir, head.content, env[SSH_CANONICALIZE_ENV] ?? "", ...stamps]),',
+    to: '    stamp: JSON.stringify([root, head.gitDir, env[SSH_CANONICALIZE_ENV] ?? "", ...stamps]),',
+    test: `${CORE}/test/repo-identity-cache.test.ts`,
+    because: "every hook after a branch switch reports the old branch, and topics and lives are filed under it",
+  },
+  {
+    label: "a cached repo identity survives a re-remote",
+    file: `${CORE}/src/git/repo-identity-cache.ts`,
+    from: "  const stamps = await Promise.all([gitEntryStamp(root), ...configPaths(head, commonDir, env).map(fileStamp)]);",
+    to: "  const stamps = await Promise.all([gitEntryStamp(root)]);",
+    test: `${CORE}/test/repo-identity-cache.test.ts`,
+    because: "a checkout pointed at another remote keeps reporting into the old repo's space for as long as the entry lives",
+  },
+  {
+    label: "a cached repo identity outlives its TTL",
+    file: `${CORE}/src/git/repo-identity-cache.ts`,
+    from: "  if (!(ageMs >= 0 && ageMs < REPO_IDENTITY_CACHE_TTL_MS) || !(await isGovernedBy(cwd, identity.root))) {",
+    to: "  if (!(await isGovernedBy(cwd, identity.root))) {",
+    test: `${CORE}/test/repo-identity-cache.test.ts`,
+    because: "a change no stamp sees — an included config, the system config — is never noticed at all",
+  },
+  {
+    label: "a cached repo identity answers for a directory that became a repository of its own",
+    file: `${CORE}/src/git/repo-identity-cache.ts`,
+    from: '  return entries.every((entry) => entry === "-");',
+    to: "  return true;",
+    test: `${CORE}/test/repo-identity-cache.test.ts`,
+    because: "a nested repository's hooks report into the outer repo",
+  },
+  {
+    label: "a cached repo identity keeps the base commit it was resolved at",
+    file: `${CORE}/src/git/repo-identity-cache.ts`,
+    from: "  return facts === null || facts.stamp !== stamp ? null : { ...identity, baseCommit: facts.commit };",
+    to: "  return facts === null || facts.stamp !== stamp ? null : identity;",
+    test: `${CORE}/test/repo-identity-cache.test.ts`,
+    because: "every hook after a commit registers and drifts against the commit before it",
+  },
+  {
+    label: "an environment that steers git is answered from the cache",
+    file: `${CORE}/src/git/repo-identity-cache.ts`,
+    from: "  if (isGitSteered(env)) {\n    return resolve(cwd);",
+    to: "  if (false) {\n    return resolve(cwd);",
+    test: `${CORE}/test/repo-identity-cache.test.ts`,
+    because: "a hook run with GIT_DIR set reports the repo the files name, not the one git would",
+  },
+  // ── Batch-2 review, M6: the landed-change probe asks git far less ──
+  {
+    label: "the probe's repo state misses a merge in progress",
+    file: `${CORE}/src/landed-changes/probe-facts.ts`,
+    from: '    readMarker(join(head.gitDir, "MERGE_HEAD")),',
+    to: "    Promise.resolve([]),",
+    test: `${CORE}/test/landed-probe-facts.test.ts`,
+    because: "the work a merge in progress brings reads as missing, and the reader resolving that merge is stopped for it",
+  },
+  {
+    label: "the probe's cached landing tips survive a fetch",
+    file: `${CORE}/src/landed-changes/probe-facts.ts`,
+    from: '    [...refFiles, join(commonDir, "packed-refs"), ...gitConfigPaths(gitDir, commonDir, env)].map(fileStamp),',
+    to: "    [...gitConfigPaths(gitDir, commonDir, env)].map(fileStamp),",
+    test: `${CORE}/test/landed-probe-facts.test.ts`,
+    because: "a change that landed after the first edit is checked against the old tips, and never stops anybody",
+  },
+  {
+    label: "the probe's cached own address survives a config change",
+    file: `${CORE}/src/landed-changes/probe-facts.ts`,
+    from: '    [...refFiles, join(commonDir, "packed-refs"), ...gitConfigPaths(gitDir, commonDir, env)].map(fileStamp),',
+    to: '    [...refFiles, join(commonDir, "packed-refs")].map(fileStamp),',
+    test: `${CORE}/test/landed-probe-facts.test.ts`,
+    because: "the reader's own commits warn the reader, or a teammate's are filtered as the reader's",
+  },
+  {
+    label: "every probe asks git the five questions that do not depend on the file",
+    file: `${CORE}/src/landed-changes/probe-facts.ts`,
+    from: "  const facts = fresh ?? (await askGit(input));",
+    to: "  const facts = await askGit(input);",
+    test: `${CORE}/test/landed-probe-facts.test.ts`,
+    because: "five git spawns, two of them in a row, on every edit: a third of PreToolUse's budget under load went to the landed probe",
+  },
+  {
+    label: "a branch tip as of an instant is asked again on every probe",
+    file: `${CORE}/src/landed-changes/git-queries.ts`,
+    from: "  if (known !== undefined) {\n    return { isAnswered: true, tip: known };",
+    to: "  if (false) {\n    return { isAnswered: true, tip: known };",
+    test: `${CORE}/test/landed-probe-facts.test.ts`,
+    because: "one git spawn per landing branch per edit for an answer that can never change",
+  },
+  {
+    label: "a merge base is asked again on every probe",
+    file: `${CORE}/src/landed-changes/git-queries.ts`,
+    from: "  if (known !== undefined && known !== null) {\n    return known;",
+    to: "  if (false) {\n    return known;",
+    test: `${CORE}/test/landed-probe-facts.test.ts`,
+    because: "one git spawn per landing branch per missing file for an answer that can never change",
+  },
+  {
+    label: "the moot check reads each commit's copy of the file with its own ls-tree",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "      ? { ...askers, filesAt: (revs) => limit(() => (isCancelled() ? Promise.resolve(null) : batchFiles(revs))) }",
+    to: "      ? askers",
+    test: `${CORE}/test/landed-probe-facts.test.ts`,
+    because: "three git spawns, two rounds, where one cat-file answers all three: the probe is PreToolUse's long pole under load",
+  },
+  {
+    label: "the one-call file read takes a commit without the file for one that has it",
+    file: `${CORE}/src/landed-changes/git-queries.ts`,
+    from: '  if (line.endsWith(" missing")) {',
+    to: "  if (false) {",
+    test: `${CORE}/test/landed-probe-facts.test.ts`,
+    because: "a file a commit never had reads as unknown, and the moot check can no longer prove a branch changed nothing",
+  },
+  {
+    label: "an edit's classification asks check-attr about its file alone",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "  const prefetch = await neighboursOf(edited);",
+    to: "  const prefetch: readonly string[] = [];",
+    test: `${CONNECTOR}/test/pre-tool-use-cost.test.ts`,
+    because: "every edit of a new file in a directory pays its own check-attr spawn on the hook's critical path",
+  },
+  {
+    label: "the attribute call never answers the neighbours it was handed",
+    file: `${CORE}/src/capture/generated-attributes.ts`,
+    from: "      : await askGit(input.root, [...misses, ...neighbours], input.timeoutMs ?? GENERATED_ATTR_TIMEOUT_MS);",
+    to: "      : await askGit(input.root, misses, input.timeoutMs ?? GENERATED_ATTR_TIMEOUT_MS);",
+    test: `${CORE}/test/generated-targets.test.ts`,
+    because: "the neighbours are never cached, and each of their edits spawns check-attr again",
+  },
+  {
+    label: "the files stand in for the git answers a caller staged",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "  const isRealGit = input.runGit === undefined;",
+    to: "  const isRealGit = true;",
+    test: `${CORE}/test/landed-probe-facts.test.ts`,
+    because: "a test that delays or fails one git call to reach a deadline or failure path never reaches it",
+  },
+  {
+    label: "the recent half asks git about commits the missing half placed outside HEAD",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "      if (notInHead.has(commit.sha)) {\n        return { commit: null, isKnown: true };",
+    to: "      if (false) {\n        return { commit: null, isKnown: true };",
+    test: `${CORE}/test/landed-probe-facts.test.ts`,
+    because: "three git spawns per landed commit to learn that a commit already known to be missing is not present",
+  },
+  {
+    label: "every hook process loads another hook's handler",
+    file: `${CONNECTOR}/src/hooks/index.ts`,
+    from: 'import { runHookWith } from "./runner.ts";',
+    to: 'import { runHookWith } from "./runner.ts";\nimport "./session-start.ts";',
+    test: `${CLI}/test/bin.test.ts`,
+    because: "every hook process evaluates handlers it never runs, in a boot no budget covers",
+  },
+  {
+    label: "every hook process loads the CLI",
+    file: `${CLI}/src/bin/crosscheck.ts`,
+    from: '} from "@crosscheck/connector-claude";',
+    to: '} from "@crosscheck/connector-claude";\nimport "../cli/index.ts";',
+    test: `${CLI}/test/bin.test.ts`,
+    because: "every hook process evaluates every command's module before it reads its payload",
+  },
+  {
+    label: "every hook process loads the MCP server",
+    file: `${CLI}/src/bin/crosscheck.ts`,
+    from: '} from "@crosscheck/connector-claude";',
+    to: '} from "@crosscheck/connector-claude";\nimport "@crosscheck/connector-core/mcp/server.ts";',
+    test: `${CLI}/test/bin.test.ts`,
+    because: "every hook process evaluates the MCP server and its tools before it reads its payload",
+  },
+  {
+    label: "every hook resolves its repo with git again",
+    file: `${CONNECTOR}/src/hooks/runner.ts`,
+    from: "  const identity = await resolveRepoIdentityCached(crosscheckHome(env), payload.cwd);",
+    to: "  const identity = await resolveRepoIdentityCached(crosscheckHome(env), payload.cwd, { now: () => Number.NaN });",
+    test: `${CONNECTOR}/test/turn-end-hook.test.ts`,
+    because: "four git spawns and an ssh -G on every hook: 90–108 ms of PreToolUse's budget under load",
   },
   {
     label: "a group the tripwire could not tell in time is never told",
@@ -29319,8 +29603,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the subagent-return hook name runs no handler",
     file: `${CONNECTOR}/src/hooks/index.ts`,
-    from: "  \"subagent-return\": handleSubagentReturn,",
-    to: "  \"subagent-return\": async () => \"\",",
+    from: "  \"subagent-return\": async () => (await import(\"./subagent-return.ts\")).handleSubagentReturn,",
+    to: "  \"subagent-return\": async () => async () => \"\",",
     test: `${CONNECTOR}/test/subagent-return-hook.test.ts`,
     because: "the registered command exits 0 in silence on every subagent return",
   },
@@ -29949,7 +30233,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a settled tripwire answer never rests its file",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "    const next = isAllAsked(fresh, answer) ? withTripwireChecked(remembered, answer.file, ctx.now()) : remembered;",
+    from: "    const next = isSettled ? withTripwireChecked(remembered, file, ctx.now()) : remembered;",
     to: "    const next = remembered;",
     test: `${CONNECTOR}/test/collision-tripwire-ttl.test.ts`,
     because: "the re-check window is never opened, and every edit of the file asks the hub again",
@@ -29957,8 +30241,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a tripwire answer with a teammate still unasked rests its file",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "    const next = isAllAsked(fresh, answer) ? withTripwireChecked(remembered, answer.file, ctx.now()) : remembered;",
-    to: "    const next = withTripwireChecked(remembered, answer.file, ctx.now());",
+    from: "    const isSettled = answer.sessions.length > 0 && isAllAsked(remembered, answer);",
+    to: "    const isSettled = answer.sessions.length > 0;",
     test: `${CONNECTOR}/test/collision-tripwire-ttl.test.ts`,
     because: "the second teammate on the file is not asked about until the window passes",
   },
@@ -30673,7 +30957,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the rest omission ledger knows no reason, and reads every booking back as nothing",
     file: `${CORE}/src/state/rest-omissions.ts`,
-    from: "export const REST_OMISSION_REASONS = [\"rest_unchecked\"] as const;",
+    from: "export const REST_OMISSION_REASONS = [\"rest_unchecked\", \"tripwire_cut\"] as const;",
     to: "export const REST_OMISSION_REASONS = [] as const;",
     test: `${CONNECTOR}/test/rest-recheck-guarantee.test.ts`,
     because: "the lines are written and no read counts them",
@@ -36411,6 +36695,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/absence-cli.test.ts 11
  * PRINTS: packages/cli/test/agent-host.test.ts 2
  * PRINTS: packages/cli/test/agent-restart.test.ts 3
+ * PRINTS: packages/cli/test/bin.test.ts 3
  * PRINTS: packages/cli/test/capture-health.test.ts 8
  * PRINTS: packages/cli/test/ci-report-args.test.ts 2
  * PRINTS: packages/cli/test/ci-report-build.test.ts 3
@@ -36419,6 +36704,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/ci-report-workflow.test.ts 3
  * PRINTS: packages/cli/test/ci-report.test.ts 6
  * PRINTS: packages/cli/test/ci-status-render.test.ts 3
+ * PRINTS: packages/cli/test/collision-omissions.test.ts 2
  * PRINTS: packages/cli/test/conference-cli.test.ts 12
  * PRINTS: packages/cli/test/confirm-cli.test.ts 1
  * PRINTS: packages/cli/test/connection-error.test.ts 2
@@ -36538,7 +36824,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-claude/test/capture-latency.test.ts 1
  * PRINTS: packages/connector-claude/test/collision-notice-hook.test.ts 12
- * PRINTS: packages/connector-claude/test/collision-order-hook.test.ts 4
+ * PRINTS: packages/connector-claude/test/collision-order-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/collision-prompt-render.test.ts 1
  * PRINTS: packages/connector-claude/test/collision-relay-durable.test.ts 2
  * PRINTS: packages/connector-claude/test/collision-relay-hook.test.ts 3
@@ -36581,6 +36867,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/landed-probe-cut-hook.test.ts 8
  * PRINTS: packages/connector-claude/test/landed-why-hook.test.ts 6
  * PRINTS: packages/connector-claude/test/landing-fetch-hook.test.ts 3
+ * PRINTS: packages/connector-claude/test/pre-tool-use-cost.test.ts 1
  * PRINTS: packages/connector-claude/test/recovery-epoch.test.ts 2
  * PRINTS: packages/connector-claude/test/recovery-losses.test.ts 1
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
@@ -36604,8 +36891,9 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/summarizer-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/topic-git-lane.test.ts 9
  * PRINTS: packages/connector-claude/test/topic-nick-shape.test.ts 19
+ * PRINTS: packages/connector-claude/test/tripwire-claim-cut.test.ts 8
  * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 12
- * PRINTS: packages/connector-claude/test/turn-end-hook.test.ts 9
+ * PRINTS: packages/connector-claude/test/turn-end-hook.test.ts 10
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 4
  * PRINTS: packages/connector-core/test/abandoned-temps.test.ts 24
  * PRINTS: packages/connector-core/test/absence-render.test.ts 7
@@ -36663,7 +36951,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/fix-diff.test.ts 7
  * PRINTS: packages/connector-core/test/foreign-hub-ledger.test.ts 8
  * PRINTS: packages/connector-core/test/future-stamps.test.ts 5
- * PRINTS: packages/connector-core/test/generated-targets.test.ts 16
+ * PRINTS: packages/connector-core/test/generated-targets.test.ts 17
  * PRINTS: packages/connector-core/test/ghost-declare.test.ts 2
  * PRINTS: packages/connector-core/test/ghost-render.test.ts 7
  * PRINTS: packages/connector-core/test/git-lane-cost.test.ts 1
@@ -36690,6 +36978,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-substance-trust-parity.test.ts 1
  * PRINTS: packages/connector-core/test/hint-trailer-budget.test.ts 7
  * PRINTS: packages/connector-core/test/holdout-round4-gate.test.ts 2
+ * PRINTS: packages/connector-core/test/hook-race.test.ts 2
  * PRINTS: packages/connector-core/test/hub-key-refresh.test.ts 3
  * PRINTS: packages/connector-core/test/injection-corpus.test.ts 8
  * PRINTS: packages/connector-core/test/intent-budget.test.ts 1
@@ -36703,6 +36992,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/landed-changes.test.ts 7
  * PRINTS: packages/connector-core/test/landed-notice.test.ts 21
  * PRINTS: packages/connector-core/test/landed-probe-cuts.test.ts 6
+ * PRINTS: packages/connector-core/test/landed-probe-facts.test.ts 10
  * PRINTS: packages/connector-core/test/landed-render.test.ts 4
  * PRINTS: packages/connector-core/test/landed-why-render.test.ts 7
  * PRINTS: packages/connector-core/test/landed-worth-stopping.test.ts 1
@@ -36728,6 +37018,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
  * PRINTS: packages/connector-core/test/network-guard.test.ts 15
+ * PRINTS: packages/connector-core/test/omission-ledger-cap.test.ts 1
  * PRINTS: packages/connector-core/test/omission-ledger-rotation.test.ts 3
  * PRINTS: packages/connector-core/test/outcome-clause.test.ts 2
  * PRINTS: packages/connector-core/test/owed-debt-rules.test.ts 22
@@ -36749,6 +37040,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/release-clock.test.ts 10
  * PRINTS: packages/connector-core/test/remember-developer.test.ts 1
  * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 7
+ * PRINTS: packages/connector-core/test/repo-identity-cache.test.ts 6
  * PRINTS: packages/connector-core/test/repo-ssh-determinism.test.ts 2
  * PRINTS: packages/connector-core/test/rest-unchecked-scope.test.ts 3
  * PRINTS: packages/connector-core/test/review-draft.test.ts 2

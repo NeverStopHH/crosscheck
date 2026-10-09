@@ -2276,6 +2276,20 @@ export const withDrainedCollisionRelays = (state: SessionState): SessionState =>
 });
 
 /**
+ * These groups back to untold (batch-2 review, H2): the hook that recorded
+ * them told nobody — the race abandoned it before its output left — so the
+ * next answer that names one tells the person after all. A group queued for
+ * the main thread stays: its relay still tells the person.
+ */
+export const withoutCollisionNotices = (state: SessionState, keys: readonly string[]): SessionState => {
+  const queued = new Set(state.collisionRelayQueue ?? []);
+  const untold = new Set(keys.filter((key) => !queued.has(key)));
+  return untold.size === 0
+    ? state
+    : { ...state, collisionNotices: (state.collisionNotices ?? []).filter((notice) => !untold.has(notice.key)) };
+};
+
+/**
  * Whether the live tripwire's last answer for `file` was fully dealt with
  * less than TRIPWIRE_RECHECK_TTL_MS ago (round 2, L1). An instant ahead of
  * the clock or unreadable is no answer at all.
@@ -2341,12 +2355,13 @@ export const withTripwireChecked = (state: SessionState, file: string, now: Date
 };
 
 /**
- * A RECHECK OWED AT ONCE (review batch 2, M1): `file`'s live tripwire was
- * asked and did not answer, so this edit told nobody — not the agent, not the
- * person — and counted nothing. Owed as a rest that is already over: it never
- * keeps the next edit from asking, and the next sync hook pays it — tells the
- * person of a teammate it finds — or books it, as every rest is
- * (hooks/rest-recheck.ts).
+ * A RECHECK OWED AT ONCE (review batch 2, M1 and H2): `file`'s live tripwire
+ * was asked and did not answer — or answered too late, or was cut — so this
+ * edit told nobody, not the agent, not the person, and counted nothing. Owed
+ * as a rest that is already over: it never keeps the file's next edit from
+ * asking the hub again, and every other sync hook pays the debt at its next
+ * opportunity (connector-claude hooks/rest-recheck.ts) — it tells the person
+ * of a teammate it finds, or books `rest_unchecked`, as every rest is.
  */
 export const withOverdueRest = (state: SessionState, file: string, now: Date): SessionState =>
   withTripwireChecked(state, file, new Date(now.getTime() - TRIPWIRE_RECHECK_TTL_MS));

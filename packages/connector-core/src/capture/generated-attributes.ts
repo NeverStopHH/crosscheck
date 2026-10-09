@@ -145,7 +145,23 @@ export interface AttributeSignalsInput {
   readonly paths: readonly string[];
   /** Absent = GENERATED_ATTR_TIMEOUT_MS. Tests pass a deadline git cannot meet. */
   readonly timeoutMs?: number;
+  /**
+   * Paths to ask about in the SAME `check-attr` when any of `paths` misses
+   * the cache — the edited file's neighbours (batch-2 review, M6): one call
+   * answers them as cheaply as one path, and the next edit beside it is a
+   * cache hit instead of a git spawn on PreToolUse's critical path. Their
+   * answers are cached, never returned.
+   */
+  readonly prefetch?: readonly string[];
 }
+
+/**
+ * Neighbours one miss may ask about besides itself: a directory's worth, not
+ * a tree. Measured: one `check-attr` over 500 paths took the time of one over
+ * a single path (about 20 ms either way), and an eighth of a 411-file
+ * directory left most of its next edits a miss.
+ */
+const MAX_ATTRIBUTE_PREFETCH = 512;
 
 /** Each path's answer: the cache's when it has one, else git's, else null. */
 export const readAttributeSignals = async (
@@ -157,10 +173,16 @@ export const readAttributeSignals = async (
   const key = await attributesKey(input.root);
   const cached = key === null ? new Map<string, boolean>() : await readCache(input.home, input.root, key);
   const misses = input.paths.filter((path) => !cached.has(path));
+  const neighbours =
+    misses.length === 0
+      ? []
+      : (input.prefetch ?? [])
+          .filter((path) => !cached.has(path) && !misses.includes(path))
+          .slice(0, MAX_ATTRIBUTE_PREFETCH);
   const answered =
     misses.length === 0
       ? new Map<string, boolean>()
-      : await askGit(input.root, misses, input.timeoutMs ?? GENERATED_ATTR_TIMEOUT_MS);
+      : await askGit(input.root, [...misses, ...neighbours], input.timeoutMs ?? GENERATED_ATTR_TIMEOUT_MS);
   if (key !== null && answered !== null && answered.size > 0) {
     await writeCache(input.home, input.root, key, cached, answered);
   }

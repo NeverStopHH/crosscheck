@@ -27,10 +27,26 @@ import type { Env } from "./paths.ts";
  * every time maintenance was handed the raw remainder instead it finished after
  * the race had already resolved and took the hook's whole point down with it
  * (see HOOK_RESERVE_RATIO for both measurements).
+ *
+ * A CLAIM THE OUTPUT MUST DELIVER (batch-2 review, H2) is not gated on the
+ * spare: a hook that marks something told and then loses the race told
+ * nobody, and waiting for spare time only moved the loss to the hooks whose
+ * answer came late. Such a claim registers its undo with `onCut` instead, in
+ * the same locked transform that makes it, and the runner runs every undo
+ * once the race is lost (`hookRace`). `isCut` refuses a claim the race has
+ * already lost. Both are absent on a budget built outside a race — a test
+ * driving a handler directly — which is never cut.
  */
 export interface HookBudget {
   readonly spareMs: () => number;
+  /** Whether the race has already abandoned this hook: an output made now is never read. */
+  readonly isCut?: () => boolean;
+  /** How to undo a claim this hook's output must deliver, should the race abandon the hook. */
+  readonly onCut?: (undo: CutUndo) => void;
 }
+
+/** Undoes one claim of a hook the race abandoned; never throws (the race's settle swallows it). */
+export type CutUndo = () => Promise<void>;
 
 /**
  * The reserve as arithmetic: what is LEFT of the hook's deadline, minus one
@@ -53,6 +69,47 @@ export const hookBudget = (
   spareMs: () =>
     Math.max(0, deadlineMs - now() - timeoutMs * HOOK_RESERVE_RATIO),
 });
+
+/** One hook run's race: the budget its handler sees, and the cut its runner settles. */
+export interface HookRace {
+  readonly budget: HookBudget;
+  /**
+   * The race was lost: no claim is accepted from here on, and every undo a
+   * claim registered so far runs. Answers how many ran; never throws.
+   */
+  readonly cut: () => Promise<number>;
+}
+
+/**
+ * `hookBudget` with the cut wired in (review H2). The two mutable cells are
+ * this one run's: which undos its claims registered, and whether the race
+ * was lost. A claim registers INSIDE its locked transform, so a cut can never
+ * fall between a claim and its undo: either the transform ran first and its
+ * undo is in the list `cut` runs — and waits for the claim's own write, which
+ * holds the lock — or it runs after and sees `isCut`.
+ */
+export const hookRace = (
+  deadlineMs: number,
+  timeoutMs: number,
+  now: () => number = Date.now,
+): HookRace => {
+  const undos: CutUndo[] = [];
+  const lost = { value: false };
+  return {
+    budget: {
+      ...hookBudget(deadlineMs, timeoutMs, now),
+      isCut: () => lost.value,
+      onCut: (undo) => {
+        undos.push(undo);
+      },
+    },
+    cut: async () => {
+      lost.value = true;
+      const settled = await Promise.allSettled(undos.map((undo) => undo()));
+      return settled.length;
+    },
+  };
+};
 
 /**
  * What the race answered, and WHICH side answered it. "" alone cannot say:

@@ -162,6 +162,8 @@ export interface ClassifyGeneratedInput {
   readonly attrTimeoutMs?: number;
   /** `root`'s declaration, when the caller already read it; absent = read here. */
   readonly authoritative?: AuthoritativeGenerated;
+  /** Neighbours the attribute call may answer for the cache too (generated-attributes.ts). */
+  readonly prefetch?: readonly string[];
 }
 
 export const classifyGenerated = async (
@@ -176,6 +178,7 @@ export const classifyGenerated = async (
       root: input.root,
       paths: unnamed,
       ...(input.attrTimeoutMs === undefined ? {} : { timeoutMs: input.attrTimeoutMs }),
+      ...(input.prefetch === undefined ? {} : { prefetch: input.prefetch.filter((path) => !matchesGeneratedName(path)) }),
     }),
     holdsBinding ? readProtoSources(input.root) : Promise.resolve(new Set<string>()),
   ]);

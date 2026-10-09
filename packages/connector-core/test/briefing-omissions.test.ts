@@ -18,6 +18,7 @@ import {
   readBriefingOmissions,
   recordBriefingOmission,
 } from "../src/state/briefing-omissions.ts";
+import { rotatedPathOf } from "../src/state/omission-ledger.ts";
 import { withLock } from "../src/spool/lock.ts";
 import { makeHome } from "./helpers.ts";
 
@@ -90,9 +91,10 @@ describe("the briefing-omission ledger", () => {
     await recordBriefingOmission(home, { key: KEY, reason: "hub", now: NOW });
   });
 
-  test("the ledger never grows past its cap, even when it cannot rotate", async () => {
-    // Arrange: a ledger already at the cap, and its rotation lock held by
-    // another writer for the whole record (review batch 2, M7).
+  test("the ledger never grows past its cap, even when it cannot prune or rotate", async () => {
+    // Arrange: a ledger already at the cap, and its lock — the prune's and
+    // the rotation's — held by another writer for the whole record (review
+    // batch 2, M7).
     const home = await freshHome("omit-cap");
     const path = briefingOmissionsPath(home);
     await mkdir(dirname(path), { recursive: true });
@@ -114,5 +116,27 @@ describe("the briefing-omission ledger", () => {
 
     // Assert
     expect((await stat(path)).size).toBe(MAX_BRIEFING_OMISSION_LEDGER_BYTES);
+  });
+
+  test("full of lines the window still counts, it lets none go: nothing is pruned, the file rotates", async () => {
+    // Arrange: a ledger at the cap with lines the window still counts — the
+    // ones the prune must keep (batch-2 review, M7). Track B's version of this
+    // case expected the new line to be skipped; with track A's rotation the
+    // full file moves aside whole and the new line starts a fresh one.
+    const home = await freshHome("omit-cap-counted");
+    const path = briefingOmissionsPath(home);
+    await mkdir(dirname(path), { recursive: true });
+    const line = `${JSON.stringify({ at: NOW.toISOString(), reason: "hub", key: KEY })}\n`;
+    const lines = Math.ceil(MAX_BRIEFING_OMISSION_LEDGER_BYTES / line.length);
+    await Bun.write(path, line.repeat(lines));
+    const full = (await stat(path)).size;
+
+    // Act
+    await recordBriefingOmission(home, { key: KEY, reason: "hub", now: NOW });
+
+    // Assert
+    expect((await stat(rotatedPathOf(path))).size).toBe(full);
+    expect((await stat(path)).size).toBeLessThan(MAX_BRIEFING_OMISSION_LEDGER_BYTES);
+    expect((await readBriefingOmissions(home, KEY, NOW)).total).toBe(lines + 1);
   });
 });

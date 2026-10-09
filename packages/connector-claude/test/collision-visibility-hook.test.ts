@@ -17,20 +17,30 @@ import type { Env } from "../src/index.ts";
 import { PRESENCE_TTL_MS } from "@crosscheck/connector-core/constants.ts";
 import { TEAMMATE_DEVELOPER_ID, activeTeammateSession } from "../../connector-core/test/fixtures/hint-hub.ts";
 import {
+  BEHAVIOUR_TIMING,
   NICK_NOTICE,
   OVERLAP_FILE,
   SESSION_ID,
   SUBAGENT,
   UNNAMED_REFRESH_NOTICE,
   cleanupCollisionFixtures,
-  collisionFixture,
+  collisionFixture as fixtureUntimed,
   editPayload,
   parsed,
   presentNow,
   promptPayload,
 } from "./fixtures/collision-fixture.ts";
+import type { CollisionFixture } from "./fixtures/collision-fixture.ts";
 
 afterEach(cleanupCollisionFixtures);
+
+/**
+ * These tests are about WHAT is said, not how fast (batch-2 review, L15):
+ * one failed 1 round in 3 at load 18 on the production 800 ms budget — the
+ * same mechanism as H2 — so they take the roomy timing every behaviour test
+ * of the collision hooks takes.
+ */
+const collisionFixture = (label: string): Promise<CollisionFixture> => fixtureUntimed(label, BEHAVIOUR_TIMING);
 
 const statusline = (repo: string, env: Env): Promise<string> =>
   runStatusline(JSON.stringify({ session_id: SESSION_ID, cwd: repo }), env);

@@ -267,6 +267,34 @@ describe("the cut-checks ledger", () => {
     expect(countWhenRunnerReturns).toBe(1);
   });
 
+  test("the second writer of one cut waits for the first one's writes — a runner never exits between them (batch-2 L6)", async () => {
+    // Arrange
+    const h = await home("cuts-inflight");
+    await writeSessionState(
+      h,
+      SessionStateSchema.parse({
+        hostSessionKey: "s-flight",
+        crosscheckSessionId: "cc_s-flight",
+        workContextId: "wc_cc_s-flight",
+        repoId: "github.com/acme/api",
+        repoRoot: "/tmp/repo",
+        hubUrl: "http://127.0.0.1:1",
+        developerId: "dev_1",
+        startedAt: NOW.toISOString(),
+      }),
+    );
+    const booking = { home: h, sessionId: "s-flight", toolUseId: "toolu_flight", key: KEY, now: NOW } as const;
+
+    // Act — the handler's booking still in flight when the runner books the same cut
+    const handlers = bookLandedProbeCut({ ...booking, reason: "deadline" });
+    await bookLandedProbeCut({ ...booking, reason: "budget" });
+
+    // Assert — by the time the runner's call returns, the cut is written
+    expect((await readLandedProbeCuts(h, KEY, NOW)).total).toBe(1);
+    expect((await readSessionState(h, "s-flight"))?.landedProbeCuts).toBe(1);
+    await handlers;
+  });
+
   test("another repo's cut is not this repo's, and one older than the window stopped counting", async () => {
     // Arrange
     const h = await home("cuts-scope");
@@ -283,7 +311,11 @@ describe("the cut-checks ledger", () => {
     const h = await home("cuts-cap");
     const path = landedProbeCutsPath(h);
     await mkdir(dirname(path), { recursive: true });
-    await Bun.write(path, "x".repeat(MAX_BRIEFING_OMISSION_LEDGER_BYTES));
+    // Lines the window still counts: the ones a full ledger cannot let go of
+    // (batch-2 review, M7 prunes the rest — test/omission-ledger-cap.test.ts).
+    const line = `${JSON.stringify({ at: NOW.toISOString(), reason: "deadline", key: KEY })}\n`;
+    await Bun.write(path, line.repeat(Math.ceil(MAX_BRIEFING_OMISSION_LEDGER_BYTES / line.length)));
+    const full = (await stat(path)).size;
 
     // Act
     await recordLandedProbeCut(h, { key: KEY, reason: "deadline", now: NOW });
@@ -291,7 +323,7 @@ describe("the cut-checks ledger", () => {
     // Assert: the full file moved aside whole, and the cut started a new one
     // (review batch 2, M7, test/omission-ledger-rotation.test.ts).
     expect(path.endsWith("landed-probe-cuts.jsonl")).toBe(true);
-    expect((await stat(`${path}.1`)).size).toBe(MAX_BRIEFING_OMISSION_LEDGER_BYTES);
+    expect((await stat(`${path}.1`)).size).toBe(full);
     expect((await stat(path)).size).toBeLessThan(MAX_BRIEFING_OMISSION_LEDGER_BYTES);
   });
 });

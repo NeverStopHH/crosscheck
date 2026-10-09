@@ -2,12 +2,17 @@
  * TOLD ONLY WHEN IT CAN BE SAID (review of feat/collision-visible, L3). A
  * group marked "told" or a relay queue drained before the hook's output is
  * on its way is a notice nobody ever sees: the budget race abandons the
- * handler, the marker stays, and the person is never told again. Each claim
- * is now the LAST step of its handler, and PreToolUse and UserPromptSubmit
- * make it only while their spare budget lasts — the hub is asked again on the
- * next edit and the queue waits for the next prompt, so a skipped claim is a
- * later notice, never a lost one. The handlers are driven directly here so
- * the budget can be held at zero without timing anything.
+ * handler, the marker stays, and the person is never told again. The relay
+ * drain and the ghost claims are the LAST step of their handlers, and
+ * UserPromptSubmit drains only while its spare budget lasts — the queue waits
+ * for the next prompt, so a skipped drain is a later notice, never a lost
+ * one. The handlers are driven directly here so the budget can be held at
+ * zero without timing anything.
+ *
+ * PreToolUse no longer waits for the spare (batch-2 review, H2): its claim
+ * tells with the ask, and a cut hook gives the claim back
+ * (test/tripwire-claim-cut.test.ts). What stays here of it is the output for
+ * an edit with no new ask but a group still untold.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 
@@ -17,7 +22,11 @@ import { handleUserPromptSubmit } from "../src/hooks/user-prompt-submit.ts";
 import { prepareHook } from "../src/hooks/runner.ts";
 import type { HookBudget, HookContext } from "../src/hooks/runner.ts";
 import type { Env } from "../src/index.ts";
-import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import {
+  readSessionState,
+  updateSessionState,
+  withTripwireGroupAsked,
+} from "@crosscheck/connector-core/state/session-state.ts";
 import {
   MIKE_FILES,
   NICK_NOTICE,
@@ -49,29 +58,18 @@ const contextFor = async (stdin: string, env: Env): Promise<HookContext> => {
   return ctx;
 };
 
-describe("the tripwire's notice is claimed last", () => {
-  test("with the spare spent, the ask still goes out and the group is NOT marked told", async () => {
-    // Arrange
-    const { repo, home, env } = await collisionFixture("co-spent");
-    const ctx = await contextFor(editPayload(repo, OVERLAP_FILE), env);
+/** Nick's (file, work context) pair, as the tripwire's once-per key spells it. */
+const NICK_ASK_KEY = JSON.stringify([OVERLAP_FILE, TEAMMATE_DEVELOPER_ID, "wc_nick"]);
+
+describe("an edit with no new ask still tells a group never told", () => {
+  test("the person gets the line — and the agent the facts with the request, no decision", async () => {
+    // Arrange: the pair was asked before, and its group never told — a record
+    // that had to let it go, or a state from before the claim told with the ask
+    const { repo, home, env } = await collisionFixture("co-later");
+    await updateSessionState(home, SESSION_ID, (fresh) => withTripwireGroupAsked(fresh, NICK_ASK_KEY));
 
     // Act
-    const output = parsed(await handlePreToolUse(ctx, SPENT));
-
-    // Assert
-    expect(output.hookSpecificOutput?.permissionDecision).toBe("ask");
-    expect(output.systemMessage).toBeUndefined();
-    const state = await readSessionState(home, SESSION_ID);
-    expect(state?.collisionNotices ?? []).toEqual([]);
-  });
-
-  test("the next edit, with time to say it, tells the person — and hands the agent the facts with the request", async () => {
-    // Arrange: the first edit asked the agent but had no time to tell the person
-    const { repo, env } = await collisionFixture("co-later");
-    await handlePreToolUse(await contextFor(editPayload(repo, OVERLAP_FILE), env), SPENT);
-
-    // Act
-    const output = parsed(await handlePreToolUse(await contextFor(editPayload(repo, OVERLAP_FILE), env), AMPLE));
+    const output = parsed(await handlePreToolUse(await contextFor(editPayload(repo, OVERLAP_FILE), env), SPENT));
 
     // Assert: no second ask, but the line the first edit could not deliver
     expect(output.hookSpecificOutput?.permissionDecision).toBeUndefined();

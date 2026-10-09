@@ -11,7 +11,7 @@ import {
   USER_PROMPT_SUBMIT_BUDGET_RATIO,
 } from "@crosscheck/connector-core/constants.ts";
 import {
-  hookBudget,
+  hookRace,
   raceHookBudget,
   resolveHookBudget,
 } from "@crosscheck/connector-core/config/hook-budget.ts";
@@ -32,7 +32,7 @@ import {
 } from "@crosscheck/connector-core/config/connected-repo.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { crosscheckHome, repoKey } from "@crosscheck/connector-core/config/paths.ts";
-import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
+import { resolveRepoIdentityCached } from "@crosscheck/connector-core/git/repo-identity-cache.ts";
 import type { RepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
 import { recordHookFired } from "@crosscheck/connector-core/state/fired-markers.ts";
@@ -166,7 +166,7 @@ const resolveHookRepo = async (
   payload: HookPayload,
   env: Env,
 ): Promise<RepoResolution> => {
-  const identity = await resolveRepoIdentity(payload.cwd);
+  const identity = await resolveRepoIdentityCached(crosscheckHome(env), payload.cwd);
   const cwdRung = identity === null ? SILENT : await resolveAt(identity, env);
   if (cwdRung.kind === "ready") {
     return cwdRung;
@@ -193,7 +193,7 @@ const fileDerivedHookRepo = async (payload: HookPayload, env: Env): Promise<Repo
   if (derivedRoot === null) {
     return SILENT;
   }
-  const derived = await resolveRepoIdentity(derivedRoot);
+  const derived = await resolveRepoIdentityCached(crosscheckHome(env), derivedRoot);
   return derived === null ? SILENT : resolveAt(derived, env);
 };
 
@@ -224,7 +224,7 @@ const stateDerivedHookRepo = async (
   if (state === null) {
     return SILENT;
   }
-  const identity = await resolveRepoIdentity(state.repoRoot);
+  const identity = await resolveRepoIdentityCached(crosscheckHome(env), state.repoRoot);
   if (identity === null || identity.repoId !== state.repoId) {
     return SILENT;
   }
@@ -555,19 +555,28 @@ export const runHookWith = async (
     // The handler's deadline is taken a fraction BEFORE the race timer starts,
     // so what the handler believes it has left is never more than the truth.
     const deadlineMs = Date.now() + budgetMs;
+    const race = hookRace(deadlineMs, timeoutMs);
     const outcome = await raceHookBudget(
       prepareAndRun(
         name,
         handler,
         stdin,
         env,
-        hookBudget(deadlineMs, timeoutMs),
+        race.budget,
         (ctx) => {
           resolved.value = { home: ctx.config.home, key: ctx.repoKey };
         },
       ),
       budgetMs,
     );
+    // A CLAIM THE LOST OUTPUT WAS TO DELIVER IS GIVEN BACK (batch-2 review,
+    // H2): first, before anything else after the race, so a handler still
+    // running claims nothing more, and every claim it made is undone — the
+    // tripwire's ask re-asked, its person's line owed by the next hook — and
+    // booked (hooks/pre-tool-use.ts releaseCutStop).
+    if (outcome.timedOut) {
+      await race.cut();
+    }
     // THE BUDGET WON, SO THE CAPTURE MAY NOT HAVE HAPPENED
     // (docs/1.0/loss-accounting.md §3 row 14): the binary exits on the ""
     // the race answered, abandoning whatever the handler had not yet

@@ -19,12 +19,21 @@
  *     own count of moments its person may not have been told about a
  *     collision sits beside the briefings and landed-change checks it did
  *     not deliver whole.
+ *
+ * And one booking of its own (batch-2 review, H2): a tripwire whose answer
+ * named a teammate, and whose hook the budget race then abandoned before its
+ * output left — reason `tripwire_cut`, one line per cut hook. The hook's
+ * claim is undone and the file left owing a recheck, so the collision is
+ * asked again or booked `rest_unchecked`; this line is the moment itself.
  */
 import { omissionLedger } from "./omission-ledger.ts";
 import type { OmissionCounts, OmissionEntry } from "./omission-ledger.ts";
 
-/** Why a collision's person may not have been told: a rest whose recheck never ran. */
-export const REST_OMISSION_REASONS = ["rest_unchecked"] as const;
+/**
+ * Why a collision's person may not have been told: a rest whose recheck
+ * never ran, or a tripwire answer the budget cut before its output left.
+ */
+export const REST_OMISSION_REASONS = ["rest_unchecked", "tripwire_cut"] as const;
 
 export type RestOmissionReason = (typeof REST_OMISSION_REASONS)[number];
 

@@ -110,7 +110,7 @@ describe("an edit of a file whose live answer was fully dealt with (round 2, L1)
     expect(second.hookSpecificOutput?.permissionDecisionReason).toContain("Ken has an active session");
   });
 
-  test("a tell the spare could not pay for does not rest the file", async () => {
+  test("an answer dealt with while the spare was spent rests the file all the same: the ask, the tell and the rest are one claim (batch-2 H2)", async () => {
     // Arrange
     const fix = await collisionFixture("tt-spent");
     const ctx = await prepareHook(editPayload(fix.repo, OVERLAP_FILE), fix.env);
@@ -123,6 +123,6 @@ describe("an edit of a file whose live answer was fully dealt with (round 2, L1)
     // Assert
     expect(ctx).not.toBeNull();
     const state = await readSessionState(fix.home, SESSION_ID);
-    expect(state?.tripwireCheckedFiles ?? []).toEqual([]);
+    expect((state?.tripwireCheckedFiles ?? []).map((check) => check.file)).toEqual([OVERLAP_FILE]);
   });
 });

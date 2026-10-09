@@ -45,24 +45,24 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 
 import { LANDED_GIT_TIMEOUT_MS, LANDED_PROBE_BUDGET_MS, MAX_LANDED_COMMITS_SCANNED } from "../constants.ts";
-import { readLandingBranches, resolveLandingRefs } from "./landing-branches.ts";
+import { readLandingBranches } from "./landing-branches.ts";
 import type { LandingRef } from "./landing-branches.ts";
 import {
   changesLandedBy,
   fileAt,
   hasNothingNetToUndo,
-  isPartialClone,
   isReachableFromAny,
   isSameContent,
   landingsOn,
   missingOn,
+  quietFileBatch,
   quietGitRunner,
-  readOwnEmail,
   readRepoState,
   stillMissingAfterMerge,
   tipAt,
 } from "./git-queries.ts";
 import type { FileAtRev, GitContext, GitRunner, MissingAnswer, ParsedCommit, RepoState } from "./git-queries.ts";
+import { emptyMemo, openProbeFacts, readProbeRepoState } from "./probe-facts.ts";
 import { isRecentLanding, localDayKey, recentWindowStart } from "./working-days.ts";
 
 export interface LandedCommit extends ParsedCommit {
@@ -264,8 +264,18 @@ const isRelanding = async (
   return ancestry.some((isAncestor) => isAncestor === false);
 };
 
+/**
+ * The commits the missing half answered with: on a landing branch and, by
+ * that very answer, NOT in this checkout's HEAD (batch-2 review, M6). A
+ * commit among them can never be recent work this checkout has, so the
+ * recent half asks git nothing more about it.
+ */
+const notInHeadOf = (answered: readonly RefResult[]): ReadonlySet<string> =>
+  new Set(answered.flatMap(({ answer }) => (answer?.commits ?? []).map((commit) => commit.sha)));
+
 const recentFor = async (
   probe: Probe,
+  notInHeadLater: Promise<ReadonlySet<string>>,
 ): Promise<{ readonly commits: readonly LandedCommit[]; readonly isComplete: boolean }> => {
   const { context } = probe;
   const windowStart = recentWindowStart(probe.now, probe.timeZone);
@@ -284,12 +294,21 @@ const recentFor = async (
     inWindow.map(async ({ ref, landing }) => ({ ref, landing, changes: await changesLandedBy(context, landing) })),
   );
   const oldTips = perRef.map(({ old }) => old.tip).filter((tip): tip is string => tip !== null);
-  const oldTipFiles = await Promise.all(oldTips.map(async (tip) => ({ tip, file: await fileAt(context, tip) })));
   const sightings = landed.flatMap(({ ref, landing, changes }) =>
     (changes ?? []).map((change) => ({ branch: ref.branch, change, landedAt: landing.itself.committedAt })),
   );
+  const candidates = grouped(sightings, probe.selfEmail, (commit) => commit.landedAt?.getTime() ?? 0);
+  const notInHead = await notInHeadLater;
+  // The old tips' copies of the file only decide a re-landing, which only a
+  // commit still to be judged can be: none left, no `ls-tree` either.
+  const oldTipFiles = candidates.some((commit) => !notInHead.has(commit.sha))
+    ? await Promise.all(oldTips.map(async (tip) => ({ tip, file: await fileAt(context, tip) })))
+    : [];
   const judged = await Promise.all(
-    grouped(sightings, probe.selfEmail, (commit) => commit.landedAt?.getTime() ?? 0).map(async (commit) => {
+    candidates.map(async (commit) => {
+      if (notInHead.has(commit.sha)) {
+        return { commit: null, isKnown: true };
+      }
       const [wasAlreadyLanded, isPresent, atCommit] = await Promise.all([
         isReachableFromAny(context, commit.sha, oldTips),
         isReachableFromAny(context, commit.sha, [probe.state.headSha]),
@@ -360,6 +379,12 @@ export interface LandedProbeInput {
   /** Keys this caller already saw answer "nothing" (LandedChanges.cleanKey). */
   readonly knownCleanKeys?: readonly string[];
   /**
+   * The crosscheck home whose `cache/` keeps this root's facts and
+   * never-changing answers across probes (landed-changes/probe-facts.ts).
+   * Absent: git is asked everything, every time.
+   */
+  readonly cacheHome?: string;
+  /**
    * How one git command runs. Injectable like repo identity's `resolveHost`:
    * the tests delay or fail single calls to reach the deadline and failure
    * paths deterministically, and count calls to prove the cache is used.
@@ -422,22 +447,35 @@ const run = async (
   const timeoutMs = input.timeoutMs ?? LANDED_GIT_TIMEOUT_MS;
   const limit = semaphore(MAX_PARALLEL_GIT);
   const runGit = input.runGit ?? quietGitRunner(input.root, timeoutMs);
-  const context: GitContext = {
+  const memo = emptyMemo();
+  const askers: GitContext = {
     root: input.root,
     file: input.file,
     // Checked again when the slot is granted: a call that waited past the
     // deadline must not start at all.
     run: (args) => limit(() => (isCancelled() ? Promise.resolve(null) : runGit(args))),
     isCancelled,
+    memo,
   };
-  const setting = await readLandingBranches(input.root);
-  const [refs, state, isPartial, selfEmail, mailmap] = await Promise.all([
-    resolveLandingRefs(input.root, setting, timeoutMs),
-    readRepoState(context),
-    isPartialClone(context),
-    readOwnEmail(context),
-    readMailmap(input.root),
+  // THE FILES AND THE CACHE STAND IN FOR REAL GIT ONLY (batch-2 review, M6;
+  // landed-changes/probe-facts.ts): a caller that injects how git runs is
+  // staging git's answers, and every question goes to that runner.
+  const isRealGit = input.runGit === undefined;
+  const [setting, mailmap] = await Promise.all([readLandingBranches(input.root), readMailmap(input.root)]);
+  const [opened, state] = await Promise.all([
+    openProbeFacts({
+      root: input.root,
+      setting,
+      mailmap,
+      context: askers,
+      timeoutMs,
+      home: isRealGit ? (input.cacheHome ?? null) : null,
+      now: input.now,
+      memo,
+    }),
+    isRealGit ? readProbeRepoState(askers) : readRepoState(askers),
   ]);
+  const { refs, isPartial, selfEmail } = opened.facts;
   if (refs === null || state === null || state.isShallow) {
     return null;
   }
@@ -448,19 +486,35 @@ const run = async (
   if (input.knownCleanKeys?.includes(key) === true) {
     return nothing(key);
   }
+  // The file at several commits in one call (git-queries.ts quietFileBatch):
+  // real git only, and never a partial clone, where an object's type is the
+  // network's to say.
+  const batchFiles = quietFileBatch(input.root, input.file, timeoutMs);
+  const context: GitContext =
+    isRealGit && !isPartial
+      ? { ...askers, filesAt: (revs) => limit(() => (isCancelled() ? Promise.resolve(null) : batchFiles(revs))) }
+      : askers;
   const probe: Probe = { context, state, refs, selfEmail, cherryPick: !isPartial, now: input.now, timeZone: input.timeZone };
   // Branch by branch, as each answers: a slow one past the deadline is named
   // unchecked, and never silences what the others already know.
   const answered: RefResult[] = [];
   progress.snapshot = () => missingHalfOf(refs, answered, selfEmail);
-  await Promise.all(
+  // Both halves at once (batch-2 review, M6): the recent half's first
+  // questions do not wait on the missing half — only its judging does, for
+  // the commits the missing half already placed outside HEAD. The missing
+  // half's calls queue for the git slots first.
+  const missingDone = Promise.all(
     refs.map(async (ref) => {
       answered.push(await missingFor(probe, ref));
     }),
   );
+  const recentDone = recentFor(probe, missingDone.then(() => notInHeadOf(answered)));
+  recentDone.catch(() => undefined);
+  await missingDone;
   const missingHalf = missingHalfOf(refs, answered, selfEmail);
   const { missing } = missingHalf;
-  const recent = await recentFor(probe);
+  const recent = await recentDone;
+  await opened.keep();
   const isComplete =
     missingHalf.unchecked.length === 0 &&
     !(missingHalf.moreMissing && missing.length === 0) &&
