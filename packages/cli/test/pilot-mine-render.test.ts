@@ -37,6 +37,36 @@ const creditLine = (yourWork: MyHintOutcomes["yourWork"]): string | undefined =>
     .split("\n")
     .find((line) => line.startsWith("your own work"));
 
+describe("renderMyOutcomes' change in waiting (round-2 R2-L2)", () => {
+  test("a cooling word over a counted one prints once, as the new word pending from its instant", () => {
+    // Arrange — followed counts; overrode, confirmed with a passkey still cooling, waits to replace it
+    const view: MyHintOutcomes = {
+      ...viewSince("2026-08-10T12:00:00.000Z"),
+      received: 1,
+      followed: 1,
+      notConfirmed: {
+        byAgent: 0,
+        atTerminal: 0,
+        legacy: 0,
+        coolingOff: 0,
+        countingFrom: null,
+        retracted: 0,
+        pendingChanges: [{ word: "overrode", pointers: 1, countsFrom: "2026-10-06T09:00:00.000Z" }],
+      },
+    };
+
+    // Act
+    const out = renderMyOutcomes(view);
+
+    // Assert — one line for the change; the earlier word stays in the tally, with no line of its own
+    expect(out).toContain(
+      "  overrode on 1 hint — pending, counts from 2026-10-06T09:00:00.000Z; your earlier word counts until then",
+    );
+    expect(out).not.toContain("still in the cool-off");
+    expect(out.split("\n").filter((line) => line.includes("pending, counts from"))).toHaveLength(1);
+  });
+});
+
 describe("renderMyOutcomes' header", () => {
   test("a view that spans its whole window names the window", () => {
     // Act

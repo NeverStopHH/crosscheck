@@ -41,7 +41,7 @@ import {
   withholdingOf,
 } from "./outcome-population.ts";
 import type { CorrectionLine, DeliveryState, Enrolment, HintOutcomeTally } from "./outcome-population.ts";
-import { countingFromOf, isCoolingRow, isRetractedRow } from "./human-provenance.ts";
+import { countingFromOf, isCoolingRow, isHumanRow, isRetractedRow } from "./human-provenance.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
@@ -106,46 +106,84 @@ export interface NotConfirmed {
   readonly legacy: number;
   /**
    * Pointers with a word confirmed by a passkey still in its cool-off (review
-   * H1): it took effect, and counts from `countingFrom` unless revoked first.
+   * H1), and no counted word yet: it took effect, and counts from
+   * `countingFrom` unless revoked first.
    */
   readonly coolingOff: number;
   /** When the earliest of those starts counting, as ISO; null with none. */
   readonly countingFrom: string | null;
+  /**
+   * A cooling word on a pointer that already has a counted one (round-2
+   * R2-L2): shown once, as the new word pending from its instant, by word.
+   * The counted word stays in the figures until then; it gets no line of its own.
+   */
+  readonly pendingChanges: readonly PendingChange[];
   /** Pointers with a word confirmed by a passkey since revoked: retracted, never counted. */
   readonly retracted: number;
 }
 
+export interface PendingChange {
+  readonly word: string;
+  readonly pointers: number;
+  /** When the earliest of them starts counting, as ISO. */
+  readonly countsFrom: string;
+}
+
 /** The person's confirmed words on their deliveries: outcomes, labels and noise said again. */
 const confirmedWordsOf = (developerId: string, repo: string, since: Date): SQL => sql`
-  SELECT hd.session_id, hd.ref_id, w.provenance, w.confirmation_id FROM (
-    SELECT o.delivery_id, o.provenance, o.confirmation_id, o.created_at FROM hint_outcomes o
+  SELECT hd.session_id, hd.ref_id, w.word, w.provenance, w.confirmation_id, w.created_at FROM (
+    SELECT o.delivery_id, o.outcome AS word, o.provenance, o.confirmation_id, o.created_at FROM hint_outcomes o
     WHERE o.recorded_by = ${developerId} AND o.repo = ${repo}
     UNION ALL
-    SELECT m.ref_id, m.provenance, m.confirmation_id, m.created_at FROM pilot_marks m
+    SELECT m.ref_id, m.mark, m.provenance, m.confirmation_id, m.created_at FROM pilot_marks m
     WHERE m.marked_by = ${developerId} AND m.repo = ${repo} AND m.ref_kind = 'hint_delivery'
     UNION ALL
-    SELECT r.delivery_id, r.provenance, r.confirmation_id, r.created_at FROM noise_reassertions r
+    SELECT r.delivery_id, 'noise', r.provenance, r.confirmation_id, r.created_at FROM noise_reassertions r
     WHERE r.marked_by = ${developerId} AND r.repo = ${repo}
   ) w JOIN hint_deliveries hd ON hd.id = w.delivery_id
   WHERE w.created_at >= ${since.toISOString()}::timestamptz`;
 
-/** The confirmed words that count in no figure now: cooling off, or retracted (review H1). */
+const isoOf = (value: string | Date | null | undefined): string | null =>
+  value === null || value === undefined ? null : new Date(value).toISOString();
+
+/**
+ * The confirmed words that count in no figure now: cooling off, or retracted
+ * (review H1). A pointer's newest cooling word is EITHER a cooling intervention
+ * (nothing of the person's counts on it yet) OR a pending change of a word that
+ * counts — never both, so no intervention is shown twice (round-2 R2-L2, N10).
+ */
 const readUncounted = async (
   deps: Deps,
   input: ReadMyHintOutcomesInput,
   since: Date,
-): Promise<Pick<NotConfirmed, "coolingOff" | "countingFrom" | "retracted">> => {
+): Promise<Pick<NotConfirmed, "coolingOff" | "countingFrom" | "pendingChanges" | "retracted">> => {
   const at = deps.now();
+  const uncounted = sql`
+    WITH words AS (${confirmedWordsOf(input.developerId, input.repo, since)}),
+    cooling AS (
+      SELECT DISTINCT ON (w.session_id, w.ref_id) w.session_id, w.ref_id, w.word, ${countingFromOf("w")} AS counts_from,
+        EXISTS (SELECT 1 FROM words c WHERE c.session_id = w.session_id AND c.ref_id = w.ref_id AND ${isHumanRow("c", at)}) AS changes_counted
+      FROM words w WHERE ${isCoolingRow("w", at)}
+      ORDER BY w.session_id, w.ref_id, w.created_at DESC)`;
   const rows = await deps.db.execute<{ cooling: number; counting_from: string | Date | null; retracted: number }>(sql`
-    WITH words AS (${confirmedWordsOf(input.developerId, input.repo, since)})
+    ${uncounted}
     SELECT
-      (SELECT count(DISTINCT (session_id, ref_id))::int FROM words w WHERE ${isCoolingRow("w", at)}) AS cooling,
-      (SELECT min(${countingFromOf("w")}) FROM words w WHERE ${isCoolingRow("w", at)}) AS counting_from,
+      (SELECT count(*)::int FROM cooling WHERE NOT changes_counted) AS cooling,
+      (SELECT min(counts_from) FROM cooling WHERE NOT changes_counted) AS counting_from,
       (SELECT count(DISTINCT (session_id, ref_id))::int FROM words w WHERE ${isRetractedRow("w")}) AS retracted`);
+  const changes = await deps.db.execute<{ word: string; pointers: number; counts_from: string | Date }>(sql`
+    ${uncounted}
+    SELECT word, count(*)::int AS pointers, min(counts_from) AS counts_from
+    FROM cooling WHERE changes_counted GROUP BY word ORDER BY word`);
   const row = rows.rows[0];
   return {
     coolingOff: row?.cooling ?? 0,
-    countingFrom: row?.counting_from === null || row?.counting_from === undefined ? null : new Date(row.counting_from).toISOString(),
+    countingFrom: isoOf(row?.counting_from),
+    pendingChanges: changes.rows.map((change) => ({
+      word: change.word,
+      pointers: change.pointers,
+      countsFrom: isoOf(change.counts_from) ?? "",
+    })),
     retracted: row?.retracted ?? 0,
   };
 };

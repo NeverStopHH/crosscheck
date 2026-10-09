@@ -199,6 +199,14 @@ export const MyHintOutcomesSchema = z.looseObject({
       countingFrom: z.string().nullable().optional().catch(undefined),
       /** Confirmed with a passkey since revoked: retracted. */
       retracted: CountSchema.optional().catch(undefined),
+      /**
+       * Round-2 R2-L2: a cooling word that changes a counted one, by word — shown once, as
+       * the new word pending from its instant. Absent from an older hub, or when unreadable.
+       */
+      pendingChanges: z
+        .array(z.looseObject({ word: z.string().min(1), pointers: CountSchema, countsFrom: z.string().min(1) }))
+        .optional()
+        .catch(undefined),
     })
     .optional()
     .catch(undefined),

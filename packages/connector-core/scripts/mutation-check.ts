@@ -25229,6 +25229,22 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/review-survivors-r2.test.ts`,
     because: "the person's noise said again in August about a July hint counts nowhere",
   },
+  {
+    label: "a change in waiting is counted again as cooling (R2-L2)",
+    file: `${SERVER}/src/services/hint-outcome-view.ts`,
+    from: "      (SELECT count(*)::int FROM cooling WHERE NOT changes_counted) AS cooling,",
+    to: "      (SELECT count(*)::int FROM cooling) AS cooling,",
+    test: `${SERVER}/test/signer-standing.test.ts`,
+    because: "one hint shows twice in --mine: counted at the old word and again as a word in its cool-off (N10)",
+  },
+  {
+    label: "pilot --mine never shows a change in waiting (R2-L2)",
+    file: `${CLI}/src/cli/pilot-mine-render.ts`,
+    from: "    ...pendingChangeLines(pending),\n",
+    to: "",
+    test: `${CLI}/test/pilot-mine-render.test.ts`,
+    because: "the person's own newer word, confirmed with a fresh passkey, is shown nowhere until it counts",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -25328,7 +25344,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
  * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 17
- * PRINTS: packages/cli/test/pilot-mine-render.test.ts 13
+ * PRINTS: packages/cli/test/pilot-mine-render.test.ts 14
  * PRINTS: packages/cli/test/pilot-render.test.ts 36
  * PRINTS: packages/cli/test/pin-denylist-door.test.ts 16
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
@@ -25692,7 +25708,7 @@ interface Outcome {
  * PRINTS: packages/server/test/session-reap-liveness.test.ts 1
  * PRINTS: packages/server/test/session-reaper.test.ts 2
  * PRINTS: packages/server/test/sessions.test.ts 1
- * PRINTS: packages/server/test/signer-standing.test.ts 2
+ * PRINTS: packages/server/test/signer-standing.test.ts 3
  * PRINTS: packages/server/test/similarity-gate.test.ts 5
  * PRINTS: packages/server/test/skeleton-identity.test.ts 17
  * PRINTS: packages/server/test/skeleton-sweep.test.ts 35
