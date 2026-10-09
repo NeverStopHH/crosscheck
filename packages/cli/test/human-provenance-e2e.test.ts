@@ -260,11 +260,11 @@ describe("an agent drafts three ratings; the person confirms two and discards on
     expect(signed.status).toBe(200);
     // after: the two the person signed wait out their passkey's cool-off (H1), said so with when
     expect(afterConfirming).toContain("as you confirmed them with your passkey: followed 0 · overrode 0 · not relevant now 0 · noise 0 · unmarked 3");
-    expect(afterConfirming).toMatch(/ {2}2 confirmed, counting from \d{4}-\d{2}-\d{2}T[\d:.]+Z — the passkey that confirmed them is still in its cool-off/);
+    expect(afterConfirming).toMatch(/ {2}2 confirmed, still in the cool-off of the passkey that confirmed them — the first counts from \d{4}-\d{2}-\d{2}T[\d:.]+Z;/);
     // a day later: the two the person signed count, and nothing of the agent's ever does
     expect(afterCoolOff).toContain("hints that reached you unasked: 3 — as you confirmed them with your passkey: followed 2 · overrode 0 · not relevant now 0 · noise 0 · unmarked 1");
     expect(afterCoolOff).toContain("not confirmed by you, so not counted above: 0 rated by your agent · 0 typed at a terminal · 0 recorded before provenance existed");
-    expect(afterCoolOff).not.toContain("counting from");
+    expect(afterCoolOff).not.toContain("still in the cool-off");
     expect(afterCoolOff).not.toContain("kept the header logic on the client");
   });
 });

@@ -468,10 +468,11 @@ describe("renderPilot", () => {
 
     // Assert — beside the figures, never in them
     const proof4 = out.slice(out.indexOf("4. proactive precision"), out.indexOf("5. coverage"));
+    // Round-2 R2-L2: exact about which instant (the first of them), and about what a revoke then does
     expect(proof4).toContain(
-      "2 confirmed, counting from 2026-08-02T10:00:00.000Z — the passkey that confirmed them is still in its cool-off, and revoking it first retracts them",
+      "2 confirmed, still in the cool-off of the passkey that confirmed them — the first counts from 2026-08-02T10:00:00.000Z; revoked before then, that passkey never counts, and what it confirmed comes back to your confirm page",
     );
-    expect(proof4).toContain("1 retracted — the passkey that confirmed them was revoked, so they count nowhere");
+    expect(proof4).toContain("1 retracted — the passkey that confirmed them was declared compromised, so they count nowhere");
   });
 
   test("proof 4 says plainly what makes a label a person's: their passkey, never the key", () => {
