@@ -283,8 +283,8 @@ describe("crosscheck pin", () => {
     expect(listed.stdout).toContain("pins: 1 (2 files");
     // The DENOMINATOR sentence: what is NOT watched, on the same line.
     expect(listed.stdout).toContain("nothing else is watched");
-    // The trust label prints the capture mode, not only the provenance.
-    expect(listed.stdout).toContain("verified by Nick (a human, at a terminal)");
+    // The trust label says who made it a pin: the person, with their passkey (human provenance §7).
+    expect(listed.stdout).toContain("verified by Nick (confirmed with their passkey)");
     expect(listed.stdout).toContain("«Play button plays/pauses»");
   });
 });
@@ -357,6 +357,48 @@ describe("crosscheck suspect", () => {
     // Assert
     expect(result.stdout).toContain("hub unreachable");
     expect(result.stdout).toContain("UNKNOWN");
+  });
+});
+
+describe("crosscheck pin list: who made it a pin (round-1 review L3)", () => {
+  test("a confirmed pin is the person's, a pin from before provenance is listed as such, and an older hub's as before", () => {
+    // Arrange — the same pin three times: confirmed, from before 0.11, and from a hub that sends no provenance
+    const base = {
+      repo: REPO_ID,
+      surface: "Play button plays/pauses",
+      files: [{ path: PINNED, status: "present" }],
+      check: "open /workbench, press Play",
+      captureMode: "human",
+      verifiedById: "dev_nick",
+      verifiedByName: "Nick",
+      verifiedAtCommit: "a1b2c3d4",
+      verifiedAt: new Date().toISOString(),
+      brokeAt: null,
+      brokeByName: null,
+      speaking: true,
+      missingPaths: 0,
+      renamedPaths: 0,
+      renamedAt: null,
+      renamedByName: null,
+      liveWaiver: null,
+      version: 1,
+    };
+    const registry = {
+      pins: [
+        { ...base, id: "pin_11111111-2222-4333-8444-000000000001", provenance: "human_passkey_confirmed" },
+        { ...base, id: "pin_11111111-2222-4333-8444-000000000002", provenance: "unknown_legacy" },
+        { ...base, id: "pin_11111111-2222-4333-8444-000000000003" },
+      ],
+      coverage: { pins: 3, files: 3, speaking: 3, broken: 0, missingPaths: 0, oldestVerifiedAt: new Date().toISOString() },
+    };
+
+    // Act
+    const rendered = renderPinList(REPO_ID, registry, new Date());
+
+    // Assert
+    expect(rendered).toContain("verified by Nick (confirmed with their passkey)");
+    expect(rendered).toContain("pinned by Nick before provenance was recorded — not proven to be theirs");
+    expect(rendered).toContain("verified by Nick (a human, at a terminal)");
   });
 });
 
