@@ -24892,6 +24892,40 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/e2e/clean-restart.e2e.test.ts`,
     because: "a SIGKILL to the pid the editor started leaves the restarted MCP server running with no parent",
   },
+  // THE PACKAGE SHIPS WHAT A RUNTIME ENTRY REACHES (cli/scripts/pack-reach.ts):
+  // the tarball cap, batch 2.
+  {
+    label: "the package ships every src file again",
+    file: `${CLI}/scripts/pack-reach.ts`,
+    from: "  reached.has(file) || PATH_LOADED_ASSETS.includes(file);",
+    to: "  true;",
+    test: `${CLI}/test/pack-reach.test.ts`,
+    because: "the render-surface registries and other test-only modules ride along, and the tarball crosses its cap",
+  },
+  {
+    label: "pack-npm copies src without asking what ships",
+    file: `${CLI}/scripts/pack-npm.ts`,
+    from: "    if (!shipsSource(reached, repoRelative)) {",
+    to: "    if (false) {",
+    test: `${CLI}/test/e2e/npm-package.e2e.test.ts`,
+    because: "the computed set exists but the packed tarball ignores it, and only a size cap would ever notice",
+  },
+  {
+    label: "a file loaded by path falls out of the package",
+    file: `${CLI}/scripts/pack-reach.ts`,
+    from: '  "packages/connector-acp/src/fd-reader.worker.ts",\n',
+    to: "",
+    test: `${CLI}/test/pack-reach.test.ts`,
+    because: "the ACP proxy's reader worker is missing from the install, and every ACP session dies at its first read",
+  },
+  {
+    label: "a module reached only by a type falls out of the package",
+    file: `${CLI}/scripts/pack-reach.ts`,
+    from: "      if (target !== null && !closed.has(target) && existsSync(join(repoRoot, target))) {",
+    to: "      if (false) {",
+    test: `${CLI}/test/pack-reach.test.ts`,
+    because: "a consumer type-checking crosscheck-hub/server cannot resolve the ./types.ts its index re-exports",
+  },
   {
     label: "a worker entry loads before the runtime is cleaned",
     file: `${CONNECTOR}/src/landing-fetch/worker-entry.ts`,
@@ -25339,6 +25373,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor.test.ts 1
  * PRINTS: packages/cli/test/e2e/bait-repo-isolation.e2e.test.ts 7
  * PRINTS: packages/cli/test/e2e/clean-restart.e2e.test.ts 4
+ * PRINTS: packages/cli/test/e2e/npm-package.e2e.test.ts 1
  * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
  * PRINTS: packages/cli/test/e2e/worker-spawn-isolation.e2e.test.ts 4
  * PRINTS: packages/cli/test/foreign-hub-lines.test.ts 1
@@ -25358,6 +25393,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/landing-fetch-doctor.test.ts 8
  * PRINTS: packages/cli/test/mcp-config.test.ts 1
  * PRINTS: packages/cli/test/outcome-cli.test.ts 35
+ * PRINTS: packages/cli/test/pack-reach.test.ts 3
  * PRINTS: packages/cli/test/passkey-status.test.ts 4
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
