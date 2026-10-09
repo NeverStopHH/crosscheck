@@ -13,6 +13,8 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import { saveConfig } from "@crosscheck/connector-core/config/config.ts";
+import { renderRepoConfig } from "@crosscheck/connector-core/config/repo-config.ts";
+import { REPO_CONFIG_FILE } from "@crosscheck/connector-core/constants.ts";
 import { getDiagnosis } from "@crosscheck/connector-core/http/hub.ts";
 import { writeRepoFile } from "../../connector-core/test/helpers.ts";
 import {
@@ -25,6 +27,9 @@ import type { CaptureHub } from "./fixtures/capture-harness.ts";
 
 let hub: CaptureHub;
 const cleanups: string[] = [];
+
+/** A hub nothing here ever reaches: only the URL a login and a repo name. */
+const OTHER_HUB_URL = "https://other-hub.example";
 
 beforeAll(async () => {
   hub = await bootCaptureHub("acp-rotation");
@@ -129,5 +134,46 @@ describe("a key rotation during a running ACP session", () => {
       ? diagnosis.data.targets.filter((target) => target.kind === "file").map((target) => target.value)
       : [];
     expect(files).not.toContain("src/limiter.ts");
+  });
+
+  test("a repo that moves to another hub mid-session, with a login there, hands this session's hub nothing", async () => {
+    // Arrange — no hub in the environment: the repo's committed config names
+    // this hub, and the session is bound to it for its life
+    const oldKey = await newDeveloperKey("repo-moved-dev@example.com");
+    const h = await createHarness(hub, cleanups, "rotation-repo-moved", {
+      env: { CROSSCHECK_API_KEY: undefined, CROSSCHECK_HUB_URL: undefined },
+    });
+    await writeRepoFile(h.repo, REPO_CONFIG_FILE, renderRepoConfig(hub.hubUrl));
+    await saveConfig(h.home, { version: 1, hubUrl: hub.hubUrl, apiKey: oldKey });
+    await writeRepoFile(h.repo, "src/quota.ts", "export const a = 1;\n");
+    const sessionId = "sess_rotation_repo_moved";
+    handshake(h, sessionId, h.repo);
+    await h.capture.settle();
+
+    // Act — this hub now refuses the old key; a pull moved the repo to
+    // another hub and the developer logged in there. That login loads as a
+    // reportable config of its OWN hub, so only the session's hub check keeps
+    // its key here — it is this hub's valid key ONLY so that sending it would show
+    const newKey = await rotate(oldKey);
+    await writeRepoFile(h.repo, REPO_CONFIG_FILE, renderRepoConfig(OTHER_HUB_URL));
+    await saveConfig(h.home, { version: 1, hubUrl: OTHER_HUB_URL, apiKey: newKey });
+    h.capture.offer(
+      "a2c",
+      toolCallUpdate(sessionId, {
+        sessionUpdate: "tool_call",
+        toolCallId: "call_after_login_elsewhere",
+        kind: "edit",
+        status: "in_progress",
+        locations: [{ path: join(h.repo, "src/quota.ts") }],
+      }),
+    );
+    await h.capture.settle();
+
+    // Assert — the other login's key never reached this hub
+    const diagnosis = await getDiagnosis({ ...h.hub, apiKey: newKey }, `wc_cc_acp-fake-agent--${sessionId}`);
+    const files = diagnosis.ok
+      ? diagnosis.data.targets.filter((target) => target.kind === "file").map((target) => target.value)
+      : [];
+    expect(files).not.toContain("src/quota.ts");
   });
 });
