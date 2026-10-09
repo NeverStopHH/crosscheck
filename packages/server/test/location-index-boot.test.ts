@@ -222,6 +222,35 @@ describe("after serving: the background pass rebuilds them (M11)", () => {
   });
 });
 
+describe("a page of the rebuild is not one stall (M11)", () => {
+  test("takes a turn of the event loop every few docs inside a page, not only between pages", async () => {
+    // Arrange — 28 location-titled contexts, one page of the default size
+    const world = await seed();
+    await world.harness.db.execute(sql`
+      INSERT INTO work_contexts (id, session_id, title, title_source, status, normalized_doc, created_at)
+      SELECT 'wc_page_' || lpad(g::text, 2, '0'), ${ROBIN_S}, ${SECRET_BRANCH}, NULL, 'analyzing', ${SECRET_BRANCH}, now()
+      FROM generate_series(1, 25) g`);
+    await optOutOnAnEarlierRelease(world);
+    await withholdPendingLocationTitles(world.harness.db);
+    let turns = 0;
+    let isRunning = true;
+    const countTurns = (): void => {
+      if (isRunning) {
+        turns += 1;
+        setImmediate(countTurns);
+      }
+    };
+    setImmediate(countTurns);
+
+    // Act
+    await rebuildOptedOutLocationIndexes({ db: world.harness.db, now: world.harness.clock.now, embedder: null });
+    isRunning = false;
+
+    // Assert — after the 10th and the 20th doc, and after the page
+    expect(turns).toBeGreaterThanOrEqual(3);
+  });
+});
+
 describe("GET /api/hub-status counts the vectors still to mint (M11)", () => {
   const vectorsPending = async (world: World): Promise<unknown> => {
     const response = await world.harness.app.request("/api/hub-status", jsonRequest("GET", world.nick.apiKey));

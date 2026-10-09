@@ -29,7 +29,13 @@
 import { and, asc, desc, eq, gt, gte, isNull, notInArray, or, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 
-import { EVENT_KINDS, LOCATION_INDEX_REBUILD_BATCH, MS_PER_DAY, PRESENCE_REENABLE_NOTICE_DAYS } from "../constants.ts";
+import {
+  EVENT_KINDS,
+  LOCATION_INDEX_REBUILD_BATCH,
+  LOCATION_INDEX_REBUILD_TURN,
+  MS_PER_DAY,
+  PRESENCE_REENABLE_NOTICE_DAYS,
+} from "../constants.ts";
 import { agentSessions, developerEmails, developerMutes, developers, events, workContexts } from "../db/schema.ts";
 import { yieldToRequests } from "../db/yield-to-requests.ts";
 import { appendEvent } from "./events.ts";
@@ -302,9 +308,20 @@ const BEFORE_EVERY_CONTEXT = "";
  * are rebuilt — a `host` or `person` title never is — once per toggle, which
  * is rare by nature, and once after boot for an opt-out from before the
  * index followed the setting (above). Page by page from `after`: each page
- * rebuilt, its vectors re-minted in one embedder call when the hub has one,
- * then a turn of the event loop.
+ * rebuilt with a turn of the event loop every LOCATION_INDEX_REBUILD_TURN
+ * docs (a doc is a few queries and its words; a page of 100 held a request
+ * 2.6 s on a loaded machine), its vectors re-minted in one embedder call
+ * when the hub has one, then a turn again.
  */
+const refreshPage = async (db: Db, ids: readonly string[]): Promise<void> => {
+  for (const [index, id] of ids.entries()) {
+    await refreshNormalizedDoc(db, id);
+    if ((index + 1) % LOCATION_INDEX_REBUILD_TURN === 0) {
+      await yieldToRequests();
+    }
+  }
+};
+
 const reindexLocationTitlesFrom = async (deps: IndexDeps, developerId: string, batch: number, after: string): Promise<void> => {
   const rows = await deps.db
     .select({ id: workContexts.id })
@@ -323,9 +340,7 @@ const reindexLocationTitlesFrom = async (deps: IndexDeps, developerId: string, b
   if (last === undefined) {
     return;
   }
-  for (const row of rows) {
-    await refreshNormalizedDoc(deps.db, row.id);
-  }
+  await refreshPage(deps.db, rows.map((row) => row.id));
   if (deps.embedder !== null) {
     await embedContextDocs(deps.db, deps.embedder, rows.map((row) => row.id));
   }

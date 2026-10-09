@@ -22329,6 +22329,14 @@ export const MUTATIONS: readonly Mutation[
     because: "every request waits out her whole rebuild, 17–26 s at 10 000 contexts (M11)",
   },
   {
+    label: "a page of the opt-out rebuild is one stall",
+    file: `${SERVER}/src/services/developer-settings.ts`,
+    from: "    if ((index + 1) % LOCATION_INDEX_REBUILD_TURN === 0) {",
+    to: "    if (false) {",
+    test: `${SERVER}/test/location-index-boot.test.ts`,
+    because: "a request waits out 100 doc rebuilds at once, 2.6 s on a loaded machine (M11)",
+  },
+  {
     label: "the start-up passes never rebuild an opted-out index",
     file: `${SERVER}/src/services/startup-upgrades.ts`,
     from: "    run: () => rebuildOptedOutLocationIndexes({ db, embedder, now: () => new Date() }),",
@@ -35685,7 +35693,7 @@ interface Outcome {
  * PRINTS: packages/server/test/live-location-surfaces.test.ts 41
  * PRINTS: packages/server/test/live-location-told.test.ts 1
  * PRINTS: packages/server/test/live-location-topics.test.ts 4
- * PRINTS: packages/server/test/location-index-boot.test.ts 5
+ * PRINTS: packages/server/test/location-index-boot.test.ts 6
  * PRINTS: packages/server/test/location-index-rebuild.test.ts 7
  * PRINTS: packages/server/test/normalized-doc.test.ts 2
  * PRINTS: packages/server/test/passkey-announcements.test.ts 1

@@ -159,9 +159,11 @@ export const DOC_UPGRADE_STAMP_BATCH = 1000;
  * (services/draft-link-cleanup.ts), one transaction each with a turn of the
  * event loop between pages. As one statement over the whole table, the
  * batch-2 integration review measured every request held 9–86 s on a
- * pilot-scale hub (H6); a page of 500 is a few tens of milliseconds.
+ * pilot-scale hub (H6). A page of 500 archived edges still held one 817 ms
+ * on a machine at load 40; 100 keeps a page to tens of milliseconds at
+ * ordinary load.
  */
-export const DRAFT_LINK_CLEANUP_BATCH = 500;
+export const DRAFT_LINK_CLEANUP_BATCH = 100;
 
 /**
  * Rows per chunk of the start-up words backfill (services/words-index.ts),
@@ -193,6 +195,13 @@ export const WORDS_INDEX_VACUUM_CHUNKS = 10;
  * per doc.
  */
 export const LOCATION_INDEX_REBUILD_BATCH = 100;
+
+/**
+ * Docs of a LOCATION_INDEX_REBUILD_BATCH page rebuilt between two turns of
+ * the event loop: a page of 100 rebuilt in one go held a request 2.6 s on a
+ * machine at load 40 (pilot-scale synthetic hub); 10 keeps it to a tenth.
+ */
+export const LOCATION_INDEX_REBUILD_TURN = 10;
 
 /**
  * THE RETENTION THIS HUB APPLIES TO `session_events`, declared on
