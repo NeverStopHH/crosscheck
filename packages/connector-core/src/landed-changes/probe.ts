@@ -55,6 +55,7 @@ import {
   isSameContent,
   landingsOn,
   missingOn,
+  quietFileBatch,
   quietGitRunner,
   readRepoState,
   stillMissingAfterMerge,
@@ -447,7 +448,7 @@ const run = async (
   const limit = semaphore(MAX_PARALLEL_GIT);
   const runGit = input.runGit ?? quietGitRunner(input.root, timeoutMs);
   const memo = emptyMemo();
-  const context: GitContext = {
+  const askers: GitContext = {
     root: input.root,
     file: input.file,
     // Checked again when the slot is granted: a call that waited past the
@@ -466,13 +467,13 @@ const run = async (
       root: input.root,
       setting,
       mailmap,
-      context,
+      context: askers,
       timeoutMs,
       home: isRealGit ? (input.cacheHome ?? null) : null,
       now: input.now,
       memo,
     }),
-    isRealGit ? readProbeRepoState(context) : readRepoState(context),
+    isRealGit ? readProbeRepoState(askers) : readRepoState(askers),
   ]);
   const { refs, isPartial, selfEmail } = opened.facts;
   if (refs === null || state === null || state.isShallow) {
@@ -485,6 +486,14 @@ const run = async (
   if (input.knownCleanKeys?.includes(key) === true) {
     return nothing(key);
   }
+  // The file at several commits in one call (git-queries.ts quietFileBatch):
+  // real git only, and never a partial clone, where an object's type is the
+  // network's to say.
+  const batchFiles = quietFileBatch(input.root, input.file, timeoutMs);
+  const context: GitContext =
+    isRealGit && !isPartial
+      ? { ...askers, filesAt: (revs) => limit(() => (isCancelled() ? Promise.resolve(null) : batchFiles(revs))) }
+      : askers;
   const probe: Probe = { context, state, refs, selfEmail, cherryPick: !isPartial, now: input.now, timeZone: input.timeZone };
   // Branch by branch, as each answers: a slow one past the deadline is named
   // unchecked, and never silences what the others already know.

@@ -66,6 +66,12 @@ export interface CommandOptions {
    * fetch worker runs git with the developer's, as the hook was given it).
    */
   readonly inheritEnv?: boolean;
+  /**
+   * Written to the command's stdin, which is then closed — for a batch
+   * protocol (`git cat-file --batch-check`; landed-changes/git-queries.ts).
+   * Absent: stdin is ignored, as for every other call.
+   */
+  readonly stdin?: string;
 }
 
 /**
@@ -143,7 +149,7 @@ export const runBoundedCommandOutcome = async (
     const proc = Bun.spawn({
       cmd: [...cmd],
       cwd,
-      stdin: "ignore",
+      stdin: options.stdin === undefined ? "ignore" : new TextEncoder().encode(options.stdin),
       stdout: "pipe",
       stderr: "ignore",
       ...(env === undefined ? {} : { env }),

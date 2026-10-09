@@ -279,6 +279,7 @@ const askBeforeEdit = async (ctx: HookContext, budget: HookBudget): Promise<Edit
   // nothing.
   const askedLanded = state.landedAskedFiles.includes(file);
   const isLiveFresh = isTripwireFresh(state, file, ctx.now());
+  const probing = startLandedProbe(ctx, edited, askedLanded, state.landedCleanKeys);
   // A mechanically generated, non-authoritative file is skipped exactly as a
   // denied one: a lockfile or a regenerated client is not anybody's plan
   // (capture/generated.ts). Asked the way capture asks, so the attribute
@@ -294,7 +295,7 @@ const askBeforeEdit = async (ctx: HookContext, budget: HookBudget): Promise<Edit
     budget,
     { ...edited, authoritative: classification === "authoritative" },
     { askedLanded, isLiveFresh },
-    state.landedCleanKeys,
+    probing,
   );
   if (found.cleanKey !== null && !state.landedCleanKeys.includes(found.cleanKey)) {
     await rememberClean(ctx, found.cleanKey);
@@ -457,24 +458,21 @@ interface Answered {
 }
 
 /**
- * Asks only the questions this session has not been stopped for yet, in
- * parallel, and neither waits on the other: the live tripwire's hub call is
- * bounded by its own timeout, the landed probe by its own deadline — never
- * longer than one hub call, so the live ask keeps the budget it always had —
- * and a failure of either is silence for that half only. The moment the
- * probe finds a landed change, the second hub call, its why, starts beside
- * them (`why`, bounded by what the budget spares; hooks/landed-why.ts).
+ * THE LANDED PROBE STARTS THE MOMENT THE FILE IS KNOWN (batch-2 review, M6):
+ * it asks only the reader's own clone, and nothing it asks depends on how the
+ * file is classified, so it runs beside the classification's `check-attr`
+ * instead of after it — under load, a git spawn of the hook's critical path.
+ * A generated file's answer is never read. ONE REQUEST of deadline
+ * (LANDED_PROBE_BUDGET_MS says why), so it ends no later than the live call
+ * that starts after the classification.
  */
-const findReasons = async (
+const startLandedProbe = (
   ctx: HookContext,
-  budget: HookBudget,
   edited: EditedFile,
-  answered: Answered,
+  askedLanded: boolean,
   knownCleanKeys: readonly string[],
-): Promise<FoundReasons> => {
-  // ONE REQUEST, the very window the live call beside it already holds
-  // (LANDED_PROBE_BUDGET_MS says why): started with it, ended no later.
-  const probing = answered.askedLanded
+): Promise<LandedProbe> => {
+  const probing = askedLanded
     ? Promise.resolve(NOT_PROBED)
     : probeLandedChanges({
         root: edited.root,
@@ -485,6 +483,26 @@ const findReasons = async (
         knownCleanKeys,
         cacheHome: ctx.config.home,
       });
+  return probing;
+};
+
+/**
+ * Asks only the questions this session has not been stopped for yet, in
+ * parallel, and neither waits on the other: the live tripwire's hub call is
+ * bounded by its own timeout, the landed probe (already under way,
+ * `startLandedProbe`) by its own deadline — never longer than one hub call,
+ * so the live ask keeps the budget it always had — and a failure of either
+ * is silence for that half only. The moment the probe finds a landed change,
+ * the second hub call, its why, starts beside them (`why`, bounded by what
+ * the budget spares; hooks/landed-why.ts).
+ */
+const findReasons = async (
+  ctx: HookContext,
+  budget: HookBudget,
+  edited: EditedFile,
+  answered: Answered,
+  probing: Promise<LandedProbe>,
+): Promise<FoundReasons> => {
   const live = answered.isLiveFresh
     ? Promise.resolve(null)
     : getTripwireSessions(ctx.hub, ctx.identity.repoId, edited.file, edited.authoritative === true).then((result) =>

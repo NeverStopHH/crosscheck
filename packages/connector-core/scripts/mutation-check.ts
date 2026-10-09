@@ -29274,6 +29274,22 @@ export const MUTATIONS: readonly Mutation[
     because: "one git spawn per landing branch per missing file for an answer that can never change",
   },
   {
+    label: "the moot check reads each commit's copy of the file with its own ls-tree",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "      ? { ...askers, filesAt: (revs) => limit(() => (isCancelled() ? Promise.resolve(null) : batchFiles(revs))) }",
+    to: "      ? askers",
+    test: `${CORE}/test/landed-probe-facts.test.ts`,
+    because: "three git spawns, two rounds, where one cat-file answers all three: the probe is PreToolUse's long pole under load",
+  },
+  {
+    label: "the one-call file read takes a commit without the file for one that has it",
+    file: `${CORE}/src/landed-changes/git-queries.ts`,
+    from: '  if (line.endsWith(" missing")) {',
+    to: "  if (false) {",
+    test: `${CORE}/test/landed-probe-facts.test.ts`,
+    because: "a file a commit never had reads as unknown, and the moot check can no longer prove a branch changed nothing",
+  },
+  {
     label: "the files stand in for the git answers a caller staged",
     file: `${CORE}/src/landed-changes/probe.ts`,
     from: "  const isRealGit = input.runGit === undefined;",
@@ -35528,7 +35544,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/landed-changes.test.ts 7
  * PRINTS: packages/connector-core/test/landed-notice.test.ts 21
  * PRINTS: packages/connector-core/test/landed-probe-cuts.test.ts 6
- * PRINTS: packages/connector-core/test/landed-probe-facts.test.ts 8
+ * PRINTS: packages/connector-core/test/landed-probe-facts.test.ts 10
  * PRINTS: packages/connector-core/test/landed-render.test.ts 4
  * PRINTS: packages/connector-core/test/landed-why-render.test.ts 7
  * PRINTS: packages/connector-core/test/landed-worth-stopping.test.ts 1

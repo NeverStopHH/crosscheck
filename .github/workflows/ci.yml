@@ -168,7 +168,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 3629
+    # PRINTS: 3631
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -390,10 +390,10 @@ jobs:
     # PRINTS: landed-changes/fetch-switch.ts 4
     # PRINTS: landed-changes/fetch-trigger.ts 3
     # PRINTS: landed-changes/fetch-worker.ts 23
-    # PRINTS: landed-changes/git-queries.ts 17
+    # PRINTS: landed-changes/git-queries.ts 18
     # PRINTS: landed-changes/landing-branches.ts 7
     # PRINTS: landed-changes/probe-facts.ts 4
-    # PRINTS: landed-changes/probe.ts 42
+    # PRINTS: landed-changes/probe.ts 43
     # PRINTS: landed-changes/working-days.ts 3
     # PRINTS: mcp/context.ts 1
     # PRINTS: mcp/render-intent-chain.ts 1
@@ -773,7 +773,7 @@ jobs:
     # PRINTS: ghost.ts 6
     # PRINTS: git-lane-cost.ts 2
     # PRINTS: git-lane.ts 19
-    # PRINTS: git-queries.ts 17
+    # PRINTS: git-queries.ts 18
     # PRINTS: git.ts 10
     # PRINTS: harness-turn.ts 28
     # PRINTS: head-history.ts 5
@@ -884,7 +884,7 @@ jobs:
     # PRINTS: presence-refresh.ts 2
     # PRINTS: presence.ts 1
     # PRINTS: probe-facts.ts 4
-    # PRINTS: probe.ts 43
+    # PRINTS: probe.ts 44
     # PRINTS: profile.ts 2
     # PRINTS: project-copy.ts 9
     # PRINTS: prompt-task.ts 12

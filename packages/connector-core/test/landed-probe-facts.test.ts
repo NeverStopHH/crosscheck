@@ -25,7 +25,7 @@ import { join } from "node:path";
 import { probeLandedChanges } from "../src/landed-changes/probe.ts";
 import type { LandedProbe } from "../src/landed-changes/probe.ts";
 import { readRepoStateFromFiles } from "../src/landed-changes/probe-facts.ts";
-import { quietGitRunner, readRepoState } from "../src/landed-changes/git-queries.ts";
+import { fileAt, quietFileBatch, quietGitRunner, readRepoState } from "../src/landed-changes/git-queries.ts";
 import type { GitContext } from "../src/landed-changes/git-queries.ts";
 import {
   MIKE,
@@ -148,6 +148,24 @@ describe("the repo state, from the files", () => {
   });
 });
 
+describe("the file at several commits, in one call", () => {
+  test("tells a file a commit does not have from one it has, as ls-tree does", async () => {
+    // Arrange: the fixture's first commit has src/lines.ts; a second file arrives later
+    const r = await repos("pf-batch-unit");
+    const first = await gitIn(r.reader, ["rev-parse", "HEAD"]);
+    const later = await commitFile(r.reader, "src/later.ts", "export const later = 1;\n", "later", { as: NICK });
+    const context = { ...contextFor(r.reader), file: "src/later.ts" };
+
+    // Act
+    const batched = await quietFileBatch(r.reader, "src/later.ts", GIT_TIMEOUT_MS)([first, later]);
+    const oneByOne = await Promise.all([first, later].map((rev) => fileAt(context, rev)));
+
+    // Assert
+    expect(batched?.map((answer) => answer.kind)).toEqual(["absent", "blob"]);
+    expect(batched).toEqual(oneByOne);
+  });
+});
+
 describe("with a cache home", () => {
   test("a second probe of the root asks git none of the questions that do not depend on the file — and answers the same", async () => {
     // Arrange
@@ -179,6 +197,23 @@ describe("with a cache home", () => {
 
     // Assert
     expect(second.asked.filter((sub) => sub === "merge-base" || sub === "rev-list")).toEqual([]);
+  });
+
+  test("a missing change's moot check reads the file at three commits with ONE cat-file, no ls-tree", async () => {
+    // Arrange: the first probe learns the merge base
+    const r = await repos("pf-batch");
+    await landWithMergeCommit(r, LANDING);
+    await readerFetches(r);
+    const home = await homeFor("pf-batch");
+    await probe(r.reader, home);
+
+    // Act
+    const second = await gitSpawnedBy(() => probe(r.reader, home));
+
+    // Assert
+    expect(missingSubjects(second.value)).toEqual(["Fix line offset"]);
+    expect(second.asked.filter((sub) => sub === "ls-tree")).toEqual([]);
+    expect(second.asked.filter((sub) => sub === "cat-file")).toEqual(["cat-file"]);
   });
 
   test("a fetch that moves a landing branch is seen at once", async () => {
