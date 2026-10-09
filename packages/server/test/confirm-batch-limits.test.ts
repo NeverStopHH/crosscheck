@@ -104,6 +104,33 @@ describe("the batch store's bounds evict, never refuse another developer", () =>
         : "not formed",
     ).toBeNull();
   });
+
+  test("at the hub's bound, a light holder's batch — the hub's oldest — survives; only the heaviest holder's goes", async () => {
+    // Arrange — Mike forms first, then Ken fills to his cap, then Bob fills the hub
+    const harness = await createTestHarness({ drafts: "pending" });
+    const mike = await createTestDeveloper(harness, "Mike", "mike-oldest@example.com");
+    const ken = await createTestDeveloper(harness, "Ken", "ken-oldest@example.com");
+    const bob = await createTestDeveloper(harness, "Bob", "bob-oldest@example.com");
+    const nick = await createTestDeveloper(harness, "Nick", "nick-oldest@example.com");
+    const store = createBatchStore(() => harness.clock.now().getTime(), SMALL);
+    const formOne = async (developerId: string, session: number) => {
+      const drafted = await draftedFor(harness, developerId);
+      const owner = { developerId, sessionKey: `${developerId}-${String(session)}` };
+      return { owner, formed: await store.form(drafted.deps, owner, drafted.body, CONFIRM_PAGE_SCOPE) };
+    };
+    const mikes = await formOne(mike.developerId, 0);
+    for (let session = 0; session < SMALL.perDeveloper; session += 1) {
+      await formOne(ken.developerId, session);
+    }
+    await formOne(bob.developerId, 0);
+
+    // Act — the hub is full; a newcomer forms one
+    const nicks = await formOne(nick.developerId, 0);
+
+    // Assert — the newcomer formed, and Mike's (the oldest anywhere) still stands
+    expect("id" in nicks.formed).toBe(true);
+    expect("id" in mikes.formed ? store.read(mikes.owner, mikes.formed.id) !== null : "not formed").toBe(true);
+  });
 });
 
 describe("a batch with nothing to sign", () => {
