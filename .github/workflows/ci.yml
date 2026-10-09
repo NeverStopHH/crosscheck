@@ -194,7 +194,30 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - name: Nick and Mike, at production budgets, in parallel, across a compaction and a resume
-        run: bun test --timeout=60000 packages/connector-claude/test/e2e/release-gate-nick-mike.e2e.test.ts
+        run: |
+          set -o pipefail
+          bun test --timeout=60000 packages/connector-claude/test/e2e/release-gate-nick-mike.e2e.test.ts 2>&1 | tee release-gate.log
+      # A RED GATE SAYS WHICH CASE, ON WHICH ASSERTION, AND WHERE THE LOGS ARE:
+      # the job's summary page and one annotation per failure
+      # (connector-claude/scripts/release-gate-summary.ts), and the console log
+      # kept as an artifact. A marked expected failure that passed is named as
+      # a fix that landed, with the line to remove.
+      - name: Which case failed
+        if: failure()
+        run: >-
+          bun run packages/connector-claude/scripts/release-gate-summary.ts
+          --log release-gate.log
+          --run-url ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          --artifact release-gate-${{ github.run_id }}-${{ github.run_attempt }}
+          --summary "$GITHUB_STEP_SUMMARY"
+      - name: Keep the gate's log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-gate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release-gate.log
+          if-no-files-found: warn
+          retention-days: 30
 
   mutation:
     # A check nobody proved can fail is decoration. This re-introduces the

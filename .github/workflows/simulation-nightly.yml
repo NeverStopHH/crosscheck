@@ -126,4 +126,24 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - name: The release gate with every core busy
-        run: bun test --timeout=60000 packages/connector-claude/test/e2e/release-gate-loaded.e2e.test.ts
+        run: |
+          set -o pipefail
+          bun test --timeout=60000 packages/connector-claude/test/e2e/release-gate-loaded.e2e.test.ts 2>&1 | tee release-gate-loaded.log
+      # As in ci.yml `release-gate`: which case failed, on which assertion,
+      # and the console log kept (connector-claude/scripts/release-gate-summary.ts).
+      - name: Which case failed
+        if: failure()
+        run: >-
+          bun run packages/connector-claude/scripts/release-gate-summary.ts
+          --log release-gate-loaded.log
+          --run-url ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          --artifact release-gate-loaded-${{ github.run_number }}-${{ github.run_attempt }}
+          --summary "$GITHUB_STEP_SUMMARY"
+      - name: Keep the gate's log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-gate-loaded-${{ github.run_number }}-${{ github.run_attempt }}
+          path: release-gate-loaded.log
+          if-no-files-found: warn
+          retention-days: 30
