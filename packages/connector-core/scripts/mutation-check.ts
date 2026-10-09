@@ -14189,17 +14189,9 @@ export const MUTATIONS: readonly Mutation[
       "a quiet repo that was shown nothing reads as a team that ignores the " +
       "label walk, a fact about people drawn from an absence of interventions",
   },
-  {
-    // Rows an older hub wrote as `off_target` are noise; nothing is rewritten.
-    label: "a label an older hub stored is lost from the noise count",
-    file: `${SERVER}/src/services/pilot-label-figures.ts`,
-    from: "const NOISE_WORDS = sql`('noise', ${PILOT_LEGACY_NOISE_MARK})`;",
-    to: "const NOISE_WORDS = sql`('noise')`;",
-    test: `${SERVER}/test/pilot-report.test.ts`,
-    because:
-      "every noise mark a hub held before the upgrade vanishes from the " +
-      "precision denominator, and precision jumps on the day of the upgrade",
-  },
+  // ("a label an older hub stored is lost from the noise count" is retired as equivalent since human
+  // provenance: an `off_target` row is only ever `unknown_legacy`, every reader of NOISE_WORDS filters
+  // to confirmed rows, and the 0.10 marks are counted apart as `legacyNoise` — anchored below.)
   {
     label: "an answer somebody asked for is counted as an intervention",
     file: `${SERVER}/src/services/pilot-label-figures.ts`,
