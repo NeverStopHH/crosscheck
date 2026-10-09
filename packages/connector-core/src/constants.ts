@@ -977,6 +977,21 @@ export const MAX_LANDING_BRANCHES = 8;
  */
 export const WELL_KNOWN_LANDING_BRANCHES: readonly string[] = ["staging", "develop"];
 /**
+ * How long one root's landed-probe facts — the landing tips, partial clone,
+ * the reader's own address — are trusted without git asking again
+ * (landed-changes/probe-facts.ts; batch-2 review, M6). Their stamps catch
+ * every ref and config file git itself writes; this bounds what no stamp
+ * sees (an included config, the system config). The identity cache's own
+ * bound, for the same reason.
+ */
+export const LANDED_PROBE_FACTS_TTL_MS = REPO_IDENTITY_CACHE_TTL_MS;
+/**
+ * Never-changing answers one root keeps for its probes (a branch tip as of a
+ * moment, a merge base): enough for every landing branch across a week of
+ * HEADs, and a few kilobytes on disk.
+ */
+export const MAX_LANDED_PROBE_MEMO_ENTRIES = 64;
+/**
  * The whole landed-change probe's deadline when a caller names none — ONE hub
  * request, exactly. PreToolUse passes its own configured per-request timeout
  * (hooks/pre-tool-use.ts), so the probe has the very window the live

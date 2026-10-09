@@ -483,6 +483,7 @@ const findReasons = async (
         timeZone: resolveTimeZone(ctx.env),
         budgetMs: ctx.config.timeoutMs,
         knownCleanKeys,
+        cacheHome: ctx.config.home,
       });
   const live = answered.isLiveFresh
     ? Promise.resolve(null)

@@ -49,6 +49,19 @@ export const quietGitRunner =
     return outcome.ok ? outcome.stdout : null;
   };
 
+/**
+ * Answers that can never change, kept per root across probes
+ * (landed-changes/probe-facts.ts; batch-2 review, M6): a landing branch's
+ * tip as it stood at an instant, and the merge base of two commits. Filled
+ * as git answers; a question git could not answer is never kept.
+ */
+export interface ProbeMemo {
+  /** `<tip>@<instant>` → the newest first-parent commit that old, or null for none. */
+  readonly tipAt: Map<string, string | null>;
+  /** `<a>..<b>` → their merge base, or null for none. */
+  readonly mergeBase: Map<string, string | null>;
+}
+
 export interface GitContext {
   readonly root: string;
   /** Repo-relative, as git names it. */
@@ -56,6 +69,8 @@ export interface GitContext {
   readonly run: GitRunner;
   /** True once the probe's deadline has passed: no further git is spawned. */
   readonly isCancelled: () => boolean;
+  /** Absent: every question goes to git, as before the memo. */
+  readonly memo?: ProbeMemo;
 }
 
 export const gitStdout = (context: GitContext, args: readonly string[]): Promise<string | null> =>
@@ -365,6 +380,24 @@ const othersOnReaderSide = async (
 };
 
 /**
+ * The merge base of two commits — the memo's when a probe of this root asked
+ * before: two commits name one base forever (ProbeMemo). Only a base git
+ * named is kept; "none" and "no answer" both read as no base, every time.
+ */
+const mergeBaseOf = async (context: GitContext, a: string, b: string): Promise<string | null> => {
+  const key = `${a}..${b}`;
+  const known = context.memo?.mergeBase.get(key);
+  if (known !== undefined && known !== null) {
+    return known;
+  }
+  const stdout = await gitStdout(context, ["merge-base", a, b]);
+  if (isFullSha(stdout)) {
+    context.memo?.mergeBase.set(key, stdout);
+  }
+  return stdout;
+};
+
+/**
  * Nothing an edit could undo, known for certain:
  *
  *   1. the file on `ref` is byte-identical to HEAD's (a stacked branch, a
@@ -387,7 +420,7 @@ export const hasNothingNetToUndo = async (
   const [onRef, onHead, base] = await Promise.all([
     fileAt(context, ref.tip),
     fileAt(context, options.headSha),
-    gitStdout(context, ["merge-base", ref.tip, options.headSha]),
+    mergeBaseOf(context, ref.tip, options.headSha),
   ]);
   if (isSameContent(onRef, onHead)) {
     return true;
@@ -436,6 +469,12 @@ export const tipAt = async (
   ref: LandingRef,
   before: Date,
 ): Promise<{ readonly isAnswered: boolean; readonly tip: string | null }> => {
+  // A commit and an instant name one answer forever (ProbeMemo): asked once per root.
+  const key = `${ref.tip}@${before.toISOString()}`;
+  const known = context.memo?.tipAt.get(key);
+  if (known !== undefined) {
+    return { isAnswered: true, tip: known };
+  }
   const stdout = await gitStdout(context, [
     "rev-list",
     "-1",
@@ -443,6 +482,9 @@ export const tipAt = async (
     `--before=${before.toISOString()}`,
     ref.tip,
   ]);
+  if (stdout !== null) {
+    context.memo?.tipAt.set(key, isFullSha(stdout) ? stdout : null);
+  }
   return { isAnswered: stdout !== null, tip: isFullSha(stdout) ? stdout : null };
 };
 

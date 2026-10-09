@@ -29192,6 +29192,71 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/repo-identity-cache.test.ts`,
     because: "a hook run with GIT_DIR set reports the repo the files name, not the one git would",
   },
+  // ── Batch-2 review, M6: the landed-change probe asks git far less ──
+  {
+    label: "the probe's repo state misses a merge in progress",
+    file: `${CORE}/src/landed-changes/probe-facts.ts`,
+    from: '    readMarker(join(head.gitDir, "MERGE_HEAD")),',
+    to: "    Promise.resolve([]),",
+    test: `${CORE}/test/landed-probe-facts.test.ts`,
+    because: "the work a merge in progress brings reads as missing, and the reader resolving that merge is stopped for it",
+  },
+  {
+    label: "the probe's cached landing tips survive a fetch",
+    file: `${CORE}/src/landed-changes/probe-facts.ts`,
+    from: '    [...refFiles, join(commonDir, "packed-refs"), ...gitConfigPaths(gitDir, commonDir, env)].map(fileStamp),',
+    to: "    [...gitConfigPaths(gitDir, commonDir, env)].map(fileStamp),",
+    test: `${CORE}/test/landed-probe-facts.test.ts`,
+    because: "a change that landed after the first edit is checked against the old tips, and never stops anybody",
+  },
+  {
+    label: "the probe's cached own address survives a config change",
+    file: `${CORE}/src/landed-changes/probe-facts.ts`,
+    from: '    [...refFiles, join(commonDir, "packed-refs"), ...gitConfigPaths(gitDir, commonDir, env)].map(fileStamp),',
+    to: '    [...refFiles, join(commonDir, "packed-refs")].map(fileStamp),',
+    test: `${CORE}/test/landed-probe-facts.test.ts`,
+    because: "the reader's own commits warn the reader, or a teammate's are filtered as the reader's",
+  },
+  {
+    label: "every probe asks git the five questions that do not depend on the file",
+    file: `${CORE}/src/landed-changes/probe-facts.ts`,
+    from: "  const facts = fresh ?? (await askGit(input));",
+    to: "  const facts = await askGit(input);",
+    test: `${CORE}/test/landed-probe-facts.test.ts`,
+    because: "five git spawns, two of them in a row, on every edit: a third of PreToolUse's budget under load went to the landed probe",
+  },
+  {
+    label: "a branch tip as of an instant is asked again on every probe",
+    file: `${CORE}/src/landed-changes/git-queries.ts`,
+    from: "  if (known !== undefined) {\n    return { isAnswered: true, tip: known };",
+    to: "  if (false) {\n    return { isAnswered: true, tip: known };",
+    test: `${CORE}/test/landed-probe-facts.test.ts`,
+    because: "one git spawn per landing branch per edit for an answer that can never change",
+  },
+  {
+    label: "a merge base is asked again on every probe",
+    file: `${CORE}/src/landed-changes/git-queries.ts`,
+    from: "  if (known !== undefined && known !== null) {\n    return known;",
+    to: "  if (false) {\n    return known;",
+    test: `${CORE}/test/landed-probe-facts.test.ts`,
+    because: "one git spawn per landing branch per missing file for an answer that can never change",
+  },
+  {
+    label: "the files stand in for the git answers a caller staged",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "  const isRealGit = input.runGit === undefined;",
+    to: "  const isRealGit = true;",
+    test: `${CORE}/test/landed-probe-facts.test.ts`,
+    because: "a test that delays or fails one git call to reach a deadline or failure path never reaches it",
+  },
+  {
+    label: "the recent half asks git about commits the missing half placed outside HEAD",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "      if (notInHead.has(commit.sha)) {\n        return { commit: null, isKnown: true };",
+    to: "      if (false) {\n        return { commit: null, isKnown: true };",
+    test: `${CORE}/test/landed-probe-facts.test.ts`,
+    because: "three git spawns per landed commit to learn that a commit already known to be missing is not present",
+  },
   {
     label: "every hook resolves its repo with git again",
     file: `${CONNECTOR}/src/hooks/runner.ts`,
@@ -35405,6 +35470,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/landed-changes.test.ts 7
  * PRINTS: packages/connector-core/test/landed-notice.test.ts 21
  * PRINTS: packages/connector-core/test/landed-probe-cuts.test.ts 5
+ * PRINTS: packages/connector-core/test/landed-probe-facts.test.ts 8
  * PRINTS: packages/connector-core/test/landed-render.test.ts 4
  * PRINTS: packages/connector-core/test/landed-why-render.test.ts 7
  * PRINTS: packages/connector-core/test/landed-worth-stopping.test.ts 1

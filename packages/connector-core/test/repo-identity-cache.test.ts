@@ -207,10 +207,10 @@ describe("a working directory's repo identity", () => {
     const git1 = counted();
     await resolveRepoIdentityCached(home, repo, { resolve: git1.resolve });
 
-    // Act
+    // Act: the same environment, GIT_DIR the one difference
     await resolveRepoIdentityCached(home, repo, {
       resolve: git1.resolve,
-      gitEnv: { GIT_DIR: join(repo, ".git") },
+      gitEnv: { ...process.env, GIT_DIR: join(repo, ".git") },
     });
 
     // Assert

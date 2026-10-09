@@ -330,6 +330,18 @@ export const repoIdentityCachePath = (home: string, cwd: string): string =>
   );
 
 /**
+ * One worktree root's landed-probe facts and never-changing answers
+ * (landed-changes/probe-facts.ts), named by a digest of the ROOT the probe
+ * asks git in. Flat in `cache/`, like the attribute caches.
+ */
+export const landedProbeFactsCachePath = (home: string, root: string): string =>
+  join(
+    home,
+    "cache",
+    `landed-${new Bun.CryptoHasher("sha256").update(root).digest("hex").slice(0, REPO_KEY_CHARS)}.json`,
+  );
+
+/**
  * Where `crosscheck conference` leaves its reports (VISION.md §2). Under the
  * crosscheck home rather than in the repo: a report quotes teammates' claims,
  * so it is private-file material like every other state file here, and a
