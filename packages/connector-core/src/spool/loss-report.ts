@@ -223,12 +223,15 @@ export const readLocalLosses = async (
   home: string,
   key: string,
 ): Promise<LocalLosses> => {
-  const [drops, unrecorded, capture] = await Promise.all([
+  const [drops, unrecorded, capture, wireCapture] = await Promise.all([
     readDropDetail(home, key),
     readUnrecordedDrop(home, key),
     readCaptureLosses(home, key),
+    // What the hub's coverage may read: the local kinds — a rest whose recheck
+    // never ran, which lost no record — stay off the wire (review batch 2, M3).
+    readCaptureLosses(home, key, "wire"),
   ]);
-  const report = toLossReport(drops, unrecorded, capture);
+  const report = toLossReport(drops, unrecorded, wireCapture);
   return {
     report: report.total === 0 ? EMPTY_LOSS_REPORT : toWireReport(report),
     drops,

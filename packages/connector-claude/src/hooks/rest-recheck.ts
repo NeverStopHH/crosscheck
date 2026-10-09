@@ -145,7 +145,8 @@ export const recheckRests = async (
 
 /**
  * THE ONE BOOKING PATH for rests whose recheck never ran: the capture-loss
- * ledger (`rest_unchecked`, per file — it travels to the hub's coverage) and
+ * ledger (`rest_unchecked`, per file — doctor and status print it; it stays
+ * off the hub's coverage, which no record was lost to, review batch 2 M3) and
  * the local omission ledger (one line per booking — the machine's count of
  * moments its person may not have been told; core state/rest-omissions.ts).
  */

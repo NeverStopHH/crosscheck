@@ -9,8 +9,11 @@
  * recheck that never ran — the turn crashed, was killed or cut, the hub did
  * not answer, the session ended owing it — is booked TWICE, for two readers:
  *
- *   the capture-loss ledger (`rest_unchecked`, counted per FILE): it travels
- *     to the hub, whose coverage says the watch had a gap;
+ *   the capture-loss ledger (`rest_unchecked`, counted per FILE): doctor and
+ *     status print it per file; it stays off the wire report, because no
+ *     record was lost and the hub's whole-repo coverage is not the place for
+ *     one file's unwarned person (review batch 2, M3, state/loss-ledger.ts
+ *     LOCAL_CAPTURE_LOSS_KINDS);
  *   this ledger (one line per BOOKING, reason `rest_unchecked`): local, like
  *     every omission — the same window, cap and key rule — so the machine's
  *     own count of moments its person may not have been told about a

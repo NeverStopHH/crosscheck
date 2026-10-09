@@ -65,6 +65,23 @@ export const CAPTURE_LOSS_KINDS = [
 
 export type CaptureLossKind = (typeof CAPTURE_LOSS_KINDS)[number];
 
+/**
+ * THE KINDS THAT STAY ON THIS MACHINE (review batch 2, M3). A collision rest
+ * whose recheck never ran lost no record: every target was delivered, and
+ * what may be missing is one PERSON told about one FILE. Sent on the wire, it
+ * turned the hub's agent_event rung `incomplete / telemetry_lost` for the
+ * repo's whole coverage for fourteen days — every path scope read "agent
+ * telemetry on this repo was lost", `isJudgeable` went false and the pin lane
+ * switched off — the class the other "person not told" ledgers were kept
+ * local for (state/omission-ledger.ts). It is still booked here, per file,
+ * and `doctor` and `status` still print it; only the wire report leaves it
+ * out (`readCaptureLosses` scope `wire`).
+ */
+export const LOCAL_CAPTURE_LOSS_KINDS: ReadonlySet<string> = new Set<CaptureLossKind>(["rest_unchecked"]);
+
+/** Which lines a read charges: every kind (doctor, status), or what the hub's coverage may read. */
+export type CaptureLossScope = "all" | "wire";
+
 const LOSS_LEDGER_FILE = "losses.jsonl";
 
 export const lossLedgerPath = (home: string): string =>
@@ -239,6 +256,7 @@ const instantOf = (at: string): string | null => ledgerInstant(at);
 export const readCaptureLosses = async (
   home: string,
   key: string,
+  scope: CaptureLossScope = "all",
 ): Promise<CaptureLossSummary> => {
   const [ledger, refusals] = await Promise.all([
     readLedgerText(lossLedgerPath(home)),
@@ -249,8 +267,8 @@ export const readCaptureLosses = async (
     ? unreadableLedger(ledger.writtenBy)
     : raw === null
       ? EMPTY_CAPTURE_LOSSES
-      : linesSummary(raw, key, ledger.writtenBy);
-  const summary = withRefusals(lines, refusals);
+      : linesSummary(raw, key, ledger.writtenBy, scope);
+  const summary = withRefusals(lines, refusals === null || scope === "all" ? refusals : withoutLocalKinds(refusals));
   return {
     ...summary,
     lastWriteAt: laterOrNull(ledger.writtenBy, refusals?.newestAt ?? null),
@@ -273,6 +291,12 @@ const laterOrNull = (left: string | null, right: string | null): string | null =
   left === null || right === null ? (left ?? right) : right > left ? right : left;
 
 const CAPTURE_KIND_SET: ReadonlySet<string> = new Set(CAPTURE_LOSS_KINDS);
+
+/** The refused counts of the kinds the wire carries; a marker that refused only local kinds reads as none. */
+const withoutLocalKinds = (refusals: LossRefusals): LossRefusals | null => {
+  const refused = Object.fromEntries(Object.entries(refusals.refused).filter(([kind]) => !LOCAL_CAPTURE_LOSS_KINDS.has(kind)));
+  return Object.keys(refused).length === 0 ? null : { ...refusals, refused };
+};
 
 /**
  * THE REFUSED LOSSES, CHARGED TO EVERY REPO (review H1): which repo lost them
@@ -313,7 +337,7 @@ const withRefusals = (
  * so it bounds the lines that name no instant (review H2). A line that will
  * not parse is machine-wide — charged to every repo — and so is its bound.
  */
-const linesSummary = (raw: string, key: string, writtenBy: string | null): CaptureLossSummary => {
+const linesSummary = (raw: string, key: string, writtenBy: string | null, scope: CaptureLossScope): CaptureLossSummary => {
   const atCap = raw.length >= MAX_LOSS_LEDGER_BYTES;
   const undatedLine = undatedOf(1, writtenBy);
   return toLines(raw).reduce<CaptureLossSummary>(
@@ -328,6 +352,9 @@ const linesSummary = (raw: string, key: string, writtenBy: string | null): Captu
       }
       const entry = parsed.data;
       if (entry.key !== null && entry.key !== key) {
+        return summary;
+      }
+      if (scope === "wire" && LOCAL_CAPTURE_LOSS_KINDS.has(entry.kind)) {
         return summary;
       }
       const detail = screenDetail(entry.detail) ?? OTHER_DETAIL;
