@@ -22193,6 +22193,14 @@ export const MUTATIONS: readonly Mutation[
     because: "a request that arrives during the cleanup waits for the whole pass, not one page (H6)",
   },
   {
+    label: "every boot's branch backfill scans every event again",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "CREATE INDEX IF NOT EXISTS events_session_started_idx\n",
+    to: "CREATE INDEX IF NOT EXISTS events_session_started_idx_gone\n",
+    test: `${SERVER}/test/ddl-sync-boot-upgrade.test.ts`,
+    because: "the port stays closed for a scan of the whole outbox at every start, growing with it (L13)",
+  },
+  {
     label: "an upgrade rewrites both tables to add the words column",
     file: `${SERVER}/src/db/bootstrap.sql`,
     from: "ALTER TABLE claims ADD COLUMN IF NOT EXISTS words_tsv tsvector;\n",
@@ -35607,6 +35615,7 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage-order.test.ts 11
  * PRINTS: packages/server/test/coverage-successor-session.test.ts 3
  * PRINTS: packages/server/test/coverage.test.ts 13
+ * PRINTS: packages/server/test/ddl-sync-boot-upgrade.test.ts 1
  * PRINTS: packages/server/test/ddl-sync-hint-outcomes.test.ts 22
  * PRINTS: packages/server/test/ddl-sync-record-receipts.test.ts 2
  * PRINTS: packages/server/test/ddl-sync-waiver-authority.test.ts 5

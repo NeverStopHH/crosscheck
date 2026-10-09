@@ -680,12 +680,14 @@ export const events = pgTable(
     payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
   },
-  // The start-up draft-link cleanup's wire-record lookup (bootstrap.sql;
-  // batch-2 integration review, H6).
+  // The start-up draft-link cleanup's wire-record lookup (H6), and the
+  // session_started events every boot's branch backfill reads (L13)
+  // (bootstrap.sql; batch-2 integration review).
   (table) => [
     index("events_claim_edge_added_edge_idx")
       .on(sql`(${table.payload}->>'edgeId')`)
       .where(sql`${table.kind} = 'claim_edge_added'`),
+    index("events_session_started_idx").on(table.id).where(sql`${table.kind} = 'session_started'`),
   ],
 );
 

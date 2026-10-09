@@ -50,6 +50,41 @@ describe("the draft-link cleanup's wire-record index (H6)", () => {
   });
 });
 
+describe("the boot's branch backfill reads the session_started events by an index (L13)", () => {
+  const STARTED_INDEX = "events_session_started_idx";
+
+  test("bootstrap.sql and drizzle both declare it, partial on that kind", async () => {
+    // Arrange
+    const harness = await createTestHarness();
+
+    // Act
+    const rows = await harness.db.execute<{ def: string }>(
+      sql`SELECT indexdef AS def FROM pg_indexes WHERE indexname = ${STARTED_INDEX}`,
+    );
+
+    // Assert
+    expect(rows.rows[0]?.def ?? "").toContain("WHERE (kind = 'session_started'::text)");
+    expect(getTableConfig(events).indexes.map((index) => index.config.name)).toContain(STARTED_INDEX);
+  });
+
+  test("the backfill every boot runs reads the index, not every event", async () => {
+    // Arrange — the statement exactly as bootstrap.sql runs it
+    const bootstrap = await Bun.file(BOOTSTRAP_SQL_URL).text();
+    const statement = /INSERT INTO developer_branches \(developer_id, branch, first_seen\)\nSELECT developer_id, branch, min\(seen\)[\s\S]*?;/.exec(
+      bootstrap,
+    )?.[0];
+    const harness = await createTestHarness();
+
+    // Act
+    await harness.db.execute(sql`SET enable_seqscan = off`);
+    const plan = await harness.db.execute<{ "QUERY PLAN": string }>(sql.raw(`EXPLAIN (COSTS OFF) ${statement ?? "SELECT missing_statement"}`));
+    await harness.db.execute(sql`RESET enable_seqscan`);
+
+    // Assert
+    expect(plan.rows.map((row) => row["QUERY PLAN"]).join("\n")).toContain(STARTED_INDEX);
+  });
+});
+
 describe("the words column and its indexes (M10)", () => {
   const WORDS_INDEXES = {
     claims: ["claims_words_tsv_idx", "claims_words_tsv_pending_idx"],

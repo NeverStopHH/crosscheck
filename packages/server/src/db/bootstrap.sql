@@ -231,6 +231,13 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS events_claim_edge_added_edge_idx
   ON events ((payload->>'edgeId')) WHERE kind = 'claim_edge_added';
 
+-- The session_started events, for the branch backfill below, which every
+-- boot runs: without it a scan of every event, 17–56 ms on a pilot-scale
+-- hub and growing with the outbox (batch-2 integration review, L13); 5 ms
+-- with it.
+CREATE INDEX IF NOT EXISTS events_session_started_idx
+  ON events (id) WHERE kind = 'session_started';
+
 -- THE BRANCHES A HUB KNEW BEFORE developer_branches EXISTED (review round 5,
 -- H3): every session's current branch, and the branch every session_started
 -- event recorded (a re-registration moves the session's branch, and only the
