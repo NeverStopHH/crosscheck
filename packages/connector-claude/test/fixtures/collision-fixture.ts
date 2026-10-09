@@ -58,6 +58,12 @@ export interface CollisionFixture {
  */
 export interface CollisionTiming {
   readonly requestTimeoutMs?: string;
+  /**
+   * How long the hub holds each tripwire answer — a deterministic stand-in
+   * for a slow hub (batch-2 review, H2: 300 and 350 ms at the production
+   * 400 ms request timeout answer in time, but late).
+   */
+  readonly tripwireLatencyMs?: number;
 }
 
 /** The request timeout of a test about behaviour, not about the budget. */
@@ -70,7 +76,7 @@ export const collisionFixture = async (label: string, timing: CollisionTiming = 
   paths.push(repo, home);
   await writeRepoFile(repo, OVERLAP_FILE, "export const a = 1;\n");
   await writeRepoFile(repo, SECOND_FILE, "export const b = 2;\n");
-  const hub = startHintHub();
+  const hub = startHintHub({ candidates: 0, tripwire: timing.tripwireLatencyMs ?? 0 });
   stops.push(hub.stop);
   hub.setTripwireSessions([activeTeammateSession()]);
   // No prompt hint in these tests: what a prompt carries is the relay alone.

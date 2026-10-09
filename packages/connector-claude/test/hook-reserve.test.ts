@@ -56,10 +56,12 @@
  * spares room to post it and still print it (connector-core hints/delivery.ts)
  * — and once more by a heartbeat the hub refuses, whose mid-life heal walks
  * the ladder only to the deadline the envelope still spares (hooks/heal.ts)
- * — and twice for a teammate collision (review L3): PreToolUse marks a group
- * told, and the main thread's hooks drain a subagent's queued relay
- * (hooks/collision-relay.ts), only while the envelope spares room to carry
- * the line out — and once more by UserPromptSubmit, which holds the prompt's
+ * — and once for a teammate collision (review L3): the main thread's hooks
+ * drain a subagent's queued relay (hooks/collision-relay.ts) only while the
+ * envelope spares room to carry the line out. PreToolUse no longer marks a
+ * group told by the envelope: it tells with the ask, and a race the budget
+ * wins gives the claim back (batch-2 review, H2; config/hook-budget.ts
+ * hookRace) — and once more by UserPromptSubmit, which holds the prompt's
  * own hub calls to what the envelope spares once a queued relay was drained
  * first (round 2, M3) — and once more by the relay's one presence refresh,
  * bounded by what the envelope spares (hooks/collision-relay.ts) — and twice
@@ -68,7 +70,7 @@
  * spare leaves the debt for the next one instead of asking at all:
  *
  * VERIFY: grep -rn 'budget\.spareMs()' packages/connector-claude/src | wc -l | tr -d ' '
- * PRINTS: 17
+ * PRINTS: 16
  */
 import { describe, expect, test } from "bun:test";
 

@@ -168,7 +168,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 3598
+    # PRINTS: 3607
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -275,10 +275,10 @@ jobs:
     # PRINTS: hooks/landing-fetch.ts 2
     # PRINTS: hooks/post-tool-use-failure.ts 5
     # PRINTS: hooks/post-tool-use.ts 15
-    # PRINTS: hooks/pre-tool-use.ts 40
+    # PRINTS: hooks/pre-tool-use.ts 46
     # PRINTS: hooks/presence-refresh.ts 2
     # PRINTS: hooks/rest-recheck.ts 12
-    # PRINTS: hooks/runner.ts 16
+    # PRINTS: hooks/runner.ts 17
     # PRINTS: hooks/session-end.ts 1
     # PRINTS: hooks/session-start.ts 11
     # PRINTS: hooks/stop.ts 3
@@ -313,7 +313,7 @@ jobs:
     # PRINTS: conference/report.ts 4
     # PRINTS: config/config.ts 7
     # PRINTS: config/connected-repo.ts 3
-    # PRINTS: config/hook-budget.ts 2
+    # PRINTS: config/hook-budget.ts 4
     # PRINTS: config/key-binding.ts 9
     # PRINTS: config/launcher-check.ts 4
     # PRINTS: config/launcher.ts 4
@@ -785,7 +785,7 @@ jobs:
     # PRINTS: hint-outcomes.ts 29
     # PRINTS: hint.ts 43
     # PRINTS: hints.ts 81
-    # PRINTS: hook-budget.ts 2
+    # PRINTS: hook-budget.ts 4
     # PRINTS: hub-install.ts 2
     # PRINTS: hub-status.ts 3
     # PRINTS: hub.ts 21
@@ -875,7 +875,7 @@ jobs:
     # PRINTS: post-tool-use-failure.ts 5
     # PRINTS: post-tool-use.ts 16
     # PRINTS: post.ts 1
-    # PRINTS: pre-tool-use.ts 40
+    # PRINTS: pre-tool-use.ts 46
     # PRINTS: precision.ts 2
     # PRINTS: presence-cache.ts 1
     # PRINTS: presence-notice.ts 2
@@ -923,7 +923,7 @@ jobs:
     # PRINTS: revalidate.ts 2
     # PRINTS: review-draft.ts 2
     # PRINTS: run.ts 9
-    # PRINTS: runner.ts 33
+    # PRINTS: runner.ts 34
     # PRINTS: runtime-isolation.ts 5
     # PRINTS: sanitize.ts 7
     # PRINTS: schema.ts 2

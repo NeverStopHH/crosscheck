@@ -10809,8 +10809,8 @@ export const MUTATIONS: readonly Mutation[
     // Landed changes. One stop per file per reason.
     label: "a landed-change stop uses up the live one",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "    return landed === null ? withLive : withLandedAsked(withLive, file);",
-    to: "    return landed === null ? withLive : withTripwireAsked(withLive, file);",
+    from: "    const asked = landed === null ? withLive : withLandedAsked(withLive, file);",
+    to: "    const asked = landed === null ? withLive : withTripwireAsked(withLive, file);",
     test: `${CONNECTOR}/test/landed-change-hook.test.ts`,
     because:
       "a teammate who starts on the file later in the session is never named, because an old landed change already spent the stop",
@@ -28744,8 +28744,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the person is told about the same teammate's work on every file",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "    told.value = groups.filter((group) => fresher.includes(group.key));",
-    to: "    told.value = groups;",
+    from: "    const told = answer.groups.filter((group) => fresher.includes(group.key));",
+    to: "    const told = answer.groups;",
     test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
     because: "one teammate on eleven files is eleven warnings, and a notice that nags is a notice that gets ignored",
   },
@@ -29015,16 +29015,16 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a teammate new on an already-asked file is never asked about",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "    const teammate = found.sessions.find((session) => !askedGroups.includes(liveAskKey(file, session))) ?? null;",
-    to: "    const teammate = fresh.tripwireAskedFiles.includes(file) ? null : (found.sessions[0] ?? null);",
+    from: "    const teammate = answer.sessions.find((session) => !askedGroups.includes(liveAskKey(file, session))) ?? null;",
+    to: "    const teammate = fresh.tripwireAskedFiles.includes(file) ? null : (answer.sessions[0] ?? null);",
     test: `${CONNECTOR}/test/collision-teammates-hook.test.ts`,
     because: "the asked marker is per file again, and Ken, who started on it after Nick, is never named to anybody",
   },
   {
     label: "only the first teammate on a file is told to the person",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "  const groups = found.sessions.map((session) => tripwireCollision(session, file, found.coverage));",
-    to: "  const groups = won.teammate === null ? [] : [tripwireCollision(won.teammate, file, found.coverage)];",
+    from: "  const groups = onePerKey(found.sessions.map((session) => tripwireCollision(session, file, found.coverage)));",
+    to: "  const groups = onePerKey(found.sessions.slice(0, 1).map((session) => tripwireCollision(session, file, found.coverage)));",
     test: `${CONNECTOR}/test/collision-teammates-hook.test.ts`,
     because: "two teammates on the file, and the person hears about one",
   },
@@ -29061,14 +29061,87 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/generated-targets.test.ts`,
     because: "the hints service asks for ordinary targets and the exact tier ranks its tree on the generated file anyway",
   },
-  // ── Review of feat/collision-visible, L3: told only when it can be said ──
+  // ── Review of feat/collision-visible, L3, superseded by the batch-2 review, H2:
+  // the person's line is part of the claim, and a cut undoes the claim ──
   {
-    label: "the tripwire marks a group told with no time left to say it",
+    label: "a tripwire answer that came late tells nobody and queues nothing",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "  if (groups.length === 0 || budget.spareMs() <= 0) {",
-    to: "  if (groups.length === 0) {",
-    test: `${CONNECTOR}/test/collision-order-hook.test.ts`,
-    because: "the race abandons the hook after the marker is written, and the person is never told about that teammate",
+    from: "    const remembered = answer.groups.length === 0 ? asked : rememberGroups(ctx, asked, answer.groups, fresher);",
+    to: "    const remembered = answer.groups.length === 0 || budget.spareMs() <= 0 ? asked : rememberGroups(ctx, asked, answer.groups, fresher);",
+    test: `${CONNECTOR}/test/tripwire-claim-cut.test.ts`,
+    because: "a subagent's agent is warned and the main thread never hears of it: no relay, no rest, nothing counted — the pilot's defect under load",
+  },
+  {
+    label: "a hook the race already abandoned still claims the stop",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "    if (budget.isCut?.() === true) {",
+    to: "    if (false) {",
+    test: `${CONNECTOR}/test/tripwire-claim-cut.test.ts`,
+    because: "a claim made after the cut is never undone: the ask is spent and the group told with nothing shown",
+  },
+  {
+    label: "a cut tripwire keeps the claim its output never delivered",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "      releaseCutStop(ctx, {",
+    to: "      Promise.resolve({",
+    test: `${CONNECTOR}/test/tripwire-claim-cut.test.ts`,
+    because: "the ask is spent and the group told for the rest of the session, and nobody saw either",
+  },
+  {
+    label: "a cut tripwire's ask is never asked again",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "        : { ...fresh, tripwireAskedGroups: (fresh.tripwireAskedGroups ?? []).filter((key) => key !== claim.askKey) };",
+    to: "        : fresh;",
+    test: `${CONNECTOR}/test/tripwire-claim-cut.test.ts`,
+    because: "the agent whose hook was cut is never warned about that teammate on that file",
+  },
+  {
+    label: "a cut main-thread tripwire leaves its group told",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "    const untold = ctx.payload.agent_id === undefined ? withoutCollisionNotices(unstopped, claim.toldKeys) : unstopped;",
+    to: "    const untold = unstopped;",
+    test: `${CONNECTOR}/test/tripwire-claim-cut.test.ts`,
+    because: "the recheck finds the group already told and says nothing: the person never hears of the teammate",
+  },
+  {
+    label: "a cut tripwire leaves no recheck owed",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "    return isLiveLost ? withOverdueRest(untold, claim.file, ctx.now()) : untold;",
+    to: "    return untold;",
+    test: `${CONNECTOR}/test/tripwire-claim-cut.test.ts`,
+    because: "a subagent edits most files once: with no debt, no later hook asks about the file again",
+  },
+  {
+    label: "a cut tripwire is never booked",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "    await recordRestOmission(ctx.config.home, { key: ctx.repoKey, reason: TRIPWIRE_CUT, now: ctx.now() });\n",
+    to: "",
+    test: `${CONNECTOR}/test/tripwire-claim-cut.test.ts`,
+    because: "doctor shows a landed-check cut instead of the collision warning the person never saw",
+  },
+  {
+    label: "the runner never settles a race it lost",
+    file: `${CONNECTOR}/src/hooks/runner.ts`,
+    from: "      await race.cut();",
+    to: "      await Promise.resolve();",
+    test: `${CONNECTOR}/test/tripwire-claim-cut.test.ts`,
+    because: "every claim a cut hook made stands, and a handler still running keeps claiming",
+  },
+  {
+    label: "a lost race still takes claims",
+    file: `${CORE}/src/config/hook-budget.ts`,
+    from: "      lost.value = true;\n",
+    to: "",
+    test: `${CORE}/test/hook-race.test.ts`,
+    because: "a handler the race abandoned claims after the cut, and nothing ever undoes that claim",
+  },
+  {
+    label: "a claim's undo is never registered with the race",
+    file: `${CORE}/src/config/hook-budget.ts`,
+    from: "        undos.push(undo);",
+    to: "        void undo;",
+    test: `${CORE}/test/hook-race.test.ts`,
+    because: "a cut runs no undo, and every claim the lost output was to deliver stands",
   },
   {
     label: "a group the tripwire could not tell in time is never told",
@@ -29786,7 +29859,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a settled tripwire answer never rests its file",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "    const next = isAllAsked(fresh, answer) ? withTripwireChecked(remembered, answer.file, ctx.now()) : remembered;",
+    from: "    const next = isSettled ? withTripwireChecked(remembered, file, ctx.now()) : remembered;",
     to: "    const next = remembered;",
     test: `${CONNECTOR}/test/collision-tripwire-ttl.test.ts`,
     because: "the re-check window is never opened, and every edit of the file asks the hub again",
@@ -29794,8 +29867,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a tripwire answer with a teammate still unasked rests its file",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "    const next = isAllAsked(fresh, answer) ? withTripwireChecked(remembered, answer.file, ctx.now()) : remembered;",
-    to: "    const next = withTripwireChecked(remembered, answer.file, ctx.now());",
+    from: "    const isSettled = answer.sessions.length > 0 && isAllAsked(remembered, answer);",
+    to: "    const isSettled = answer.sessions.length > 0;",
     test: `${CONNECTOR}/test/collision-tripwire-ttl.test.ts`,
     because: "the second teammate on the file is not asked about until the window passes",
   },
@@ -30510,7 +30583,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the rest omission ledger knows no reason, and reads every booking back as nothing",
     file: `${CORE}/src/state/rest-omissions.ts`,
-    from: "export const REST_OMISSION_REASONS = [\"rest_unchecked\"] as const;",
+    from: "export const REST_OMISSION_REASONS = [\"rest_unchecked\", \"tripwire_cut\"] as const;",
     to: "export const REST_OMISSION_REASONS = [] as const;",
     test: `${CONNECTOR}/test/rest-recheck-guarantee.test.ts`,
     because: "the lines are written and no read counts them",
@@ -35111,7 +35184,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-claude/test/capture-latency.test.ts 1
  * PRINTS: packages/connector-claude/test/collision-notice-hook.test.ts 12
- * PRINTS: packages/connector-claude/test/collision-order-hook.test.ts 4
+ * PRINTS: packages/connector-claude/test/collision-order-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/collision-prompt-render.test.ts 1
  * PRINTS: packages/connector-claude/test/collision-relay-durable.test.ts 2
  * PRINTS: packages/connector-claude/test/collision-relay-hook.test.ts 3
@@ -35176,6 +35249,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/summarizer-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/topic-git-lane.test.ts 9
  * PRINTS: packages/connector-claude/test/topic-nick-shape.test.ts 19
+ * PRINTS: packages/connector-claude/test/tripwire-claim-cut.test.ts 8
  * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 12
  * PRINTS: packages/connector-claude/test/turn-end-hook.test.ts 9
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 4
@@ -35260,6 +35334,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-substance-trust-parity.test.ts 1
  * PRINTS: packages/connector-core/test/hint-trailer-budget.test.ts 7
  * PRINTS: packages/connector-core/test/holdout-round4-gate.test.ts 2
+ * PRINTS: packages/connector-core/test/hook-race.test.ts 2
  * PRINTS: packages/connector-core/test/hub-key-refresh.test.ts 3
  * PRINTS: packages/connector-core/test/injection-corpus.test.ts 8
  * PRINTS: packages/connector-core/test/intent-budget.test.ts 1
