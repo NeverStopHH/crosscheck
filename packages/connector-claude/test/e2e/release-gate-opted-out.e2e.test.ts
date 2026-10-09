@@ -54,8 +54,12 @@ const ANONYMOUS_GHOST_LINE = "- A teammate's work in progress also touches 3 of 
 const COLLISION_ROUTE = /^\/api\/(?:hints\/tripwire|ghost-checks|presence)\b/;
 /** The one route allowed to name him: the work-context listing (visibility.ts «creation»). */
 const LISTING_ROUTE = /^\/api\/work-contexts\?/;
-/** A listing entry of his, as the briefing renders it: name, creation age, status, title. */
-const LISTING_ENTRY = /^- Mike, [^,]+ ago, status [a-z_]+: «[^»]*»$/;
+/**
+ * A listing entry of his, as the briefing renders it: name, status, title —
+ * and no age: his last touch is withheld, and the creation that is left said
+ * when he was there (batch-2 integration review, M5).
+ */
+const LISTING_ENTRY = /^- Mike, status [a-z_]+: «[^»]*»$/;
 
 let hub: TestHub;
 let world: OptedOutWorld;

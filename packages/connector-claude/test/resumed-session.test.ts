@@ -532,7 +532,11 @@ describe("a session the hub ends while the conversation keeps going", () => {
     await edit(fx, sessionId, "src/mid/after.ts");
     await edit(fx, sessionId, "src/mid/before.ts");
 
-    // Assert: the next life holds the later edit, the ended one keeps its own
+    // Assert: the next life holds the later edits, the ended one keeps its
+    // own — and the refused edit too: the hook that healed swept the tree
+    // again under the new life (hooks/git-lane.ts sweepIfLifeMoved; batch-2
+    // review, L10), so the file the refusal withheld is filed there, as is
+    // the ended life's `before.ts`, before any later edit.
     const next = `cc_${sessionId}~r1`;
     expect((await readSessionState(fx.home, sessionId))?.crosscheckSessionId).toBe(next);
     expect(await sessionRows(sessionId)).toEqual([
@@ -546,6 +550,7 @@ describe("a session the hub ends while the conversation keeps going", () => {
       { work_context_id: `wc_${next}`, value: "src/mid/after.ts" },
       { work_context_id: `wc_${next}`, value: "src/mid/before.ts" },
       { work_context_id: `wc_cc_${sessionId}`, value: "src/mid/before.ts" },
+      { work_context_id: `wc_${next}`, value: "src/mid/refused.ts" },
     ]);
     // ...and the one edit between the end and the heal is counted, with its cause
     expect((await readDropDetail(fx.home, repoKey(fx.url, REPO_ID))).rejectedCauses).toEqual({
