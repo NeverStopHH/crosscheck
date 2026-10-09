@@ -15,7 +15,7 @@ import { dirname } from "node:path";
 
 import { MAX_BRIEFING_OMISSION_LEDGER_BYTES, MS_PER_DAY } from "../src/constants.ts";
 import { landedProbeCutsPath, readLandedProbeCuts, recordLandedProbeCut } from "../src/state/landed-probe-cuts.ts";
-import { rotatedPathOf } from "../src/state/omission-ledger.ts";
+import { makeRoom, rotatedPathOf } from "../src/state/omission-ledger.ts";
 import { readRestOmissions, recordRestOmission, restOmissionsPath } from "../src/state/rest-omissions.ts";
 import { makeHome } from "./helpers.ts";
 
@@ -90,5 +90,25 @@ describe("a full omission ledger rotates instead of going blind (review batch 2,
 
     // Assert
     expect((await readLandedProbeCuts(home, KEY, now)).byReason).toEqual({ deadline: filled, unanswered: 0, budget: RACING_WRITERS });
+  });
+
+  test("a hook that waited while another made room leaves the ledger as it finds it", async () => {
+    // Arrange: the room another hook made — a fresh live file under the cap,
+    // with a line this reader cannot parse (a newer writer's), which a prune
+    // would drop.
+    const home = await makeHome("omit-room-made");
+    homes.push(home);
+    const now = new Date();
+    const path = landedProbeCutsPath(home);
+    const body = `${JSON.stringify({ at: now.toISOString(), reason: "budget", key: KEY })}\n${JSON.stringify({ v: 2, when: "later" })}\n`;
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, body, "utf8");
+
+    // Act: this hook found the ledger full before it got the lock
+    await makeRoom(path, now);
+
+    // Assert: nothing pruned, nothing rotated
+    expect(await Bun.file(path).text()).toBe(body);
+    expect(await Bun.file(rotatedPathOf(path)).exists()).toBe(false);
   });
 });

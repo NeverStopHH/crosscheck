@@ -26356,7 +26356,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the briefing-omission ledger grows for ever",
     file: `${CORE}/src/state/omission-ledger.ts`,
-    from: "      if ((await sizeOf(at)) >= MAX_BRIEFING_OMISSION_LEDGER_BYTES) {\n        // Neither the prune nor the rotation could run: the cap holds rather than the file growing.\n        return;\n      }\n",
+    from: "      if ((await sizeOf(at)) >= MAX_BRIEFING_OMISSION_LEDGER_BYTES) {\n        // No room could be made (a busy lock): the cap holds rather than the file growing.\n        return;\n      }\n",
     to: "",
     test: `${CORE}/test/briefing-omissions.test.ts`,
     because: "a hub that never answers grows a file in the home on every session start",
@@ -26364,8 +26364,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a full omission ledger stops counting for good",
     file: `${CORE}/src/state/omission-ledger.ts`,
-    from: "      const room = size < MAX_BRIEFING_OMISSION_LEDGER_BYTES ? size : await prunedToWindow(at, entry.now);",
-    to: "      const room = size;",
+    from: "    if ((await prunedToWindow(at, now)) >= MAX_BRIEFING_OMISSION_LEDGER_BYTES) {",
+    to: "    if ((await sizeOf(at)) >= MAX_BRIEFING_OMISSION_LEDGER_BYTES) {",
     test: `${CORE}/test/omission-ledger-cap.test.ts`,
     because:
       "a ledger full of stale lines rotates instead of pruning them, and the rotation throws away the lines " +
@@ -36453,7 +36453,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a full omission ledger goes blind for good",
     file: `${CORE}/src/state/omission-ledger.ts`,
-    from: "        await rotate(at);\n",
+    from: "        await makeRoom(at, entry.now);\n",
     to: "",
     test: `${CORE}/test/omission-ledger-rotation.test.ts`,
     because: "M7: once its lines age out, doctor reads 0 omissions for ever while every new one is refused",
@@ -36466,13 +36466,21 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/omission-ledger-rotation.test.ts`,
     because: "M7: a week of omissions vanishes from doctor at every rotation",
   },
+  // RETIRED (track B merge): "two hooks that find the ledger full rotate it
+  // twice" forced the rotation's own size check. Tracks A and B both fixed
+  // M7, and the merge makes room in ONE hold of the ledger's lock
+  // (omission-ledger.ts `makeRoom`): the rename happens only in the hold that
+  // found the file still full after its own prune, so a hook that waits finds
+  // the fresh small file and never renames it — a second rotation cannot
+  // happen, whichever check is removed. What the in-lock size check still
+  // guards is the next anchor.
   {
-    label: "two hooks that find the ledger full rotate it twice",
+    label: "a hook that waited while another made room prunes the ledger anyway",
     file: `${CORE}/src/state/omission-ledger.ts`,
-    from: "    if ((await sizeOf(path)) >= MAX_BRIEFING_OMISSION_LEDGER_BYTES) {\n      await rename(",
-    to: "    if (true) {\n      await rename(",
+    from: "    if ((await sizeOf(at)) < MAX_BRIEFING_OMISSION_LEDGER_BYTES) {\n      return;\n    }\n",
+    to: "",
     test: `${CORE}/test/omission-ledger-rotation.test.ts`,
-    because: "the second rename throws the first one's lines away",
+    because: "the room another hook made is rewritten again, dropping lines this reader cannot parse and racing a third hook's append",
   },
   {
     label: "SessionEnd under a busy lock drops owed rests unbooked",

@@ -13,11 +13,10 @@
  * ledger, keyed per line like the capture-loss ledger (state/loss-ledger.ts):
  * a hook that never learned its repo writes a null key, and the reader
  * charges it to every repo — the conservative reading. Fail open throughout:
- * an unwritable ledger costs the count, never the hook. A full one first
- * PRUNES the lines the window no longer counts (`prunedToWindow`), and only
- * when every line still counts does it ROTATE (`rotate`) — both review batch
- * 2, M7: past twice the cap inside the window the count is a floor, never a
- * zero.
+ * an unwritable ledger costs the count, never the hook. A full one MAKES ROOM
+ * (`makeRoom`, review batch 2, M7): it first prunes the lines the window no
+ * longer counts, and only when every line still counts does it rotate — past
+ * twice the cap inside the window the count is a floor, never a zero.
  */
 import { appendFile, rename, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -70,27 +69,6 @@ const sizeOf = (path: string): Promise<number> =>
 /** Where a full ledger's lines go, read beside the live file until the next rotation replaces them. */
 export const rotatedPathOf = (path: string): string => `${path}.1`;
 
-/**
- * A FULL LEDGER ROTATES, IT DOES NOT GO BLIND (review batch 2, M7). Appends
- * used to stop at the cap for good: the lines that filled it aged out of the
- * read window one by one, and `doctor` read 0 for ever after — a storm writes
- * the cap in minutes. At the cap the live file is renamed over the one
- * rotated before it, and appends start a new one; the reader reads both, so
- * the window keeps up to twice the cap and old lines leave with the rotation
- * that replaces them. A rename loses no append racing it — one that opened
- * the old file lands in the rotated one, which is still read — and the
- * rotation runs under the ledger's own lock and checks the size again inside
- * it, so two hooks that both found it full rotate it once, not twice (the
- * second rename would have thrown the first one's lines away).
- */
-const rotate = async (path: string): Promise<void> => {
-  await withLock(`${path}.lock`, undefined, async () => {
-    if ((await sizeOf(path)) >= MAX_BRIEFING_OMISSION_LEDGER_BYTES) {
-      await rename(path, rotatedPathOf(path));
-    }
-  });
-};
-
 const parseLine = (line: string): z.infer<typeof LineSchema> | null => {
   try {
     const parsed = LineSchema.safeParse(JSON.parse(line));
@@ -100,39 +78,54 @@ const parseLine = (line: string): z.infer<typeof LineSchema> | null => {
   }
 };
 
+/** Rewrites `at` with only the lines the reader still counts (an unparseable line counts nothing, and goes too); answers the new size. */
+const prunedToWindow = async (at: string, now: Date): Promise<number> => {
+  const windowOpens = now.getTime() - BRIEFING_OMISSION_WINDOW_DAYS * MS_PER_DAY;
+  const kept = ((await readTextOrNull(at)) ?? "").split("\n").filter((line) => {
+    const entry = line.length === 0 ? null : parseLine(line);
+    return entry !== null && Date.parse(entry.at) >= windowOpens;
+  });
+  const body = kept.map((line) => `${line}\n`).join("");
+  await writePrivateFile(at, body);
+  return Buffer.byteLength(body);
+};
+
 /**
- * AT THE CAP, THE LINES THE WINDOW NO LONGER COUNTS GO (batch-2 review, M7).
- * Appends used to stop at MAX_BRIEFING_OMISSION_LEDGER_BYTES for good, and
- * the reader counts only the last BRIEFING_OMISSION_WINDOW_DAYS — so a full
- * ledger read 0 forever and every new omission went unrecorded. The file is
- * rewritten, under its own lock, with only the lines the reader still counts
- * (an unparseable line counts nothing, and goes too); answers the new size,
- * or the cap itself when the lock is busy — this line is then skipped, as
- * every line used to be. An append racing the rewrite can be lost: rare, and
- * the cap lost all of them before. Like `rotate`, it checks the size again
- * inside the lock: a hook that found the ledger full while another one was
- * already making room — pruning it, or rotating it — finds the room, and
- * rewrites nothing that a third hook may be appending to.
+ * A FULL LEDGER MAKES ROOM, IT DOES NOT GO BLIND (review batch 2, M7 — both
+ * tracks' fixes, as one step). Appends used to stop at the cap for good, and
+ * the reader counts only the last BRIEFING_OMISSION_WINDOW_DAYS: the lines
+ * that filled the file aged out one by one and `doctor` read 0 for ever after,
+ * while a storm writes the cap in minutes. Under ONE hold of the ledger's own
+ * lock, on the size it finds there:
  *
- * It runs BEFORE any rotation: a rotation replaces the file rotated before
- * it, and that file may still hold lines the window counts, so the old lines
- * of the live file go first and the rotation is left for a ledger whose lines
- * all still count (a storm inside the window).
+ *   1. room already: another hook made it while this one waited, and the
+ *      ledger is left as it is — nothing rewritten under a third hook's
+ *      append;
+ *   2. otherwise the lines the window no longer counts go (track B). FIRST,
+ *      because a rotation replaces the file rotated before it, which may
+ *      still hold lines the window counts;
+ *   3. and only when the prune left no room — every line still counts, a
+ *      storm inside the window — the live file is renamed over the rotated
+ *      one, and appends start a new one (track A). The reader reads both, so
+ *      the window keeps up to twice the cap.
+ *
+ * One hold, so no hook can rotate a file another hook already rotated (the
+ * second rename would throw the first one's lines away): the rename happens
+ * only in the hold that found the file still full after its own prune. A
+ * rename loses no append racing it — one that opened the old file lands in
+ * the rotated one, which is still read; an append racing the prune's rewrite
+ * can be lost — rare, and the cap lost all of them before. A busy lock makes
+ * no room, and the caller skips its line, as every line used to be skipped.
+ * Exported for its race test.
  */
-const prunedToWindow = (at: string, now: Date): Promise<number> =>
-  withLock(`${at}.lock`, MAX_BRIEFING_OMISSION_LEDGER_BYTES, async () => {
-    const size = await sizeOf(at);
-    if (size < MAX_BRIEFING_OMISSION_LEDGER_BYTES) {
-      return size;
+export const makeRoom = (at: string, now: Date): Promise<void> =>
+  withLock(`${at}.lock`, undefined, async () => {
+    if ((await sizeOf(at)) < MAX_BRIEFING_OMISSION_LEDGER_BYTES) {
+      return;
     }
-    const windowOpens = now.getTime() - BRIEFING_OMISSION_WINDOW_DAYS * MS_PER_DAY;
-    const kept = ((await readTextOrNull(at)) ?? "").split("\n").filter((line) => {
-      const entry = line.length === 0 ? null : parseLine(line);
-      return entry !== null && Date.parse(entry.at) >= windowOpens;
-    });
-    const body = kept.map((line) => `${line}\n`).join("");
-    await writePrivateFile(at, body);
-    return Buffer.byteLength(body);
+    if ((await prunedToWindow(at, now)) >= MAX_BRIEFING_OMISSION_LEDGER_BYTES) {
+      await rename(at, rotatedPathOf(at));
+    }
   });
 
 export const omissionLedger = <R extends string>(file: string, reasons: readonly R[]): OmissionLedger<R> => {
@@ -147,13 +140,11 @@ export const omissionLedger = <R extends string>(file: string, reasons: readonly
   const record = async (home: string, entry: OmissionEntry<R>): Promise<void> => {
     try {
       const at = path(home);
-      const size = await sizeOf(at);
-      const room = size < MAX_BRIEFING_OMISSION_LEDGER_BYTES ? size : await prunedToWindow(at, entry.now);
-      if (room >= MAX_BRIEFING_OMISSION_LEDGER_BYTES) {
-        await rotate(at);
+      if ((await sizeOf(at)) >= MAX_BRIEFING_OMISSION_LEDGER_BYTES) {
+        await makeRoom(at, entry.now);
       }
       if ((await sizeOf(at)) >= MAX_BRIEFING_OMISSION_LEDGER_BYTES) {
-        // Neither the prune nor the rotation could run: the cap holds rather than the file growing.
+        // No room could be made (a busy lock): the cap holds rather than the file growing.
         return;
       }
       await ensureDir(dirname(at));
