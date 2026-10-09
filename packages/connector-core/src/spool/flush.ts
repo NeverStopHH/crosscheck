@@ -66,6 +66,7 @@ import { readRefusedLives, recordRefusedLife } from "./refused-lives.ts";
 import { rejectCauseOf } from "./reject-cause.ts";
 import type { RejectCause } from "./reject-cause.ts";
 import { ackedIn, noteWorkContextAcked } from "./work-context-ack.ts";
+import { traceSpan } from "../trace/hook-trace.ts";
 
 export type { SessionHeal, SessionHealer } from "./flush-heal.ts";
 
@@ -706,7 +707,10 @@ const drain = async (
  * A budget of zero or less is honest and normal: nothing is sent, and the next
  * hook tries again.
  */
-export const flushSpool = async (
+export const flushSpool = async (ctx: HubContext, input: FlushInput, budgetMs: number): Promise<FlushOutcome> =>
+  traceSpan("flush", async () => flushSpoolUntimed(ctx, input, budgetMs));
+
+const flushSpoolUntimed = async (
   ctx: HubContext,
   input: FlushInput,
   budgetMs: number,

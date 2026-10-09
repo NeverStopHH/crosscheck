@@ -9,6 +9,7 @@ import {
   runSummarizeWorker,
 } from "@crosscheck/connector-claude";
 import { runMcpServer } from "@crosscheck/connector-core/mcp/server.ts";
+import { startHookTrace, traceMark, traceSpan } from "@crosscheck/connector-core/trace/hook-trace.ts";
 import { runCli } from "../cli/index.ts";
 import { interceptHelpOrUnknownFlag } from "../cli/help.ts";
 
@@ -56,7 +57,12 @@ const main = async (): Promise<void> => {
     if (name === undefined || !isHookName(name)) {
       process.exit(EXIT_OK);
     }
-    emitAndExit(await runHook(name, await readStdin(), process.env), EXIT_OK);
+    // Phase timing, only under CX_HOOK_TRACE=1 (connector-core trace/hook-trace.ts).
+    startHookTrace(name, process.env);
+    const stdin = await traceSpan("stdin", readStdin);
+    const output = await runHook(name, stdin, process.env);
+    traceMark("returned");
+    emitAndExit(output, EXIT_OK);
   }
 
   if (command === "statusline") {

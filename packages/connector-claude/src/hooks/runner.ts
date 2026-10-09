@@ -37,6 +37,7 @@ import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
 import { recordHookFired } from "@crosscheck/connector-core/state/fired-markers.ts";
 import { recordHookTimeout } from "@crosscheck/connector-core/state/loss-ledger.ts";
 import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import { traceBegin, traceMark, traceSpan } from "@crosscheck/connector-core/trace/hook-trace.ts";
 import { briefingSkippedLine } from "@crosscheck/connector-core/briefing/omission.ts";
 import { recordBriefingOmission } from "@crosscheck/connector-core/state/briefing-omissions.ts";
 import { bookLandedProbeCut } from "@crosscheck/connector-core/state/landed-probe-cuts.ts";
@@ -350,7 +351,7 @@ const prepareAndRun = async (
   budget: HookBudget,
   onResolved: (ctx: HookContext) => void,
 ): Promise<string> => {
-  const prepared = await prepareHookFor(stdin, env);
+  const prepared = await traceSpan("prepare", async () => prepareHookFor(stdin, env));
   if (prepared.kind === "foreign_hub") {
     return refuseForeignHub(name, prepared);
   }
@@ -358,7 +359,7 @@ const prepareAndRun = async (
     return "";
   }
   onResolved(prepared.ctx);
-  return handler(prepared.ctx, budget);
+  return traceSpan("handler", async () => handler(prepared.ctx, budget));
 };
 
 /**
@@ -530,14 +531,14 @@ export const runHookWith = async (
     value: null,
   };
   try {
-    const { budgetMs, timeoutMs } = await resolveHookBudget(
+    const { budgetMs, timeoutMs } = await traceSpan("budget", async () => resolveHookBudget(
       BUDGET_RATIOS[name],
       env,
-    );
+    ));
     // The handler's deadline is taken a fraction BEFORE the race timer starts,
     // so what the handler believes it has left is never more than the truth.
     const deadlineMs = Date.now() + budgetMs;
-    const outcome = await raceHookBudget(
+    const outcome = await traceSpan("race", async () => raceHookBudget(
       prepareAndRun(
         name,
         handler,
@@ -549,7 +550,12 @@ export const runHookWith = async (
         },
       ),
       budgetMs,
-    );
+    ));
+    if (outcome.timedOut) {
+      traceMark("race:timed-out");
+    }
+    // Everything after the race, up to the answer: the bookings and the fired marker.
+    const endPostRace = traceBegin("post-race");
     // THE BUDGET WON, SO THE CAPTURE MAY NOT HAVE HAPPENED
     // (docs/1.0/loss-accounting.md §3 row 14): the binary exits on the ""
     // the race answered, abandoning whatever the handler had not yet
@@ -581,6 +587,7 @@ export const runHookWith = async (
         new Date(),
       );
     }
+    endPostRace();
     return outcome.timedOut
       ? ((await skippedBriefing(name, "budget", resolved.value, stdin, env)) ?? outcome.output)
       : outcome.output;
