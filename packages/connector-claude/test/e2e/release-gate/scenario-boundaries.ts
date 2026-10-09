@@ -3,6 +3,12 @@
  * (one person, two worktrees — silent), N5 (a 300-file formatting sweep that
  * shares one file — NOT silent, but qualified and ranked below a focused
  * overlap: the line "Sweep ≠ Ignore" draws).
+ *
+ * Under a parallel profile (release-gate/profile.ts) the subagent work of N3
+ * and N4 fans out, N4's two sessions run AT ONCE (two terminals), and N4's
+ * sessions live: the first compacts before its next Stop, the second ends
+ * and resumes — so Nick's own earlier life is one more "other session" the
+ * hub must never present to him as a teammate.
  */
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -15,6 +21,8 @@ import type { Person } from "./git.ts";
 import { openSession } from "./host.ts";
 import type { HookRun, HostSession } from "./host.ts";
 import type { TestHub } from "./hub.ts";
+import { GENEROUS } from "./profile.ts";
+import type { GateProfile } from "./profile.ts";
 import { TINA } from "./scenario-long-session.ts";
 import { makeDeveloper, targetsOf } from "./team.ts";
 import type { GateDeveloper } from "./team.ts";
@@ -38,6 +46,31 @@ const commitByBash = async (
   );
 };
 
+/** `paths` split into `count` near-equal runs, in order. */
+const split = (paths: readonly string[], count: number): readonly (readonly string[])[] =>
+  Array.from({ length: count }, (_, index) =>
+    paths.slice(Math.floor((index * paths.length) / count), Math.floor(((index + 1) * paths.length) / count)),
+  ).filter((part) => part.length > 0);
+
+/** One subagent over all of `paths`, or — under a parallel profile — `workers` of them at once. */
+const subagentsOver = async (
+  session: HostSession,
+  root: string,
+  paths: readonly string[],
+  note: string,
+  profile: GateProfile,
+  workers: number,
+): Promise<void> => {
+  const parts = profile.isParallel ? split(paths, workers) : [paths];
+  await Promise.all(
+    parts.map(async (part, index) =>
+      session.subagent(`${note}-${String(index)}`, async (actor) => {
+        await editEach(session, root, part, note, actor);
+      }),
+    ),
+  );
+};
+
 // ── N3 ──────────────────────────────────────────────────────────────────────
 
 const N3_FILES = [
@@ -50,6 +83,8 @@ const N3_FILES = [
   "apps/practice/mapping/mappingSchema.ts",
   "apps/practice/mapping/index.ts",
 ];
+/** Nick's parallel workers on the eight merged files. */
+const N3_WORKERS = 4;
 
 export interface LandedWorld {
   readonly repo: CaseRepo;
@@ -69,14 +104,17 @@ export interface LandedWorld {
  * are dated there for the connector-side landed-change probe, whose clock is
  * real. Mike resumes once after his first commit, as a person does the next
  * morning — the re-register that gives his session a base main does not yet
- * contain, which is what makes his merge LAND it (services/landed.ts).
+ * contain, which is what makes his merge LAND it (services/landed.ts). Every
+ * async hook of a day has finished before the hub's clock moves on, so no
+ * record is stamped on the wrong day.
  */
-export const runLandedCase = async (hub: TestHub): Promise<LandedWorld> => {
+export const runLandedCase = async (hub: TestHub, profile: GateProfile = GENEROUS): Promise<LandedWorld> => {
+  const host = { isProcessHost: profile.isProcessHost };
   const repo = await seedCase("landed-before", hub.url, [...N3_FILES, "apps/numlabs/sync.ts"]);
-  const mike = await makeDeveloper(hub, MIKE, "n3-mike");
-  const nick = await makeDeveloper(hub, NICK, "n3-nick");
+  const mike = await makeDeveloper(hub, MIKE, "n3-mike", profile.budget);
+  const nick = await makeDeveloper(hub, NICK, "n3-nick", profile.budget);
   const mikeAt = await checkoutFor(repo, MIKE, "feat/mapping-v1", "mike");
-  const mikeSession = openSession(mike, "n3-mike-mapping", mikeAt.worktree);
+  const mikeSession = openSession(mike, "n3-mike-mapping", mikeAt.worktree, host);
 
   hub.clock.setOffsetMs(-9 * MS_PER_DAY);
   mikeSession.label("mike-day-1");
@@ -85,6 +123,7 @@ export const runLandedCase = async (hub: TestHub): Promise<LandedWorld> => {
   await editEach(mikeSession, mikeAt.worktree, N3_FILES.slice(0, 6), "mapping v1");
   await commitByBash(mikeSession, mikeAt.worktree, MIKE, "mapping v1", daysAgo(9));
   await mikeSession.stop();
+  await mikeSession.settle();
   hub.clock.setOffsetMs(-8 * MS_PER_DAY);
   mikeSession.label("mike-day-2");
   await mikeSession.start("resume");
@@ -92,20 +131,20 @@ export const runLandedCase = async (hub: TestHub): Promise<LandedWorld> => {
   await commitByBash(mikeSession, mikeAt.worktree, MIKE, "mapping v1: schema", daysAgo(8));
   await mikeSession.stop();
   await mikeSession.end();
+  await mikeSession.settle();
   const mikeLastCommit = await gitIn(mikeAt.worktree, ["rev-parse", "HEAD"]);
   await landOnMain(repo.seed, mikeAt.clone, "feat/mapping-v1", "Merge pull request #398 from acme/feat/mapping-v1", MIKE, daysAgo(7.5));
   hub.clock.setOffsetMs(0);
 
   const nickAt = await checkoutFor(repo, NICK, "feat/mapping-v2", "nick");
-  const nickSession = openSession(nick, "n3-nick-mapping-v2", nickAt.worktree);
+  const nickSession = openSession(nick, "n3-nick-mapping-v2", nickAt.worktree, host);
   nickSession.label("nick-after-merge");
   await nickSession.start();
   await nickSession.prompt("mapping v2 on top of the merged v1");
-  await nickSession.subagent("mapping-v2", async (actor) => {
-    await editEach(nickSession, nickAt.worktree, N3_FILES, "mapping v2", actor);
-  });
+  await subagentsOver(nickSession, nickAt.worktree, N3_FILES, "mapping-v2", profile, N3_WORKERS);
   await nickSession.prompt("continue");
   await nickSession.stop();
+  await nickSession.settle();
   const nickStatusline = await nickSession.statusline();
   return {
     repo,
@@ -130,6 +169,8 @@ const N4_FILES = [
   "apps/practice/mapping/mappingFilters.ts",
   "apps/practice/mapping/index.ts",
 ];
+/** Nick's parallel workers per session on the six files. */
+const N4_WORKERS = 3;
 
 export interface SelfWorld {
   readonly repo: CaseRepo;
@@ -140,32 +181,60 @@ export interface SelfWorld {
   readonly cleanup: readonly string[];
 }
 
-/** Nick alone, in two sessions on two worktrees of one clone, both in the same six files. */
-export const runSelfCase = async (hub: TestHub): Promise<SelfWorld> => {
+/** The first session's turn: its subagents over all six files. */
+const firstTurn = async (session: HostSession, root: string, profile: GateProfile): Promise<void> => {
+  session.label("first");
+  await session.start();
+  await session.prompt("mapping a: grid and config");
+  await subagentsOver(session, root, N4_FILES, "mapping-a", profile, N4_WORKERS);
+  await session.stop();
+};
+
+/** The second session's turn: three files by hand, three by subagents. */
+const secondTurn = async (session: HostSession, root: string, profile: GateProfile): Promise<void> => {
+  session.label("second");
+  await session.start();
+  await session.prompt("mapping b: the same files, another approach");
+  await editEach(session, root, N4_FILES.slice(0, 3), "b");
+  await subagentsOver(session, root, N4_FILES.slice(3), "mapping-b", profile, N4_WORKERS);
+  await session.stop();
+};
+
+/**
+ * Nick alone, in two sessions on two worktrees of one clone, both in the same
+ * six files — one after the other, or (parallel profile) at once. With the
+ * lives, the second ends and resumes, and the first compacts, before each
+ * touches a shared file again.
+ */
+export const runSelfCase = async (hub: TestHub, profile: GateProfile = GENEROUS): Promise<SelfWorld> => {
+  const host = { isProcessHost: profile.isProcessHost };
   const repo = await seedCase("self-twins", hub.url, [...N4_FILES, "apps/numlabs/sync.ts"]);
-  const nick = await makeDeveloper(hub, NICK, "n4-nick");
+  const nick = await makeDeveloper(hub, NICK, "n4-nick", profile.budget);
   const firstAt = await checkoutFor(repo, NICK, "feat/mapping-a", "nick-a");
   const secondTree = await addWorktree(firstAt.clone, join(firstAt.parent, "nick-b"), "feat/mapping-b", "origin/main");
-  const first = openSession(nick, "n4-nick-a", firstAt.worktree);
-  const second = openSession(nick, "n4-nick-b", secondTree);
-  first.label("first");
-  await first.start();
-  await first.prompt("mapping a: grid and config");
-  await first.subagent("mapping-a", async (actor) => {
-    await editEach(first, firstAt.worktree, N4_FILES, "a", actor);
-  });
-  await first.stop();
-  second.label("second");
-  await second.start();
-  await second.prompt("mapping b: the same files, another approach");
-  await editEach(second, secondTree, N4_FILES.slice(0, 3), "b");
-  await second.subagent("mapping-b", async (actor) => {
-    await editEach(second, secondTree, N4_FILES.slice(3), "b", actor);
-  });
-  await second.stop();
+  const first = openSession(nick, "n4-nick-a", firstAt.worktree, host);
+  const second = openSession(nick, "n4-nick-b", secondTree, host);
+  if (profile.isParallel) {
+    await Promise.all([firstTurn(first, firstAt.worktree, profile), secondTurn(second, secondTree, profile)]);
+  } else {
+    await firstTurn(first, firstAt.worktree, profile);
+    await secondTurn(second, secondTree, profile);
+  }
+  if (profile.hasCompactAndResume) {
+    second.label("second-resumed");
+    await second.end();
+    await second.start("resume");
+    await second.prompt("back to b after the reload");
+    await editEach(second, secondTree, N4_FILES.slice(1, 2), "b again");
+    await second.stop();
+  }
   first.label("first-again");
+  if (profile.hasCompactAndResume) {
+    await first.start("compact");
+  }
   await first.prompt("back to a");
   await editEach(first, firstAt.worktree, N4_FILES.slice(0, 1), "a again");
+  await Promise.all([first.settle(), second.settle()]);
   return {
     repo,
     nick,
@@ -210,23 +279,25 @@ const mikeTargets = async (hub: TestHub, repo: CaseRepo): Promise<number> =>
  * fresher one. Then Nick edits the one file all three touched, and Tina's two
  * others.
  */
-export const runSweepCase = async (hub: TestHub): Promise<SweepWorld> => {
+export const runSweepCase = async (hub: TestHub, profile: GateProfile = GENEROUS): Promise<SweepWorld> => {
+  const host = { isProcessHost: profile.isProcessHost };
   const repo = await seedCase("formatter-run", hub.url, [...new Set([...N5_SWEEP, ...N5_FOCUSED])]);
-  const mike = await makeDeveloper(hub, MIKE, "n5-mike");
-  const nick = await makeDeveloper(hub, NICK, "n5-nick");
-  const tina = await makeDeveloper(hub, TINA, "n5-tina");
+  const mike = await makeDeveloper(hub, MIKE, "n5-mike", profile.budget);
+  const nick = await makeDeveloper(hub, NICK, "n5-nick", profile.budget);
+  const tina = await makeDeveloper(hub, TINA, "n5-tina", profile.budget);
   const tinaAt = await checkoutFor(repo, TINA, "feat/mapping-perf", "tina");
   const mikeAt = await checkoutFor(repo, MIKE, "chore/prettier-3", "mike");
   const nickAt = await checkoutFor(repo, NICK, "feat/mapping-fix", "nick");
-  const tinaSession = openSession(tina, "n5-tina-perf", tinaAt.worktree);
-  const mikeSession = openSession(mike, "n5-mike-format", mikeAt.worktree);
-  const nickSession = openSession(nick, "n5-nick-fix", nickAt.worktree);
+  const tinaSession = openSession(tina, "n5-tina-perf", tinaAt.worktree, host);
+  const mikeSession = openSession(mike, "n5-mike-format", mikeAt.worktree, host);
+  const nickSession = openSession(nick, "n5-nick-fix", nickAt.worktree, host);
 
   tinaSession.label("tina-focused");
   await tinaSession.start();
   await tinaSession.prompt("mapping perf: memoize the grid rows");
   await editEach(tinaSession, tinaAt.worktree, N5_FOCUSED, "perf");
   await tinaSession.stop();
+  await tinaSession.settle();
 
   mikeSession.label("mike-sweep");
   await mikeSession.start();
@@ -245,6 +316,7 @@ export const runSweepCase = async (hub: TestHub): Promise<SweepWorld> => {
   const counts: number[] = [];
   for (let turn = 0; turn < MAX_SWEEP_TURNS; turn += 1) {
     await mikeSession.stop();
+    await mikeSession.settle();
     counts.push(await mikeTargets(hub, repo));
     if (counts.length > 1 && counts.at(-1) === counts.at(-2)) {
       break;
@@ -258,6 +330,7 @@ export const runSweepCase = async (hub: TestHub): Promise<SweepWorld> => {
   const nickSharedEdit = await nickSession.edit(join(nickAt.worktree, N5_SHARED_FILE), "// fixed row height\n");
   nickSession.label("nick-edits-rest");
   await editEach(nickSession, nickAt.worktree, N5_FOCUSED.slice(1), "row height");
+  await nickSession.settle();
   const nickStatusline = await nickSession.statusline();
   return {
     repo,
