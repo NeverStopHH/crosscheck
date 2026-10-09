@@ -65,6 +65,24 @@ describe("the label door drafts", () => {
     ]);
   });
 
+  test("an older client's off_target is drafted as noise: the page shows the word that will be stored", async () => {
+    // Arrange
+    const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
+
+    // Act
+    const response = await post(world.harness, world.nick, "/api/pilot-marks", {
+      repo: REPO,
+      refKind: "hint_delivery",
+      refId: world.delivered.kenContext,
+      mark: "off_target",
+      presence: "controlling_terminal",
+    });
+
+    // Assert
+    expect(response.status).toBe(201);
+    expect((await draftsOf(world.harness)).map((draft) => [draft.kind, draft.payload["word"]])).toEqual([["label", "noise"]]);
+  });
+
   test("the door still refuses what could never count, and drafts nothing", async () => {
     // Arrange
     const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
