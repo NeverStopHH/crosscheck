@@ -13,14 +13,17 @@
  * ledger, keyed per line like the capture-loss ledger (state/loss-ledger.ts):
  * a hook that never learned its repo writes a null key, and the reader
  * charges it to every repo — the conservative reading. Fail open throughout:
- * a full or unwritable ledger costs the count, never the hook.
+ * an unwritable ledger costs the count, never the hook. A full one ROTATES
+ * (`rotate`, review batch 2, M7): past twice the cap inside the window the
+ * count is a floor, never a zero.
  */
-import { appendFile, stat } from "node:fs/promises";
+import { appendFile, rename, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 
 import { BRIEFING_OMISSION_WINDOW_DAYS, MAX_BRIEFING_OMISSION_LEDGER_BYTES } from "../constants.ts";
 import { ensureDir, readTextOrNull } from "../config/paths.ts";
+import { withLock } from "../spool/lock.ts";
 
 const MS_PER_DAY = 86_400_000;
 
@@ -56,6 +59,36 @@ const LineSchema = z.looseObject({
   key: z.string().nullable().catch(null),
 });
 
+const sizeOf = (path: string): Promise<number> =>
+  stat(path).then(
+    (info) => info.size,
+    () => 0,
+  );
+
+/** Where a full ledger's lines go, read beside the live file until the next rotation replaces them. */
+export const rotatedPathOf = (path: string): string => `${path}.1`;
+
+/**
+ * A FULL LEDGER ROTATES, IT DOES NOT GO BLIND (review batch 2, M7). Appends
+ * used to stop at the cap for good: the lines that filled it aged out of the
+ * read window one by one, and `doctor` read 0 for ever after — a storm writes
+ * the cap in minutes. At the cap the live file is renamed over the one
+ * rotated before it, and appends start a new one; the reader reads both, so
+ * the window keeps up to twice the cap and old lines leave with the rotation
+ * that replaces them. A rename loses no append racing it — one that opened
+ * the old file lands in the rotated one, which is still read — and the
+ * rotation runs under the ledger's own lock and checks the size again inside
+ * it, so two hooks that both found it full rotate it once, not twice (the
+ * second rename would have thrown the first one's lines away).
+ */
+const rotate = async (path: string): Promise<void> => {
+  await withLock(`${path}.lock`, undefined, async () => {
+    if ((await sizeOf(path)) >= MAX_BRIEFING_OMISSION_LEDGER_BYTES) {
+      await rename(path, rotatedPathOf(path));
+    }
+  });
+};
+
 const parseLine = (line: string): z.infer<typeof LineSchema> | null => {
   try {
     const parsed = LineSchema.safeParse(JSON.parse(line));
@@ -77,11 +110,11 @@ export const omissionLedger = <R extends string>(file: string, reasons: readonly
   const record = async (home: string, entry: OmissionEntry<R>): Promise<void> => {
     try {
       const at = path(home);
-      const size = await stat(at).then(
-        (info) => info.size,
-        () => 0,
-      );
-      if (size >= MAX_BRIEFING_OMISSION_LEDGER_BYTES) {
+      if ((await sizeOf(at)) >= MAX_BRIEFING_OMISSION_LEDGER_BYTES) {
+        await rotate(at);
+      }
+      if ((await sizeOf(at)) >= MAX_BRIEFING_OMISSION_LEDGER_BYTES) {
+        // The rotation could not run: the cap holds rather than the file growing.
         return;
       }
       await ensureDir(dirname(at));
@@ -92,7 +125,8 @@ export const omissionLedger = <R extends string>(file: string, reasons: readonly
   };
 
   const read = async (home: string, key: string, now: Date): Promise<OmissionCounts<R>> => {
-    const text = await readTextOrNull(path(home));
+    const [rotated, current] = await Promise.all([readTextOrNull(rotatedPathOf(path(home))), readTextOrNull(path(home))]);
+    const text = rotated === null && current === null ? null : `${rotated ?? ""}\n${current ?? ""}`;
     if (text === null) {
       return none;
     }

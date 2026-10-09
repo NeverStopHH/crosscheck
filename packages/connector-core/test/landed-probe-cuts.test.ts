@@ -248,7 +248,7 @@ describe("the cut-checks ledger", () => {
     expect((await readLandedProbeCuts(h, KEY, NOW)).total).toBe(0);
   });
 
-  test("the cuts are their own file, beside the briefing omissions, and stop growing at the cap", async () => {
+  test("the cuts are their own file, beside the briefing omissions, and a full one rotates instead of growing", async () => {
     // Arrange
     const h = await home("cuts-cap");
     const path = landedProbeCutsPath(h);
