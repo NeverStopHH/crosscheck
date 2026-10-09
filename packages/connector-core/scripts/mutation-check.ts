@@ -4737,11 +4737,13 @@ export const MUTATIONS: readonly Mutation[
       "\"nothing is named yet\" into a ranked accusation on its own word",
   },
   {
-    // The same route's other scope. A retraction is not a global verb.
+    // The same route's other scope. A retraction is not a global verb. Since human provenance the
+    // door scopes it first — it drafts a break only for a pin of the repo it names — and the
+    // confirmation's own write (markPinBroke) keeps the repo scope as a second guard.
     label: "one key's retraction reaches a pin in any repo on the hub",
-    file: `${SERVER}/src/services/pins.ts`,
-    from: "and(eq(pins.id, pinId), eq(pins.repo, repo), isNull(pins.brokeAt))",
-    to: "and(eq(pins.id, pinId), isNull(pins.brokeAt))",
+    file: `${SERVER}/src/services/draft-doors.ts`,
+    from: "    .where(and(eq(pins.id, pinId), eq(pins.repo, repo)))",
+    to: "    .where(eq(pins.id, pinId))",
     test: `${SERVER}/test/pins.test.ts`,
     because:
       "any checkout retracts any other team's pin by id alone, and the row " +
