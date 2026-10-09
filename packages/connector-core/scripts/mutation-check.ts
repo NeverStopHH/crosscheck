@@ -13967,8 +13967,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a timed-out hook that captures nothing is booked as a loss",
     file: `${CONNECTOR}/src/hooks/runner.ts`,
-    from: "    if (outcome.timedOut && CAPTURE_HOOKS.has(name)) {",
-    to: "    if (outcome.timedOut) {",
+    from: "    if (outcome.timedOut && CAPTURE_HOOKS.has(name) && !race.isCaptured()) {",
+    to: "    if (outcome.timedOut && !race.isCaptured()) {",
     test: `${CONNECTOR}/test/hook-timeout-loss.test.ts`,
     because: "a slow hub cutting PreToolUse or UserPromptSubmit, which spool only informational records, turns every repo telemetry_lost",
   },
