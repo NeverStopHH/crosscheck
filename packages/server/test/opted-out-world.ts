@@ -23,8 +23,13 @@
  *   - a pilot-enrolled repo with a prompt hint about her context delivered to
  *     Nick, and opened
  */
+import { createHash, randomBytes } from "node:crypto";
+
 import { sql } from "drizzle-orm";
 
+// Her connector's own mint — a test-only import: the hub depends on no connector.
+import { TOPIC_KEY_BYTES } from "../../connector-core/src/constants.ts";
+import { mintTopicId, topicWorkContextIdFor } from "../../connector-core/src/flows/topic-contexts.ts";
 import { hintDeliveries } from "../src/db/schema.ts";
 import {
   TEST_ADMIN_TOKEN,
@@ -75,10 +80,22 @@ export const ROBIN_SOLVED = "wc_robin_solved";
 export const ROBIN_LOCAL_CONTEXT = "wc_robin_local";
 export const ROBIN_DETACHED_CONTEXT = "wc_robin_detached";
 export const ROBIN_HOST_CONTEXT = "wc_robin_host";
-/** Her topics' contexts: one beside her live session's on the shared repo, one on the local repo. */
-export const ROBIN_TOPIC = `${ROBIN_CONTEXT}~t0a1b2c3d4e5f.1`;
-export const ROBIN_SECOND_TOPIC = `${ROBIN_CONTEXT}~t5e4d3c2b1a0f.3`;
-export const ROBIN_LOCAL_TOPIC = `${ROBIN_LOCAL_CONTEXT}~tf5e4d3c2b1a0.2`;
+/**
+ * Her topic ids, minted as her connector mints them (connector-core
+ * flows/topic-contexts.ts `mintTopicId`; batch-2 integration review, H3):
+ * keyed by a secret of her machine — here one per test process, so the two
+ * worlds of one walk mint the same ids — over her conversation, the repo, the
+ * worktree root and the branch. The hub serves ids as written, so the leak
+ * scan below hashes every branch of hers the unkeyed ways and fails on an id
+ * one of them meets (`topicIdOraclesIn`).
+ */
+const HER_TOPIC_KEY = randomBytes(TOPIC_KEY_BYTES).toString("hex");
+const herTopicId = (session: string, repo: string, worktree: string, branch: string): string =>
+  mintTopicId(HER_TOPIC_KEY, session, repo, `/Users/robin/worktrees/${worktree}`, branch);
+/** Her topics' contexts: two beside her live session's on the shared repo, one on the local repo. */
+export const ROBIN_TOPIC = topicWorkContextIdFor(ROBIN_CONTEXT, herTopicId(ROBIN_LIVE, REPO, "lugano", SECRET_TOPIC_BRANCH));
+export const ROBIN_SECOND_TOPIC = topicWorkContextIdFor(ROBIN_CONTEXT, herTopicId(ROBIN_LIVE, REPO, "bellinzona", SECRET_SECOND_TOPIC_BRANCH));
+export const ROBIN_LOCAL_TOPIC = topicWorkContextIdFor(ROBIN_LOCAL_CONTEXT, herTopicId(ROBIN_LOCAL, LOCAL_REPO, "locarno", SECRET_LOCAL_TOPIC_BRANCH));
 /**
  * Created long before every window a surface applies (conference, suspect,
  * a since=) and touched again at UPDATED_AT: inside a window only by her
@@ -295,9 +312,32 @@ export const instantsNear = (
 export const instantLeaksIn = (text: string, now: Date): readonly string[] =>
   instantsNear(text, SECRET_INSTANTS, now);
 
-/** Every leak `text` carries: the exact spellings, then the tolerant instants. */
+/** A topic id's two parts, wherever one is spelled: `~t<lead>.<number>`. */
+const TOPIC_ID = /~t([0-9a-f]+)\.([0-9]+)/g;
+const OLD_NUMBER_HEX_CHARS = 8;
+const PLAIN_LEAD_HEX_CHARS = 12;
+
+/** What anybody computes from a branch without her key: the old mint's number, and a plain hash's lead. */
+const unkeyedSpellings = (branch: string): readonly string[] => {
+  const hex = createHash("sha256").update(branch).digest("hex");
+  return [`number ${String(Number.parseInt(hex.slice(0, OLD_NUMBER_HEX_CHARS), 16))}`, `lead ${hex.slice(0, PLAIN_LEAD_HEX_CHARS)}`];
+};
+
+/**
+ * THE ID ORACLE (batch-2 integration review, H3): the label of every branch
+ * of hers that hashes, unkeyed, into a part of a topic id `text` spells — a
+ * colleague who hashed `git branch -r` read her topics' branches that way.
+ */
+export const topicIdOraclesIn = (text: string): readonly string[] => {
+  const spelled = new Set([...text.matchAll(TOPIC_ID)].flatMap((match) => [`lead ${match[1] ?? ""}`, `number ${match[2] ?? ""}`]));
+  return SECRETS.filter(([label, branch]) => label.endsWith("branch") && unkeyedSpellings(branch).some((spelling) => spelled.has(spelling))).map(
+    ([label]) => `${label}, hashed into a topic id`,
+  );
+};
+
+/** Every leak `text` carries: the exact spellings, the tolerant instants, and a branch an id can be hashed back to. */
 export const leaksIn = (text: string, now: Date): readonly string[] => [
-  ...new Set([...secretsIn(text), ...instantLeaksIn(text, now)]),
+  ...new Set([...secretsIn(text), ...instantLeaksIn(text, now), ...topicIdOraclesIn(text)]),
 ];
 
 export interface OptedOutWorld {

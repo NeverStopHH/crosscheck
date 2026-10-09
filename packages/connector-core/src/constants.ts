@@ -351,12 +351,19 @@ export const MAX_TOPICS_PER_SESSION = 24;
 export const INTENT_TOPIC_AMBIGUITY_MS = 60_000;
 
 /**
- * Hex characters of sha256(repo, worktree root) a topic's minted id leads
- * with — the id is that root key and a number from the branch the topic
- * OPENED on (flows/topic-contexts.ts `mintTopicId`), minted once, so a rename
- * cannot change it.
+ * Hex characters of its keyed digest a topic's minted id leads with — the id
+ * is those, a dot, and a number from the digest's next hex
+ * (flows/topic-contexts.ts `mintTopicId`), minted once from the branch the
+ * topic OPENED on, so a rename cannot change it.
  */
 export const TOPIC_KEY_HEX_CHARS = 12;
+
+/**
+ * Random bytes in this machine's topic key (state/topic-key.ts): the secret
+ * every topic id is an HMAC under, so nobody without it can hash a guessed
+ * branch into one (batch-2 integration review, H3). A SHA-256 block's worth.
+ */
+export const TOPIC_KEY_BYTES = 32;
 
 /**
  * How much of a worktree's HEAD log (`<gitdir>/logs/HEAD`) the topic rules

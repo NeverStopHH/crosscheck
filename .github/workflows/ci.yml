@@ -168,7 +168,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 3612
+    # PRINTS: 3618
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -354,8 +354,8 @@ jobs:
     # PRINTS: flows/register-session.ts 38
     # PRINTS: flows/solved-hint.ts 4
     # PRINTS: flows/topic-base-word.ts 1
-    # PRINTS: flows/topic-contexts.ts 13
-    # PRINTS: flows/topic-rules.ts 15
+    # PRINTS: flows/topic-contexts.ts 16
+    # PRINTS: flows/topic-rules.ts 16
     # PRINTS: flows/work-context-title.ts 1
     # PRINTS: git/check-ignore.ts 2
     # PRINTS: git/claim-drift.ts 5
@@ -451,6 +451,7 @@ jobs:
     # PRINTS: state/session-state.ts 71
     # PRINTS: state/temp-sweep.ts 15
     # PRINTS: state/tool-window-key.ts 2
+    # PRINTS: state/topic-key.ts 2
     # PRINTS: packages/connector-core/test/fixtures/hint-hub.ts 1
     # PRINTS: packages/connector-core/test/intent-budget.test.ts 1
     # PRINTS: packages/connector-core/test/network-guard-rules.ts 7
@@ -988,9 +989,10 @@ jobs:
     # PRINTS: tool-window-key.ts 2
     # PRINTS: topic-base-commit.ts 1
     # PRINTS: topic-base-word.ts 1
-    # PRINTS: topic-contexts.ts 13
+    # PRINTS: topic-contexts.ts 16
     # PRINTS: topic-group.ts 11
-    # PRINTS: topic-rules.ts 15
+    # PRINTS: topic-key.ts 2
+    # PRINTS: topic-rules.ts 16
     # PRINTS: touched-root.ts 6
     # PRINTS: transcript.ts 4
     # PRINTS: triggers.ts 8

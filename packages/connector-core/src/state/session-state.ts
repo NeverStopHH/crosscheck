@@ -920,9 +920,10 @@ const SessionStateObjectSchema = z.looseObject({
   topicContexts: z
     .array(
       z.object({
-        // The topic's MINTED id (flows/topic-contexts.ts `mintTopicId`): its
-        // root's key and its ordinal in that root — never its branch, so a
-        // rename keeps it.
+        // The topic's MINTED id (flows/topic-contexts.ts `mintTopicId`): a
+        // keyed digest of its conversation, root and opening branch — never
+        // the branch itself, so a rename keeps it. An id minted before the
+        // key (sha256 of the branch) stays as it was: never re-derived.
         key: z.string().min(1),
         sessionId: z.string().min(1),
         workContextId: z.string().min(1),

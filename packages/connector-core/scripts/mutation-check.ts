@@ -26970,8 +26970,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a session opens topics without bound",
     file: `${CORE}/src/flows/topic-rules.ts`,
-    from: "      if (live.length + opened.length >= MAX_TOPICS_PER_SESSION) {",
-    to: "      if (false) {",
+    // RETARGETED (batch-2 integration review, H3): the cap is named before the key is read.
+    from: "      const isCapped = live.length + opened.length >= MAX_TOPICS_PER_SESSION;",
+    to: "      const isCapped = false;",
     test: `${CORE}/test/topic-contexts.test.ts`,
     because:
       "a script that checks out a branch per file mints a work context per file on the " +
@@ -27082,18 +27083,69 @@ export const MUTATIONS: readonly Mutation[
     // DESIGN.md "One session, many topics" — the topic rules (flows/topic-rules.ts).
     label: "a topic's id is minted from the worktree alone",
     file: `${CORE}/src/flows/topic-contexts.ts`,
-    from: "  return `${rootKeyOf(repoId, root)}.${String(Number.parseInt(branchKey, 16))}`;",
-    to: "  return `${rootKeyOf(repoId, root)}.1`;",
+    // RETARGETED (batch-2 integration review, H3): the id is one keyed digest now.
+    from: "  const digest = createHmac(\"sha256\", key).update(JSON.stringify([conversation, repoId, root, branch])).digest(\"hex\");",
+    to: "  const digest = createHmac(\"sha256\", key).update(JSON.stringify([conversation, repoId, root, \"\"])).digest(\"hex\");",
     test: `${CORE}/test/topic-contexts.test.ts`,
     because: "review M1: two hooks opening two branches of one worktree mint one id, and one branch's targets sit in the other's context under a flipped title",
   },
   {
     label: "a worktree's second topic takes its first topic's id",
     file: `${CORE}/src/flows/topic-rules.ts`,
-    from: "        const id = mintTopicId(life.repoId, head.root, decision.branch);",
-    to: "        const id = mintTopicId(life.repoId, head.root, \"\");",
+    // RETARGETED (batch-2 integration review, H3): the mint takes the key and the conversation.
+    from: "        const id = mintTopicId(key, conversationOf(life.sessionId), life.repoId, head.root, decision.branch);",
+    to: "        const id = mintTopicId(key, conversationOf(life.sessionId), life.repoId, head.root, \"\");",
     test: `${CORE}/test/topic-rules.test.ts`,
     because: "a new piece of work in the same worktree is spooled under the old topic's context id, and the two merge on the hub",
+  },
+  // ── Batch-2 integration review, H3: a topic id names no branch ─────────
+  {
+    label: "a topic id is the old unkeyed mint, sha256 of the branch it opened on",
+    file: `${CORE}/src/flows/topic-contexts.ts`,
+    from: "  const digest = createHmac(\"sha256\", key).update(JSON.stringify([conversation, repoId, root, branch])).digest(\"hex\");",
+    to: "  const digest = new Bun.CryptoHasher(\"sha256\").update(`${repoId}\\n${root}`).digest(\"hex\").slice(0, 12) + new Bun.CryptoHasher(\"sha256\").update(branch).digest(\"hex\");",
+    test: `${CORE}/test/topic-key.test.ts`,
+    because: "a colleague hashes `git branch -r` and reads which branch each of an opted-out developer's topics is on off the id the hub serves",
+  },
+  {
+    label: "a topic id is the old unkeyed mint, sha256 of the branch it opened on (hub routes)",
+    file: `${CORE}/src/flows/topic-contexts.ts`,
+    from: "  const digest = createHmac(\"sha256\", key).update(JSON.stringify([conversation, repoId, root, branch])).digest(\"hex\");",
+    to: "  const digest = new Bun.CryptoHasher(\"sha256\").update(`${repoId}\\n${root}`).digest(\"hex\").slice(0, 12) + new Bun.CryptoHasher(\"sha256\").update(branch).digest(\"hex\");",
+    test: `${SERVER}/test/live-location-topics.test.ts`,
+    because: "the listing, the conference, search, hints, the diagnosis and the landed stop all serve the id a guessed branch hashes into",
+  },
+  {
+    label: "a topic id is the old unkeyed mint, sha256 of the branch it opened on (differential)",
+    file: `${CORE}/src/flows/topic-contexts.ts`,
+    from: "  const digest = createHmac(\"sha256\", key).update(JSON.stringify([conversation, repoId, root, branch])).digest(\"hex\");",
+    to: "  const digest = new Bun.CryptoHasher(\"sha256\").update(`${repoId}\\n${root}`).digest(\"hex\").slice(0, 12) + new Bun.CryptoHasher(\"sha256\").update(branch).digest(\"hex\");",
+    test: `${SERVER}/test/live-location-differential.test.ts`,
+    because: "her topic action puts an id on every route that the leak scan hashes back to her branch",
+  },
+  {
+    label: "a touch opens a topic when no topic key can be had",
+    file: `${CORE}/src/flows/topic-rules.ts`,
+    from: "      const key = isCapped ? null : await topicKey();",
+    to: "      const key = isCapped ? null : ((await topicKey()) ?? \"\");",
+    test: `${CORE}/test/topic-rules.test.ts`,
+    because: "an id minted under no key is one anybody can mint, so a guessed branch tests against it again",
+  },
+  {
+    label: "the topic key is written readable by anyone on the machine",
+    file: `${CORE}/src/state/topic-key.ts`,
+    from: "{ mode: PRIVATE_FILE_MODE });",
+    to: "{ mode: 0o644 });",
+    test: `${CORE}/test/topic-key.test.ts`,
+    because: "another account on the machine reads the key and can hash guessed branches into her ids",
+  },
+  {
+    label: "sibling hooks racing for the first topic key each keep their own",
+    file: `${CORE}/src/state/topic-key.ts`,
+    from: "    await link(temp, path);",
+    to: "    await Bun.write(path, Bun.file(temp));",
+    test: `${CORE}/test/topic-key.test.ts`,
+    because: "two hooks of one conversation mint two ids for one topic, the duplicate context review M1 removed",
   },
   {
     label: "the fold registers a topic opened twice twice",
@@ -27832,8 +27884,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the edit capture opens topics without their word about their base",
     file: `${CORE}/src/flows/capture-touched-files.ts`,
-    from: "  const plan = await withTopicBaseWords(await planTopics(life, resolution, input.paths, input.now, input.cwd));",
-    to: "  const plan = await planTopics(life, resolution, input.paths, input.now, input.cwd);",
+    // RETARGETED (batch-2 integration review, H3): the plan takes the topic key, on its own line.
+    from: "  const plan = await withTopicBaseWords(\n    await planTopics(life, resolution, input.paths,",
+    to: "  const plan = await Promise.resolve(\n    await planTopics(life, resolution, input.paths,",
     test: `${CORE}/test/topic-base-word.test.ts`,
     because: "the topics an edit opens — almost all of them — reach the hub with no word, so the fresh-branch rule never applies",
   },
@@ -35473,8 +35526,9 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/topic-base-word.test.ts 7
  * PRINTS: packages/connector-core/test/topic-contexts.test.ts 21
  * PRINTS: packages/connector-core/test/topic-heads.test.ts 3
+ * PRINTS: packages/connector-core/test/topic-key.test.ts 3
  * PRINTS: packages/connector-core/test/topic-record-marker.test.ts 8
- * PRINTS: packages/connector-core/test/topic-rules.test.ts 15
+ * PRINTS: packages/connector-core/test/topic-rules.test.ts 16
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
  * PRINTS: packages/connector-core/test/tripwire-recheck.test.ts 9
  * PRINTS: packages/connector-core/test/trusted-path.test.ts 4
@@ -35602,13 +35656,13 @@ interface Outcome {
  * PRINTS: packages/server/test/listen-boot.test.ts 8
  * PRINTS: packages/server/test/listen.test.ts 16
  * PRINTS: packages/server/test/live-location-cost.test.ts 3
- * PRINTS: packages/server/test/live-location-differential.test.ts 13
+ * PRINTS: packages/server/test/live-location-differential.test.ts 14
  * PRINTS: packages/server/test/live-location-privacy.test.ts 27
  * PRINTS: packages/server/test/live-location-projection.test.ts 9
  * PRINTS: packages/server/test/live-location-prose.test.ts 3
  * PRINTS: packages/server/test/live-location-surfaces.test.ts 48
  * PRINTS: packages/server/test/live-location-told.test.ts 1
- * PRINTS: packages/server/test/live-location-topics.test.ts 4
+ * PRINTS: packages/server/test/live-location-topics.test.ts 5
  * PRINTS: packages/server/test/location-index-rebuild.test.ts 7
  * PRINTS: packages/server/test/normalized-doc.test.ts 2
  * PRINTS: packages/server/test/passkey-announcements.test.ts 1

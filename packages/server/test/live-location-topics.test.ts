@@ -23,11 +23,17 @@ import {
   CREATED_AT,
   FILE,
   LOCAL_REPO,
+  REPO,
   ROBIN_LOCAL,
   ROBIN_LOCAL_TOPIC,
+  ROBIN_SECOND_TOPIC,
+  ROBIN_TOPIC,
   SECRET_LOCAL_TOPIC_BRANCH,
   SECRET_TOPIC_SHA,
+  TIED_TOPIC_WORDS,
+  openTiedTopics,
   seedOptedOutWorld,
+  topicIdOraclesIn,
 } from "./opted-out-world.ts";
 import type { OptedOutWorld } from "./opted-out-world.ts";
 
@@ -179,5 +185,39 @@ describe("an opted-out developer's unmarked topic on a local repo", () => {
     // leaks no longer
     expect(before).toEqual(["/api/conference", "/api/hints/candidates", "/api/search"]);
     expect(await leakingRoutes(world)).toEqual([]);
+  });
+});
+
+describe("her topic ids (batch-2 integration review, H3)", () => {
+  test("name no branch of hers a colleague can hash, on any route that serves them", async () => {
+    // Arrange: two topics of hers, minted as her connector mints them
+    const world = await seedOptedOutWorld();
+    await openTiedTopics(world);
+    const repo = encodeURIComponent(REPO);
+    const words = encodeURIComponent(TIED_TOPIC_WORDS);
+
+    // Act: every read that names a topic by its id
+    const bodies = await Promise.all([
+      ...[
+        `/api/work-contexts?repo=${repo}`,
+        `/api/conference?repo=${repo}`,
+        `/api/search?repo=${repo}&query=${words}`,
+        `/api/hints/candidates?repo=${repo}&query=${words}`,
+        `/api/work-contexts/${ROBIN_TOPIC}`,
+        `/api/work-contexts/${ROBIN_TOPIC}/diagnosis`,
+      ].map(async (path) => (await world.harness.app.request(path, jsonRequest("GET", world.nick.apiKey))).text()),
+      (async () =>
+        (
+          await world.harness.app.request(
+            "/api/landed/context",
+            jsonRequest("POST", world.nick.apiKey, { repo: REPO, path: FILE, commits: [{ sha: "abcdef1234567", authorEmail: "robin@example.com", committedAt: CREATED_AT }] }),
+          )
+        ).text())(),
+    ]);
+
+    // Assert: the ids are served, and none hashes back to a branch of hers
+    expect(bodies.join("\n")).toContain(ROBIN_TOPIC);
+    expect(bodies.join("\n")).toContain(ROBIN_SECOND_TOPIC);
+    expect(bodies.flatMap(topicIdOraclesIn)).toEqual([]);
   });
 });

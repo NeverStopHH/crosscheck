@@ -31,7 +31,9 @@ import {
 } from "@crosscheck/connector-core/constants.ts";
 import { mintTopicId, topicSeenKey } from "@crosscheck/connector-core/flows/topic-contexts.ts";
 import { readHeadFile } from "@crosscheck/connector-core/git/repo-identity.ts";
+import { conversationOf } from "@crosscheck/connector-core/state/session-lineage.ts";
 import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import { readTopicKey } from "@crosscheck/connector-core/state/topic-key.ts";
 
 import {
   REMOTE,
@@ -91,9 +93,17 @@ const repoWithWorktree = async (
  * topic-contexts.ts): B is checked out on its own HEAD, so the rules open a
  * topic for it, and its seen-set entry carries that topic's id.
  */
-const seenInWorktree = async (repoId: string | undefined, worktree: string, file: string): Promise<string> => {
+const seenInWorktree = async (
+  home: string,
+  state: { readonly repoId: string; readonly crosscheckSessionId: string } | null,
+  worktree: string,
+  file: string,
+): Promise<string> => {
   const root = await realpath(worktree);
-  return topicSeenKey(mintTopicId(repoId ?? "", root, (await readHeadFile(root))?.branch ?? ""), file);
+  // Minted under this home's topic key, in the session's conversation (core state/topic-key.ts).
+  const key = (await readTopicKey(home)) ?? "";
+  const conversation = conversationOf(state?.crosscheckSessionId ?? "");
+  return topicSeenKey(mintTopicId(key, conversation, state?.repoId ?? "", root, (await readHeadFile(root))?.branch ?? ""), file);
 };
 
 const harnessAt = async (label: string, repo: string): Promise<Harness> => {
@@ -133,7 +143,7 @@ describe("an ACP session at checkout A editing a file in worktree B", () => {
     // Assert
     expect(h.capture.counters().targets).toBe(1);
     const state = await readSessionState(h.home, hostKey);
-    expect(state?.seenTargets).toEqual([await seenInWorktree(state?.repoId, worktree, EDITED_FILE)]);
+    expect(state?.seenTargets).toEqual([await seenInWorktree(h.home, state, worktree,EDITED_FILE)]);
     expect(state?.editToolFires).toBe(1);
     expect(state?.targetsCapturedCount).toBe(1);
     expect(state?.lastPostToolUseTool).toBe("edit");
@@ -173,7 +183,7 @@ describe("an ACP session at checkout A editing a file in worktree B", () => {
 
     // Assert
     const state = await readSessionState(h.home, hostKey);
-    expect(state?.seenTargets).toEqual([await seenInWorktree(state?.repoId, worktree, "src/written.ts")]);
+    expect(state?.seenTargets).toEqual([await seenInWorktree(h.home, state, worktree,"src/written.ts")]);
     expect(state?.editToolFires).toBe(1);
     expect(state?.targetsCapturedCount).toBe(1);
     expect(state?.lastPostToolUseTool).toBe("fs/write_text_file");
@@ -212,7 +222,7 @@ describe("an ACP session at checkout A editing a file in worktree B", () => {
     const state = await readSessionState(h.home, hostKey);
     expect(state?.editToolFires).toBe(2);
     expect(state?.targetsCapturedCount).toBe(1);
-    expect(state?.seenTargets).toEqual([await seenInWorktree(state?.repoId, worktree, EDITED_FILE)]);
+    expect(state?.seenTargets).toEqual([await seenInWorktree(h.home, state, worktree,EDITED_FILE)]);
   });
 
   test("one edit arriving pending then completed ticks the fire counter ONCE", async () => {
@@ -256,7 +266,7 @@ describe("an ACP session at checkout A editing a file in worktree B", () => {
     const state = await readSessionState(h.home, hostKey);
     expect(state?.editToolFires).toBe(1);
     expect(state?.targetsCapturedCount).toBe(1);
-    expect(state?.seenTargets).toEqual([await seenInWorktree(state?.repoId, worktree, EDITED_FILE)]);
+    expect(state?.seenTargets).toEqual([await seenInWorktree(h.home, state, worktree,EDITED_FILE)]);
   });
 
   test("a repeated edit row carrying NO tool-call id still ticks once", async () => {
@@ -294,7 +304,7 @@ describe("an ACP session at checkout A editing a file in worktree B", () => {
     const state = await readSessionState(h.home, hostKey);
     expect(state?.editToolFires).toBe(1);
     expect(state?.targetsCapturedCount).toBe(1);
-    expect(state?.seenTargets).toEqual([await seenInWorktree(state?.repoId, worktree, EDITED_FILE)]);
+    expect(state?.seenTargets).toEqual([await seenInWorktree(h.home, state, worktree,EDITED_FILE)]);
   });
 
   test("an edit announced with no kind still books its fire", async () => {

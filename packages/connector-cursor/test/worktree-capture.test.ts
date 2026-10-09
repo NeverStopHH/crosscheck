@@ -27,6 +27,8 @@ import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { realpathBestEffort } from "@crosscheck/connector-core/config/paths.ts";
 import { readSpoolLines } from "@crosscheck/connector-core/spool/files.ts";
 import { cursorHostSessionKey } from "@crosscheck/connector-core/state/host-session-key.ts";
+import { conversationOf } from "@crosscheck/connector-core/state/session-lineage.ts";
+import { readTopicKey } from "@crosscheck/connector-core/state/topic-key.ts";
 import {
   deriveSessionState,
   readSessionState,
@@ -149,7 +151,10 @@ describe("a cursor conversation at checkout A editing a file in worktree B", () 
     const state = await readSessionState(home, HOST_KEY);
     const root = await realpath(worktree);
     const branch = (await readHeadFile(root))?.branch ?? "";
-    expect(state?.seenTargets).toEqual([topicSeenKey(mintTopicId(REPO_ID, root, branch), EDITED_FILE)]);
+    // Minted under this home's topic key, in the session's conversation (core state/topic-key.ts).
+    const key = (await readTopicKey(home)) ?? "";
+    const conversation = conversationOf(state?.crosscheckSessionId ?? "");
+    expect(state?.seenTargets).toEqual([topicSeenKey(mintTopicId(key, conversation, REPO_ID, root, branch), EDITED_FILE)]);
     expect(state?.editToolFires).toBe(1);
     expect(state?.targetsCapturedCount).toBe(1);
     expect(state?.lastPostToolUseTool).toBe("afterFileEdit");

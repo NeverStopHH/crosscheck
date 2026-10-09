@@ -36,10 +36,11 @@ import { toRepoRelative } from "../capture/target-paths.ts";
 import type { RootHead, TouchedRootsResolution } from "../capture/touched-root.ts";
 import { descendsInHeadLog, isRenamedInHeadLog } from "../git/head-history.ts";
 import { DETACHED_BRANCH_PREFIX, resolveHeadCommit } from "../git/repo-identity.ts";
+import { conversationOf } from "../state/session-lineage.ts";
 import type { TopicContext } from "../state/session-state.ts";
 import { fallbackWorkContextTitle } from "./register-session.ts";
 import { labelsOf, mintTopicId, seenPathsOf, topicWorkContextIdFor } from "./topic-contexts.ts";
-import type { Filing, Relabel, TopicLife, TopicPlan } from "./topic-contexts.ts";
+import type { Filing, Relabel, TopicKeySource, TopicLife, TopicPlan } from "./topic-contexts.ts";
 
 /** One topic as the rules see it — `id` null is the session's own start topic. */
 interface Candidate {
@@ -169,6 +170,7 @@ export const planTopics = async (
   resolution: TouchedRootsResolution,
   paths: readonly string[],
   now: Date,
+  topicKey: TopicKeySource,
   cwd: string = life.sessionRoot,
 ): Promise<TopicPlan> => {
   const session: Filing = { key: null, workContextId: life.sessionWorkContextId };
@@ -192,12 +194,16 @@ export const planTopics = async (
         relabeled.push(decision.relabel);
       }
     } else if (decision.kind === "open" && head !== undefined) {
-      if (live.length + opened.length >= MAX_TOPICS_PER_SESSION) {
+      const isCapped = live.length + opened.length >= MAX_TOPICS_PER_SESSION;
+      // No key, no topic (state/topic-key.ts): the touch files under the
+      // session's own context, as one whose root's HEAD cannot be read does.
+      const key = isCapped ? null : await topicKey();
+      if (isCapped) {
         for (const path of rootPaths) {
           overflowedPaths.add(path);
         }
-      } else {
-        const id = mintTopicId(life.repoId, head.root, decision.branch);
+      } else if (key !== null) {
+        const id = mintTopicId(key, conversationOf(life.sessionId), life.repoId, head.root, decision.branch);
         opened.push({
           key: id,
           sessionId: life.sessionId,

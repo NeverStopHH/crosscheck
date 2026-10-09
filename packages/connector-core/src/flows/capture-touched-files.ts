@@ -62,8 +62,9 @@ import type { CaptureFileTargetsInput } from "./capture-targets.ts";
 import { NO_GENERATED, addGeneratedTally } from "../capture/generated.ts";
 import type { GeneratedTally } from "../capture/generated.ts";
 import { plannedTopicRecords, relabelsKept, seenPathsOf, topicSeenKey } from "./topic-contexts.ts";
-import type { Filing, TopicCapture, TopicLife, TopicPlan } from "./topic-contexts.ts";
+import type { Filing, TopicCapture, TopicKeySource, TopicLife, TopicPlan } from "./topic-contexts.ts";
 import { planTopics } from "./topic-rules.ts";
+import { topicKeyFrom } from "../state/topic-key.ts";
 import { withTopicBaseWords } from "./topic-base-word.ts";
 
 /** The capture-loss detail a topic overflow is booked under (state/loss-ledger.ts). */
@@ -99,6 +100,12 @@ export interface CaptureTouchedFilesInput
    * mutation #9) — a full or unwritable spool refuses both.
    */
   readonly appendTopicContexts?: typeof appendRecords;
+  /**
+   * The key the topics this capture opens are minted under — this machine's
+   * (state/topic-key.ts) by default; injected only by a test that names its
+   * topics' ids before the capture runs.
+   */
+  readonly topicKey?: TopicKeySource;
 }
 
 export interface CaptureTouchedFilesResult {
@@ -211,7 +218,9 @@ const captureByTopic = async (
 ): Promise<{ readonly captured: readonly string[]; readonly generated: GeneratedTally; readonly topics: TopicCapture }> => {
   // Each topic this event opens says whether its base was on the default
   // branch already (topic review C1) — git asked only for those.
-  const plan = await withTopicBaseWords(await planTopics(life, resolution, input.paths, input.now, input.cwd));
+  const plan = await withTopicBaseWords(
+    await planTopics(life, resolution, input.paths, input.now, input.topicKey ?? topicKeyFrom(input.home), input.cwd),
+  );
   const isOpened = await spoolOpenedTopics(input, plan, life);
   const session: Filing = { key: null, workContextId: life.sessionWorkContextId };
   const unopened = new Set(isOpened ? [] : plan.opened.map((topic) => topic.key));
