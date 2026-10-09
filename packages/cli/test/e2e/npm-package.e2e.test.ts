@@ -644,10 +644,22 @@ describe("packed npm tarball", () => {
           `${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} })}\n`,
       );
 
-      // Assert: init wrote this install's bin; the hook reported with the key;
-      // the server listed its tools
+      // Assert: init wrote this install's bin by its bare name, unless its
+      // identity probe stayed silent under load — then it wired the absolute
+      // launcher and said so in exactly one line (core launcher.ts
+      // silentBareNote). Either way the branch taken is the one written down;
+      // the hook reported with the key; the server listed its tools.
       expect(init.exitCode).toBe(0);
-      expect(sessionStart).toBe("crosscheck hook session-start");
+      const marker = "didn't answer in time; wired the absolute launcher ";
+      const fallbacks = init.stdout.split("\n").filter((line) => line.includes(marker));
+      const fallback = fallbacks[0];
+      const expectedLauncher =
+        fallback === undefined
+          ? "crosscheck"
+          : fallback.slice(fallback.indexOf(marker) + marker.length, fallback.indexOf(" instead; rerun init"));
+      console.log(`[npm-package] init wired ${fallback === undefined ? "the bare crosscheck" : "the absolute launcher (identity probe silent)"}`);
+      expect(fallbacks.length).toBeLessThanOrEqual(1);
+      expect(sessionStart).toBe(`${expectedLauncher} hook session-start`);
       expect(hook.exitCode).toBe(0);
       expect(seen).toContain("POST /api/sessions keyed");
       expect(mcp.exitCode).toBe(0);

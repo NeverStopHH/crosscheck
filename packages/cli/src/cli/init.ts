@@ -21,11 +21,13 @@ import type { RepoConfig } from "@crosscheck/connector-core/config/repo-config.t
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import { mergeMcpConfig } from "@crosscheck/connector-core/config/mcp-config.ts";
 import {
+  INIT_IDENTITY_PROBE,
   isVersionManagerPath,
   realpathOrSelf,
   resolveCommandPrefix,
   resolveLauncher as resolveLauncherWithEntry,
   resolveMcpLauncher,
+  silentBareNote,
 } from "@crosscheck/connector-core/config/launcher.ts";
 import type { Launcher } from "@crosscheck/connector-core/config/launcher.ts";
 import { buildSettingsPlan, mergeClaudeSettings } from "@crosscheck/connector-claude";
@@ -134,11 +136,18 @@ export {
 } from "@crosscheck/connector-core/config/launcher.ts";
 export type { Launcher } from "@crosscheck/connector-core/config/launcher.ts";
 
+/** Both inits: a person is waiting, so the PATH bin gets init's longer probe and one retry. */
 export const resolveLauncher = async (
   override: string | undefined,
   env: Env,
   entryPath: string = BIN_ENTRY_PATH,
-): Promise<Launcher> => resolveLauncherWithEntry(override, env, entryPath);
+): Promise<Launcher> => resolveLauncherWithEntry(override, env, entryPath, INIT_IDENTITY_PROBE);
+
+/** The fallback line `silentBareNote` gives, as an output-line list for both inits. */
+export const silentBareLines = (launcher: Exclude<Launcher, { kind: "refused" }>): readonly string[] => {
+  const note = silentBareNote(launcher);
+  return note === null ? [] : [note];
+};
 
 // The read-and-refuse / backup / render discipline MOVED to init-io.ts when
 // finding #11 added the user-level install: both inits obey the identical
@@ -358,6 +367,8 @@ export const runInit = async (
           `note: ${launcher.path} resolves through a node version manager — the hooks' bare \`crosscheck\` disappears on \`nvm use\` or a runtime upgrade; pin it with ${INIT_COMMAND_PREFIX_FLAG} "<bun> <entry>" if you switch versions`,
         ]
       : []),
+    // Never a silent fallback: a PATH bin that stayed silent is said so.
+    ...silentBareLines(launcher),
     ...(launcher.kind === "entry"
       ? [
           "launcher is an absolute path on this machine — teammates must run crosscheck init once too (or npm install -g crosscheck-hub)",

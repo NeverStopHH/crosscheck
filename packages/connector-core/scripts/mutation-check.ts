@@ -24892,6 +24892,40 @@ export const MUTATIONS: readonly Mutation[
     test: `${CLI}/test/e2e/clean-restart.e2e.test.ts`,
     because: "a SIGKILL to the pid the editor started leaves the restarted MCP server running with no parent",
   },
+  // INIT'S PATH-BIN PROBE (core config/launcher.ts): under load the shim's
+  // re-exec ran past 3 s and init quietly wired the absolute launcher.
+  {
+    label: "init falls back to the absolute launcher silently",
+    file: `${CLI}/src/cli/init.ts`,
+    from: "    // Never a silent fallback: a PATH bin that stayed silent is said so.\n    ...silentBareLines(launcher),\n",
+    to: "",
+    test: `${CLI}/test/init-silent-bin.test.ts`,
+    because: "a busy machine gets hooks pinned to one absolute path, and nobody is told why the bare name was not used",
+  },
+  {
+    label: "init probes the PATH bin on the hook budget",
+    file: `${CLI}/src/cli/init.ts`,
+    from: "): Promise<Launcher> => resolveLauncherWithEntry(override, env, entryPath, INIT_IDENTITY_PROBE);",
+    to: "): Promise<Launcher> => resolveLauncherWithEntry(override, env, entryPath);",
+    test: `${CLI}/test/init-silent-bin.test.ts`,
+    because: "at a load average of 20 the shim needs more than 3 s, and init gives up on the developer's own install",
+  },
+  {
+    label: "a silent PATH bin is not asked again",
+    file: `${CORE}/src/config/launcher.ts`,
+    from: '  for (let attempt = 0; attempt < budget.attempts && identity === "silent"; attempt += 1) {',
+    to: '  for (let attempt = 0; attempt < 1 && identity === "silent"; attempt += 1) {',
+    test: `${CORE}/test/launcher-identity.test.ts`,
+    because: "one slow start of the shim decides the launcher for good, though the next answer would have been ours",
+  },
+  {
+    label: "a PATH bin's silence reads as a foreign answer",
+    file: `${CORE}/src/config/launcher.ts`,
+    from: '    timer = setTimeout(() => resolveDeadline("silent"), timeoutMs);',
+    to: '    timer = setTimeout(() => resolveDeadline("foreign" as "silent"), timeoutMs);',
+    test: `${CORE}/test/launcher-identity.test.ts`,
+    because: "a slow install of our own is treated like a stranger's tool: no retry, and no line saying why",
+  },
   // THE PACKAGE SHIPS WHAT A RUNTIME ENTRY REACHES (cli/scripts/pack-reach.ts):
   // the tarball cap, batch 2.
   {
@@ -25385,6 +25419,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/init-remove-safety.test.ts 14
  * PRINTS: packages/cli/test/init-remove-verdict.test.ts 7
  * PRINTS: packages/cli/test/init-remove.test.ts 17
+ * PRINTS: packages/cli/test/init-silent-bin.test.ts 2
  * PRINTS: packages/cli/test/intent-cost.test.ts 1
  * PRINTS: packages/cli/test/key-origin-attacker.test.ts 14
  * PRINTS: packages/cli/test/key-rotate.test.ts 6
@@ -25572,6 +25607,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/landing-fetch-trigger.test.ts 13
  * PRINTS: packages/connector-core/test/landing-fetch-worker.test.ts 20
  * PRINTS: packages/connector-core/test/latency.test.ts 3
+ * PRINTS: packages/connector-core/test/launcher-identity.test.ts 2
  * PRINTS: packages/connector-core/test/loss-ledger.test.ts 5
  * PRINTS: packages/connector-core/test/loss-report.test.ts 33
  * PRINTS: packages/connector-core/test/mark-hint-outcome-tool.test.ts 19

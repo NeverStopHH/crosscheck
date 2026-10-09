@@ -104,30 +104,84 @@ export const realpathOrSelf = async (path: string): Promise<string> => {
 
 /** What our own bin prints for `--version`; a foreign tool prints anything else. */
 const OWN_VERSION_PATTERN = /^crosscheck \d+\.\d+\.\d+/;
-/** Plenty for `crosscheck --version` even through the node shim's re-exec hop. */
-const IDENTITY_PROBE_TIMEOUT_MS = 3_000;
+
+/** How long, and how often, `<bin> --version` may take to identify itself. */
+export interface IdentityProbeBudget {
+  readonly timeoutMs: number;
+  readonly attempts: number;
+}
+
+/**
+ * Plenty for `crosscheck --version` through the node shim's re-exec hop on a
+ * quiet machine. The budget wherever the answer is waited for inside someone
+ * else's time: the ACP proxy resolves its injected MCP entry under a
+ * session-setup deadline, and doctor's launcher line is one check of many.
+ */
+export const DEFAULT_IDENTITY_PROBE: IdentityProbeBudget = { timeoutMs: 3_000, attempts: 1 };
+
+/**
+ * INIT'S BUDGET. Under load (about 20) the shim's re-exec hop ran past 3 s,
+ * and init quietly wrote the absolute launcher (batch 2). init is a one-off a
+ * person starts and waits for, so it waits longer and asks once more.
+ */
+export const INIT_IDENTITY_PROBE: IdentityProbeBudget = { timeoutMs: 10_000, attempts: 2 };
+
+/** What `<bin> --version` said: our banner, anything else, or nothing before the deadline. */
+export type BinIdentity = "own" | "foreign" | "silent";
 
 /**
  * Executes `<bin> --version` and accepts only our own banner. The NAME
  * `crosscheck` on a PATH proves nothing: npm's `crosscheck-cli` package
  * installs a bin of exactly this name, and hooks wired to a stranger's
  * binary would pipe session json into it on every prompt — silently, because
- * hooks never print. Identity is proven by execution, not by name.
+ * hooks never print. Identity is proven by execution, not by name. A bin that
+ * says nothing in time is `silent`, which is not the same as foreign: it may
+ * be ours on a busy machine, and the caller decides whether to ask again.
  */
-export const isOwnCrosscheckBin = async (binPath: string): Promise<boolean> => {
+export const probeCrosscheckBin = async (
+  binPath: string,
+  timeoutMs: number = DEFAULT_IDENTITY_PROBE.timeoutMs,
+): Promise<BinIdentity> => {
+  let probe: Bun.Subprocess<"ignore", "pipe", "ignore">;
   try {
-    const probe = Bun.spawn({
-      cmd: [binPath, "--version"],
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "ignore",
-      timeout: IDENTITY_PROBE_TIMEOUT_MS,
-    });
-    const stdout = await new Response(probe.stdout).text();
-    return (await probe.exited) === 0 && OWN_VERSION_PATTERN.test(stdout.trim());
+    probe = Bun.spawn({ cmd: [binPath, "--version"], stdin: "ignore", stdout: "pipe", stderr: "ignore" });
   } catch {
-    return false;
+    return "foreign";
   }
+  const answered = (async (): Promise<BinIdentity> => {
+    const stdout = await new Response(probe.stdout).text();
+    return (await probe.exited) === 0 && OWN_VERSION_PATTERN.test(stdout.trim()) ? "own" : "foreign";
+  })();
+  // A late answer after the deadline must not surface as an unhandled rejection.
+  answered.catch(() => undefined);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<"silent">((resolveDeadline) => {
+    timer = setTimeout(() => resolveDeadline("silent"), timeoutMs);
+  });
+  try {
+    const identity = await Promise.race([answered, deadline]);
+    if (identity === "silent") {
+      // SIGTERM, which the node shim forwards to its bun child.
+      probe.kill();
+    }
+    return identity;
+  } catch {
+    return "foreign";
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+export const isOwnCrosscheckBin = async (binPath: string): Promise<boolean> =>
+  (await probeCrosscheckBin(binPath)) === "own";
+
+/** The probe within a budget: asked again only while it stays silent. */
+const identifyWithin = async (binPath: string, budget: IdentityProbeBudget): Promise<BinIdentity> => {
+  let identity: BinIdentity = "silent";
+  for (let attempt = 0; attempt < budget.attempts && identity === "silent"; attempt += 1) {
+    identity = await probeCrosscheckBin(binPath, budget.timeoutMs);
+  }
+  return identity;
 };
 
 /**
@@ -154,7 +208,9 @@ export type Launcher =
   | { readonly kind: "bare"; readonly path: string }
   // The absolute form carries its finished, isolated start and nothing a
   // caller could reassemble without the flags (config/runtime-isolation.ts).
-  | { readonly kind: "entry"; readonly launch: SelfLaunch }
+  // `silentBare`: the `crosscheck` on PATH that did not identify itself in
+  // time, when that is why this form was chosen (`silentBareNote`).
+  | { readonly kind: "entry"; readonly launch: SelfLaunch; readonly silentBare?: string }
   | { readonly kind: "refused"; readonly reason: string };
 
 export type UsableLauncher = Exclude<Launcher, { kind: "refused" }>;
@@ -178,6 +234,7 @@ export const resolveLauncher = async (
   override: string | undefined,
   env: Env,
   entryPath: string,
+  identityBudget: IdentityProbeBudget = DEFAULT_IDENTITY_PROBE,
 ): Promise<Launcher> => {
   if (override !== undefined && override.length > 0) {
     return { kind: "override", prefix: override };
@@ -186,12 +243,13 @@ export const resolveLauncher = async (
   // The host resolves a bare `crosscheck` through the developer's whole PATH
   // at hook time, so with a relative or in-repo entry on it the name is a
   // repo's to answer: the absolute form below is written instead.
-  if (
+  const identity =
     hit !== null &&
     untrustedPathEntries(env["PATH"] ?? "", process.cwd()).length === 0 &&
-    !isEphemeralInstallPath(await realpathOrSelf(hit)) &&
-    (await isOwnCrosscheckBin(hit))
-  ) {
+    !isEphemeralInstallPath(await realpathOrSelf(hit))
+      ? await identifyWithin(hit, identityBudget)
+      : null;
+  if (hit !== null && identity === "own") {
     return { kind: "bare", path: hit };
   }
   // A rejected PATH hit falls THROUGH rather than erroring: the absolute
@@ -200,10 +258,21 @@ export const resolveLauncher = async (
     if (isEphemeralInstallPath(await realpathOrSelf(entryPath))) {
       return { kind: "refused", reason: CACHE_REFUSAL };
     }
-    return { kind: "entry", launch: selfLaunch(entryPath) };
+    const launch = selfLaunch(entryPath);
+    return hit !== null && identity === "silent" ? { kind: "entry", launch, silentBare: hit } : { kind: "entry", launch };
   }
   return { kind: "refused", reason: NO_LAUNCHER_REFUSAL };
 };
+
+/**
+ * The one line an install prints when a `crosscheck` on PATH stayed silent
+ * and the absolute launcher was wired instead; null otherwise. Never a silent
+ * fallback: the bare name follows upgrades and the absolute path does not.
+ */
+export const silentBareNote = (launcher: UsableLauncher): string | null =>
+  launcher.kind === "entry" && launcher.silentBare !== undefined
+    ? `crosscheck on PATH (${launcher.silentBare}) didn't answer in time; wired the absolute launcher ${resolveCommandPrefix(launcher)} instead; rerun init to switch`
+    : null;
 
 /** The hook/statusline command prefix, as one shell string. */
 export const resolveCommandPrefix = (launcher: UsableLauncher): string => {

@@ -157,7 +157,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 2455
+    # PRINTS: 2459
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -200,7 +200,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/init-remove-plan.ts 6
     # PRINTS: packages/cli/src/cli/init-remove-report.ts 8
     # PRINTS: packages/cli/src/cli/init-remove.ts 6
-    # PRINTS: packages/cli/src/cli/init.ts 7
+    # PRINTS: packages/cli/src/cli/init.ts 9
     # PRINTS: packages/cli/src/cli/key.ts 6
     # PRINTS: packages/cli/src/cli/login.ts 6
     # PRINTS: packages/cli/src/cli/noise.ts 11
@@ -294,7 +294,7 @@ jobs:
     # PRINTS: config/hook-budget.ts 2
     # PRINTS: config/key-binding.ts 9
     # PRINTS: config/launcher-check.ts 3
-    # PRINTS: config/launcher.ts 3
+    # PRINTS: config/launcher.ts 5
     # PRINTS: config/origin.ts 2
     # PRINTS: config/paths.ts 11
     # PRINTS: config/runtime-isolation.ts 2
@@ -687,7 +687,7 @@ jobs:
     # PRINTS: init-remove-plan.ts 6
     # PRINTS: init-remove-report.ts 8
     # PRINTS: init-remove.ts 6
-    # PRINTS: init.ts 8
+    # PRINTS: init.ts 10
     # PRINTS: injector.ts 10
     # PRINTS: install.ts 1
     # PRINTS: intent-budget.test.ts 1
@@ -709,7 +709,7 @@ jobs:
     # PRINTS: landing-fetch.ts 2
     # PRINTS: latency.ts 1
     # PRINTS: launcher-check.ts 3
-    # PRINTS: launcher.ts 5
+    # PRINTS: launcher.ts 7
     # PRINTS: ledger-read.ts 2
     # PRINTS: live-location.ts 36
     # PRINTS: lock.ts 2
