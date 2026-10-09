@@ -97,6 +97,33 @@ describe("doctor's confirmation lines", () => {
   });
 });
 
+describe("crosscheck confirm --help: the lost-device path (round-2 R2-H3)", () => {
+  let repo: string;
+  let home: string;
+
+  beforeAll(async () => {
+    repo = await makeRepo("confirm-help", { remote: "git@github.com:acme/api.git" });
+    home = await makeHome("confirm-help");
+  });
+
+  afterAll(async () => {
+    await Promise.all([repo, home].map((path) => rm(path, { recursive: true, force: true })));
+  });
+
+  test("names who to call, the exact revoke, and that a retired passkey keeps the record", async () => {
+    // Act
+    const result = await runCli(["confirm", "--help"], { CROSSCHECK_HOME: home, HOME: home }, repo);
+
+    // Assert
+    expect(result.stdout).toContain("ask your hub's operator (whoever holds its admin token) to retire it:");
+    expect(result.stdout).toContain(
+      'curl -X POST -H "Authorization: Bearer $CROSSCHECK_ADMIN_TOKEN" <hub>/api/developers/<your id>/passkeys/<passkey id>/revoke',
+    );
+    expect(result.stdout).toContain("a retired passkey keeps your record: what it confirmed while it stood keeps counting");
+    expect(result.stdout).toContain("revoke it yourself as compromised on <hub>/ui/passkeys");
+  });
+});
+
 describe("crosscheck confirm against an older hub", () => {
   let oldHub: ReturnType<typeof Bun.serve>;
   let repo: string;
