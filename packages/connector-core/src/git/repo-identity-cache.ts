@@ -20,13 +20,21 @@
  * else `packed-refs`) on every answer, so a commit moves `baseCommit` without
  * git — the same reading git/repo-identity.ts's topic routing already trusts.
  *
- * WHAT THE FILES CANNOT VOUCH FOR IS ALWAYS GIT'S: a detached HEAD (git picks
- * its short-sha length), an unborn branch, a reftable repository (its HEAD
- * file is a placeholder), and any environment that steers git's discovery or
- * config (GIT_DIR and its kin — git/git.ts hands git the process environment
- * whole). An entry is written only when the files say exactly what git just
- * said — the branch HEAD names and the commit it resolves to — so the files
- * are never trusted for a repo where they disagree with git.
+ * A DETACHED HEAD IS VOUCHED FOR BY ITS CONTENT, the commit itself, under
+ * git's own label (release gate, production lane, 2026-10-09): the pilot's
+ * shape is one long session in a worktree detached at an old commit, and
+ * every hook of it paid git the full way — 150–235 ms under the fan-out,
+ * which is what skipped SubagentStop's git lane. What the files cannot
+ * re-derive is git's abbreviation of the sha; it is kept as git said it, and
+ * HEAD's bytes in the stamp retire it the moment HEAD names anything else.
+ *
+ * WHAT THE FILES CANNOT VOUCH FOR IS ALWAYS GIT'S: an unborn branch, a
+ * reftable repository (its HEAD file is a placeholder), and any environment
+ * that steers git's discovery or config (GIT_DIR and its kin — git/git.ts
+ * hands git the process environment whole). An entry is written only when
+ * the files say exactly what git just said — the branch HEAD names, or the
+ * commit git abbreviated, and the commit it resolves to — so the files are
+ * never trusted for a repo where they disagree with git.
  *
  * Fail open: an unreadable or unwritable cache is a full resolution, never an
  * error; nothing here can make a hook resolve a repo git would not.
@@ -37,13 +45,15 @@ import { z } from "zod";
 
 import { REPO_IDENTITY_CACHE_TTL_MS, SSH_CANONICALIZE_ENV } from "../constants.ts";
 import { readJsonOrNull, repoIdentityCachePath, userHomeOf, writePrivateFile } from "../config/paths.ts";
-import { branchLabelOfHead, commonDirOf, readHeadFile, resolveHeadCommit, resolveRepoIdentity } from "./repo-identity.ts";
+import { DETACHED_BRANCH_PREFIX, branchLabelOfHead, commonDirOf, readHeadFile, resolveHeadCommit, resolveRepoIdentity } from "./repo-identity.ts";
 import type { HeadFile, RepoIdentity } from "./repo-identity.ts";
 
 const CACHE_VERSION = 1;
 
 /** A HEAD the files can name a branch for: a symbolic ref to a local branch. */
 const LOCAL_BRANCH_HEAD = "ref: refs/heads/";
+/** Any symbolic ref: what a detached HEAD's content never starts with. */
+const SYMBOLIC_REF = "ref: ";
 
 /**
  * The variables that move what git discovers or which configuration it
@@ -138,9 +148,23 @@ const configPaths = (head: HeadFile, commonDir: string, env: Env): readonly stri
   join(userHomeOf(env), ".ssh", "config"),
 ];
 
+/** A HEAD the files can name a commit for: a local branch, or the bare commit id of a detached HEAD. */
+const isVouchedHead = (content: string): boolean =>
+  content.startsWith(LOCAL_BRANCH_HEAD) || branchLabelOfHead(content)?.startsWith(DETACHED_BRANCH_PREFIX) === true;
+
+/**
+ * Whether git's label is the one the files would give for this HEAD: the
+ * branch it names, or — detached — git's abbreviation of the very commit the
+ * file holds, whatever length git chose.
+ */
+const isLabelOfHead = (label: string, head: HeadFile, commit: string): boolean =>
+  label.startsWith(DETACHED_BRANCH_PREFIX)
+    ? !head.content.startsWith(SYMBOLIC_REF) && commit.startsWith(label.slice(DETACHED_BRANCH_PREFIX.length))
+    : branchLabelOfHead(head.content) === label;
+
 const rootFacts = async (root: string, env: Env): Promise<RootFacts | null> => {
   const head = await readHeadFile(root);
-  if (head === null || !head.content.startsWith(LOCAL_BRANCH_HEAD)) {
+  if (head === null || !isVouchedHead(head.content)) {
     return null;
   }
   const [commonDir, commit] = await Promise.all([commonDirOf(head.gitDir), resolveHeadCommit(head)]);
@@ -187,12 +211,12 @@ const readCached = async (home: string, cwd: string, env: Env, nowMs: number): P
   return facts === null || facts.stamp !== stamp ? null : { ...identity, baseCommit: facts.commit };
 };
 
-/** Kept only when the files say exactly what git just said: the branch HEAD names and the commit it resolves to. */
+/** Kept only when the files say exactly what git just said: the branch HEAD names (or the commit git abbreviated) and the commit it resolves to. */
 const remember = async (home: string, cwd: string, identity: RepoIdentity, env: Env, nowMs: number): Promise<void> => {
   const facts = await rootFacts(identity.root, env);
   const isFaithful =
     facts !== null &&
-    branchLabelOfHead(facts.head.content) === identity.branch &&
+    isLabelOfHead(identity.branch, facts.head, facts.commit) &&
     facts.commit === identity.baseCommit &&
     (await isGovernedBy(cwd, identity.root));
   if (facts === null || !isFaithful) {

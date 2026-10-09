@@ -234,7 +234,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 3854
+    # PRINTS: 3861
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -350,7 +350,7 @@ jobs:
     # PRINTS: hooks/pre-tool-use.ts 51
     # PRINTS: hooks/presence-refresh.ts 2
     # PRINTS: hooks/rest-recheck.ts 14
-    # PRINTS: hooks/runner.ts 19
+    # PRINTS: hooks/runner.ts 21
     # PRINTS: hooks/session-end.ts 1
     # PRINTS: hooks/session-start.ts 11
     # PRINTS: hooks/stop.ts 3
@@ -386,7 +386,7 @@ jobs:
     # PRINTS: config/clean-restart.ts 8
     # PRINTS: config/config.ts 8
     # PRINTS: config/connected-repo.ts 5
-    # PRINTS: config/hook-budget.ts 4
+    # PRINTS: config/hook-budget.ts 5
     # PRINTS: config/key-binding.ts 9
     # PRINTS: config/launcher-check.ts 4
     # PRINTS: config/launcher.ts 6
@@ -413,14 +413,14 @@ jobs:
     # PRINTS: derive/summarizer/gate.ts 8
     # PRINTS: evidence/render.ts 1
     # PRINTS: flows/briefing.ts 14
-    # PRINTS: flows/capture-git-touches.ts 8
+    # PRINTS: flows/capture-git-touches.ts 9
     # PRINTS: flows/capture-targets.ts 7
     # PRINTS: flows/capture-touched-files.ts 9
     # PRINTS: flows/claim-revalidation.ts 2
     # PRINTS: flows/claim-surface.ts 1
     # PRINTS: flows/draft-nudge.ts 13
     # PRINTS: flows/end-session.ts 18
-    # PRINTS: flows/git-lane.ts 17
+    # PRINTS: flows/git-lane.ts 18
     # PRINTS: flows/heal-session.ts 23
     # PRINTS: flows/heartbeat.ts 3
     # PRINTS: flows/hint.ts 38
@@ -438,7 +438,7 @@ jobs:
     # PRINTS: git/head-history.ts 5
     # PRINTS: git/pin-paths.ts 8
     # PRINTS: git/pin-sweep.ts 2
-    # PRINTS: git/repo-identity-cache.ts 7
+    # PRINTS: git/repo-identity-cache.ts 8
     # PRINTS: git/repo-identity.ts 2
     # PRINTS: git/ssh-hostname.ts 4
     # PRINTS: guarantees/check.ts 17
@@ -524,7 +524,7 @@ jobs:
     # PRINTS: state/session-lineage.ts 8
     # PRINTS: state/session-reap.ts 13
     # PRINTS: state/session-scan.ts 2
-    # PRINTS: state/session-state.ts 76
+    # PRINTS: state/session-state.ts 77
     # PRINTS: state/temp-sweep.ts 15
     # PRINTS: state/tool-window-key.ts 2
     # PRINTS: state/topic-key.ts 2
@@ -752,7 +752,7 @@ jobs:
     # PRINTS: calibration.ts 1
     # PRINTS: capabilities.ts 9
     # PRINTS: capture-bookkeeping.ts 7
-    # PRINTS: capture-git-touches.ts 8
+    # PRINTS: capture-git-touches.ts 9
     # PRINTS: capture-health.ts 6
     # PRINTS: capture-latency.test.ts 1
     # PRINTS: capture-targets.ts 7
@@ -879,7 +879,7 @@ jobs:
     # PRINTS: ghost-overlap.ts 22
     # PRINTS: ghost.ts 6
     # PRINTS: git-lane-cost.ts 2
-    # PRINTS: git-lane.ts 20
+    # PRINTS: git-lane.ts 21
     # PRINTS: git-queries.ts 17
     # PRINTS: git.ts 10
     # PRINTS: harness-turn.ts 28
@@ -894,7 +894,7 @@ jobs:
     # PRINTS: hint-outcomes.ts 27
     # PRINTS: hint.ts 43
     # PRINTS: hints.ts 97
-    # PRINTS: hook-budget.ts 4
+    # PRINTS: hook-budget.ts 5
     # PRINTS: hub-install.ts 2
     # PRINTS: hub-status.ts 5
     # PRINTS: hub.ts 22
@@ -1030,7 +1030,7 @@ jobs:
     # PRINTS: render-surfaces.ts 2
     # PRINTS: render.ts 134
     # PRINTS: repo-config.ts 1
-    # PRINTS: repo-identity-cache.ts 7
+    # PRINTS: repo-identity-cache.ts 8
     # PRINTS: repo-identity.ts 2
     # PRINTS: repo-path.ts 1
     # PRINTS: report.ts 12
@@ -1041,7 +1041,7 @@ jobs:
     # PRINTS: revalidate.ts 2
     # PRINTS: review-draft.ts 2
     # PRINTS: run.ts 9
-    # PRINTS: runner.ts 36
+    # PRINTS: runner.ts 38
     # PRINTS: runtime-isolation.ts 3
     # PRINTS: sanitize.ts 7
     # PRINTS: schema.ts 2
@@ -1060,7 +1060,7 @@ jobs:
     # PRINTS: session-reap.ts 13
     # PRINTS: session-scan.ts 2
     # PRINTS: session-start.ts 18
-    # PRINTS: session-state.ts 76
+    # PRINTS: session-state.ts 77
     # PRINTS: session-window.ts 1
     # PRINTS: session.ts 6
     # PRINTS: sessions.ts 30

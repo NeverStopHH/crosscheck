@@ -20,7 +20,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdir, realpath, rm, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { DEFAULT_AGENT_KIND, MAX_SPOOL_AGE_DAYS, MS_PER_DAY } from "../src/constants.ts";
+import { DEFAULT_AGENT_KIND, MAX_SPOOL_AGE_DAYS, MAX_TARGETS_PER_INVOCATION, MS_PER_DAY } from "../src/constants.ts";
 import { repoKey, sessionLineagePathForSlug, sessionSlug } from "../src/config/paths.ts";
 import { endSessionFlow } from "../src/flows/end-session.ts";
 import { selectGitLaneRoots, sweepGitRoots, windowStartOf } from "../src/flows/git-lane.ts";
@@ -28,6 +28,7 @@ import type { GitLaneChoice } from "../src/flows/git-lane.ts";
 import { fallbackWorkContextTitle, registerSessionFlow } from "../src/flows/register-session.ts";
 import { guaranteeDeclarationFor } from "../src/guarantees/declarations.ts";
 import type { HubContext } from "../src/http/client.ts";
+import { readDropDetail } from "../src/spool/drops.ts";
 import { withLock } from "../src/spool/lock.ts";
 import { readCaptureLosses } from "../src/state/loss-ledger.ts";
 import {
@@ -91,6 +92,15 @@ const worldFor = async (label: string): Promise<World> => {
   const home = await makeHome(label);
   cleanups.push(root, sibling, home);
   return { home, root, sibling };
+};
+
+/** `count` dirty files the tool lane filed, `src/f000.ts` on — written now, so the window holds them. */
+const dirtyMany = async (root: string, count: number): Promise<readonly string[]> => {
+  const paths = Array.from({ length: count }, (_, index) => `src/f${String(index).padStart(3, "0")}.ts`);
+  for (const path of paths) {
+    await writeRepoFile(root, path, "export const f = 1;\n");
+  }
+  return paths;
 };
 
 /** A file only a shell wrote, `minutesAgo` ago — no edit tool ever named it. */
@@ -223,6 +233,32 @@ describe("a compact or resume re-fire keeps the window the turn's Stop sweeps (H
     expect(await laneFiles(world, state, STOP)).toContain("src/by-bash.ts");
   });
 
+  test("at pilot scale the Stop after a compact files only what the tool lane had not: nothing twice, nothing capped", async () => {
+    // Arrange: the tool lane filed more files than one tool call may spool,
+    // all still dirty; a shell wrote one more; then the conversation compacted.
+    const label = "cal-compact-scale";
+    const world = await worldFor(label);
+    const firstStart = isoAgo(10 * MINUTE_MS);
+    const filed = await dirtyMany(world.root, MAX_TARGETS_PER_INVOCATION + 5);
+    await writeSessionState(world.home, { ...stateFor(world, firstStart, label), seenTargets: [...filed] });
+    await bashWrote(world.root, "src/by-bash.ts", 5);
+
+    // Act: the compact's SessionStart publishes a fresh state stamped now.
+    await publishSessionState(world.home, stateFor(world, new Date().toISOString(), label));
+    const state = await readSessionState(world.home, label);
+    if (state === null) {
+      throw new Error("the compact published no state");
+    }
+
+    // Assert: the seen-set stands, so the Stop files the shell's file, none
+    // of the tool lane's again, and books nothing.
+    expect(state.seenTargets).toEqual([...filed]);
+    const files = await laneFiles(world, state, STOP);
+    expect(files).toContain("src/by-bash.ts");
+    expect(files.filter((path) => filed.includes(path))).toEqual([]);
+    expect((await readDropDetail(world.home, KEY)).byReason["capture-capped"]).toBeUndefined();
+  });
+
   test(
     "a compact under a busy state lock keeps the roots, the shell mark and the window (L1)",
     async () => {
@@ -332,6 +368,30 @@ describe("a resume after SessionEnd sweeps what the ended life left (H1)", () =>
     expect(resumed.crosscheckSessionId).not.toBe(ended.crosscheckSessionId);
     expect(windowStartOf(resumed).toISOString()).toBe(firstStart);
     expect(await laneFiles(world, resumed, SUBAGENT_STOP)).toContain("src/by-bash.ts");
+  });
+
+  test("at pilot scale the next life's first Stop files everything the ended life left dirty, not twenty of it", async () => {
+    // Arrange: life one filed more files than one tool call may spool and left
+    // them dirty, a shell wrote one more, and the conversation ended.
+    const label = "cal-resume-scale";
+    const world = await worldFor(label);
+    const firstStart = isoAgo(10 * MINUTE_MS);
+    const filed = await dirtyMany(world.root, MAX_TARGETS_PER_INVOCATION + 5);
+    const ended: SessionState = { ...stateFor(world, firstStart, label), seenTargets: [...filed] };
+    await writeSessionState(world.home, ended);
+    await bashWrote(world.root, "src/by-bash.ts", 7);
+    await endLife(world, ended);
+
+    // Act: the conversation resumes — a new life, nothing seen — and its turn ends.
+    await registerNextLife(world, label);
+    const resumed = await readSessionState(world.home, label);
+    if (resumed === null) {
+      throw new Error("the resume published no state");
+    }
+
+    // Assert: every file the ended life left is filed again, under the life that is live now.
+    expect(await laneFiles(world, resumed, STOP)).toEqual(expect.arrayContaining([...filed, "src/by-bash.ts"]));
+    expect((await readDropDetail(world.home, KEY)).byReason["capture-capped"]).toBeUndefined();
   });
 
   test("a resume bound to another hub carries nothing of the ended life", async () => {

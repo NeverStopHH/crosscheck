@@ -38,12 +38,12 @@
  * turn, and a commit on a branch the root has since left (`git log HEAD`
  * walks the branch the root is on now).
  */
-import { GIT_LANE_TOUCH_SLACK_MS, MAX_GIT_LANE_ROOTS, MAX_TARGETS_PER_INVOCATION } from "../constants.ts";
+import { GIT_LANE_TOUCH_SLACK_MS, MAX_GIT_LANE_ROOTS, MAX_GIT_LANE_TARGETS_PER_ROOT } from "../constants.ts";
 import { hasGitEntry } from "../config/connected-repo.ts";
 import { realpathBestEffort } from "../config/paths.ts";
 import type { DenylistConfig } from "../capture/denylist.ts";
 import type { Producer } from "../capture/records.ts";
-import { seqAfter, seqSlice } from "../capture/seq.ts";
+import { seqAfter, seqWindow } from "../capture/seq.ts";
 import type { RootHead, TouchedRootsResolution } from "../capture/touched-root.ts";
 import { gitDirOf, readHeadFile } from "../git/repo-identity.ts";
 import { changedWorktreesOf, commonDirOfRoot } from "../git/shell-roots.ts";
@@ -208,10 +208,20 @@ export interface SweepGitRootsInput {
   readonly denylist: DenylistConfig | null;
   readonly now: Date;
   /**
-   * ONE block for the whole sweep, allocated before it: root i owns positions
-   * [i × MAX_TARGETS_PER_INVOCATION, (i + 1) × MAX_TARGETS_PER_INVOCATION).
+   * ONE block for the whole sweep, handed in whole: root i owns the positions
+   * after what the roots before it may file, at most
+   * MAX_GIT_LANE_TARGETS_PER_ROOT each. Null with no `allocate` stamps every
+   * record `allocation_failed`.
    */
   readonly seq: SeqRange | null;
+  /**
+   * The hook's allocator, when the block is to be taken INSIDE the sweep —
+   * after the roots are read and before anything is spooled — exactly as
+   * wide as the paths the roots may file. A Stop that files six paths then
+   * takes six positions, not a cap's worth per root, and the positions still
+   * precede every record they stamp (hooks/git-lane.ts says why they must).
+   */
+  readonly allocate?: (count: number) => Promise<SeqRange | null>;
   /** Each git call's deadline; absent = GIT_TOUCHES_TIMEOUT_MS. */
   readonly gitTimeoutMs?: number;
   /** The key the topics the sweep opens are minted under: this machine's (state/topic-key.ts) by default. */
@@ -338,7 +348,7 @@ const heldElsewhere = (life: TopicLife, root: string, filing: Filing): ReadonlyS
 const spoolRoot = async (
   input: SweepGitRootsInput,
   read: RootRead,
-  index: number,
+  block: SeqRange | null,
   life: TopicLife,
   probe: TopicBaseProbe,
   topicKey: TopicKeySource,
@@ -362,12 +372,15 @@ const spoolRoot = async (
     records.length === 0 || (await appendRecords(input.home, input.repoKey, input.hostSessionKey, records, input.now)).persisted;
   const filing = isOpened ? (plan.filingByPath.get(first) ?? session) : session;
   const held = heldElsewhere(life, read.lane.root, filing);
-  const block = seqSlice(input.seq, index, MAX_TARGETS_PER_INVOCATION);
   const base = {
     ...laneInput(input, read.lane),
     workContextId: filing.workContextId,
     seenTargets: [...seenPathsOf(input.state.seenTargets, filing.key), ...held],
   };
+  // THE LANE'S OWN CAP on both halves together (constants.ts
+  // MAX_GIT_LANE_TARGETS_PER_ROOT): the tool lane's per-call twenty filed
+  // twenty of a hundred-file root per Stop, and a resumed life never caught
+  // up with what its earlier life had left.
   const changedSpooled =
     touches.length === 0 ? NOTHING_SPOOLED : await spoolGitTouches({ ...base, seq: block }, touches, "git_diff");
   const changed = changedSpooled.captured;
@@ -379,7 +392,7 @@ const spoolRoot = async (
             ...base,
             seenTargets: [...base.seenTargets, ...changed],
             seq: seqAfter(block, changed.length),
-            maxTargets: MAX_TARGETS_PER_INVOCATION - changed.length,
+            maxTargets: MAX_GIT_LANE_TARGETS_PER_ROOT - changed.length,
           },
           commits,
           "git_commit",
@@ -403,25 +416,41 @@ const spoolRoot = async (
   };
 };
 
+/** What one root may file this sweep: its candidate paths, at most the lane's cap. */
+const rootWidth = (read: RootRead): number =>
+  Math.min(MAX_GIT_LANE_TARGETS_PER_ROOT, (read.commits ?? []).length + (read.touches ?? []).length);
+
+/** The sweep's block: the caller's, or one its allocator takes now for exactly these widths. */
+const blockFor = async (input: SweepGitRootsInput, widths: readonly number[]): Promise<SeqRange | null> => {
+  const total = widths.reduce((sum, width) => sum + width, 0);
+  return input.allocate === undefined || total === 0 ? input.seq : input.allocate(total);
+};
+
 /**
  * Reads every root at once, then spools root by root — the reads are the
  * cost, and doing them in parallel keeps the lane inside ONE git deadline
  * whatever the count; the spooling is sequential so a topic two roots share
- * is opened once and each root's records stay in order.
+ * is opened once and each root's records stay in order. The block is taken
+ * between the two, as wide as the reads say the roots may file.
  */
 export const sweepGitRoots = async (input: SweepGitRootsInput): Promise<GitLaneSweep> => {
   const reads = await Promise.all(input.roots.map((lane) => readRoot(input, lane)));
+  const widths = reads.map(rootWidth);
+  const seq = await blockFor(input, widths);
   let life = topicLifeOf(input.state);
   const captured: string[] = [];
   const topics: TopicCapture[] = [];
   let generated = NO_GENERATED;
+  let offset = 0;
   // One probe for the sweep: the topics its roots open share one default-ref
   // lookup, the repo's (flows/topic-base-word.ts).
   const probe = topicBaseProbe();
   // ...and one key read: every root's topics are minted under it.
   const topicKey = input.topicKey ?? topicKeyFrom(input.home);
   for (const [index, read] of reads.entries()) {
-    const spooled = await spoolRoot(input, read, index, life, probe, topicKey);
+    const width = widths[index] ?? 0;
+    const spooled = await spoolRoot(input, read, seqWindow(seq, offset, width), life, probe, topicKey);
+    offset += width;
     if (spooled !== null) {
       captured.push(...spooled.captured);
       generated = addGeneratedTally(generated, spooled.generated);

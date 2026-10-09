@@ -43,6 +43,15 @@ export interface HookBudget {
   readonly isCut?: () => boolean;
   /** How to undo a claim this hook's output must deliver, should the race abandon the hook. */
   readonly onCut?: (undo: CutUndo) => void;
+  /**
+   * The hook's capture is on disk — its records appended, its state written —
+   * and only maintenance is left: a cut from here on loses nothing, since a
+   * drain the race abandons leaves its records in the spool for the next hook
+   * (the runner books a cut capture hook as `hook_timed_out` until this is
+   * said; release gate, loaded lane, 2026-10-09). Absent on a budget built
+   * outside a race.
+   */
+  readonly captured?: () => void;
 }
 
 /** Undoes one claim of a hook the race abandoned; never throws (the race's settle swallows it). */
@@ -51,6 +60,17 @@ export type CutUndo = () => Promise<void>;
 /**
  * The reserve as arithmetic: what is LEFT of the hook's deadline, minus one
  * per-request timeout, floored at zero.
+ *
+ * WHAT THE RESERVE CARRIES OUT IS THE HOOK'S ANSWER, and an ANSWERLESS hook
+ * — Stop, SubagentStop: async, their response ignored (connector-claude
+ * cli/settings-merge.ts) — holds nothing back (`holdsReserve` false): its
+ * spare is the whole remainder, floored the same way. Held back on them, the
+ * request timeout starved exactly the work they exist for (release gate,
+ * loaded lane, 2026-10-09): the git lane, which needs one git deadline of the
+ * hook's 800 ms, was skipped once 150 ms had passed, and the drain after it
+ * shipped one of the two batches a resumed life's re-filing takes. The race
+ * still cuts the hook at its deadline, and the drain still bounds every
+ * request to the room left (spool/flush.ts), so nothing outlives it.
  *
  * `now` is a parameter, and that is the only reason this is exported. The
  * reserve used to be observable ONLY through its wall-clock side effect — take
@@ -65,9 +85,10 @@ export const hookBudget = (
   deadlineMs: number,
   timeoutMs: number,
   now: () => number = Date.now,
+  holdsReserve = true,
 ): HookBudget => ({
   spareMs: () =>
-    Math.max(0, deadlineMs - now() - timeoutMs * HOOK_RESERVE_RATIO),
+    Math.max(0, deadlineMs - now() - (holdsReserve ? timeoutMs * HOOK_RESERVE_RATIO : 0)),
 });
 
 /** One hook run's race: the budget its handler sees, and the cut its runner settles. */
@@ -78,6 +99,8 @@ export interface HookRace {
    * claim registered so far runs. Answers how many ran; never throws.
    */
   readonly cut: () => Promise<number>;
+  /** Whether the handler said its capture was on disk before the race was lost (`budget.captured`). */
+  readonly isCaptured: () => boolean;
 }
 
 /**
@@ -92,15 +115,22 @@ export const hookRace = (
   deadlineMs: number,
   timeoutMs: number,
   now: () => number = Date.now,
+  holdsReserve = true,
 ): HookRace => {
   const undos: CutUndo[] = [];
   const lost = { value: false };
+  // Said BEFORE the race is lost, or not at all: a capture settled after the
+  // cut is one the abandoned handler finished too late to vouch for.
+  const captured = { value: false };
   return {
     budget: {
-      ...hookBudget(deadlineMs, timeoutMs, now),
+      ...hookBudget(deadlineMs, timeoutMs, now, holdsReserve),
       isCut: () => lost.value,
       onCut: (undo) => {
         undos.push(undo);
+      },
+      captured: () => {
+        captured.value = captured.value || !lost.value;
       },
     },
     cut: async () => {
@@ -108,6 +138,7 @@ export const hookRace = (
       const settled = await Promise.allSettled(undos.map((undo) => undo()));
       return settled.length;
     },
+    isCaptured: () => captured.value,
   };
 };
 

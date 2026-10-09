@@ -159,6 +159,10 @@ export const handleStop = async (
   // invariant that holds at any load.) The lane books the generated-target
   // rule's counts beside its captures (hooks/git-lane.ts).
   await runGitLane(ctx, budget, state, { cwdRoot: ownCwdRoot(ctx, state) }, GIT_LANE_LOSS_DETAIL);
+  // The turn's capture is on disk — the lane's records spooled, its skip
+  // counted, the state written: a cut from here on abandons only the drain
+  // below, whose records wait for the next hook (runner.ts, the booking).
+  budget.captured?.();
 
   // Maintenance on the spare budget, like every hook: earlier drafts and
   // records ship now instead of waiting for the next tool use.

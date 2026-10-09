@@ -13967,8 +13967,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a timed-out hook that captures nothing is booked as a loss",
     file: `${CONNECTOR}/src/hooks/runner.ts`,
-    from: "    if (outcome.timedOut && CAPTURE_HOOKS.has(name)) {",
-    to: "    if (outcome.timedOut) {",
+    from: "    if (outcome.timedOut && CAPTURE_HOOKS.has(name) && !race.isCaptured()) {",
+    to: "    if (outcome.timedOut && !race.isCaptured()) {",
     test: `${CONNECTOR}/test/hook-timeout-loss.test.ts`,
     because: "a slow hub cutting PreToolUse or UserPromptSubmit, which spool only informational records, turns every repo telemetry_lost",
   },
@@ -37126,6 +37126,80 @@ export const MUTATIONS: readonly Mutation[
     test: `${CONNECTOR}/test/e2e/heal-sweeps-again.e2e.test.ts`,
     because: "L10: the refused life's files sit on the hub under an ended life, invisible to every teammate's tripwire, for the rest of the turn",
   },
+  // THE FAN-OUT'S SILENCE (release gate, production lane, 2026-10-09): two
+  // defects the generous lane never meets, because it neither compacts nor
+  // resumes. A compact dropped the seen-set, and the git lane's cap was one
+  // tool call's twenty.
+  {
+    label: "a compact drops the life's seen-set, and the next Stop files the tool lane's work again",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "        seenTargets: previous.seenTargets,\n",
+    to: "",
+    test: `${CORE}/test/session-state-transforms.test.ts`,
+    because:
+      "the Stop after a compaction spends the git lane's whole cap on files the hub already holds, and the " +
+      "Bash-only files behind them never reach it — the pilot's six, with only capture-capped moving",
+  },
+  {
+    label: "the git lane files one tool call's twenty per root per Stop",
+    file: `${CORE}/src/flows/capture-git-touches.ts`,
+    from: "    maxTargets: input.maxTargets ?? MAX_GIT_LANE_TARGETS_PER_ROOT,",
+    to: "    maxTargets: input.maxTargets ?? 20,",
+    test: `${CORE}/test/git-lane-sweep.test.ts`,
+    because:
+      "a root a long session left a hundred files dirty files twenty per Stop and books the rest, and a resumed " +
+      "life never re-files the shared files its earlier life left — Mike warned on 0 of 11 after Nick's resume",
+  },
+  {
+    label: "the sweep's block is a cap's worth per root, not what the roots file",
+    file: `${CORE}/src/flows/git-lane.ts`,
+    from: "  const total = widths.reduce((sum, width) => sum + width, 0);",
+    to: "  const total = widths.length * MAX_GIT_LANE_TARGETS_PER_ROOT;",
+    test: `${CORE}/test/git-lane-sweep.test.ts`,
+    because:
+      "every Stop takes five hundred positions per root it sweeps, and the hub reads a gap that size as the " +
+      "session's own residue on every turn",
+  },
+  {
+    label: "a detached HEAD is never answered from the identity cache",
+    file: `${CORE}/src/git/repo-identity-cache.ts`,
+    from: "  content.startsWith(LOCAL_BRANCH_HEAD) || branchLabelOfHead(content)?.startsWith(DETACHED_BRANCH_PREFIX) === true;",
+    to: "  content.startsWith(LOCAL_BRANCH_HEAD);",
+    test: `${CORE}/test/repo-identity-cache.test.ts`,
+    because:
+      "every hook of a session in a detached worktree — the pilot's own shape — spawns git four times before it " +
+      "does anything, 150-235 ms under a fan-out, and SubagentStop's git lane is skipped on exactly those",
+  },
+  {
+    label: "an answerless hook holds the reserve back all the same",
+    file: `${CORE}/src/config/hook-budget.ts`,
+    from: "    Math.max(0, deadlineMs - now() - (holdsReserve ? timeoutMs * HOOK_RESERVE_RATIO : 0)),",
+    to: "    Math.max(0, deadlineMs - now() - timeoutMs * HOOK_RESERVE_RATIO),",
+    test: `${CONNECTOR}/test/hook-reserve.test.ts`,
+    because:
+      "Stop and SubagentStop hold 400 ms back for an answer nobody reads: their git lane is skipped once 150 ms " +
+      "have passed, and the drain after it ships one batch of a resumed life's two",
+  },
+  {
+    label: "Stop and SubagentStop are given a reserve to hold",
+    file: `${CONNECTOR}/src/hooks/runner.ts`,
+    from: "    const race = hookRace(deadlineMs, timeoutMs, Date.now, !ANSWERLESS_HOOKS.has(name));",
+    to: "    const race = hookRace(deadlineMs, timeoutMs, Date.now, true);",
+    test: `${CONNECTOR}/test/stop-git-touches.test.ts`,
+    because:
+      "the budget arithmetic knows about answerless hooks but the runner never says which they are, and the " +
+      "lane is starved on a loaded machine exactly as before",
+  },
+  {
+    label: "a drain the budget cut after the capture was on disk is booked as a lost capture",
+    file: `${CONNECTOR}/src/hooks/runner.ts`,
+    from: "    if (outcome.timedOut && CAPTURE_HOOKS.has(name) && !race.isCaptured()) {",
+    to: "    if (outcome.timedOut && CAPTURE_HOOKS.has(name)) {",
+    test: `${CONNECTOR}/test/hook-time-budget.test.ts`,
+    because:
+      "a Stop whose lane and state write landed and whose drain the race cut books hook_timed_out for records " +
+      "still safe in the spool, and the hub's coverage answer then contradicts the connector's ledger",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -37385,9 +37459,9 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/hint-hook.test.ts 4
  * PRINTS: packages/connector-claude/test/hook-budget.test.ts 3
  * PRINTS: packages/connector-claude/test/hook-contract.test.ts 1
- * PRINTS: packages/connector-claude/test/hook-reserve.test.ts 1
+ * PRINTS: packages/connector-claude/test/hook-reserve.test.ts 2
  * PRINTS: packages/connector-claude/test/hook-seq.test.ts 3
- * PRINTS: packages/connector-claude/test/hook-time-budget.test.ts 1
+ * PRINTS: packages/connector-claude/test/hook-time-budget.test.ts 2
  * PRINTS: packages/connector-claude/test/hook-timeout-loss.test.ts 6
  * PRINTS: packages/connector-claude/test/hook-window-pairing.test.ts 11
  * PRINTS: packages/connector-claude/test/hook-window.test.ts 4
@@ -37415,7 +37489,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/statusline-last-seen.test.ts 1
  * PRINTS: packages/connector-claude/test/statusline-person-strip.test.ts 4
  * PRINTS: packages/connector-claude/test/stop-gate.test.ts 6
- * PRINTS: packages/connector-claude/test/stop-git-touches.test.ts 1
+ * PRINTS: packages/connector-claude/test/stop-git-touches.test.ts 2
  * PRINTS: packages/connector-claude/test/stop-hook.test.ts 2
  * PRINTS: packages/connector-claude/test/stop-latency.test.ts 1
  * PRINTS: packages/connector-claude/test/subagent-return-cost.test.ts 5
@@ -37491,7 +37565,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/ghost-declare.test.ts 2
  * PRINTS: packages/connector-core/test/ghost-render.test.ts 7
  * PRINTS: packages/connector-core/test/git-lane-cost.test.ts 1
- * PRINTS: packages/connector-core/test/git-lane-sweep.test.ts 1
+ * PRINTS: packages/connector-core/test/git-lane-sweep.test.ts 3
  * PRINTS: packages/connector-core/test/git-safety-pins.test.ts 7
  * PRINTS: packages/connector-core/test/git-timeout.test.ts 4
  * PRINTS: packages/connector-core/test/git-touches.test.ts 1
@@ -37576,7 +37650,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/release-clock.test.ts 10
  * PRINTS: packages/connector-core/test/remember-developer.test.ts 1
  * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 7
- * PRINTS: packages/connector-core/test/repo-identity-cache.test.ts 7
+ * PRINTS: packages/connector-core/test/repo-identity-cache.test.ts 8
  * PRINTS: packages/connector-core/test/repo-ssh-determinism.test.ts 2
  * PRINTS: packages/connector-core/test/rest-unchecked-scope.test.ts 3
  * PRINTS: packages/connector-core/test/review-draft.test.ts 2
@@ -37590,7 +37664,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/session-lives.test.ts 73
  * PRINTS: packages/connector-core/test/session-losses.test.ts 4
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
- * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 9
+ * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 10
  * PRINTS: packages/connector-core/test/set-intent.test.ts 15
  * PRINTS: packages/connector-core/test/sharing.test.ts 30
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4

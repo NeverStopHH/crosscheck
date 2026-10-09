@@ -38,6 +38,8 @@ import { join } from "node:path";
 
 import { readSpoolLines, repoKey, runHook } from "../src/index.ts";
 import type { Env } from "../src/index.ts";
+import { GIT_TOUCHES_TIMEOUT_MS, HOOK_RESERVE_RATIO, STOP_BUDGET_RATIO } from "@crosscheck/connector-core/constants.ts";
+import { resolveRepoIdentityCached } from "@crosscheck/connector-core/git/repo-identity-cache.ts";
 import { readSessionState, writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { readCaptureLosses } from "@crosscheck/connector-core/state/loss-ledger.ts";
 import { makeHome, makeRepo, writeRepoFile } from "../../connector-core/test/helpers.ts";
@@ -149,7 +151,39 @@ const spooledTargets = async (fix: Fixture): Promise<readonly SpooledRecord[]> =
     .map((line) => JSON.parse(line) as SpooledRecord)
     .filter((record) => record.kind === "target");
 
+/**
+ * An envelope on which a reserve alone would starve the lane: at this
+ * request timeout the Stop envelope is STOP_BUDGET_RATIO × it, the reserve
+ * one of it, and what is left for the lane before anything ran is one
+ * millisecond short of the git deadline the lane needs — so a Stop that held
+ * the reserve could never run it, however fast the machine.
+ */
+const STARVING_TIMEOUT_MS = GIT_TOUCHES_TIMEOUT_MS - 1;
+
 describe("the Stop hook's git evidence lane", () => {
+  // Stop answers nothing (cli/settings-merge.ts: async, response ignored),
+  // so the reserve that carries a sync hook's answer out protects nothing
+  // here and the lane runs on the whole remainder (config/hook-budget.ts;
+  // release gate, loaded lane, 2026-10-09).
+  test("runs on an envelope whose reserve alone would have starved it: an answerless hook holds nothing back", async () => {
+    // Arrange: the codemod shape again, on the starving envelope, the repo's
+    // identity already cached so prepare costs no git
+    const fix = await fixture("stop-git-starved", false);
+    await resolveRepoIdentityCached(fix.home, fix.repo);
+    await writeRepoFile(fix.repo, "src/workbench/usePlayback.ts", "export const a = 3;\n");
+    const env = { ...fix.env, CROSSCHECK_TIMEOUT_MS: String(STARVING_TIMEOUT_MS) };
+    expect(STOP_BUDGET_RATIO * STARVING_TIMEOUT_MS - HOOK_RESERVE_RATIO * STARVING_TIMEOUT_MS).toBeLessThan(GIT_TOUCHES_TIMEOUT_MS);
+
+    // Act
+    await runHook("stop", stopPayload(fix), env);
+
+    // Assert: the lane ran, recorded the file, and skipped nothing
+    const state = await readSessionState(fix.home, SESSION_ID);
+    expect((await spooledTargets(fix)).map((record) => record.body.value)).toEqual(["src/workbench/usePlayback.ts"]);
+    expect(state?.gitLaneSkipped).toBe(0);
+    expect((await readCaptureLosses(fix.home, fix.key)).byKind["hook_timed_out"] ?? 0).toBe(0);
+  });
+
   test("records a file no Edit tool reported, labelled git_diff", async () => {
     // Arrange: the codemod shape — the file changed, the host saw nothing.
     const fix = await fixture("stop-git-record");
@@ -235,12 +269,16 @@ describe("the Stop hook's git evidence lane", () => {
   });
 
   test("review M5: a skipped lane is a counted loss, keyed to this repo, not only a session-state number", async () => {
-    // Arrange: a Stop envelope of 2 x 200 ms, which can never leave the
-    // lane's GIT_TOUCHES_TIMEOUT_MS (250) unspent behind its own reserve
+    // Arrange: a Stop envelope one millisecond short of the lane's own git
+    // deadline (GIT_TOUCHES_TIMEOUT_MS), which no remainder can ever afford —
+    // Stop holds no reserve, so a shorter envelope is what forces the skip.
+    // The identity is cached first, so the skip is booked well inside it.
     const fix = await fixture("stop-git-skip-loss", false);
+    await resolveRepoIdentityCached(fix.home, fix.repo);
+    const envelopeShortMs = String(Math.floor((GIT_TOUCHES_TIMEOUT_MS - 1) / STOP_BUDGET_RATIO));
 
     // Act
-    await runHook("stop", stopPayload(fix), { ...fix.env, CROSSCHECK_TIMEOUT_MS: "200" });
+    await runHook("stop", stopPayload(fix), { ...fix.env, CROSSCHECK_TIMEOUT_MS: envelopeShortMs });
 
     // Assert
     const losses = await readCaptureLosses(fix.home, fix.key);

@@ -24,18 +24,6 @@ export interface ExpectedFailure {
 export type Expectations = Readonly<Record<string, ExpectedFailure>>;
 
 /**
- * H1: a compaction or a resume restarts the git lane's window, so work from
- * before it is never filed again. Track A merged into batch 2 at 33f48cd3 and
- * its own tests pass, but the realistic gate still fails all eight H1 cases
- * on the merged tree (production lane, 2026-10-09): Nick's subagent-stop git
- * lane timed out under the fan-out (state/losses.jsonl hook_timed_out), the
- * Bash-only files never reached the hub (5a), Mike's statusline counted 8
- * files, not 11 (1d), and after the resume his tripwire warned about Nick on
- * 0 of the 11 (L1). A finding, reported; the marker stays until it is fixed.
- */
-const H1_CAPTURE_ACROSS_LIVES: ExpectedFailure = { finding: "H1", track: "A", branch: "fix/b2-capture-across-lives" };
-
-/**
  * WHAT EVERY PROFILE SHOWS, timing or not: the opted-out case (P2,
  * release-gate/gate-opted-out.ts). The generous variant's whole table.
  *
@@ -54,25 +42,18 @@ export const OWNER_DECISIONS_PENDING: Expectations = {};
  * on feat/crosscheck-batch-1006 with tracks A, B, C and D merged. Flipped on
  * the merge of track E (2026-10-09): R1 (track B's H2) and
  * P2.anonymous.when.statusline (track C's M5) pass and lost their markers.
- * What is left fails on the merged tree and is reported as a finding. Track
- * C's H3–H5 have no line: no gate case hashes topic ids, polls the landed
- * stop or ranks hints as an opted-out developer's colleague; P2's anonymity
- * check (plain) holds.
+ * Flipped by fix/b2-fanout (2026-10-09): the eight H1 cases (1d, 5a–5c,
+ * L1–L4) — a compact dropped the life's seen-set and the git lane's cap was
+ * one tool call's twenty, so the pilot's Bash-only files and a resumed
+ * life's re-filing never reached the hub at pilot scale; both are fixed and
+ * the cases are plain tests again. With the owner's two decisions off too
+ * (above), the table is empty: every batch-2 case is a plain test.
+ * Track C's H3–H5 have no line: no gate case hashes topic ids, polls the
+ * landed stop or ranks hints as an opted-out developer's colleague; P2's
+ * anonymity check (plain) holds.
  */
 export const BATCH_2_FINDINGS: Expectations = {
   ...OWNER_DECISIONS_PENDING,
-  // Track A (H1, compaction): the codegen worker's six Bash-only files land after the turn's lane
-  // and before the compaction, and are never filed.
-  "1d": H1_CAPTURE_ACROSS_LIVES,
-  "5a": H1_CAPTURE_ACROSS_LIVES,
-  "5b": H1_CAPTURE_ACROSS_LIVES,
-  "5c": H1_CAPTURE_ACROSS_LIVES,
-  // Track A (H1, resume): after SessionEnd and the resume, Mike sees none of the 11 files Nick still
-  // has dirty or untracked on disk.
-  L1: H1_CAPTURE_ACROSS_LIVES,
-  L2: H1_CAPTURE_ACROSS_LIVES,
-  L3: H1_CAPTURE_ACROSS_LIVES,
-  L4: H1_CAPTURE_ACROSS_LIVES,
 };
 
 /** Per table, the test ids registered against it — so a marker left on a renamed or removed test is caught. */

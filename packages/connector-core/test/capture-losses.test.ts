@@ -10,7 +10,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { MAX_GIT_TOUCH_CANDIDATES, MAX_TARGETS_PER_INVOCATION } from "../src/constants.ts";
+import { MAX_GIT_LANE_TARGETS_PER_ROOT, MAX_GIT_TOUCH_CANDIDATES, MAX_TARGETS_PER_INVOCATION } from "../src/constants.ts";
 import { captureGitTouches } from "../src/flows/capture-git-touches.ts";
 import { repoKey } from "../src/config/paths.ts";
 import type { Producer } from "../src/capture/records.ts";
@@ -163,11 +163,11 @@ describe("LOSS-11: capture-side refusals are counted drops", () => {
       gitTimeoutMs: GIT_LANE_BOUND_TEST_TIMEOUT_MS,
     });
 
-    // Assert: the 5 cut before the freshness check, plus the ones the per-call
-    // cap (MAX_TARGETS_PER_INVOCATION) cut from the fresh paths it examined
+    // Assert: the 5 cut before the freshness check, plus the ones the lane's
+    // own cap (MAX_GIT_LANE_TARGETS_PER_ROOT) cut from the fresh paths it examined
     const detail = await readDropDetail(fx.home, KEY);
     expect(detail.byReason["capture-capped"]).toBe(
-      dirty - MAX_GIT_TOUCH_CANDIDATES + (MAX_GIT_TOUCH_CANDIDATES - MAX_TARGETS_PER_INVOCATION),
+      dirty - MAX_GIT_TOUCH_CANDIDATES + (MAX_GIT_TOUCH_CANDIDATES - MAX_GIT_LANE_TARGETS_PER_ROOT),
     );
   }, GIT_LANE_BOUND_TEST_TIMEOUT_MS);
 });

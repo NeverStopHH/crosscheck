@@ -2902,10 +2902,30 @@ export const GIT_TOUCHES_TIMEOUT_MS = 250;
  * deadline (GIT_TOUCHES_TIMEOUT_MS, 250 ms), which leaves a disk ten times
  * slower than the measuring machine inside one git deadline.
  *
- * The per-invocation cap (MAX_TARGETS_PER_INVOCATION) still applies to the
+ * The lane's own cap (MAX_GIT_LANE_TARGETS_PER_ROOT) still applies to the
  * fresh paths afterwards, and counts what it cuts the same way.
  */
 export const MAX_GIT_TOUCH_CANDIDATES = 2000;
+
+/**
+ * How many targets one root's sweep may spool per Stop — the git lane's own
+ * cap, where the tool lane's per-call cap (MAX_TARGETS_PER_INVOCATION, sized
+ * for ONE tool call) used to apply. A long session's root is a hundred files
+ * dirty, and after a resume the next life must file every one of them again
+ * (flows/git-lane.ts `windowStartOf`): at twenty per Stop the shared files
+ * behind the first twenty never reached a teammate — the release gate's
+ * production lane found Mike warned on 8 of 11 files before Nick's resume and
+ * 0 of 11 after it, with only `capture-capped` moving (2026-10-09).
+ *
+ * WHY THE SEEN-SET'S SIZE: a sweep may file at most what the session can
+ * remember having filed, or the next sweep would file the excess again. The
+ * paths past it are examined and still cut, so they are counted
+ * (`capture-capped`), as the candidate bound above counts its own.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.MAX_GIT_LANE_TARGETS_PER_ROOT === c.MAX_SEEN_TARGETS, c.MAX_GIT_LANE_TARGETS_PER_ROOT > c.MAX_TARGETS_PER_INVOCATION, c.MAX_GIT_LANE_TARGETS_PER_ROOT <= c.MAX_GIT_TOUCH_CANDIDATES)'
+ * PRINTS: true true true
+ */
+export const MAX_GIT_LANE_TARGETS_PER_ROOT = MAX_SEEN_TARGETS;
 
 /**
  * ── The generated-target rule (capture/generated.ts) ─────────────────────────
