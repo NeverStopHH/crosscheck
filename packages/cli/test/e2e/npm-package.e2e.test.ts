@@ -66,8 +66,16 @@ const SHUTDOWN_TIMEOUT_MS = 5_000;
  * 4.77 MB unpacked, of which `connector-core` is 1.76 MB and `server` 1.51 MB.
  * A `node_modules` leak still trips this cap many times over; `docs` and every
  * `test/` are refused by name below, whatever the number.
+ *
+ * RAISED TO 2 500 000 (owner decision, 2026-10-09). The package ships
+ * TypeScript sources, and 0.11 adds security, provenance and isolation code:
+ * with human provenance merged it packed 2 058 422 bytes. The computed
+ * pack-reach trim (cli/scripts/pack-reach.ts) still keeps test-only modules
+ * out, so the growth is source the package is meant to ship. The cap stays a
+ * guard against accidentally shipping something big; revisit it before the
+ * packed size reaches 3 MB.
  */
-const TARBALL_SIZE_CAP_BYTES = 2_000_000;
+const TARBALL_SIZE_CAP_BYTES = 2_500_000;
 
 const nodeExe = Bun.which("node");
 const npmExe = Bun.which("npm");
