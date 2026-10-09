@@ -29258,6 +29258,30 @@ export const MUTATIONS: readonly Mutation[
     because: "three git spawns per landed commit to learn that a commit already known to be missing is not present",
   },
   {
+    label: "every hook process loads another hook's handler",
+    file: `${CONNECTOR}/src/hooks/index.ts`,
+    from: 'import { runHookWith } from "./runner.ts";',
+    to: 'import { runHookWith } from "./runner.ts";\nimport "./session-start.ts";',
+    test: `${CLI}/test/bin.test.ts`,
+    because: "every hook process evaluates handlers it never runs, in a boot no budget covers",
+  },
+  {
+    label: "every hook process loads the CLI",
+    file: `${CLI}/src/bin/crosscheck.ts`,
+    from: '} from "@crosscheck/connector-claude";',
+    to: '} from "@crosscheck/connector-claude";\nimport "../cli/index.ts";',
+    test: `${CLI}/test/bin.test.ts`,
+    because: "every hook process evaluates every command's module before it reads its payload",
+  },
+  {
+    label: "every hook process loads the MCP server",
+    file: `${CLI}/src/bin/crosscheck.ts`,
+    from: '} from "@crosscheck/connector-claude";',
+    to: '} from "@crosscheck/connector-claude";\nimport "@crosscheck/connector-core/mcp/server.ts";',
+    test: `${CLI}/test/bin.test.ts`,
+    because: "every hook process evaluates the MCP server and its tools before it reads its payload",
+  },
+  {
     label: "every hook resolves its repo with git again",
     file: `${CONNECTOR}/src/hooks/runner.ts`,
     from: "  const identity = await resolveRepoIdentityCached(crosscheckHome(env), payload.cwd);",
@@ -29351,8 +29375,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the subagent-return hook name runs no handler",
     file: `${CONNECTOR}/src/hooks/index.ts`,
-    from: "  \"subagent-return\": handleSubagentReturn,",
-    to: "  \"subagent-return\": async () => \"\",",
+    from: "  \"subagent-return\": async () => (await import(\"./subagent-return.ts\")).handleSubagentReturn,",
+    to: "  \"subagent-return\": async () => async () => \"\",",
     test: `${CONNECTOR}/test/subagent-return-hook.test.ts`,
     because: "the registered command exits 0 in silence on every subagent return",
   },
@@ -35187,6 +35211,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/absence-cli.test.ts 11
  * PRINTS: packages/cli/test/agent-host.test.ts 2
  * PRINTS: packages/cli/test/agent-restart.test.ts 3
+ * PRINTS: packages/cli/test/bin.test.ts 3
  * PRINTS: packages/cli/test/capture-health.test.ts 8
  * PRINTS: packages/cli/test/ci-report-args.test.ts 2
  * PRINTS: packages/cli/test/ci-report-build.test.ts 3

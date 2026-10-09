@@ -8,9 +8,9 @@ import {
   runStatusline,
   runSummarizeWorker,
 } from "@crosscheck/connector-claude";
-import { runMcpServer } from "@crosscheck/connector-core/mcp/server.ts";
-import { runCli } from "../cli/index.ts";
-import { interceptHelpOrUnknownFlag } from "../cli/help.ts";
+// The MCP server, the CLI and its help are DYNAMIC imports in their own
+// branches below (batch-2 review, M6): every hook process paid their module
+// evaluation in its boot — the part of a hook's wall clock no budget covers.
 
 /**
  * Bounded: this read runs before the hook budget exists, so an stdin the caller
@@ -76,6 +76,7 @@ const main = async (): Promise<void> => {
   // An MCP server's stdin stays open for the life of the session BY DESIGN —
   // that is the transport — so the bounded read would end it after one second.
   if (command === "mcp") {
+    const { runMcpServer } = await import("@crosscheck/connector-core/mcp/server.ts");
     process.exit(await runMcpServer(process.env, process.cwd()));
   }
 
@@ -162,6 +163,7 @@ const main = async (): Promise<void> => {
     // The help gate runs BEFORE the dynamic import: `serve --help` must
     // answer with usage, not boot a hub — the same incident class as
     // `init --help` running a full init (cli/help.ts).
+    const { interceptHelpOrUnknownFlag } = await import("../cli/help.ts");
     const intercepted = interceptHelpOrUnknownFlag(command, rest, {
       usage: SERVE_USAGE,
     });
@@ -180,6 +182,7 @@ const main = async (): Promise<void> => {
     }
   }
 
+  const { runCli } = await import("../cli/index.ts");
   const result = await runCli(argv, process.env, process.cwd());
   process.stdout.write(result.stdout);
   process.exit(result.exitCode);

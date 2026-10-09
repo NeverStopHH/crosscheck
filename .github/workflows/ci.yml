@@ -168,7 +168,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 3622
+    # PRINTS: 3625
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -180,7 +180,7 @@ jobs:
     # PRINTS: .github/workflows/publish.yml 2
     # PRINTS: docs/OPERATIONS.md 2
     # PRINTS: packages/cli/scripts/release-preflight.ts 5
-    # PRINTS: packages/cli/src/bin/crosscheck.ts 1
+    # PRINTS: packages/cli/src/bin/crosscheck.ts 3
     # PRINTS: packages/cli/src/ci-report/args.ts 2
     # PRINTS: packages/cli/src/ci-report/entry.ts 1
     # PRINTS: packages/cli/src/ci-report/junit.ts 2
@@ -270,7 +270,7 @@ jobs:
     # PRINTS: hooks/collision-relay.ts 13
     # PRINTS: hooks/ghost-notice.ts 2
     # PRINTS: hooks/git-lane.ts 3
-    # PRINTS: hooks/index.ts 1
+    # PRINTS: hooks/index.ts 2
     # PRINTS: hooks/landed-why.ts 2
     # PRINTS: hooks/landing-fetch.ts 2
     # PRINTS: hooks/post-tool-use-failure.ts 5
@@ -695,7 +695,7 @@ jobs:
     # PRINTS: coverage-order.ts 5
     # PRINTS: coverage.ts 49
     # PRINTS: crosscheck.cjs 4
-    # PRINTS: crosscheck.ts 1
+    # PRINTS: crosscheck.ts 3
     # PRINTS: cursor.ts 1
     # PRINTS: declarations.ts 5
     # PRINTS: default-branch.ts 1
@@ -791,7 +791,7 @@ jobs:
     # PRINTS: hub-install.ts 2
     # PRINTS: hub-status.ts 3
     # PRINTS: hub.ts 21
-    # PRINTS: index.ts 17
+    # PRINTS: index.ts 18
     # PRINTS: init-global.ts 2
     # PRINTS: init-io.ts 10
     # PRINTS: init-remove-plan.ts 6
