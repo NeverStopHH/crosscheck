@@ -37054,6 +37054,16 @@ export const MUTATIONS: readonly Mutation[
       "every Stop takes five hundred positions per root it sweeps, and the hub reads a gap that size as the " +
       "session's own residue on every turn",
   },
+  {
+    label: "a detached HEAD is never answered from the identity cache",
+    file: `${CORE}/src/git/repo-identity-cache.ts`,
+    from: "  content.startsWith(LOCAL_BRANCH_HEAD) || branchLabelOfHead(content)?.startsWith(DETACHED_BRANCH_PREFIX) === true;",
+    to: "  content.startsWith(LOCAL_BRANCH_HEAD);",
+    test: `${CORE}/test/repo-identity-cache.test.ts`,
+    because:
+      "every hook of a session in a detached worktree — the pilot's own shape — spawns git four times before it " +
+      "does anything, 150-235 ms under a fan-out, and SubagentStop's git lane is skipped on exactly those",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -37502,7 +37512,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/release-clock.test.ts 10
  * PRINTS: packages/connector-core/test/remember-developer.test.ts 1
  * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 7
- * PRINTS: packages/connector-core/test/repo-identity-cache.test.ts 7
+ * PRINTS: packages/connector-core/test/repo-identity-cache.test.ts 8
  * PRINTS: packages/connector-core/test/repo-ssh-determinism.test.ts 2
  * PRINTS: packages/connector-core/test/rest-unchecked-scope.test.ts 3
  * PRINTS: packages/connector-core/test/review-draft.test.ts 2

@@ -6,8 +6,9 @@
  * `cache/` while the files git would read say nothing changed — the root's
  * `.git`, HEAD, the configs that name the remote — and for at most
  * REPO_IDENTITY_CACHE_TTL_MS. HEAD's commit is re-read from the ref files on
- * every answer, so a commit moves `baseCommit` without git. Anything the
- * files cannot vouch for — a detached HEAD, a reftable repository, an
+ * every answer, so a commit moves `baseCommit` without git. A detached HEAD
+ * is vouched for by its content, the commit itself, under git's own label.
+ * Anything the files cannot vouch for — a reftable repository, an
  * environment that steers git — is resolved by git every time.
  *
  * `resolve` is injected as a counting wrapper around the real resolver, so
@@ -140,7 +141,14 @@ describe("a working directory's repo identity", () => {
     expect(git1.calls()).toBe(2);
   });
 
-  test("a detached HEAD is resolved by git every time", async () => {
+  // THE PILOT'S OWN SHAPE (release gate, production lane, 2026-10-09): one
+  // long session in a worktree DETACHED at an old commit. Every hook of it
+  // paid git the full way — 65 ms quiet, 150–235 ms under the fan-out — and
+  // SubagentStop's git lane, which needs 150 ms of the hook's 800 left, was
+  // skipped and booked on exactly those. HEAD's content IS the commit, so the
+  // files vouch for it; what they cannot re-derive — git's abbreviation — is
+  // kept as git said it, for as long as HEAD's bytes stay.
+  test("a detached HEAD is answered from the cache while HEAD names the same commit, with git's own label", async () => {
     // Arrange
     const { repo, home } = await fixture("ric-detached");
     await git(repo, ["checkout", "-q", "--detach"]);
@@ -148,10 +156,33 @@ describe("a working directory's repo identity", () => {
 
     // Act
     const first = await resolveRepoIdentityCached(home, repo, { resolve: git1.resolve });
-    await resolveRepoIdentityCached(home, repo, { resolve: git1.resolve });
+    const second = await resolveRepoIdentityCached(home, repo, { resolve: git1.resolve });
 
     // Assert
     expect(first?.branch.startsWith("detached@")).toBe(true);
+    expect(first?.baseCommit).toBe(await headOf(repo));
+    expect(second).toEqual(first);
+    expect(git1.calls()).toBe(1);
+  });
+
+  test("a detached HEAD moved to another commit is resolved by git again", async () => {
+    // Arrange: two commits, detached at the newer one and cached there
+    const { repo, home } = await fixture("ric-detached-moved");
+    await writeRepoFile(repo, "src/next.ts", "export const next = 1;\n");
+    await git(repo, ["add", "."]);
+    await git(repo, ["commit", "-q", "-m", "next"]);
+    await git(repo, ["checkout", "-q", "--detach"]);
+    const git1 = counted();
+    const atNewer = await resolveRepoIdentityCached(home, repo, { resolve: git1.resolve });
+
+    // Act
+    await git(repo, ["checkout", "-q", "--detach", "HEAD~1"]);
+    const atOlder = await resolveRepoIdentityCached(home, repo, { resolve: git1.resolve });
+
+    // Assert
+    expect(atOlder?.baseCommit).toBe(await headOf(repo));
+    expect(atOlder?.baseCommit).not.toBe(atNewer?.baseCommit);
+    expect(atOlder?.branch).not.toBe(atNewer?.branch);
     expect(git1.calls()).toBe(2);
   });
 
