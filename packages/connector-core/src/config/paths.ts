@@ -396,6 +396,19 @@ export const landingFetchLockPath = (home: string, cloneKey: string): string =>
 export const hooksFiredPath = (home: string, key: string): string =>
   join(home, "state", `${key}-hooks.json`);
 
+/** The file name every per-hook stamp of `key` starts with (`hookFiredPath`). */
+export const hookFiredPrefix = (key: string): string => `${key}-hook-`;
+
+/**
+ * ONE FILE PER HOOK EVENT (review batch 2, M9): `<key>-hook-<event>.json`,
+ * written whole by that event alone, so no two hooks ever rewrite the same
+ * file. The combined `-hooks.json` above was a read-modify-write every hook
+ * shared, and twelve racing ones left one key: the other eleven read as
+ * "never fired". It is still read (state/fired-markers.ts), never written.
+ */
+export const hookFiredPath = (home: string, key: string, hook: string): string =>
+  join(home, "state", `${hookFiredPrefix(key)}${hook}.json`);
+
 /**
  * Per-repo record of the last time the STATUSLINE actually rendered (trial
  * finding H7). `statusline registered` is a textual check too, and the
