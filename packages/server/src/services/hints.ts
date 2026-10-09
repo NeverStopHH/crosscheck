@@ -343,6 +343,13 @@ export interface HintContextCandidate {
     readonly developerName: string;
     readonly baseCommit: string;
     /**
+     * The owner opted out of presence, so her last touch is withheld from
+     * this reader (batch-2 integration review, M5) — the listing's word
+     * (services/diagnosis.ts), on the candidate too, so the connector's
+     * pointer prints no age off the creation that is left.
+     */
+    readonly locationWithheld?: true;
+    /**
      * Solved trees are presented differently (VISION.md §1) — the fact rides
      * the search row (services/solved.ts computes it there) so this endpoint
      * stays one bounded call.
@@ -472,7 +479,9 @@ const listClaimsForContext = async (
         pushableClaimCondition(),
       ),
     )
-    .orderBy(desc(claims.createdAt))
+    // Equally old claims to their id, never to the order the scan met them
+    // in (integration review L7): the window and the hint read them as stored.
+    .orderBy(desc(claims.createdAt), asc(claims.id))
     // One row past the window, read only to learn that rows stayed behind.
     .limit(HINT_MAX_CLAIMS_PER_CONTEXT + 1);
   const rows = fetched.slice(0, HINT_MAX_CLAIMS_PER_CONTEXT);
@@ -878,7 +887,10 @@ const rankOnPushableText =
           ),
         )
         .groupBy(claims.workContextId, workContexts.createdAt, workContexts.updatedAt, agentSessions.developerId)
-        .orderBy(sql`max(ts_rank(${words.words}, ${tsquery})) DESC`)
+        // Equal ranks to the context id, as the statement pass above: the
+        // aggregate's own order is the hash table's, and the LIMIT cut a tie
+        // by it (integration review L7, the half 5f2f200a left).
+        .orderBy(sql`max(ts_rank(${words.words}, ${tsquery})) DESC`, asc(claims.workContextId))
         .limit(TIER_CANDIDATES),
     ]);
     const best = [...statements, ...pushable].reduce<ReadonlyMap<string, RankedRow>>(
@@ -1089,6 +1101,7 @@ const matchCandidates = async (
         // context whose base commit the hub never knew.
         { baseCommit: "empty" },
       ),
+      ...(hidden.has(row.developerId) ? { locationWithheld: true as const } : {}),
     },
     // Each nested row by its OWN owner: a claim by its author, who may not
     // be the context's; a matched target by the context's owner, whose

@@ -28,8 +28,15 @@ import {
 } from "@crosscheck/connector-core/flows/git-lane.ts";
 import type { GitLaneChoice, GitLaneSweep } from "@crosscheck/connector-core/flows/git-lane.ts";
 import { withTopicCapture } from "@crosscheck/connector-core/flows/topic-contexts.ts";
+import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
 import { recordCaptureLoss } from "@crosscheck/connector-core/state/loss-ledger.ts";
-import { allocateSeq, updateSessionState, withGitTouches } from "@crosscheck/connector-core/state/session-state.ts";
+import {
+  allocateSeq,
+  owesSweepToLife,
+  readSessionState,
+  updateSessionState,
+  withGitTouches,
+} from "@crosscheck/connector-core/state/session-state.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
@@ -118,6 +125,8 @@ export const runGitLane = async (
       // How the generated-target rule classified what was spooled — the lane
       // that sees `bun install` and a codegen run (capture/generated.ts).
       ...(isSameLife ? { generated: sweep.generated } : {}),
+      // The life this sweep filed under, when it ran and the life held (L10).
+      ...(isSameLife && !sweep.unavailable ? { sweptLife: state.crosscheckSessionId } : {}),
     });
     const swept = withSweptRoots(
       withTopicCapture(booked, sweep.topics),
@@ -133,4 +142,43 @@ export const runGitLane = async (
       shellSweepSince: isShellAnswered ? null : (swept.shellSweepSince ?? null),
     };
   });
+};
+
+/** The loss-ledger detail of a sweep owed to a healed life, booked only when the sweep ran and git did not answer. */
+const HEAL_GIT_LANE_LOSS_DETAIL = "heal-git-lane";
+
+/**
+ * A SWEEP OWED TO A HEALED LIFE, PAID BY THE FIRST HOOK WITH ROOM (batch-2
+ * integration review, L10). A mid-life heal registers the next life with an
+ * empty seen-set, and the files the refused life had filed — on the hub
+ * under a life now ended, so invisible to every teammate's tripwire — were
+ * filed again only by the next Stop or SubagentStop lane: 0 of 6 pre-heal
+ * files for a whole turn in the review's V1b. This is the git lane once
+ * more, under the new life, from the window the session keeps across a
+ * heal, and the spool flushed right after it so the hub holds the files
+ * inside the same hook.
+ *
+ * WHY THE LANE AND NOT A RE-SPOOL of the refused life's seen targets: the
+ * seen-set keeps paths and nothing else, and a target names which lane saw
+ * the file (tool_edit, git_diff, git_commit) — a re-spool would have to
+ * guess that, and a guessed source is a lie on the hub's record. The lane
+ * reads the tree and files each path as what it is. Its cost is the lane's
+ * (GIT_TOUCHES_TIMEOUT_MS per root, roots in parallel) plus one flush, paid
+ * once per heal, only when the hook's spare budget covers the lane; a hook
+ * without the room pays nothing and books nothing — the files are on the
+ * hub under the ended life, and the next lane files them, as before.
+ */
+export const sweepIfLifeMoved = async (ctx: HookContext, budget: HookBudget): Promise<boolean> => {
+  if (budget.spareMs() < GIT_TOUCHES_TIMEOUT_MS) {
+    return false;
+  }
+  const state = await readSessionState(ctx.config.home, ctx.payload.session_id);
+  if (state === null || !owesSweepToLife(state)) {
+    return false;
+  }
+  await runGitLane(ctx, budget, state, { cwdRoot: ownCwdRoot(ctx, state) }, HEAL_GIT_LANE_LOSS_DETAIL);
+  // No healer: the life was healed a moment ago, and a refusal now is the
+  // next hook's to walk — this flush only carries the sweep's records.
+  await flushSpool(ctx.hub, { sessionId: state.crosscheckSessionId, developerId: state.developerId }, budget.spareMs());
+  return true;
 };

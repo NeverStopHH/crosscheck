@@ -690,6 +690,19 @@ const SessionStateObjectSchema = z.looseObject({
   gitLaneSkipped: z.number().int().min(0).default(0),
   gitLaneRan: z.number().int().min(0).default(0),
   /**
+   * THE LIFE THE GIT LANE LAST SWEPT UNDER (batch-2 integration review,
+   * L10). A mid-life heal moves the state to the next life with an empty
+   * seen-set (flows/heal-session.ts swapLife), and everything the refused
+   * life had filed stays invisible to a teammate's tripwire until the next
+   * Stop or SubagentStop lane — 0 of 6 pre-heal files in the review's V1b.
+   * The lane writes the life it swept here; a hook that finds it behind the
+   * state's life owes a sweep, and the first hook with the room pays it
+   * (connector-claude hooks/git-lane.ts sweepIfLifeMoved). Set to the life
+   * at register, so a fresh session owes nothing; absent or null on an
+   * older state reads as nothing owed either.
+   */
+  gitLaneSweptLife: z.string().nullable().optional(),
+  /**
    * The generated-target rule's counters (capture/generated.ts): how many of
    * this session's spooled targets each signal kept out of overlap as
    * mechanically generated and non-authoritative, how many a signal fired on
@@ -1370,6 +1383,9 @@ const routingFieldsOf = (previous: SessionState, state: SessionStateInput): Part
         startHead: previous.startHead ?? state.startHead ?? null,
         startBranches: previous.startBranches ?? state.startBranches ?? [],
         sessionTouchedAt: previous.sessionTouchedAt,
+        // ...and the life the lane last swept under (L10): a re-fire is the
+        // same life, and must neither owe a sweep nor forgive one.
+        ...(previous.gitLaneSweptLife === undefined ? {} : { gitLaneSweptLife: previous.gitLaneSweptLife }),
       }
     : {}),
   topicOverflowCount: previous.topicOverflowCount,
@@ -1861,13 +1877,30 @@ export const withGitTouches = (
     readonly skipped: boolean;
     /** How the lane's recorded paths were classified (capture/generated.ts). */
     readonly generated?: GeneratedTally;
+    /**
+     * The life the sweep ran under, when it ran and that life is still the
+     * state's (L10): what `gitLaneSweptLife` records. Absent — skipped, or
+     * the life moved under the sweep — leaves the record as it was.
+     */
+    readonly sweptLife?: string;
   },
 ): SessionState => ({
   ...withGeneratedTargets(withSeenTargets(state, outcome.captured), outcome.generated),
   gitTouchCount: state.gitTouchCount + outcome.captured.length,
   gitLaneSkipped: state.gitLaneSkipped + (outcome.skipped ? 1 : 0),
   gitLaneRan: state.gitLaneRan + (outcome.skipped ? 0 : 1),
+  ...(outcome.sweptLife === undefined ? {} : { gitLaneSweptLife: outcome.sweptLife }),
 });
+
+/**
+ * Whether a sweep is owed to the life the state names (L10): the lane last
+ * swept under another one — a heal moved the state — and nothing has swept
+ * since. An older state, which recorded no life, owes nothing.
+ */
+export const owesSweepToLife = (state: SessionState): boolean =>
+  state.gitLaneSweptLife !== undefined &&
+  state.gitLaneSweptLife !== null &&
+  state.gitLaneSweptLife !== state.crosscheckSessionId;
 
 /**
  * One capture's generated-target counts, added in. Absent leaves the state as
@@ -2597,6 +2630,7 @@ export const deriveSessionState = (
     gitTouchCount: 0,
     gitLaneSkipped: 0,
     gitLaneRan: 0,
+    gitLaneSweptLife: crosscheckSessionId,
     generatedTargets: NO_GENERATED,
     ghostNoticeCount: 0,
     ghostFireCount: 0,

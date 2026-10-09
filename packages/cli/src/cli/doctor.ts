@@ -188,8 +188,10 @@ import type { SeparationProbes } from "./doctor-hub-separation.ts";
 import {
   ISOLATED_BUNFIG_PATH,
   RUNTIME_ISOLATION_FLAGS,
+  bunStartupKeysIn,
   selfLaunch,
 } from "@crosscheck/connector-core/config/runtime-isolation.ts";
+import { restartedWithoutRuntimeKeys } from "@crosscheck/connector-core/config/clean-restart.ts";
 import { readForeignHubRefusals } from "@crosscheck/connector-core/state/foreign-hub.ts";
 import { readBriefingOmissions } from "@crosscheck/connector-core/state/briefing-omissions.ts";
 import { landedProbeCutsCheck } from "./landed-probe-cuts.ts";
@@ -418,6 +420,36 @@ const checkBunfig = async (
     }
   }
   return check("PASS", "bun request logging", "no debug logLevel found");
+};
+
+/** What one process start costs on a quiet machine: the second start every bun startup variable buys (measured, L12). */
+const RESTART_COST_MS = 75;
+
+/**
+ * BUN'S STARTUP VARIABLES IN THE SHELL (batch-2 integration review, L12).
+ * Any BUN_OPTIONS, BUN_CONFIG_* or BUN_INSPECT* a crosscheck process is
+ * started under restarts it without them (connector-core
+ * config/clean-restart.ts) — every hook, the statusline and the MCP server,
+ * a second process start each. The isolation stays as it is; this line says
+ * what it costs and which variable buys it, so the person can decide. Names
+ * only: a value could be a token (BUN_CONFIG_TOKEN), and crosscheck reads
+ * none. Doctor restarted the same way, so the names it was started without
+ * count beside the ones its own environment still shows (in-process, as the
+ * tests run it; the variables proven harmless appear in neither).
+ */
+const runtimeVariablesCheck = (env: Env): Check => {
+  const names = [...new Set([...bunStartupKeysIn(env), ...restartedWithoutRuntimeKeys()])].sort();
+  if (names.length === 0) {
+    return check("PASS", "runtime variables", "none of bun's startup variables is set in this shell");
+  }
+  const them = names.length === 1 ? "it" : "them";
+  return check(
+    "WARN",
+    "runtime variables",
+    `${names.join(", ")} ${names.length === 1 ? "is" : "are"} set in this shell: every crosscheck process — each hook, the statusline, the MCP server — ` +
+      `starts itself a second time without ${them}, about ${String(RESTART_COST_MS)} ms per start; unset ${them} for the agent's shell to save it ` +
+      `(crosscheck reads no value of ${names.length === 1 ? "it" : "theirs"})`,
+  );
 };
 
 interface SettingsInspection {
@@ -3998,6 +4030,7 @@ export const runDoctor = async (
             probe: { kind: "not-probed", why: "no hub configured" },
           }),
       bunfigCheck,
+      runtimeVariablesCheck(env),
       ...repoRuntime,
     ]);
   }
@@ -4369,6 +4402,7 @@ export const runDoctor = async (
     ...hubChecks,
     skewCheck,
     bunfigCheck,
+    runtimeVariablesCheck(env),
     ...repoRuntime,
     ...checkClaudeDerive(),
     ...checkCausalGuarantees(contradictedDeclarations),

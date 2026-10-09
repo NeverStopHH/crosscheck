@@ -19,10 +19,11 @@ import { gateTest } from "./expected.ts";
 import { CASE_TIMEOUT_MS, collisionBookings, crashedHooks, mentions } from "./gate-checks.ts";
 import type { GateContext } from "./gate-pilot.ts";
 import { agentTexts, personLines } from "./host.ts";
+import type { HookRun } from "./host.ts";
 import { startHub } from "./hub.ts";
 import type { TestHub } from "./hub.ts";
 import { bookingsOf } from "./observe.ts";
-import { OPTED_OUT_BRANCH, OPTED_OUT_SHARED_FILE, runOptedOutCase } from "./scenario-opted-out.ts";
+import { NICK_SHARED_EDIT_LABEL, OPTED_OUT_BRANCH, OPTED_OUT_FILES, OPTED_OUT_SHARED_FILE, runOptedOutCase } from "./scenario-opted-out.ts";
 import type { OptedOutWorld } from "./scenario-opted-out.ts";
 import { targetsOf } from "./team.ts";
 
@@ -31,6 +32,22 @@ type Register = (id: string, name: string, body: () => void | Promise<void>) => 
 const SHARED_NAME = OPTED_OUT_SHARED_FILE.split("/").at(-1) ?? OPTED_OUT_SHARED_FILE;
 /** An age or a last-seen: what says WHEN somebody was active ("2m ago", "last seen …"). */
 const LAST_ACTIVE = /\b\d+\s*[smhd]\s+ago\b|\blast seen\b/i;
+
+/**
+ * Nick's hook runs from the first subagent hook on one of Mike's files
+ * through the last run of his own edit of the shared file: the window in
+ * which a nameless teammate's ONE warning lands — on a subagent's PreToolUse,
+ * relayed to the person when the subagent returns, or on the main thread's
+ * own edit (P2.told).
+ */
+const fromFirstSubagentHitThroughSharedEdit = (world: OptedOutWorld): readonly HookRun[] => {
+  const runs = world.nickSession.runs();
+  const first = runs.findIndex(
+    (run) => run.agentId !== null && run.event === "PreToolUse" && OPTED_OUT_FILES.some((file) => run.filePath?.endsWith(file) === true),
+  );
+  const last = runs.findLastIndex((run) => run.label === NICK_SHARED_EDIT_LABEL);
+  return first < 0 || last < first ? [] : runs.slice(first, last + 1);
+};
 
 export const describeOptedOut = (ctx: GateContext): void => {
   describe(`P2 — Mike opted out: Nick is warned that a teammate is on the file, and told nothing of Mike [${ctx.profile.name}]`, () => {
@@ -70,14 +87,25 @@ export const describeOptedOut = (ctx: GateContext): void => {
       expect(crashedHooks([world().mikeSession, world().nickSession])).toEqual([]);
     });
 
-    // The owner's decision on I1. The loaded lane also accepts a dated booking that names the untold warning.
-    it("P2.told", `Nick's edit of ${SHARED_NAME}, which opted-out Mike works on right now, tells NICK a teammate is working on it`, async () => {
-      const lines = personLines(world().nickSharedEdit);
-      const told = lines.some((line) => line.includes(SHARED_NAME) && /\bteammate\b/i.test(line));
+    // The owner's decision on I1, as the coordinator read it (2026-10-09): a nameless
+    // teammate is ONE group, told once — the rule for a named one, whose group is their
+    // work context. Nick's subagents meet Mike's files first (mappingApi, MappingRow,
+    // index), so the person hears "A teammate recently worked on 3 files you also
+    // touched, e.g. index.ts" by relay, and the main thread's own edit of the shared
+    // file has nothing new to tell about the same teammate. Read from the first subagent
+    // hit through that edit, relay included: the line names a teammate and one of the
+    // files the hits were on. The loaded lane also accepts a dated booking.
+    it("P2.told", `Nick, whose subagents and then his own edit meet Mike's files while opted-out Mike works on them, is told a teammate is on them`, async () => {
+      const window = fromFirstSubagentHitThroughSharedEdit(world());
+      const lines = personLines(window);
+      const names = OPTED_OUT_FILES.map((file) => file.split("/").at(-1) ?? file);
+      const told = lines.some((line) => /\bteammate\b/i.test(line) && names.some((name) => line.includes(name)));
       const booked =
         ctx.profile.mayBookInsteadOfWarn &&
         collisionBookings(await bookingsOf(world().nick), world().nickSharedEditMoment).length > 0;
       expect(told || booked, JSON.stringify(lines)).toBe(true);
+      // ...and nothing he or his agent read in that window names Mike.
+      expect(mentions([...lines, ...agentTexts(window)], world().mike.name)).toBe(false);
     });
 
     // WHO: the warning is anonymous. (The team's work-context listing names Mike's work as it

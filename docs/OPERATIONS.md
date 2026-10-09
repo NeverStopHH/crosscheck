@@ -61,7 +61,7 @@ Opting out hides who you are, where you work (branch, topic) and when (heartbeat
 - **The tripwire** answers one nameless row while an opted-out developer is live on the file. The teammate's agent and person read "a teammate is working on <file> right now — talk to your team before you change it"; the statusline counts "1 teammate". Several opted-out developers on one file are still one row.
 - **The ghost check** answers a nameless count of the reader's own files an opted-out developer's unfinished work touches, shown in the briefing and to the person as "a teammate's work in progress also touches N of your files".
 - Neither carries a name, developer or session id, branch, topic, work-context id, heartbeat or any other time. A developer the reader muted still raises nothing.
-- Nameless is not unlinkable. The work contexts an opted-out developer publishes stay attributed in the briefing, with their creation age, as before. In a team of two, "a teammate" is therefore the other person.
+- Nameless is not unlinkable. The work contexts an opted-out developer publishes stay attributed in the briefing, in hints and in search results — without an age: her last touch is withheld, and the creation that is left would say when she was there. In a team of two, "a teammate" is therefore the other person.
 
 `crosscheck presence`, `crosscheck presence off` and doctor print the first sentence above, so a person reads it before opting out. Nothing needs setting; it starts with the hub and connector upgrade.
 

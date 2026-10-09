@@ -293,6 +293,38 @@ describe("the hint surface is hardened like the briefing and the MCP tools", () 
   });
 });
 
+/**
+ * NO AGE FOR AN AUTHOR WHO OPTED OUT (batch-2 integration review, M5). The
+ * hub withholds her last touch and the pointer fell back to the context's
+ * creation — a topic context is created the moment she first edits, so the
+ * fact said when she was there. A row the hub marked `locationWithheld`
+ * keeps its author, id, status and title, and carries no age fact at all.
+ */
+describe("a pointer to an opted-out author's context says no age", () => {
+  test("the withheld row drops the age fact and keeps every other", () => {
+    const text = renderPointerHint({
+      context: workContext({ developerName: "Mike", updatedAt: null, locationWithheld: true }),
+      claimCount: 0,
+      drift: null,
+      now: NOW,
+    });
+
+    expect(text).toContain("- Mike · work context wc_1 · status analyzing: «Refresh 500s after key rotation»");
+    expect(text).not.toMatch(/\b\d+[smhd] ago\b|unknown time/);
+  });
+
+  test("a row the hub did not mark keeps its age, read from the same instant", () => {
+    const text = renderPointerHint({
+      context: workContext({ developerName: "Mike", updatedAt: null }),
+      claimCount: 0,
+      drift: null,
+      now: NOW,
+    });
+
+    expect(text).toContain("- Mike · work context wc_1 · status analyzing · 2h ago: «Refresh 500s after key rotation»");
+  });
+});
+
 describe("tripwire reason (ask-mode, never deny)", () => {
   test("a large change through the file is qualified on the overlap line, never left out", () => {
     // Arrange: the hub ranks a large change after the focused rows and says

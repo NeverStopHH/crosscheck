@@ -20,7 +20,7 @@
  */
 import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
 import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
-import { ownCwdRoot, runGitLane } from "./git-lane.ts";
+import { ownCwdRoot, runGitLane, sweepIfLifeMoved } from "./git-lane.ts";
 import { healerFor } from "./heal.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
@@ -55,5 +55,8 @@ export const handleSubagentStop = async (
     { sessionId: current.crosscheckSessionId, developerId: current.developerId, heal: healerFor(ctx) },
     budget.spareMs(),
   );
+  // A heal in that flush moved the life away from the lane above (L10):
+  // sweep again under the new life while the spare budget covers it.
+  await sweepIfLifeMoved(ctx, budget);
   return "";
 };

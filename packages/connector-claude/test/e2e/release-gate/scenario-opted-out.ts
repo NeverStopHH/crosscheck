@@ -42,6 +42,8 @@ export const OPTED_OUT_FILES = [
   "apps/practice/mapping/index.ts",
 ] as const;
 export const OPTED_OUT_SHARED_FILE = OPTED_OUT_FILES[0];
+/** The label on Nick's hook runs while his main thread edits the shared file (P2.told reads up to its last run). */
+export const NICK_SHARED_EDIT_LABEL = "nick-shared-edit";
 /** Mike's edit after Nick's turn: a file Nick's subagent edited. */
 const MIKE_LATER_FILE = OPTED_OUT_FILES[1];
 
@@ -109,7 +111,7 @@ export const runOptedOutCase = async (hub: TestHub, profile: GateProfile): Promi
     await nickSession.prompt("fix the mapping grid row height and its api");
     await nickSubagents(nickSession, nickAt.worktree, profile);
     await nickSession.settle();
-    nickSession.label("nick-shared-edit");
+    nickSession.label(NICK_SHARED_EDIT_LABEL);
     const shared = await timed(async () =>
       nickSession.edit(join(nickAt.worktree, OPTED_OUT_SHARED_FILE), fileSource(OPTED_OUT_SHARED_FILE, "nick fix")),
     );

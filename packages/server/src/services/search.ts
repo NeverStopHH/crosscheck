@@ -23,6 +23,7 @@
  */
 import {
   and,
+  asc,
   cosineDistance,
   eq,
   inArray,
@@ -226,6 +227,13 @@ export interface SearchResultView {
    * the searcher asked for, which every surface rendering it must label.
    */
   readonly derivedOnly: boolean;
+  /**
+   * The owner opted out of presence, so her last touch is withheld from
+   * this reader (batch-2 integration review, M5) — the listing's word
+   * (services/diagnosis.ts), on the search row too, so a connector prints
+   * no age off the creation that is left.
+   */
+  readonly locationWithheld?: true;
 }
 
 export interface SearchResponse {
@@ -644,7 +652,9 @@ const listFtsTier = async (
       workContexts.updatedAt,
       agentSessions.developerId,
     )
-    .orderBy(sql`max(ts_rank(${claims.tsv}, ${tsquery})) DESC`)
+    // Equal ranks to the context id (integration review L7): the aggregate's
+    // own order is the hash table's, and the LIMIT cut a tie by it.
+    .orderBy(sql`max(ts_rank(${claims.tsv}, ${tsquery})) DESC`, asc(claims.workContextId))
     .limit(TIER_CANDIDATES);
 
   const claimMatches = claimRows.map((row) => ({ ...row, derivedOnly: !row.declared }));
@@ -868,7 +878,8 @@ const hydrate = async (
     }
     const solvedAt = solvedInfo.get(row.id);
     return [
-      projectRow(hidden, {
+      {
+      ...projectRow(hidden, {
         developerId: row.developerId,
         titleFacts: { repo: row.repo, branch: row.branch, titleSource: row.titleSource },
         kind: "work_context",
@@ -889,6 +900,8 @@ const hydrate = async (
         solvedAt: solvedAt === undefined ? null : solvedAt.toISOString(),
         derivedOnly: entry.lexicalDerivedOnly === true,
       }),
+      ...(hidden.has(row.developerId) ? { locationWithheld: true as const } : {}),
+      },
     ];
   });
 };

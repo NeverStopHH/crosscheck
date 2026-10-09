@@ -3445,8 +3445,8 @@ export const MUTATIONS: readonly Mutation[
     // carry this guard is the second lock and no test can see it alone.
     label: "the hint wire ships an unpromoted draft's body",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "        pushableClaimCondition(),\n      ),\n    )\n    .orderBy(desc(claims.createdAt))",
-    to: "      ),\n    )\n    .orderBy(desc(claims.createdAt))",
+    from: "        pushableClaimCondition(),\n      ),\n    )\n    // Equally old claims to their id, never to the order the scan met them\n    // in (integration review L7): the window and the hint read them as stored.\n    .orderBy(desc(claims.createdAt), asc(claims.id))",
+    to: "      ),\n    )\n    .orderBy(desc(claims.createdAt), asc(claims.id))",
     test: `${SERVER}/test/hints.test.ts`,
     because:
       "a machine guess nobody reviewed — including a ghost draft a THIRD " +
@@ -24447,8 +24447,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "search names an opted-out teammate's branch through a fallback title",
     file: `${SERVER}/src/services/search.ts`,
-    from: "      projectRow(hidden, {\n        developerId: row.developerId,\n        titleFacts: { repo: row.repo, branch: row.branch, titleSource: row.titleSource },",
-    to: "      projectRow(new Set<string>(), {\n        developerId: row.developerId,\n        titleFacts: { repo: row.repo, branch: row.branch, titleSource: row.titleSource },",
+    from: "      ...projectRow(hidden, {\n        developerId: row.developerId,\n        titleFacts: { repo: row.repo, branch: row.branch, titleSource: row.titleSource },",
+    to: "      ...projectRow(new Set<string>(), {\n        developerId: row.developerId,\n        titleFacts: { repo: row.repo, branch: row.branch, titleSource: row.titleSource },",
     test: `${SERVER}/test/live-location-privacy.test.ts`,
     because:
       "search_related_work hands a colleague `feat/robin-relocates-to-zurich " +
@@ -28137,7 +28137,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the legacy line leaves out the rejections a 0.10 ledger kept without a cause",
     file: `${CORE}/src/spool/loss-report.ts`,
-    from: '  const rejected = Math.max(0, (local.drops.byReason["rejected"] ?? 0) - causes);',
+    from: '  const rejected = Math.max(0, (local.drops.byReason["rejected"] ?? 0) - causedRejections(local));',
     to: "  const rejected = 0;",
     test: `${CORE}/test/loss-report.test.ts`,
     because: "the 1.0 release gate: the 0.10 late-write losses read only as this connector's rejections, never as what was lost before the fix",
@@ -35511,7 +35511,7 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the npm shim hands bun a host's runtime variables",
     file: "packaging/bin/crosscheck.cjs",
-    from: '      { stdio: "inherit", env: withoutRuntimeInjection(process.env) },',
+    from: '      { stdio: "inherit", env: restartedEnv(process.env) },',
     to: '      { stdio: "inherit" },',
     test: `${CLI}/test/e2e/bait-repo-isolation.e2e.test.ts`,
     because: "a .mcp.json env block's BUN_OPTIONS preloads the repo's code in the bun the shim starts",
@@ -37020,6 +37020,112 @@ export const MUTATIONS: readonly Mutation[
     test: `${CORE}/test/repo-identity-cache.test.ts`,
     because: "every hook's repo stamp stats and hashes the developer's own ~/.gitconfig and ~/.ssh/config in a test the guard was meant to keep off them",
   },
+  // THE BATCH-2 INTEGRATION REVIEW'S LOW FIXES AND ITS PRIVACY REMAINDER
+  // (fix/b2-integration-lows, 2026-10-09): L5, M5.
+  {
+    label: "a cause-less rejection is counted on the rejected line too",
+    file: `${CORE}/src/spool/loss-report.ts`,
+    from: '  const records = Math.min(local.drops.byReason["rejected"] ?? 0, causedRejections(local));',
+    to: '  const records = local.drops.byReason["rejected"] ?? 0;',
+    test: `${CORE}/test/loss-report.test.ts`,
+    because: "L5: status printed the same three records twice on its one losses line, and its parts no longer summed",
+  },
+  {
+    label: "the briefing dates an opted-out teammate's work by its creation",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "  isLocationWithheld(topic) ? `status ${topic.status}` : `${formatAge(topic.ageMs)} ago, status ${topic.status}`;",
+    to: "  `${formatAge(topic.ageMs)} ago, status ${topic.status}`;",
+    test: `${CORE}/test/briefing-withheld-age.test.ts`,
+    because: "M5: \"Mike, 2s ago\" on a row the hub marked withheld says when she was there",
+  },
+  {
+    label: "a pointer hint dates an opted-out author's context by its creation",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "    ...(context.locationWithheld === true ? [] : [ageLabel(context.updatedAt ?? context.createdAt, now)]),",
+    to: "    ageLabel(context.updatedAt ?? context.createdAt, now),",
+    test: `${CORE}/test/hint-render.test.ts`,
+    because: "M5: the pointer's age fact fell back to the creation of a topic she opened the moment she first edited",
+  },
+  {
+    label: "search_related_work dates an opted-out owner's row by its creation",
+    file: `${CORE}/src/mcp/tools/search-related-work.ts`,
+    from: "        ageMs: entry.locationWithheld === true ? null : Math.max(0, nowMs - timestampOf(entry)),",
+    to: "        ageMs: Math.max(0, nowMs - timestampOf(entry)),",
+    test: `${CORE}/test/mcp-tools.test.ts`,
+    because: "M5: the search line said \"2s ago\" about a teammate who turned presence off",
+  },
+  {
+    label: "the search line prints an age it was handed none for",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: "    ...(hit.ageMs === null ? [] : [`${formatAge(hit.ageMs)} ago`]),",
+    to: "    `${formatAge(hit.ageMs ?? 0)} ago`,",
+    test: `${CORE}/test/mcp-render.test.ts`,
+    because: "M5: a withheld row's line would read \"0s ago\" — a guess dressed as the freshest thing on the page",
+  },
+  {
+    label: "the hub's hint candidates carry no withheld mark for a hidden owner",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "      ...(hidden.has(row.developerId) ? { locationWithheld: true as const } : {}),\n    },",
+    to: "    },",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because: "M5: without the mark a connector's pointer prints her work's creation as an age",
+  },
+  {
+    label: "the hub's search results carry no withheld mark for a hidden owner",
+    file: `${SERVER}/src/services/search.ts`,
+    from: "      ...(hidden.has(row.developerId) ? { locationWithheld: true as const } : {}),\n      },",
+    to: "      },",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because: "M5: without the mark search_related_work prints her work's creation as an age",
+  },
+  {
+    label: "tied claim matches of the hint pool fall to the aggregate's order",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "        .orderBy(sql`max(ts_rank(${words.words}, ${tsquery})) DESC`, asc(claims.workContextId))",
+    to: "        .orderBy(sql`max(ts_rank(${words.words}, ${tsquery})) DESC`)",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because: "L7: the pool's LIMIT cut equally ranked trees by the hash table's order, which an update of hers that changed no value reordered",
+  },
+  {
+    label: "a tree's equally old claims are windowed in the order they were stored",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    .orderBy(desc(claims.createdAt), asc(claims.id))",
+    to: "    .orderBy(desc(claims.createdAt))",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because: "L7: which of a tree's claims a hint shows followed where the rows sat on disk",
+  },
+  {
+    label: "the watch-mode variable buys every hook a restart like the rest",
+    file: `${CORE}/src/config/runtime-isolation.ts`,
+    from: 'const HARMLESS_BUN_STARTUP_KEYS: ReadonlySet<string> = new Set(["BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD"]);',
+    to: "const HARMLESS_BUN_STARTUP_KEYS: ReadonlySet<string> = new Set([]);",
+    test: `${CORE}/test/runtime-isolation.test.ts`,
+    because: "L12: a variable proven to load no code, change no config, preload nothing and redirect nothing costs every hook a second process start",
+  },
+  {
+    label: "a restarted process is not told which variables it was started without",
+    file: `${CORE}/src/config/clean-restart.ts`,
+    from: '      [RESTARTED_WITHOUT_ENV]: bunStartupKeysIn(process.env).join(","),\n',
+    to: "",
+    test: `${CORE}/test/runtime-isolation.test.ts`,
+    because: "L12: doctor, restarted like every entry, has nothing to name — the cost stays invisible",
+  },
+  {
+    label: "doctor never names the variables that make every hook restart",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "  const names = [...new Set([...bunStartupKeysIn(env), ...restartedWithoutRuntimeKeys()])].sort();\n  if (names.length === 0) {",
+    to: "  const names = [...new Set([...bunStartupKeysIn(env), ...restartedWithoutRuntimeKeys()])].sort();\n  if (names.length >= 0) {",
+    test: `${CLI}/test/doctor.test.ts`,
+    because: "L12: a BUN_CONFIG_REGISTRY in the shell costs every hook about 75 ms, and nothing says so",
+  },
+  {
+    label: "a healed life waits for the next Stop before its files are filed again",
+    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
+    from: '  if (owesSweep && budget.spareMs() >= GIT_TOUCHES_TIMEOUT_MS) {\n    const { sweepIfLifeMoved } = await import("./git-lane.ts");\n    await sweepIfLifeMoved(ctx, budget);\n  }\n',
+    to: "",
+    test: `${CONNECTOR}/test/e2e/heal-sweeps-again.e2e.test.ts`,
+    because: "L10: the refused life's files sit on the hub under an ended life, invisible to every teammate's tripwire, for the rest of the turn",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -37158,7 +37264,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-subagent-return.test.ts 10
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
  * PRINTS: packages/cli/test/doctor-verdict-legality.test.ts 2
- * PRINTS: packages/cli/test/doctor.test.ts 12
+ * PRINTS: packages/cli/test/doctor.test.ts 13
  * PRINTS: packages/cli/test/drafted-gestures-cli.test.ts 6
  * PRINTS: packages/cli/test/e2e/bait-repo-isolation.e2e.test.ts 7
  * PRINTS: packages/cli/test/e2e/clean-restart.e2e.test.ts 4
@@ -37267,6 +37373,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/detached-title.test.ts 3
  * PRINTS: packages/connector-claude/test/double-wiring.test.ts 1
  * PRINTS: packages/connector-claude/test/draft-nudge-hook.test.ts 2
+ * PRINTS: packages/connector-claude/test/e2e/heal-sweeps-again.e2e.test.ts 1
  * PRINTS: packages/connector-claude/test/e2e/release-gate-opted-out.e2e.test.ts 2
  * PRINTS: packages/connector-claude/test/failure-hook.test.ts 2
  * PRINTS: packages/connector-claude/test/fingerprint.test.ts 1
@@ -37335,6 +37442,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/briefing-presence-notice.test.ts 3
  * PRINTS: packages/connector-core/test/briefing-presence-topics.test.ts 6
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 5
+ * PRINTS: packages/connector-core/test/briefing-withheld-age.test.ts 1
  * PRINTS: packages/connector-core/test/capture-across-lives.test.ts 11
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 5
  * PRINTS: packages/connector-core/test/capture-losses.test.ts 7
@@ -37398,7 +37506,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-intent-fallback.test.ts 8
  * PRINTS: packages/connector-core/test/hint-old-hub-floor.test.ts 15
  * PRINTS: packages/connector-core/test/hint-query-window.test.ts 5
- * PRINTS: packages/connector-core/test/hint-render.test.ts 5
+ * PRINTS: packages/connector-core/test/hint-render.test.ts 6
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
  * PRINTS: packages/connector-core/test/hint-substance-flow.test.ts 12
  * PRINTS: packages/connector-core/test/hint-substance-render.test.ts 3
@@ -37433,16 +37541,16 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/ledger-concurrency.test.ts 5
  * PRINTS: packages/connector-core/test/loopback-bind.test.ts 1
  * PRINTS: packages/connector-core/test/loss-ledger.test.ts 5
- * PRINTS: packages/connector-core/test/loss-report.test.ts 38
+ * PRINTS: packages/connector-core/test/loss-report.test.ts 39
  * PRINTS: packages/connector-core/test/mark-hint-outcome-tool.test.ts 20
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 5
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3
- * PRINTS: packages/connector-core/test/mcp-render.test.ts 16
+ * PRINTS: packages/connector-core/test/mcp-render.test.ts 17
  * PRINTS: packages/connector-core/test/mcp-seq-e2e.test.ts 2
  * PRINTS: packages/connector-core/test/mcp-seq.test.ts 8
  * PRINTS: packages/connector-core/test/mcp-solved-render.test.ts 4
- * PRINTS: packages/connector-core/test/mcp-tools.test.ts 4
+ * PRINTS: packages/connector-core/test/mcp-tools.test.ts 5
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
  * PRINTS: packages/connector-core/test/network-guard.test.ts 15
@@ -37472,7 +37580,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/repo-ssh-determinism.test.ts 2
  * PRINTS: packages/connector-core/test/rest-unchecked-scope.test.ts 3
  * PRINTS: packages/connector-core/test/review-draft.test.ts 2
- * PRINTS: packages/connector-core/test/runtime-isolation.test.ts 9
+ * PRINTS: packages/connector-core/test/runtime-isolation.test.ts 11
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
@@ -37652,7 +37760,7 @@ interface Outcome {
  * PRINTS: packages/server/test/live-location-privacy.test.ts 28
  * PRINTS: packages/server/test/live-location-projection.test.ts 9
  * PRINTS: packages/server/test/live-location-prose.test.ts 3
- * PRINTS: packages/server/test/live-location-surfaces.test.ts 48
+ * PRINTS: packages/server/test/live-location-surfaces.test.ts 52
  * PRINTS: packages/server/test/live-location-told.test.ts 1
  * PRINTS: packages/server/test/live-location-topics.test.ts 5
  * PRINTS: packages/server/test/location-index-boot.test.ts 6

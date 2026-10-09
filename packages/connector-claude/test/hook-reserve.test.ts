@@ -67,10 +67,14 @@
  * bounded by what the envelope spares (hooks/collision-relay.ts) — and twice
  * by the recheck every 30 s rest owes (hooks/rest-recheck.ts; round 3, F-M2):
  * each tripwire call is bounded the same way, and a hook with nothing to
- * spare leaves the debt for the next one instead of asking at all:
+ * spare leaves the debt for the next one instead of asking at all — and
+ * three times by the sweep a healed life is owed (hooks/git-lane.ts
+ * sweepIfLifeMoved; batch-2 review, L10): PostToolUse asks whether the
+ * envelope spares a lane before it loads the lane's modules, the sweep
+ * asks once more before it runs, and its flush carries what is left:
  *
  * VERIFY: grep -rn 'budget\.spareMs()' packages/connector-claude/src | wc -l | tr -d ' '
- * PRINTS: 16
+ * PRINTS: 19
  */
 import { describe, expect, test } from "bun:test";
 

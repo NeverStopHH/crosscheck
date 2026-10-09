@@ -1463,7 +1463,13 @@ export const renderDiagnosis = (
 /** One work context the hub search matched, with its ages at query time. */
 export interface SearchHit {
   readonly entry: SearchResultEntry;
-  readonly ageMs: number;
+  /**
+   * Since the context's last touch, or its creation; null for a row whose
+   * owner opted out of presence (batch-2 integration review, M5): the hub
+   * withheld her last touch, and the creation it left says when she was
+   * there, so the line prints no age at all.
+   */
+  readonly ageMs: number | null;
   /** Age of the solving claim, for solved results; the tool computes it. */
   readonly solvedAgeMs?: number | undefined;
 }
@@ -1491,7 +1497,7 @@ const searchLine = (hit: SearchHit): string => {
   const facts = [
     `- ${safeId(hit.entry.id)}`,
     author.length === 0 ? UNNAMED_AUTHOR : author,
-    `${formatAge(hit.ageMs)} ago`,
+    ...(hit.ageMs === null ? [] : [`${formatAge(hit.ageMs)} ago`]),
     `status ${bare(hit.entry.status)}`,
     ...solvedFact(hit),
     // A pull the searcher asked for, never a vouched finding: the hub found

@@ -669,8 +669,19 @@ export const moreTopicsTail = (hidden: number, atLeast: boolean): string =>
 const framedTopicLine = (facts: string, label: string): string =>
   `${facts}: «${label}»`;
 
+/**
+ * NO AGE FOR A TEAMMATE WHO OPTED OUT (batch-2 integration review, M5). The
+ * hub withholds her last touch and marks the row (`locationWithheld`); the
+ * one instant left on it is the work's creation, and a topic context is
+ * created the moment she first edits — so "Mike, 2s ago" said when she was
+ * there. The age still orders and windows her rows (the hub ranks her work
+ * by creation too); it is only never printed.
+ */
+const isLocationWithheld = (topic: Topic<ContextTopicRow>): boolean =>
+  topic.rows.some((row) => row.context.locationWithheld === true);
+
 const topicFacts = (topic: Topic<ContextTopicRow>): string =>
-  `${formatAge(topic.ageMs)} ago, status ${topic.status}`;
+  isLocationWithheld(topic) ? `status ${topic.status}` : `${formatAge(topic.ageMs)} ago, status ${topic.status}`;
 
 /**
  * One topic, complete: the line it always was, with the session count in

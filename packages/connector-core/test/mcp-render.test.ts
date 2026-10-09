@@ -116,7 +116,7 @@ const workContext = (
   ...overrides,
 });
 
-const hit = (entry: WorkContextEntry, ageMs: number): SearchHit => ({
+const hit = (entry: WorkContextEntry, ageMs: number | null): SearchHit => ({
   entry,
   ageMs,
 });
@@ -390,6 +390,22 @@ describe("renderDiagnosis", () => {
     // Assert
     expect(contextLine.split(" · status ").length - 1).toBe(1);
     expect(edgeLine).not.toContain(" · status ");
+  });
+
+  test("a searched work context of an opted-out author prints no age (integration review M5)", () => {
+    // Arrange: the hub withheld her last touch and marked the row; the tool
+    // then hands the renderer no age at all, rather than the creation's.
+    const rendered = renderSearchResults(
+      [hit(workContext({ developerName: "Mike", locationWithheld: true }), null), hit(workContext({ id: "wc_02" }), 60_000)],
+      "login",
+    );
+    const withheld = rendered.split("\n").find((entry) => entry.startsWith("- wc_01")) ?? "";
+    const dated = rendered.split("\n").find((entry) => entry.startsWith("- wc_02")) ?? "";
+
+    // Assert
+    expect(withheld).toStartWith("- wc_01 · Mike · status analyzing");
+    expect(withheld).not.toMatch(/\b\d+[smhd] ago\b/);
+    expect(dated).toStartWith("- wc_02 · Nick · 1m ago · status analyzing");
   });
 
   test("a searched work context's author cannot mint a field either", () => {

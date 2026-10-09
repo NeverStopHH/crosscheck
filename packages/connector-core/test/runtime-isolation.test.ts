@@ -16,6 +16,8 @@ import { resolveCommandPrefix, resolveMcpLauncher } from "../src/config/launcher
 import {
   ISOLATED_BUNFIG_PATH,
   RUNTIME_ISOLATION_FLAGS,
+  bunStartupKeysIn,
+  hasBunStartupKey,
   isRuntimeInjectionKey,
   selfLaunch,
   selfSpawnCmd,
@@ -137,6 +139,17 @@ describe("environment that configures the runtime (review round 2, N2)", () => {
     expect(ORDINARY.filter(isRuntimeInjectionKey)).toEqual([]);
   });
 
+  test("the watch-mode variable is proven harmless: no restart, not stripped, never named (integration review L12)", () => {
+    // Arrange: the one allow-listed name beside two that buy a restart
+    const env = { PATH: "/bin", BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD: "1", BUN_OPTIONS: "--smol", BUN_CONFIG_REGISTRY: "https://registry.example.test" };
+
+    // Act + Assert
+    expect(isRuntimeInjectionKey("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD")).toBe(false);
+    expect(hasBunStartupKey({ PATH: "/bin", BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD: "1" })).toBe(false);
+    expect(bunStartupKeysIn(env)).toEqual(["BUN_CONFIG_REGISTRY", "BUN_OPTIONS"]);
+    expect(withoutRuntimeInjection(env)).toEqual({ PATH: "/bin", BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD: "1" });
+  });
+
   test("is left out of what a child or a worker is given", () => {
     // Arrange
     const env = { PATH: "/bin", BUN_OPTIONS: "--preload ./x.ts", BUN_CONFIG_VERBOSE_FETCH: "curl", NODE_OPTIONS: "--require ./y.js", UNSET: undefined };
@@ -181,9 +194,11 @@ describe("environment that configures the runtime (review round 2, N2)", () => {
       await writeFile(
         entry,
         `import ${JSON.stringify(new URL("../src/config/clean-runtime.ts", import.meta.url).pathname)};\n` +
+          `import { restartedWithoutRuntimeKeys } from ${JSON.stringify(new URL("../src/config/clean-restart.ts", import.meta.url).pathname)};\n` +
           "const stdin = await Bun.stdin.text();\n" +
           "console.log(JSON.stringify({ execArgv: process.execArgv, args: process.argv.slice(2), stdin, " +
-          "bunConfig: process.env.BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD ?? null, nodeOptions: process.env.NODE_OPTIONS ?? null }));\n" +
+          "bunConfig: process.env.BUN_CONFIG_MAX_HTTP_REQUESTS ?? null, watch: process.env.BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD ?? null, " +
+          "nodeOptions: process.env.NODE_OPTIONS ?? null, restartedWithout: restartedWithoutRuntimeKeys(), marker: process.env.CROSSCHECK_RESTARTED_WITHOUT ?? null }));\n" +
           "process.exit(3);\n",
         "utf8",
       );
@@ -201,18 +216,39 @@ describe("environment that configures the runtime (review round 2, N2)", () => {
     }
   };
 
-  test("a bun startup variable restarts the entry once: isolated, without it, same args, stdin and exit code", async () => {
+  test("a bun startup variable restarts the entry once: isolated, without it, same args, stdin and exit code — and told its name", async () => {
     // Act
-    const run = await runEntry({ BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD: "1" });
+    const run = await runEntry({ BUN_CONFIG_MAX_HTTP_REQUESTS: "64" });
 
-    // Assert
+    // Assert: the restarted process knows the NAME it was started without (doctor prints it), and the marker itself is gone
     expect(run.exitCode).toBe(3);
     expect(run.seen).toEqual({
       execArgv: [...RUNTIME_ISOLATION_FLAGS],
       args: ["first", "second"],
       stdin: "the payload",
       bunConfig: null,
+      watch: null,
       nodeOptions: null,
+      restartedWithout: ["BUN_CONFIG_MAX_HTTP_REQUESTS"],
+      marker: null,
+    });
+  });
+
+  test("the watch-mode variable alone costs no restart and stays (integration review L12)", async () => {
+    // Act
+    const run = await runEntry({ BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD: "1" });
+
+    // Assert — started plain: no flags, the variable still there, nothing to report
+    expect(run.exitCode).toBe(3);
+    expect(run.seen).toEqual({
+      execArgv: [],
+      args: ["first", "second"],
+      stdin: "the payload",
+      bunConfig: null,
+      watch: "1",
+      nodeOptions: null,
+      restartedWithout: [],
+      marker: null,
     });
   });
 
@@ -222,7 +258,16 @@ describe("environment that configures the runtime (review round 2, N2)", () => {
 
     // Assert — started plain, so no restart means no flags
     expect(run.exitCode).toBe(3);
-    expect(run.seen).toEqual({ execArgv: [], args: ["first", "second"], stdin: "the payload", bunConfig: null, nodeOptions: null });
+    expect(run.seen).toEqual({
+      execArgv: [],
+      args: ["first", "second"],
+      stdin: "the payload",
+      bunConfig: null,
+      watch: null,
+      nodeOptions: null,
+      restartedWithout: [],
+      marker: null,
+    });
   });
 
   test("is stripped by the npm shim with the same set", async () => {
@@ -236,7 +281,10 @@ describe("environment that configures the runtime (review round 2, N2)", () => {
     // Assert
     expect(literal.length).toBeGreaterThan(0);
     expect([...INJECTION, ...ORDINARY].filter((name) => shimKey.test(name))).toEqual(INJECTION);
-    expect(shim).toContain('{ stdio: "inherit", env: withoutRuntimeInjection(process.env) }');
+    expect(shim).toContain('{ stdio: "inherit", env: restartedEnv(process.env) }');
+    // ...and names what it stripped for the restarted bun, as clean-restart.ts does (L12).
+    expect(shim).toContain('const RESTARTED_WITHOUT_ENV = "CROSSCHECK_RESTARTED_WITHOUT";');
+    expect(shim).toContain("child[RESTARTED_WITHOUT_ENV] = names.join(\",\");");
   });
 });
 
