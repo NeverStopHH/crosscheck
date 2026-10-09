@@ -14,7 +14,6 @@ import {
   LARGE_WORD,
   SILENT,
   SWEEP_TARGETS,
-  bookedLines,
   collisionBookings,
   collisionNoise,
   isQualifiedAsLarge,
@@ -27,6 +26,7 @@ import { gitIn } from "./git.ts";
 import { agentTexts, personLines } from "./host.ts";
 import { startHub } from "./hub.ts";
 import type { TestHub } from "./hub.ts";
+import { bookedLines } from "./observe.ts";
 import { N5_SHARED_FILE, runLandedCase, runSelfCase, runSweepCase } from "./scenario-boundaries.ts";
 import type { LandedWorld, SelfWorld, SweepWorld } from "./scenario-boundaries.ts";
 import { GENERATED_CLASSES, runGeneratedCase } from "./scenario-generated.ts";

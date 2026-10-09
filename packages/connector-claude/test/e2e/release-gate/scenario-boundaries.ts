@@ -21,6 +21,7 @@ import type { Person } from "./git.ts";
 import { openSession } from "./host.ts";
 import type { HookRun, HostSession } from "./host.ts";
 import type { TestHub } from "./hub.ts";
+import { hooksCut } from "./observe.ts";
 import { GENEROUS } from "./profile.ts";
 import type { GateProfile } from "./profile.ts";
 import { TINA } from "./scenario-long-session.ts";
@@ -313,12 +314,17 @@ export const runSweepCase = async (hub: TestHub, profile: GateProfile = GENEROUS
     { cwd: mikeAt.worktree },
   );
   // Turn after turn: each Stop's git lane takes the next slice of the sweep.
+  // The sweep is taken up when a turn whose lane RAN adds nothing; a turn whose
+  // lane was cut or skipped (booked `hook_timed_out`, as a starved machine
+  // does) says nothing about that, and the next turn tries again.
   const counts: number[] = [];
   for (let turn = 0; turn < MAX_SWEEP_TURNS; turn += 1) {
+    const cutBefore = await hooksCut(mike);
     await mikeSession.stop();
     await mikeSession.settle();
     counts.push(await mikeTargets(hub, repo));
-    if (counts.length > 1 && counts.at(-1) === counts.at(-2)) {
+    const laneRan = (await hooksCut(mike)) === cutBefore;
+    if (laneRan && counts.length > 1 && counts.at(-1) === counts.at(-2)) {
       break;
     }
     await mikeSession.bash("bunx prettier@3 --check .", async () => undefined, { cwd: mikeAt.worktree });

@@ -25,7 +25,6 @@ import {
   SILENT,
   SOURCES_WITHOUT_EMITTER,
   agentEventOf,
-  bookedLines,
   collisionBookings,
   collisionNoise,
   collisionTextsFor,
@@ -40,6 +39,7 @@ import { gitIn } from "./git.ts";
 import { agentTexts, personLines } from "./host.ts";
 import { dumpDatabase } from "./hub.ts";
 import type { TestHub } from "./hub.ts";
+import { bookedLines } from "./observe.ts";
 import type { GateProfile } from "./profile.ts";
 import { MIKE_AFTER_RESUME_FILES, MIKE_BRANCH, STALE_BRANCH, TOPIC_BRANCH, runLongSessionCase } from "./scenario-long-session.ts";
 import type { LongSessionPlan, LongSessionWorld } from "./scenario-long-session.ts";

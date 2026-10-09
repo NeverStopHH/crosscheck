@@ -4,9 +4,6 @@
  * what "silent" means for a negative control, what the hub answered Mike's
  * own tripwire asks, and — for the loaded lane — what a connector BOOKED.
  */
-import { readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
-
 import { GHOST_SECTION_HEADER } from "@crosscheck/connector-core/briefing/ghost.ts";
 
 import { agentTexts, personLines } from "./host.ts";
@@ -146,39 +143,6 @@ export const agentEventOf = (answer: TripwireAnswer): CoverageRow | undefined =>
 export const overlapFileCount = (statusline: string): number => {
   const match = /overlap: [^·]*· (\d+) files?/.exec(statusline);
   return match === null ? 0 : Number(match[1]);
-};
-
-/**
- * EVERY LINE A CONNECTOR BOOKED in its home's ledgers — the loss ledger, every
- * omission ledger, the spool's drop records — as `<file>: <kind or reason>`.
- * Read generically, by file, so a ledger a fixing branch adds is read too.
- * The loaded lane's "or a booked loss says why" compares two of these.
- */
-export const bookedLines = async (developer: GateDeveloper): Promise<readonly string[]> => {
-  const entries = await readdir(developer.home, { recursive: true, withFileTypes: true }).catch(() => []);
-  const spool = `${join(developer.home, "spool")}/`;
-  const ledgers = entries
-    .filter((entry) => entry.isFile() && (entry.name.endsWith(".jsonl") || entry.name.endsWith(".drops")))
-    .map((entry) => join(entry.parentPath, entry.name))
-    .filter((path) => !path.startsWith(spool) || path.endsWith(".drops"));
-  const lines = await Promise.all(
-    ledgers.map(async (path) =>
-      (await readFile(path, "utf8").catch(() => ""))
-        .split("\n")
-        .filter((line) => line.trim().length > 0)
-        .map((line) => `${path.slice(developer.home.length + 1)}: ${kindOf(line)}`),
-    ),
-  );
-  return lines.flat();
-};
-
-const kindOf = (line: string): string => {
-  try {
-    const parsed = JSON.parse(line) as Readonly<Record<string, unknown>>;
-    return String(parsed["kind"] ?? parsed["reason"] ?? parsed["type"] ?? "?");
-  } catch {
-    return line.slice(0, 80);
-  }
 };
 
 /** A booking about an edit's collision warning: a rest left unchecked, a tripwire cut or unanswered, a relay or notice lost. */
