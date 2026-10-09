@@ -168,7 +168,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 3694
+    # PRINTS: 3696
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -226,7 +226,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/pilot-label-render.ts 1
     # PRINTS: packages/cli/src/cli/pilot-label.ts 8
     # PRINTS: packages/cli/src/cli/pilot-mark.ts 4
-    # PRINTS: packages/cli/src/cli/pilot-mine-render.ts 14
+    # PRINTS: packages/cli/src/cli/pilot-mine-render.ts 15
     # PRINTS: packages/cli/src/cli/pilot-mine.ts 1
     # PRINTS: packages/cli/src/cli/pilot-render.ts 37
     # PRINTS: packages/cli/src/cli/pilot.ts 3
@@ -593,7 +593,7 @@ jobs:
     # PRINTS: packages/server/src/services/generated-targets.ts 2
     # PRINTS: packages/server/src/services/ghost-overlap.ts 19
     # PRINTS: packages/server/src/services/hint-deliveries.ts 6
-    # PRINTS: packages/server/src/services/hint-outcome-view.ts 17
+    # PRINTS: packages/server/src/services/hint-outcome-view.ts 18
     # PRINTS: packages/server/src/services/hint-outcomes.ts 21
     # PRINTS: packages/server/src/services/hints.ts 76
     # PRINTS: packages/server/src/services/hub-install.ts 2
@@ -815,7 +815,7 @@ jobs:
     # PRINTS: held-deliveries.ts 13
     # PRINTS: hint-deliveries.ts 6
     # PRINTS: hint-hub.ts 1
-    # PRINTS: hint-outcome-view.ts 17
+    # PRINTS: hint-outcome-view.ts 18
     # PRINTS: hint-outcome.ts 1
     # PRINTS: hint-outcomes.ts 27
     # PRINTS: hint.ts 43
@@ -899,7 +899,7 @@ jobs:
     # PRINTS: pilot-label.ts 8
     # PRINTS: pilot-mark.ts 9
     # PRINTS: pilot-marks.ts 2
-    # PRINTS: pilot-mine-render.ts 14
+    # PRINTS: pilot-mine-render.ts 15
     # PRINTS: pilot-mine.ts 1
     # PRINTS: pilot-outcome-figures.ts 6
     # PRINTS: pilot-render.ts 37

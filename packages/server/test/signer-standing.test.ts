@@ -13,6 +13,7 @@
  * through the ceremony, a real `confirm_batch` assertion, a real revocation.
  */
 import { describe, expect, test } from "bun:test";
+import { eq } from "drizzle-orm";
 
 import { PASSKEY_COOLOFF_HOURS } from "../src/constants.ts";
 import { hintOutcomes, passkeys } from "../src/db/schema.ts";
@@ -128,5 +129,34 @@ describe("revoking the passkey that confirmed", () => {
     expect(view).toMatchObject({ followed: 0 });
     expect(view["notConfirmed"]).toMatchObject({ retracted: 0, coolingOff: 0 });
     expect((await pendingOf(world.harness, world.nick)).drafts).toHaveLength(1);
+  });
+});
+
+describe("a word that changes a counted one, confirmed with a passkey still cooling (round-2 R2-L2, N10)", () => {
+  test("is shown once, as the new word pending from its instant; the earlier word counts until then, on no line of its own", async () => {
+    // Arrange — followed, confirmed with a passkey that stands; overrode on the same hint, with a fresh one
+    const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
+    await confirmFollowed(world, await prepareConfirmer(world.harness, world.nick, { pastCoolOff: true }));
+    const cooling = await prepareConfirmer(world.harness, world.nick);
+    expect(
+      (await recordOutcome(world, world.nick, { ref: KEN_CONTEXT, outcome: "overrode", reason: "kept mine", session: NICK_SESSION }))
+        .status,
+    ).toBe(201);
+    world.harness.clock.advanceSeconds(MINUTE_S);
+    expect((await confirmPending(world.harness, world.nick, { ...cooling, viewer: await viewerOf(world.harness, world.nick) })).status).toBe(200);
+    const [fresh] = await world.harness.db
+      .select({ usableFrom: passkeys.usableFrom })
+      .from(passkeys)
+      .where(eq(passkeys.id, cooling.passkeyId));
+
+    // Act
+    const view = await mine(world);
+
+    // Assert — counted as followed; the change waits as overrode, and is not counted again as cooling
+    expect(view).toMatchObject({ followed: 1, overrode: 0 });
+    expect(view["notConfirmed"]).toMatchObject({
+      coolingOff: 0,
+      pendingChanges: [{ word: "overrode", pointers: 1, countsFrom: fresh?.usableFrom.toISOString() }],
+    });
   });
 });

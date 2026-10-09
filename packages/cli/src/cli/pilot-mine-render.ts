@@ -167,6 +167,24 @@ const creditLine = (credit: MyHintOutcomes["yourWork"]): string =>
       (credit.pausedInPeriod === true ? `; ${COUNTED_WHILE_ENROLLED}` : "") +
       (credit.reconstructed === true ? `; ${RECONSTRUCTED_ENROLMENT}` : "");
 
+/** An ISO instant as this client prints it, or that it cannot read one (never the hub's own text). */
+const instantWords = (iso: string): string => {
+  const ms = Date.parse(iso);
+  return Number.isNaN(ms) ? "a time this client cannot read" : new Date(ms).toISOString();
+};
+
+/**
+ * A CHANGE IN WAITING (round-2 R2-L2, the owner's decision): a word confirmed
+ * with a passkey still cooling, over a word that counts, is shown ONCE — as the
+ * new word, pending from its instant. The earlier word keeps counting in the
+ * tally above until then and gets no line of its own.
+ */
+const pendingChangeLines = (pending: NonNullable<MyHintOutcomes["notConfirmed"]>): readonly string[] =>
+  (pending.pendingChanges ?? []).map(
+    (change) =>
+      `${INDENT}${reasonWord(change.word)} on ${plural(change.pointers, "hint")} — pending, counts from ${instantWords(change.countsFrom)}; your earlier word counts until then`,
+  );
+
 /**
  * WHAT IS NOT YOURS YET (human provenance §5), never inside the counts above:
  * your agent's words and words typed at a terminal are drafts until your
@@ -183,6 +201,7 @@ const notConfirmedLines = (view: MyHintOutcomes): readonly string[] => {
     `not confirmed by you, so not counted above: ${String(pending.byAgent)} rated by your agent · ${String(pending.atTerminal)} typed at a terminal · ${String(pending.legacy)} recorded before provenance existed`,
     ...(waiting > 0 ? [`${INDENT}confirm or discard them with your passkey: crosscheck confirm`] : []),
     ...uncountedLines(pending, INDENT),
+    ...pendingChangeLines(pending),
   ];
 };
 
