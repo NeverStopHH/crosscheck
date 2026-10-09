@@ -24,12 +24,15 @@ import {
 import {
   readJsonOrNull,
   removeFile,
+  repoKey,
   sessionStatePath,
   writePrivateFile,
 } from "../config/paths.ts";
 import { withLock } from "../spool/lock.ts";
 import { NO_GENERATED, addGeneratedTally } from "../capture/generated.ts";
 import type { GeneratedTally } from "../capture/generated.ts";
+import { recordCaptureLoss } from "./loss-ledger.ts";
+import { recordRestOmission } from "./rest-omissions.ts";
 import {
   listSessionStateFiles,
   sessionSilentForMs,
@@ -1410,6 +1413,9 @@ export const publishSessionState = async (
     async () => {
       const previous = await readSessionState(home, state.hostSessionKey);
       await writeSessionState(home, withCarriedCapture(measuredFromStart({ ...state, ...(await startOf()) }), previous));
+      if (previous !== null && !isSameBinding(previous, state)) {
+        await bookRestsLeftBehind(home, previous, new Date(state.startedAt));
+      }
       return true;
     },
   );
@@ -1417,6 +1423,26 @@ export const publishSessionState = async (
     const unlocked = await readSessionState(home, state.hostSessionKey);
     await writeSessionState(home, withCarriedRouting(withCarriedCollisions(measuredFromStart(state), unlocked), unlocked));
   }
+};
+
+/** The loss-ledger detail for rechecks a re-fire of another binding left behind. */
+const REBOUND_REST_DETAIL = "session-start";
+
+/**
+ * A RE-FIRE BOUND ELSEWHERE BOOKS THE RECHECKS IT REPLACES (review batch 2,
+ * L4). A state of another binding — another hub, another repo — carries
+ * nothing across (`withCarriedCapture`), its owed rechecks included, and no
+ * hook of that binding will pay them: booked under that binding's own repo,
+ * in both ledgers, the way SessionEnd books what it cannot pay.
+ */
+const bookRestsLeftBehind = async (home: string, previous: SessionState, now: Date): Promise<void> => {
+  const count = (previous.tripwireCheckedFiles ?? []).length + (previous.tripwireRestsDropped ?? 0);
+  if (count === 0) {
+    return;
+  }
+  const key = repoKey(previous.hubUrl, previous.repoId);
+  await recordCaptureLoss(home, { kind: "rest_unchecked", count, key, detail: REBOUND_REST_DETAIL, now });
+  await recordRestOmission(home, { key, reason: "rest_unchecked", now });
 };
 
 /**
