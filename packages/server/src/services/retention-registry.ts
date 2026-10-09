@@ -221,8 +221,9 @@ export const RETENTION_REGISTRY: readonly RetentionRelation[] = [
   {
     // Human provenance (review M4): a draft names the delivery and the session a
     // label or an outcome is about INSIDE its payload — no foreign key, so
-    // declared here by hand. Rows are kept (what was drafted and decided);
-    // their reason ages out at the pilot's bound (services/pilot.ts).
+    // declared here by hand. Decided rows are kept, their reason aging out at
+    // the pilot's bound; a draft nobody decided dies whole there (round-2
+    // R2-L3, services/pilot.ts).
     table: "human_drafts",
     column: "payload",
     semantics: "non_retaining_edge",

@@ -777,22 +777,36 @@ export const prunePilotMeasurements = async (deps: Deps): Promise<void> => {
 };
 
 /**
- * A WORD'S SENTENCE AGES OUT OF ITS DRAFT AND ITS CONFIRMATION TOO (human
- * provenance, review M4). The draft and the confirmation item hold the same
- * reason the outcome row did; past the pilot's window the reason is cleared
- * in both — the ONE update either table ever takes, and only of that key.
- * What was decided, the digest and the assertion stay. An item whose reason
- * was cleared no longer re-verifies against the signed digest item by item:
- * the confirmation still proves who signed, and when, not that sentence.
+ * A WORD'S SENTENCE AGES OUT WHEREVER IT IS KEPT (human provenance, review M4;
+ * round-2 R2-L3). Past the pilot's window the reason is cleared from the
+ * confirmation item, from a decided draft, and from a label's own row — the
+ * label stays, its sentence goes, as an outcome's and a re-assertion's whole
+ * row already does. Every report window is at most that long, so no figure
+ * loses a sentence it could show. What was decided, the digest and the
+ * assertion stay; an item whose reason was cleared no longer re-verifies
+ * against the signed digest item by item — the confirmation still proves who
+ * signed, and when, not that sentence.
+ *
+ * A DRAFT NOBODY DECIDED IS NEVER EDITED: past the window it dies whole, so
+ * the person is never shown, and never signs, a word without the sentence
+ * they typed beside it. One that a batch kept for later is named by its item
+ * and stays as it is.
  */
 const pruneConfirmationReasons = async (deps: Deps, cutoff: Date): Promise<void> => {
   const before = cutoff.toISOString();
   await deps.db.execute(sql`
-    UPDATE human_drafts SET payload = jsonb_set(payload, '{reason}', 'null'::jsonb)
-    WHERE created_at < ${before}::timestamptz AND payload ? 'reason' AND payload->'reason' <> 'null'::jsonb`);
+    DELETE FROM human_drafts d
+    WHERE d.created_at < ${before}::timestamptz
+      AND NOT EXISTS (SELECT 1 FROM human_confirmation_items i WHERE i.draft_id = d.id)`);
+  await deps.db.execute(sql`
+    UPDATE human_drafts d SET payload = jsonb_set(d.payload, '{reason}', 'null'::jsonb)
+    WHERE d.created_at < ${before}::timestamptz AND d.payload ? 'reason' AND d.payload->'reason' <> 'null'::jsonb
+      AND EXISTS (SELECT 1 FROM human_confirmation_items i WHERE i.draft_id = d.id AND i.decision IN ('confirm', 'discard'))`);
   await deps.db.execute(sql`
     UPDATE human_confirmation_items i SET content = jsonb_set(i.content, '{reason}', 'null'::jsonb)
     FROM human_confirmations c
     WHERE c.id = i.confirmation_id AND c.confirmed_at < ${before}::timestamptz
       AND i.content ? 'reason' AND i.content->'reason' <> 'null'::jsonb`);
+  await deps.db.execute(sql`
+    UPDATE pilot_marks SET reason = NULL WHERE created_at < ${before}::timestamptz AND reason IS NOT NULL`);
 };
