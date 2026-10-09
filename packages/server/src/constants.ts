@@ -186,13 +186,15 @@ export const WORDS_INDEX_CLAIMS_BATCH = 20;
 export const WORDS_INDEX_PROGRESS_CHUNKS = 100;
 
 /**
- * Chunks of the words backfill between two VACUUMs of the table it fills
- * (services/words-index.ts): often enough that the next chunks reuse the
+ * Chunks of a pass between two VACUUMs of the table it deletes from or fills
+ * (services/words-index.ts, services/record-receipts.ts; db/vacuum.ts), and
+ * one more after its last chunk: often enough that the next chunks reuse the
  * space the last ones freed, rarely enough that the VACUUMs cost less than
- * the file growth they save (measured: every 10 chunks, 38 s and +185 MB;
- * once at the end, 67 s and +346 MB, on the review's synthetic hub).
+ * the growth they save. Measured on the words backfill of the review's
+ * synthetic hub: every 10 chunks, 38 s and +185 MB; once at the end, 67 s
+ * and +346 MB; every chunk, 47 s and +180 MB for ten times the VACUUMs.
  */
-export const WORDS_INDEX_VACUUM_CHUNKS = 10;
+export const CHUNKS_PER_VACUUM = 10;
 
 /**
  * An opted-out developer's location-titled docs rebuilt per page, re-embedded

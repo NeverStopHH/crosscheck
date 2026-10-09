@@ -19177,7 +19177,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a receipts prune leaves its dead rows behind (H3)",
     file: `${SERVER}/src/services/record-receipts.ts`,
-    from: "    await deps.db.execute(sql`VACUUM record_receipts`);\n",
+    // RETARGETED (batch-2 review, follow-up to M10): one VACUUM call, at the words backfill's cadence.
+    from: "    await vacuumTable(deps.db, \"record_receipts\");\n",
     to: "",
     test: `${SERVER}/test/record-receipts-bloat.test.ts`,
     because: "review-2 round 9, H3: PGlite runs no autovacuum, and the table grows six times its retention's size in half a year",
@@ -19373,8 +19374,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a receipts prune stops after its first chunk (M4)",
     file: `${SERVER}/src/services/record-receipts.ts`,
-    from: "    if (chunk < RECORD_RECEIPT_PRUNE_CHUNK) {\n      return pruned;\n    }\n",
-    to: "    return pruned;\n",
+    // RETARGETED (batch-2 review, follow-up to M10): the prune recurses a chunk at a time.
+    from: "  return isLast ? pruned : pruneFrom(deps, cutoff, pruned, counted);",
+    to: "  return pruned;",
     test: `${SERVER}/test/record-receipts.test.ts`,
     because: "review-2 round 9, M4: a backlog larger than one chunk outlives its retention by a pass per chunk",
   },
@@ -22252,10 +22254,50 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the words backfill VACUUMs a table only once it is filled",
     file: `${SERVER}/src/services/words-index.ts`,
-    from: "  if (chunk % WORDS_INDEX_VACUUM_CHUNKS === 0) {",
+    from: "  if (chunk % CHUNKS_PER_VACUUM === 0) {",
     to: "  if (false) {",
     test: `${SERVER}/test/words-index.test.ts`,
     because: "no chunk reuses the space the last ones freed: +346 MB instead of +185 MB, and one 666 ms VACUUM at the end (M10)",
+  },
+  {
+    label: "a VACUUM may map a parallel shared memory segment again",
+    file: `${SERVER}/src/db/vacuum.ts`,
+    from: "VACUUM (PARALLEL 0) ${sql.identifier(table)}",
+    to: "VACUUM ${sql.identifier(table)}",
+    test: `${SERVER}/test/vacuum.test.ts`,
+    because: "a long-lived hub's VACUUMs fail once PGlite can no longer map the segment: out of memory after a few hundred (follow-up to M10)",
+  },
+  {
+    label: "a server pass spells its own VACUUM around db/vacuum.ts",
+    file: `${SERVER}/src/services/skeleton-identity.ts`,
+    from: "    await vacuumTable(deps.db, \"session_events\");\n",
+    to: "    await deps.db.execute(sql`VACUUM session_events`);\n",
+    test: `${SERVER}/test/vacuum.test.ts`,
+    because: "that VACUUM may plan parallel workers again, and nothing outside db/vacuum.ts says it must not (follow-up to M10)",
+  },
+  {
+    label: "the receipts prune VACUUMs only once it is done",
+    file: `${SERVER}/src/services/record-receipts.ts`,
+    from: "  const isDue = deleted > 0 && counted % CHUNKS_PER_VACUUM === 0;",
+    to: "  const isDue = false;",
+    test: `${SERVER}/test/vacuum.test.ts`,
+    because: "a long backlog's dead rows pile up until its end, and one VACUUM of all of them holds a request (follow-up to M10)",
+  },
+  {
+    label: "the receipts prune VACUUMs after every chunk again",
+    file: `${SERVER}/src/services/record-receipts.ts`,
+    from: "  const isDue = deleted > 0 && counted % CHUNKS_PER_VACUUM === 0;",
+    to: "  const isDue = deleted > 0;",
+    test: `${SERVER}/test/vacuum.test.ts`,
+    because: "ten times the VACUUMs in a process that runs them every day (follow-up to M10)",
+  },
+  {
+    label: "the receipts prune leaves its last chunks' dead rows behind",
+    file: `${SERVER}/src/services/record-receipts.ts`,
+    from: "  const owesLast = isLast && pruned > 0 && counted % CHUNKS_PER_VACUUM !== 0;",
+    to: "  const owesLast = false;",
+    test: `${SERVER}/test/vacuum.test.ts`,
+    because: "a day's prune of fewer than ten chunks never VACUUMs, and the table grows again (follow-up to M10)",
   },
   {
     label: "the floor drops a row the words backfill has not reached",
@@ -35770,6 +35812,7 @@ interface Outcome {
  * PRINTS: packages/server/test/ui-work-context.test.ts 2
  * PRINTS: packages/server/test/unstorable-text.test.ts 2
  * PRINTS: packages/server/test/upgrade.test.ts 1
+ * PRINTS: packages/server/test/vacuum.test.ts 5
  * PRINTS: packages/server/test/verdict-latency.test.ts 1
  * PRINTS: packages/server/test/verdict.test.ts 3
  * PRINTS: packages/server/test/waiver-closure-surfaces.test.ts 4

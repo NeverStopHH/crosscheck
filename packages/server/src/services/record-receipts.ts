@@ -14,9 +14,10 @@
  */
 import { and, eq, inArray, lte, sql } from "drizzle-orm";
 
-import { MS_PER_DAY, RECORD_RECEIPT_PRUNE_CHUNK, RECORD_RECEIPT_RETENTION_DAYS } from "../constants.ts";
+import { CHUNKS_PER_VACUUM, MS_PER_DAY, RECORD_RECEIPT_PRUNE_CHUNK, RECORD_RECEIPT_RETENTION_DAYS } from "../constants.ts";
 import { recordReceipts } from "../db/schema.ts";
 import type { Db } from "../db/client.ts";
+import { vacuumTable } from "../db/vacuum.ts";
 import { yieldToRequests } from "../db/yield-to-requests.ts";
 import type { Clock } from "../types.ts";
 
@@ -108,28 +109,39 @@ const deleteChunk = async (deps: Deps, cutoff: Date): Promise<number> => {
  * microtasks, so a loop of statements that never yields reads no request
  * until it is done.
  *
- * A chunk that deleted rows VACUUMs the table (review-2 round 9, H3): PGlite
- * runs no autovacuum, and every deleted receipt left a dead row for good — the
- * table grew six times its retention's size in half a year, and the prune with
- * it. Only when something went, so a pass with nothing to prune costs nothing
- * more (services/skeleton-identity.ts does the same). Per chunk, not once at
- * the end: a VACUUM of a chunk's dead rows takes a millisecond or two, one of a
- * million took 230 ms.
+ * The pass VACUUMs the table (review-2 round 9, H3): PGlite runs no
+ * autovacuum, and every deleted receipt left a dead row for good — the table
+ * grew six times its retention's size in half a year, and the prune with it.
+ * Only when something went, so a pass with nothing to prune costs nothing
+ * more (services/skeleton-identity.ts does the same). Every CHUNKS_PER_VACUUM
+ * chunks and once after the last, as the words backfill does, not after every
+ * chunk, and without parallel workers (db/vacuum.ts): a VACUUM per chunk,
+ * every day in one long-lived process, is the pattern after which PGlite
+ * failed to map a parallel VACUUM's shared memory segment (batch-2
+ * integration review, follow-up to M10). A VACUUM of 10 chunks' dead rows
+ * still takes a few milliseconds; one of a million took 230 ms.
  */
 export const pruneRecordReceipts = async (deps: Deps): Promise<number> => {
   const cutoff = new Date(deps.now().getTime() - RECORD_RECEIPT_RETENTION_DAYS * MS_PER_DAY);
-  let pruned = 0;
-  for (;;) {
-    const chunk = await deleteChunk(deps, cutoff);
-    pruned += chunk;
+  return pruneFrom(deps, cutoff, 0, 0);
+};
+
+/**
+ * A chunk from where the last left off, a turn of the event loop, and a
+ * VACUUM when the cadence is due or the last chunk left dead rows since the
+ * last one. `chunks` counts the chunks that deleted something.
+ */
+const pruneFrom = async (deps: Deps, cutoff: Date, done: number, chunks: number): Promise<number> => {
+  const deleted = await deleteChunk(deps, cutoff);
+  await yieldToRequests();
+  const pruned = done + deleted;
+  const counted = deleted === 0 ? chunks : chunks + 1;
+  const isLast = deleted < RECORD_RECEIPT_PRUNE_CHUNK;
+  const isDue = deleted > 0 && counted % CHUNKS_PER_VACUUM === 0;
+  const owesLast = isLast && pruned > 0 && counted % CHUNKS_PER_VACUUM !== 0;
+  if (isDue || owesLast) {
+    await vacuumTable(deps.db, "record_receipts");
     await yieldToRequests();
-    if (chunk === 0) {
-      return pruned;
-    }
-    await deps.db.execute(sql`VACUUM record_receipts`);
-    await yieldToRequests();
-    if (chunk < RECORD_RECEIPT_PRUNE_CHUNK) {
-      return pruned;
-    }
   }
+  return isLast ? pruned : pruneFrom(deps, cutoff, pruned, counted);
 };
