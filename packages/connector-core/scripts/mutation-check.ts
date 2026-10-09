@@ -20827,8 +20827,10 @@ export const MUTATIONS: readonly Mutation[
     file: `${CORE}/src/http/hint-outcomes.ts`,
     from: '  person: "/api/hint-outcomes/person",',
     to: '  person: "/api/hint-outcomes",',
-    test: `${CLI}/test/outcome-cli.test.ts`,
-    because: "crosscheck followed is filed as the agent's, and the agent's next word overturns the person",
+    // Since human provenance the door decides the draft's class; a hub that confirms at once (the
+    // outcome-cli suites) cannot tell the doors apart, so the guard is the CLI against the hub as it runs.
+    test: `${CLI}/test/drafted-gestures-cli.test.ts`,
+    because: "crosscheck followed at a terminal is drafted as the agent's, and the confirm page shows the person's word as their agent's",
   },
   {
     label: "crosscheck followed / overrode post as the agent",
