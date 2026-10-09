@@ -57,24 +57,51 @@ describe("renderMyOutcomes' header", () => {
   });
 });
 
-describe("renderMyOutcomes' source credit, with follows confirmed late (review M6)", () => {
-  test("follows confirmed this month about earlier months' hints are counted here, said to be late", () => {
+describe("renderMyOutcomes' source credit, with follows confirmed late (review M6; round 2, R2-H2)", () => {
+  const OWN_LINE = "followed 3 times — shown once, leaving out any one person, at least 3 people followed it";
+  const GENERIC = "no count — below the disclosure minimums: leaving out any one person, at least 3 people must have followed it";
+
+  test("follows confirmed this month about earlier months' hints are counted here, said to be late, each part shown on its own", () => {
     // Act
-    const line = creditLine({ ...JULY, followed: 3, followedLate: 1, withheld: null });
+    const line = creditLine({ ...JULY, followed: 3, withheld: null, late: { followed: 4, withheld: null } });
 
     // Assert
     expect(line).toBe(
-      "your own work, in teammates' hints, July 2026: followed 3 times (and 1 confirmed late, about earlier months' hints) — shown once, leaving out any one person, at least 3 people followed it",
+      `your own work, in teammates' hints, July 2026: ${OWN_LINE}; and confirmed late, about earlier months' hints: followed 4 times — shown once, leaving out any one person, at least 3 people followed them`,
     );
   });
 
-  test("a month with only late follows never prints 'followed 0' — the same generic sentence (review M-1)", () => {
+  test("N12: one teammate's follow and three late ones print neither number — each is withheld on its own", () => {
     // Act
-    const line = creditLine({ ...JULY, followed: 0, followedLate: 2, withheld: null });
+    const line = creditLine({ ...JULY, followed: null, withheld: "below_minimums", late: { followed: null, withheld: "below_minimums" } });
 
     // Assert
     expect(line).toBe(
-      "your own work, in teammates' hints, July 2026: no count — below the disclosure minimums: leaving out any one person, at least 3 people must have followed it",
+      `your own work, in teammates' hints, July 2026: ${GENERIC}; and confirmed late, about earlier months' hints: no count — below the disclosure minimums`,
+    );
+  });
+
+  test("a month with only late follows never prints 'followed 0' — the generic sentence, then the late part on its own (review M-1)", () => {
+    // Act
+    const line = creditLine({ ...JULY, followed: 0, withheld: null, late: { followed: 4, withheld: null } });
+
+    // Assert
+    expect(line).toBe(
+      `your own work, in teammates' hints, July 2026: ${GENERIC}; and confirmed late, about earlier months' hints: followed 4 times — shown once, leaving out any one person, at least 3 people followed them`,
+    );
+  });
+
+  test("round-2 R2-H1: follows later retracted as compromised carry a correction, with a count only past the minimums", () => {
+    // Act
+    const withheld = creditLine({ ...JULY, followed: 3, withheld: null, laterRetracted: { count: null, withheld: "below_minimums" } });
+    const counted = creditLine({ ...JULY, followed: 3, withheld: null, laterRetracted: { count: 4, withheld: null } });
+
+    // Assert
+    expect(withheld).toBe(
+      `your own work, in teammates' hints, July 2026: ${OWN_LINE}; correction: some of these were later retracted — their passkey was declared compromised (no count: below the disclosure minimums)`,
+    );
+    expect(counted).toBe(
+      `your own work, in teammates' hints, July 2026: ${OWN_LINE}; correction: 4 of these were later retracted — their passkey was declared compromised`,
     );
   });
 });

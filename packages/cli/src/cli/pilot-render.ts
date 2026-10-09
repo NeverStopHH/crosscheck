@@ -494,19 +494,42 @@ const outcomeLine = (report: PilotReport): string => {
  * WORDS CONFIRMED LATE (review M6): confirmed in the closed month shown,
  * about hints of an earlier one — counted here, apart, never in the month
  * they were about (which stays as it closed), and outside the rates above.
+ * A figure of its own (round-2 R2-H2): counts only when it passes the
+ * minimums on its own, the generic sentence otherwise — whatever the month's
+ * own figure did. An older hub sends no late block and gets no line.
  */
 const lateOutcomeLines = (report: PilotReport): readonly string[] => {
   const block = report.outcomes;
-  if (block === undefined || "unreadable" in block || block.withheld !== null || block.figures === null) {
+  if (block === undefined || "unreadable" in block || block.late === undefined) {
     return [];
   }
-  const late = block.figures.confirmedLate;
-  if (late === undefined || late.followed + late.overrode + late.notRelevantNow + late.noise === 0) {
-    return [];
-  }
+  const month = monthOf(block.periodStartIso);
+  const late = block.late.figures;
   return [
-    `${INDENT}  confirmed late in ${monthOf(block.periodStartIso)}, about hints of earlier months (counted here, never there): ` +
-      `followed ${count(late.followed)} · overrode ${count(late.overrode)} · not relevant now ${count(late.notRelevantNow)} · noise ${count(late.noise)}`,
+    late === null
+      ? `${INDENT}  confirmed late in ${month}, about hints of earlier months: no count — below the disclosure minimums`
+      : `${INDENT}  confirmed late in ${month}, about hints of earlier months (counted here, never there): ` +
+        `followed ${count(late.followed)} · overrode ${count(late.overrode)} · not relevant now ${count(late.notRelevantNow)} · noise ${count(late.noise)}`,
+  ];
+};
+
+/**
+ * THE CORRECTION LINE (round-2 R2-H1): a closed month stands as it closed,
+ * so a later compromise never moves its figures — this line says some of its
+ * words were since retracted, with a count only past the minimums.
+ */
+const correctionLines = (report: PilotReport): readonly string[] => {
+  const block = report.outcomes;
+  if (block === undefined || "unreadable" in block || block.laterRetracted === undefined || block.laterRetracted === null) {
+    return [];
+  }
+  const month = monthOf(block.periodStartIso);
+  const retracted = block.laterRetracted;
+  const what = `of ${month}'s counted words were later retracted — their passkey was declared compromised; the figures above stand as the month closed`;
+  return [
+    retracted.count === null
+      ? `${INDENT}  correction: some ${what} — no count: below the disclosure minimums`
+      : `${INDENT}  correction: ${count(retracted.count)} ${what}`,
   ];
 };
 
@@ -525,6 +548,7 @@ const precisionLines = (report: PilotReport): readonly string[] => {
     ...reasonLines(proof),
     outcomeLine(report),
     ...lateOutcomeLines(report),
+    ...correctionLines(report),
     ...cohortLines(report.cohorts),
   ];
 };

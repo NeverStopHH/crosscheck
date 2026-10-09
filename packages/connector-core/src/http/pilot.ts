@@ -90,6 +90,35 @@ const LabelFiguresSchema = z.looseObject({
 export type PilotLabelFigures = z.infer<typeof LabelFiguresSchema>;
 
 /**
+ * THE CORRECTION LINE beneath a closed month (round-2 R2-H1): how many of its
+ * counted words were later declared compromised — a count only beside no
+ * "withheld", or this client reads none of it.
+ */
+export const CorrectionSchema = z
+  .looseObject({ count: CountSchema.nullable(), withheld: z.string().min(1).nullable() })
+  .refine((line) => (line.withheld === null) === (line.count !== null), {
+    message: "a correction is either withheld or counted",
+  });
+
+export type Correction = z.infer<typeof CorrectionSchema>;
+
+/**
+ * THE WORDS CONFIRMED LATE in the month (review M6), withheld ON THEIR OWN
+ * (round-2 R2-H2): figures only beside no "withheld", or this client reads
+ * none of them.
+ */
+const LateBlockSchema = z
+  .looseObject({
+    withheld: z.string().min(1).nullable(),
+    figures: z
+      .looseObject({ followed: CountSchema, overrode: CountSchema, notRelevantNow: CountSchema, noise: CountSchema })
+      .nullable(),
+  })
+  .refine((late) => (late.withheld === null) === (late.figures !== null), {
+    message: "a late figure is either withheld or shown",
+  });
+
+/**
  * THE OUTCOMES BLOCK (07 §13.9–§13.11). Strict inside — a count that did not
  * arrive is not zero, and figures beside "withheld" are not printed — but
  * strict about ITSELF only: a block this client cannot read is answered as
@@ -115,13 +144,12 @@ const OutcomeBlockSchema = z
         notRelevantNow: CountSchema,
         noise: CountSchema,
         unmarked: CountSchema,
-        /** Review M6: words confirmed this month about earlier months' hints. Absent from an older hub. */
-        confirmedLate: z
-          .looseObject({ followed: CountSchema, overrode: CountSchema, notRelevantNow: CountSchema, noise: CountSchema })
-          .optional()
-          .catch(undefined),
       })
       .nullable(),
+    /** Round-2 R2-H2: the month's late words, withheld on their own. Absent from an older hub. */
+    late: LateBlockSchema.optional().catch(undefined),
+    /** Round-2 R2-H1: the correction line; null when none. Absent from an older hub. */
+    laterRetracted: CorrectionSchema.nullable().optional().catch(undefined),
   })
   .refine((block) => (block.withheld === null) === (block.figures !== null), {
     message: "an outcome figure is either withheld or shown",

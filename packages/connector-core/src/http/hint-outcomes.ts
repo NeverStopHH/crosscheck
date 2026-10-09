@@ -15,7 +15,7 @@ import { z } from "zod";
 import type { HintOutcome, HintOutcomeChannel } from "@crosscheck/schema";
 
 import { hubRequest } from "./client.ts";
-import { UNREADABLE_BLOCK } from "./pilot.ts";
+import { CorrectionSchema, UNREADABLE_BLOCK } from "./pilot.ts";
 import type { UnreadableBlock } from "./pilot.ts";
 import type { HubContext, HubResult } from "./client.ts";
 
@@ -146,8 +146,17 @@ const CreditSchema = z
     pausedInPeriod: z.boolean().optional(),
     /** 07 §13.12 (review M-3): counted over an enrolment an upgrade reconstructed. Absent from an older hub. */
     reconstructed: z.boolean().optional(),
-    /** Review M6: follows confirmed this month about earlier months' hints. Absent from an older hub. */
-    followedLate: CountSchema.nullable().optional().catch(undefined),
+    /**
+     * Review M6: follows confirmed this month about earlier months' hints, withheld on their own
+     * (round-2 R2-H2). Absent from an older hub, and read as absent when it is inconsistent.
+     */
+    late: z
+      .looseObject({ followed: CountSchema.nullable(), withheld: z.string().min(1).nullable() })
+      .refine((late) => (late.withheld === null) === (late.followed !== null))
+      .optional()
+      .catch(undefined),
+    /** Round-2 R2-H1: follows of the month later declared compromised; null when none. Absent from an older hub. */
+    laterRetracted: CorrectionSchema.nullable().optional().catch(undefined),
   })
   .refine((credit) => (credit.withheld === null) === (credit.followed !== null), {
     message: "a source credit is either withheld or counted",

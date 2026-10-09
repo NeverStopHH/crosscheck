@@ -219,28 +219,70 @@ describe("renderPilot", () => {
     expect(out).not.toContain("none could be recorded");
   });
 
+  const monthBlock = {
+    ...JULY,
+    recordableSinceIso: "2026-06-03T09:00:00.000Z",
+    countedFromIso: JULY.periodStartIso,
+    pausedInPeriod: false,
+  };
+  const OWN = { interventions: 20, followed: 10, overrode: 2, notRelevantNow: 2, noise: 2, unmarked: 4 };
+  const LATE = { followed: 2, overrode: 0, notRelevantNow: 0, noise: 1 };
+  const LATE_LINE =
+    "confirmed late in July 2026, about hints of earlier months (counted here, never there): followed 2 · overrode 0 · not relevant now 0 · noise 1";
+  const LATE_WITHHELD_LINE =
+    "confirmed late in July 2026, about hints of earlier months: no count — below the disclosure minimums";
+
   test("review M6: words confirmed late are printed in the month they were confirmed, apart, never in the rates", () => {
-    // Arrange — August shown; two of its words were confirmed late about July's hints
-    const outcomes = {
-      ...JULY,
-      recordableSinceIso: "2026-06-03T09:00:00.000Z",
-      countedFromIso: JULY.periodStartIso,
-      pausedInPeriod: false,
-      withheld: null,
-      figures: {
-        interventions: 20, followed: 10, overrode: 2, notRelevantNow: 2, noise: 2, unmarked: 4,
-        confirmedLate: { followed: 2, overrode: 0, notRelevantNow: 0, noise: 1 },
-      },
-    };
+    // Arrange — the month's own figure and its late words, each past the minimums on its own
+    const outcomes = { ...monthBlock, withheld: null, figures: OWN, late: { withheld: null, figures: LATE } };
 
     // Act
     const out = renderPilot(view({ outcomes }));
 
     // Assert
-    expect(out).toContain(
-      "confirmed late in July 2026, about hints of earlier months (counted here, never there): followed 2 · overrode 0 · not relevant now 0 · noise 1",
-    );
+    expect(out).toContain(LATE_LINE);
     expect(out).toContain("followed 50.0");
+  });
+
+  test("round-2 R2-H2: late words below the minimums on their own print no count, beside a month's own figure", () => {
+    // Arrange
+    const outcomes = { ...monthBlock, withheld: null, figures: OWN, late: { withheld: "below_minimums", figures: null } };
+
+    // Act
+    const out = renderPilot(view({ outcomes }));
+
+    // Assert
+    expect(out).toContain(LATE_WITHHELD_LINE);
+    expect(out).not.toContain("counted here, never there");
+  });
+
+  test("round-2 R2-H2: a month's own figure withheld still prints its late words when they pass on their own", () => {
+    // Arrange
+    const outcomes = { ...monthBlock, withheld: "below_minimums", figures: null, late: { withheld: null, figures: LATE } };
+
+    // Act
+    const out = renderPilot(view({ outcomes }));
+
+    // Assert
+    expect(out).toContain(LATE_LINE);
+    expect(out).not.toContain("followed 50.0");
+  });
+
+  test("round-2 R2-H1: a later compromise prints a correction line beneath the month, which stands as it closed", () => {
+    // Arrange — one person's words, then the same with a count that passes
+    const one = { ...monthBlock, withheld: null, figures: OWN, laterRetracted: { count: null, withheld: "below_minimums" } };
+    const many = { ...monthBlock, withheld: null, figures: OWN, laterRetracted: { count: 12, withheld: null } };
+
+    // Act
+    const [withheld, counted] = [renderPilot(view({ outcomes: one })), renderPilot(view({ outcomes: many }))];
+
+    // Assert
+    expect(withheld).toContain(
+      "correction: some of July 2026's counted words were later retracted — their passkey was declared compromised; the figures above stand as the month closed — no count: below the disclosure minimums",
+    );
+    expect(counted).toContain(
+      "correction: 12 of July 2026's counted words were later retracted — their passkey was declared compromised; the figures above stand as the month closed",
+    );
   });
 
   test("every channel prints, the empty ones and `unknown` included (PIL-1)", () => {

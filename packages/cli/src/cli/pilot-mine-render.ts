@@ -120,14 +120,38 @@ const BELOW_MINIMUMS_CREDIT = `no count — below the disclosure minimums: leavi
  * a zero is every recorder's verdict at once.
  */
 const creditWords = (credit: Credit): string => {
-  const late = credit.followedLate ?? 0;
   if (credit.withheld === null && credit.followed !== null && credit.followed > 0) {
-    // review M6: a follow confirmed this month about an earlier month's hint is counted here, marked late —
-    // beside a month's own follows only, so no line ever says "followed 0" (M-1)
-    const lateWords = late > 0 ? ` (and ${String(late)} confirmed late, about earlier months' hints)` : "";
-    return `followed ${plural(credit.followed, "time")}${lateWords} — shown once, leaving out any one person, at least ${PEOPLE_MINIMUM} people followed it`;
+    return `followed ${plural(credit.followed, "time")} — shown once, leaving out any one person, at least ${PEOPLE_MINIMUM} people followed it`;
   }
   return credit.withheld === "not_recordable" ? NOT_RECORDABLE_CREDIT : BELOW_MINIMUMS_CREDIT;
+};
+
+/**
+ * FOLLOWS CONFIRMED LATE (review M6), a figure of its own (round-2 R2-H2):
+ * a number only when it passes the minimum on its own — never "followed 0" —
+ * the generic sentence otherwise. An older hub sends no late part.
+ */
+const lateCreditWords = (credit: Credit): string => {
+  if (credit.late === undefined) {
+    return "";
+  }
+  const late = credit.late;
+  const words =
+    late.withheld === null && late.followed !== null && late.followed > 0
+      ? `followed ${plural(late.followed, "time")} — shown once, leaving out any one person, at least ${PEOPLE_MINIMUM} people followed them`
+      : "no count — below the disclosure minimums";
+  return `; and confirmed late, about earlier months' hints: ${words}`;
+};
+
+/** The correction (round-2 R2-H1): follows of the month later declared compromised; a count only past the minimums. */
+const correctionCreditWords = (credit: Credit): string => {
+  const retracted = credit.laterRetracted;
+  if (retracted === undefined || retracted === null) {
+    return "";
+  }
+  return retracted.count === null
+    ? "; correction: some of these were later retracted — their passkey was declared compromised (no count: below the disclosure minimums)"
+    : `; correction: ${String(retracted.count)} of these were later retracted — their passkey was declared compromised`;
 };
 
 /** 07 §13.11 (round 3): a credit this client cannot read is one line, and the person's own view still prints. */
@@ -138,6 +162,8 @@ const creditLine = (credit: MyHintOutcomes["yourWork"]): string =>
   "unreadable" in credit
     ? UNREADABLE_CREDIT_LINE
     : `your own work, in teammates' hints, ${monthOf(credit.periodStartIso)}: ${creditWords(credit)}` +
+      lateCreditWords(credit) +
+      correctionCreditWords(credit) +
       (credit.pausedInPeriod === true ? `; ${COUNTED_WHILE_ENROLLED}` : "") +
       (credit.reconstructed === true ? `; ${RECONSTRUCTED_ENROLMENT}` : "");
 
