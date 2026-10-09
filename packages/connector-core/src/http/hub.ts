@@ -2384,8 +2384,19 @@ const HubTransportSchema = z.looseObject({
 
 export type HubTransport = z.infer<typeof HubTransportSchema>;
 
+/**
+ * The start-up backfills after an upgrade (batch-2 integration review, M10
+ * and M11): rows still waiting for their hint-floor words, and — null on a
+ * keyless hub — work contexts still waiting for a vector. Absent from an
+ * older hub, and a malformed one reads as absent: either must never cost the
+ * lines beside it.
+ */
+const PendingCountSchema = z.number().int().min(0);
+
 const HubStatusSchema = z.looseObject({
   searchDocsPending: z.number().int().min(0),
+  wordsIndexPending: PendingCountSchema.optional().catch(undefined),
+  vectorsPending: PendingCountSchema.nullable().optional().catch(undefined),
   transport: HubTransportSchema.optional().catch(undefined),
 });
 

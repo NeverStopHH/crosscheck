@@ -1970,6 +1970,41 @@ const checkSearchRebuild = (result: HubResult<HubStatus>): Check | null => {
   );
 };
 
+/**
+ * The start-up backfills an upgraded hub runs after it listens (batch-2
+ * integration review, M10 and M11): the hint floor's words of the rows the
+ * upgrade found, and — with an embedder — the vectors still to mint. A line
+ * each only while something is left, and none when the hub does not say.
+ */
+const checkStartupBackfills = (result: HubResult<HubStatus>): readonly Check[] => {
+  if (!result.ok) {
+    return [];
+  }
+  const words = result.data.wordsIndexPending ?? 0;
+  const vectors = result.data.vectorsPending ?? 0;
+  return [
+    ...(words === 0
+      ? []
+      : [
+          check(
+            "WARN",
+            "words index",
+            `hub is still indexing the dotted names of ${String(words)} rows; ` +
+              "until it finishes, a name such as products.name in them matches only whole",
+          ),
+        ]),
+    ...(vectors === 0
+      ? []
+      : [
+          check(
+            "WARN",
+            "vector index",
+            `hub is still embedding ${String(vectors)} work contexts; until it finishes, the vector tier misses them`,
+          ),
+        ]),
+  ];
+};
+
 const checkPrivacy = async (ctx: HubContext): Promise<Check> => {
   const result = await getPrivacySettings(ctx);
   if (!result.ok) {
@@ -4093,6 +4128,7 @@ export const runDoctor = async (
     intentLedgerCheck,
     passkeyDoctorCheck(announcementAnswerOf(passkeyAnnouncements), config.hubUrl),
     ...(searchRebuildCheck === null ? [] : [searchRebuildCheck]),
+    ...checkStartupBackfills(hubStatus),
     ...hubTransportChecks(hubStatus),
   ];
 
