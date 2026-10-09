@@ -89,8 +89,36 @@ export const selfSpawnCmd = (entry: string, args: readonly string[] = []): reado
 const BUN_STARTUP_KEY = /^(BUN_OPTIONS|BUN_CONFIG_[A-Z0-9_]+|BUN_INSPECT[A-Z0-9_]*)$/;
 const NODE_STARTUP_KEY = /^NODE_OPTIONS$/;
 
-export const isRuntimeInjectionKey = (name: string): boolean =>
-  BUN_STARTUP_KEY.test(name) || NODE_STARTUP_KEY.test(name);
+/**
+ * BUN'S STARTUP VARIABLES PROVEN HARMLESS TO THE ISOLATION (batch-2
+ * integration review, L12). Every other one restarts the process without it
+ * (config/clean-restart.ts), which costs each hook, the statusline and the
+ * MCP server a second process start — about 75 ms here, measured on the
+ * cli's --version — and doctor names the ones it finds. A name goes on this
+ * list only with its proof that it can load no code, change no config,
+ * preload nothing and redirect nothing; in doubt it stays off.
+ *
+ *   BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD   read by `--watch` and `--hot`
+ *     alone, to leave the terminal unclear on a reload (Bun's watch-mode
+ *     docs); no crosscheck process runs under either flag.
+ */
+const HARMLESS_BUN_STARTUP_KEYS: ReadonlySet<string> = new Set(["BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD"]);
+
+/** A variable bun reads at startup that a crosscheck process must not run under. */
+const isBunStartupKey = (name: string): boolean => BUN_STARTUP_KEY.test(name) && !HARMLESS_BUN_STARTUP_KEYS.has(name);
+
+export const isRuntimeInjectionKey = (name: string): boolean => isBunStartupKey(name) || NODE_STARTUP_KEY.test(name);
+
+/**
+ * The names in `env` that make a crosscheck entry restart itself, sorted —
+ * names only, never a value: doctor prints them, and a value could be a
+ * token (BUN_CONFIG_TOKEN). Screened by the startup pattern, so a name that
+ * reaches a terminal is one of bun's own.
+ */
+export const bunStartupKeysIn = (env: Readonly<Record<string, string | undefined>>): readonly string[] =>
+  Object.keys(env)
+    .filter((name) => env[name] !== undefined && isBunStartupKey(name))
+    .sort();
 
 /** `env` without the runtime-configuring keys, and without unset values: what a child is given. */
 export const withoutRuntimeInjection = (env: Readonly<Record<string, string | undefined>>): Record<string, string> =>
@@ -106,7 +134,7 @@ export const withoutRuntimeInjection = (env: Readonly<Record<string, string | un
  * it (config/clean-restart.ts).
  */
 export const hasBunStartupKey = (env: Readonly<Record<string, string | undefined>>): boolean =>
-  Object.keys(env).some((name) => BUN_STARTUP_KEY.test(name));
+  bunStartupKeysIn(env).length > 0;
 
 /**
  * The one start that is deliberately NOT isolated: `crosscheck ci-report`

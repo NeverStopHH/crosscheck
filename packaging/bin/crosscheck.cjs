@@ -72,6 +72,12 @@ const EXIT_INTERNAL = 70;
  * here reads a config or a key.
  */
 const RUNTIME_INJECTION_KEY = /^(BUN_OPTIONS|BUN_CONFIG_[A-Z0-9_]+|BUN_INSPECT[A-Z0-9_]*|NODE_OPTIONS)$/;
+/* The bun startup variables alone, for doctor's "runtime variables" line (config/runtime-isolation.ts). */
+const BUN_STARTUP_KEY = /^(BUN_OPTIONS|BUN_CONFIG_[A-Z0-9_]+|BUN_INSPECT[A-Z0-9_]*)$/;
+/* Proven harmless there: watch-mode only; no crosscheck process runs under --watch or --hot. */
+const HARMLESS_BUN_STARTUP_KEYS = ["BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD"];
+/* How the restarted process learns the names it was started without (config/clean-restart.ts). */
+const RESTARTED_WITHOUT_ENV = "CROSSCHECK_RESTARTED_WITHOUT";
 
 const withoutRuntimeInjection = function (env) {
   const kept = {};
@@ -81,6 +87,25 @@ const withoutRuntimeInjection = function (env) {
     }
   }
   return kept;
+};
+
+/* The names bun would have read at startup, sorted — names only, never a value. */
+const bunStartupKeysIn = function (env) {
+  return Object.keys(env)
+    .filter(function (name) {
+      return env[name] !== undefined && BUN_STARTUP_KEY.test(name) && HARMLESS_BUN_STARTUP_KEYS.indexOf(name) === -1;
+    })
+    .sort();
+};
+
+/* What the restarted bun is given: the environment without the variables, and their names. */
+const restartedEnv = function (env) {
+  const names = bunStartupKeysIn(env);
+  const child = withoutRuntimeInjection(env);
+  if (names.length > 0) {
+    child[RESTARTED_WITHOUT_ENV] = names.join(",");
+  }
+  return child;
 };
 
 if (process.versions.bun !== undefined) {
@@ -203,7 +228,7 @@ if (process.versions.bun !== undefined) {
     const current = spawn(
       CANDIDATES[index],
       ["--no-env-file", "--config=" + ISOLATED_BUNFIG, ENTRY].concat(process.argv.slice(2)),
-      { stdio: "inherit", env: withoutRuntimeInjection(process.env) },
+      { stdio: "inherit", env: restartedEnv(process.env) },
     );
     child = current;
     let retried = false;

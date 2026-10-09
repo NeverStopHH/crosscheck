@@ -27,13 +27,37 @@
  */
 import { constants as osConstants } from "node:os";
 
-import { hasBunStartupKey, selfSpawnCmd, withoutRuntimeInjection } from "./runtime-isolation.ts";
+import { bunStartupKeysIn, hasBunStartupKey, selfSpawnCmd, withoutRuntimeInjection } from "./runtime-isolation.ts";
 
 /** What a host or a person sends to stop a crosscheck process; each goes on to the restarted one. */
 export const FORWARDED_SIGNALS: readonly NodeJS.Signals[] = ["SIGTERM", "SIGINT", "SIGHUP", "SIGQUIT"];
 
 /** How a restarted process learns which pid supervises it. */
 export const SUPERVISOR_PID_ENV = "CROSSCHECK_SUPERVISOR_PID";
+
+/**
+ * How a restarted process learns which variables it was restarted without:
+ * their names, comma-joined, so doctor can say what every hook's second
+ * start costs and why (batch-2 integration review, L12). Names only — the
+ * values stayed with the supervisor. The npm shim sets the same variable.
+ */
+export const RESTARTED_WITHOUT_ENV = "CROSSCHECK_RESTARTED_WITHOUT";
+
+let restartedWithout: readonly string[] = [];
+
+/** The bun startup variables this process was restarted without; empty in one that never restarted. */
+export const restartedWithoutRuntimeKeys = (): readonly string[] => restartedWithout;
+
+/** Read once, then taken out of the environment so no child inherits a stale list. */
+const readRestartedWithout = (): void => {
+  const raw = process.env[RESTARTED_WITHOUT_ENV];
+  if (raw === undefined) {
+    return;
+  }
+  delete process.env[RESTARTED_WITHOUT_ENV];
+  // Screened as the startup pattern screens them: a name here is one of bun's own.
+  restartedWithout = bunStartupKeysIn(Object.fromEntries(raw.split(",").map((name) => [name, ""])));
+};
 
 /** How often a restarted process checks that its supervisor is still its parent. */
 export const SUPERVISOR_POLL_MS = 500;
@@ -66,7 +90,11 @@ const superviseRestart = (): Promise<never> => {
   const [, entry = "", ...args] = process.argv;
   const child = Bun.spawn({
     cmd: [...selfSpawnCmd(entry, args)],
-    env: { ...withoutRuntimeInjection(process.env), [SUPERVISOR_PID_ENV]: String(process.pid) },
+    env: {
+      ...withoutRuntimeInjection(process.env),
+      [SUPERVISOR_PID_ENV]: String(process.pid),
+      [RESTARTED_WITHOUT_ENV]: bunStartupKeysIn(process.env).join(","),
+    },
     stdin: "inherit",
     stdout: "inherit",
     stderr: "inherit",
@@ -118,6 +146,7 @@ const watchSupervisor = (): void => {
  * restarted itself: that process only supervises.
  */
 export const ensureCleanRuntime = async (): Promise<void> => {
+  readRestartedWithout();
   watchSupervisor();
   if (!hasBunStartupKey(process.env)) {
     delete process.env["NODE_OPTIONS"];
