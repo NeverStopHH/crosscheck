@@ -174,6 +174,8 @@ import { briefingOmissionsCheck } from "./doctor-briefings.ts";
 import { FOREIGN_HUB_MCP_CHECK, keyOriginChecks } from "./foreign-hub.ts";
 import { repoRuntimeChecks } from "./doctor-repo-runtime.ts";
 import { hostEnvChecks, mcpEntryEnvKeys } from "./doctor-host-env.ts";
+import { hubSeparationChecks } from "./doctor-hub-separation.ts";
+import type { SeparationProbes } from "./doctor-hub-separation.ts";
 import {
   ISOLATED_BUNFIG_PATH,
   RUNTIME_ISOLATION_FLAGS,
@@ -271,7 +273,12 @@ import { unavailableClause } from "./pilot-render.ts";
 import { generatedTargetsCheck } from "./doctor-generated.ts";
 import type { CliResult } from "./login.ts";
 
-export type CheckLevel = "PASS" | "WARN" | "FAIL";
+/**
+ * SKIP is a check that could not tell, said as such: it is never a PASS, and
+ * it is not a WARN either, because a hub on another machine is the setup the
+ * hub separation lines want, not a fault (doctor-hub-separation.ts).
+ */
+export type CheckLevel = "PASS" | "WARN" | "FAIL" | "SKIP";
 
 export interface Check {
   readonly level: CheckLevel;
@@ -3679,12 +3686,14 @@ const summarize = (checks: readonly Check[]): CliResult => {
   );
   const failures = checks.filter((entry) => entry.level === "FAIL").length;
   const warnings = checks.filter((entry) => entry.level === "WARN").length;
+  const skipped = checks.filter((entry) => entry.level === "SKIP").length;
   const exitCode =
     failures > 0 ? EXIT_FAIL : warnings > 0 ? EXIT_WARN : EXIT_OK;
   return {
     stdout: [
       ...lines,
-      `${checks.length - failures - warnings} pass, ${warnings} warn, ${failures} fail`,
+      `${checks.length - failures - warnings - skipped} pass, ${warnings} warn, ${failures} fail` +
+        (skipped > 0 ? `, ${skipped} not checked` : ""),
       "",
     ].join("\n"),
     exitCode,
@@ -3696,6 +3705,7 @@ export const runDoctor = async (
   cwd: string,
   measureLatency: MeasureLatency = defaultMeasureLatency,
   agentProbe?: AgentProcessProbe,
+  separationProbes?: Partial<SeparationProbes>,
 ): Promise<CliResult> => {
   const now = new Date();
   const home = crosscheckHome(env);
@@ -3803,6 +3813,16 @@ export const runDoctor = async (
     repoKey: key,
     now: () => now,
   };
+  // Agent credential ≠ operator authority (doctor-hub-separation.ts): what of
+  // this developer's hub their own OS user can reach. STARTED here and awaited
+  // where its lines print, so its bounded lsof/DNS probes run beside the hub
+  // reads rather than after them. It never rejects: every probe answers
+  // failure as a SKIP line.
+  const hubSeparation = hubSeparationChecks({
+    env,
+    hubUrl: config.hubUrl,
+    ...(separationProbes === undefined ? {} : { probes: separationProbes }),
+  });
   // repoKey "" keeps the probe out of the sync record, exactly like
   // `defaultMeasureLatency` above and `login`'s probe: with the real key it
   // stamped `lastSyncAt`/`lastOkAt` moments before `checkLastSync` read them,
@@ -4088,6 +4108,7 @@ export const runDoctor = async (
     ...(await checkSpool(config.home, key, now, openOnHub)),
     ...(await foreignDropChecks(config.home)),
     ...keyOriginLines,
+    ...(await hubSeparation),
     ...captureChecks(captureHealth, now),
     generatedTargetsCheck(captureHealth),
     await checkHints(hubCtx, identity.repoId, captureHealth),

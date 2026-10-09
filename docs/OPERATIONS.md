@@ -92,3 +92,49 @@ With an embedder configured, every start re-embeds each work context that has no
 ```sql
 UPDATE work_contexts SET embedding = NULL WHERE id = '<work context id>';
 ```
+
+## Running the hub under its own user
+
+A hub that runs as your OS user, for example from a LaunchAgent in `~/Library/LaunchAgents`, is reachable by every coding agent you start. Such an agent can read `ADMIN_TOKEN` from `hub.env`, change the hub's database, and change the hub's code. The rule is **agent credential ≠ operator authority**: the hub's data, its token and its code belong to an OS user that no agent runs as.
+
+A separate macOS user is not a VM. Anyone with admin rights or root still gets in. It is a cheap step that keeps your own agents out, and a service account, a container or a VM is the stronger one.
+
+**Before you start.** The steps need `sudo`, so no agent can run them for you. Run them in a terminal window where no agent runs, because an agent in the same terminal can reuse sudo's cached credentials for several minutes. End with `sudo -k`. If the hub's address changes (to an https `tailscale serve` front, say), every member logs in again, because keys are bound to the address they were issued for.
+
+The steps, on macOS, with `crosscheck-hub` as the user's name:
+
+1. **Create the user**, hidden and with no login shell:
+   ```sh
+   sudo sysadminctl -addUser crosscheck-hub -fullName "Crosscheck Hub" -shell /usr/bin/false -password -
+   sudo dscl . -create /Users/crosscheck-hub IsHidden 1
+   sudo createhomedir -c -u crosscheck-hub
+   sudo chmod 700 /Users/crosscheck-hub
+   ```
+   Give it a long random password. You never need it again.
+2. **Install Bun and the hub as that user**, so that both belong to it and you cannot write them:
+   ```sh
+   sudo -u crosscheck-hub -H bash -c 'curl -fsSL https://bun.sh/install | bash'
+   sudo -u crosscheck-hub -H /Users/crosscheck-hub/.bun/bin/bun add -g crosscheck-hub@<version>
+   ```
+3. **Stop the old hub**: `launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.crosscheck.hub.plist`. Then `lsof -nP -iTCP:7100 -sTCP:LISTEN` must print nothing.
+4. **Move the data**: the data dir, its state dir if your hub has one, every backup, and `hub.env`. Copy them with `sudo ditto` into `/Users/crosscheck-hub/.crosscheck-hub`, then `sudo chown -R crosscheck-hub:staff` and `sudo chmod -R go-rwx` that directory.
+5. **Edit the hub user's `hub.env`** with `sudo -u crosscheck-hub -H nano …`. Point `CROSSCHECK_DATA_DIR` at the moved data dir. Behind `tailscale serve`, set `CROSSCHECK_LISTEN=127.0.0.1` and list only the https origin in `CROSSCHECK_WEBAUTHN_ORIGINS`. **Set a new `ADMIN_TOKEN`** (`openssl rand -hex 32`): the old one sat in your home and counts as known. Write it straight into the file, store it nowhere else, and never paste it into an agent's window.
+6. **Run the hub as a system LaunchDaemon under that user.** Create `/Library/LaunchDaemons/com.crosscheck.hub.plist`. Set `UserName` to `crosscheck-hub` and `HOME` to `/Users/crosscheck-hub`. The program is `/bin/sh -c 'set -a; . <hub home>/hub.env; set +a; exec <hub user's bun> <its crosscheck-hub>/packages/server/src/index.ts'`, with `RunAtLoad` and `KeepAlive` on and the logs in the hub user's home. Then run `sudo chown root:wheel` and `sudo chmod 644` on it, and `sudo launchctl bootstrap system <plist>`.
+7. **Optionally, add https through Tailscale**: `tailscale serve --bg 7100`. MagicDNS and HTTPS certificates must be on in the tailnet.
+8. **Check the result.** `sudo lsof -nP -iTCP:7100 -sTCP:LISTEN` shows `crosscheck-hub` as the user. Without `sudo`, lsof lists only your own sockets and shows nothing. `cat /Users/crosscheck-hub/.crosscheck-hub/hub.env` as yourself answers `Permission denied`. `crosscheck doctor` passes the lines below.
+9. **Clean up your home**, once the new hub runs. Delete `~/Library/LaunchAgents/com.crosscheck.hub.plist`. Delete `~/.crosscheck-hub`: it holds the old token, the old database and `trial-keys.txt`. Every key listed in `trial-keys.txt` was readable by your agents, so reissue or revoke it. Then run `sudo -k`.
+
+From then on the token lives only with the hub user. For an operator action, read it in a terminal with no agent, using `sudo -u crosscheck-hub -H cat /Users/crosscheck-hub/.crosscheck-hub/hub.env`, then run `sudo -k`. Backups run as the hub user and land in its home.
+
+### What `crosscheck doctor` checks
+
+Doctor runs as you, so it checks what your user can reach. It never opens `hub.env`, and it prints no file's contents and no secret.
+
+| Line | FAIL / WARN when | PASS when |
+|---|---|---|
+| `operator token` | FAIL: `~/.crosscheck-hub/hub.env` is readable or writable by you, or belongs to you (mode 600 included), or `ADMIN_TOKEN` is set in your shell. | there is no `hub.env` there, or you cannot read it. |
+| `hub state` | WARN: anything else in `~/.crosscheck-hub` (data dir, state dir, backups, `trial-keys.txt`, logs) or the dirs that `CROSSCHECK_DATA_DIR` / `CROSSCHECK_STATE_DIR` name in your environment is readable or writable by you, or belongs to you. | none of it is. |
+| `hub process` | WARN: the process listening for your hub runs as your uid. | the hub's `bun` runs as another user. |
+| `hub LaunchAgent` | WARN: `~/Library/LaunchAgents/com.crosscheck.hub.plist` exists (macOS only). | there is none. |
+
+`hub process` judges only a hub on this machine: a loopback address, one of this machine's own addresses (its tailnet IP among them), or an https `tailscale serve` front, which doctor follows to the loopback port behind it. Everything else is `SKIP`, counted as "not checked" in the summary and never PASS. That covers a hub elsewhere (`not checked here: the hub runs elsewhere`), a name that does not resolve, an https front with no `tailscale serve` mapping, a listener that is not the hub's `bun` (a proxy), and a probe that failed or ran out of time. Without root, lsof sees only your own sockets, so on macOS doctor names another user's listener with `netstat -anv` and `ps`. On Linux, a hub under another user reads as "not checked".
