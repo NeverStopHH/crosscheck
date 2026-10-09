@@ -8,14 +8,15 @@
  * loaded refuses the batch, so the person reviews again.
  *
  * Titles, names, words and reasons are author-written text: escaped, capped
- * JSX interpolations, never markup.
+ * JSX interpolations, never markup, with every bidi, control and format
+ * character shown as its code point (round-1 review L4: `shownAsSigned`).
  */
 import type { FC } from "hono/jsx";
 import { HINT_OUTCOMES, MAX_PILOT_LABEL_REASON_CHARS, PILOT_INTERVENTION_LABELS } from "@crosscheck/schema";
 import type { DraftKind, DraftProvenance } from "@crosscheck/schema";
 
 import { UI_MAX_LABEL_CHARS, UI_MAX_NOTE_CHARS, UI_MAX_TITLE_CHARS } from "../constants.ts";
-import { capped } from "../format.ts";
+import { shownAsSigned } from "../format.ts";
 import { Layout } from "../layout.tsx";
 import type { ViewerChrome } from "../layout.tsx";
 import type { DraftContext } from "../../services/confirm-page.ts";
@@ -67,11 +68,11 @@ const Subject: FC<{ readonly draft: DraftContext }> = ({ draft }) => {
   if (draft.kind === "label" || draft.kind === "outcome") {
     return (
       <span class="meta">
-        a {capped(draft.channel ?? "hint", UI_MAX_LABEL_CHARS)}
+        a {shownAsSigned(draft.channel ?? "hint", UI_MAX_LABEL_CHARS)}
         {draft.deliveredAt === null ? "" : ` delivered ${draft.deliveredAt}`} · pointed at{" "}
-        {draft.pointedTitle === null ? "work not on this repo's record" : `«${capped(draft.pointedTitle, UI_MAX_TITLE_CHARS)}»`}
-        {draft.sourceName === null ? "" : ` by ${capped(draft.sourceName, UI_MAX_LABEL_CHARS)}`} · said:{" "}
-        {capped(text(draft, "word"), UI_MAX_LABEL_CHARS)}
+        {draft.pointedTitle === null ? "work not on this repo's record" : `«${shownAsSigned(draft.pointedTitle, UI_MAX_TITLE_CHARS)}»`}
+        {draft.sourceName === null ? "" : ` by ${shownAsSigned(draft.sourceName, UI_MAX_LABEL_CHARS)}`} · said:{" "}
+        {shownAsSigned(text(draft, "word"), UI_MAX_LABEL_CHARS)}
       </span>
     );
   }
@@ -79,17 +80,20 @@ const Subject: FC<{ readonly draft: DraftContext }> = ({ draft }) => {
     const files = draft.payload["files"];
     return (
       <span class="meta">
-        pin {capped(text(draft, "pinId") || text(draft, "id"), UI_MAX_LABEL_CHARS)} «
-        {capped(draft.pinSurface ?? "", UI_MAX_TITLE_CHARS)}»
+        pin {shownAsSigned(text(draft, "pinId") || text(draft, "id"), UI_MAX_LABEL_CHARS)} «
+        {shownAsSigned(draft.pinSurface ?? "", UI_MAX_TITLE_CHARS)}»
         {Array.isArray(files) ? ` · ${String(files.length)} file(s), every one listed below` : ""}
       </span>
     );
   }
   if (draft.kind === "mute" || draft.kind === "unmute") {
-    return <span class="meta">{capped(text(draft, "name"), UI_MAX_LABEL_CHARS)}</span>;
+    return <span class="meta">{shownAsSigned(text(draft, "name"), UI_MAX_LABEL_CHARS)}</span>;
   }
   return null;
 };
+
+/** A signed value is never cut (review M2): only its acting characters are shown as code points. */
+const WHOLE = Number.POSITIVE_INFINITY;
 
 /** One signed value, in full: a list as every item, scrollable; nothing cut (review M2). */
 const TermValue: FC<{ readonly value: unknown }> = ({ value }) => {
@@ -97,7 +101,7 @@ const TermValue: FC<{ readonly value: unknown }> = ({ value }) => {
     return (
       <ol class="signed-list">
         {value.map((item) => (
-          <li>{String(item)}</li>
+          <li>{shownAsSigned(String(item), WHOLE)}</li>
         ))}
       </ol>
     );
@@ -105,7 +109,7 @@ const TermValue: FC<{ readonly value: unknown }> = ({ value }) => {
   if (value === null || value === undefined) {
     return <>—</>;
   }
-  return <>{typeof value === "object" ? JSON.stringify(value) : String(value)}</>;
+  return <>{shownAsSigned(typeof value === "object" ? JSON.stringify(value) : String(value), WHOLE)}</>;
 };
 
 /**
@@ -123,7 +127,7 @@ const SignedTerms: FC<{ readonly draft: DraftContext }> = ({ draft }) => (
         {draft.id} · version {String(draft.version)}
       </dd>
       <dt>about</dt>
-      <dd>{draft.subjectKey}</dd>
+      <dd>{shownAsSigned(draft.subjectKey, WHOLE)}</dd>
       {Object.keys(draft.payload)
         .sort()
         .map((key) => (
@@ -149,11 +153,11 @@ const DraftCard: FC<{ readonly draft: DraftContext }> = ({ draft }) => (
     <span class="label">{KIND_LABEL[draft.kind]}</span>{" "}
     <span class="meta">
       {PROVENANCE_LABEL[draft.provenance]} · {draft.createdAt}
-      {draft.repo === null ? "" : ` · ${capped(draft.repo, UI_MAX_LABEL_CHARS)}`}
+      {draft.repo === null ? "" : ` · ${shownAsSigned(draft.repo, UI_MAX_LABEL_CHARS)}`}
     </span>{" "}
     <Subject draft={draft} />
     {draft.reconfirm === null ? null : <p class="notice">{RECONFIRM_LINE[draft.reconfirm]}</p>}
-    {text(draft, "reason") === "" ? null : <blockquote>{capped(text(draft, "reason"), UI_MAX_NOTE_CHARS)}</blockquote>}
+    {text(draft, "reason") === "" ? null : <blockquote>{shownAsSigned(text(draft, "reason"), UI_MAX_NOTE_CHARS)}</blockquote>}
     <SignedTerms draft={draft} />
     <div>
       <label>
