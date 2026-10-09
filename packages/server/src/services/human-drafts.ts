@@ -249,10 +249,26 @@ const isPageFull = async (deps: { readonly db: DbExecutor; readonly now: Clock }
   (await readPendingDrafts(deps, developerId)).length >= MAX_PENDING_DRAFT_SUBJECTS;
 
 /**
+ * THE SUPERSEDED VERSIONS NOTHING SIGNED GO (review M8, probe P12). A newer
+ * version replaces them on the page, and no confirmed batch named them, so no
+ * record or item points at them: they are dropped, and one subject holds only
+ * its newest version plus those a passkey ceremony named (confirmed,
+ * discarded or kept for later) — each one a tap of the person's. A batch formed
+ * over a dropped version is refused at signing like any stale page.
+ */
+const pruneSuperseded = async (db: DbExecutor, developerId: string, subjectKey: string, newestVersion: number): Promise<void> => {
+  await db.execute(sql`
+    DELETE FROM human_drafts d
+    WHERE d.developer_id = ${developerId} AND d.subject_key = ${subjectKey} AND d.version < ${newestVersion}
+      AND NOT EXISTS (SELECT 1 FROM human_confirmation_items i WHERE i.draft_id = d.id)`);
+};
+
+/**
  * ONE DRAFT. A repeat (repeatOf) writes nothing; a new subject past
  * MAX_PENDING_DRAFT_SUBJECTS is refused; a newer version of a subject that is
  * still pending is always taken (it replaces nothing a person decided — they
- * decided nothing about it yet).
+ * decided nothing about it yet), and the versions it supersedes that nothing
+ * signed are dropped (pruneSuperseded).
  */
 export const writeDraft = (deps: Deps, input: WriteDraftInput): Promise<WriteDraftResult> =>
   deps.db.transaction(async (tx) => {
@@ -284,6 +300,7 @@ export const writeDraft = (deps: Deps, input: WriteDraftInput): Promise<WriteDra
       provenance: input.provenance,
       createdAt: deps.now(),
     });
+    await pruneSuperseded(tx, input.developerId, input.subjectKey, version);
     return { id, version, repeated: false, waiting: true, discardedByPerson: false };
   });
 
