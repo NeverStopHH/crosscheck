@@ -15,8 +15,12 @@
  *   - each chunk is its own statement and commits on its own, and the next
  *     chunk is simply the next rows still empty: a start that dies mid-pass
  *     loses nothing, and the next start fills what is left;
- *   - each table VACUUMed once it was filled: PGlite runs no autovacuum, and
- *     every filled row left its old version behind.
+ *   - the table VACUUMed every WORDS_INDEX_VACUUM_CHUNKS chunks and once at
+ *     its end: PGlite runs no autovacuum, and every filled row left its old
+ *     version behind. Every 10 chunks, the next chunks reuse the space the
+ *     last ones freed: on the review's synthetic hub the database grew
+ *     185 MB, not 346 MB, the pass took 38 s, not 67 s, and no VACUUM held a
+ *     request past 219 ms (one VACUUM at the end: 666 ms).
  *
  * Until the pass reaches a row, the floor reads it by its plain words
  * (isWordsIndexComplete below; services/hints.ts), and GET /api/hub-status
@@ -25,7 +29,7 @@
 import { sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 
-import { WORDS_INDEX_BACKFILL_BATCH, WORDS_INDEX_PROGRESS_CHUNKS } from "../constants.ts";
+import { WORDS_INDEX_BACKFILL_BATCH, WORDS_INDEX_PROGRESS_CHUNKS, WORDS_INDEX_VACUUM_CHUNKS } from "../constants.ts";
 import type { Db, DbExecutor } from "../db/client.ts";
 import { yieldToRequests } from "../db/yield-to-requests.ts";
 
@@ -85,6 +89,16 @@ interface Progress {
   readonly progress: (line: string) => void;
 }
 
+/**
+ * The dead row versions the filled chunks left, made reusable. PARALLEL 0:
+ * a parallel VACUUM maps a dynamic shared memory segment, and PGlite failed
+ * to map one ("could not map shared memory segment": out of memory) after a
+ * few hundred VACUUMs in one process on the review's synthetic hub.
+ */
+const vacuum = async (db: Db, table: WordsTable): Promise<void> => {
+  await db.execute(sql`VACUUM (PARALLEL 0) ${sql.identifier(table.name)}`);
+};
+
 const fillTable = async (db: Db, table: WordsTable, options: Progress, done = 0, chunks = 0): Promise<number> => {
   const filled = await fillChunk(db, table, options.batch);
   if (filled === 0) {
@@ -92,13 +106,18 @@ const fillTable = async (db: Db, table: WordsTable, options: Progress, done = 0,
   }
   await yieldToRequests();
   const total = done + filled;
-  if ((chunks + 1) % WORDS_INDEX_PROGRESS_CHUNKS === 0) {
+  const chunk = chunks + 1;
+  if (chunk % WORDS_INDEX_PROGRESS_CHUNKS === 0) {
     options.progress(`${String(total)} ${table.label}(s) filled`);
   }
-  return fillTable(db, table, options, total, chunks + 1);
+  if (chunk % WORDS_INDEX_VACUUM_CHUNKS === 0) {
+    await vacuum(db, table);
+    await yieldToRequests();
+  }
+  return fillTable(db, table, options, total, chunk);
 };
 
-/** One table filled to the end, and VACUUMed when anything was written. */
+/** One table filled to the end, and VACUUMed once more when anything was written. */
 const backfillTable = async (db: Db, table: WordsTable, options: Progress): Promise<number> => {
   const pending = await countIn(db, table);
   if (pending === 0) {
@@ -106,7 +125,7 @@ const backfillTable = async (db: Db, table: WordsTable, options: Progress): Prom
   }
   options.progress(`starting: ${String(pending)} ${table.label}(s) to fill; until each is, it is matched by its plain words`);
   const filled = await fillTable(db, table, options);
-  await db.execute(sql`VACUUM ${sql.identifier(table.name)}`);
+  await vacuum(db, table);
   return filled;
 };
 

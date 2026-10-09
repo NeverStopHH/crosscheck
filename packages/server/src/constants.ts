@@ -176,6 +176,15 @@ export const WORDS_INDEX_BACKFILL_BATCH = 50;
 export const WORDS_INDEX_PROGRESS_CHUNKS = 100;
 
 /**
+ * Chunks of the words backfill between two VACUUMs of the table it fills
+ * (services/words-index.ts): often enough that the next chunks reuse the
+ * space the last ones freed, rarely enough that the VACUUMs cost less than
+ * the file growth they save (measured: every 10 chunks, 38 s and +185 MB;
+ * once at the end, 67 s and +346 MB, on the review's synthetic hub).
+ */
+export const WORDS_INDEX_VACUUM_CHUNKS = 10;
+
+/**
  * An opted-out developer's location-titled docs rebuilt per page, re-embedded
  * in one embedder call per page, with a turn of the event loop between pages
  * (services/developer-settings.ts; batch-2 integration review, M11). A doc's

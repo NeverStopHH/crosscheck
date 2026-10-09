@@ -202,6 +202,29 @@ describe("the background backfill (M10)", () => {
     expect(await storedWords(harness)).toEqual(written);
   });
 
+  test("VACUUMs the table as it goes, not only at its end, so later chunks reuse the space earlier ones freed", async () => {
+    // Arrange — 25 empty claims, a chunk of one each
+    const { harness } = await seed();
+    await harness.db.execute(sql`
+      INSERT INTO claims (id, work_context_id, author_session_id, kind, body, status, confidence, capture_mode, provenance, created_at)
+      SELECT id || '_more_' || g, work_context_id, author_session_id, kind, body || ' ' || g, status, confidence, capture_mode, provenance, created_at
+      FROM claims, generate_series(1, 4) g`);
+    await emptyEveryRowsWords(harness);
+    await harness.db.execute(sql`SET stats_fetch_consistency = 'none'`);
+    const vacuums = async (): Promise<number> =>
+      Number(
+        (await harness.db.execute<{ n: number }>(sql`SELECT vacuum_count AS n FROM pg_stat_user_tables WHERE relname = 'claims'`)).rows[0]
+          ?.n ?? 0,
+      );
+    const before = await vacuums();
+
+    // Act
+    await backfillWordsIndex({ db: harness.db }, { batch: 1 });
+
+    // Assert — 25 chunks: after the 10th, the 20th, and at the end
+    expect((await vacuums()) - before).toBe(3);
+  });
+
   test("takes a turn of the event loop between chunks", async () => {
     // Arrange
     const { harness } = await seed();
