@@ -18,7 +18,7 @@ import { describe, expect, test } from "bun:test";
 import { sql } from "drizzle-orm";
 import { PIN_PRESENCE_TERMINAL } from "@crosscheck/schema";
 
-import { developerMutes, hintOutcomes, noiseReassertions } from "../src/db/schema.ts";
+import { developerMutes, hintOutcomes, noiseReassertions, pilotMarks } from "../src/db/schema.ts";
 import { confirmPending, pendingOf, prepareConfirmer } from "./fixtures/confirm-driver.ts";
 import type { Confirmer } from "./fixtures/confirm-driver.ts";
 import {
@@ -189,6 +189,35 @@ describe("saying a word again after it was decided", () => {
     expect(again.status).toBe(200);
     expect(await bodyOf(again)).toMatchObject({ repeated: true, waiting: true });
     expect(await waiting(world)).toBe(1);
+  });
+
+  test("helpful said again after it was confirmed is one label: the second confirmation writes no second row", async () => {
+    // Arrange — the person's helpful, confirmed
+    const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
+    const confirmer = await prepareConfirmer(world.harness, world.nick, { pastCoolOff: true });
+    const helpful = (): Promise<Response> =>
+      Promise.resolve(
+        world.harness.app.request(
+          "/api/pilot-marks",
+          jsonRequest("POST", world.nick.apiKey, {
+            repo: REPO,
+            refKind: "hint_delivery",
+            refId: world.delivered.kenContext,
+            mark: "helpful",
+            presence: PIN_PRESENCE_TERMINAL,
+          }),
+        ),
+      );
+    expect((await helpful()).status).toBe(201);
+    await confirmAll(world, confirmer);
+
+    // Act — said again: a new draft (the first was decided), confirmed too
+    expect((await helpful()).status).toBe(201);
+    await confirmAll(world, confirmer);
+
+    // Assert — one person, one label: the noise figure counts people, not keystrokes
+    const labels = await world.harness.db.select({ mark: pilotMarks.mark }).from(pilotMarks);
+    expect(labels).toEqual([{ mark: "helpful" }]);
   });
 });
 
