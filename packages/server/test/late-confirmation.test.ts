@@ -14,6 +14,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { sql } from "drizzle-orm";
+import { PIN_PRESENCE_TERMINAL } from "@crosscheck/schema";
 
 import { readPeriodAggregate } from "../src/services/outcome-population.ts";
 import { confirmPending, prepareConfirmer } from "./fixtures/confirm-driver.ts";
@@ -27,6 +28,7 @@ import {
   recordPersonOutcome,
 } from "./fixtures/hint-outcome-world.ts";
 import type { OutcomeWorld } from "./fixtures/hint-outcome-world.ts";
+import { jsonRequest } from "./helpers.ts";
 
 const DAY_S = 86_400;
 const JULY = { from: new Date("2026-07-01T00:00:00.000Z"), until: new Date("2026-08-01T00:00:00.000Z") };
@@ -89,5 +91,30 @@ describe("a word confirmed after its hint's month closed", () => {
 
     // Assert — the word standing in figures is July's, said before August: not August's, late or not
     expect(august).toMatchObject({ followed: 0, interventions: 0, late: { followed: 0, overrode: 0, notRelevantNow: 0, noise: 0 } });
+  });
+
+  test("a helpful label confirmed in August brings the pointer into August, and July's followed still counts there by nothing", async () => {
+    // Arrange — July's followed confirmed in July; on 2 August the person labels the hint helpful and confirms it
+    const world = await confirmedAfter(DAY_S);
+    world.harness.clock.advanceSeconds(9 * DAY_S);
+    const confirmer = await prepareConfirmer(world.harness, world.nick, { pastCoolOff: true });
+    const labelled = await world.harness.app.request(
+      "/api/pilot-marks",
+      jsonRequest("POST", world.nick.apiKey, {
+        repo: REPO,
+        refKind: "hint_delivery",
+        refId: world.delivered.kenContext,
+        mark: "helpful",
+        presence: PIN_PRESENCE_TERMINAL,
+      }),
+    );
+    expect(labelled.status).toBe(201);
+    expect((await confirmPending(world.harness, world.nick, { ...confirmer, viewer: await viewerOf(world.harness, world.nick) })).status).toBe(200);
+
+    // Act
+    const august = await aggregate(world, AUGUST);
+
+    // Assert — the helpful is August's, but the followed it stands beside was said in July: not late in August
+    expect(august).toMatchObject({ followed: 0, interventions: 0, late: { followed: 0 } });
   });
 });
