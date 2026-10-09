@@ -149,6 +149,8 @@ describe("startServer", () => {
       const listening = "crosscheck server listening on";
       const rebuilt = "[crosscheck] location index: rebuilt for 1 opted-out developer(s)";
       const words = "[crosscheck] words index: 2 claim(s) and";
+      const skeleton = "[crosscheck] skeleton identity:";
+      const receipts = "[crosscheck] record receipts:";
 
       // Act
       const child = Bun.spawn({
@@ -158,7 +160,7 @@ describe("startServer", () => {
         stderr: "pipe",
         env: keylessEnv(randomPort(), dataDir),
       });
-      const stdout = await readUntilAll(child.stdout, [withheld, listening, rebuilt, words]);
+      const stdout = await readUntilAll(child.stdout, [withheld, listening, rebuilt, words, skeleton, receipts]);
       child.kill("SIGTERM");
       const exit = await Promise.race([
         child.exited,
@@ -180,6 +182,10 @@ describe("startServer", () => {
       expect(stdout.indexOf(withheld)).toBeLessThan(stdout.indexOf(listening));
       expect(stdout.indexOf(listening)).toBeLessThan(stdout.indexOf(rebuilt));
       expect(stdout).toContain(words);
+      // one pass after another, never side by side: the upgrades, then the
+      // skeleton identity, then the receipts prune
+      expect(stdout.indexOf(words)).toBeLessThan(stdout.indexOf(skeleton));
+      expect(stdout.indexOf(skeleton)).toBeLessThan(stdout.indexOf(receipts));
       expect(doc.rows[0]?.doc).not.toContain("lisbon");
       expect(doc.rows[0]?.doc).not.toBe("");
       expect(Number(empty.rows[0]?.n)).toBe(0);

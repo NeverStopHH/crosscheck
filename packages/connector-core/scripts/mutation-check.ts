@@ -19381,8 +19381,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the hub prunes no receipts at boot (M4)",
     file: `${SERVER}/src/index.ts`,
-    from: "  void pruneRecordReceipts({ db, now: () => new Date() }).then(",
-    to: "  void Promise.resolve(0).then(",
+    // RETARGETED (batch-2 review): the passes after serving run one after another.
+    from: "    await pruneRecordReceipts({ db, now: () => new Date() }).then(",
+    to: "    await Promise.resolve(0).then(",
     test: `${SERVER}/test/record-receipts-boot.test.ts`,
     because: "review-2 round 9, M4: a hub restarted after weeks off keeps their receipts until its timer's first pass",
   },
@@ -22289,6 +22290,14 @@ export const MUTATIONS: readonly Mutation[
     because: "the column an upgrade adds empty stays empty, and the floor reads plain words for good (M10)",
   },
   {
+    label: "the passes after serving run side by side again",
+    file: `${SERVER}/src/index.ts`,
+    from: "    await runStartupUpgrades({ db, embedder });\n",
+    to: "    void runStartupUpgrades({ db, embedder });\n",
+    test: `${SERVER}/test/startup-boot.test.ts`,
+    because: "the request that arrives as the port opens waits out every pass's first page at once: 0.6–3 s on a loaded machine",
+  },
+  {
     label: "the hub listens with an opted-out developer's old titles in the index",
     file: `${SERVER}/src/index.ts`,
     from: "  const indexesPending = await withholdPendingLocationTitles(db);",
@@ -22379,7 +22388,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the boot never runs the start-up upgrade passes",
     file: `${SERVER}/src/index.ts`,
-    from: "  void runStartupUpgrades({ db, embedder });\n",
+    // RETARGETED (batch-2 review): the passes after serving run one after another.
+    from: "    await runStartupUpgrades({ db, embedder });\n",
     to: "",
     test: `${SERVER}/test/startup-boot.test.ts`,
     because: "an upgraded hub keeps every draft in its search docs and every old gate link, and no test notices",
@@ -35745,7 +35755,7 @@ interface Outcome {
  * PRINTS: packages/server/test/solved-intent.test.ts 4
  * PRINTS: packages/server/test/solved-probe.test.ts 1
  * PRINTS: packages/server/test/solved-ranking.test.ts 4
- * PRINTS: packages/server/test/startup-boot.test.ts 4
+ * PRINTS: packages/server/test/startup-boot.test.ts 5
  * PRINTS: packages/server/test/startup-upgrades.test.ts 5
  * PRINTS: packages/server/test/suspect.test.ts 9
  * PRINTS: packages/server/test/target-last-seen.test.ts 1
