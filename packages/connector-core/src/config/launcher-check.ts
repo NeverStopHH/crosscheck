@@ -126,7 +126,7 @@ export const checkLauncherCommand = async (
       );
     }
     const identity = await probe(hit);
-    if (identity === "unanswered") {
+    if (identity === "silent") {
       // Not the foreign-tool FAIL: nothing answered, so nothing is known
       // about whose binary this is — a busy machine runs a first exec past
       // the deadline, and "remove it" would be the wrong remedy for that.

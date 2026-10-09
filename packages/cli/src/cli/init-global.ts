@@ -62,6 +62,7 @@ import {
   INIT_COMMAND_PREFIX_FLAG,
   resolveLauncher,
   RESTART_HINT_LINE,
+  silentBareLines,
 } from "./init.ts";
 import {
   readJsonConfig,
@@ -191,6 +192,8 @@ export const runInitGlobal = async (
           `note: ${launcher.path} resolves through a node version manager — the hooks' bare \`crosscheck\` disappears on \`nvm use\` or a runtime upgrade; pin it with ${INIT_COMMAND_PREFIX_FLAG} "<bun> <entry>" if you switch versions`,
         ]
       : []),
+    // Never a silent fallback: a PATH bin that stayed silent is said so.
+    ...silentBareLines(launcher),
     ...(launcher.kind === "entry"
       ? [
           "launcher is an absolute path on this machine — reinstalling crosscheck elsewhere means rerunning crosscheck init --global",
