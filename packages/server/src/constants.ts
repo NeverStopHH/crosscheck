@@ -155,6 +155,15 @@ export const DOC_UPGRADE_PROGRESS_PAGES = 10;
 export const DOC_UPGRADE_STAMP_BATCH = 1000;
 
 /**
+ * Offending edges per page of the start-up draft-link cleanup
+ * (services/draft-link-cleanup.ts), one transaction each with a turn of the
+ * event loop between pages. As one statement over the whole table, the
+ * batch-2 integration review measured every request held 9–86 s on a
+ * pilot-scale hub (H6); a page of 500 is a few tens of milliseconds.
+ */
+export const DRAFT_LINK_CLEANUP_BATCH = 500;
+
+/**
  * THE RETENTION THIS HUB APPLIES TO `session_events`, declared on
  * `GET /api/sessions/order` so that `doctor` prints the hub's own statement
  * rather than a connector's assumption about it (schema session-event.ts says

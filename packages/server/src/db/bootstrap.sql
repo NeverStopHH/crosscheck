@@ -223,6 +223,14 @@ CREATE TABLE IF NOT EXISTS events (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
+-- THE WIRE RECORD OF AN EDGE, by edge id (batch-2 integration review, H6):
+-- the start-up draft-link cleanup (services/draft-link-cleanup.ts) asks, of
+-- every legacy similarity edge, whether a claim_edge_added event names it.
+-- Without this it scanned all of `events` per edge — 86 s on a pilot-scale
+-- hub, every request held — and 58 ms with it. Partial: only that kind.
+CREATE INDEX IF NOT EXISTS events_claim_edge_added_edge_idx
+  ON events ((payload->>'edgeId')) WHERE kind = 'claim_edge_added';
+
 -- THE BRANCHES A HUB KNEW BEFORE developer_branches EXISTED (review round 5,
 -- H3): every session's current branch, and the branch every session_started
 -- event recorded (a re-registration moves the session's branch, and only the

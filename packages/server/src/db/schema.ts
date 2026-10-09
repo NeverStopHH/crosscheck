@@ -657,12 +657,22 @@ export const artifacts = pgTable("artifacts", {
 });
 
 /** Outbox table — the bigserial id is the SSE replay cursor (DESIGN.md §2). */
-export const events = pgTable("events", {
-  id: bigserial("id", { mode: "number" }).primaryKey(),
-  kind: text("kind").notNull(),
-  payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
-  createdAt: timestamptz("created_at").notNull().defaultNow(),
-});
+export const events = pgTable(
+  "events",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    kind: text("kind").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+  },
+  // The start-up draft-link cleanup's wire-record lookup (bootstrap.sql;
+  // batch-2 integration review, H6).
+  (table) => [
+    index("events_claim_edge_added_edge_idx")
+      .on(sql`(${table.payload}->>'edgeId')`)
+      .where(sql`${table.kind} = 'claim_edge_added'`),
+  ],
+);
 
 /**
  * Similarity-detected contradiction candidates only (ingest gate, DESIGN.md
