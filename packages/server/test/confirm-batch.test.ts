@@ -496,7 +496,7 @@ describe("the batch is frozen: what was reviewed is what is signed", () => {
         items: pending.drafts.map((draft) => ({ draftId: draft.id, version: draft.version, decision: "confirm" })),
       }),
     );
-    // A session token is deterministic in its instant: the person logs in a second later.
+    // Each login is its own session, whatever the instant (review L1): the person logs in too.
     world.harness.clock.advanceSeconds(1);
     const persons = await prepareConfirmer(world.harness, world.nick);
     expect(persons.viewer.cookie).not.toBe(agentsSession.viewer.cookie);
