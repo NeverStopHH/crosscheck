@@ -162,4 +162,12 @@ export const JUDGEMENT_READERS_EXEMPT: Readonly<Record<string, string>> = {
   "src/routes/pilot.ts": "serves proof 3 and proof 4 as the producers above compute them, beside where confirming is possible",
   "src/routes/hint-outcomes.ts": "serves --mine as the producer above computes it, beside where confirming is possible",
   "src/routes/confirm-status.ts": "the caller's pending drafts and own confirmations; counts no judgement",
+  // Round-1 L2: the readers the widened guard finds — each applies a setting in effect, or writes, and counts nothing.
+  "src/services/suspect.ts":
+    "records each answer suspect gives in pilot_attributions and hides muted authors from it; proof 3 scores in pilot-report.ts",
+  "src/services/visibility.ts": "applies the reader's mutes in effect to what they are shown; a void mute was deleted by the rollback",
+  "src/services/draft-kinds.ts": "a mute or unmute draft's liveness reads whether the mute already holds; counts nothing",
+  "src/services/developer-settings.ts": "the writer of a confirmed mute and of presence changes; counts nothing",
+  "src/services/draft-doors.ts": "a mute door answers whether the mute already holds before drafting; counts nothing",
+  "src/routes/pins.ts": "names human_drafts in a comment only: a key's pin waits there, read by no registry",
 };

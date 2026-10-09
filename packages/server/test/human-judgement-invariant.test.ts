@@ -270,8 +270,10 @@ const confirmedWorld = async (options: { readonly pastCoolOff: boolean }): Promi
 describe("the producer registry", () => {
   test("every source that reads a judgement table is a registered producer or exempt with its reason", async () => {
     // Arrange
+    // Round-1 L2: every table a person's judgement or setting lands in, attributions,
+    // drafts, mutes and privacy changes included — not only the figures' own tables.
     const reads =
-      /pilot_marks|pilotMarks|hint_outcomes|hintOutcomes|noise_reassertions|noiseReassertions|repairs_pin_id|repairsPinId|broke_provenance|brokeProvenance|human_confirmation|humanConfirmation/;
+      /pilot_marks|pilotMarks|hint_outcomes|hintOutcomes|noise_reassertions|noiseReassertions|repairs_pin_id|repairsPinId|broke_provenance|brokeProvenance|human_confirmation|humanConfirmation|pilot_attributions|pilotAttributions|human_drafts|humanDrafts|developer_mutes|developerMutes|privacy_changes|privacyChanges/;
     const registered = new Set(Object.values(HUMAN_JUDGEMENT_PRODUCERS).map((producer) => producer.file));
     const readers: string[] = [];
     for await (const path of new Glob("src/{services,routes}/**/*.{ts,tsx}").scan(SRC_ROOT)) {
