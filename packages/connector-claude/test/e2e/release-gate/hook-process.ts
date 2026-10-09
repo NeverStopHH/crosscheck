@@ -60,6 +60,13 @@ const childEnv = (env: Env): Record<string, string> => {
   return merged;
 };
 
+/** When the host started a hook's process and when it saw it exit (epoch ms), and its pid: what joins a CX_HOOK_TRACE file. */
+export interface ProcessTimes {
+  readonly pid: number;
+  readonly spawnedAt: number;
+  readonly exitedAt: number;
+}
+
 export interface ProcessRun {
   readonly stdout: string;
   /** Wall time of the whole process, boot included. */
@@ -67,10 +74,12 @@ export interface ProcessRun {
   readonly exitCode: number | null;
   /** True when the process outlived HOOK_KILL_AFTER_MS and was killed. */
   readonly wasKilled: boolean;
+  readonly times: ProcessTimes;
 }
 
 const runEntry = async (args: readonly string[], stdin: string, env: Env, cwd: string): Promise<ProcessRun> => {
   const startedAt = performance.now();
+  const spawnedAt = Date.now();
   const child = Bun.spawn({
     cmd: [...selfSpawnCmd(CLI_ENTRY, args)],
     cwd,
@@ -86,7 +95,13 @@ const runEntry = async (args: readonly string[], stdin: string, env: Env, cwd: s
   }, HOOK_KILL_AFTER_MS);
   try {
     const [stdout, exitCode] = await Promise.all([new Response(child.stdout).text(), child.exited]);
-    return { stdout, durationMs: Math.round(performance.now() - startedAt), exitCode, wasKilled: killed.value };
+    return {
+      stdout,
+      durationMs: Math.round(performance.now() - startedAt),
+      exitCode,
+      wasKilled: killed.value,
+      times: { pid: child.pid, spawnedAt, exitedAt: Date.now() },
+    };
   } finally {
     clearTimeout(timer);
   }

@@ -38,6 +38,11 @@
  * fixing yet.
  *
  * DETERMINISM AND RUNTIME: see the lane's job in .github/workflows/ci.yml.
+ *
+ * WHERE A HOOK'S WALL TIME GOES: run the lane with CX_HOOK_TRACE=1 (and a
+ * fresh CX_HOOK_TRACE_DIR); every hook process then writes its phases
+ * (connector-core trace/hook-trace.ts), and P1 prints them for its fan-out
+ * (release-gate/hook-traces.ts). A measurement only: nothing is asserted on it.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";

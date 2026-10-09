@@ -39,6 +39,8 @@ import {
 import { gitIn } from "./git.ts";
 import { agentTexts, personLines } from "./host.ts";
 import type { HookRun } from "./host.ts";
+import { breakdownOf, isHookTraceOn, readHookTraces, renderBreakdowns } from "./hook-traces.ts";
+import type { Breakdown } from "./hook-traces.ts";
 import { dumpDatabase } from "./hub.ts";
 import type { TestHub } from "./hub.ts";
 import { bookedLines, bookingsOf } from "./observe.ts";
@@ -438,6 +440,32 @@ const pilotSummary = async (world: LongSessionWorld, wallMs: number): Promise<st
   ].join(" · ");
 };
 
+/**
+ * WHERE THE FAN-OUT'S WALL TIME GOES (only with CX_HOOK_TRACE=1;
+ * release-gate/hook-traces.ts): Nick's subagent PreToolUse processes at the
+ * fan-out, the hits among them, the async captures running beside them, and
+ * Mike's PreToolUse on a quiet machine the next morning as the baseline.
+ */
+const pilotTraceLines = async (world: LongSessionWorld): Promise<readonly string[]> => {
+  const traces = await readHookTraces();
+  const breakdowns = (runs: readonly HookRun[]): readonly Breakdown[] =>
+    runs.flatMap((run) => {
+      const breakdown = breakdownOf(run, traces);
+      return breakdown === null ? [] : [breakdown];
+    });
+  const fanOut = world.moments.nickSubagentHits;
+  const preToolUse = fanOut.filter((run) => run.event === "PreToolUse" && run.agentId !== null);
+  return [
+    ...renderBreakdowns("fan-out, subagent PreToolUse", breakdowns(preToolUse)),
+    ...renderBreakdowns(
+      "fan-out, subagent PreToolUse that warned about Mike (the hits)",
+      breakdowns(preToolUse.filter((run) => mentions(agentTexts([run]), "Mike"))),
+    ),
+    ...renderBreakdowns("fan-out, async PostToolUse captures", breakdowns(fanOut.filter((run) => run.event === "PostToolUse" && run.isAsync))),
+    ...renderBreakdowns("the next morning, Mike's PreToolUse (quiet)", breakdowns(world.moments.mikeNext.filter((run) => run.event === "PreToolUse"))),
+  ];
+};
+
 export const describePilot = (ctx: GateContext): void => {
   describe(`P1 — the pilot collision must warn both people [${ctx.profile.name}]`, () => {
     const held: { world: LongSessionWorld | null } = { world: null };
@@ -452,6 +480,9 @@ export const describePilot = (ctx: GateContext): void => {
       held.world = await runLongSessionCase(ctx.hub(), P1_PLAN, ctx.profile);
       ctx.cleanups.push(...held.world.cleanup);
       console.log(await pilotSummary(held.world, performance.now() - startedAt));
+      if (isHookTraceOn()) {
+        console.log((await pilotTraceLines(held.world)).join("\n"));
+      }
     }, CASE_TIMEOUT_MS);
     const it: Register = (id, name, body) => gateTest(ctx.expected, id, name, body);
     pilotSetup(it, get, ctx.hub);

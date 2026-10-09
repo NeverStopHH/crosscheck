@@ -34,6 +34,7 @@ import { dirname } from "node:path";
 import { buildSettingsPlan, isHookName, runHook, runStatusline } from "../../../src/index.ts";
 import type { Env } from "../../../src/index.ts";
 import { runHookProcess, runStatuslineProcess } from "./hook-process.ts";
+import type { ProcessTimes } from "./hook-process.ts";
 
 export type HostEvent =
   | "SessionStart"
@@ -160,6 +161,8 @@ export interface HookRun {
   readonly exitCode: number | null;
   /** A process host killed the hook after it hung (release-gate/hook-process.ts). */
   readonly wasKilled: boolean;
+  /** A process host's pid and spawn/exit epochs (what joins a CX_HOOK_TRACE file); null in-process. */
+  readonly times: ProcessTimes | null;
 }
 
 /** A line the PERSON is shown: a sync main-thread hook's systemMessage. */
@@ -272,11 +275,12 @@ export const openSession = (
   ): Promise<HookRun> => {
     const isImplemented = isHookName(planned.hook);
     const stdin = JSON.stringify(payload);
-    const inProcess = async (): Promise<{ stdout: string; durationMs: null; exitCode: null; wasKilled: false }> => ({
+    const inProcess = async (): Promise<{ stdout: string; durationMs: null; exitCode: null; wasKilled: false; times: null }> => ({
       stdout: isImplemented ? await runHook(planned.hook as Parameters<typeof runHook>[0], stdin, developer.env) : "",
       durationMs: null,
       exitCode: null,
       wasKilled: false,
+      times: null,
     });
     const result =
       isImplemented && options.isProcessHost
@@ -299,6 +303,7 @@ export const openSession = (
       durationMs: result.durationMs,
       exitCode: result.exitCode,
       wasKilled: result.wasKilled,
+      times: result.times,
     };
     runs.push(run);
     return run;
