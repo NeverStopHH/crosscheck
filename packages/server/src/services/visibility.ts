@@ -16,7 +16,9 @@
  *   was created, honest coverage that some session went silent, team-level
  *   pilot counts, event sequence gaps, and words you write yourself. A
  *   determined teammate can infer roughly when you work from the work you
- *   share.
+ *   share. Opting out hides WHO you are, WHERE you work (branch, topic) and
+ *   WHEN (heartbeat, times); teammates still learn that SOMEONE is working
+ *   on a file they touch right now («anonymous» below).
  *
  * WHAT IT DOES NOT HIDE — the residuals, each tagged so the executable
  * boundary (test/live-location-differential.test.ts RESIDUALS) can point at
@@ -29,13 +31,19 @@
  *               verification's time and HEAD are withheld (below), so a
  *               pin of hers carries no instant of hers at all. The docs
  *               once listed it here; the code withholds it, which is the
- *               harmless direction (review round 5, L2)
+ *               harmless direction (review round 5, L2). Nor a DERIVED
+ *               claim's to the second: her connector stamps a draft when it
+ *               derives it from her session's work, so its creation is
+ *               shown to the day (batch-2 integration review, L8)
  *   «coverage»  honest coverage that SOME session went quiet or reported:
  *               the agent_event rung's state, its reason and whether its
  *               gap is withheld (`session_silent` with `withheld: true`) —
  *               never whose session, never when: its start is withheld for
  *               as long as she has a session on the repo, so nothing she
- *               does moves it (services/coverage.ts)
+ *               does moves it (services/coverage.ts). The coverage record's
+ *               order block reads the same window (no session in it, or the
+ *               weakest declaration of those in it), so whether SOME session
+ *               reported inside the window moves it too
  *   «pilot»     team-level pilot counts: sessions, deliveries and pulls,
  *               the integrity counters, which prior work was opened
  *   «sequence»  event sequence gaps (the feed's ids, below)
@@ -49,6 +57,27 @@
  *               WHEN she collected it is withheld: an absence finding's
  *               evidenceCollectedAt reads LOCATION_WITHHELD, and the rung
  *               prints the newest instant a viewer may be told
+ *   «anonymous» THAT a teammate is working on a file the reader touches,
+ *               right now, and nothing of who, where or when (the owner's
+ *               decision on the batch-2 integration review's I1: dropping
+ *               her whole recreated the pilot's failure for every
+ *               opted-out person). The tripwire answers ONE nameless row,
+ *               `{ anonymous: true }`, while any developer the reader may
+ *               not be told about is live on the file
+ *               (services/hints.ts listAnonymousTargetPresence), and the
+ *               ghost check a nameless, time-free count of the reader's own
+ *               files such a developer's unfinished work touches
+ *               (services/ghost-overlap.ts countAnonymousOverlap). One row
+ *               and one count for all of them, so no count singles anybody
+ *               out; no name, developer or session id, branch, title,
+ *               topic, work-context id, intent or instant; a teammate the
+ *               reader muted raises neither. Whether the row is there moves
+ *               with her liveness, and the count lasts while her session is
+ *               open (never by her work's own times) — that is the fact the
+ *               decision accepts. NAMELESS, NOT UNLINKABLE: her published
+ *               work contexts stay attributed with their creation age
+ *               («creation»), so in a small team who "a teammate" is can be
+ *               guessed by elimination (release gate I1 pins exactly that)
  *   «content»   what her shared work says — a claim, a target's path, an
  *   «words»     intent, a pin's surface, a status, a revalidation's
  *               finding — the words she writes herself, and the counts and
@@ -60,7 +89,15 @@
  *               included, so it must not hide what that key did. The row
  *               names her id and who acted (`self` or `admin`), never a
  *               branch, HEAD or heartbeat. A self-rotation's instant is an
- *               instant she, or something holding her key, was active
+ *               instant she, or something holding her key, was active.
+ *               And a PASSKEY ENROLMENT of hers (batch-2 integration review,
+ *               L9): GET /api/passkeys/announcements and the /ui/passkeys
+ *               page list every member's recent enrolments — name, label,
+ *               authenticator, when it was created and becomes usable,
+ *               whether it was revoked — because the announcement IS the
+ *               control against a planted passkey (1.0 spec 04a §4.3), and
+ *               the admin's per-developer list is how one is revoked.
+ *               Team-wide by design, never the caller's own
  *
  * Every one of them holds at a colleague's POLL interval: a colleague who
  * reads again and again sees when a residual changed — when a claim
@@ -73,7 +110,10 @@
  *   1. GET /api/presence          — briefing "active teammates", statusline,
  *                                   `crosscheck status` teammate lines
  *   2. GET /api/hints/tripwire    — the PreToolUse "working on the same
- *                                   file" ask about my active sessions
+ *                                   file" ask about my active sessions: my
+ *                                   rows go, and one nameless row says only
+ *                                   that a teammate is live on the file
+ *                                   («anonymous» above)
  *   3. GET /api/absences          — "inactive" findings about me (absence
  *                                   reporting IS presence surveillance: it
  *                                   reports when I last ran an agent)
@@ -94,7 +134,10 @@
  *                                   asserts that a NAMED teammate is working
  *                                   in these files NOW, which is presence-
  *                                   class exactly as the tripwire is, and it
- *                                   carries their last-active age out loud
+ *                                   carries their last-active age out loud.
+ *                                   My rows go; a nameless, time-free count
+ *                                   of the reader's files my unfinished work
+ *                                   touches stays («anonymous» above)
  *   6. GET /api/sessions?open=1   — the open-session listing without mine=1.
  *                                   A row with its branch and heartbeat gone
  *                                   says only THAT the session exists, which
@@ -281,10 +324,13 @@
  *                                   opted-out developer cannot decide what
  *                                   the reader is shown either
  *  10. POST /api/landed/context  — the teammate work a landed-change stop
- *                                   names (step 3). Presence opt-out applies
- *                                   there only while that work's session is
- *                                   live: an ended session's work is
- *                                   published, a live one is presence
+ *                                   names (step 3). Presence opt-out does
+ *                                   not decide WHICH work is named: her work
+ *                                   is published, live or ended, and the
+ *                                   match reads no time and no state of her
+ *                                   sessions — "is it live" is presence
+ *                                   (integration review H4); its times are
+ *                                   withheld from the answer
  *  11. GET /api/landed/notices   — the author's notice (landed changes,
  *                                   step 4): X's stop at my landed change,
  *                                   in my briefing and, on the same list, in

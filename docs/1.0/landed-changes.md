@@ -332,8 +332,11 @@ That is the match (decision 6).
   - It is never the caller's own work context.
   - A developer the caller muted is left out, because this is an unasked
     surface.
-  - A presence opt-out hides the work only while its session is live. A
-    live session is presence; an ended session's work is published.
+  - For a developer who opted out of presence, the match reads no time and
+    no session state of theirs: their work on the file is named whether its
+    session is live or ended, matched by the path and the address alone.
+    Hiding live work made "matched or not" say whether they were live, to
+    the second; its title and start are withheld as everywhere else.
   - The answer carries the work context's title, its current intent, the
     developer's name, when the session started, and the work context's id.
     It never carries an address.

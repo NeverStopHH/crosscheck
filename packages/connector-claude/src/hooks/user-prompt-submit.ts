@@ -146,6 +146,8 @@ const envelope = (text: string): PromptOutput => ({
 interface PromptDelivery {
   readonly output: PromptOutput | "";
   readonly shownGhosts: readonly GhostCheckEntry[];
+  /** The paid briefing's nameless ghost count, or null (hooks/ghost-notice.ts). */
+  readonly shownAnonymousGhost: number | null;
 }
 
 const nonEmpty = (part: string): boolean => part.length > 0;
@@ -341,16 +343,21 @@ const deliverPromptContext = async (ctx: HookContext, budget: HookBudget): Promi
   const note = await claimProbeCutsNote(ctx).catch(() => "");
   const own = await promptText(ctx, budget);
   const whole = [own.text, note].filter(nonEmpty).join("\n");
-  return { output: whole.length === 0 ? "" : envelope(whole), shownGhosts: own.shownGhosts };
+  return {
+    output: whole.length === 0 ? "" : envelope(whole),
+    shownGhosts: own.shownGhosts,
+    shownAnonymousGhost: own.shownAnonymousGhost,
+  };
 };
 
-/** The prompt's own text — briefing, hint or nudge — and the ghost rows a paid briefing shows. */
+/** The prompt's own text — briefing, hint or nudge — and the ghost rows (and nameless count) a paid briefing shows. */
 interface PromptText {
   readonly text: string;
   readonly shownGhosts: readonly GhostCheckEntry[];
+  readonly shownAnonymousGhost: number | null;
 }
 
-const spoken = (text: string): PromptText => ({ text, shownGhosts: [] });
+const spoken = (text: string): PromptText => ({ text, shownGhosts: [], shownAnonymousGhost: null });
 
 const promptText = async (ctx: HookContext, budget: HookBudget): Promise<PromptText> => {
   // ONE CLASSIFICATION of the prompt for the whole hook — the intent fire and
@@ -377,7 +384,7 @@ const promptText = async (ctx: HookContext, budget: HookBudget): Promise<PromptT
     tellsNotices: aPersonReads(ctx.env),
   });
   if (paid.briefing.length > 0) {
-    return { text: paid.briefing, shownGhosts: paid.shownGhosts };
+    return { text: paid.briefing, shownGhosts: paid.shownGhosts, shownAnonymousGhost: paid.shownAnonymousGhost };
   }
   const text = await selectAndRenderHint({
     home: ctx.config.home,
@@ -468,7 +475,7 @@ export const handleUserPromptSubmit = async (
   // A paid briefing's ghost rows are claimed told after that, as SessionStart
   // claims its own (review L5): one lock write, the last thing before output,
   // and not gated on the spare — it is this prompt's own delivery.
-  const ghosts = await tellPersonOfGhosts(ctx, delivery.shownGhosts);
+  const ghosts = await tellPersonOfGhosts(ctx, delivery.shownGhosts, delivery.shownAnonymousGhost);
   return serialize(delivery.output, relay, swept, ghosts, ctx.now());
 };
 

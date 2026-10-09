@@ -39,17 +39,33 @@ export const MUTE_USAGE = [
 ].join("\n");
 
 /**
+ * THE GUARANTEE, AS IT IS (the owner's decision on the batch-2 integration
+ * review's I1): the one sentence `crosscheck presence`, `presence off` and
+ * doctor all print, so a person reads it BEFORE opting out. Opting out hides
+ * who, where and when; it does not hide that somebody is working on a file a
+ * teammate is about to change, because hiding that recreated the pilot's
+ * failure for every opted-out person (services/visibility.ts «anonymous»).
+ */
+export const OPT_OUT_GUARANTEE =
+  "Opting out hides who you are, where you work (branch, topic) and when (heartbeat, times); " +
+  "teammates still learn that someone is working on a file they touch right now.";
+
+/**
  * What opting out hides and — just as important — what it does not. The
  * hub-side surface list lives in packages/server/src/services/visibility.ts;
  * these lines are its user-facing mirror.
  */
 const OPT_OUT_SCOPE = [
   "",
+  OPT_OUT_GUARANTEE,
+  "",
   "Hidden from other developers: active-teammate briefing lines, statusline",
-  "presence, PreToolUse same-file asks, absence (\"connector inactive\")",
-  "lines, and every activity-feed event attributed to you — session",
-  "start/end and knowledge events alike, since feed timestamps reveal when",
-  "you work. Your own view of your own activity is unaffected.",
+  "presence, your name and location on PreToolUse same-file asks (a teammate",
+  "about to edit a file you are on is told only that a teammate is on it),",
+  "absence (\"connector inactive\") lines, and",
+  "every activity-feed event attributed to you — session start/end and",
+  "knowledge events alike, since feed timestamps reveal when you work.",
+  "Your own view of your own activity is unaffected.",
   "",
   "NOT retracted: claims, diagnoses and solved trees you published",
   "stay visible and attributed — opt-out covers live presence, not",
@@ -119,7 +135,7 @@ const showPresence = async (ctx: HubContext): Promise<CliResult> => {
     return failureResult(settings);
   }
   return {
-    stdout: `${presenceStateLine(settings.data.presenceOptOut)}\n`,
+    stdout: `${presenceStateLine(settings.data.presenceOptOut)}\n${OPT_OUT_GUARANTEE}\n`,
     exitCode: EXIT_OK,
   };
 };

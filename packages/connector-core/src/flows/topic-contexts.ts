@@ -17,9 +17,10 @@
  * on top of it — so a topic carries:
  *
  *   - a STABLE id, MINTED when its (repo, worktree root, branch) is first seen
- *     in a life (`mintTopicId`): the root's key and a number hashed from the
- *     branch it OPENED on — spelling no branch, and never re-derived, so no
- *     rename can change it. Its work context is `wc_<life>~t<id>`.
+ *     in a life (`mintTopicId`): an HMAC of them under this machine's topic
+ *     key (state/topic-key.ts) — spelling no branch, testable against no
+ *     guessed one, and never re-derived, so no rename can change it. Its work
+ *     context is `wc_<life>~t<id>`.
  *     Deterministic, so a crash, a retry or a sibling hook opening the same
  *     topic from the same state name one context (review M1);
  *   - an AFFINITY: the root, every branch the rules attached to it, the
@@ -47,6 +48,8 @@
  * session's own context and is counted (`topic_overflow`), never dropped. A
  * topic is never excluded for its SIZE: nothing here counts its files.
  */
+import { createHmac } from "node:crypto";
+
 import type { Envelope, WorkContextTitleSource } from "@crosscheck/schema";
 
 import { INTENT_TOPIC_AMBIGUITY_MS, TOPIC_KEY_HEX_CHARS } from "../constants.ts";
@@ -68,29 +71,37 @@ export const TOPIC_TITLE_SOURCE: WorkContextTitleSource = "fallback";
 /** The status a topic opens with when the life's state names none. */
 const DEFAULT_TOPIC_STATUS = "implementing";
 
-/** sha256 of (repo, worktree root), short: a worktree's key — hashed, so no path is readable from it. */
-export const rootKeyOf = (repoId: string, root: string): string =>
-  new Bun.CryptoHasher("sha256")
-    .update(`${repoId}\n${root}`)
-    .digest("hex")
-    .slice(0, TOPIC_KEY_HEX_CHARS);
+/**
+ * Where a topic's key comes from (state/topic-key.ts): this machine's secret,
+ * read only when a topic opens; null when none can be had, and then no topic
+ * opens (flows/topic-rules.ts).
+ */
+export type TopicKeySource = () => Promise<string | null>;
 
-/** Hex characters of the opening branch's hash a topic id carries, read as one decimal number. */
-const BRANCH_KEY_HEX_CHARS = 8;
+/** Hex characters of the digest after the lead a topic id carries, read as one decimal number. */
+const NUMBER_HEX_CHARS = 8;
 
 /**
- * A topic's MINTED id: its root's key, and a number derived from the branch
- * it was OPENED on — the decimal of sha256(branch)'s first 8 hex, so it stays
- * inside the id grammar's `~t<hex>.<digits>` (schema/src/question.ts). Minted
- * once, when the topic opens, and never re-derived: a rename joins the
+ * A topic's MINTED id (batch-2 integration review, H3): an HMAC-SHA256 under
+ * this machine's topic key (state/topic-key.ts) of the conversation, the repo,
+ * the worktree root and the branch the topic was OPENED on — its first
+ * TOPIC_KEY_HEX_CHARS hex, a dot, and the decimal of the next 8, so it stays
+ * inside the id grammar's `~t<hex>.<digits>` (schema/src/question.ts). It was
+ * sha256(repo, root) and sha256(branch), and the hub serves ids as written: a
+ * colleague hashing the remote's branch list read an opted-out developer's
+ * topic branches off it. Keyed, a guess cannot be tested without the key,
+ * which never leaves this machine.
+ *
+ * Minted once, when the topic opens, and never re-derived: a rename joins the
  * affinity and keeps the id. Deterministic in what was opened (review M1):
- * two hooks planning from one state open the SAME id for one (root, branch)
- * and two ids for two branches, where an ordinal counted from that state gave
- * both branches one id.
+ * two hooks planning from one state read one key and open the SAME id for
+ * one (root, branch), and two ids for two branches; a heal's next life
+ * re-opens it under the same id, since the conversation is every life's.
  */
-export const mintTopicId = (repoId: string, root: string, branch: string): string => {
-  const branchKey = new Bun.CryptoHasher("sha256").update(branch).digest("hex").slice(0, BRANCH_KEY_HEX_CHARS);
-  return `${rootKeyOf(repoId, root)}.${String(Number.parseInt(branchKey, 16))}`;
+export const mintTopicId = (key: string, conversation: string, repoId: string, root: string, branch: string): string => {
+  const digest = createHmac("sha256", key).update(JSON.stringify([conversation, repoId, root, branch])).digest("hex");
+  const number = digest.slice(TOPIC_KEY_HEX_CHARS, TOPIC_KEY_HEX_CHARS + NUMBER_HEX_CHARS);
+  return `${digest.slice(0, TOPIC_KEY_HEX_CHARS)}.${String(Number.parseInt(number, 16))}`;
 };
 
 export const topicWorkContextIdFor = (sessionWorkContextId: string, id: string): string =>

@@ -47,6 +47,24 @@ If nobody sets anything:
 - With an https origin listed, passkey prompts at `http://localhost:7100` are refused, so a person whose only passkey was enrolled at `localhost` can approve no waiver and release no artifact until they enrol at the https address. Without an https origin, a request through `tailscale serve` cannot use `localhost` either, and only the hub machine's own browser at `http://localhost:7100` can.
 - Approving an artifact on `/ui/approvals` is a passkey ceremony now, and the old approve form post answers 403. Revoking a release still takes no passkey: the owner uses the plain button, and the operator can re-hide any release during the passkey gap with `POST /api/artifacts/<id>/withdraw` (admin token).
 
+### Topic ids minted before this version
+
+A topic's work-context id (`wc_<life>~t<hex>.<digits>`) used to carry `sha256(branch)`, so anybody who hashed the remote's branch names could tell which branch the topic was on, also for a developer who opted out of presence. Connectors of this version mint the id as an HMAC under a key that never leaves the developer's machine (`~/.crosscheck/sessions/topic-key`, created at the first topic). Nothing needs doing, and nothing is rewritten:
+
+- **On the hub**, topics stored before the upgrade keep their ids, and those ids still hash back to their branch. An id is what every target, claim, question and delivery of the topic points at, and the owning connector may still send records under it, so rewriting it would split the topic in two. Knowledge on the hub is append-only, so nothing removes them either.
+- **In a running session**, a topic it already opened keeps its id: ids are minted once and never re-derived, so its work goes on under the same context. Every topic opened after the connector upgrade gets a keyed id, a topic that a heal or a resume opens again in the next life included.
+
+### What a presence opt-out hides now
+
+Opting out hides who you are, where you work (branch, topic) and when (heartbeat, times); teammates still learn that someone is working on a file they touch right now. Before this version an opted-out developer's sessions were dropped from the tripwire and the ghost check entirely, so a teammate about to change the same file was told nothing, which is how the pilot's collision went unseen. Now:
+
+- **The tripwire** answers one nameless row while an opted-out developer is live on the file. The teammate's agent and person read "a teammate is working on <file> right now — talk to your team before you change it"; the statusline counts "1 teammate". Several opted-out developers on one file are still one row.
+- **The ghost check** answers a nameless count of the reader's own files an opted-out developer's unfinished work touches, shown in the briefing and to the person as "a teammate's work in progress also touches N of your files".
+- Neither carries a name, developer or session id, branch, topic, work-context id, heartbeat or any other time. A developer the reader muted still raises nothing.
+- Nameless is not unlinkable. The work contexts an opted-out developer publishes stay attributed in the briefing, with their creation age, as before. In a team of two, "a teammate" is therefore the other person.
+
+`crosscheck presence`, `crosscheck presence off` and doctor print the first sentence above, so a person reads it before opting out. Nothing needs setting; it starts with the hub and connector upgrade.
+
 ## Passkeys, drafts and a lost device
 
 Since 0.11 a key only drafts a person's judgements and settings: labels, ratings, pins, breaks, mutes and switching presence back on. Nothing counts, protects or changes until the person confirms it on `/ui/confirm` with a passkey (`crosscheck confirm` opens the page). Switching presence off is immediate. A new passkey waits 24 hours (its cool-off). What it confirms takes effect at once and counts in the figures from the moment the cool-off ends.

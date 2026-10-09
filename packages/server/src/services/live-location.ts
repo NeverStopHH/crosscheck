@@ -28,7 +28,7 @@
  * reads as WITHHELD_TITLE on every surface. Done here, on the hub, so a
  * connector too old to know about it cannot print the branch anyway.
  */
-import { and, eq, ne, sql } from "drizzle-orm";
+import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import {
@@ -71,6 +71,29 @@ export const locationHiddenFrom = async (
     return new Map();
   }
   return branchesOf(db, rows.map((row) => row.id));
+};
+
+/**
+ * The same set, among `ownerIds` only and WITHOUT their branches: for rows
+ * that carry no title, which is the one field the branches judge
+ * (projectTitle). A read beside another that already looked the branches up
+ * — the prompt's answers beside its hint candidates — does not look them up
+ * again (test/live-location-cost.test.ts).
+ */
+export const locationHiddenAmong = async (
+  db: Db,
+  viewerDeveloperId: string,
+  ownerIds: readonly string[],
+): Promise<HiddenLocations> => {
+  const others = [...new Set(ownerIds)].filter((id) => id !== viewerDeveloperId);
+  if (others.length === 0) {
+    return new Map();
+  }
+  const rows = await db
+    .select({ id: developers.id })
+    .from(developers)
+    .where(and(eq(developers.presenceOptOut, true), inArray(developers.id, others)));
+  return new Map(rows.map((row) => [row.id, []]));
 };
 
 /**
@@ -237,6 +260,8 @@ const INSTANT_OR_COMMIT_FIELD = /(?:At|Ms|Commit|Commits|Sha)$|^(?:sha|head)$/;
 /** Words a person or an agent wrote: never withheld for their shape. */
 const PROSE_FIELDS: ReadonlySet<string> = new Set([
   "body",
+  // An answer row's claim (services/questions.ts listUndeliveredAnswers).
+  "claimBody",
   "description",
   "summary",
   "reason",
@@ -337,6 +362,22 @@ const ACTIVITY_COUNTERS: Readonly<Record<string, number>> = { dedupCount: 1 };
  */
 const DAY_PRECISION: ReadonlySet<string> = new Set(["landedAt"]);
 
+/**
+ * A DERIVED claim's creation is a MACHINE STAMP (batch-2 integration review,
+ * L8): her connector writes it the moment it derives the draft from what her
+ * session did — when she was there, not when somebody chose to say
+ * something, which is what «creation» accepts. Shown to the day, like her
+ * work's landing; every other claim keeps its creation whole.
+ */
+const DERIVED_PROVENANCE = "derived";
+const NO_PATHS: ReadonlySet<string> = new Set();
+const MACHINE_STAMPED: ReadonlySet<string> = new Set(["createdAt"]);
+
+const dayPathsOf = (owner: RowOwner, row: object): ReadonlySet<string> =>
+  owner.kind === "claim" && (row as { readonly provenance?: unknown }).provenance === DERIVED_PROVENANCE
+    ? MACHINE_STAMPED
+    : NO_PATHS;
+
 export type WithheldForms = Readonly<Record<string, WithheldForm>>;
 
 /** Title fields: withheld only when the title IS the branch. */
@@ -375,6 +416,8 @@ interface Projection {
   readonly forms: WithheldForms;
   readonly reportedBranches: readonly string[];
   readonly shown: ReadonlySet<string>;
+  /** Paths shown to the day only (dayPathsOf): a machine stamp of hers. */
+  readonly dayPaths: ReadonlySet<string>;
   /** Where in the row this part sits: "" at the root, `validity` inside it. */
   readonly path: string;
 }
@@ -426,7 +469,7 @@ const projectEntry = (
   if (counter !== undefined) {
     return [[key, counter]];
   }
-  if (DAY_PRECISION.has(key)) {
+  if (DAY_PRECISION.has(key) || p.dayPaths.has(path)) {
     return [[key, toDay(value)]];
   }
   if (LOCATION_BY_NAME.has(key) || isWithheldShape(key, value)) {
@@ -536,6 +579,10 @@ export const projectRow = <R extends object>(
   if (reportedBranches === undefined) {
     return row;
   }
-  const shown: ReadonlySet<string> = new Set(owner.kind === undefined ? [] : SHOWN_FOR_HIDDEN[owner.kind]);
-  return projectObject({ owner, forms, reportedBranches, shown, path: "" }, row) as R;
+  // A machine stamp leaves the allowlist for the day rule (dayPathsOf).
+  const dayPaths = dayPathsOf(owner, row);
+  const shown: ReadonlySet<string> = new Set(
+    (owner.kind === undefined ? [] : SHOWN_FOR_HIDDEN[owner.kind]).filter((entry: string) => !dayPaths.has(entry)),
+  );
+  return projectObject({ owner, forms, reportedBranches, shown, dayPaths, path: "" }, row) as R;
 };

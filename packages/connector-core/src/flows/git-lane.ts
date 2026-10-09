@@ -58,7 +58,8 @@ import type { CapturedFileTargets } from "./capture-targets.ts";
 import { NO_GENERATED, addGeneratedTally } from "../capture/generated.ts";
 import type { GeneratedTally } from "../capture/generated.ts";
 import { mergeTopicCaptures, plannedTopicRecords, relabelsKept, seenPathsOf, topicLifeOf, topicSeenKey } from "./topic-contexts.ts";
-import type { Filing, TopicCapture, TopicLife } from "./topic-contexts.ts";
+import type { Filing, TopicCapture, TopicKeySource, TopicLife } from "./topic-contexts.ts";
+import { topicKeyFrom } from "../state/topic-key.ts";
 import { planTopics } from "./topic-rules.ts";
 import { topicBaseProbe, withTopicBaseWords } from "./topic-base-word.ts";
 import type { TopicBaseProbe } from "./topic-base-word.ts";
@@ -213,6 +214,8 @@ export interface SweepGitRootsInput {
   readonly seq: SeqRange | null;
   /** Each git call's deadline; absent = GIT_TOUCHES_TIMEOUT_MS. */
   readonly gitTimeoutMs?: number;
+  /** The key the topics the sweep opens are minted under: this machine's (state/topic-key.ts) by default. */
+  readonly topicKey?: TopicKeySource;
 }
 
 export interface GitLaneSweep {
@@ -338,6 +341,7 @@ const spoolRoot = async (
   index: number,
   life: TopicLife,
   probe: TopicBaseProbe,
+  topicKey: TopicKeySource,
 ): Promise<RootSpooled | null> => {
   const commits = read.commits ?? [];
   const touches = read.touches ?? [];
@@ -349,7 +353,7 @@ const spoolRoot = async (
   // The topics this root opens, each with its own word about its base (topic
   // review C1; flows/topic-base-word.ts).
   const plan = await withTopicBaseWords(
-    await planTopics(life, resolutionOf(read, paths, input.state, input.now), paths, input.now, read.lane.root),
+    await planTopics(life, resolutionOf(read, paths, input.state, input.now), paths, input.now, topicKey, read.lane.root),
     probe,
   );
   const session: Filing = { key: null, workContextId: life.sessionWorkContextId };
@@ -414,8 +418,10 @@ export const sweepGitRoots = async (input: SweepGitRootsInput): Promise<GitLaneS
   // One probe for the sweep: the topics its roots open share one default-ref
   // lookup, the repo's (flows/topic-base-word.ts).
   const probe = topicBaseProbe();
+  // ...and one key read: every root's topics are minted under it.
+  const topicKey = input.topicKey ?? topicKeyFrom(input.home);
   for (const [index, read] of reads.entries()) {
-    const spooled = await spoolRoot(input, read, index, life, probe);
+    const spooled = await spoolRoot(input, read, index, life, probe, topicKey);
     if (spooled !== null) {
       captured.push(...spooled.captured);
       generated = addGeneratedTally(generated, spooled.generated);

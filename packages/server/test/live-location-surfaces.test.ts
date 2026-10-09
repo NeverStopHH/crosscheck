@@ -35,6 +35,8 @@ import {
   ROBIN_PIN,
   NICK_CONTEXT,
   NICK_SESSION,
+  NICK_TITLE,
+  NICK_TO_ROBIN_QUESTION,
   REVALIDATED_AT,
   REPO,
   ROBIN_CONTEXT,
@@ -44,14 +46,23 @@ import {
   ROBIN_LOCAL,
   ROBIN_LOCAL_CONTEXT,
   ROBIN_OLD_CONTEXT,
+  ROBIN_SECOND_TOPIC,
   ROBIN_SOLVED,
+  ROBIN_TOPIC,
+  OLD_CREATED_AT,
+  OLD_TITLE,
   SECRET_BRANCH,
   SECRET_LOCAL_BRANCH,
   SECRET_SHA,
   SECRET_SHA2,
+  TIED_FINDING_WORDS,
+  TIED_TOPIC_WORDS,
   UPDATED_AT,
   getAs,
+  leaksIn,
+  openTiedTopics,
   postAs,
+  rewriteTiedTopicInPlace,
   secretsIn,
   seedOptedOutWorld,
   url,
@@ -90,10 +101,12 @@ describe("the conference", () => {
     const asRobin = await getAs(world, "robin", url("/api/conference", { repo: REPO }));
 
     expect(secretsIn(asNick.body)).toEqual([]);
-    expect(conferenceQuestionTitles(asNick.body)).toEqual({ q_ken_1: WITHHELD_TITLE, q_robin_1: WITHHELD_TITLE });
+    // Nick's own question to her is about HIS work: titled as his, for both.
+    expect(conferenceQuestionTitles(asNick.body)).toEqual({ q_ken_1: WITHHELD_TITLE, q_robin_1: WITHHELD_TITLE, [NICK_TO_ROBIN_QUESTION]: NICK_TITLE });
     expect(conferenceQuestionTitles(asRobin.body)).toEqual({
       q_ken_1: `${SECRET_BRANCH} @ api`,
       q_robin_1: `${SECRET_BRANCH} @ api`,
+      [NICK_TO_ROBIN_QUESTION]: NICK_TITLE,
     });
   });
 });
@@ -133,7 +146,84 @@ describe("the questions inbox (review round 3, H1)", () => {
     expect(secretsIn(answerable.body)).toEqual([]);
     expect(answerable.body).toContain(WITHHELD_TITLE);
   });
+
+  test("her answer to Nick's question carries neither when she answered nor her evidence's age (integration review M4)", async () => {
+    // The answer lands on the asker's briefing and prompt: the hub's stamp of
+    // her answer and the evidence rung's age (the failure her session observed)
+    // went out raw on both, where every other route withholds them.
+    const world = await seedOptedOutWorld();
+    world.harness.clock.advanceSeconds(ANSWER_DELAY_S);
+    const answered = await postAs(world, "robin", `/api/questions/${NICK_TO_ROBIN_QUESTION}/answers`, {
+      claim: validClaimBody({ id: "clm_robin_answer", workContextId: ROBIN_CONTEXT, authorSessionId: ROBIN_LIVE, kind: "observation", body: "The cache keeps the old key id for one refresh", verificationRef: `error_fingerprint:${ROBIN_FINGERPRINT}`, createdAt: CREATED_AT }),
+    });
+    world.harness.clock.advanceSeconds(ANSWER_DELAY_S);
+    const answeredAt = new Date(world.harness.clock.now().getTime() - ANSWER_DELAY_S * 1000).toISOString();
+
+    const reads = [
+      await getAs(world, "nick", url("/api/questions", { repo: REPO })),
+      await getAs(world, "nick", url("/api/hints/candidates", { repo: REPO, query: "where does the cache keep the key id" })),
+    ];
+    const answers = reads.map((read) => (JSON.parse(read.body) as { data: { answers: readonly AnswerRow[] } }).data.answers);
+
+    expect(answered.status).toBe(200);
+    for (const [index, read] of reads.entries()) {
+      expect(leaksIn(read.body, world.harness.clock.now())).toEqual([]);
+      expect(read.body).not.toContain(answeredAt);
+      expect(answers[index]?.map((answer) => [answer.claimId, answer.answeredAt, answer.axes?.observedAt ?? null])).toEqual([
+        ["clm_robin_answer", LOCATION_WITHHELD, null],
+      ]);
+    }
+  });
+
+  test("which answers Nick is handed first does not follow when she answered (integration review M4)", async () => {
+    // Four answers wait and a page holds three: ordered by when each was
+    // answered, hers was in or out by her own instant.
+    const page = async (isHersLast: boolean): Promise<readonly string[]> => {
+      const world = await seedOptedOutWorld();
+      const asKen = async (path: string, body: unknown): Promise<Response> =>
+        world.harness.app.request(path, jsonRequest("POST", world.ken.apiKey, body));
+      const hers = async (): Promise<void> => {
+        const answered = await postAs(world, "robin", `/api/questions/${NICK_TO_ROBIN_QUESTION}/answers`, {
+          claim: validClaimBody({ id: "clm_robin_answer", workContextId: ROBIN_CONTEXT, authorSessionId: ROBIN_LIVE, kind: "observation", body: "The cache keeps the old key id for one refresh", createdAt: CREATED_AT }),
+        });
+        expect(answered.status).toBe(200);
+      };
+      if (!isHersLast) {
+        await hers();
+      }
+      for (const part of [1, 2, 3]) {
+        world.harness.clock.advanceSeconds(ANSWER_DELAY_S);
+        const question = `q_nick_to_ken_${String(part)}`;
+        await postAs(world, "nick", "/api/questions", { id: question, repo: REPO, sessionId: NICK_SESSION, body: `Ken, where is the key id kept, part ${String(part)}?`, developer: "Ken", workContextId: NICK_CONTEXT });
+        const answered = await asKen(`/api/questions/${question}/answers`, {
+          claim: validClaimBody({ id: `clm_ken_answer_${String(part)}`, workContextId: "wc_ken", authorSessionId: KEN_SESSION, kind: "observation", body: `In the refresh cache, part ${String(part)}`, createdAt: world.harness.clock.now().toISOString() }),
+        });
+        expect(answered.status).toBe(200);
+      }
+      if (isHersLast) {
+        world.harness.clock.advanceSeconds(ANSWER_DELAY_S);
+        await hers();
+      }
+      world.harness.clock.advanceSeconds(ANSWER_DELAY_S);
+      const read = await getAs(world, "nick", url("/api/questions", { repo: REPO }));
+      return (JSON.parse(read.body) as { data: { answers: readonly AnswerRow[] } }).data.answers.map((answer) => answer.claimId);
+    };
+
+    const first = await page(false);
+    const last = await page(true);
+
+    expect(first).toHaveLength(3);
+    expect(last).toEqual(first);
+  });
 });
+
+const ANSWER_DELAY_S = 90;
+
+interface AnswerRow {
+  readonly claimId: string;
+  readonly answeredAt: string;
+  readonly axes?: { readonly observedAt?: string | null };
+}
 
 describe("the pilot surfaces (review round 3, H3)", () => {
   test("crosscheck pilot label lists the hint about Robin's context under the withheld title", async () => {
@@ -279,7 +369,84 @@ describe("when Robin last touched her work (review round 3, M1)", () => {
     expect(robinsRows(world, listed(asNick.body))[0]?.id).toBe(ROBIN_HOST_CONTEXT);
     expect(robinsRows(world, listed(asRobin.body))[0]?.id).toBe(ROBIN_CONTEXT);
   });
+
+  test("the listing marks her rows withheld, and nobody else's: no reader dates her by creation (integration review M5)", async () => {
+    const world = await seedOptedOutWorld();
+    const marked = async (who: "nick" | "robin"): Promise<readonly string[]> => [
+      ...new Set(
+        (JSON.parse((await getAs(world, who, url("/api/work-contexts", { repo: REPO }))).body) as { data: { workContexts: readonly { developerId: string; locationWithheld?: unknown }[] } }).data.workContexts
+          .filter((row) => row.locationWithheld !== undefined)
+          .map((row) => (row.locationWithheld === true ? row.developerId : `not true: ${JSON.stringify(row.locationWithheld)}`)),
+      ),
+    ];
+
+    expect(await marked("nick")).toEqual([world.robin.developerId]);
+    expect(await marked("robin")).toEqual([]);
+  });
+
+  test("the hint pool ranks her trees by creation, never by her last touch (integration review H5)", async () => {
+    // Her old context, created ninety days back, moved again twenty days or
+    // two minutes before Nick's prompt. The pool decays every tier by
+    // `updatedAt ?? createdAt`, and read raw, her withheld touch brought the
+    // old tree into a list capped at three and pushed Ken's out.
+    const pool = async (beforeReadS: number): Promise<readonly string[]> => {
+      const world = await seedOptedOutWorld();
+      world.harness.clock.advanceSeconds(TOUCH_SKEW_S - beforeReadS);
+      const moved = await postRecords(world.harness, world.robin, {
+        records: [
+          recordEnvelope(
+            "work_context",
+            validWorkContextBody({ id: ROBIN_OLD_CONTEXT, sessionId: ROBIN_LIVE, title: OLD_TITLE, titleSource: "host", status: "testing", createdAt: OLD_CREATED_AT }),
+            { sessionId: ROBIN_LIVE },
+          ),
+        ],
+      });
+      expect(moved.data?.accepted).toBe(1);
+      world.harness.clock.advanceSeconds(beforeReadS);
+      return candidateIds(await getAs(world, "nick", url("/api/hints/candidates", { repo: REPO, query: "why does POST /login return a 500" })));
+    };
+
+    const early = await pool(TOUCH_SKEW_S);
+    const late = await pool(TOUCH_LATE_S);
+
+    expect(early.length).toBeGreaterThan(0);
+    expect(late).toEqual(early);
+  });
+
+  test("equal ranks follow the ids, never where her rows sit on disk (integration review L7)", async () => {
+    // Two topics of hers say the same words; an update that changes no value
+    // moves one of them, its claim and her session to new tuples.
+    const world = await seedOptedOutWorld();
+    await openTiedTopics(world);
+    // By their statements, and by their finding alone — the claim tier's own tie.
+    const read = async (): Promise<readonly (readonly string[])[]> => [
+      candidateIds(await getAs(world, "nick", url("/api/hints/candidates", { repo: REPO, query: TIED_TOPIC_WORDS }))),
+      candidateIds(await getAs(world, "nick", url("/api/hints/candidates", { repo: REPO, query: TIED_FINDING_WORDS }))),
+      searchIds(await getAs(world, "nick", url("/api/search", { query: TIED_TOPIC_WORDS, repo: REPO }))),
+      searchIds(await getAs(world, "nick", url("/api/search", { query: TIED_FINDING_WORDS, repo: REPO }))),
+    ];
+
+    const before = await read();
+    await rewriteTiedTopicInPlace(world);
+    const after = await read();
+
+    expect(before[0]).toEqual(expect.arrayContaining([ROBIN_TOPIC, ROBIN_SECOND_TOPIC]));
+    expect(before[1]).toEqual(expect.arrayContaining([ROBIN_TOPIC, ROBIN_SECOND_TOPIC]));
+    expect(after).toEqual(before);
+  });
 });
+
+/** Twenty days, and two minutes past the presence TTL: she is quiet at both reads. */
+const TOUCH_SKEW_S = 20 * 86_400;
+const TOUCH_LATE_S = 120;
+
+const candidateIds = (answer: { readonly body: string }): readonly string[] =>
+  (JSON.parse(answer.body) as { data: { candidates: readonly { workContext: { id: string } }[] } }).data.candidates.map(
+    (candidate) => candidate.workContext.id,
+  );
+
+const searchIds = (answer: { readonly body: string }): readonly string[] =>
+  (JSON.parse(answer.body) as { data: { results: readonly { id: string }[] } }).data.results.map((result) => result.id);
 
 const titleOf = (body: string, id: string): string | undefined =>
   listed(body).find((row) => row.id === id)?.["title" as keyof ListedContext] as string | undefined;
@@ -378,6 +545,35 @@ describe("her activity after the opt-out (review round 4, H3 and M3)", () => {
     expect(secretsIn(diagnosis.body)).toEqual([]);
     expect(claim?.["lastSeenAt"]).toBeNull();
     expect(claim?.["dedupCount"]).toBe(1);
+  });
+
+  test("a draft her connector derived is dated to the day on a colleague's tree (integration review L8)", async () => {
+    // A derived claim's creation is the derivation's machine stamp — the
+    // instant her session did the work — not when somebody chose to write.
+    const world = await seedOptedOutWorld();
+    const derivedAt = world.harness.clock.now().toISOString();
+    const posted = await postRecords(world.harness, world.robin, {
+      records: [
+        recordEnvelope(
+          "claim",
+          validClaimBody({ id: "clm_robin_draft", workContextId: ROBIN_CONTEXT, authorSessionId: ROBIN_LIVE, kind: "observation", status: "proposed", provenance: "derived", captureMode: "agent", confidence: 0.4, body: "The refresh retries hit the cache before the rotation lands", createdAt: derivedAt }),
+          { sessionId: ROBIN_LIVE },
+        ),
+      ],
+    });
+    expect(posted.data?.accepted).toBe(1);
+    world.harness.clock.advanceSeconds(ANSWER_DELAY_S);
+
+    const createdAtOf = async (who: "nick" | "robin"): Promise<unknown> =>
+      (JSON.parse((await getAs(world, who, `/api/work-contexts/${ROBIN_CONTEXT}/diagnosis`)).body) as { data: { claims: readonly Record<string, unknown>[] } }).data.claims.find(
+        (row) => row["id"] === "clm_robin_draft",
+      )?.["createdAt"];
+    const page = await getAs(world, "nick", `/ui/work-contexts/${ROBIN_CONTEXT}`);
+
+    expect(await createdAtOf("nick")).toBe(`${derivedAt.slice(0, 10)}T00:00:00.000Z`);
+    expect(await createdAtOf("robin")).toBe(derivedAt);
+    expect(page.body).not.toContain(derivedAt);
+    expect(page.body).not.toMatch(/\b1m ago\b/);
   });
 
   test("a teammate's claim on her context keeps its own re-observation: each row by its own owner", async () => {
@@ -676,6 +872,38 @@ describe("the landed-change stop (review round 3, H2)", () => {
     expect(new Set(answers).size).toBe(1);
     expect(answers[0]).toContain(ROBIN_SOLVED);
   });
+
+  test("answers the same about her live session's file while she goes quiet and works again (integration review H4)", async () => {
+    // A file only her LIVE session touched: "matched or not" was "is she
+    // inside the presence window now". Polled once a second, it flipped at
+    // her last record plus the TTL, and one heartbeat flipped it back.
+    const world = await seedOptedOutWorld();
+    const ask = async (): Promise<string> =>
+      (
+        await postAs(world, "nick", "/api/landed/context", {
+          repo: REPO,
+          path: ROBIN_NEW_FILE,
+          commits: [{ sha: LANDED_SHA, authorEmail: "robin@example.com", committedAt: CREATED_AT }],
+        })
+      ).body;
+
+    const answers = [await ask()];
+    for (let poll = 0; poll < LIVENESS_POLLS; poll += 1) {
+      world.harness.clock.advanceSeconds(1);
+      answers.push(await ask());
+    }
+    const heartbeat = await world.harness.app.request(
+      `/api/sessions/${ROBIN_LIVE}/heartbeat`,
+      jsonRequest("POST", world.robin.apiKey, { status: "implementing" }),
+    );
+    answers.push(await ask());
+
+    expect(heartbeat.status).toBe(200);
+    expect(new Set(answers).size).toBe(1);
+    expect(answers[0]).toContain(ROBIN_HOST_CONTEXT);
+  });
 });
 
+/** Past the presence TTL from the read: her live session goes quiet inside the polls. */
+const LIVENESS_POLLS = 120;
 const MS_PER_DAY = 86_400_000;

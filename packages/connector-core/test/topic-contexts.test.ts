@@ -121,15 +121,20 @@ const capture = async (
     knownWorktreeRoots: state.knownWorktreeRoots,
     topics: topicLifeOf(state),
     resolveRoots: async (input) => resolutionFor(input.paths, branchOf),
+    topicKey,
   });
 
 const spooledOf = async (home: string, hubUrl: string = HUB): Promise<readonly { kind: string; body: Record<string, unknown> }[]> =>
   (await readSpoolLines(home, repoKey(hubUrl, REPO_ID))).map((line) => JSON.parse(line) as { kind: string; body: Record<string, unknown> });
 
+/** The topic key the captures here mint under (state/topic-key.ts holds a machine's), and their conversation. */
+const TOPIC_KEY = "3d".repeat(32);
+const topicKey = async (): Promise<string> => TOPIC_KEY;
 /** The id the rules mint for a topic opened in `/cx-topics/<worktree>` on `branch` — wt1 is on feat/one, wt2 on feat/two below. */
-const topicIn = (worktree: string, branch: string): string => mintTopicId(REPO_ID, `/cx-topics/${worktree}`, branch);
-const firstTopicIn = (worktree: string): string =>
-  topicIn(worktree, worktree === "wt2" ? "feat/two" : worktree.startsWith("feat/") ? worktree : "feat/one");
+const topicIn = (worktree: string, branch: string, conversation = "cc_topics"): string =>
+  mintTopicId(TOPIC_KEY, conversation, REPO_ID, `/cx-topics/${worktree}`, branch);
+const firstTopicIn = (worktree: string, conversation?: string): string =>
+  topicIn(worktree, worktree === "wt2" ? "feat/two" : worktree.startsWith("feat/") ? worktree : "feat/one", conversation);
 
 const topicEntry = (
   sessionId: string,
@@ -543,8 +548,10 @@ describe("against a hub", () => {
     await capture(fx.home, healed, ["/cx-topics/wt1/src/after.ts"], () => "feat/one");
     await fx.flush();
 
-    // Assert: the next life's topic context reached the hub ahead of its target
-    const nextId = topicWorkContextIdFor(`wc_${fx.life.crosscheckSessionId}~r1`, firstTopicIn("wt1"));
+    // Assert: the next life's topic context reached the hub ahead of its
+    // target, under the id the first life minted for it — the key and the
+    // conversation are both lives' (integration review H3: stable across a heal)
+    const nextId = topicWorkContextIdFor(`wc_${fx.life.crosscheckSessionId}~r1`, firstTopicIn("wt1", fx.life.crosscheckSessionId));
     expect(healed.crosscheckSessionId).toBe(`${fx.life.crosscheckSessionId}~r1`);
     expect(healed.topicContexts).toEqual([]);
     const targets = await raw<{ value: string }>("select value from work_context_targets where work_context_id = $1", [nextId]);

@@ -6544,11 +6544,12 @@ export const MUTATIONS: readonly Mutation[
   {
     // The PreToolUse ask states what a teammate is doing; the note states how
     // far the archive that claim came from reaches. Dropped, the ask reads as
-    // a complete picture of who is in the file.
+    // a complete picture of who is in the file. RETARGETED (I1): the note's
+    // lines are one helper now, shared with the nameless teammate's ask.
     label: "the ask reason states a teammate and not what was watched",
     file: `${CORE}/src/hints/render.ts`,
-    from: "    ...(note === null ? [] : [note]),",
-    to: "    ...[],",
+    from: "  return note === null ? [] : [note];",
+    to: "  return [];",
     test: `${CORE}/test/coverage-hints.test.ts`,
     because:
       "the one surface that interrupts a tool call says nothing about the " +
@@ -11853,14 +11854,10 @@ export const MUTATIONS: readonly Mutation[
     test: `${SERVER}/test/landed-context.test.ts`,
     because: "a follow-up begun just before the commit takes the credit for the work that made it",
   },
-  {
-    label: "an opted-out teammate's live work is shown",
-    file: `${SERVER}/src/services/landed-context.ts`,
-    from: "            not(visible),\n            or(isNotNull(agentSessions.endedAt), lte(agentSessions.lastHeartbeatAt, live)),\n",
-    to: "            not(visible),\n",
-    test: `${SERVER}/test/landed-context.test.ts`,
-    because: "an unasked stop reveals what a teammate who switched presence off is doing right now",
-  },
+  // RETIRED (batch-2 integration review, H4): "an opted-out teammate's live
+  // work is shown" guarded hiding her live work, and hiding it was the leak —
+  // matched or not said whether she was live. Its inverse is anchored with the
+  // review's other opt-out seams ("the landed stop hides … until she goes quiet").
   {
     label: "the file is matched only as it was spelled",
     file: `${SERVER}/src/services/landed-context.ts`,
@@ -11921,8 +11918,10 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a just-ended opted-out session is hidden as if live",
     file: `${SERVER}/src/services/landed-context.ts`,
-    from: "            or(isNotNull(agentSessions.endedAt), lte(agentSessions.lastHeartbeatAt, live)),\n          ),\n        ),",
-    to: "            or(sql`false`, lte(agentSessions.lastHeartbeatAt, live)),\n          ),\n        ),",
+    // RETARGETED (batch-2 integration review, H4): no liveness clause is left
+    // to weaken, so the mutation puts the end back in charge.
+    from: "          not(visible),\n",
+    to: "          and(not(visible), sql`${agentSessions.endedAt} is null`),\n",
     test: `${SERVER}/test/landed-context.test.ts`,
     because: "an opted-out teammate's finished work goes unnamed for the presence window after every session",
   },
@@ -20694,10 +20693,11 @@ export const MUTATIONS: readonly Mutation[
   },
   // ── 07 §13.9, D-O3: the tripwire and the briefing ─────────────────────────
   {
+    // RETARGETED (I1): the answer carries the nameless row beside the sessions.
     label: "the tripwire answer says it records outcomes on a repo nobody enrolled",
     file: `${SERVER}/src/routes/hints.ts`,
-    from: "    return ok(c, { sessions, coverage, recordsOutcomes: settings.pilotEnrolled });",
-    to: "    return ok(c, { sessions, coverage, recordsOutcomes: true });",
+    from: "    return ok(c, { sessions, anonymous, coverage, recordsOutcomes: settings.pilotEnrolled });",
+    to: "    return ok(c, { sessions, anonymous, coverage, recordsOutcomes: true });",
     test: `${SERVER}/test/hints-records-outcomes.test.ts`,
     because: "every stop on an unenrolled repo invites a call the hub then refuses",
   },
@@ -25036,8 +25036,9 @@ export const MUTATIONS: readonly Mutation[
     // secrets, which must include her instants and not only branch and HEAD.
     label: "survivor N: the listing adds a raw last-touch field under a new name past the projection (guard)",
     file: `${SERVER}/src/services/diagnosis.ts`,
-    from: "      branch: row.branch,\n    }),\n  );",
-    to: "      branch: row.branch,\n    }),\n  ).map((view, index) => ({ ...view, seenAt: rows[index]?.workContext.updatedAt?.toISOString() ?? null }));",
+    // RETARGETED (batch-2 integration review, M5): the row carries the withheld marker after its projection.
+    from: "    ...(hidden.has(row.developerId) ? { locationWithheld: true as const } : {}),\n  }));",
+    to: "    ...(hidden.has(row.developerId) ? { locationWithheld: true as const } : {}),\n  })).map((view, index) => ({ ...view, seenAt: rows[index]?.workContext.updatedAt?.toISOString() ?? null }));",
     test: `${SERVER}/test/live-location-privacy.test.ts`,
     because:
       "the guard's secrets were branch and HEAD only, so an instant of hers " +
@@ -25047,10 +25048,10 @@ export const MUTATIONS: readonly Mutation[
     // Review round 4, C1: the landed stop's commit time is the caller's word.
     label: "the landed stop compares a caller's commit time with an opted-out teammate's session start",
     file: `${SERVER}/src/services/landed-context.ts`,
-    from: "            or(isNotNull(agentSessions.endedAt), lte(agentSessions.lastHeartbeatAt, live)),\n",
-    to:
-      "            or(isNotNull(agentSessions.endedAt), lte(agentSessions.lastHeartbeatAt, live)),\n" +
-      "            lte(agentSessions.startedAt, startedBy),\n",
+    // RETARGETED (batch-2 integration review, H4): the hidden owner's clause
+    // is `not(visible)` alone now.
+    from: "          not(visible),\n",
+    to: "          and(not(visible), lte(agentSessions.startedAt, startedBy)),\n",
     test: `${SERVER}/test/live-location-surfaces.test.ts`,
     because:
       "Nick sweeps committedAt and reads Robin's session start back to the " +
@@ -26688,6 +26689,336 @@ export const MUTATIONS: readonly Mutation[
       "touching a file of her old context again brings that context into a colleague's " +
       "suspect window, which says when she was there",
   },
+  // ── Batch-2 integration review, the opt-out seams (H3–H5, M4, M5, L7–L9) ──
+  // Each is a later branch reading what the opt-out withholds; each is caught
+  // by the two-world walk, and the cheap ones by a focused case beside it.
+  {
+    label: "the landed stop hides an opted-out teammate's live work until she goes quiet",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "          not(visible),\n",
+    to: "          and(not(visible), sql`(${agentSessions.endedAt} is not null or ${agentSessions.lastHeartbeatAt} <= ${new Date(deps.now().getTime() - 90_000).toISOString()}::timestamptz)`),\n",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because: "matched or not is whether she is live: polled, it reads her last heartbeat plus the TTL to the second",
+  },
+  {
+    label: "the landed stop hides an opted-out teammate's live work until she goes quiet (differential)",
+    file: `${SERVER}/src/services/landed-context.ts`,
+    from: "          not(visible),\n",
+    to: "          and(not(visible), sql`(${agentSessions.endedAt} is not null or ${agentSessions.lastHeartbeatAt} <= ${new Date(deps.now().getTime() - 90_000).toISOString()}::timestamptz)`),\n",
+    test: `${SERVER}/test/live-location-differential.test.ts`,
+    because: "one heartbeat of hers changes what the stop names, and no residual accepts it",
+  },
+  {
+    label: "the hint pool decays an opted-out teammate's trees by her withheld last touch",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    const updatedAt = updatedAtSeenBy(readerDeveloperId, agentSessions.developerId, workContexts.updatedAt);\n",
+    to: "    const updatedAt = workContexts.updatedAt;\n",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because: "a tree she touched two minutes ago joins a pool capped at three: which topic, so which branch, she is on now",
+  },
+  {
+    label: "the hint pool decays an opted-out teammate's trees by her withheld last touch (differential)",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    const updatedAt = updatedAtSeenBy(readerDeveloperId, agentSessions.developerId, workContexts.updatedAt);\n",
+    to: "    const updatedAt = workContexts.updatedAt;\n",
+    test: `${SERVER}/test/live-location-differential.test.ts`,
+    because: "the same action twenty days or two minutes before the read hints a colleague differently",
+  },
+  {
+    label: "equally ranked statements reach the hint pool in the order the scan met them",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "        .orderBy(sql`ts_rank(${statement}, ${tsquery}) DESC`, asc(workContexts.id))",
+    to: "        .orderBy(sql`ts_rank(${statement}, ${tsquery}) DESC`)",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because: "an update of hers that changes no value moves a tuple and re-ranks her tied trees, since a fused contribution is a position",
+  },
+  {
+    label: "equally ranked statements reach the hint pool in the order the scan met them (differential)",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "        .orderBy(sql`ts_rank(${statement}, ${tsquery}) DESC`, asc(workContexts.id))",
+    to: "        .orderBy(sql`ts_rank(${statement}, ${tsquery}) DESC`)",
+    test: `${SERVER}/test/live-location-differential.test.ts`,
+    because: "two worlds that differ only by where her rows sit on disk hint a colleague differently",
+  },
+  {
+    label: "an answer to a colleague's question says when an opted-out answerer answered",
+    file: `${SERVER}/src/services/questions.ts`,
+    from: '    ...projectRow(hidden, { developerId: row.answererDeveloperId, kind: "claim" }, {',
+    to: '    ...projectRow(new Map(), { developerId: row.answererDeveloperId, kind: "claim" }, {',
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because: "the asker's briefing and prompt read the hub's stamp of her answer and her evidence's age, which every other route withholds",
+  },
+  {
+    label: "an answer to a colleague's question says when an opted-out answerer answered (differential)",
+    file: `${SERVER}/src/services/questions.ts`,
+    from: '    ...projectRow(hidden, { developerId: row.answererDeveloperId, kind: "claim" }, {',
+    to: '    ...projectRow(new Map(), { developerId: row.answererDeveloperId, kind: "claim" }, {',
+    test: `${SERVER}/test/live-location-differential.test.ts`,
+    because: "her answer action puts her instant on a line no residual accepts",
+  },
+  {
+    label: "the asker's answer page is cut by when an opted-out answerer answered",
+    file: `${SERVER}/src/services/questions.ts`,
+    from: "    .orderBy(sql`${answeredSeen} DESC`, asc(questionAnswers.claimId))",
+    to: "    .orderBy(desc(questionAnswers.createdAt), asc(questionAnswers.claimId))",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because: "four answers wait and three are handed out: hers is in or out by her own instant",
+  },
+  {
+    label: "a draft her connector derived shows its machine stamp to the second",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  owner.kind === \"claim\" && (row as { readonly provenance?: unknown }).provenance === DERIVED_PROVENANCE\n",
+    to: "  false && (row as { readonly provenance?: unknown }).provenance === DERIVED_PROVENANCE\n",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because: "the derivation's stamp is the instant her session did the work, and her tree reads \"1m ago\" to a colleague",
+  },
+  {
+    label: "a draft her connector derived shows its machine stamp to the second (differential)",
+    file: `${SERVER}/src/services/live-location.ts`,
+    from: "  owner.kind === \"claim\" && (row as { readonly provenance?: unknown }).provenance === DERIVED_PROVENANCE\n",
+    to: "  false && (row as { readonly provenance?: unknown }).provenance === DERIVED_PROVENANCE\n",
+    test: `${SERVER}/test/live-location-differential.test.ts`,
+    because: "her connector's derivation puts her instant on her tree, on a line no residual accepts",
+  },
+  {
+    label: "the listing leaves an opted-out teammate's rows unmarked",
+    file: `${SERVER}/src/services/diagnosis.ts`,
+    from: "    ...(hidden.has(row.developerId) ? { locationWithheld: true as const } : {}),\n",
+    to: "    ...({}),\n",
+    test: `${SERVER}/test/live-location-surfaces.test.ts`,
+    because: "no connector can tell her creation-dated row from an active one, and the statusline says she was last seen",
+  },
+  {
+    label: "the listing leaves an opted-out teammate's rows unmarked (differential)",
+    file: `${SERVER}/src/services/diagnosis.ts`,
+    from: "    ...(hidden.has(row.developerId) ? { locationWithheld: true as const } : {}),\n",
+    to: "    ...({}),\n",
+    test: `${SERVER}/test/live-location-differential.test.ts`,
+    because: "a topic her connector opens now reaches a colleague's statusline as \"last seen\" at that instant",
+  },
+  {
+    label: "the statusline dates an opted-out teammate by her newest creation",
+    file: `${CORE}/src/state/presence-cache.ts`,
+    from: "    if (entry.developerId === selfDeveloperId || entry.locationWithheld === true) {",
+    to: "    if (entry.developerId === selfDeveloperId) {",
+    test: `${CONNECTOR}/test/statusline-last-seen.test.ts`,
+    because: "\"Robin last seen 2m ago\" is the presence line she turned off, read off a topic created at her first edit",
+  },
+  {
+    label: "the statusline dates an opted-out teammate by her newest creation (differential)",
+    file: `${CORE}/src/state/presence-cache.ts`,
+    from: "    if (entry.developerId === selfDeveloperId || entry.locationWithheld === true) {",
+    to: "    if (entry.developerId === selfDeveloperId) {",
+    test: `${SERVER}/test/live-location-differential.test.ts`,
+    because: "the colleague's own connector, over the listing he read, names the instant she opened a topic",
+  },
+  // NOT ADDED, measured: an id tie-break on the two CLAIM tiers (hints'
+  // pushable pass, search's claim pass). Both GROUP BY the context, and the
+  // aggregate hands rows on by its group key, never by where they sit: a
+  // rewritten tied claim moved nothing, so the tie-break was an equivalent
+  // mutant under the L7 case and is left out.
+  // ── The owner's decision on the integration review's I1: an opted-out
+  // teammate is still a collision — anonymous and live, and nothing more ──
+  {
+    label: "an opted-out teammate's anonymous tripwire row says who and where she is",
+    file: `${SERVER}/src/services/hints.ts`,
+    from:
+      "    .select({ one: sql<number>`1` })\n    .from(workContextTargets)\n" +
+      "    .innerJoin(workContexts, eq(workContextTargets.workContextId, workContexts.id))\n" +
+      "    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))\n" +
+      "    .where(hiddenAndLiveOnFile)\n    .limit(1);\n  return rows.length === 0 ? [] : [ANONYMOUS_ROW];\n",
+    to:
+      "    .select({ developerId: agentSessions.developerId, branch: agentSessions.branch, lastHeartbeatAt: agentSessions.lastHeartbeatAt })\n    .from(workContextTargets)\n" +
+      "    .innerJoin(workContexts, eq(workContextTargets.workContextId, workContexts.id))\n" +
+      "    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))\n" +
+      "    .where(hiddenAndLiveOnFile)\n    .limit(1);\n  return rows.map((row) => ({ ...ANONYMOUS_ROW, ...row }));\n",
+    test: `${SERVER}/test/anonymous-presence.test.ts`,
+    because: "the row that may say only THAT someone is on the file names her id, her branch and her last heartbeat",
+  },
+  {
+    label: "an opted-out teammate's anonymous tripwire row says who and where she is (differential)",
+    file: `${SERVER}/src/services/hints.ts`,
+    from:
+      "    .select({ one: sql<number>`1` })\n    .from(workContextTargets)\n" +
+      "    .innerJoin(workContexts, eq(workContextTargets.workContextId, workContexts.id))\n" +
+      "    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))\n" +
+      "    .where(hiddenAndLiveOnFile)\n    .limit(1);\n  return rows.length === 0 ? [] : [ANONYMOUS_ROW];\n",
+    to:
+      "    .select({ developerId: agentSessions.developerId, branch: agentSessions.branch, lastHeartbeatAt: agentSessions.lastHeartbeatAt })\n    .from(workContextTargets)\n" +
+      "    .innerJoin(workContexts, eq(workContextTargets.workContextId, workContexts.id))\n" +
+      "    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))\n" +
+      "    .where(hiddenAndLiveOnFile)\n    .limit(1);\n  return rows.map((row) => ({ ...ANONYMOUS_ROW, ...row }));\n",
+    test: `${SERVER}/test/live-location-differential.test.ts`,
+    because: "her live world and her quiet one differ by a field of the anonymous row that is not its kind, which «anonymous» does not accept",
+  },
+  {
+    label: "the tripwire drops the anonymous row: an opted-out teammate on the file is a silence again",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  return rows.length === 0 ? [] : [ANONYMOUS_ROW];",
+    to: "  return [];",
+    test: `${SERVER}/test/anonymous-presence.test.ts`,
+    because: "Mike opted out and edited the file Nick was about to change, and Nick was told nothing: the pilot's failure, for every opted-out person",
+  },
+  {
+    label: "the tripwire drops the anonymous row: an opted-out teammate on the file is a silence again (differential)",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  return rows.length === 0 ? [] : [ANONYMOUS_ROW];",
+    to: "  return [];",
+    test: `${SERVER}/test/live-location-differential.test.ts`,
+    because: "her being live on his file and her being quiet read the same to him: the one difference the policy owes him is gone",
+  },
+  {
+    label: "the tripwire drops the anonymous row: an opted-out teammate on the file is a silence again (release gate)",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "  return rows.length === 0 ? [] : [ANONYMOUS_ROW];",
+    to: "  return [];",
+    test: `${CONNECTOR}/test/e2e/release-gate-opted-out.e2e.test.ts`,
+    because: "Nick's real hooks edit the three files Mike is live on, opted out, and nobody tells Nick anything",
+  },
+  {
+    label: "the anonymous row outlives her presence window",
+    file: `${SERVER}/src/services/hints.ts`,
+    from:
+      "    gt(agentSessions.lastHeartbeatAt, presenceCutoff(deps.now())),\n" +
+      "    not(visiblePresenceCondition(callerDeveloperId, agentSessions.developerId)),\n",
+    to: "    not(visiblePresenceCondition(callerDeveloperId, agentSessions.developerId)),\n",
+    test: `${SERVER}/test/anonymous-presence.test.ts`,
+    because: "\"right now\" stays true of a session that went quiet, so whether the row shows says when she last beat",
+  },
+  {
+    label: "the anonymous row interrupts a reader who muted her",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    notMutedCondition(callerDeveloperId, agentSessions.developerId),\n  );\n",
+    to: "  );\n",
+    test: `${SERVER}/test/anonymous-presence.test.ts`,
+    because: "a mute is the reader's own control over who interrupts them, and an anonymous row of the muted teammate still did",
+  },
+  {
+    label: "a teammate the tripwire names is counted again as anonymous",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "    not(visiblePresenceCondition(callerDeveloperId, agentSessions.developerId)),\n",
+    to: "    sql`true`,\n",
+    test: `${SERVER}/test/anonymous-presence.test.ts`,
+    because: "every named teammate on the file also arrives as \"a teammate\": one person read as two",
+  },
+  {
+    label: "the ghost check drops the anonymous overlap count",
+    file: `${SERVER}/src/services/ghost-overlap.ts`,
+    from: "  return shared.length === 0 ? null : { sharedFileCount: shared.length };",
+    to: "  return null;",
+    test: `${SERVER}/test/anonymous-presence.test.ts`,
+    because: "an opted-out teammate's unfinished work on the reader's files is in nobody's briefing",
+  },
+  {
+    label: "the anonymous overlap count reads her work's times",
+    file: `${SERVER}/src/services/ghost-overlap.ts`,
+    from:
+      "        ...liveWorkConditions(),\n      ),\n    )\n" +
+      "    // Distinct values out of the reader's own files: never more than those.\n",
+    to:
+      "        ...liveWorkConditions(),\n        gte(activityExpression, cutoff),\n      ),\n    )\n" +
+      "    // Distinct values out of the reader's own files: never more than those.\n",
+    test: `${SERVER}/test/anonymous-presence.test.ts`,
+    because: "the count shows or not by when she last touched that work, which the opt-out withholds",
+  },
+  {
+    label: "a teammate the ghost check names is counted again in the anonymous overlap",
+    file: `${SERVER}/src/services/ghost-overlap.ts`,
+    from: "        not(visiblePresenceCondition(viewerDeveloperId, agentSessions.developerId)),\n",
+    to: "        sql`true`,\n",
+    test: `${SERVER}/test/anonymous-presence.test.ts`,
+    because: "a named row and a nameless count for the same person's work: one teammate read as two",
+  },
+  {
+    label: "the connector ignores the tripwire's anonymous row",
+    file: `${CORE}/src/http/hub.ts`,
+    from: "      anonymous: (value.anonymous ?? []).some(isAnonymousRow),\n",
+    to: "      anonymous: false,\n",
+    test: `${CONNECTOR}/test/e2e/release-gate-opted-out.e2e.test.ts`,
+    because: "the hub says a teammate is on the file and Nick's connector reads past it: silence again, one layer up",
+  },
+  {
+    label: "the edit hook drops the hub's anonymous answer",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "    anonymous: hub?.anonymous ?? false,\n",
+    to: "    anonymous: false,\n",
+    test: `${CONNECTOR}/test/collision-anonymous-hook.test.ts`,
+    because: "neither the person nor the agent hears that a teammate is on the file being edited",
+  },
+  {
+    label: "the person is not told of an anonymous teammate on the file they edit",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "    ...(found.anonymous ? [anonymousTripwireCollision(file, found.coverage)] : []),\n",
+    to: "",
+    test: `${CONNECTOR}/test/collision-anonymous-hook.test.ts`,
+    because: "the agent is asked and the person is not: the pilot's hints reached only agents, 0 of 157 opened",
+  },
+  {
+    label: "the anonymous live line says the teammate only recently worked on the file",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "  return group.unconfirmed === true\n    ? `crosscheck: ${UNKNOWN_TEAMMATE} recently worked on",
+    to: "  return true\n    ? `crosscheck: ${UNKNOWN_TEAMMATE} recently worked on",
+    test: `${CONNECTOR}/test/collision-anonymous-hook.test.ts`,
+    because: "a teammate live on the file this second reads as old news, and \"right now\" is the whole warning",
+  },
+  {
+    label: "the session state forgets that a stored group was nameless",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  anonymous: z.boolean().optional(),\n});",
+    to: "});",
+    test: `${CONNECTOR}/test/collision-anonymous-hook.test.ts`,
+    because: "read back from the state, the opted-out teammate's group is a named one with no name, and a relay with no presence answer prints it in a named teammate's sentence",
+  },
+  {
+    label: "the turn-end recheck drops the anonymous row",
+    file: `${CONNECTOR}/src/hooks/rest-recheck.ts`,
+    from: "      ...(outcome.anonymous ? [anonymousTripwireCollision(outcome.rest.file, outcome.coverage)] : []),\n",
+    to: "",
+    test: `${CONNECTOR}/test/collision-anonymous-hook.test.ts`,
+    because: "a teammate who arrived on a file the session already edited is found by the recheck and told to nobody",
+  },
+  {
+    label: "the briefing drops the anonymous ghost count",
+    file: `${CORE}/src/briefing/render.ts`,
+    from:
+      "    ...(input.anonymousGhost === null || input.anonymousGhost === undefined\n      ? []\n" +
+      "      : [formatAnonymousGhostLine(input.anonymousGhost.sharedFileCount)]),\n",
+    to: "",
+    test: `${CONNECTOR}/test/collision-anonymous-hook.test.ts`,
+    because: "the agent's briefing never says that a teammate's unfinished work touches the reader's files",
+  },
+  {
+    label: "the person is not told of the anonymous ghost count at session start",
+    file: `${CONNECTOR}/src/hooks/ghost-notice.ts`,
+    from: "  const groups = [...ghostCollisions(shown), ...(anonymousFiles === null ? [] : [anonymousGhostCollision(anonymousFiles)])];",
+    to: "  const groups = ghostCollisions(shown);",
+    test: `${CONNECTOR}/test/collision-anonymous-hook.test.ts`,
+    because: "the briefing tells the agent and the person hears nothing, which is the gap the visible collision closed",
+  },
+  {
+    label: "`crosscheck presence` does not say what an opt-out hides",
+    file: `${CLI}/src/cli/privacy.ts`,
+    from: "    stdout: `${presenceStateLine(settings.data.presenceOptOut)}\\n${OPT_OUT_GUARANTEE}\\n`,",
+    to: "    stdout: `${presenceStateLine(settings.data.presenceOptOut)}\\n`,",
+    test: `${CLI}/test/privacy-cli.test.ts`,
+    because: "the person learns only after opting out that teammates still hear somebody is on their file",
+  },
+  {
+    label: "`crosscheck presence off` does not state the guarantee",
+    file: `${CLI}/src/cli/privacy.ts`,
+    from: "  OPT_OUT_GUARANTEE,\n",
+    to: "",
+    test: `${CLI}/test/privacy-cli.test.ts`,
+    because: "the scope an opt-out prints leaves out the one thing it does not hide",
+  },
+  {
+    label: "doctor's privacy check does not state the guarantee",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    `${presencePart}, ${result.data.mutes.length} muted${aliasPart}. ${OPT_OUT_GUARANTEE}`,",
+    to: "    `${presencePart}, ${result.data.mutes.length} muted${aliasPart}.`,",
+    test: `${CLI}/test/privacy-cli.test.ts`,
+    because: "the check a person runs to see their privacy state is silent on what their opt-out still says",
+  },
   // THE GENERATED-TARGET RULE (release gate N2): every gate, from the signal
   // that names a file generated to the hub read that keeps it out of overlap.
   {
@@ -26931,10 +27262,11 @@ export const MUTATIONS: readonly Mutation[
     because: "an older connector's hand edit of a file a teammate's connector labelled generated stops on that teammate",
   },
   {
+    // RETARGETED (I1): the name check is one helper both tripwire answers use.
     label: "an older connector's tripwire is answered about a nested lockfile",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "  if (!authoritative && isGeneratedPath(value)) {",
-    to: "  if (false) {",
+    from: "  !authoritative && isGeneratedPath(value);",
+    to: "  false;",
     test: `${SERVER}/test/generated-targets.test.ts`,
     because: "a connector with no rule asks about every lockfile, and a row stored before the column answers it",
   },
@@ -27014,8 +27346,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a session opens topics without bound",
     file: `${CORE}/src/flows/topic-rules.ts`,
-    from: "      if (live.length + opened.length >= MAX_TOPICS_PER_SESSION) {",
-    to: "      if (false) {",
+    // RETARGETED (batch-2 integration review, H3): the cap is named before the key is read.
+    from: "      const isCapped = live.length + opened.length >= MAX_TOPICS_PER_SESSION;",
+    to: "      const isCapped = false;",
     test: `${CORE}/test/topic-contexts.test.ts`,
     because:
       "a script that checks out a branch per file mints a work context per file on the " +
@@ -27126,18 +27459,69 @@ export const MUTATIONS: readonly Mutation[
     // DESIGN.md "One session, many topics" — the topic rules (flows/topic-rules.ts).
     label: "a topic's id is minted from the worktree alone",
     file: `${CORE}/src/flows/topic-contexts.ts`,
-    from: "  return `${rootKeyOf(repoId, root)}.${String(Number.parseInt(branchKey, 16))}`;",
-    to: "  return `${rootKeyOf(repoId, root)}.1`;",
+    // RETARGETED (batch-2 integration review, H3): the id is one keyed digest now.
+    from: "  const digest = createHmac(\"sha256\", key).update(JSON.stringify([conversation, repoId, root, branch])).digest(\"hex\");",
+    to: "  const digest = createHmac(\"sha256\", key).update(JSON.stringify([conversation, repoId, root, \"\"])).digest(\"hex\");",
     test: `${CORE}/test/topic-contexts.test.ts`,
     because: "review M1: two hooks opening two branches of one worktree mint one id, and one branch's targets sit in the other's context under a flipped title",
   },
   {
     label: "a worktree's second topic takes its first topic's id",
     file: `${CORE}/src/flows/topic-rules.ts`,
-    from: "        const id = mintTopicId(life.repoId, head.root, decision.branch);",
-    to: "        const id = mintTopicId(life.repoId, head.root, \"\");",
+    // RETARGETED (batch-2 integration review, H3): the mint takes the key and the conversation.
+    from: "        const id = mintTopicId(key, conversationOf(life.sessionId), life.repoId, head.root, decision.branch);",
+    to: "        const id = mintTopicId(key, conversationOf(life.sessionId), life.repoId, head.root, \"\");",
     test: `${CORE}/test/topic-rules.test.ts`,
     because: "a new piece of work in the same worktree is spooled under the old topic's context id, and the two merge on the hub",
+  },
+  // ── Batch-2 integration review, H3: a topic id names no branch ─────────
+  {
+    label: "a topic id is the old unkeyed mint, sha256 of the branch it opened on",
+    file: `${CORE}/src/flows/topic-contexts.ts`,
+    from: "  const digest = createHmac(\"sha256\", key).update(JSON.stringify([conversation, repoId, root, branch])).digest(\"hex\");",
+    to: "  const digest = new Bun.CryptoHasher(\"sha256\").update(`${repoId}\\n${root}`).digest(\"hex\").slice(0, 12) + new Bun.CryptoHasher(\"sha256\").update(branch).digest(\"hex\");",
+    test: `${CORE}/test/topic-key.test.ts`,
+    because: "a colleague hashes `git branch -r` and reads which branch each of an opted-out developer's topics is on off the id the hub serves",
+  },
+  {
+    label: "a topic id is the old unkeyed mint, sha256 of the branch it opened on (hub routes)",
+    file: `${CORE}/src/flows/topic-contexts.ts`,
+    from: "  const digest = createHmac(\"sha256\", key).update(JSON.stringify([conversation, repoId, root, branch])).digest(\"hex\");",
+    to: "  const digest = new Bun.CryptoHasher(\"sha256\").update(`${repoId}\\n${root}`).digest(\"hex\").slice(0, 12) + new Bun.CryptoHasher(\"sha256\").update(branch).digest(\"hex\");",
+    test: `${SERVER}/test/live-location-topics.test.ts`,
+    because: "the listing, the conference, search, hints, the diagnosis and the landed stop all serve the id a guessed branch hashes into",
+  },
+  {
+    label: "a topic id is the old unkeyed mint, sha256 of the branch it opened on (differential)",
+    file: `${CORE}/src/flows/topic-contexts.ts`,
+    from: "  const digest = createHmac(\"sha256\", key).update(JSON.stringify([conversation, repoId, root, branch])).digest(\"hex\");",
+    to: "  const digest = new Bun.CryptoHasher(\"sha256\").update(`${repoId}\\n${root}`).digest(\"hex\").slice(0, 12) + new Bun.CryptoHasher(\"sha256\").update(branch).digest(\"hex\");",
+    test: `${SERVER}/test/live-location-differential.test.ts`,
+    because: "her topic action puts an id on every route that the leak scan hashes back to her branch",
+  },
+  {
+    label: "a touch opens a topic when no topic key can be had",
+    file: `${CORE}/src/flows/topic-rules.ts`,
+    from: "      const key = isCapped ? null : await topicKey();",
+    to: "      const key = isCapped ? null : ((await topicKey()) ?? \"\");",
+    test: `${CORE}/test/topic-rules.test.ts`,
+    because: "an id minted under no key is one anybody can mint, so a guessed branch tests against it again",
+  },
+  {
+    label: "the topic key is written readable by anyone on the machine",
+    file: `${CORE}/src/state/topic-key.ts`,
+    from: "{ mode: PRIVATE_FILE_MODE });",
+    to: "{ mode: 0o644 });",
+    test: `${CORE}/test/topic-key.test.ts`,
+    because: "another account on the machine reads the key and can hash guessed branches into her ids",
+  },
+  {
+    label: "sibling hooks racing for the first topic key each keep their own",
+    file: `${CORE}/src/state/topic-key.ts`,
+    from: "    await link(temp, path);",
+    to: "    await Bun.write(path, Bun.file(temp));",
+    test: `${CORE}/test/topic-key.test.ts`,
+    because: "two hooks of one conversation mint two ids for one topic, the duplicate context review M1 removed",
   },
   {
     label: "the fold registers a topic opened twice twice",
@@ -27876,8 +28260,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the edit capture opens topics without their word about their base",
     file: `${CORE}/src/flows/capture-touched-files.ts`,
-    from: "  const plan = await withTopicBaseWords(await planTopics(life, resolution, input.paths, input.now, input.cwd));",
-    to: "  const plan = await planTopics(life, resolution, input.paths, input.now, input.cwd);",
+    // RETARGETED (batch-2 integration review, H3): the plan takes the topic key, on its own line.
+    from: "  const plan = await withTopicBaseWords(\n    await planTopics(life, resolution, input.paths,",
+    to: "  const plan = await Promise.resolve(\n    await planTopics(life, resolution, input.paths,",
     test: `${CORE}/test/topic-base-word.test.ts`,
     because: "the topics an edit opens — almost all of them — reach the hub with no word, so the fresh-branch rule never applies",
   },
@@ -29042,10 +29427,11 @@ export const MUTATIONS: readonly Mutation[
     because: "a teammate on nine of your files is reported as one, from the hub's bounded sample",
   },
   {
+    // RETARGETED (I1): the field is one helper, shared with the nameless group.
     label: "a partial record behind the person's notice goes unsaid",
     file: `${CORE}/src/hints/collision-notice.ts`,
-    from: "    ...(coverage !== undefined && hasIncompleteRung(coverage) ? { partial: true } : {}),",
-    to: "    ...({}),",
+    from: "  coverage !== undefined && hasIncompleteRung(coverage) ? { partial: true } : {};",
+    to: "  ({});",
     test: `${CORE}/test/collision-notice.test.ts`,
     because: "COV-9: the person learns only from doctor that the overlap rests on an incomplete record and may be wider",
   },
@@ -29217,18 +29603,20 @@ export const MUTATIONS: readonly Mutation[
     because: "the asked marker is per file again, and Ken, who started on it after Nick, is never named to anybody",
   },
   {
+    // RETARGETED (I1): the named groups are the first part of the list now.
     label: "only the first teammate on a file is told to the person",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "  const groups = onePerKey(found.sessions.map((session) => tripwireCollision(session, file, found.coverage)));",
-    to: "  const groups = onePerKey(found.sessions.slice(0, 1).map((session) => tripwireCollision(session, file, found.coverage)));",
+    from: "    ...found.sessions.map((session) => tripwireCollision(session, file, found.coverage)),\n",
+    to: "    ...found.sessions.slice(0, 1).map((session) => tripwireCollision(session, file, found.coverage)),\n",
     test: `${CONNECTOR}/test/collision-teammates-hook.test.ts`,
     because: "two teammates on the file, and the person hears about one",
   },
   {
+    // RETARGETED (I1): the asked key is the named teammate's or the nameless one's.
     label: "the same teammate on the same file is asked about on every edit",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "      teammate === null ? fresh : withTripwireGroupAsked(withTripwireAsked(fresh, file), liveAskKey(file, teammate));",
-    to: "      teammate === null ? fresh : withTripwireAsked(fresh, file);",
+    from: "    const withLive = liveKey === null ? fresh : withTripwireGroupAsked(withTripwireAsked(fresh, file), liveKey);",
+    to: "    const withLive = liveKey === null ? fresh : withTripwireAsked(fresh, file);",
     test: `${CONNECTOR}/test/collision-teammates-hook.test.ts`,
     because: "the permission prompt comes back on every save of a file the person already chose to edit",
   },
@@ -29674,9 +30062,10 @@ export const MUTATIONS: readonly Mutation[
     because: "a garbled stamp keeps branch and age forever",
   },
   {
+    // RETARGETED (I1): the nameless count rides along with the named rows.
     label: "a briefing paid late tells the agent of its ghost row and never the person",
     file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
-    from: "  const ghosts = await tellPersonOfGhosts(ctx, delivery.shownGhosts);",
+    from: "  const ghosts = await tellPersonOfGhosts(ctx, delivery.shownGhosts, delivery.shownAnonymousGhost);",
     to: "  const ghosts = \"\";",
     test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
     because: "a late-registered session's multi-day overlap stays inside additionalContext, which shows no chat message",
@@ -29690,10 +30079,11 @@ export const MUTATIONS: readonly Mutation[
     because: "the group is marked told and the line is thrown away",
   },
   {
+    // RETARGETED (I1): the paid briefing also hands on its nameless count.
     label: "a paid deferred briefing hides the ghost rows it shows",
     file: `${CORE}/src/flows/briefing.ts`,
-    from: "  return { briefing: assembled.briefing, shownGhosts: assembled.shownGhosts };",
-    to: "  return { briefing: assembled.briefing, shownGhosts: [] };",
+    from: "  return { briefing: assembled.briefing, shownGhosts: assembled.shownGhosts, shownAnonymousGhost: assembled.shownAnonymousGhost };",
+    to: "  return { briefing: assembled.briefing, shownGhosts: [], shownAnonymousGhost: assembled.shownAnonymousGhost };",
     test: `${CONNECTOR}/test/collision-notice-hook.test.ts`,
     because: "the prompt hook has no row to tell the person about",
   },
@@ -29707,10 +30097,11 @@ export const MUTATIONS: readonly Mutation[
   },
   // ── Review of feat/collision-visible, L9: the ghost claim inside SessionStart's budget ──
   {
+    // RETARGETED (I1): the claim also carries the nameless count.
     label: "SessionStart claims its ghost notice only from the spare the drain spends",
     file: `${CONNECTOR}/src/hooks/session-start.ts`,
-    from: "await tellPersonOfGhosts(ctx, assembled.shownGhosts);",
-    to: "(budget.spareMs() > 0 ? await tellPersonOfGhosts(ctx, assembled.shownGhosts) : []);",
+    from: "await tellPersonOfGhosts(ctx, assembled.shownGhosts, assembled.shownAnonymousGhost);",
+    to: "(budget.spareMs() > 0 ? await tellPersonOfGhosts(ctx, assembled.shownGhosts, assembled.shownAnonymousGhost) : []);",
     test: `${CONNECTOR}/test/hook-time-budget.test.ts`,
     because: "a session that starts on a backlog — the one whose drain spends the spare — never tells its person of the multi-day overlap",
   },
@@ -29839,10 +30230,11 @@ export const MUTATIONS: readonly Mutation[
   },
   // ── Review of feat/collision-visible, round 2, H1: a queued hit is never nothing ──
   {
+    // RETARGETED (I1): the nameless group's branch now opens the map.
     label: "a relayed hit whose teammate presence cannot confirm is dropped",
     file: `${CORE}/src/hints/collision-notice.ts`,
-    from: "  groups.map((group) => {\n    if (presence === null) {",
-    to: "  groups.filter((group) => presence === null || confirmingEntry(group, presence) !== undefined).map((group) => {\n    if (presence === null) {",
+    from: "  groups.map((group) => {\n    // A teammate the hub never named",
+    to: "  groups.filter((group) => presence === null || confirmingEntry(group, presence) !== undefined).map((group) => {\n    // A teammate the hub never named",
     test: `${CONNECTOR}/test/collision-relay-unconfirmed.test.ts`,
     because: "the queue is drained and the group marked told, and a subagent's collision with a teammate who just ended their session reaches nobody",
   },
@@ -29855,10 +30247,13 @@ export const MUTATIONS: readonly Mutation[
     because: "an hour-old answer decides instead of the refresh, so the same hit reads differently by the cache's age alone",
   },
   {
+    // RETARGETED (I1): a nameless line's tense is its group's now — live only
+    // for the tripwire's own nameless row — so the anonymized relay must
+    // carry the past tense itself.
     label: "an unconfirmed relay line reads as live work in progress",
     file: `${CORE}/src/hints/collision-notice.ts`,
-    from: "  if (group.anonymous === true) {",
-    to: "  if (false) {",
+    from: "  anonymous: true,\n  unconfirmed: true,\n});",
+    to: "  anonymous: true,\n});",
     test: `${CONNECTOR}/test/collision-relay-unconfirmed.test.ts`,
     because: "an unnamed teammate is told as 'A teammate is working on' it, a live claim presence never confirmed",
   },
@@ -30242,10 +30637,19 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a tripwire answer with a teammate still unasked rests its file",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
-    from: "    const isSettled = answer.sessions.length > 0 && isAllAsked(remembered, answer);",
-    to: "    const isSettled = answer.sessions.length > 0;",
+    from: "    const isSettled = isLive && isAllAsked(remembered, answer);",
+    to: "    const isSettled = isLive;",
     test: `${CONNECTOR}/test/collision-tripwire-ttl.test.ts`,
     because: "the second teammate on the file is not asked about until the window passes",
+  },
+  {
+    // The track C merge: a nameless teammate is a live one in the claim too.
+    label: "a nameless teammate alone on the file never rests it",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "    const isLive = answer.sessions.length > 0 || answer.anonymous;",
+    to: "    const isLive = answer.sessions.length > 0;",
+    test: `${CONNECTOR}/test/collision-anonymous-hook.test.ts`,
+    because: "every edit of her file asks the hub again for a teammate the person was already told of, and a cut leaves no recheck owed",
   },
   {
     label: "the tripwire's re-check window never closes",
@@ -30349,10 +30753,11 @@ export const MUTATIONS: readonly Mutation[
     because: "a teammate who opted out since the hit is still placed on a branch, up to 90 s old, whenever the refresh fails",
   },
   {
+    // RETARGETED (I1): the nameless line has its own tense switch; this is the named one.
     label: "a relay with no presence answer says the teammate is on the file now",
     file: `${CORE}/src/hints/collision-notice.ts`,
-    from: "  return group.unconfirmed === true\n",
-    to: "  return false\n",
+    from: "  return group.unconfirmed === true\n    ? `crosscheck: ${name} recently worked on",
+    to: "  return false\n    ? `crosscheck: ${name} recently worked on",
     test: `${CORE}/test/collision-relay-presence.test.ts`,
     because: "a subagent that ran for two hours relays 'Mike is working on' from a row as old as its run",
   },
@@ -32317,8 +32722,9 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a muted author's claim ranks a tree into the hint pool",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "            notMutedCondition(readerDeveloperId, claimAuthors.developerId),\n          ),\n        )\n        .groupBy(claims.workContextId, workContexts.createdAt, workContexts.updatedAt)",
-    to: "          ),\n        )\n        .groupBy(claims.workContextId, workContexts.createdAt, workContexts.updatedAt)",
+    // RETARGETED (batch-2 integration review, H5): the claim pass groups by the owner too.
+    from: "            notMutedCondition(readerDeveloperId, claimAuthors.developerId),\n          ),\n        )\n        .groupBy(claims.workContextId, workContexts.createdAt, workContexts.updatedAt, agentSessions.developerId)",
+    to: "          ),\n        )\n        .groupBy(claims.workContextId, workContexts.createdAt, workContexts.updatedAt, agentSessions.developerId)",
     test: `${SERVER}/test/hint-pushable-ranking.test.ts`,
     because: "a muted teammate's words still fill the reader's pool and push the answer out (M3)",
   },
@@ -34471,10 +34877,11 @@ export const MUTATIONS: readonly Mutation[
     because: "the repo's word loses to a name the hub cannot read the repo to judge",
   },
   {
+    // RETARGETED (I1): the name check is one helper both tripwire answers use.
     label: "the hub's name check answers nobody for a file the repo declared",
     file: `${SERVER}/src/services/hints.ts`,
-    from: "  if (!authoritative && isGeneratedPath(value)) {",
-    to: "  if (isGeneratedPath(value)) {",
+    from: "  !authoritative && isGeneratedPath(value);",
+    to: "  isGeneratedPath(value);",
     test: `${SERVER}/test/generated-targets.test.ts`,
     because: "a hand edit of declared client bindings stops on no teammate however many are in them",
   },
@@ -36783,6 +37190,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/pin-waive-hostile-hub.test.ts 1
  * PRINTS: packages/cli/test/pins-cli.test.ts 7
  * PRINTS: packages/cli/test/presence-reenabled-cli.test.ts 3
+ * PRINTS: packages/cli/test/privacy-cli.test.ts 3
  * PRINTS: packages/cli/test/publish-workflow.test.ts 2
  * PRINTS: packages/cli/test/release-preflight.test.ts 5
  * PRINTS: packages/cli/test/revalidate-cli.test.ts 1
@@ -36832,6 +37240,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/briefing-omission-hook.test.ts 4
  * PRINTS: packages/connector-claude/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-claude/test/capture-latency.test.ts 1
+ * PRINTS: packages/connector-claude/test/collision-anonymous-hook.test.ts 8
  * PRINTS: packages/connector-claude/test/collision-notice-hook.test.ts 12
  * PRINTS: packages/connector-claude/test/collision-order-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/collision-prompt-render.test.ts 1
@@ -36850,6 +37259,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/detached-title.test.ts 3
  * PRINTS: packages/connector-claude/test/double-wiring.test.ts 1
  * PRINTS: packages/connector-claude/test/draft-nudge-hook.test.ts 2
+ * PRINTS: packages/connector-claude/test/e2e/release-gate-opted-out.e2e.test.ts 2
  * PRINTS: packages/connector-claude/test/failure-hook.test.ts 2
  * PRINTS: packages/connector-claude/test/fingerprint.test.ts 1
  * PRINTS: packages/connector-claude/test/foreign-hub-cut.test.ts 1
@@ -36887,6 +37297,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/settings-merge.test.ts 5
  * PRINTS: packages/connector-claude/test/solved-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/state-reap.test.ts 1
+ * PRINTS: packages/connector-claude/test/statusline-last-seen.test.ts 1
  * PRINTS: packages/connector-claude/test/statusline-person-strip.test.ts 4
  * PRINTS: packages/connector-claude/test/stop-gate.test.ts 6
  * PRINTS: packages/connector-claude/test/stop-git-touches.test.ts 1
@@ -37079,8 +37490,9 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/topic-base-word.test.ts 7
  * PRINTS: packages/connector-core/test/topic-contexts.test.ts 21
  * PRINTS: packages/connector-core/test/topic-heads.test.ts 3
+ * PRINTS: packages/connector-core/test/topic-key.test.ts 3
  * PRINTS: packages/connector-core/test/topic-record-marker.test.ts 8
- * PRINTS: packages/connector-core/test/topic-rules.test.ts 15
+ * PRINTS: packages/connector-core/test/topic-rules.test.ts 16
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
  * PRINTS: packages/connector-core/test/tripwire-recheck.test.ts 9
  * PRINTS: packages/connector-core/test/trusted-path.test.ts 4
@@ -37130,6 +37542,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/typing-slip.test.ts 11
  * PRINTS: packages/schema/test/weak-words.test.ts 5
  * PRINTS: packages/server/test/absences.test.ts 7
+ * PRINTS: packages/server/test/anonymous-presence.test.ts 8
  * PRINTS: packages/server/test/banner-liveness-reuse.test.ts 2
  * PRINTS: packages/server/test/calibration.test.ts 1
  * PRINTS: packages/server/test/causal-guarantees.test.ts 23
@@ -37218,7 +37631,7 @@ interface Outcome {
  * PRINTS: packages/server/test/intent-ledger-write.test.ts 10
  * PRINTS: packages/server/test/key-rotation.test.ts 6
  * PRINTS: packages/server/test/label-slot.test.ts 2
- * PRINTS: packages/server/test/landed-context.test.ts 22
+ * PRINTS: packages/server/test/landed-context.test.ts 21
  * PRINTS: packages/server/test/landed-notices.test.ts 34
  * PRINTS: packages/server/test/landed-repair.test.ts 20
  * PRINTS: packages/server/test/landed-topics.test.ts 11
@@ -37227,13 +37640,13 @@ interface Outcome {
  * PRINTS: packages/server/test/listen-boot.test.ts 8
  * PRINTS: packages/server/test/listen.test.ts 16
  * PRINTS: packages/server/test/live-location-cost.test.ts 3
- * PRINTS: packages/server/test/live-location-differential.test.ts 6
+ * PRINTS: packages/server/test/live-location-differential.test.ts 16
  * PRINTS: packages/server/test/live-location-privacy.test.ts 28
  * PRINTS: packages/server/test/live-location-projection.test.ts 9
  * PRINTS: packages/server/test/live-location-prose.test.ts 3
- * PRINTS: packages/server/test/live-location-surfaces.test.ts 41
+ * PRINTS: packages/server/test/live-location-surfaces.test.ts 48
  * PRINTS: packages/server/test/live-location-told.test.ts 1
- * PRINTS: packages/server/test/live-location-topics.test.ts 4
+ * PRINTS: packages/server/test/live-location-topics.test.ts 5
  * PRINTS: packages/server/test/location-index-boot.test.ts 6
  * PRINTS: packages/server/test/location-index-rebuild.test.ts 7
  * PRINTS: packages/server/test/minimums-per-figure.test.ts 2

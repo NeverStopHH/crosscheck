@@ -10,6 +10,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
 import { runCli } from "../src/index.ts";
+import { OPT_OUT_GUARANTEE } from "../src/cli/privacy.ts";
 import { EXIT_FAIL, EXIT_OK, EXIT_USAGE } from "@crosscheck/connector-core/constants.ts";
 import {
   deriveSessionState,
@@ -184,6 +185,19 @@ describe("crosscheck presence", () => {
     // audience reads the contract: commit evidence under an unmatchable git
     // email still surfaces as an "unconnected" absence line.
     expect(result.stdout).toContain("git email the hub cannot match");
+    // The guarantee as it is (the owner's decision on the batch-2 integration
+    // review's I1): who, where and when go; THAT someone is on a file stays.
+    expect(result.stdout).toContain(OPT_OUT_GUARANTEE);
+  });
+
+  test("bare `presence` says what an opt-out hides and what it does not, before anybody opts out", async () => {
+    const { repo, env } = await fixture("presence-guarantee", { presenceOptOut: false });
+
+    const result = await runCli(["presence"], env, repo);
+
+    expect(result.exitCode).toBe(EXIT_OK);
+    expect(result.stdout).toContain("presence: visible to teammates");
+    expect(result.stdout).toContain(OPT_OUT_GUARANTEE);
   });
 
   test("`presence on` opts back in", async () => {
@@ -339,6 +353,7 @@ describe("status and doctor show the privacy state", () => {
     expect(result.stdout).toContain("privacy settings");
     expect(result.stdout).toContain("presence hidden (opt-out), 2 muted");
     expect(result.stdout).not.toContain("Robin");
+    expect(result.stdout).toContain(OPT_OUT_GUARANTEE);
   });
 
   test("doctor counts the caller's alias emails; status names them", async () => {

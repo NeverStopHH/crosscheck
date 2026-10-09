@@ -99,6 +99,8 @@ import { appendOutcomeClause } from "@crosscheck/connector-core/hints/outcome-cl
 import {
   COLLISION_RELAY_SENTENCE,
   renderCollisionNotices,
+  ANONYMOUS_TEAMMATE_ID,
+  anonymousTripwireCollision,
   tripwireCollision,
 } from "@crosscheck/connector-core/hints/collision-notice.ts";
 import {
@@ -347,16 +349,27 @@ const stopFor = async (
   file: string,
   found: FoundReasons,
 ): Promise<EditAnswer> => {
-  if (found.sessions.length === 0 && found.landed === null) {
+  if (found.sessions.length === 0 && !found.anonymous && found.landed === null) {
     return NO_EDIT_ANSWER;
   }
-  const groups = onePerKey(found.sessions.map((session) => tripwireCollision(session, file, found.coverage)));
-  const claim = await claimStop(ctx, budget, { file, sessions: found.sessions, groups }, found.landed);
+  // A nameless teammate's group comes after the named ones (the owner's
+  // decision on the integration review's I1).
+  const groups = onePerKey([
+    ...found.sessions.map((session) => tripwireCollision(session, file, found.coverage)),
+    ...(found.anonymous ? [anonymousTripwireCollision(file, found.coverage)] : []),
+  ]);
+  const claim = await claimStop(
+    ctx,
+    budget,
+    { file, sessions: found.sessions, anonymous: found.anonymous, groups },
+    found.landed,
+  );
   // A sibling hook may have booked both reasons: then there is no ask to
   // state and no why to wait for — but a teammate group untold so far is
   // still told.
   const { won } = claim;
-  const reason = won.teammate === null && won.landed === null ? null : await statedReason(ctx, state, file, found, won);
+  const reason =
+    won.teammate === null && !won.anonymous && won.landed === null ? null : await statedReason(ctx, state, file, found, won);
   return { reason, notices: claim.told };
 };
 
@@ -385,6 +398,7 @@ const statedReason = async (
       : await recordLandedStop(ctx, state, file, won.landed, answer.told);
   const warning = renderEditWarning({
     live: won.teammate,
+    anonymous: won.anonymous,
     landed: won.landed,
     file,
     now: ctx.now(),
@@ -410,12 +424,15 @@ const statedReason = async (
 interface LiveAnswer {
   readonly file: string;
   readonly sessions: readonly TripwireSession[];
+  /** The answer said a teammate it will not name is live on the file. */
+  readonly anonymous: boolean;
   readonly groups: readonly CollisionNotice[];
 }
 
-/** Whether every teammate session this answer named on the file has been asked about. */
+/** Whether every teammate this answer put on the file, the nameless one included, has been asked about. */
 const isAllAsked = (state: SessionState, answer: LiveAnswer): boolean =>
-  answer.sessions.every((session) => (state.tripwireAskedGroups ?? []).includes(liveAskKey(answer.file, session)));
+  answer.sessions.every((session) => (state.tripwireAskedGroups ?? []).includes(liveAskKey(answer.file, session))) &&
+  (!answer.anonymous || (state.tripwireAskedGroups ?? []).includes(anonymousAskKey(answer.file)));
 
 /** The collision fields a tell can change: nothing to write when none of them did. */
 const collisionFieldsOf = (state: SessionState): string =>
@@ -448,12 +465,16 @@ const PRE_TOOL_USE_HOOK = "pre-tool-use";
 
 interface Reasons {
   readonly teammate: TripwireSession | null;
+  /** The nameless teammate's ask, won only when no named teammate's was. */
+  readonly anonymous: boolean;
   readonly landed: LandedChanges | null;
 }
 
 interface FoundReasons {
   /** EVERY live teammate session the hub named on the file, in its order (review M4). */
   readonly sessions: readonly TripwireSession[];
+  /** A teammate the hub will not name is live on the file — ranked after every named one. */
+  readonly anonymous: boolean;
   /** The live tripwire was asked and did not answer: a recheck is owed (review batch 2, M1). */
   readonly isLiveUnanswered: boolean;
   readonly landed: LandedChanges | null;
@@ -473,11 +494,14 @@ interface FoundReasons {
   readonly why: Promise<LandedContextAnswer>;
 }
 
-const NO_REASONS: Reasons = { teammate: null, landed: null };
+const NO_REASONS: Reasons = { teammate: null, anonymous: false, landed: null };
 
 /** The live half's once-per key: this file, this teammate's work context. */
 const liveAskKey = (file: string, session: TripwireSession): string =>
   JSON.stringify([file, session.developerId, session.workContextId]);
+
+/** The nameless teammate's once-per key: this file, whoever and however many they are. */
+const anonymousAskKey = (file: string): string => JSON.stringify([file, ANONYMOUS_TEAMMATE_ID]);
 
 /** Which of the two questions this edit already has an answer to. */
 interface Answered {
@@ -547,6 +571,7 @@ const findReasons = async (
   const [hub, probed] = await Promise.all([live, probing]);
   return {
     sessions: hub?.sessions ?? [],
+    anonymous: hub?.anonymous ?? false,
     isLiveUnanswered: !answered.isLiveFresh && hub === null,
     landed: worthStopping(probed.landed),
     cleanKey: probed.landed?.cleanKey ?? null,
@@ -660,26 +685,32 @@ const claimStop = async (
     }
     const askedGroups = fresh.tripwireAskedGroups ?? [];
     const teammate = answer.sessions.find((session) => !askedGroups.includes(liveAskKey(file, session))) ?? null;
+    // The nameless teammate is asked about once every named one on the file is.
+    const anonymous = teammate === null && answer.anonymous && !askedGroups.includes(anonymousAskKey(file));
     const landed = found !== null && !fresh.landedAskedFiles.includes(file) ? found : null;
-    const withLive =
-      teammate === null ? fresh : withTripwireGroupAsked(withTripwireAsked(fresh, file), liveAskKey(file, teammate));
+    const liveKey = teammate !== null ? liveAskKey(file, teammate) : anonymous ? anonymousAskKey(file) : null;
+    const withLive = liveKey === null ? fresh : withTripwireGroupAsked(withTripwireAsked(fresh, file), liveKey);
     const asked = landed === null ? withLive : withLandedAsked(withLive, file);
     const fresher = newCollisionKeys(asked, answer.groups);
     const told = answer.groups.filter((group) => fresher.includes(group.key));
     const remembered = answer.groups.length === 0 ? asked : rememberGroups(ctx, asked, answer.groups, fresher);
-    const isSettled = answer.sessions.length > 0 && isAllAsked(remembered, answer);
+    // A nameless teammate on the file is a live one too: the file rests once
+    // she is asked about and told like every named one, and a cut leaves her
+    // recheck owed.
+    const isLive = answer.sessions.length > 0 || answer.anonymous;
+    const isSettled = isLive && isAllAsked(remembered, answer);
     const next = isSettled ? withTripwireChecked(remembered, file, ctx.now()) : remembered;
-    if (teammate === null && landed === null && collisionFieldsOf(next) === collisionFieldsOf(fresh)) {
+    if (liveKey === null && landed === null && collisionFieldsOf(next) === collisionFieldsOf(fresh)) {
       return null;
     }
-    claimed.value = { won: { teammate, landed }, told };
+    claimed.value = { won: { teammate, anonymous, landed }, told };
     budget.onCut?.(() =>
       releaseCutStop(ctx, {
         file,
-        askKey: teammate === null ? null : liveAskKey(file, teammate),
+        askKey: liveKey,
         isLandedWon: landed !== null,
         toldKeys: told.map((group) => group.key),
-        isLive: answer.sessions.length > 0,
+        isLive,
       }),
     );
     return next;

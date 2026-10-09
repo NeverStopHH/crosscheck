@@ -18,7 +18,7 @@ import { fail, ok } from "../http/envelope.ts";
 import { formatIssues } from "../http/request.ts";
 import { RepoQuerySchema } from "../http/schemas.ts";
 import { developerAuth } from "../middleware/auth.ts";
-import { listGhostOverlaps } from "../services/ghost-overlap.ts";
+import { countAnonymousOverlap, listGhostOverlaps } from "../services/ghost-overlap.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
 
 export const ghostChecksRoutes = (deps: AppDeps): Hono<AppEnv> => {
@@ -30,12 +30,14 @@ export const ghostChecksRoutes = (deps: AppDeps): Hono<AppEnv> => {
     if (!parsed.success) {
       return fail(c, 400, "validation_failed", formatIssues(parsed.error));
     }
-    const overlaps = await listGhostOverlaps(
-      deps,
-      c.get("developer").id,
-      parsed.data.repo,
-    );
-    return ok(c, { ghostChecks: overlaps });
+    // Beside the named rows, one nameless, time-free count: the caller's own
+    // files a hidden teammate's unfinished work also touches
+    // (services/ghost-overlap.ts countAnonymousOverlap).
+    const [overlaps, anonymousOverlap] = await Promise.all([
+      listGhostOverlaps(deps, c.get("developer").id, parsed.data.repo),
+      countAnonymousOverlap(deps, c.get("developer").id, parsed.data.repo),
+    ]);
+    return ok(c, { ghostChecks: overlaps, anonymousOverlap });
   });
 
   return router;

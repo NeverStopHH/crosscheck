@@ -43,9 +43,9 @@ const ADMIN_TOKEN = "round-trip-admin";
 const REPO_ID = "github.com/acme/api";
 const UUID = "0f8e7d6c-5b4a-4392-8170-6a5b4c3d2e1f";
 
-/** A topic's work context in a life, minted the way the topic rules mint it (flows/topic-rules.ts). */
+/** A topic's work context in a life, minted the way the topic rules mint it (flows/topic-rules.ts), under a test key. */
 const topicIdIn = (lifeWorkContextId: string, branch: string): string =>
-  topicWorkContextIdFor(lifeWorkContextId, mintTopicId(REPO_ID, "/repos/api-feature", branch));
+  topicWorkContextIdFor(lifeWorkContextId, mintTopicId("7c".repeat(32), `cc_${UUID}`, REPO_ID, "/repos/api-feature", branch));
 
 /** Every id shape the connector mints, a healed or resumed life's and a topic's included. */
 export const MINTED_IDS: readonly string[] = [

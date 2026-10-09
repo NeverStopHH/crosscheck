@@ -250,7 +250,7 @@ describe("POST /api/landed/context", () => {
     expect(answer.matches).toEqual([]);
   });
 
-  test("a presence opt-out hides the work while its session is live, and not after", async () => {
+  test("a presence opt-out's work is named the same live or quiet: the answer never says which", async () => {
     // Arrange — Mike opted out of presence; his session is live at first
     const t = await team();
     await mikeWorks(t, { session: "ses_mike", context: "wc_mike", title: "Line offsets are off by one" });
@@ -265,9 +265,11 @@ describe("POST /api/landed/context", () => {
     t.harness.clock.advanceSeconds(HOUR_S);
     const afterwards = await askContext(t, t.nick, [commitBy(MIKE_EMAIL, at(HOUR_S))]);
 
-    // Assert — a live session is presence; a finished one is published work
-    expect(whileLive.matches).toEqual([]);
-    expect(afterwards.matches.map((match) => match.workContextId)).toEqual(["wc_mike"]);
+    // Assert — the published work is named both times (integration review
+    // H4): "matched or not" was "is he live now", read to the second by a
+    // colleague polling the stop.
+    expect(whileLive.matches.map((match) => match.workContextId)).toEqual(["wc_mike"]);
+    expect(afterwards.matches).toEqual(whileLive.matches);
   });
 
   test("work from a session long gone is not offered for a commit made outside any", async () => {

@@ -279,6 +279,20 @@ export const ghostDraftBody = (
 };
 
 /**
+ * The block's NAMELESS line (the owner's decision on the batch-2 integration
+ * review's I1): how many of the reader's own files the unfinished work of a
+ * teammate who opted out of presence touches. One count for all of them, no
+ * name, no age, no id — nothing to pull, so nothing to point at but the team.
+ */
+export const formatAnonymousGhostLine = (sharedFileCount: number): string => {
+  const count = Math.max(1, Math.trunc(sharedFileCount));
+  return (
+    `- A teammate's work in progress also touches ${String(count)} of your files · ` +
+    `not named: they opted out of presence, so talk to your team before you change ${count === 1 ? "it" : "them"}`
+  );
+};
+
+/**
  * The one header both surfaces print. The briefing composes it into a
  * `Section` and `set_intent` prints it as a block; a second literal would be
  * a second place for "nothing here blocks you" to be dropped, which is the

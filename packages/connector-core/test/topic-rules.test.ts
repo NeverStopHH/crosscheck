@@ -33,6 +33,12 @@ import type { SessionState } from "../src/state/session-state.ts";
 import { git, makeRepo, writeRepoFile } from "./helpers.ts";
 
 const REPO_ID = "github.com/acme/api";
+/** A test's topic key, and the conversation its state's lives belong to (`hostSessionKey: "rules"`). */
+const TOPIC_KEY = "5e".repeat(32);
+const CONVERSATION = "cc_rules";
+const topicKey = async (): Promise<string> => TOPIC_KEY;
+/** The id the rules mint for a topic opened in `root` on `branch`. */
+const idOf = (root: string, branch: string): string => mintTopicId(TOPIC_KEY, CONVERSATION, REPO_ID, root, branch);
 const T0 = Date.parse("2026-10-07T10:00:00.000Z");
 const STEP_MS = 60_000;
 const cleanups: string[] = [];
@@ -108,7 +114,7 @@ const touch = async (
   files: readonly string[],
   step: number,
 ): Promise<{ readonly plan: TopicPlan; readonly state: SessionState }> => {
-  const plan = await planTopics(topicLifeOf(state), await resolutionIn(root, files), files.map((file) => `${root}/${file}`), at(step));
+  const plan = await planTopics(topicLifeOf(state), await resolutionIn(root, files), files.map((file) => `${root}/${file}`), at(step), topicKey);
   const captured = files.flatMap((file) => {
     const filing = plan.filingByPath.get(`${root}/${file}`);
     return filing === undefined ? [] : [topicSeenKey(filing.key, file)];
@@ -156,11 +162,25 @@ describe("(a) first sight opens a topic", () => {
 
     // Assert
     const [opened] = plan.opened;
-    expect(opened?.key).toBe(mintTopicId(REPO_ID, sibling, "feat/a"));
+    expect(opened?.key).toBe(idOf(sibling,"feat/a"));
     expect(opened?.key).not.toContain("feat");
     expect(opened).toMatchObject({ branch: "feat/a", branches: ["feat/a"], head: await headCommit(sibling), root: sibling });
     expect(opened?.title).toBe("feat/a @ api");
     expect(keysOf(plan)).toEqual([opened?.key ?? ""]);
+  });
+
+  test("no topic key, no topic: the touch files under the session's own context (integration review H3)", async () => {
+    // Arrange: a machine whose topic key cannot be had (state/topic-key.ts)
+    const { main, sibling } = await world("rules-no-key");
+    const state = await sessionIn(main);
+
+    // Act
+    const plan = await planTopics(topicLifeOf(state), await resolutionIn(sibling, ["src/a.ts"]), [`${sibling}/src/a.ts`], at(1), async () => null);
+
+    // Assert: no id a mint without the key could spell
+    expect(plan.opened).toEqual([]);
+    expect(plan.filingByPath.get(`${sibling}/src/a.ts`)).toEqual({ key: null, workContextId: state.workContextId });
+    expect(plan.sessionTouched).toBe(true);
   });
 
   test("the same branch again files under the same topic and attaches nothing", async () => {
@@ -174,7 +194,7 @@ describe("(a) first sight opens a topic", () => {
     // Assert
     expect(plan.opened).toEqual([]);
     expect(plan.relabeled).toEqual([]);
-    expect(keysOf(plan)).toEqual([mintTopicId(REPO_ID, sibling, "feat/a")]);
+    expect(keysOf(plan)).toEqual([idOf(sibling,"feat/a")]);
   });
 
   test("the session's own checkout on its start branch files under the session's own context", async () => {
@@ -197,7 +217,7 @@ describe("(b) a rename keeps the topic", () => {
     const { plan, state } = await touch(first.state, sibling, ["src/other.ts"], 2);
 
     // Assert: same id, the new name in the affinity — and in the title (review M4)
-    const id = mintTopicId(REPO_ID, sibling, "feat/a");
+    const id = idOf(sibling,"feat/a");
     expect(plan.opened).toEqual([]);
     expect(keysOf(plan)).toEqual([id]);
     expect(plan.relabeled).toEqual([{ id, label: "feat/a-renamed", head: await headCommit(sibling), title: "feat/a-renamed @ api" }]);
@@ -235,7 +255,7 @@ describe("(b) a rename keeps the topic", () => {
     const { plan, state } = await touch(second.state, sibling, ["src/c.ts"], 3);
 
     // Assert
-    const id = mintTopicId(REPO_ID, sibling, "feat/a");
+    const id = idOf(sibling,"feat/a");
     expect(plan.opened).toEqual([]);
     expect(keysOf(plan)).toEqual([id]);
     expect(state.topicContexts.find((entry) => entry.key === id)?.branches).toEqual(["feat/a", "feat/b", "feat/c"]);
@@ -271,7 +291,7 @@ describe("(c) a move to another branch", () => {
 
     // Assert: the follow-up joins the affinity; the title stays the opening
     // branch's — only a rename is the same branch under a new name
-    const id = mintTopicId(REPO_ID, sibling, "feat/a");
+    const id = idOf(sibling,"feat/a");
     expect(plan.opened).toEqual([]);
     expect(keysOf(plan)).toEqual([id]);
     expect(plan.relabeled.map((relabel) => relabel.title)).toEqual([null]);
@@ -290,8 +310,8 @@ describe("(c) a move to another branch", () => {
     const { plan } = await touch(first.state, sibling, ["src/b.ts"], 2);
 
     // Assert: a new topic in the same worktree, its id minted from the branch it opened on
-    expect(plan.opened.map((topic) => [topic.key, topic.branch])).toEqual([[mintTopicId(REPO_ID, sibling, "feat/b"), "feat/b"]]);
-    expect(mintTopicId(REPO_ID, sibling, "feat/b")).not.toBe(mintTopicId(REPO_ID, sibling, "feat/a"));
+    expect(plan.opened.map((topic) => [topic.key, topic.branch])).toEqual([[idOf(sibling,"feat/b"), "feat/b"]]);
+    expect(idOf(sibling,"feat/b")).not.toBe(idOf(sibling,"feat/a"));
     expect(plan.relabeled).toEqual([]);
   });
 
@@ -323,7 +343,7 @@ describe("(d) a detached HEAD", () => {
     const { plan, state } = await touch(first.state, sibling, ["src/c.ts"], 2);
 
     // Assert
-    const id = mintTopicId(REPO_ID, sibling, "feat/a");
+    const id = idOf(sibling,"feat/a");
     const label = `detached@${(await headCommit(sibling)).slice(0, DETACHED_LABEL_SHA_CHARS)}`;
     expect(plan.opened).toEqual([]);
     expect(keysOf(plan)).toEqual([id]);
@@ -383,7 +403,7 @@ describe("the bounds", () => {
     // Arrange: a topic whose seen-set already holds 1000 files
     const { main, sibling } = await world("rules-size");
     const state = await sessionIn(main);
-    const id = mintTopicId(REPO_ID, sibling, "feat/a");
+    const id = idOf(sibling,"feat/a");
     const big = { ...state, seenTargets: Array.from({ length: 1000 }, (_, index) => topicSeenKey(id, `old/${String(index)}.ts`)) };
     const files = Array.from({ length: 300 }, (_, index) => `src/f${String(index)}.ts`);
 

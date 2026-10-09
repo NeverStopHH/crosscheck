@@ -180,6 +180,12 @@ export const CollisionNoticeSchema = z.object({
   landed: z.boolean().optional(),
   /** The files their LARGE change touched, when the row said so — a qualifier the line prints (release gate, gap 6). */
   largeChangeFiles: z.number().int().min(0).optional(),
+  /**
+   * A teammate the hub would not name — one who opted out of presence — and
+   * never will be: no name, no branch, no age, on this record or any surface
+   * that reads it (hints/collision-notice.ts anonymousTripwireCollision).
+   */
+  anonymous: z.boolean().optional(),
 });
 
 export type CollisionNotice = z.infer<typeof CollisionNoticeSchema>;
@@ -938,9 +944,10 @@ const SessionStateObjectSchema = z.looseObject({
   topicContexts: z
     .array(
       z.object({
-        // The topic's MINTED id (flows/topic-contexts.ts `mintTopicId`): its
-        // root's key and its ordinal in that root — never its branch, so a
-        // rename keeps it.
+        // The topic's MINTED id (flows/topic-contexts.ts `mintTopicId`): a
+        // keyed digest of its conversation, root and opening branch — never
+        // the branch itself, so a rename keeps it. An id minted before the
+        // key (sha256 of the branch) stays as it was: never re-derived.
         key: z.string().min(1),
         sessionId: z.string().min(1),
         workContextId: z.string().min(1),

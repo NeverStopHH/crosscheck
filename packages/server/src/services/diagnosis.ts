@@ -134,6 +134,15 @@ export interface WorkContextListEntry extends WorkContextView {
    * knowledge and stays; the connector falls back to its title.
    */
   readonly branch?: string;
+  /**
+   * Present, and true, on a row whose owner's location the viewer may not be
+   * told (batch-2 integration review, M5). Its `updatedAt` is withheld, so
+   * the only time left on it is its creation — which a connector would
+   * otherwise read as "last seen", and a topic context is created the moment
+   * its author first edits a sibling worktree. A reader that dates teammates'
+   * activity skips the row; one that does not know the field loses nothing.
+   */
+  readonly locationWithheld?: true;
 }
 
 export interface WorkContextListWindow {
@@ -508,8 +517,8 @@ export const listWorkContextsByRepo = async (
     // teammate's freshest context is served before anyone's second.
     .orderBy(sql`${contextRankPerDeveloper(activity)} ASC`, desc(activity), asc(workContexts.id))
     .limit(limit);
-  return rows.map((row) =>
-    projectRow(hidden, ownerOf(row.developerId, repo, row.branch, row.workContext), {
+  return rows.map((row) => ({
+    ...projectRow(hidden, ownerOf(row.developerId, repo, row.branch, row.workContext), {
       ...toWorkContextView(row.workContext, row.baseCommit),
       developerId: row.developerId,
       developerName: row.developerName,
@@ -518,7 +527,8 @@ export const listWorkContextsByRepo = async (
       developerContextCount: row.developerContextCount,
       branch: row.branch,
     }),
-  );
+    ...(hidden.has(row.developerId) ? { locationWithheld: true as const } : {}),
+  }));
 };
 
 /** The tree's targets, bounded, in deterministic (kind, value) order. */

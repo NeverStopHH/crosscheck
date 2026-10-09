@@ -550,7 +550,13 @@ const REJECTED_STATUS = "rejected";
  */
 export type FtsTierRanker = (tokens: readonly string[], scope: SQL | undefined) => Promise<readonly RankedRow[]>;
 
-/** A caller's ranker, held to the tier's own contract: no tokens, no rows; best first; bounded. */
+/**
+ * A caller's ranker, held to the tier's own contract: no tokens, no rows; best
+ * first; bounded. The sort is stable, so equal ranks keep the ranker's order —
+ * which is why a ranker never leaves a tie to the order its scan met the rows
+ * in (hints.ts rankOnPushableText; integration review L7): an RRF
+ * contribution is a row's POSITION.
+ */
 const listRankedFtsTier = async (
   ranker: FtsTierRanker,
   tokens: readonly string[],

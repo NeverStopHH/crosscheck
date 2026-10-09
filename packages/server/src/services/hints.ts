@@ -30,7 +30,7 @@
  * with this note rather than half-built. The lexical fast path (exact targets +
  * FTS) is the one the design names normative for the sync budget.
  */
-import { and, asc, desc, eq, gt, inArray, isNull, lte, ne, notExists, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lte, ne, not, notExists, or, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 
@@ -48,7 +48,7 @@ import {
 import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
 import { resolvedEvidenceCounts } from "./evidence-resolution.ts";
 import { claimValidity, loadRevalidations } from "./claim-validity.ts";
-import { locationHiddenFrom, projectRow } from "./live-location.ts";
+import { locationHiddenFrom, projectRow, updatedAtSeenBy } from "./live-location.ts";
 import type { HiddenLocations } from "./live-location.ts";
 import { presenceCutoff } from "./presence.ts";
 import { contextBaseCommit } from "./topic-base-commit.ts";
@@ -833,25 +833,35 @@ const rankOnPushableText =
     // The statement as THIS reader may read it: a hidden owner's location
     // title neither ranks her work nor pulls it into the pool (titleSeenBy).
     const statement = statementDocument(titleSeenBy(readerDeveloperId));
+    // ...and her last touch as THIS reader may read it (integration review
+    // H5): the search decays every tier by `updatedAt ?? createdAt`, and the
+    // raw column let her withheld last touch decay or boost her trees in a
+    // pool capped at three — which tree, and so which branch, she is on now.
+    // It reads the owner, so the claim pass groups by her too: a context has
+    // one session, and the groups are the same.
+    const updatedAt = updatedAtSeenBy(readerDeveloperId, agentSessions.developerId, workContexts.updatedAt);
     const words = claimFloorWords(await isWordsIndexComplete(db));
     const [statements, pushable] = await Promise.all([
       db
         .select({
           id: workContexts.id,
           createdAt: workContexts.createdAt,
-          updatedAt: workContexts.updatedAt,
+          updatedAt,
           rank: sql<number>`ts_rank(${statement}, ${tsquery})`,
         })
         .from(workContexts)
         .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
         .where(and(scope, sql`${statement} @@ ${tsquery}`))
-        .orderBy(sql`ts_rank(${statement}, ${tsquery}) DESC`)
+        // Equal ranks to the id, never to the order the scan met the rows in
+        // (integration review L7): an update of hers that changed no value
+        // moved a tuple and reordered the pool a colleague is hinted from.
+        .orderBy(sql`ts_rank(${statement}, ${tsquery}) DESC`, asc(workContexts.id))
         .limit(TIER_CANDIDATES),
       db
         .select({
           id: claims.workContextId,
           createdAt: workContexts.createdAt,
-          updatedAt: workContexts.updatedAt,
+          updatedAt,
           rank: sql<number>`max(ts_rank(${words.words}, ${tsquery}))`,
         })
         .from(claims)
@@ -867,7 +877,7 @@ const rankOnPushableText =
             notMutedCondition(readerDeveloperId, claimAuthors.developerId),
           ),
         )
-        .groupBy(claims.workContextId, workContexts.createdAt, workContexts.updatedAt)
+        .groupBy(claims.workContextId, workContexts.createdAt, workContexts.updatedAt, agentSessions.developerId)
         .orderBy(sql`max(ts_rank(${words.words}, ${tsquery})) DESC`)
         .limit(TIER_CANDIDATES),
     ]);
@@ -1293,6 +1303,16 @@ const TRIPWIRE_MAX_CANDIDATES = GHOST_HOT_TARGET_MAX_CONTEXTS;
 const MS_PER_DAY = 86_400_000;
 
 /**
+ * A well-known mechanically generated name is nobody's plan, whoever asks:
+ * an older connector's tripwire, which knows no generated-target rule, asks
+ * about a nested lockfile all the same (services/generated-targets.ts). A
+ * repo that declared the file authoritative is answered about it. One rule
+ * for both of the tripwire's answers, the named rows and the nameless one.
+ */
+const isNobodysPlan = (value: string, authoritative: boolean): boolean =>
+  !authoritative && isGeneratedPath(value);
+
+/**
  * The ask names the FIRST row (connector hooks/pre-tool-use.ts), so the order
  * is the decision. Focused before a LARGE CHANGE — a session renaming three
  * hundred files through this one is weaker evidence of a plan in the reader's
@@ -1336,10 +1356,7 @@ export const listTargetSessions = async (
    */
   authoritative = false,
 ): Promise<readonly TargetSessionView[]> => {
-  // A well-known mechanically generated name is nobody's plan, whoever asks:
-  // an older connector's tripwire, which knows no generated-target rule, asks
-  // about a nested lockfile all the same (services/generated-targets.ts).
-  if (!authoritative && isGeneratedPath(value)) {
+  if (isNobodysPlan(value, authoritative)) {
     return [];
   }
   const cutoff = presenceCutoff(deps.now());
@@ -1413,4 +1430,64 @@ export const listTargetSessions = async (
     }))
     .sort(byTripwireStrength)
     .slice(0, TRIPWIRE_MAX_SESSIONS);
+};
+
+/**
+ * A teammate the reader may not be told about, working on the file now — and
+ * nothing else about them. The row's only field is its kind.
+ */
+export interface AnonymousTargetRow {
+  readonly anonymous: true;
+}
+
+const ANONYMOUS_ROW: AnonymousTargetRow = { anonymous: true };
+
+/**
+ * AN OPTED-OUT TEAMMATE IS STILL A COLLISION (the owner's decision on the
+ * batch-2 integration review's I1). The named rows above leave a hidden
+ * owner's sessions out whole, and that recreated the pilot's failure for
+ * every opted-out person: Mike opted out, edited the files Nick was about to
+ * change, and Nick was told nothing. So the tripwire answers one more
+ * question: is ANYBODY whose location this caller may not be told live on
+ * this file right now?
+ *
+ * The answer is one row or none, whoever and however many they are, so a
+ * count singles nobody out; and the row carries no developer, name, session,
+ * branch, title, topic, work context, intent or instant (opting out still
+ * hides WHO, WHERE and WHEN — services/visibility.ts «anonymous»). "Live"
+ * is the presence rule the named rows use, and the same filters hold: the
+ * caller's own sessions never count, a teammate the caller muted never
+ * interrupts them, and a file her connector labelled generated, or a well-
+ * known generated name, is nobody's plan.
+ */
+export const listAnonymousTargetPresence = async (
+  deps: Deps,
+  callerDeveloperId: string,
+  repo: string,
+  value: string,
+  authoritative = false,
+): Promise<readonly AnonymousTargetRow[]> => {
+  if (isNobodysPlan(value, authoritative)) {
+    return [];
+  }
+  const hiddenAndLiveOnFile = and(
+    eq(workContextTargets.value, value),
+    eq(agentSessions.repo, repo),
+    ordinaryTargetCondition(),
+    ne(agentSessions.developerId, callerDeveloperId),
+    isNull(agentSessions.endedAt),
+    gt(agentSessions.lastHeartbeatAt, presenceCutoff(deps.now())),
+    not(visiblePresenceCondition(callerDeveloperId, agentSessions.developerId)),
+    notMutedCondition(callerDeveloperId, agentSessions.developerId),
+  );
+  // Nothing of theirs is selected, and the row is a constant: there is no
+  // column of theirs here to leak.
+  const rows = await deps.db
+    .select({ one: sql<number>`1` })
+    .from(workContextTargets)
+    .innerJoin(workContexts, eq(workContextTargets.workContextId, workContexts.id))
+    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
+    .where(hiddenAndLiveOnFile)
+    .limit(1);
+  return rows.length === 0 ? [] : [ANONYMOUS_ROW];
 };

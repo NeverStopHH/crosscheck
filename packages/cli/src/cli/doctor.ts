@@ -80,6 +80,7 @@ import {
 } from "@crosscheck/connector-core/briefing/render.ts";
 import { bareUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
 import { PRESENCE_ON_WAITING_LINE, presenceReenabledLine } from "@crosscheck/connector-core/briefing/presence-notice.ts";
+import { OPT_OUT_GUARANTEE } from "./privacy.ts";
 import { getCiVerdict } from "@crosscheck/connector-core/http/hub.ts";
 import type { CiCoverage } from "@crosscheck/connector-core/http/hub.ts";
 import { CI_PROVIDERS, CI_KNOWN_PROVIDERS } from "@crosscheck/schema";
@@ -2052,10 +2053,12 @@ const checkPrivacy = async (ctx: HubContext): Promise<Check> => {
     result.data.emails.length === 0
       ? ""
       : `, ${aliasCount} alias email${aliasCount === 1 ? "" : "s"}`;
+  // The guarantee as it is, on the line a person reads before opting out
+  // (the owner's decision on the batch-2 integration review's I1).
   return check(
     "PASS",
     "privacy settings",
-    `${presencePart}, ${result.data.mutes.length} muted${aliasPart}`,
+    `${presencePart}, ${result.data.mutes.length} muted${aliasPart}. ${OPT_OUT_GUARANTEE}`,
   );
 };
 

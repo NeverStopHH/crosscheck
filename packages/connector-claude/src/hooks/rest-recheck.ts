@@ -25,7 +25,7 @@
  * recheck finds and the person was never told of is told now, as the
  * tripwire tells them.
  */
-import { tripwireCollision } from "@crosscheck/connector-core/hints/collision-notice.ts";
+import { anonymousTripwireCollision, tripwireCollision } from "@crosscheck/connector-core/hints/collision-notice.ts";
 import { TURN_END_RECHECK_MAX_FILES } from "@crosscheck/connector-core/constants.ts";
 import { getTripwireSessions } from "@crosscheck/connector-core/http/hub.ts";
 import type { CoverageRecord } from "@crosscheck/connector-core/http/coverage.ts";
@@ -64,6 +64,8 @@ type Outcome =
       readonly kind: "answered";
       readonly rest: TripwireCheck;
       readonly sessions: readonly TripwireSession[];
+      /** The answer said a teammate it will not name is live on the file. */
+      readonly anonymous: boolean;
       readonly coverage: CoverageRecord;
     };
 
@@ -79,7 +81,7 @@ const recheckOf = async (ctx: HookContext, budget: HookBudget, rest: TripwireChe
   }
   const result = await getTripwireSessions({ ...ctx.hub, timeoutMs }, ctx.identity.repoId, rest.file);
   return result.ok
-    ? { kind: "answered", rest, sessions: result.data.sessions, coverage: result.data.coverage }
+    ? { kind: "answered", rest, sessions: result.data.sessions, anonymous: result.data.anonymous, coverage: result.data.coverage }
     : { kind: "failed", rest };
 };
 
@@ -120,10 +122,13 @@ export const recheckRests = async (
   if (settled.length === 0) {
     return [];
   }
+  // The nameless teammate's group as the edit builds it, after the named
+  // ones: the same group, so a person told once is not told again.
   const groups = onePerKey(
-    answered.flatMap((outcome) =>
-      outcome.sessions.map((session) => tripwireCollision(session, outcome.rest.file, outcome.coverage)),
-    ),
+    answered.flatMap((outcome) => [
+      ...outcome.sessions.map((session) => tripwireCollision(session, outcome.rest.file, outcome.coverage)),
+      ...(outcome.anonymous ? [anonymousTripwireCollision(outcome.rest.file, outcome.coverage)] : []),
+    ]),
   );
   const told: { value: readonly CollisionNotice[] } = { value: [] };
   const booked: { value: number } = { value: 0 };

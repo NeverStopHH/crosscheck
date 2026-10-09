@@ -17,12 +17,19 @@
  *     on the local repo — and one host-written title that merely ENDS in
  *     ` @ api` (titleSource "host", which must stay)
  *   - a claim contradicting Nick's, a solved tree on the failure Nick is live
- *     on, two questions to Nick about her contexts (one hers, one Ken's)
+ *     on, two questions to Nick about her contexts (one hers, one Ken's), and
+ *     one of Nick's to her about his own — which the differential's answer
+ *     action answers
  *   - a pilot-enrolled repo with a prompt hint about her context delivered to
  *     Nick, and opened
  */
+import { createHash, randomBytes } from "node:crypto";
+
 import { sql } from "drizzle-orm";
 
+// Her connector's own mint — a test-only import: the hub depends on no connector.
+import { TOPIC_KEY_BYTES } from "../../connector-core/src/constants.ts";
+import { mintTopicId, topicWorkContextIdFor } from "../../connector-core/src/flows/topic-contexts.ts";
 import { hintDeliveries } from "../src/db/schema.ts";
 import { draftOutcome } from "../src/services/draft-doors.ts";
 import {
@@ -54,6 +61,8 @@ export const SECRET_SHA2 = "beefbeefbeef0123456789abcdef0123456789ab";
  * without them.
  */
 export const SECRET_TOPIC_BRANCH = "feat/robin-topic-lugano";
+/** A second sibling worktree's branch, whose topic says the same words as the first (a tie). */
+export const SECRET_SECOND_TOPIC_BRANCH = "feat/robin-topic-bellinzona";
 export const SECRET_LOCAL_TOPIC_BRANCH = "feat/robin-topic-locarno";
 export const SECRET_TOPIC_SHA = "c0c0abadc0de0123456789abcdef0123456789ab";
 export const FILE = "src/auth/refresh.ts";
@@ -66,14 +75,28 @@ export const ROBIN_STALE = "cc_55555555-6666-4777-8888-999999999999";
 export const ROBIN_LOCAL = "cc_66666666-7777-4888-8999-aaaaaaaaaaaa";
 
 export const NICK_CONTEXT = "wc_nick_live";
+export const NICK_TITLE = "Key rotation";
 export const ROBIN_CONTEXT = "wc_robin_live";
 export const ROBIN_SOLVED = "wc_robin_solved";
 export const ROBIN_LOCAL_CONTEXT = "wc_robin_local";
 export const ROBIN_DETACHED_CONTEXT = "wc_robin_detached";
 export const ROBIN_HOST_CONTEXT = "wc_robin_host";
-/** Her topics' contexts: one beside her live session's on the shared repo, one on the local repo. */
-export const ROBIN_TOPIC = `${ROBIN_CONTEXT}~t0a1b2c3d4e5f.1`;
-export const ROBIN_LOCAL_TOPIC = `${ROBIN_LOCAL_CONTEXT}~tf5e4d3c2b1a0.2`;
+/**
+ * Her topic ids, minted as her connector mints them (connector-core
+ * flows/topic-contexts.ts `mintTopicId`; batch-2 integration review, H3):
+ * keyed by a secret of her machine — here one per test process, so the two
+ * worlds of one walk mint the same ids — over her conversation, the repo, the
+ * worktree root and the branch. The hub serves ids as written, so the leak
+ * scan below hashes every branch of hers the unkeyed ways and fails on an id
+ * one of them meets (`topicIdOraclesIn`).
+ */
+const HER_TOPIC_KEY = randomBytes(TOPIC_KEY_BYTES).toString("hex");
+const herTopicId = (session: string, repo: string, worktree: string, branch: string): string =>
+  mintTopicId(HER_TOPIC_KEY, session, repo, `/Users/robin/worktrees/${worktree}`, branch);
+/** Her topics' contexts: two beside her live session's on the shared repo, one on the local repo. */
+export const ROBIN_TOPIC = topicWorkContextIdFor(ROBIN_CONTEXT, herTopicId(ROBIN_LIVE, REPO, "lugano", SECRET_TOPIC_BRANCH));
+export const ROBIN_SECOND_TOPIC = topicWorkContextIdFor(ROBIN_CONTEXT, herTopicId(ROBIN_LIVE, REPO, "bellinzona", SECRET_SECOND_TOPIC_BRANCH));
+export const ROBIN_LOCAL_TOPIC = topicWorkContextIdFor(ROBIN_LOCAL_CONTEXT, herTopicId(ROBIN_LOCAL, LOCAL_REPO, "locarno", SECRET_LOCAL_TOPIC_BRANCH));
 /**
  * Created long before every window a surface applies (conference, suspect,
  * a since=) and touched again at UPDATED_AT: inside a window only by her
@@ -190,6 +213,7 @@ export const SECRETS: readonly (readonly [label: string, value: string])[] = [
   ["branch", SECRET_BRANCH],
   ["local branch", SECRET_LOCAL_BRANCH],
   ["topic branch", SECRET_TOPIC_BRANCH],
+  ["second topic branch", SECRET_SECOND_TOPIC_BRANCH],
   ["local topic branch", SECRET_LOCAL_TOPIC_BRANCH],
   ...shaForms(SECRET_SHA).map((value) => [`sha ${String(value.length)}`, value] as const),
   ...shaForms(SECRET_SHA2).map((value) => [`local sha ${String(value.length)}`, value] as const),
@@ -289,9 +313,32 @@ export const instantsNear = (
 export const instantLeaksIn = (text: string, now: Date): readonly string[] =>
   instantsNear(text, SECRET_INSTANTS, now);
 
-/** Every leak `text` carries: the exact spellings, then the tolerant instants. */
+/** A topic id's two parts, wherever one is spelled: `~t<lead>.<number>`. */
+const TOPIC_ID = /~t([0-9a-f]+)\.([0-9]+)/g;
+const OLD_NUMBER_HEX_CHARS = 8;
+const PLAIN_LEAD_HEX_CHARS = 12;
+
+/** What anybody computes from a branch without her key: the old mint's number, and a plain hash's lead. */
+const unkeyedSpellings = (branch: string): readonly string[] => {
+  const hex = createHash("sha256").update(branch).digest("hex");
+  return [`number ${String(Number.parseInt(hex.slice(0, OLD_NUMBER_HEX_CHARS), 16))}`, `lead ${hex.slice(0, PLAIN_LEAD_HEX_CHARS)}`];
+};
+
+/**
+ * THE ID ORACLE (batch-2 integration review, H3): the label of every branch
+ * of hers that hashes, unkeyed, into a part of a topic id `text` spells — a
+ * colleague who hashed `git branch -r` read her topics' branches that way.
+ */
+export const topicIdOraclesIn = (text: string): readonly string[] => {
+  const spelled = new Set([...text.matchAll(TOPIC_ID)].flatMap((match) => [`lead ${match[1] ?? ""}`, `number ${match[2] ?? ""}`]));
+  return SECRETS.filter(([label, branch]) => label.endsWith("branch") && unkeyedSpellings(branch).some((spelling) => spelled.has(spelling))).map(
+    ([label]) => `${label}, hashed into a topic id`,
+  );
+};
+
+/** Every leak `text` carries: the exact spellings, the tolerant instants, and a branch an id can be hashed back to. */
 export const leaksIn = (text: string, now: Date): readonly string[] => [
-  ...new Set([...secretsIn(text), ...instantLeaksIn(text, now)]),
+  ...new Set([...secretsIn(text), ...instantLeaksIn(text, now), ...topicIdOraclesIn(text)]),
 ];
 
 export interface OptedOutWorld {
@@ -398,7 +445,7 @@ const robinWork = (): readonly Record<string, unknown>[] => [
 ];
 
 const nickWork = (): readonly Record<string, unknown>[] => [
-  recordEnvelope("work_context", validWorkContextBody({ id: NICK_CONTEXT, sessionId: NICK_SESSION, title: "Key rotation" }), { sessionId: NICK_SESSION }),
+  recordEnvelope("work_context", validWorkContextBody({ id: NICK_CONTEXT, sessionId: NICK_SESSION, title: NICK_TITLE }), { sessionId: NICK_SESSION }),
   ...targetsOf(NICK_CONTEXT, NICK_SESSION),
   recordEnvelope(
     "claim",
@@ -413,8 +460,11 @@ const nickWork = (): readonly Record<string, unknown>[] => [
   ),
 ];
 
+/** Nick's question to her, about his own work: asked at a published instant, open until an action answers it. */
+export const NICK_TO_ROBIN_QUESTION = "q_nick_to_robin";
+
 const askNick = async (
-  world: Pick<OptedOutWorld, "harness" | "ken" | "robin">,
+  world: Pick<OptedOutWorld, "harness" | "nick" | "ken" | "robin">,
 ): Promise<void> => {
   await assertOk(
     await world.harness.app.request("/api/questions", jsonRequest("POST", world.robin.apiKey, {
@@ -427,6 +477,12 @@ const askNick = async (
       id: "q_ken_1", repo: REPO, sessionId: KEN_SESSION, body: "Do you know what this is about?", developer: "Nick", workContextId: ROBIN_SOLVED,
     })),
     "Ken's question",
+  );
+  await assertOk(
+    await world.harness.app.request("/api/questions", jsonRequest("POST", world.nick.apiKey, {
+      id: NICK_TO_ROBIN_QUESTION, repo: REPO, sessionId: NICK_SESSION, body: "Where does the cache keep the key id?", developer: "Robin", workContextId: NICK_CONTEXT,
+    })),
+    "Nick's question to Robin",
   );
 };
 
@@ -625,7 +681,7 @@ export const seedOptedOutWorld = async (): Promise<OptedOutWorld> => {
   const { nick, ken, robin } = await seedTeam(harness);
   await seedRobin(harness, robin);
   harness.clock.advanceSeconds(ASKED_OFFSET_S - CREATED_OFFSET_S);
-  await askNick({ harness, ken, robin });
+  await askNick({ harness, nick, ken, robin });
   // Nick was shown Robin's context by a prompt hint, and opened it.
   await harness.db.insert(hintDeliveries).values({
     id: "hd_robin_1",
@@ -698,6 +754,44 @@ export const postAs = async (
   const { apiKey } = credentialsOf(world, who);
   const response = await world.harness.app.request(url, jsonRequest("POST", apiKey, body));
   return { status: response.status, body: await response.text() };
+};
+
+/**
+ * TWO TOPICS OF HERS THAT SAY THE SAME WORDS (batch-2 integration review, L7):
+ * sibling worktrees of one feature, each with the same description and the
+ * same finding, so every tier ranks them equal and only a tie-break orders
+ * them. Not seeded: the cases that need a tie open it.
+ */
+export const TIED_TOPIC_WORDS = "rotation window refresh topic";
+/** Words only the tied topics' finding says — no statement of theirs — so the claim tier alone ranks them. */
+export const TIED_FINDING_WORDS = "stale cache entry evicts the rotated key id";
+const TIED_FINDING = `Rotation window refresh: the ${TIED_FINDING_WORDS}`;
+const TIED_TOPICS = [
+  { id: ROBIN_TOPIC, branch: SECRET_TOPIC_BRANCH, claim: "clm_robin_tied_1" },
+  { id: ROBIN_SECOND_TOPIC, branch: SECRET_SECOND_TOPIC_BRANCH, claim: "clm_robin_tied_2" },
+] as const;
+
+export const openTiedTopics = async (world: OptedOutWorld): Promise<void> => {
+  const posted = await postRecords(world.harness, world.robin, {
+    records: TIED_TOPICS.flatMap(({ id, branch, claim }) => [
+      recordEnvelope("work_context", validWorkContextBody({ id, sessionId: ROBIN_LIVE, title: `${branch} @ api`, titleSource: "fallback", status: "implementing", branch, baseCommit: SECRET_TOPIC_SHA, description: TIED_TOPIC_WORDS, createdAt: CREATED_AT }), { sessionId: ROBIN_LIVE }),
+      recordEnvelope("target", { workContextId: id, kind: "file", value: FILE }, { sessionId: ROBIN_LIVE }),
+      recordEnvelope("claim", validClaimBody({ id: claim, workContextId: id, authorSessionId: ROBIN_LIVE, kind: "observation", body: TIED_FINDING, createdAt: CREATED_AT }), { sessionId: ROBIN_LIVE }),
+    ]),
+  });
+  assertAccepted(posted, "Robin's tied topics");
+};
+
+/**
+ * An update of hers that changes no value — a status resent, a heartbeat —
+ * as the table sees it: new tuple versions of the first tied topic, its
+ * claim and her live session, which move them on disk and nothing else.
+ */
+export const rewriteTiedTopicInPlace = async (world: OptedOutWorld): Promise<void> => {
+  const [first] = TIED_TOPICS;
+  await world.harness.db.execute(sql`UPDATE work_contexts SET title = title WHERE id = ${first.id}`);
+  await world.harness.db.execute(sql`UPDATE claims SET body = body WHERE id = ${first.claim}`);
+  await world.harness.db.execute(sql`UPDATE agent_sessions SET branch = branch WHERE id = ${ROBIN_LIVE}`);
 };
 
 export const url = (path: string, query: Readonly<Record<string, string>> = {}): string => {

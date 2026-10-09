@@ -16,7 +16,7 @@
  * that failed or threw tells nobody — a group not recorded as told is not
  * told — and costs the hook nothing it emits.
  */
-import { ghostCollisions } from "@crosscheck/connector-core/hints/collision-notice.ts";
+import { anonymousGhostCollision, ghostCollisions } from "@crosscheck/connector-core/hints/collision-notice.ts";
 import type { GhostCheckEntry } from "@crosscheck/connector-core/http/hub.ts";
 import {
   newCollisionKeys,
@@ -29,8 +29,15 @@ import type { HookContext } from "./runner.ts";
 export const tellPersonOfGhosts = async (
   ctx: HookContext,
   shown: readonly GhostCheckEntry[],
+  /**
+   * The nameless count the emitted briefing really shows — how many of the
+   * reader's files a teammate who opted out of presence has in unfinished
+   * work (the owner's decision on the batch-2 integration review's I1) — or
+   * null. Told after the named rows, as ONE nameless group.
+   */
+  anonymousFiles: number | null = null,
 ): Promise<readonly CollisionNotice[]> => {
-  const groups = ghostCollisions(shown);
+  const groups = [...ghostCollisions(shown), ...(anonymousFiles === null ? [] : [anonymousGhostCollision(anonymousFiles)])];
   if (groups.length === 0) {
     return [];
   }

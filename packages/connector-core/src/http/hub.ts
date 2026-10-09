@@ -120,6 +120,13 @@ export const WorkContextEntrySchema = z.looseObject({
   createdAt: z.string().min(1),
   updatedAt: z.string().nullable().optional(),
   /**
+   * The hub's word that this row's owner opted out of presence, so its
+   * activity is withheld and `createdAt` is the only time left on it (batch-2
+   * integration review, M5): nothing that dates a teammate's activity — the
+   * statusline's "last seen" — may read it. Tolerant: an older hub sends none.
+   */
+  locationWithheld: z.literal(true).optional().catch(undefined),
+  /**
    * Cheap aggregates the briefing and `doctor` read (audit row M15-rest,
    * trial findings #20 + M1): how many claims and deterministic targets the
    * tree carries. Both OPTIONAL and both `.catch(undefined)` — an older hub
@@ -1009,6 +1016,52 @@ export const getGhostChecks = (
     method: "GET",
     path: `/api/ghost-checks${encodeRepo(repo)}`,
     schema: tolerantList("ghostChecks", GhostCheckEntrySchema),
+  });
+
+/**
+ * How many of the reader's own files a teammate the hub will not name — one
+ * who opted out of presence — has in unfinished work (server services/
+ * ghost-overlap.ts countAnonymousOverlap; the owner's decision on the batch-2
+ * integration review's I1). The count and nothing else is read.
+ */
+export interface AnonymousOverlap {
+  readonly sharedFileCount: number;
+}
+
+export interface GhostChecksAnswer {
+  readonly entries: readonly GhostCheckEntry[];
+  /** Null from an older hub, and when no such teammate's work touches the reader's files. */
+  readonly anonymousOverlap: AnonymousOverlap | null;
+}
+
+const GhostChecksAnswerSchema = z
+  .looseObject({
+    ghostChecks: z.array(z.unknown()),
+    anonymousOverlap: z
+      .looseObject({ sharedFileCount: z.number().int().min(1) })
+      .nullable()
+      .optional()
+      .catch(null),
+  })
+  .transform(
+    (value): GhostChecksAnswer => ({
+      entries: value.ghostChecks.flatMap((item) => {
+        const parsed = GhostCheckEntrySchema.safeParse(item);
+        return parsed.success ? [parsed.data] : [];
+      }),
+      anonymousOverlap:
+        value.anonymousOverlap === null || value.anonymousOverlap === undefined
+          ? null
+          : { sharedFileCount: value.anonymousOverlap.sharedFileCount },
+    }),
+  );
+
+/** The briefing's ghost call: the named rows and the nameless count, from the one request. */
+export const getGhostChecksAnswer = (ctx: HubContext, repo: string): Promise<HubResult<GhostChecksAnswer>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: `/api/ghost-checks${encodeRepo(repo)}`,
+    schema: GhostChecksAnswerSchema,
   });
 
 export const DraftEntrySchema = z.looseObject({
@@ -2503,21 +2556,35 @@ export type TripwireSession = z.infer<typeof TripwireSessionSchema>;
 
 export interface TripwireOutcome {
   readonly sessions: readonly TripwireSession[];
+  /**
+   * A teammate the hub will not name — one who opted out of presence — is
+   * live on the file (server services/hints.ts listAnonymousTargetPresence;
+   * the owner's decision on the batch-2 integration review's I1). Only the
+   * row's kind is read: whatever else a row might carry is never kept.
+   * False from an older hub.
+   */
+  readonly anonymous: boolean;
   /** Never absent: a hub that reported none yields UNKNOWN_COVERAGE. */
   readonly coverage: CoverageRecord;
   /** 07 §13 (D-O3): whether the ask may end with the outcome clause; false from an older hub. */
   readonly recordsOutcomes: boolean;
 }
 
+/** A nameless row is exactly `{ anonymous: true }` as far as this connector reads it. */
+const isAnonymousRow = (row: unknown): boolean =>
+  typeof row === "object" && row !== null && (row as { readonly anonymous?: unknown }).anonymous === true;
+
 const TripwireResponseSchema = z
   .looseObject({
     sessions: z.array(z.unknown()).default([]),
+    anonymous: z.array(z.unknown()).optional().catch(undefined),
     coverage: z.unknown().optional(),
     recordsOutcomes: z.boolean().default(false),
   })
   .transform(
     (value): TripwireOutcome => ({
       sessions: parseRows(value.sessions, TripwireSessionSchema).rows,
+      anonymous: (value.anonymous ?? []).some(isAnonymousRow),
       coverage: parseCoverage(value.coverage),
       recordsOutcomes: value.recordsOutcomes,
     }),

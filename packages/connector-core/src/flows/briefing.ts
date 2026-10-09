@@ -31,7 +31,7 @@ import {
   MS_PER_DAY,
   WORK_CONTEXT_LIST_LIMIT,
 } from "../constants.ts";
-import { formatGhostLine } from "../briefing/ghost.ts";
+import { formatAnonymousGhostLine, formatGhostLine } from "../briefing/ghost.ts";
 import { formatLandedNoticeEntry } from "../briefing/landed-notices.ts";
 import { coverageNote } from "../coverage/render.ts";
 import { UNKNOWN_COVERAGE } from "../http/coverage.ts";
@@ -49,7 +49,7 @@ import {
   getAbsences,
   getContradictions,
   getDraftListing,
-  getGhostChecks,
+  getGhostChecksAnswer,
   getLandedNotices,
   getPresence,
   getPrivacySettings,
@@ -139,6 +139,12 @@ export interface AssembledBriefing {
    * (hints/collision-notice.ts), so a row the budget cut is told to nobody.
    */
   readonly shownGhosts: readonly GhostCheckEntry[];
+  /**
+   * The nameless ghost line's count when the emitted text really shows it —
+   * how many of the reader's files a teammate who opted out of presence has
+   * in unfinished work — else null; told to the person like the rows.
+   */
+  readonly shownAnonymousGhost: number | null;
   /** The `collectLanded` rider's result; empty when no rider was passed. */
   readonly landed: LandedReading;
   /**
@@ -219,7 +225,10 @@ export const assembleBriefing = async (
     // VISION §3. Also in the parallel block, and for the same reason plus one
     // more: the SessionStart budget is 1000 ms and this GET must cost the
     // hook nothing but its share of the one timeout the block already spends.
-    getGhostChecks(hub, repoId),
+    // With it, the nameless count of the reader's files a teammate who opted
+    // out of presence has in unfinished work (the owner's decision on the
+    // batch-2 integration review's I1): the same request.
+    getGhostChecksAnswer(hub, repoId),
     // Landed changes, step 4: the author's notices, addressed to this reader.
     // Same block, same one timeout; an older hub renders no section.
     input.tellsNotices === false ? Promise.resolve(NO_NOTICES) : getLandedNotices(hub, repoId),
@@ -263,7 +272,8 @@ export const assembleBriefing = async (
     ? { total: draftsResult.data.total, oldestCreatedAt: draftsResult.data.oldestCreatedAt }
     : undefined;
   const questions = questionsResult.ok ? questionsResult.data.inbox : [];
-  const ghostChecks = ghostChecksResult.ok ? ghostChecksResult.data : [];
+  const ghostChecks = ghostChecksResult.ok ? ghostChecksResult.data.entries : [];
+  const anonymousGhost = ghostChecksResult.ok ? ghostChecksResult.data.anonymousOverlap : null;
   const landedNotices = landedNoticesResult.ok ? landedNoticesResult.data : [];
   const reenabledNotice =
     privacyResult.ok && privacyResult.data.presenceReenabledAt !== null
@@ -302,6 +312,7 @@ export const assembleBriefing = async (
     draftTotals,
     questions,
     ghostChecks,
+    anonymousGhost,
     landedNotices,
     ...(coverageLine === null ? {} : { coverageLine }),
     ...(presenceNotice === null ? {} : { presenceNotice }),
@@ -331,6 +342,11 @@ export const assembleBriefing = async (
     .filter((shown) => briefing.includes(shown.line))
     .map((shown) => shown.entry);
   const shownGhostCount = shownGhosts.length;
+  // The nameless line, the same "the text contains it" fact.
+  const shownAnonymousGhost =
+    anonymousGhost !== null && briefing.includes(formatAnonymousGhostLine(anonymousGhost.sharedFileCount))
+      ? anonymousGhost.sharedFileCount
+      : null;
 
   // The same rule once more: an entry's one spelling is in the text, or it
   // was not shown — and only the commits it names are marked told.
@@ -364,6 +380,7 @@ export const assembleBriefing = async (
     shownSolvedIds,
     shownGhostCount,
     shownGhosts,
+    shownAnonymousGhost,
     shownLandedNoticeIds,
     presence,
     presenceFetched: presenceResult.ok,
@@ -506,13 +523,14 @@ export const deliverDeferredBriefing = async (
   input: DeliverDeferredBriefingInput,
 ): Promise<string> => (await payDeferredBriefing(input)).briefing;
 
-/** A paid deferred briefing: its text, and the ghost rows that text really shows. */
+/** A paid deferred briefing: its text, and the ghost rows — and the nameless count — that text really shows. */
 export interface PaidDeferredBriefing {
   readonly briefing: string;
   readonly shownGhosts: readonly GhostCheckEntry[];
+  readonly shownAnonymousGhost: number | null;
 }
 
-const NOTHING_PAID: PaidDeferredBriefing = { briefing: "", shownGhosts: [] };
+const NOTHING_PAID: PaidDeferredBriefing = { briefing: "", shownGhosts: [], shownAnonymousGhost: null };
 
 /**
  * `deliverDeferredBriefing` for a caller that also tells the PERSON about the
@@ -569,5 +587,5 @@ export const payDeferredBriefing = async (
     shownLandedNoticeIds: assembled.shownLandedNoticeIds,
     now: input.now,
   });
-  return { briefing: assembled.briefing, shownGhosts: assembled.shownGhosts };
+  return { briefing: assembled.briefing, shownGhosts: assembled.shownGhosts, shownAnonymousGhost: assembled.shownAnonymousGhost };
 };

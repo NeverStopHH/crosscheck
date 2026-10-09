@@ -31,14 +31,16 @@
  * of a shared row cap.
  *
  * AN UNASKED SURFACE: the answer is printed in a stop nobody asked for, so a
- * developer the caller muted is left out. A presence opt-out hides the work
- * only while its session is LIVE — that is presence; an ended session's work
- * is published (services/visibility.ts). And for that developer the match is
- * blind to the CALLER's commit time, which could otherwise be swept to read
- * her session start and heartbeat back (matchFor). Never the caller's own
- * work. Never an address in the answer.
+ * developer the caller muted is left out. For a developer who opted out of
+ * presence the match reads NO time of hers and no state of her sessions: her
+ * work on the file is named whether its session is live, quiet or ended,
+ * because "live" is presence and "ended" is her SessionEnd's instant
+ * (services/visibility.ts, integration review H4). It is blind to the
+ * CALLER's commit time too, which could otherwise be swept to read her
+ * session start and heartbeat back (matchFor). Never the caller's own work.
+ * Never an address in the answer.
  */
-import { and, desc, eq, inArray, isNotNull, lte, ne, not, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lte, ne, not, or, sql } from "drizzle-orm";
 
 import type { Intent, LandedContextCommit, LandedContextRequest } from "@crosscheck/schema";
 import { IntentSchema, canonicalRepoPath } from "@crosscheck/schema";
@@ -58,7 +60,6 @@ import {
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 import { resolvesToDeveloper } from "./cloud-agent-identity.ts";
-import { presenceCutoff } from "./presence.ts";
 import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
 import { locationHiddenFrom, projectRow } from "./live-location.ts";
 import type { HiddenLocations } from "./live-location.ts";
@@ -109,14 +110,15 @@ const matchFor = async (
   const startedBy = new Date(committedMs + LANDED_WHY_CLOCK_SLACK_MS);
   const editedBy = startedBy;
   const recordedBy = new Date(committedMs + LANDED_WHY_FLUSH_SLACK_MS);
-  const live = presenceCutoff(deps.now());
   // THE COMMIT TIME IS THE CALLER'S WORD (review round 4, C1). Compared with
   // a hidden owner's session start and last heartbeat — or her target times —
   // "matched / not matched" let a colleague binary-search those instants to
   // the second. So for a developer whose location the caller may not be told,
-  // no condition and no ordering reads the caller's time: her work matches on
-  // the path and the address alone, ended or silent by the HUB's clock, and
-  // her rows are ordered by id. A visible owner keeps the full time match.
+  // no condition and no ordering reads the caller's time OR the hub's: her
+  // work matches on the path and the address alone, and her rows are ordered
+  // by id. The hub's clock was the round-4 answer, and it was the same oracle
+  // one step removed — her liveness against now (integration review H4). A
+  // visible owner keeps the full time match.
   const visible = visiblePresenceCondition(callerDeveloperId, agentSessions.developerId);
   const rows = await deps.db
     .select({
@@ -151,13 +153,13 @@ const matchFor = async (
             lte(agentSessions.startedAt, startedBy),
             sql`${agentSessions.lastHeartbeatAt} >= ${activeSince.toISOString()}::timestamptz`,
           ),
-          // A hidden owner: her LIVE session's work is presence and never
-          // matched; an ended or silent session's work is published, judged
-          // by the hub's clock only.
-          and(
-            not(visible),
-            or(isNotNull(agentSessions.endedAt), lte(agentSessions.lastHeartbeatAt, live)),
-          ),
+          // A hidden owner: her work on the file, live or not. Whether her
+          // session is live is presence, and so is when it ended — a
+          // colleague polling "matched or not" read her last heartbeat plus
+          // the presence TTL to the second, and her SessionEnd's instant
+          // (integration review H4) — so neither decides. Her work is
+          // published (the listing names it); only its times are withheld.
+          not(visible),
         ),
       ),
     )
@@ -173,9 +175,9 @@ const matchFor = async (
     )
     .limit(1);
   const found = rows[0];
-  // An ENDED or silent session's work is published and the stop names it —
-  // under a title and a start time that say nothing of where its author is
-  // (services/live-location.ts). The live one is not matched at all, above.
+  // A hidden owner's work is published and the stop names it — under a title
+  // and a start time that say nothing of where its author is
+  // (services/live-location.ts), the same whether her session is live.
   // The sha is the CALLER's commit, echoed back to key the answer — outside
   // the projection, which would withhold it as hers.
   return found === undefined
