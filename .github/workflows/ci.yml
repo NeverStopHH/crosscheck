@@ -168,7 +168,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 3579
+    # PRINTS: 3585
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -370,7 +370,7 @@ jobs:
     # PRINTS: guarantees/check.ts 17
     # PRINTS: guarantees/declarations.ts 5
     # PRINTS: guarantees/doctor.ts 3
-    # PRINTS: hints/collision-notice.ts 59
+    # PRINTS: hints/collision-notice.ts 63
     # PRINTS: hints/delivery.ts 8
     # PRINTS: hints/outcome-clause.ts 2
     # PRINTS: hints/precision.ts 2
@@ -575,11 +575,11 @@ jobs:
     # PRINTS: packages/server/src/services/evidence-axes.ts 2
     # PRINTS: packages/server/src/services/evidence-resolution.ts 10
     # PRINTS: packages/server/src/services/generated-targets.ts 2
-    # PRINTS: packages/server/src/services/ghost-overlap.ts 18
+    # PRINTS: packages/server/src/services/ghost-overlap.ts 19
     # PRINTS: packages/server/src/services/hint-deliveries.ts 6
     # PRINTS: packages/server/src/services/hint-outcome-view.ts 16
     # PRINTS: packages/server/src/services/hint-outcomes.ts 23
-    # PRINTS: packages/server/src/services/hints.ts 75
+    # PRINTS: packages/server/src/services/hints.ts 76
     # PRINTS: packages/server/src/services/hub-install.ts 2
     # PRINTS: packages/server/src/services/intent-ledger.ts 12
     # PRINTS: packages/server/src/services/landed-context.ts 22
@@ -675,7 +675,7 @@ jobs:
     # PRINTS: claim-validity.ts 11
     # PRINTS: client.ts 16
     # PRINTS: cloud-agent-identity.ts 1
-    # PRINTS: collision-notice.ts 59
+    # PRINTS: collision-notice.ts 63
     # PRINTS: collision-relay.ts 13
     # PRINTS: commit-evidence.ts 6
     # PRINTS: conference-cost.ts 1
@@ -767,7 +767,7 @@ jobs:
     # PRINTS: generated.ts 7
     # PRINTS: get-diagnosis.ts 2
     # PRINTS: ghost-notice.ts 2
-    # PRINTS: ghost-overlap.ts 18
+    # PRINTS: ghost-overlap.ts 19
     # PRINTS: ghost.ts 6
     # PRINTS: git-lane-cost.ts 2
     # PRINTS: git-lane.ts 19
@@ -784,7 +784,7 @@ jobs:
     # PRINTS: hint-outcome.ts 1
     # PRINTS: hint-outcomes.ts 29
     # PRINTS: hint.ts 43
-    # PRINTS: hints.ts 80
+    # PRINTS: hints.ts 81
     # PRINTS: hook-budget.ts 2
     # PRINTS: hub-install.ts 2
     # PRINTS: hub-status.ts 3

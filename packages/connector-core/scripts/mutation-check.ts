@@ -29304,7 +29304,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a relayed hit is located by its own old heartbeat, not by presence now",
     file: `${CORE}/src/hints/collision-notice.ts`,
-    from: "  branch: group.landed === true ? group.branch : entry.branch,\n  lastActiveAt: entry.lastHeartbeatAt,\n",
+    // RETARGETED (release gate, 1b): an unnameable presence branch leaves the hit's.
+    from: "  branch: group.landed === true || !isNameableBranch(entry.branch) ? group.branch : entry.branch,\n  lastActiveAt: entry.lastHeartbeatAt,\n",
     to: "",
     test: `${CONNECTOR}/test/collision-visibility-hook.test.ts`,
     because: "a subagent that runs past 90 s loses the teammate's branch while presence still lists them on it",
@@ -29320,10 +29321,61 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a relayed landed group takes a live branch it never merged on",
     file: `${CORE}/src/hints/collision-notice.ts`,
-    from: "group.landed === true ? group.branch : entry.branch",
-    to: "entry.branch",
+    // RETARGETED (release gate, 1b): the condition gained the unnameable-branch half.
+    from: "group.landed === true || !isNameableBranch(entry.branch) ? group.branch : entry.branch",
+    to: "!isNameableBranch(entry.branch) ? group.branch : entry.branch",
     test: `${CORE}/test/collision-relay-presence.test.ts`,
     because: "the person is told a change merged from the branch the teammate happens to be on now",
+  },
+  // ── Release gate, 1b: the person's line names the topic the file's work is on ──
+  {
+    label: "a detached presence row erases the topic's branch from a relayed hit",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "group.landed === true || !isNameableBranch(entry.branch) ? group.branch : entry.branch",
+    to: "group.landed === true ? group.branch : entry.branch",
+    test: `${CORE}/test/collision-relay-presence.test.ts`,
+    because: "a long detached session's relayed hit loses the topic branch it named, and the person reads no branch at all",
+  },
+  {
+    label: "a ghost group names no branch though its row carries one",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "        branch: visibleBranch(entry.branch ?? \"\"),\n",
+    to: "        branch: null,\n",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "the person reads \"Nick is working on 11 files\" with no topic, the pilot's stale-title gap",
+  },
+  {
+    label: "a tripwire row names the session's branch, not the topic's",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: "      branch: sql<string>`coalesce(${workContexts.branch}, ${agentSessions.branch})`,\n",
+    to: "      branch: sql<string>`${agentSessions.branch}`,\n",
+    test: `${SERVER}/test/tripwire-rows.test.ts`,
+    because: "a long detached session's topic is told by the checkout it started in, which is never printed",
+  },
+  {
+    label: "a ghost row names the session's branch, not the topic's",
+    file: `${SERVER}/src/services/ghost-overlap.ts`,
+    from: "      branch: sql<string>`coalesce(${workContexts.branch}, ${agentSessions.branch})`,\n",
+    to: "      branch: sql<string>`${agentSessions.branch}`,\n",
+    test: `${SERVER}/test/ghost-overlap.test.ts`,
+    because: "the ghost line names the stale checkout a long session started in, not the topic the overlap is on",
+  },
+  // ── Release gate, gap 6: a large change is qualified on the person's line ──
+  {
+    label: "the person's line drops the large-change qualifier",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "${size === null ? \"\" : `, ${largeChangeClause(size)}`}`;",
+    to: "`;",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "a file shared with a 190-file sweep reads exactly like one shared with a plan",
+  },
+  {
+    label: "a tripwire group forgets the size its row carried",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: "    ...largeChangeField(session.largeChangeFiles),\n",
+    to: "",
+    test: `${CORE}/test/collision-notice.test.ts`,
+    because: "the tripwire's own qualified row reaches the person unqualified",
   },
   // ── Review of feat/collision-visible, round 2, M1: an offline teammate's overlap stays on the statusline ──
   {
@@ -34982,10 +35034,10 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/collision-count-only.test.ts 2
  * PRINTS: packages/connector-core/test/collision-indicator.test.ts 4
  * PRINTS: packages/connector-core/test/collision-notice-bounds.test.ts 1
- * PRINTS: packages/connector-core/test/collision-notice.test.ts 30
+ * PRINTS: packages/connector-core/test/collision-notice.test.ts 33
  * PRINTS: packages/connector-core/test/collision-person-strip.test.ts 11
  * PRINTS: packages/connector-core/test/collision-publish-busy-lock.test.ts 3
- * PRINTS: packages/connector-core/test/collision-relay-presence.test.ts 7
+ * PRINTS: packages/connector-core/test/collision-relay-presence.test.ts 8
  * PRINTS: packages/connector-core/test/collision-rest-reap.test.ts 3
  * PRINTS: packages/connector-core/test/collision-state-eviction.test.ts 6
  * PRINTS: packages/connector-core/test/collision-state.test.ts 4
@@ -35214,7 +35266,7 @@ interface Outcome {
  * PRINTS: packages/server/test/fence-waivers.test.ts 1
  * PRINTS: packages/server/test/forwarded-trust.test.ts 11
  * PRINTS: packages/server/test/generated-targets.test.ts 16
- * PRINTS: packages/server/test/ghost-overlap.test.ts 13
+ * PRINTS: packages/server/test/ghost-overlap.test.ts 14
  * PRINTS: packages/server/test/hint-candidate-floor.test.ts 11
  * PRINTS: packages/server/test/hint-closed-stems.test.ts 2
  * PRINTS: packages/server/test/hint-content-floor.test.ts 8
@@ -35316,7 +35368,7 @@ interface Outcome {
  * PRINTS: packages/server/test/team-settings.test.ts 9
  * PRINTS: packages/server/test/topic-contexts.test.ts 4
  * PRINTS: packages/server/test/tripwire-large-change.test.ts 5
- * PRINTS: packages/server/test/tripwire-rows.test.ts 2
+ * PRINTS: packages/server/test/tripwire-rows.test.ts 3
  * PRINTS: packages/server/test/ui-approvals.test.ts 11
  * PRINTS: packages/server/test/ui-ceremony-localhost.test.ts 6
  * PRINTS: packages/server/test/ui-feed.test.ts 3

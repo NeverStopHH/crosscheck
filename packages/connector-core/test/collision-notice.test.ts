@@ -246,12 +246,55 @@ describe("the notice for a teammate's group of files (ghost check)", () => {
     expect(groups).toEqual([]);
   });
 
-  test("a ghost row names no branch — it never carries one", () => {
+  test("a ghost row that carries no branch names none", () => {
     // Act
     const [group] = ghostCollisions([ghostRow()]);
 
     // Assert
     expect(group?.branch).toBeNull();
+  });
+
+  test("a ghost row's branch — its topic's, where the work lives — is the one the person is told (release gate, 1b)", () => {
+    // Act
+    const [group] = ghostCollisions([ghostRow({ branch: "feat/numlabs-practices" })]);
+
+    // Assert
+    expect(group?.branch).toBe("feat/numlabs-practices");
+    expect(renderCollisionNotice(group as CollisionNotice, NOW)).toBe(
+      "crosscheck: Mike is working on 3 files you also touched, e.g. PlayerMappingGrid.tsx on branch feat/numlabs-practices " +
+        "(last active 2d ago) — talk before you both change them",
+    );
+  });
+});
+
+describe("a large change is qualified on the person's line, never hidden (release gate, gap 6)", () => {
+  test("the tripwire's row size is told beside the file", () => {
+    // Act
+    const line = noticeOf(tripwireRow({ largeChangeFiles: 190 }));
+
+    // Assert
+    expect(line).toBe(
+      "crosscheck: Mike is working on PlayerMappingGrid.tsx on branch feat/streaming-practice-beta, " +
+        "part of a large change touching 190 files (last active 3m ago) — talk before you both change it",
+    );
+  });
+
+  test("a ghost row's size is told the same way", () => {
+    // Act
+    const [group] = ghostCollisions([ghostRow({ largeChangeFiles: 300 })]);
+
+    // Assert
+    expect(renderCollisionNotice(group as CollisionNotice, NOW)).toContain("part of a large change touching 300 files");
+  });
+
+  test("a focused change, or a hub that sends no size, says nothing of size", () => {
+    // Act
+    const focused = noticeOf(tripwireRow({ largeChangeFiles: null }));
+    const unsized = noticeOf(tripwireRow());
+
+    // Assert
+    expect(focused).not.toContain("large change");
+    expect(unsized).not.toContain("large change");
   });
 });
 

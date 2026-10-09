@@ -175,6 +175,8 @@ export const CollisionNoticeSchema = z.object({
   partial: z.boolean().optional(),
   /** The teammate's work context had LANDED when the row was read. */
   landed: z.boolean().optional(),
+  /** The files their LARGE change touched, when the row said so — a qualifier the line prints (release gate, gap 6). */
+  largeChangeFiles: z.number().int().min(0).optional(),
 });
 
 export type CollisionNotice = z.infer<typeof CollisionNoticeSchema>;

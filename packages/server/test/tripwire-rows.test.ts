@@ -30,6 +30,7 @@ const TRIPWIRE_BOUND_CASE_TIMEOUT_MS = 30_000;
 interface TripwireRow {
   readonly developerName: string;
   readonly workContextId: string;
+  readonly branch?: string | null;
   readonly landedAt?: string | null;
 }
 
@@ -141,5 +142,37 @@ describe("a tripwire row says whether its work context landed", () => {
 
     // Assert
     expect(row?.landedAt).toBe(landed.toISOString());
+  });
+});
+
+/**
+ * A TRIPWIRE ROW SAYS WHERE THE WORK ON THE FILE LIVES (release gate, 1b):
+ * the topic's own branch, its session's only when the context has none. A
+ * long detached session's branch is the checkout it started in, so the
+ * person read "Nick is working on mappingSchema.ts" with no topic at all.
+ */
+describe("a tripwire row names the branch its work context is on", () => {
+  test("a topic's row names the topic's branch, and a plain context its session's", async () => {
+    // Arrange: Ken's session sits on feat/ken; his context on this file is a topic on its own branch
+    const { harness, reader } = await setup();
+    const ken = await addTestDeveloperWithSession(harness, "Ken", "ken@example.com", { id: "ses_ken", branch: "feat/ken" });
+    await postRecords(harness, ken, {
+      records: [
+        recordEnvelope(
+          "work_context",
+          validWorkContextBody({ id: "wc_ken_topic", sessionId: "ses_ken", title: "Practices", branch: "feat/numlabs-practices" }),
+          { sessionId: "ses_ken" },
+        ),
+        recordEnvelope("target", { workContextId: "wc_ken_topic", kind: "file", value: TARGET_FILE }, { sessionId: "ses_ken" }),
+      ],
+    });
+
+    // Act
+    const rows = await fetchTripwire(harness, reader);
+
+    // Assert
+    const branchOf = (id: string): string | null | undefined => rows.find((row) => row.workContextId === id)?.branch;
+    expect(branchOf("wc_ken_topic")).toBe("feat/numlabs-practices");
+    expect(branchOf(WORK_CONTEXT_ID)).toBe(VALID_SESSION_BODY.branch);
   });
 });

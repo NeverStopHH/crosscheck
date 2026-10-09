@@ -168,6 +168,12 @@ export interface GhostOverlapView {
   /** coalesce(updated_at, created_at): the age every surface prints. */
   readonly lastActiveAt: string;
   /**
+   * Where their work lives (release gate, 1b): the context's own branch — a
+   * topic's — or its session's when it has none. Never an opted-out
+   * owner's: the route answers by presence, which keeps her rows off.
+   */
+  readonly branch: string;
+  /**
    * The values BOTH sides carry, bounded at GHOST_MAX_SHARED_SHOWN. A subset
    * of the CALLER'S OWN targets by construction, which is what makes naming
    * them a disclosure of nothing (see the header).
@@ -642,6 +648,7 @@ interface DisplayRow {
   readonly developerName: string;
   readonly intent: Record<string, unknown> | null;
   readonly lastActiveAt: Date;
+  readonly branch: string;
 }
 
 const hydrate = async (
@@ -659,6 +666,7 @@ const hydrate = async (
       developerId: agentSessions.developerId,
       developerName: developers.name,
       lastActiveAt: sql<string>`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt})`,
+      branch: sql<string>`coalesce(${workContexts.branch}, ${agentSessions.branch})`,
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
@@ -673,6 +681,7 @@ const hydrate = async (
         developerName: row.developerName,
         intent: row.intent ?? null,
         lastActiveAt: new Date(row.lastActiveAt),
+        branch: row.branch,
       },
     ]),
   );
@@ -848,6 +857,7 @@ export const listGhostOverlaps = async (
       developerName: row.developerName,
       intent: row.intent,
       lastActiveAt: row.lastActiveAt.toISOString(),
+      branch: row.branch,
       // Strongest kind first on the line too, so a truncated list keeps the
       // values the reader would have wanted to see.
       sharedTargets: [...candidate.shared]

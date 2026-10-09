@@ -199,6 +199,19 @@ describe("a named relay says where the teammate is NOW (round 2, L3)", () => {
     expect(relayed?.lastActiveAt).toBeNull();
   });
 
+  test("a presence row on a detached HEAD leaves the branch the hit recorded — a topic's (release gate, 1b)", () => {
+    // Act: Nick's long session sits detached; the file's work lives on a topic branch
+    const [relayed] = relayedCollisions(
+      [nick({ branch: "feat/numlabs-practices" })],
+      [presence("dev_nick", { branch: "detached@51eae4d8" })],
+      NOW,
+    );
+
+    // Assert
+    expect(relayed?.branch).toBe("feat/numlabs-practices");
+    expect(relayed?.lastActiveAt).toBe("2026-10-07T11:59:50.000Z");
+  });
+
   test("landed work keeps the branch that merged", () => {
     // Act
     const [relayed] = relayedCollisions(

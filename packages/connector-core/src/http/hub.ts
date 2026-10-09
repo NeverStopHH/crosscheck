@@ -947,6 +947,12 @@ export const GhostCheckEntrySchema = z.looseObject({
   developerName: z.string().min(1).optional(),
   intent: tolerantIntent,
   lastActiveAt: z.string().min(1),
+  /**
+   * Where their work lives (release gate, 1b): the context's own branch — a
+   * topic's — or its session's. Optional and tolerant: an older hub sends
+   * none, and the person's line then names no branch, as it always did.
+   */
+  branch: z.string().nullable().optional().catch(undefined),
   sharedTargets: z.array(GhostSharedTargetSchema).catch([]),
   sharedTargetCount: z.number().int().min(0).catch(0),
   /**

@@ -82,6 +82,7 @@ interface GhostView {
   readonly intentTokenHits: number;
   readonly intent: { summary?: string } | null;
   readonly largeChangeFiles?: number | null;
+  readonly branch?: string | null;
 }
 
 const fetchGhostChecks = async (
@@ -1098,5 +1099,44 @@ describe("ghost checks, the deterministic overlap", () => {
     );
     expect(muted.status).toBe(200);
     expect(await fetchGhostChecks(harness, me.apiKey)).toEqual([]);
+  });
+});
+
+/**
+ * A GHOST ROW SAYS WHERE THE TEAMMATE WORKS ON IT (release gate, 1b): a
+ * topic's own branch — where that work lives — and its session's only when
+ * the context has none. The session's branch of a long detached session is
+ * the stale checkout it started in, which the person must never be told.
+ */
+describe("a ghost row names the branch its work context is on", () => {
+  const PLAN = [
+    { kind: "file", value: "src/practice/mapping.ts" },
+    { kind: "file", value: "src/practice/columns.ts" },
+  ];
+
+  test("a topic's row names the topic's branch, not its session's", async () => {
+    // Arrange
+    const { harness, me, them } = await setup();
+    await seed(harness, me, contextRecords(MY_CONTEXT, MY_SESSION, "Mine", PLAN));
+    await seed(harness, them, contextRecords(THEIR_CONTEXT, THEIR_SESSION, "Theirs", PLAN, undefined, { branch: "feat/numlabs-practices" }));
+
+    // Act
+    const rows = await fetchGhostChecks(harness, me.apiKey);
+
+    // Assert
+    expect(rows.map((row) => [row.workContextId, row.branch])).toEqual([[THEIR_CONTEXT, "feat/numlabs-practices"]]);
+  });
+
+  test("a context with no branch of its own names its session's", async () => {
+    // Arrange
+    const { harness, me, them } = await setup();
+    await seed(harness, me, contextRecords(MY_CONTEXT, MY_SESSION, "Mine", PLAN));
+    await seed(harness, them, contextRecords(THEIR_CONTEXT, THEIR_SESSION, "Theirs", PLAN));
+
+    // Act
+    const rows = await fetchGhostChecks(harness, me.apiKey);
+
+    // Assert
+    expect(rows.map((row) => [row.workContextId, row.branch])).toEqual([[THEIR_CONTEXT, VALID_SESSION_BODY.branch]]);
   });
 });

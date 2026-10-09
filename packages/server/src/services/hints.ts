@@ -1319,6 +1319,11 @@ export const listTargetSessions = async (
       workContextTitle: workContexts.title,
       workContextIntent: workContexts.intent,
       landedAt: workContexts.landedAt,
+      // WHERE THE WORK ON THE FILE LIVES (release gate, 1b): a topic's own
+      // branch, its session's only when the context has none — a long
+      // detached session's branch is the checkout it started in. Never an
+      // opted-out owner's: the presence condition below keeps her off.
+      branch: sql<string>`coalesce(${workContexts.branch}, ${agentSessions.branch})`,
     })
     .from(workContextTargets)
     .innerJoin(
@@ -1365,7 +1370,7 @@ export const listTargetSessions = async (
       sessionId: row.session.id,
       developerId: row.session.developerId,
       developerName: row.developerName,
-      branch: row.session.branch,
+      branch: row.branch,
       status: row.session.status,
       lastHeartbeatAt: row.session.lastHeartbeatAt.toISOString(),
       workContextId: row.workContextId,

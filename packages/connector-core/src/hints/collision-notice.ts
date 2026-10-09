@@ -45,7 +45,7 @@ import {
   STATUSLINE_NAME_CHARS,
   UNSOLICITED_CLAIM_BODY_MAX_CHARS,
 } from "../constants.ts";
-import { formatGhostAge } from "../briefing/ghost.ts";
+import { formatGhostAge, largeChangeClause, largeChangeOf } from "../briefing/ghost.ts";
 import { cutWellFormed } from "../briefing/cut.ts";
 import { bareCleaned, tripsPhraseFilter } from "../briefing/sanitize.ts";
 import { hasIncompleteRung } from "../coverage/render.ts";
@@ -308,7 +308,14 @@ export const tripwireCollision = (
     lastActiveAt: session.lastHeartbeatAt,
     ...(coverage !== undefined && hasIncompleteRung(coverage) ? { partial: true } : {}),
     ...(hasLanded(session.landedAt) ? { landed: true } : {}),
+    ...largeChangeField(session.largeChangeFiles),
   };
+};
+
+/** The size a LARGE change's row carried, kept for the line (release gate, gap 6); nothing for a focused one. */
+const largeChangeField = (files: number | null | undefined): { readonly largeChangeFiles?: number } => {
+  const size = largeChangeOf(files);
+  return size === null ? {} : { largeChangeFiles: size };
 };
 
 /** A row's `landedAt` counts only when it is a readable instant; anything else is open work. */
@@ -332,7 +339,8 @@ const ghostFileCount = (entry: GhostCheckEntry, files: number): number => {
  * A briefing's ghost rows (VISION.md §3) as person-facing groups — only the
  * rows with a FILE in their overlap. A shared failure or words of an intent
  * are the agent's to weigh; the person is told about files both are changing.
- * A ghost row never carries a branch, so none is printed.
+ * The branch is the row's own — a topic's, where the work lives (release
+ * gate, 1b) — and none from a hub that sends none.
  */
 export const ghostCollisions = (entries: readonly GhostCheckEntry[]): readonly CollisionNotice[] =>
   entries.flatMap((entry) => {
@@ -350,8 +358,9 @@ export const ghostCollisions = (entries: readonly GhostCheckEntry[]): readonly C
         name: personField(entry.developerName ?? "", COLLISION_NOTICE_NAME_CHARS),
         files,
         fileCount: ghostFileCount(entry, files.length),
-        branch: null,
+        branch: visibleBranch(entry.branch ?? ""),
         lastActiveAt: entry.lastActiveAt,
+        ...largeChangeField(entry.largeChangeFiles),
       },
     ];
   });
@@ -420,7 +429,10 @@ export const renderCollisionNotice = (group: RenderableCollision, now: Date): st
   }
   const name = displayName(group.name);
   const branch = group.branch === null ? null : visibleBranch(group.branch);
-  const where = branch === null ? "" : ` on branch ${branch}`;
+  // A LARGE change is qualified, never hidden (release gate, gap 6): the
+  // person weighs a file shared with a 190-file sweep against a plan.
+  const size = largeChangeOf(group.largeChangeFiles);
+  const where = `${branch === null ? "" : ` on branch ${branch}`}${size === null ? "" : `, ${largeChangeClause(size)}`}`;
   // LANDED work is a change already made, not a plan in flight: the person
   // is told what merged, and the advice drops "both" — only they are about
   // to change it. No age: a heartbeat says nothing about when it merged.
@@ -428,8 +440,9 @@ export const renderCollisionNotice = (group: RenderableCollision, now: Date): st
     return `crosscheck: ${name} changed ${what}${where} (merged) — talk before you change ${pronoun}${partial}`;
   }
   // UNCONFIRMED is the past tense of the same fact, without a location.
+  const sized = size === null ? "" : `, ${largeChangeClause(size)}`;
   return group.unconfirmed === true
-    ? `crosscheck: ${name} recently worked on ${what} — talk before you change ${pronoun}${partial}`
+    ? `crosscheck: ${name} recently worked on ${what}${sized} — talk before you change ${pronoun}${partial}`
     : `crosscheck: ${name} is working on ${what}${where}${ageClause(group.lastActiveAt, now)} — ` +
         `talk before you both change ${pronoun}${partial}`;
 };
@@ -493,11 +506,14 @@ const confirmingEntry = (group: CollisionNotice, presence: readonly PresenceFact
  * 2, L3): the hit's own heartbeat is as old as the subagent's run, so a
  * subagent working past the presence TTL lost the branch while presence still
  * listed the teammate. Landed work keeps the branch that merged — the
- * teammate's live session may be on another one by now.
+ * teammate's live session may be on another one by now. And a presence row
+ * whose branch cannot be named — a detached HEAD, a withheld one — leaves
+ * the branch the hit recorded (release gate, 1b): a long detached session
+ * works on topics, and the hit's row named the topic the file's work is on.
  */
 const locatedBy = (group: CollisionNotice, entry: PresenceFact): CollisionNotice => ({
   ...group,
-  branch: group.landed === true ? group.branch : entry.branch,
+  branch: group.landed === true || !isNameableBranch(entry.branch) ? group.branch : entry.branch,
   lastActiveAt: entry.lastHeartbeatAt,
 });
 
