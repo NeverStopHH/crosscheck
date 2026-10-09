@@ -24988,7 +24988,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
  * PRINTS: packages/cli/test/doctor-verdict-legality.test.ts 2
  * PRINTS: packages/cli/test/doctor.test.ts 1
- * PRINTS: packages/cli/test/drafted-gestures-cli.test.ts 2
+ * PRINTS: packages/cli/test/drafted-gestures-cli.test.ts 6
  * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
  * PRINTS: packages/cli/test/gitignored-advice.test.ts 11
@@ -25004,13 +25004,13 @@ interface Outcome {
  * PRINTS: packages/cli/test/landed-authors-doctor.test.ts 9
  * PRINTS: packages/cli/test/landed-doctor.test.ts 3
  * PRINTS: packages/cli/test/landing-fetch-doctor.test.ts 8
- * PRINTS: packages/cli/test/outcome-cli.test.ts 35
+ * PRINTS: packages/cli/test/outcome-cli.test.ts 34
  * PRINTS: packages/cli/test/passkey-status.test.ts 4
  * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-label-cli.test.ts 11
  * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 17
  * PRINTS: packages/cli/test/pilot-mine-render.test.ts 12
- * PRINTS: packages/cli/test/pilot-render.test.ts 32
+ * PRINTS: packages/cli/test/pilot-render.test.ts 35
  * PRINTS: packages/cli/test/pin-denylist-door.test.ts 16
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pin-waive-hostile-hub.test.ts 1
@@ -25256,8 +25256,9 @@ interface Outcome {
  * PRINTS: packages/server/test/claim-validity.test.ts 2
  * PRINTS: packages/server/test/commit-evidence-opt-out.test.ts 3
  * PRINTS: packages/server/test/conference.test.ts 10
+ * PRINTS: packages/server/test/confirm-batch-limits.test.ts 3
  * PRINTS: packages/server/test/confirm-batch.test.ts 6
- * PRINTS: packages/server/test/confirmation-records.test.ts 1
+ * PRINTS: packages/server/test/confirmation-records.test.ts 2
  * PRINTS: packages/server/test/coverage-answer-sessions.test.ts 10
  * PRINTS: packages/server/test/coverage-compat-0.10.test.ts 2
  * PRINTS: packages/server/test/coverage-instant-privacy.test.ts 8
@@ -25282,9 +25283,12 @@ interface Outcome {
  * PRINTS: packages/server/test/doc-upgrade-vectors.test.ts 5
  * PRINTS: packages/server/test/doc-upgrade-window.test.ts 6
  * PRINTS: packages/server/test/doc-upgrade.test.ts 6
- * PRINTS: packages/server/test/draft-doors.test.ts 3
+ * PRINTS: packages/server/test/door-notice.test.ts 2
+ * PRINTS: packages/server/test/draft-doors.test.ts 4
  * PRINTS: packages/server/test/draft-kinds.test.ts 2
  * PRINTS: packages/server/test/draft-link-cleanup.test.ts 18
+ * PRINTS: packages/server/test/draft-repeats.test.ts 5
+ * PRINTS: packages/server/test/draft-versions-bound.test.ts 2
  * PRINTS: packages/server/test/draft-visibility.test.ts 9
  * PRINTS: packages/server/test/drafts.test.ts 4
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
@@ -25293,9 +25297,9 @@ interface Outcome {
  * PRINTS: packages/server/test/ghost-overlap.test.ts 7
  * PRINTS: packages/server/test/hint-content-floor.test.ts 6
  * PRINTS: packages/server/test/hint-deliveries.test.ts 5
- * PRINTS: packages/server/test/hint-outcome-retention.test.ts 4
+ * PRINTS: packages/server/test/hint-outcome-retention.test.ts 5
  * PRINTS: packages/server/test/hint-outcomes-mine.test.ts 23
- * PRINTS: packages/server/test/hint-outcomes.test.ts 63
+ * PRINTS: packages/server/test/hint-outcomes.test.ts 50
  * PRINTS: packages/server/test/hints-records-outcomes.test.ts 3
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/hub-status-transport.test.ts 2
@@ -25310,6 +25314,7 @@ interface Outcome {
  * PRINTS: packages/server/test/landed-notices.test.ts 34
  * PRINTS: packages/server/test/landed-repair.test.ts 20
  * PRINTS: packages/server/test/landed.test.ts 15
+ * PRINTS: packages/server/test/late-confirmation.test.ts 3
  * PRINTS: packages/server/test/listen-boot.test.ts 8
  * PRINTS: packages/server/test/listen.test.ts 16
  * PRINTS: packages/server/test/live-location-cost.test.ts 3
@@ -25328,10 +25333,10 @@ interface Outcome {
  * PRINTS: packages/server/test/pilot-attributions.test.ts 3
  * PRINTS: packages/server/test/pilot-counters.test.ts 6
  * PRINTS: packages/server/test/pilot-mark-candidates.test.ts 15
- * PRINTS: packages/server/test/pilot-marks.test.ts 16
- * PRINTS: packages/server/test/pilot-outcome-figures.test.ts 30
+ * PRINTS: packages/server/test/pilot-marks.test.ts 14
+ * PRINTS: packages/server/test/pilot-outcome-figures.test.ts 28
  * PRINTS: packages/server/test/pilot-repairs.test.ts 5
- * PRINTS: packages/server/test/pilot-report.test.ts 34
+ * PRINTS: packages/server/test/pilot-report.test.ts 33
  * PRINTS: packages/server/test/pilot-retention.test.ts 4
  * PRINTS: packages/server/test/pilot-sessions.test.ts 11
  * PRINTS: packages/server/test/pilot-substance-channel.test.ts 2
@@ -25342,6 +25347,7 @@ interface Outcome {
  * PRINTS: packages/server/test/questions.test.ts 8
  * PRINTS: packages/server/test/records.test.ts 2
  * PRINTS: packages/server/test/retention-registry.test.ts 3
+ * PRINTS: packages/server/test/review-survivors.test.ts 6
  * PRINTS: packages/server/test/search-filters.test.ts 10
  * PRINTS: packages/server/test/search-tokens.test.ts 5
  * PRINTS: packages/server/test/search.test.ts 3
@@ -25355,6 +25361,7 @@ interface Outcome {
  * PRINTS: packages/server/test/session-reap-liveness.test.ts 1
  * PRINTS: packages/server/test/session-reaper.test.ts 2
  * PRINTS: packages/server/test/sessions.test.ts 1
+ * PRINTS: packages/server/test/signer-standing.test.ts 2
  * PRINTS: packages/server/test/similarity-gate.test.ts 5
  * PRINTS: packages/server/test/skeleton-identity.test.ts 17
  * PRINTS: packages/server/test/skeleton-sweep.test.ts 35
@@ -25371,8 +25378,11 @@ interface Outcome {
  * PRINTS: packages/server/test/team-settings.test.ts 9
  * PRINTS: packages/server/test/ui-approvals.test.ts 11
  * PRINTS: packages/server/test/ui-ceremony-localhost.test.ts 6
+ * PRINTS: packages/server/test/ui-confirm-link.test.ts 3
+ * PRINTS: packages/server/test/ui-confirm-signed.test.ts 2
  * PRINTS: packages/server/test/ui-feed.test.ts 3
  * PRINTS: packages/server/test/ui-passkeys.test.ts 9
+ * PRINTS: packages/server/test/ui-session-nonce.test.ts 1
  * PRINTS: packages/server/test/ui-work-context.test.ts 2
  * PRINTS: packages/server/test/unstorable-text.test.ts 1
  * PRINTS: packages/server/test/upgrade.test.ts 1
