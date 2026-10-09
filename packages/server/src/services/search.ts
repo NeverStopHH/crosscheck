@@ -23,6 +23,7 @@
  */
 import {
   and,
+  asc,
   cosineDistance,
   eq,
   inArray,
@@ -651,7 +652,9 @@ const listFtsTier = async (
       workContexts.updatedAt,
       agentSessions.developerId,
     )
-    .orderBy(sql`max(ts_rank(${claims.tsv}, ${tsquery})) DESC`)
+    // Equal ranks to the context id (integration review L7): the aggregate's
+    // own order is the hash table's, and the LIMIT cut a tie by it.
+    .orderBy(sql`max(ts_rank(${claims.tsv}, ${tsquery})) DESC`, asc(claims.workContextId))
     .limit(TIER_CANDIDATES);
 
   const claimMatches = claimRows.map((row) => ({ ...row, derivedOnly: !row.declared }));

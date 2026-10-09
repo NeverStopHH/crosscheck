@@ -8,6 +8,7 @@
  * form and none of her SECRETS, and as Robin, who must still see her own.
  */
 import { describe, expect, test } from "bun:test";
+import { sql } from "drizzle-orm";
 import { LOCATION_WITHHELD, WITHHELD_TITLE } from "@crosscheck/schema";
 
 import { contradictionIdFor } from "../src/services/contradictions.ts";
@@ -387,6 +388,87 @@ describe("when Robin last touched her work (review round 3, M1)", () => {
       .filter((id) => tied.includes(id));
 
     expect(order).toEqual(tied);
+  });
+
+  /**
+   * TIED CLAIM MATCHES FALL TO THEIR CONTEXT ID, NEVER TO THE AGGREGATE'S
+   * ORDER (batch-2 integration review, L7, the half 5f2f200a left). The
+   * claim pass of the hint pool and of the search groups by work context and
+   * orders by the best rank alone, so equally ranked trees came out in the
+   * hash aggregate's order — which an update of hers that changed no value,
+   * or the byte length of her branch names, reordered. Six trees whose ONLY
+   * match is one claim saying the same words: listed by id on both routes,
+   * and a tree's own equally old claims by theirs.
+   */
+  test("equally ranked claim matches are listed by their context id on the hint pool and the search alike (integration review L7)", async () => {
+    const world = await seedOptedOutWorld();
+    // Six teammates, one tree each: the pool caps one developer's trees, and
+    // a cap would choose among the tie before the order under test is read.
+    const tied = ["wc_tieclaim_f", "wc_tieclaim_b", "wc_tieclaim_e", "wc_tieclaim_a", "wc_tieclaim_d", "wc_tieclaim_c"];
+    for (const [index, id] of tied.entries()) {
+      const teammate = await createTestDeveloper(world.harness, `Tie Claims ${String(index)}`, `tieclaims${String(index)}@example.com`);
+      const sessionId = `cc_${String(index)}1111111-0000-4000-8000-000000000000`;
+      await registerTestSession(world.harness, teammate.apiKey, { id: sessionId });
+      await postRecords(world.harness, teammate, {
+        records: [
+          recordEnvelope("work_context", validWorkContextBody({ id, sessionId, title: `Tied claim work ${String(index)}` }), { sessionId }),
+          recordEnvelope(
+            "claim",
+            validClaimBody({ id: `clm_${id}`, workContextId: id, authorSessionId: sessionId, kind: "observation", body: "The zebra quokka lantern evicts the rotated key id", createdAt: CREATED_AT }),
+            { sessionId },
+          ),
+        ],
+      });
+    }
+    const sorted = [...tied].sort();
+
+    // The aggregate's own order, as a large hub meets it: on six rows the
+    // planner sorts to group and hands back the ids' order by accident, so
+    // the reads run with the sort discouraged and the groups hashed.
+    await world.harness.db.execute(sql`SET enable_sort = off`);
+    try {
+      const candidates = candidateIds(await getAs(world, "nick", url("/api/hints/candidates", { repo: REPO, query: "zebra quokka lantern" })));
+      const searched = searchIds(await getAs(world, "nick", url("/api/search", { q: "zebra quokka lantern", repo: REPO })));
+
+      // Both routes are bounded (the pool at three, the search at its page):
+      // what each hands back is the head of the id order, never a tie's.
+      const pooled = candidates.filter((id) => tied.includes(id));
+      const paged = searched.filter((id) => tied.includes(id));
+      expect(pooled.length).toBeGreaterThanOrEqual(3);
+      expect(pooled).toEqual(sorted.slice(0, pooled.length));
+      expect(paged.length).toBeGreaterThanOrEqual(3);
+      expect(paged).toEqual(sorted.slice(0, paged.length));
+    } finally {
+      await world.harness.db.execute(sql`RESET enable_sort`);
+    }
+  });
+
+  test("a tree's equally old claims are windowed by their id, never by the order they were stored in (integration review L7)", async () => {
+    const world = await seedOptedOutWorld();
+    const teammate = await createTestDeveloper(world.harness, "Tie Window", "tiewindow@example.com");
+    const sessionId = "cc_71111111-0000-4000-8000-000000000000";
+    const id = "wc_tiewindow";
+    await registerTestSession(world.harness, teammate.apiKey, { id: sessionId });
+    await postRecords(world.harness, teammate, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody({ id, sessionId, title: "Tie window work" }), { sessionId }),
+        // Distinct bodies: the hub folds a claim that repeats another's words into it.
+        ...["clm_tiewindow_c", "clm_tiewindow_a", "clm_tiewindow_b"].map((claim, index) =>
+          recordEnvelope(
+            "claim",
+            validClaimBody({ id: claim, workContextId: id, authorSessionId: sessionId, kind: "observation", body: `The marmoset gazebo pulley evicts the rotated key id in refresh ${String(index)}`, createdAt: CREATED_AT }),
+            { sessionId },
+          ),
+        ),
+      ],
+    });
+
+    const answer = await getAs(world, "nick", url("/api/hints/candidates", { repo: REPO, query: "marmoset gazebo pulley" }));
+    const candidate = (JSON.parse(answer.body) as { data: { candidates: readonly { workContext: { id: string }; claims: readonly { id: string }[] }[] } }).data.candidates.find(
+      (entry) => entry.workContext.id === id,
+    );
+
+    expect(candidate?.claims.map((claim) => claim.id)).toEqual(["clm_tiewindow_a", "clm_tiewindow_b", "clm_tiewindow_c"]);
   });
 
   test("freshest-first ranks her work by creation, so the order says nothing of her last touch", async () => {

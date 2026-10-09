@@ -479,7 +479,9 @@ const listClaimsForContext = async (
         pushableClaimCondition(),
       ),
     )
-    .orderBy(desc(claims.createdAt))
+    // Equally old claims to their id, never to the order the scan met them
+    // in (integration review L7): the window and the hint read them as stored.
+    .orderBy(desc(claims.createdAt), asc(claims.id))
     // One row past the window, read only to learn that rows stayed behind.
     .limit(HINT_MAX_CLAIMS_PER_CONTEXT + 1);
   const rows = fetched.slice(0, HINT_MAX_CLAIMS_PER_CONTEXT);
@@ -885,7 +887,10 @@ const rankOnPushableText =
           ),
         )
         .groupBy(claims.workContextId, workContexts.createdAt, workContexts.updatedAt, agentSessions.developerId)
-        .orderBy(sql`max(ts_rank(${words.words}, ${tsquery})) DESC`)
+        // Equal ranks to the context id, as the statement pass above: the
+        // aggregate's own order is the hash table's, and the LIMIT cut a tie
+        // by it (integration review L7, the half 5f2f200a left).
+        .orderBy(sql`max(ts_rank(${words.words}, ${tsquery})) DESC`, asc(claims.workContextId))
         .limit(TIER_CANDIDATES),
     ]);
     const best = [...statements, ...pushable].reduce<ReadonlyMap<string, RankedRow>>(
