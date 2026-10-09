@@ -10,6 +10,11 @@
  * off (its remote is a github.com URL that must never be contacted), and a
  * summarizer command that does not exist, so a derive worker the prompt hook
  * spawns fails open instead of starting a real model.
+ *
+ * THE BUDGET is the profile's (release-gate/profile.ts): PRODUCTION leaves
+ * `CROSSCHECK_TIMEOUT_MS` unset, exactly as an installed connector runs —
+ * HTTP_TIMEOUT_MS per request and each hook's ratio of it; GENEROUS sets the
+ * old 4000 ms.
  */
 import { mkdtemp, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -21,9 +26,9 @@ import type { Db } from "@crosscheck/server";
 import type { Person } from "./git.ts";
 import type { HostDeveloper } from "./host.ts";
 import type { HubDeveloper, TestHub } from "./hub.ts";
+import { GENEROUS_TIMEOUT_MS } from "./profile.ts";
+import type { GateBudget } from "./profile.ts";
 
-/** Wide enough that a cold PGlite query never trips the fail-open budget. */
-const HOOK_TIMEOUT_MS = "4000";
 const FORBIDDEN_HUB_PORT = "7100";
 
 export interface GateDeveloper extends HostDeveloper {
@@ -39,7 +44,12 @@ const assertLocalHub = (url: string): void => {
   }
 };
 
-export const makeDeveloper = async (hub: TestHub, person: Person, label: string): Promise<GateDeveloper> => {
+export const makeDeveloper = async (
+  hub: TestHub,
+  person: Person,
+  label: string,
+  budget: GateBudget = "generous",
+): Promise<GateDeveloper> => {
   assertLocalHub(hub.url);
   const account = await hub.createDeveloper(person.name, person.email);
   const home = await mkdtemp(join(tmpdir(), `cx-gate-home-${label}-`));
@@ -52,7 +62,7 @@ export const makeDeveloper = async (hub: TestHub, person: Person, label: string)
       CROSSCHECK_HOME: home,
       CROSSCHECK_HUB_URL: hub.url,
       CROSSCHECK_API_KEY: account.apiKey,
-      CROSSCHECK_TIMEOUT_MS: HOOK_TIMEOUT_MS,
+      ...(budget === "generous" ? { CROSSCHECK_TIMEOUT_MS: GENEROUS_TIMEOUT_MS } : {}),
       CROSSCHECK_TRIPWIRE: "notice",
       CROSSCHECK_LANDING_FETCH: "off",
       CROSSCHECK_SUMMARIZER_CMD: join(home, "no-summarizer-installed"),
