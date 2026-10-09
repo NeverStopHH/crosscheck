@@ -8245,25 +8245,12 @@ export const MUTATIONS: readonly Mutation[
       "never produce a hit or a miss — and the report says so in words that " +
       "sound like a fact about the team rather than about the hub",
   },
-  {
-    // 07 §3.2. The noise FIGURE has to count people, not keystrokes — and
-    // the unique key is the database's, but the service is what turns a
-    // second attempt into an answer rather than a second row.
-    label: "one person's second keystroke becomes a second complaint",
-    file: `${SERVER}/src/services/pilot.ts`,
-    from:
-      "    .onConflictDoNothing()\n" +
-      "    .returning({ id: pilotMarks.id });",
-    to: "    .returning({ id: pilotMarks.id });",
-    // Since human provenance a noise mark goes through writeNoiseOnPointer, so the guard is a
-    // helpful label said again and confirmed, against the hub as it runs.
-    test: `${SERVER}/test/draft-repeats.test.ts`,
-    because:
-      "the one figure that says whether this product is worth installing is " +
-      "inflated by the gesture designed to make complaining cheap, so a " +
-      "single frustrated person reads as a team — and the target it is " +
-      "measured against was set before anybody could know that",
-  },
+  // ("one person's second keystroke becomes a second complaint" — the `.onConflictDoNothing()` on
+  // the label insert — is retired as equivalent since round 2 (R2-M1): "one label in effect" is
+  // decided by `labelInEffect` before the insert, in the confirmation's transaction, and the
+  // database key is per confirmation, so a conflict needs one confirmation to write one label
+  // twice, which no batch can. The obligation is anchored on the writer's rule instead: "a second
+  // keystroke becomes a second complaint", guarded by label-slot.test.ts.)
   {
     // AT-3 on the pilot's own surface. A mark IS the measurement of whether
     // this product is useful.
@@ -25625,7 +25612,7 @@ interface Outcome {
  * PRINTS: packages/server/test/draft-doors.test.ts 4
  * PRINTS: packages/server/test/draft-kinds.test.ts 2
  * PRINTS: packages/server/test/draft-link-cleanup.test.ts 18
- * PRINTS: packages/server/test/draft-repeats.test.ts 5
+ * PRINTS: packages/server/test/draft-repeats.test.ts 4
  * PRINTS: packages/server/test/draft-versions-bound.test.ts 2
  * PRINTS: packages/server/test/draft-visibility.test.ts 9
  * PRINTS: packages/server/test/drafts.test.ts 4
