@@ -31,6 +31,7 @@ import { dirname, join } from "node:path";
 import { PRESENCE_CACHE_TTL_MS } from "@crosscheck/connector-core/constants.ts";
 
 import type { Actor, HookRun, HostSession } from "./host.ts";
+import type { Moment } from "./observe.ts";
 import type { LongSessionFiles, LongSessionPlan } from "./scenario-long-session.ts";
 
 /** How far past the presence cache's freshness a subagent runs before it returns. */
@@ -150,6 +151,8 @@ export interface NickMoments {
    * re-briefing — what the person's record holds of the foreground hits.
    */
   readonly nickStatuslineAtTurnEnd: string | null;
+  /** When the subagent work began and ended: what a booking must fall inside to speak for it. */
+  readonly nickWork: Moment;
 }
 
 const writeEnvFiles = async (work: NickWork, actor: Actor, which: readonly number[]): Promise<void> => {
@@ -168,6 +171,7 @@ const writeEnvFiles = async (work: NickWork, actor: Actor, which: readonly numbe
 /** The generous variant's order: one subagent at a time. */
 export const nickWorksSequentially = async (work: NickWork): Promise<NickMoments> => {
   const { session, topic, files } = work;
+  const from = Date.now();
   // A subagent edits the eight shared files Mike just worked on — the hits.
   // It runs longer than the presence cache stays fresh, as a real subagent
   // does (minutes), with no statusline render in between (an IDE session has
@@ -197,7 +201,13 @@ export const nickWorksSequentially = async (work: NickWork): Promise<NickMoments
   await session.subagent("fixtures", async (actor) => {
     await bashOthers({ session, topic, scratch: work.scratch, actor }, files);
   });
-  return { nickSubagentHits, nickReturnAndPrompt: [...returned, ...prompted], nickStatusline, nickStatuslineAtTurnEnd: null };
+  return {
+    nickSubagentHits,
+    nickReturnAndPrompt: [...returned, ...prompted],
+    nickStatusline,
+    nickStatuslineAtTurnEnd: null,
+    nickWork: { from, to: Date.now() },
+  };
 };
 
 /** `items` dealt round-robin into `hands` lists. */
@@ -222,6 +232,7 @@ export const nickWorksInParallel = async (work: NickWork, compacts: boolean): Pr
   const bashDone = Promise.withResolvers<void>();
   const returnsAfter = performance.now() + PRESENCE_CACHE_TTL_MS + SUBAGENT_OVERRUN_MS;
   const bashContext = (actor: Actor): BashContext => ({ session, topic, scratch: work.scratch, actor });
+  const from = Date.now();
 
   session.label("nick-fan-out");
   await session.prompt("fan the mapping port and the NumLabs core out over twelve workers");
@@ -270,8 +281,12 @@ export const nickWorksInParallel = async (work: NickWork, compacts: boolean): Pr
     await session.settle();
   }
   bashMayRun.resolve();
-  await bashDone.promise;
+  // A worker that throws before its Bash work is done ends the wait too, and
+  // its error surfaces at the `Promise.all` below instead of a hung case.
+  await Promise.race([bashDone.promise, codegen.finished]);
   if (compacts) {
+    // The Bash calls' own captures have run: the compaction is the next thing that happens.
+    await session.settle();
     await Bun.sleep(MTIME_MARGIN_MS);
     await session.start("compact");
   }
@@ -288,5 +303,6 @@ export const nickWorksInParallel = async (work: NickWork, compacts: boolean): Pr
     nickReturnAndPrompt: fanOut.filter((run) => run.agentId === null && run.event !== "SessionStart"),
     nickStatusline,
     nickStatuslineAtTurnEnd,
+    nickWork: { from, to: Date.now() },
   };
 };

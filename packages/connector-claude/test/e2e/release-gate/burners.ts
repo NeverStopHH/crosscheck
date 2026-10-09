@@ -15,6 +15,8 @@ import { availableParallelism, loadavg } from "node:os";
 export const BURNERS_ENV = "CX_GATE_BURNERS";
 /** How often a burner looks up from its loop: the deadline and its parent. */
 const CHECK_EVERY_ITERATIONS = 1_000_000;
+/** How long a burner gets to leave on SIGTERM before its own handle sends SIGKILL. */
+const STOP_GRACE_MS = 3_000;
 
 const BURNER_SOURCE = `
 const deadline = Date.now() + Number(process.env.CX_BURN_MS);
@@ -46,21 +48,27 @@ export const startBurners = (count: number, maxMs: number): Burners => {
   const children = Array.from({ length: count }, () =>
     Bun.spawn({
       cmd: [process.execPath, "-e", BURNER_SOURCE],
-      env: { ...process.env, CX_BURN_MS: String(maxMs), CX_BURN_PARENT: String(process.pid) },
+      // A spinning loop needs nothing of this run's environment.
+      env: { PATH: process.env["PATH"] ?? "", CX_BURN_MS: String(maxMs), CX_BURN_PARENT: String(process.pid) },
       stdin: "ignore",
       stdout: "ignore",
       stderr: "ignore",
     }),
   );
+  const stopOne = async (child: (typeof children)[number]): Promise<void> => {
+    child.kill("SIGTERM");
+    const hasLeft = await Promise.race([child.exited.then(() => true), Bun.sleep(STOP_GRACE_MS).then(() => false)]);
+    if (!hasLeft) {
+      child.kill("SIGKILL");
+      await child.exited;
+    }
+  };
   return {
     pids: children.map((child) => child.pid),
     loadAtStart: loadavg()[0] ?? 0,
     stop: async () => {
       const loadAtStop = loadavg()[0] ?? 0;
-      for (const child of children) {
-        child.kill("SIGTERM");
-      }
-      await Promise.all(children.map(async (child) => child.exited));
+      await Promise.all(children.map(stopOne));
       return loadAtStop;
     },
   };

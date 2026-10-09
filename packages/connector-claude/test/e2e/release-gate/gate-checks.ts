@@ -9,6 +9,7 @@ import { GHOST_SECTION_HEADER } from "@crosscheck/connector-core/briefing/ghost.
 import { agentTexts, personLines } from "./host.ts";
 import type { HookRun, HostSession } from "./host.ts";
 import type { TestHub } from "./hub.ts";
+import type { Booking, Moment } from "./observe.ts";
 import { conferenceOverlaps, ghostRows } from "./team.ts";
 import type { ConferenceOverlap, GateDeveloper, GhostRow } from "./team.ts";
 
@@ -139,23 +140,43 @@ export const tripwireAnswers = (hub: TestHub, developer: string, repo: string): 
 export const agentEventOf = (answer: TripwireAnswer): CoverageRow | undefined =>
   answer.sources.find((row) => row.source === "agent_event");
 
+/**
+ * Every hook process of `sessions` that crashed (a hook binary always exits
+ * 0) or hung until it was killed — none, under every profile. A case whose
+ * hooks crashed has not run the scenario its assertions read, so this is a
+ * plain setup test beside every case: an expected failure can never be a
+ * crash in disguise.
+ */
+export const crashedHooks = (sessions: readonly HostSession[]): readonly string[] =>
+  sessions
+    .flatMap((session) => session.runs())
+    .filter((run) => run.wasKilled || (run.exitCode !== null && run.exitCode !== 0))
+    .map((run) => `${run.developer} ${run.hook} [${run.label}] ${run.wasKilled ? "killed" : `exit ${String(run.exitCode)}`}`);
+
 /** The count in a statusline's `overlap: <who> · N files`, or 0 when it shows none. */
 export const overlapFileCount = (statusline: string): number => {
   const match = /overlap: [^·]*· (\d+) files?/.exec(statusline);
   return match === null ? 0 : Number(match[1]);
 };
 
-/** A booking about an edit's collision warning: a rest left unchecked, a tripwire cut or unanswered, a relay or notice lost. */
-const COLLISION_BOOKING = /rest|tripwire|collision|relay|notice/i;
+/** A kind that names an edit's collision warning itself: a tripwire cut or unanswered, a collision or relay lost. */
+const COLLISION_WARNING_KIND = /^(tripwire|collision|relay)_/;
 
 /**
- * Booked lines that SAY WHY a person was not told of a collision — the ones
- * that name the warning itself (`rest_unchecked`, a rest omission, a cut or
- * unanswered tripwire). Not a capture timeout, a spool drop or an allocation
- * failure (they say a record was lost, not that a warning was), not a
- * landed-probe cut (the review's H2(b) mislabel: "the landed check was cut"
- * where a collision warning was lost) and not a briefing omission (the
- * session's opening briefing, not an edit's warning).
+ * Bookings that SAY WHY a person was not told of a collision in `moment`:
+ * booked inside it, and of a kind that names the warning itself — what a
+ * connector books when an edit's tripwire was cut or went unanswered
+ * (`tripwire_…`), or a collision or relay was lost. Nothing else says that:
+ * not `rest_unchecked` (a warning that DID reach the person, whose recheck
+ * could not run), not a capture timeout, a spool drop or an allocation
+ * failure (a record lost, not a warning), not a landed-probe cut (the
+ * review's H2(b) mislabel: "the landed check was cut" where a collision
+ * warning was lost), not a briefing omission (the opening briefing, not an
+ * edit's warning). On 5a544fff no connector books such a kind, so today the
+ * loaded lane's "or booked" accepts nothing the production lane rejects.
  */
-export const collisionBookings = (lines: readonly string[]): readonly string[] =>
-  lines.filter((line) => COLLISION_BOOKING.test(line) && !/landed-probe-cuts|briefing-omissions/.test(line));
+export const collisionBookings = (bookings: readonly Booking[], moment: Moment): readonly Booking[] =>
+  bookings.filter(
+    (booking) =>
+      booking.at !== null && booking.at >= moment.from && booking.at <= moment.to && COLLISION_WARNING_KIND.test(booking.kind),
+  );

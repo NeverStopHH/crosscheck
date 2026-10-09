@@ -40,10 +40,14 @@ export interface GateProfile {
    */
   readonly hasCompactAndResume: boolean;
   /**
-   * The person must see the collision, OR a loss the connector booked must
-   * say why (the loaded lane's standard: under CPU starvation a fail-open
-   * budget may cut, but never silently). PRODUCTION and GENEROUS require the
-   * person to see it.
+   * The person must see the collision, OR the connector must have booked,
+   * inside the very moment judged, a line naming the untold warning itself —
+   * a cut or unanswered tripwire (release-gate/gate-checks.ts
+   * `collisionBookings`). The loaded lane's standard: under CPU starvation a
+   * fail-open budget may cut, but never silently. On 5a544fff no connector
+   * books such a line, so until a fix does, the loaded lane accepts nothing
+   * the production lane rejects. PRODUCTION and GENEROUS require the person
+   * to see it.
    */
   readonly mayBookInsteadOfWarn: boolean;
 }

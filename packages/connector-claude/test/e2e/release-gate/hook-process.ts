@@ -14,13 +14,28 @@
  * except the two the test preloads set on purpose (ssh canonicalization off,
  * the guard's mark), plus the developer's own. So the only budget knob a
  * child can see is the one the profile put in the developer's env.
+ *
+ * NO FETCH GUARD RUNS IN THE CHILD (an installed hook has no test preload),
+ * so the env is checked here instead, before any spawn, with the guard's own
+ * rules: the hub must be a test hub (loopback, a port of its own, never
+ * 7100) and the home must lie under the OS temp directory.
+ *
+ * A HOOK THAT NEVER EXITS is killed — by its own handle — after
+ * HOOK_KILL_AFTER_MS, far past any budget, and its run says so; a hook
+ * binary always exits 0 (bin/crosscheck.ts), so any other exit is a crash.
+ * Both are what `crashedHooks` (release-gate/gate-checks.ts) reports.
  */
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
 import { selfSpawnCmd, withoutRuntimeInjection } from "@crosscheck/connector-core/config/runtime-isolation.ts";
 import { SSH_CANONICALIZE_ENV } from "@crosscheck/connector-core/constants.ts";
 
+import { isTestHubUrl, isUnderDir } from "../../../../connector-core/test/network-guard-rules.ts";
 import type { Env } from "../../../src/index.ts";
+
+/** Far past every hook budget (SessionStart's is 1 s): a hook still running then is hung. */
+const HOOK_KILL_AFTER_MS = 30_000;
 
 /** The CLI entry an installed `crosscheck` runs. */
 export const CLI_ENTRY = resolve(import.meta.dir, "..", "..", "..", "..", "cli", "src", "bin", "crosscheck.ts");
@@ -38,13 +53,20 @@ const childEnv = (env: Env): Record<string, string> => {
   const own = Object.fromEntries(
     Object.entries(env).flatMap(([name, value]) => (value === undefined ? [] : [[name, value]])),
   );
-  return { ...inherited, ...own };
+  const merged = { ...inherited, ...own };
+  if (!isTestHubUrl(merged["CROSSCHECK_HUB_URL"]) || !isUnderDir(merged["CROSSCHECK_HOME"], tmpdir())) {
+    throw new Error("release gate refuses to start a hook whose hub is not a test hub or whose home is not a temp dir");
+  }
+  return merged;
 };
 
 export interface ProcessRun {
   readonly stdout: string;
   /** Wall time of the whole process, boot included. */
   readonly durationMs: number;
+  readonly exitCode: number | null;
+  /** True when the process outlived HOOK_KILL_AFTER_MS and was killed. */
+  readonly wasKilled: boolean;
 }
 
 const runEntry = async (args: readonly string[], stdin: string, env: Env, cwd: string): Promise<ProcessRun> => {
@@ -57,14 +79,28 @@ const runEntry = async (args: readonly string[], stdin: string, env: Env, cwd: s
     stdout: "pipe",
     stderr: "ignore",
   });
-  const [stdout] = await Promise.all([new Response(child.stdout).text(), child.exited]);
-  return { stdout, durationMs: Math.round(performance.now() - startedAt) };
+  const killed = { value: false };
+  const timer = setTimeout(() => {
+    killed.value = true;
+    child.kill("SIGKILL");
+  }, HOOK_KILL_AFTER_MS);
+  try {
+    const [stdout, exitCode] = await Promise.all([new Response(child.stdout).text(), child.exited]);
+    return { stdout, durationMs: Math.round(performance.now() - startedAt), exitCode, wasKilled: killed.value };
+  } finally {
+    clearTimeout(timer);
+  }
 };
 
 /** `crosscheck hook <name>` with `stdin`, as Claude Code runs it. */
 export const runHookProcess = async (name: string, stdin: string, env: Env, cwd: string): Promise<ProcessRun> =>
   runEntry(["hook", name], stdin, env, cwd);
 
-/** `crosscheck statusline` with `stdin`, as Claude Code's status line runs it. */
-export const runStatuslineProcess = async (stdin: string, env: Env, cwd: string): Promise<string> =>
-  (await runEntry(["statusline"], stdin, env, cwd)).stdout.trimEnd();
+/** `crosscheck statusline` with `stdin`, as Claude Code's status line runs it; throws on a crash or a hang. */
+export const runStatuslineProcess = async (stdin: string, env: Env, cwd: string): Promise<string> => {
+  const run = await runEntry(["statusline"], stdin, env, cwd);
+  if (run.exitCode !== 0 || run.wasKilled) {
+    throw new Error(`the statusline process ${run.wasKilled ? "hung and was killed" : `exited ${String(run.exitCode)}`}`);
+  }
+  return run.stdout.trimEnd();
+};

@@ -28,6 +28,7 @@ import {
   collisionBookings,
   collisionNoise,
   collisionTextsFor,
+  crashedHooks,
   isQualifiedAsLarge,
   mentions,
   nickRows,
@@ -37,11 +38,20 @@ import {
 } from "./gate-checks.ts";
 import { gitIn } from "./git.ts";
 import { agentTexts, personLines } from "./host.ts";
+import type { HookRun } from "./host.ts";
 import { dumpDatabase } from "./hub.ts";
 import type { TestHub } from "./hub.ts";
-import { bookedLines } from "./observe.ts";
+import { bookedLines, bookingsOf } from "./observe.ts";
+import type { Moment } from "./observe.ts";
 import type { GateProfile } from "./profile.ts";
-import { MIKE_AFTER_RESUME_FILES, MIKE_BRANCH, STALE_BRANCH, TOPIC_BRANCH, runLongSessionCase } from "./scenario-long-session.ts";
+import {
+  MIKE_AFTER_RESUME_FILES,
+  MIKE_BRANCH,
+  MIKE_NEXT_FILES,
+  STALE_BRANCH,
+  TOPIC_BRANCH,
+  runLongSessionCase,
+} from "./scenario-long-session.ts";
 import type { LongSessionPlan, LongSessionWorld } from "./scenario-long-session.ts";
 import { FOREGROUND_HITS } from "./scenario-nick-work.ts";
 import { findMarker } from "./team.ts";
@@ -77,10 +87,11 @@ type Register = (id: string, name: string, body: () => void | Promise<void>) => 
 
 /**
  * The person saw it — or, in the loaded lane only, `developer`'s connector
- * booked a line that can say why a collision went untold.
+ * booked, INSIDE `moment`, a line that names the untold warning itself
+ * (release-gate/gate-checks.ts `collisionBookings`).
  */
-const toldOrBooked = async (ctx: GateContext, told: boolean, developer: GateDeveloper): Promise<boolean> =>
-  told || (ctx.profile.mayBookInsteadOfWarn && collisionBookings(await bookedLines(developer)).length > 0);
+const toldOrBooked = async (ctx: GateContext, told: boolean, developer: GateDeveloper, moment: Moment): Promise<boolean> =>
+  told || (ctx.profile.mayBookInsteadOfWarn && collisionBookings(await bookingsOf(developer), moment).length > 0);
 
 const shortName = (path: string): string => path.split("/").at(-1) ?? path;
 
@@ -126,13 +137,36 @@ const pilotSetup = (it: Register, get: Get, hub: () => TestHub): void => {
     );
     expect(mentions(reports.map((entry) => entry.requestBody), get().commits.staleBase)).toBe(true);
   });
+
+  it("P1.setup.processes", "no hook process crashed or hung (a hook always exits 0)", () => {
+    expect(crashedHooks([get().mikeSession, get().nickSession, get().tinaSession])).toEqual([]);
+  });
+
+  // WHAT THE EXPECTED FAILURES READ EXISTS: 1d, 5b, R1 and L1-L4 can only fail on what they assert,
+  // never on a moment that did not happen (a statusline that never rendered, an edit that never ran).
+  it("P1.setup.moments", "every moment the assertions read happened: statuslines rendered, Mike's edits ran, the hits and the lives exist", () => {
+    const { moments, seenAfterResume, profile } = get();
+    const preOn = (runs: readonly HookRun[] | null, names: readonly string[]): readonly string[] =>
+      names.filter((name) => runsOn(runs ?? [], `/${name}`, "PreToolUse").length === 0);
+    expect(moments.mikeStatusline).toContain("cx ");
+    expect(preOn(moments.mikeNext, MIKE_NEXT_FILES)).toEqual([]);
+    if (profile.isParallel) {
+      expect(moments.nickStatuslineAtTurnEnd ?? "").toContain("cx ");
+      expect(foregroundHitFiles(get()).size, "the simultaneous foreground hits must exist").toBeGreaterThan(0);
+    }
+    if (profile.hasCompactAndResume) {
+      expect(seenAfterResume, "the snapshot after Nick's resume").not.toBeNull();
+      expect(moments.mikeStatuslineAfterResume ?? "").toContain("cx ");
+      expect(preOn(moments.mikeAfterResume, MIKE_AFTER_RESUME_FILES)).toEqual([]);
+    }
+  });
 };
 
 const pilotMikeTold = (it: Register, get: Get, ctx: GateContext): void => {
   // fixed by feat/collision-visible (systemMessage from the sync PreToolUse).
   it("1a", "Mike's next edit tells MIKE that Nick overlaps (pilot: hints reached only agents, 0 of 157 opened)", async () => {
     const told = mentions(personLines(get().moments.mikeNext), "Nick");
-    expect(await toldOrBooked(ctx, told, get().mike), "no systemMessage naming Nick reached Mike").toBe(true);
+    expect(await toldOrBooked(ctx, told, get().mike, get().moments.mikeNextMoment), "no systemMessage naming Nick reached Mike").toBe(true);
   });
 
   // Was a gap ("NEW GAP — no branch"): the person's line was topic-less; fixed on the batch.
@@ -183,32 +217,35 @@ const pilotNickTold = (it: Register, get: Get, ctx: GateContext): void => {
     const person = personLines(get().moments.nickReturnAndPrompt);
     const shared = get().files.nickMappingByEdit.map(shortName);
     const told = person.some((line) => shared.some((name) => line.includes(name)));
-    expect(await toldOrBooked(ctx, told, get().nick), JSON.stringify(person)).toBe(true);
+    expect(await toldOrBooked(ctx, told, get().nick, get().moments.nickWork), JSON.stringify(person)).toBe(true);
   });
 
   // Was a gap: fixed on the batch by 2898b5da (a relayed collision names the teammate unless a presence answer omits them).
   it("2b", "the relayed line names Mike and his branch feat/streaming-practice-beta", async () => {
     const person = personLines(get().moments.nickReturnAndPrompt);
     const told = mentions(person, "Mike") && mentions(person, MIKE_BRANCH);
-    expect(await toldOrBooked(ctx, told, get().nick), JSON.stringify(person)).toBe(true);
+    expect(await toldOrBooked(ctx, told, get().nick, get().moments.nickWork), JSON.stringify(person)).toBe(true);
   });
 
   // fixed by feat/collision-visible.
   it("2c", "Nick's statusline shows the overlap with Mike", async () => {
     const told = /overlap: Mike/.test(get().moments.nickStatusline);
-    expect(await toldOrBooked(ctx, told, get().nick), get().moments.nickStatusline).toBe(true);
+    expect(await toldOrBooked(ctx, told, get().nick, get().moments.nickWork), get().moments.nickStatusline).toBe(true);
   });
 
   if (ctx.profile.isParallel) {
     // The relay, hit by hit (review H2): six foreground workers each edit a shared file mid-run.
     // Every one whose agent was warned about Mike is a file the person's record holds — what the
     // statusline counts and the relay tells — when the turn ends, before any re-briefing adds it.
+    // Its precondition (the hits exist, the statusline rendered) is P1.setup.moments, a plain test.
     it("R1", "every shared file a foreground subagent was warned about is on NICK's record when the turn ends (statusline count)", async () => {
       const hits = foregroundHitFiles(get());
       const statusline = get().moments.nickStatuslineAtTurnEnd ?? "";
-      expect(hits.size, "the simultaneous foreground hits must exist").toBeGreaterThan(0);
       const told = overlapFileCount(statusline) >= hits.size;
-      expect(await toldOrBooked(ctx, told, get().nick), `${String(hits.size)} hits [${[...hits].join(", ")}] · ${statusline}`).toBe(true);
+      expect(
+        await toldOrBooked(ctx, told, get().nick, get().moments.nickWork),
+        `${String(hits.size)} hits [${[...hits].join(", ")}] · ${statusline}`,
+      ).toBe(true);
     });
   }
 };
@@ -325,7 +362,12 @@ const pilotEnv = (it: Register, get: Get, ctx: GateContext): void => {
         "hub answers": hub.wire.map((entry) => entry.responseBody).join("\n"),
         "hub database": await dumpDatabase(hub.db),
         "hook outputs": outputs.join("\n"),
-        statuslines: [world.moments.mikeStatusline, world.moments.nickStatusline, world.moments.mikeStatuslineAfterResume ?? ""].join("\n"),
+        statuslines: [
+          world.moments.mikeStatusline,
+          world.moments.nickStatusline,
+          world.moments.nickStatuslineAtTurnEnd ?? "",
+          world.moments.mikeStatuslineAfterResume ?? "",
+        ].join("\n"),
       },
       [world.mike.home, world.nick.home, world.tina.home],
     );
@@ -333,7 +375,8 @@ const pilotEnv = (it: Register, get: Get, ctx: GateContext): void => {
   });
 
   it("env.paths", "no .env path became a target either (the denylist holds on both lanes)", () => {
-    const envTargets = (get().seenAfterResume ?? get().seen).targets.filter((target) => /(^|\/)\.env/.test(target.value));
+    const snapshots = [get().seen, get().seenAfterResume].filter((seen) => seen !== null);
+    const envTargets = snapshots.flatMap((seen) => seen.targets).filter((target) => /(^|\/)\.env/.test(target.value));
     expect(envTargets).toEqual([]);
   });
 };
@@ -372,7 +415,8 @@ const pilotLives = (it: Register, get: Get, ctx: GateContext): void => {
 
   it("L4", "after the resume, Mike is told of Nick in a line he reads", async () => {
     const told = mentions(personLines(mikeLater()), "Nick");
-    expect(await toldOrBooked(ctx, told, get().mike), JSON.stringify(personLines(mikeLater()))).toBe(true);
+    const moment = get().moments.mikeAfterResumeMoment ?? { from: 0, to: 0 };
+    expect(await toldOrBooked(ctx, told, get().mike, moment), JSON.stringify(personLines(mikeLater()))).toBe(true);
   });
 };
 
@@ -446,6 +490,10 @@ export const describeScaleTwin = (ctx: GateContext): void => {
       const edits = get().nickSession.runs().filter((run) => run.event === "PostToolUse" && run.filePath !== null);
       expect(new Set(edits.filter((run) => run.agentId !== null).map((run) => run.filePath)).size).toBe(172);
       expect(get().seen.contexts.some((context) => context.developer === "Nick" && context.sessionBranch.startsWith("detached@"))).toBe(true);
+    });
+
+    it("N1.setup.processes", "no hook process crashed or hung (a hook always exits 0)", () => {
+      expect(crashedHooks([get().mikeSession, get().nickSession, get().tinaSession])).toEqual([]);
     });
 
     it("N1", "no collision line, tripwire output, briefing ghost section or statusline overlap for anybody", () => {

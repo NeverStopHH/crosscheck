@@ -21,7 +21,8 @@ import type { Person } from "./git.ts";
 import { openSession } from "./host.ts";
 import type { HookRun, HostSession } from "./host.ts";
 import type { TestHub } from "./hub.ts";
-import { hooksCut } from "./observe.ts";
+import { hooksCut, timed } from "./observe.ts";
+import type { Moment } from "./observe.ts";
 import { GENEROUS } from "./profile.ts";
 import type { GateProfile } from "./profile.ts";
 import { TINA } from "./scenario-long-session.ts";
@@ -131,6 +132,8 @@ export const runLandedCase = async (hub: TestHub, profile: GateProfile = GENEROU
   await editEach(mikeSession, mikeAt.worktree, N3_FILES.slice(6), "mapping v1 schema");
   await commitByBash(mikeSession, mikeAt.worktree, MIKE, "mapping v1: schema", daysAgo(8));
   await mikeSession.stop();
+  // The turn's lane has run before the session ends: a life boundary never races a lane.
+  await mikeSession.settle();
   await mikeSession.end();
   await mikeSession.settle();
   const mikeLastCommit = await gitIn(mikeAt.worktree, ["rev-parse", "HEAD"]);
@@ -221,6 +224,8 @@ export const runSelfCase = async (hub: TestHub, profile: GateProfile = GENEROUS)
     await firstTurn(first, firstAt.worktree, profile);
     await secondTurn(second, secondTree, profile);
   }
+  // Every turn's lanes have run before a life boundary (an end, a resume, a compaction).
+  await Promise.all([first.settle(), second.settle()]);
   if (profile.hasCompactAndResume) {
     second.label("second-resumed");
     await second.end();
@@ -264,8 +269,9 @@ export interface SweepWorld {
   readonly tinaSession: HostSession;
   /** How many of the 300 files the hub holds as Mike's targets when Nick edits. */
   readonly mikeTargetCount: number;
-  /** Nick's runs for his edit of the one shared file. */
+  /** Nick's runs for his edit of the one shared file, and when it began and ended. */
   readonly nickSharedEdit: readonly HookRun[];
+  readonly nickSharedEditMoment: Moment;
   readonly nickStatusline: string;
   readonly cleanup: readonly string[];
 }
@@ -333,7 +339,9 @@ export const runSweepCase = async (hub: TestHub, profile: GateProfile = GENEROUS
   nickSession.label("nick-edits-shared");
   await nickSession.start();
   await nickSession.prompt("fix the mapping grid row height");
-  const nickSharedEdit = await nickSession.edit(join(nickAt.worktree, N5_SHARED_FILE), "// fixed row height\n");
+  const { value: nickSharedEdit, moment: nickSharedEditMoment } = await timed(async () =>
+    nickSession.edit(join(nickAt.worktree, N5_SHARED_FILE), "// fixed row height\n"),
+  );
   nickSession.label("nick-edits-rest");
   await editEach(nickSession, nickAt.worktree, N5_FOCUSED.slice(1), "row height");
   await nickSession.settle();
@@ -348,6 +356,7 @@ export const runSweepCase = async (hub: TestHub, profile: GateProfile = GENEROUS
     tinaSession,
     mikeTargetCount: counts.at(-1) ?? 0,
     nickSharedEdit,
+    nickSharedEditMoment,
     nickStatusline,
     cleanup: [repo.seed, tinaAt.parent, mikeAt.parent, nickAt.parent, mike.home, nick.home, tina.home],
   };

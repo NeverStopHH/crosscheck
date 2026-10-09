@@ -156,6 +156,10 @@ export interface HookRun {
   readonly output: HookOutput;
   /** A process host's wall time for the hook's process, boot included; null in-process. */
   readonly durationMs: number | null;
+  /** A process host's exit code (a hook always exits 0, so anything else is a crash); null in-process. */
+  readonly exitCode: number | null;
+  /** A process host killed the hook after it hung (release-gate/hook-process.ts). */
+  readonly wasKilled: boolean;
 }
 
 /** A line the PERSON is shown: a sync main-thread hook's systemMessage. */
@@ -196,6 +200,11 @@ export type StartSource = "startup" | "resume" | "compact";
 export interface HostSession {
   readonly sessionId: string;
   readonly developer: HostDeveloper;
+  /**
+   * Every run so far — in COMPLETION order under a process host (concurrent
+   * hooks finish in any order), so read it by label, event and file, never
+   * by position. What `fire` returns is in the plan's order.
+   */
   readonly runs: () => readonly HookRun[];
   readonly label: (phase: string) => void;
   /** SessionStart: a new conversation, `claude --resume` after an exit or a reload, or a compaction. */
@@ -263,11 +272,16 @@ export const openSession = (
   ): Promise<HookRun> => {
     const isImplemented = isHookName(planned.hook);
     const stdin = JSON.stringify(payload);
-    const result = !isImplemented
-      ? { stdout: "", durationMs: null }
-      : options.isProcessHost
+    const inProcess = async (): Promise<{ stdout: string; durationMs: null; exitCode: null; wasKilled: false }> => ({
+      stdout: isImplemented ? await runHook(planned.hook as Parameters<typeof runHook>[0], stdin, developer.env) : "",
+      durationMs: null,
+      exitCode: null,
+      wasKilled: false,
+    });
+    const result =
+      isImplemented && options.isProcessHost
         ? await runHookProcess(planned.hook, stdin, developer.env, stringOrNull(payload["cwd"]) ?? cwd)
-        : { stdout: await runHook(planned.hook as Parameters<typeof runHook>[0], stdin, developer.env), durationMs: null };
+        : await inProcess();
     const input = payload["tool_input"] as Readonly<Record<string, unknown>> | undefined;
     const run: HookRun = {
       label,
@@ -283,6 +297,8 @@ export const openSession = (
       stdout: result.stdout,
       output: parseOutput(result.stdout),
       durationMs: result.durationMs,
+      exitCode: result.exitCode,
+      wasKilled: result.wasKilled,
     };
     runs.push(run);
     return run;

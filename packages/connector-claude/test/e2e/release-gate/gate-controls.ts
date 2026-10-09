@@ -16,6 +16,7 @@ import {
   SWEEP_TARGETS,
   collisionBookings,
   collisionNoise,
+  crashedHooks,
   isQualifiedAsLarge,
   mentions,
   overlapRows,
@@ -26,7 +27,7 @@ import { gitIn } from "./git.ts";
 import { agentTexts, personLines } from "./host.ts";
 import { startHub } from "./hub.ts";
 import type { TestHub } from "./hub.ts";
-import { bookedLines } from "./observe.ts";
+import { bookingsOf } from "./observe.ts";
 import { N5_SHARED_FILE, runLandedCase, runSelfCase, runSweepCase } from "./scenario-boundaries.ts";
 import type { LandedWorld, SelfWorld, SweepWorld } from "./scenario-boundaries.ts";
 import { GENERATED_CLASSES, runGeneratedCase } from "./scenario-generated.ts";
@@ -70,6 +71,10 @@ export const describeGenerated = (ctx: GateContext): void => {
       expect(targets.some((target) => target.developer === "Mike" && target.value === "apps/streaming/feed.ts")).toBe(true);
       expect(targets.some((target) => target.developer === "Nick" && target.value === "apps/numlabs/sync.ts")).toBe(true);
       expect([...world.get().nickEdits.keys()]).toEqual(GENERATED_CLASSES.map((entry) => entry.path));
+    });
+
+    it("N2.setup.processes", "no hook process crashed or hung (a hook always exits 0)", () => {
+      expect(crashedHooks([world.get().mikeSession, world.get().nickSession])).toEqual([]);
     });
 
     // The lockfile, __generated__/ and linguist-generated classes: fixed by the
@@ -120,6 +125,10 @@ export const describeLanded = (ctx: GateContext): void => {
       await gitIn(world.get().nickWorktree, ["merge-base", "--is-ancestor", world.get().mikeLastCommit, "HEAD"]);
     });
 
+    it("N3.setup.processes", "no hook process crashed or hung (a hook always exits 0)", () => {
+      expect(crashedHooks([world.get().mikeSession, world.get().nickSession])).toEqual([]);
+    });
+
     it("N3", "no collision output, briefing ghost section or statusline overlap reaches Nick", () => {
       expect(collisionNoise([world.get().nickSession], ["Mike"], [world.get().nickStatusline])).toEqual(SILENT);
     });
@@ -149,6 +158,10 @@ export const describeSelf = (ctx: GateContext): void => {
         contextsPerFile.set(target.value, new Set([...(contextsPerFile.get(target.value) ?? []), target.workContextId]));
       }
       expect([...contextsPerFile.values()].filter((contexts) => contexts.size >= 2).length).toBe(6);
+    });
+
+    it("N4.setup.processes", "no hook process crashed or hung (a hook always exits 0)", () => {
+      expect(crashedHooks([world.get().first, world.get().second])).toEqual([]);
     });
 
     it("N4", "Nick is never warned about himself — no collision output, no statusline overlap", () => {
@@ -198,6 +211,10 @@ export const describeSweep = (ctx: GateContext): void => {
       expect(nickGhost.get().some((row) => row.developerName === "Tina")).toBe(true);
     });
 
+    it("N5.setup.processes", "no hook process crashed or hung (a hook always exits 0)", () => {
+      expect(crashedHooks([world.get().tinaSession, world.get().mikeSession, world.get().nickSession])).toEqual([]);
+    });
+
     it("N5.1", "the hub offers the sweep as an overlap on the shared file — it is not ignored", () => {
       const names = sharedAnswer(ctx.hub(), world.get()).map((row) => row["developerName"]);
       expect(names).toContain("Mike");
@@ -207,7 +224,9 @@ export const describeSweep = (ctx: GateContext): void => {
     // fixed by feat/collision-visible. The loaded lane also accepts a line Nick's connector booked that says why.
     it("N5.2", "Nick is shown the overlap with Mike in a line he reads", async () => {
       const told = mentions(nickLines(), "Mike");
-      const booked = ctx.profile.mayBookInsteadOfWarn && collisionBookings(await bookedLines(world.get().nick)).length > 0;
+      const booked =
+        ctx.profile.mayBookInsteadOfWarn &&
+        collisionBookings(await bookingsOf(world.get().nick), world.get().nickSharedEditMoment).length > 0;
       expect(told || booked, JSON.stringify(nickLines())).toBe(true);
     });
 

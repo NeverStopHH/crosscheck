@@ -39,11 +39,11 @@
  *
  * DETERMINISM AND RUNTIME: see the lane's job in .github/workflows/ci.yml.
  */
-import { afterAll, beforeAll, describe } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
 import { warmHub } from "./release-gate/case-kit.ts";
-import { BATCH_2_FINDINGS } from "./release-gate/expected.ts";
+import { BATCH_2_FINDINGS, unregisteredExpectations } from "./release-gate/expected.ts";
 import type { Expectations } from "./release-gate/expected.ts";
 import { describeGenerated, describeLanded, describeSelf, describeSweep } from "./release-gate/gate-controls.ts";
 import { describePilot, describeScaleTwin } from "./release-gate/gate-pilot.ts";
@@ -57,8 +57,8 @@ const FILE = "packages/connector-claude/test/e2e/release-gate-nick-mike.e2e.test
 /** Starting the hub and warming every route a hook calls, unmeasured. */
 const WARM_UP_TIMEOUT_MS = 120_000;
 
-/** The findings this lane shows, each with its track and branch (release-gate/expected.ts). */
-const EXPECTED: Expectations = BATCH_2_FINDINGS;
+/** The findings this lane shows, each with its track and branch (release-gate/expected.ts); this file's own copy. */
+const EXPECTED: Expectations = { ...BATCH_2_FINDINGS };
 
 const held: { hub: TestHub | null } = { hub: null };
 const cleanups: string[] = [];
@@ -94,4 +94,8 @@ describe.skipIf(!inGateLane("production"))("release gate — production budgets,
   describeLanded(ctx);
   describeSelf(ctx);
   describeSweep(ctx);
+
+  test("every expected failure in the table names a test this file registered", () => {
+    expect(unregisteredExpectations(EXPECTED)).toEqual([]);
+  });
 });

@@ -95,7 +95,12 @@ export interface GeneratedWorld {
   readonly cleanup: readonly string[];
 }
 
-/** Nick's hand edit of each generated file: the runs it got, one at a time on the main thread or one subagent each, at once. */
+/**
+ * Nick's hand edit of each generated file: the runs it got — one at a time on
+ * the main thread, or one subagent each, at once, and then the runs include
+ * that subagent's return to the main thread, where a relayed line would reach
+ * the person.
+ */
 const handEdits = async (
   session: HostSession,
   root: string,
@@ -114,11 +119,11 @@ const handEdits = async (
   }
   const edits = await Promise.all(
     GENERATED_CLASSES.map(async (entry) => {
-      const held: { value: readonly [string, readonly HookRun[]] | null } = { value: null };
-      await session.subagent("hand-patch", async (actor) => {
-        held.value = await editAs(entry, actor);
+      const held: { value: readonly HookRun[] } = { value: [] };
+      const returned = await session.subagent("hand-patch", async (actor) => {
+        held.value = (await editAs(entry, actor))[1];
       });
-      return held.value ?? ([entry.path, []] as const);
+      return [entry.path, [...held.value, ...returned]] as const;
     }),
   );
   return new Map(edits);

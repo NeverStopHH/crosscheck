@@ -62,38 +62,71 @@ export const observe = async (hub: TestHub, pair: ObservedPair): Promise<Observe
   mikeWarnedAboutNick: await filesWarnedAbout(hub, pair.mike, pair.repoId, pair.mikeFiles, "Nick"),
 });
 
-const kindOf = (line: string): string => {
+/** A stretch of a case on the real clock (the connector's): when one moment the assertions judge began and ended. */
+export interface Moment {
+  readonly from: number;
+  readonly to: number;
+}
+
+/** Runs `body` and returns its result with the moment it took. */
+export const timed = async <T>(body: () => Promise<T>): Promise<{ readonly value: T; readonly moment: Moment }> => {
+  const from = Date.now();
+  const value = await body();
+  return { value, moment: { from, to: Date.now() } };
+};
+
+/** One line a connector booked: the ledger file (home-relative), its kind or reason, its detail, and when. */
+export interface Booking {
+  readonly file: string;
+  readonly kind: string;
+  /** The writer's own enum word (a hook name for a loss), or null. */
+  readonly detail: string | null;
+  /** Epoch ms of the booking's `at`, or null when the line carries none. */
+  readonly at: number | null;
+}
+
+const bookingOf = (file: string, line: string): Booking => {
   try {
     const parsed = JSON.parse(line) as Readonly<Record<string, unknown>>;
-    return String(parsed["kind"] ?? parsed["reason"] ?? parsed["type"] ?? "?");
+    const at = typeof parsed["at"] === "string" ? Date.parse(parsed["at"]) : Number.NaN;
+    return {
+      file,
+      kind: String(parsed["kind"] ?? parsed["reason"] ?? parsed["type"] ?? "?"),
+      detail: typeof parsed["detail"] === "string" ? parsed["detail"] : null,
+      at: Number.isNaN(at) ? null : at,
+    };
   } catch {
-    return line.slice(0, 80);
+    return { file, kind: line.slice(0, 80), detail: null, at: null };
   }
 };
 
 /**
  * EVERY LINE A CONNECTOR BOOKED in its home's ledgers — the loss ledger, every
- * omission ledger, the spool's drop records — as `<file>: <kind or reason>`.
- * Read generically, by file, so a ledger a fixing branch adds is read too.
+ * omission ledger, the spool's drop records. Read generically, by file, so a
+ * ledger a fixing branch adds is read too.
  */
-export const bookedLines = async (developer: GateDeveloper): Promise<readonly string[]> => {
+export const bookingsOf = async (developer: GateDeveloper): Promise<readonly Booking[]> => {
   const entries = await readdir(developer.home, { recursive: true, withFileTypes: true }).catch(() => []);
   const spool = `${join(developer.home, "spool")}/`;
   const ledgers = entries
     .filter((entry) => entry.isFile() && (entry.name.endsWith(".jsonl") || entry.name.endsWith(".drops")))
     .map((entry) => join(entry.parentPath, entry.name))
     .filter((path) => !path.startsWith(spool) || path.endsWith(".drops"));
-  const lines = await Promise.all(
+  const bookings = await Promise.all(
     ledgers.map(async (path) =>
       (await readFile(path, "utf8").catch(() => ""))
         .split("\n")
         .filter((line) => line.trim().length > 0)
-        .map((line) => `${path.slice(developer.home.length + 1)}: ${kindOf(line)}`),
+        .map((line) => bookingOf(path.slice(developer.home.length + 1), line)),
     ),
   );
-  return lines.flat();
+  return bookings.flat();
 };
+
+/** The bookings as `<file>: <kind>[/<detail>]`, for a log line. */
+export const bookedLines = async (developer: GateDeveloper): Promise<readonly string[]> =>
+  (await bookingsOf(developer)).map((booking) => `${booking.file}: ${booking.kind}${booking.detail === null ? "" : `/${booking.detail}`}`);
 
 /** How many hooks `developer`'s connector booked as cut or skipped (`hook_timed_out`). */
 export const hooksCut = async (developer: GateDeveloper): Promise<number> =>
-  (await bookedLines(developer)).filter((line) => line.endsWith(": hook_timed_out")).length;
+  (await bookingsOf(developer)).filter((booking) => booking.kind === "hook_timed_out").length;

@@ -8,12 +8,13 @@
  *
  * THE STANDARD (release-gate/profile.ts LOADED): a starved machine may cut a
  * fail-open hook — but never silently. Wherever a PERSON must be told of a
- * collision, the line must reach them OR the connector must have booked a
- * line that says why (release-gate/gate-checks.ts `collisionBookings`: a
- * landed-check cut or a briefing omission does not say why an edit's
- * collision went untold). Everything else — the hub's rows, the coverage,
- * the `.env` denylist — and every negative control is held exactly as in the
- * production lane: silence is silence under load too.
+ * collision, the line must reach them OR the connector must have booked,
+ * inside that very moment, a line naming the untold warning itself — a cut
+ * or unanswered tripwire (release-gate/gate-checks.ts `collisionBookings`;
+ * a rest left unchecked, a capture timeout, a landed-check cut or a briefing
+ * omission says something else). Everything else — the hub's rows, the
+ * coverage, the `.env` denylist — and every negative control is held exactly
+ * as in the production lane: silence is silence under load too.
  *
  * THE LANE: the nightly / release-candidate workflow
  * (.github/workflows/simulation-nightly.yml, job `release-gate-loaded`),
@@ -21,13 +22,13 @@
  * it measures. Locally: CX_GATE_LANE=loaded bun test <this file>
  * (CX_GATE_BURNERS=<n> to choose the burners; one per core by default).
  */
-import { afterAll, beforeAll, describe } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
 import { burnerCount, startBurners } from "./release-gate/burners.ts";
 import type { Burners } from "./release-gate/burners.ts";
 import { warmHub } from "./release-gate/case-kit.ts";
-import { BATCH_2_FINDINGS } from "./release-gate/expected.ts";
+import { BATCH_2_FINDINGS, unregisteredExpectations } from "./release-gate/expected.ts";
 import type { Expectations } from "./release-gate/expected.ts";
 import { describeGenerated, describeLanded, describeSelf, describeSweep } from "./release-gate/gate-controls.ts";
 import { describePilot, describeScaleTwin } from "./release-gate/gate-pilot.ts";
@@ -42,8 +43,8 @@ const WARM_UP_TIMEOUT_MS = 120_000;
 /** No burner outlives this, even if the file's own `afterAll` never runs. */
 const BURNERS_MAX_MS = 45 * 60_000;
 
-/** The same findings as the production lane (release-gate/expected.ts), held to the loaded standard. */
-const EXPECTED: Expectations = BATCH_2_FINDINGS;
+/** The same findings as the production lane (release-gate/expected.ts), held to the loaded standard; this file's own copy. */
+const EXPECTED: Expectations = { ...BATCH_2_FINDINGS };
 
 const held: { hub: TestHub | null; burners: Burners | null } = { hub: null, burners: null };
 const cleanups: string[] = [];
@@ -83,4 +84,8 @@ describe.skipIf(!inGateLane("loaded"))("release gate under load — production b
   describeLanded(ctx);
   describeSelf(ctx);
   describeSweep(ctx);
+
+  test("every expected failure in the table names a test this file registered", () => {
+    expect(unregisteredExpectations(EXPECTED)).toEqual([]);
+  });
 });

@@ -57,6 +57,9 @@ export const BATCH_2_FINDINGS: Expectations = {
   R1: H2_PERSON_RECORD_LAST,
 };
 
+/** Per table, the test ids registered against it — so a marker left on a renamed or removed test is caught. */
+const registered = new WeakMap<Expectations, Set<string>>();
+
 /** `test`, or `test.failing` when `expected` names `id`. */
 export const gateTest = (
   expected: Expectations,
@@ -64,6 +67,11 @@ export const gateTest = (
   name: string,
   body: () => void | Promise<void>,
 ): void => {
+  registered.set(expected, new Set([...(registered.get(expected) ?? []), id]));
   const register = expected[id] === undefined ? test : test.failing;
   register(`${id}: ${name}`, body);
 };
+
+/** The ids `expected` names that no test registered against it. */
+export const unregisteredExpectations = (expected: Expectations): readonly string[] =>
+  Object.keys(expected).filter((id) => registered.get(expected)?.has(id) !== true);

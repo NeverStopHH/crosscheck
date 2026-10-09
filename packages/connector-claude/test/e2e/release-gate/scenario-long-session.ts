@@ -60,8 +60,8 @@ import type { Person } from "./git.ts";
 import { MAIN_THREAD, openSession } from "./host.ts";
 import type { HookRun, HostSession } from "./host.ts";
 import type { TestHub } from "./hub.ts";
-import { observe } from "./observe.ts";
-import type { Observed } from "./observe.ts";
+import { observe, timed } from "./observe.ts";
+import type { Moment, Observed } from "./observe.ts";
 import { GENEROUS } from "./profile.ts";
 import type { GateProfile } from "./profile.ts";
 import { editAll, edited, nickWorksInParallel, nickWorksSequentially, sourceOf } from "./scenario-nick-work.ts";
@@ -219,6 +219,10 @@ export interface LongSessionWorld {
     /** Mike's edits after Nick's session ended and resumed, and his statusline then; null when the profile has no lives. */
     readonly mikeAfterResume: readonly HookRun[] | null;
     readonly mikeStatuslineAfterResume: string | null;
+    /** When each judged stretch began and ended (a booking speaks for a moment only from inside it). */
+    readonly nickWork: Moment;
+    readonly mikeNextMoment: Moment;
+    readonly mikeAfterResumeMoment: Moment | null;
   };
   /** What the hub showed at Mike's morning check. */
   readonly seen: Observed;
@@ -441,21 +445,27 @@ export const runLongSessionCase = async (
 
   // The next morning (06.10): Mike resumes, prompts, edits two shared files —
   // one Nick's subagent edited, one Nick changed only through Bash.
-  mikeSession.label("mike-next");
-  await mikeSession.start("resume");
-  await mikeSession.prompt("next: the mapping schema for the beta feed");
-  const next = await mikeEdits(mikeSession, at.mikeWorktree, plan, MIKE_NEXT_FILES, "mike-next");
-  await mikeSession.settle();
+  const { value: next, moment: mikeNextMoment } = await timed(async () => {
+    mikeSession.label("mike-next");
+    await mikeSession.start("resume");
+    await mikeSession.prompt("next: the mapping schema for the beta feed");
+    const edits = await mikeEdits(mikeSession, at.mikeWorktree, plan, MIKE_NEXT_FILES, "mike-next");
+    await mikeSession.settle();
+    return edits;
+  });
   const seen = await observe(hub, pair);
 
   const afterResume = profile.hasCompactAndResume
     ? await (async () => {
         await nickLivesOn(nickSession, at.nickTopic, files);
-        mikeSession.label("mike-after-resume");
-        await mikeSession.prompt("and the mapping toolbar and its config");
-        const later = await mikeEdits(mikeSession, at.mikeWorktree, plan, MIKE_AFTER_RESUME_FILES, "mike-after-resume");
-        await mikeSession.settle();
-        return { ...later, seen: await observe(hub, pair) };
+        const { value: later, moment } = await timed(async () => {
+          mikeSession.label("mike-after-resume");
+          await mikeSession.prompt("and the mapping toolbar and its config");
+          const edits = await mikeEdits(mikeSession, at.mikeWorktree, plan, MIKE_AFTER_RESUME_FILES, "mike-after-resume");
+          await mikeSession.settle();
+          return edits;
+        });
+        return { ...later, moment, seen: await observe(hub, pair) };
       })()
     : null;
 
@@ -476,6 +486,8 @@ export const runLongSessionCase = async (
       mikeStatusline: next.statusline,
       mikeAfterResume: afterResume?.runs ?? null,
       mikeStatuslineAfterResume: afterResume?.statusline ?? null,
+      mikeNextMoment,
+      mikeAfterResumeMoment: afterResume?.moment ?? null,
     },
     seen,
     seenAfterResume: afterResume?.seen ?? null,
