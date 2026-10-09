@@ -56,6 +56,11 @@ export interface HintHub {
   /** A status the tripwire fails with (an error envelope), or null to answer again. */
   readonly setTripwireFailure: (status: number | null) => void;
   /**
+   * The tripwire's nameless rows (a teammate who opted out of presence, live
+   * on the file); undefined (the default) answers like a hub too old to send them.
+   */
+  readonly setTripwireAnonymous: (rows: readonly unknown[] | undefined) => void;
+  /**
    * The rows GET /api/presence answers with; null (the default) answers with a
    * body the client cannot read, which is what this hub always did.
    */
@@ -318,6 +323,7 @@ export const startHintHub = (
   let tripwireSessions: readonly unknown[] = [];
   const tripwireByFile = new Map<string, readonly unknown[]>();
   let tripwireFailure: number | null = null;
+  let tripwireAnonymous: readonly unknown[] | undefined;
   let solvedMatches: readonly unknown[] = [];
   let lastSolvedFingerprint: string | null = null;
   let lastCandidatesQuery: URLSearchParams | null = null;
@@ -365,7 +371,11 @@ export const startHintHub = (
         const sessions = tripwireByFile.get(searchParams.get("value") ?? "") ?? tripwireSessions;
         return Response.json({
           ok: true,
-          data: { sessions, ...(recordsOutcomes === undefined ? {} : { recordsOutcomes }) },
+          data: {
+            sessions,
+            ...(tripwireAnonymous === undefined ? {} : { anonymous: tripwireAnonymous }),
+            ...(recordsOutcomes === undefined ? {} : { recordsOutcomes }),
+          },
         });
       }
       if (pathname === "/api/records") {
@@ -430,6 +440,9 @@ export const startHintHub = (
     },
     setTripwireFailure: (status) => {
       tripwireFailure = status;
+    },
+    setTripwireAnonymous: (rows) => {
+      tripwireAnonymous = rows;
     },
     setPresence: (next) => {
       presence = next;

@@ -306,11 +306,63 @@ export const tripwireCollision = (
     fileCount: 1,
     branch: visibleBranch(session.branch),
     lastActiveAt: session.lastHeartbeatAt,
-    ...(coverage !== undefined && hasIncompleteRung(coverage) ? { partial: true } : {}),
+    ...partialField(coverage),
     ...(hasLanded(session.landedAt) ? { landed: true } : {}),
     ...largeChangeField(session.largeChangeFiles),
   };
 };
+
+/**
+ * The developer id no developer has: every group a hidden teammate makes is
+ * THIS one teammate, whoever and however many they are (the owner's decision
+ * on the batch-2 integration review's I1), so no count singles anybody out.
+ */
+export const ANONYMOUS_TEAMMATE_ID = "~anonymous";
+
+/** The one group key for them all: told once, its files counted together. */
+const ANONYMOUS_KEY = collisionKey(ANONYMOUS_TEAMMATE_ID, "");
+
+/**
+ * A tripwire's nameless row (server services/hints.ts
+ * listAnonymousTargetPresence): a teammate who opted out of presence is live
+ * on this file. The group holds the reader's own file and nothing of theirs —
+ * no name, no branch, no age — and the record keeps it nameless for good.
+ */
+export const anonymousTripwireCollision = (file: string, coverage?: CoverageRecord): CollisionNotice => {
+  const path = storedPath(file);
+  return {
+    key: ANONYMOUS_KEY,
+    developerId: ANONYMOUS_TEAMMATE_ID,
+    name: "",
+    files: path.length === 0 ? [] : [path],
+    fileCount: 1,
+    branch: null,
+    lastActiveAt: null,
+    anonymous: true,
+    ...partialField(coverage),
+  };
+};
+
+/**
+ * A ghost check's nameless count (server services/ghost-overlap.ts
+ * countAnonymousOverlap): how many of the reader's own files a hidden
+ * teammate's unfinished work touches, time-free. No file is named: the hub
+ * sends the count alone.
+ */
+export const anonymousGhostCollision = (sharedFileCount: number): CollisionNotice => ({
+  key: ANONYMOUS_KEY,
+  developerId: ANONYMOUS_TEAMMATE_ID,
+  name: "",
+  files: [],
+  fileCount: sharedFileCount,
+  branch: null,
+  lastActiveAt: null,
+  anonymous: true,
+});
+
+/** A record behind the line with a rung that was not complete: the line says so (PARTIAL_RECORD_CLAUSE). */
+const partialField = (coverage: CoverageRecord | undefined): { readonly partial?: true } =>
+  coverage !== undefined && hasIncompleteRung(coverage) ? { partial: true } : {};
 
 /** The size a LARGE change's row carried, kept for the line (release gate, gap 6); nothing for a focused one. */
 const largeChangeField = (files: number | null | undefined): { readonly largeChangeFiles?: number } => {
@@ -382,18 +434,43 @@ const basename = (path: string): string => path.split("/").filter((part) => part
  * between the relay and the line.
  */
 export type RenderableCollision = CollisionNotice & {
-  readonly anonymous?: true;
   readonly unconfirmed?: true;
 };
 
-/** The group with everything that says WHO and WHERE dropped; the file stays. */
+/**
+ * The group with everything that says WHO and WHERE dropped; the file stays.
+ * Shown LATER, so in the past tense: nothing at render time says the
+ * teammate is still on it.
+ */
 export const anonymousCollision = (group: CollisionNotice): RenderableCollision => ({
   ...group,
   name: "",
   branch: null,
   lastActiveAt: null,
   anonymous: true,
+  unconfirmed: true,
 });
+
+/**
+ * A nameless group's ONE line (the owner's decision on the batch-2
+ * integration review's I1): the tripwire's live row as it is told —
+ * `crosscheck: A teammate is working on refresh.ts right now — talk to your
+ * team before you change it` — the same group told later in the past tense,
+ * or a ghost check's count, which names no file:
+ * `crosscheck: A teammate's work in progress also touches 3 of your files — …`.
+ */
+const anonymousLine = (group: RenderableCollision, what: string, pronoun: string, partial: string): string => {
+  if (group.files.length === 0) {
+    const count = Math.max(1, group.fileCount);
+    return (
+      `crosscheck: ${UNKNOWN_TEAMMATE}'s work in progress also touches ${String(count)} of your files — ` +
+      `talk to your team before you change ${count === 1 ? "it" : "them"}${partial}`
+    );
+  }
+  return group.unconfirmed === true
+    ? `crosscheck: ${UNKNOWN_TEAMMATE} recently worked on ${what} — talk to your team before you change ${pronoun}${partial}`
+    : `crosscheck: ${UNKNOWN_TEAMMATE} is working on ${what} right now — talk to your team before you change ${pronoun}${partial}`;
+};
 
 /**
  * The group with everything that says WHERE dropped and the name kept (round
@@ -425,7 +502,7 @@ export const renderCollisionNotice = (group: RenderableCollision, now: Date): st
   const pronoun = isGroup ? "them" : "it";
   const partial = group.partial === true ? PARTIAL_RECORD_CLAUSE : "";
   if (group.anonymous === true) {
-    return `crosscheck: ${UNKNOWN_TEAMMATE} recently worked on ${what} — talk to your team before you change ${pronoun}${partial}`;
+    return anonymousLine(group, what, pronoun, partial);
   }
   const name = displayName(group.name);
   const branch = group.branch === null ? null : visibleBranch(group.branch);
@@ -459,7 +536,9 @@ export const stillPresent = (
   groups: readonly CollisionNotice[],
   presence: readonly { readonly developerId: string; readonly isSelf: boolean }[],
 ): readonly CollisionNotice[] =>
-  groups.filter((group) => presence.some((entry) => !entry.isSelf && entry.developerId === group.developerId));
+  groups.filter(
+    (group) => group.anonymous !== true && presence.some((entry) => !entry.isSelf && entry.developerId === group.developerId),
+  );
 
 /**
  * A group older than the presence TTL keeps its name and its files and loses
@@ -540,6 +619,11 @@ export const relayedCollisions = (
   now: Date,
 ): readonly RenderableCollision[] =>
   groups.map((group) => {
+    // A teammate the hub never named stays unnamed: no presence answer can
+    // upgrade them, since presence has no row of theirs to confirm.
+    if (group.anonymous === true) {
+      return anonymousCollision(group);
+    }
     if (presence === null) {
       return unconfirmedCollision(group);
     }
@@ -628,14 +712,18 @@ interface OverlapPerson {
   readonly fileCount: number;
 }
 
+/** Whose group it is, as the indicator folds them: every nameless group is the one anonymous teammate. */
+const personIdOf = (group: CollisionNotice): string =>
+  group.anonymous === true ? ANONYMOUS_TEAMMATE_ID : group.developerId;
+
 /** One person per developer: their groups folded, files counted once. */
 const byPerson = (groups: readonly CollisionNotice[]): readonly OverlapPerson[] =>
   groups.reduce<readonly OverlapPerson[]>((people, group) => {
-    const known = people.find((person) => person.developerId === group.developerId);
+    const known = people.find((person) => person.developerId === personIdOf(group));
     if (known === undefined) {
       return [
         ...people,
-        { developerId: group.developerId, name: group.name, files: new Set(group.files), fileCount: group.fileCount },
+        { developerId: personIdOf(group), name: group.name, files: new Set(group.files), fileCount: group.fileCount },
       ];
     }
     const files = new Set([...known.files, ...group.files]);

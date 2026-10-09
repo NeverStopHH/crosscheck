@@ -36,6 +36,8 @@ import {
 } from "./hints/render.ts";
 import {
   anonymousCollision,
+  anonymousGhostCollision,
+  anonymousTripwireCollision,
   ghostCollisions,
   renderCollisionNotices,
   renderOverlapIndicator,
@@ -1152,6 +1154,19 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
         ],
         NOW,
       ),
+  },
+  {
+    // The NAMELESS lines (the owner's decision on the batch-2 integration
+    // review's I1): a teammate who opted out of presence, live on the reader's
+    // planted file, and the ghost check's count of the reader's files. Only
+    // the reader's own file reaches them, held to the same BARE invariants.
+    kind: "corpus",
+    name: "collision-notice-anonymous",
+    delivery: "unsolicited",
+    module: "src/hints/collision-notice.ts",
+    framing: "bare",
+    render: (payload) =>
+      renderCollisionNotices([anonymousTripwireCollision(payload, CORPUS_COVERAGE), anonymousGhostCollision(3)], NOW),
   },
   {
     // What the MAIN thread is handed for a group its subagent ran into: the

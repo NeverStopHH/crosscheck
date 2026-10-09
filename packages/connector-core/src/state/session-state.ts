@@ -177,6 +177,12 @@ export const CollisionNoticeSchema = z.object({
   landed: z.boolean().optional(),
   /** The files their LARGE change touched, when the row said so — a qualifier the line prints (release gate, gap 6). */
   largeChangeFiles: z.number().int().min(0).optional(),
+  /**
+   * A teammate the hub would not name — one who opted out of presence — and
+   * never will be: no name, no branch, no age, on this record or any surface
+   * that reads it (hints/collision-notice.ts anonymousTripwireCollision).
+   */
+  anonymous: z.boolean().optional(),
 });
 
 export type CollisionNotice = z.infer<typeof CollisionNoticeSchema>;

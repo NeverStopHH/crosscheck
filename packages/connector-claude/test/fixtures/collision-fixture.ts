@@ -161,8 +161,11 @@ export const mikeGhostRow = (sharedTargets: readonly unknown[], sharedTargetCoun
   intentTokenHits: 0,
 });
 
-/** A hub that answers SessionStart's fetch block with the given ghost rows. */
-const startGhostHub = (ghostChecks: readonly unknown[]): { readonly url: string; readonly stop: () => void } => {
+/** A hub that answers SessionStart's fetch block with the given ghost rows, and a nameless count when given one. */
+const startGhostHub = (
+  ghostChecks: readonly unknown[],
+  anonymousOverlap?: unknown,
+): { readonly url: string; readonly stop: () => void } => {
   const server = Bun.serve({
     // Bound to the loopback the URL below names, never the wildcard: no other
     // process can then answer this hub's port.
@@ -171,7 +174,7 @@ const startGhostHub = (ghostChecks: readonly unknown[]): { readonly url: string;
     fetch: (request) => {
       const { pathname } = new URL(request.url);
       if (pathname === "/api/ghost-checks") {
-        return Response.json({ ok: true, data: { ghostChecks } });
+        return Response.json({ ok: true, data: { ghostChecks, ...(anonymousOverlap === undefined ? {} : { anonymousOverlap }) } });
       }
       if (pathname === "/api/records") {
         return Response.json({ ok: true, data: { accepted: 1, duplicates: 0, ignored: 0, rejected: 0 } });
@@ -192,8 +195,9 @@ const startGhostHub = (ghostChecks: readonly unknown[]): { readonly url: string;
 export const ghostFixture = async (
   label: string,
   ghostChecks: readonly unknown[],
+  anonymousOverlap?: unknown,
 ): Promise<{ readonly repo: string; readonly home: string; readonly env: Env }> => {
-  const hub = startGhostHub(ghostChecks);
+  const hub = startGhostHub(ghostChecks, anonymousOverlap);
   const repo = await makeRepo(label, { remote: "git@github.com:acme/api.git" });
   const home = await makeHome(label);
   trackForCleanup(repo, hub.stop);
@@ -213,8 +217,9 @@ export const ghostFixture = async (
 export const deferredGhostFixture = async (
   label: string,
   ghostChecks: readonly unknown[],
+  anonymousOverlap?: unknown,
 ): Promise<{ readonly repo: string; readonly home: string; readonly env: Env }> => {
-  const fix = await ghostFixture(label, ghostChecks);
+  const fix = await ghostFixture(label, ghostChecks, anonymousOverlap);
   await writeSessionState(fix.home, {
     ...deriveSessionState({
       hostSessionKey: SESSION_ID,

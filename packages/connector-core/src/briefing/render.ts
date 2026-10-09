@@ -54,7 +54,7 @@ import type { TeammateTopics, Topic, TopicRow } from "./topic-group.ts";
 import { backlogOf, backlogSize, oldestAgeMs } from "./draft-backlog.ts";
 import { formatAge } from "./age.ts";
 import { fitEntries } from "./fit.ts";
-import { formatGhostLine, GHOST_SECTION_HEADER } from "./ghost.ts";
+import { formatAnonymousGhostLine, formatGhostLine, GHOST_SECTION_HEADER } from "./ghost.ts";
 import { formatIntentLabel, intentFragment, renderIntent } from "./intent.ts";
 import { fitQuestionEntries, formatQuestionEntry } from "./questions.ts";
 import {
@@ -158,6 +158,12 @@ export interface BriefingInput {
   readonly landedNotices?: readonly LandedNotice[] | undefined;
   /** Teammates whose live plan overlaps the reader's; empty renders none. */
   readonly ghostChecks?: readonly GhostCheckEntry[] | undefined;
+  /**
+   * How many of the reader's files a teammate who opted out of presence has
+   * in unfinished work — one nameless line in the same block; null or absent
+   * renders none.
+   */
+  readonly anonymousGhost?: { readonly sharedFileCount: number } | null | undefined;
   /**
    * The coverage qualifier (03 §5.3), ALREADY RENDERED by coverage/render.ts
    * and passed in rather than computed here — one direction only, because a
@@ -419,10 +425,16 @@ const renderLandedNoticeSection = (input: BriefingInput): Section => {
  * loses the `get_diagnosis` id that is its entire next action.
  */
 const renderGhostSection = (input: BriefingInput): Section => {
-  const rendered = (input.ghostChecks ?? []).flatMap((entry) => {
-    const line = formatGhostLine(entry, input.now);
-    return line === null ? [] : [line];
-  });
+  // The nameless line ranks after every named row, like the tripwire's.
+  const rendered = [
+    ...(input.ghostChecks ?? []).flatMap((entry) => {
+      const line = formatGhostLine(entry, input.now);
+      return line === null ? [] : [line];
+    }),
+    ...(input.anonymousGhost === null || input.anonymousGhost === undefined
+      ? []
+      : [formatAnonymousGhostLine(input.anonymousGhost.sharedFileCount)]),
+  ];
   return {
     header: GHOST_SECTION_HEADER,
     lines: fitEntries(

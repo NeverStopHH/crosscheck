@@ -514,6 +514,6 @@ export const handleSessionStart = async (
   // output carries it (session-start-output.ts): the batch's briefing — its
   // omission, presence-notice and coverage lines inside — and the person's
   // collision notice beside it.
-  const told = await tellPersonOfGhosts(ctx, assembled.shownGhosts);
+  const told = await tellPersonOfGhosts(ctx, assembled.shownGhosts, assembled.shownAnonymousGhost);
   return sessionStartContext(briefing, renderCollisionNotices(told, ctx.now()));
 };

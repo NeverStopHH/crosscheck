@@ -600,6 +600,12 @@ export const renderSolvedHint = (
   return line === null ? "" : fitHint([SOLVED_HINT_HEADER, line]);
 };
 
+/** What the hub could not watch on the file, under a live answer's lines; nothing when it watched it all. */
+const coverageNoteLines = (coverage: CoverageRecord, now: Date): readonly string[] => {
+  const note = coverageNote(coverage, now);
+  return note === null ? [] : [note];
+};
+
 /** A live teammate session on the file: three factual lines, no imperative. */
 const liveTripwireLines = (
   session: TripwireSession,
@@ -618,14 +624,18 @@ const liveTripwireLines = (
     `whose work context targeted ${bare(repoRelativeFile, MAX_WORK_CONTEXT_TITLE_CHARS)}` +
     `${size === null ? "" : `, ${largeChangeClause(size)}`}.`;
   const contextLine = `Their work context ${quoted(session.workContextTitle, MAX_WORK_CONTEXT_TITLE_CHARS)} is readable with get_diagnosis ${safeId(session.workContextId)}.`;
-  const note = coverageNote(coverage, now);
-  return [
-    overlapLine,
-    contextLine,
-    ...intentLines(session.workContextIntent),
-    ...(note === null ? [] : [note]),
-  ];
+  return [overlapLine, contextLine, ...intentLines(session.workContextIntent), ...coverageNoteLines(coverage, now)];
 };
+
+/**
+ * The live half for a teammate the hub would not name: the person's own
+ * sentence, and nothing to pull — no name, branch, status, heartbeat, title,
+ * intent or work-context id ever reached this connector to print.
+ */
+const anonymousTripwireLines = (repoRelativeFile: string, now: Date, coverage: CoverageRecord): readonly string[] => [
+  `crosscheck: A teammate is working on ${bare(repoRelativeFile, MAX_WORK_CONTEXT_TITLE_CHARS)} right now — talk to your team before you change it.`,
+  ...coverageNoteLines(coverage, now),
+];
 
 const branchList = (branches: readonly string[]): string =>
   branches.map((branch) => bare(branch)).join(" and ");
@@ -781,6 +791,13 @@ const toldLines = (told: readonly string[]): readonly string[] => {
 export interface EditWarningInput {
   /** An active teammate session that targeted the file, if any. */
   readonly live: TripwireSession | null;
+  /**
+   * A teammate the hub would not name — one who opted out of presence — is
+   * live on the file (the owner's decision on the batch-2 integration
+   * review's I1). Said only when no named teammate is: the named row ranks
+   * first, and the next edit of the file asks about the rest.
+   */
+  readonly anonymous?: boolean;
   /** Landed changes to the file, or null when unknown. */
   readonly landed: LandedChanges | null;
   readonly file: string;
@@ -809,10 +826,13 @@ export interface EditWarningInput {
  * there is nothing to say.
  */
 export const renderEditWarning = (input: EditWarningInput): string => {
+  const coverage = input.coverage ?? UNKNOWN_COVERAGE;
   const live =
-    input.live === null
-      ? []
-      : liveTripwireLines(input.live, input.file, input.now, input.coverage ?? UNKNOWN_COVERAGE);
+    input.live !== null
+      ? liveTripwireLines(input.live, input.file, input.now, coverage)
+      : input.anonymous === true
+        ? anonymousTripwireLines(input.file, input.now, coverage)
+        : [];
   const landed =
     input.landed === null
       ? []
