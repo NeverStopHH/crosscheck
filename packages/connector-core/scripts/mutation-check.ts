@@ -20207,14 +20207,10 @@ export const MUTATIONS: readonly Mutation[
   // ── 07 §13.10, review #11: a repeat reports what stands ──────────────────
   // ("the word the person's noise label superseded, said again, overturns the label" is retired with
   // 07 §13.12's agent channel: a confirmed word is always the person's, J8 — human provenance review M1.)
-  {
-    label: "a word that ties with the noise label is reported as standing",
-    file: `${SERVER}/src/services/hint-outcomes.ts`,
-    from: "      stands: after ?? input.outcome,\n    };",
-    to: "      stands: input.outcome,\n    };",
-    test: `${SERVER}/test/hint-outcomes.test.ts`,
-    because: "the label wins a tie (D-O7), so 'recorded' would claim a word took that every figure overrules",
-  },
+  // ("a word that ties with the noise label is reported as standing" is retired as equivalent: a
+  // confirmed word is stamped strictly after every word on its pointer, the label included, so it can
+  // never tie with the label — that stamping is anchored as "an outcome said in the label's own
+  // millisecond ties with it".)
   {
     label: "crosscheck followed says the word took when the noise label still stands",
     file: `${CLI}/src/cli/outcome-render.ts`,
