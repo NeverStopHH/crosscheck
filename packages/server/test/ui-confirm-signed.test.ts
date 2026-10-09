@@ -43,7 +43,7 @@ const everyKindWaiting = async (world: OutcomeWorld): Promise<void> => {
     { db: world.harness.db, now: world.harness.clock.now },
     world.nick.developerId,
     existing,
-    await seedHumanStamp(world.harness.db, world.nick.developerId),
+    await seedHumanStamp(world.harness.db, world.nick.developerId, "pin"),
   );
   const answers = [
     await post(world, "POST", "/api/pilot-marks", {

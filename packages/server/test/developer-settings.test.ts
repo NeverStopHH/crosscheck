@@ -219,7 +219,7 @@ describe("POST /api/settings/mutes", () => {
       { db: harness.db, now: harness.clock.now },
       nick.developerId,
       "Sam",
-      await seedHumanStamp(harness.db, nick.developerId),
+      await seedHumanStamp(harness.db, nick.developerId, "mute"),
     );
 
     // Assert

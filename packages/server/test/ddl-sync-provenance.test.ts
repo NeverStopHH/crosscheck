@@ -10,6 +10,7 @@ import { describe, expect, test } from "bun:test";
 import { sql } from "drizzle-orm";
 import { getTableConfig } from "drizzle-orm/pg-core";
 import type { PgTable } from "drizzle-orm/pg-core";
+import type { DraftKind } from "@crosscheck/schema";
 
 import {
   developerMutes,
@@ -24,6 +25,7 @@ import {
 } from "../src/db/schema.ts";
 import { BOOTSTRAP_SQL_URL } from "./fixtures/bootstrap-sql.ts";
 import { seedHumanStamp } from "./fixtures/human-confirmation.ts";
+import { createOutcomeWorld } from "./fixtures/hint-outcome-world.ts";
 import { createTestDeveloper, createTestHarness } from "./helpers.ts";
 import type { TestHarness } from "./helpers.ts";
 
@@ -117,7 +119,7 @@ describe("human provenance DDL sync", () => {
     // Arrange — a legacy label, and an honest confirmation of something else
     const harness = await createTestHarness();
     const nick = await createTestDeveloper(harness, "Nick", "nick-ddl-item@example.com");
-    const stamp = await seedHumanStamp(harness.db, nick.developerId);
+    const stamp = await seedHumanStamp(harness.db, nick.developerId, "label");
     await harness.db.execute(sql`INSERT INTO pilot_marks (id, repo, ref_kind, ref_id, mark, marked_by, capture_mode, created_at, provenance, confirmation_id)
       VALUES ('pm_old', 'github.com/acme/api', 'hint_delivery', 'hd_old', 'helpful', ${nick.developerId}, 'human', ${AT.toISOString()}::timestamptz, 'unknown_legacy', NULL)`);
 
@@ -132,6 +134,71 @@ describe("human provenance DDL sync", () => {
         ),
       ),
     ).rejects.toThrow();
+  });
+
+  test("round-2 M5: a row is admitted only under a CONFIRMED item of its own kind — the A-P9 label under an outcome item is refused", async () => {
+    // Arrange — a legacy label; confirmed items of the wrong kind, a discarded one of the right kind, and the right one
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick-ddl-kind@example.com");
+    const underOutcome = await seedHumanStamp(harness.db, nick.developerId, "outcome");
+    const underPin = await seedHumanStamp(harness.db, nick.developerId, "pin_ok");
+    const discarded = await seedHumanStamp(harness.db, nick.developerId, "label", "discard");
+    const underLabel = await seedHumanStamp(harness.db, nick.developerId, "label");
+    await harness.db.execute(sql`INSERT INTO pilot_marks (id, repo, ref_kind, ref_id, mark, marked_by, capture_mode, created_at, provenance, confirmation_id)
+      VALUES ('pm_old', 'github.com/acme/api', 'hint_delivery', 'hd_old', 'helpful', ${nick.developerId}, 'human', ${AT.toISOString()}::timestamptz, 'unknown_legacy', NULL)`);
+    const upgrade = (stamp: { readonly confirmationId: string | null; readonly confirmationPosition: number | null }) =>
+      attempt(
+        harness.db.execute(sql`UPDATE pilot_marks SET provenance = 'human_passkey_confirmed', confirmation_id = ${stamp.confirmationId},
+          confirmation_position = ${stamp.confirmationPosition} WHERE id = 'pm_old'`),
+      );
+
+    // Act & Assert — an outcome's item and a discarded label refused; a pin's ok and a label (both write pilot_marks) admitted
+    await expect(upgrade(underOutcome)).rejects.toThrow();
+    await expect(upgrade(discarded)).rejects.toThrow();
+    await upgrade(underPin);
+    await upgrade(underLabel);
+    const rows = await harness.db.execute(sql`SELECT confirmation_id FROM pilot_marks WHERE id = 'pm_old'`);
+    expect(rows.rows).toEqual([{ confirmation_id: underLabel.confirmationId }]);
+  });
+
+  test("round-2 M5: each counting table, and a pin's break, takes only its own kinds", async () => {
+    // Arrange — a pin confirmed under a pin item, a delivery to Nick, and one item of every kind
+    const { harness, nick, ken, delivered } = await createOutcomeWorld();
+    const item = async (kind: DraftKind) => seedHumanStamp(harness.db, nick.developerId, kind);
+    const pin = await item("pin");
+    await harness.db.execute(sql`INSERT INTO pins (id, repo, surface, verified_by, verified_at_commit, verified_at, check_recipe, capture_mode, created_at, provenance, confirmation_id, confirmation_position)
+      VALUES ('pin_kinds', 'github.com/acme/api', 'the refresh path', ${nick.developerId}, 'a1b2c3d', ${AT.toISOString()}::timestamptz, 'bun test', 'human',
+        ${AT.toISOString()}::timestamptz, 'human_passkey_confirmed', ${pin.confirmationId}, ${pin.confirmationPosition})`);
+    const outcome = (stamp: Awaited<ReturnType<typeof item>>, id: string) =>
+      attempt(harness.db.execute(sql`INSERT INTO hint_outcomes (id, repo, delivery_id, outcome, recorded_by, created_at, recorded_via, provenance, confirmation_id, confirmation_position)
+        VALUES (${id}, 'github.com/acme/api', ${delivered.kenContext}, 'followed', ${nick.developerId}, ${AT.toISOString()}::timestamptz, 'person', 'human_passkey_confirmed',
+          ${stamp.confirmationId}, ${stamp.confirmationPosition})`));
+    const mute = (stamp: Awaited<ReturnType<typeof item>>) =>
+      attempt(harness.db.execute(sql`INSERT INTO developer_mutes (reader_developer_id, muted_developer_id, created_at, provenance, confirmation_id, confirmation_position)
+        VALUES (${nick.developerId}, ${ken.developerId}, ${AT.toISOString()}::timestamptz, 'human_passkey_confirmed', ${stamp.confirmationId}, ${stamp.confirmationPosition})`));
+    const reassert = (stamp: Awaited<ReturnType<typeof item>>, id: string) =>
+      attempt(harness.db.execute(sql`INSERT INTO noise_reassertions (id, repo, delivery_id, marked_by, created_at, provenance, confirmation_id, confirmation_position)
+        VALUES (${id}, 'github.com/acme/api', ${delivered.kenContext}, ${nick.developerId}, ${AT.toISOString()}::timestamptz, 'human_passkey_confirmed',
+          ${stamp.confirmationId}, ${stamp.confirmationPosition})`));
+    const repin = (stamp: Awaited<ReturnType<typeof item>>) =>
+      attempt(harness.db.execute(sql`UPDATE pins SET confirmation_id = ${stamp.confirmationId}, confirmation_position = ${stamp.confirmationPosition}
+        WHERE id = 'pin_kinds'`));
+    const broke = (stamp: Awaited<ReturnType<typeof item>>) =>
+      attempt(harness.db.execute(sql`UPDATE pins SET broke_at = ${AT.toISOString()}::timestamptz, broke_by = ${nick.developerId},
+        broke_provenance = 'human_passkey_confirmed', broke_confirmation_id = ${stamp.confirmationId}, broke_confirmation_position = ${stamp.confirmationPosition}
+        WHERE id = 'pin_kinds'`));
+
+    // Act & Assert — the wrong kind refused, the right kind admitted
+    await expect(outcome(await item("label"), "ho_wrong")).rejects.toThrow();
+    await outcome(await item("outcome"), "ho_right");
+    await expect(reassert(await item("outcome"), "nr_wrong")).rejects.toThrow();
+    await reassert(await item("label"), "nr_right");
+    await expect(mute(await item("unmute"))).rejects.toThrow();
+    await mute(await item("mute"));
+    await expect(repin(await item("pin_broke"))).rejects.toThrow();
+    await repin(await item("pin"));
+    await expect(broke(await item("pin"))).rejects.toThrow();
+    await broke(await item("pin_broke"));
   });
 
   test("drizzle gives provenance no default, so a writer that forgets it does not compile", () => {

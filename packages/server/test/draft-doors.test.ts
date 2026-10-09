@@ -207,7 +207,7 @@ describe("the pin doors draft, and a draft pin protects nothing", () => {
   test("a key's break is a draft: the confirmed pin stays unbroken", async () => {
     // Arrange
     const { harness, nick } = await pinWorld();
-    const stamp = await seedHumanStamp(harness.db, nick.developerId);
+    const stamp = await seedHumanStamp(harness.db, nick.developerId, "pin");
     const body = pinBody("pin_confirmed_1");
     await createPin({ db: harness.db, now: harness.clock.now }, nick.developerId, {
       id: "pin_confirmed_1",
@@ -292,7 +292,7 @@ describe("the settings doors", () => {
   test("a key's unmute is a draft: the confirmed mute stays", async () => {
     // Arrange
     const { harness, nick, ken } = await settingsWorld();
-    await addMute({ db: harness.db, now: harness.clock.now }, nick.developerId, ken.developerId, await seedHumanStamp(harness.db, nick.developerId));
+    await addMute({ db: harness.db, now: harness.clock.now }, nick.developerId, ken.developerId, await seedHumanStamp(harness.db, nick.developerId, "mute"));
 
     // Act
     const response = await harness.app.request("/api/settings/mutes/Ken", jsonRequest("DELETE", nick.apiKey));

@@ -45,7 +45,7 @@ const PIN = {
 
 /** A confirmed pin, so a break has something to draft against. */
 const seedConfirmedPin = async (world: OutcomeWorld, id: string): Promise<void> => {
-  const stamp = await seedHumanStamp(world.harness.db, world.nick.developerId);
+  const stamp = await seedHumanStamp(world.harness.db, world.nick.developerId, "pin");
   await createPin({ db: world.harness.db, now: world.harness.clock.now }, world.nick.developerId, { ...PIN, files: [...PIN.files], id }, stamp);
 };
 
@@ -62,7 +62,7 @@ describe("the notice on every drafted answer", () => {
     // Arrange
     const world = await createOutcomeWorld({ enrolled: true, drafts: "pending" });
     await seedConfirmedPin(world, "pin_notice_confirmed");
-    await addMute({ db: world.harness.db, now: world.harness.clock.now }, world.nick.developerId, world.mike.developerId, await seedHumanStamp(world.harness.db, world.nick.developerId));
+    await addMute({ db: world.harness.db, now: world.harness.clock.now }, world.nick.developerId, world.mike.developerId, await seedHumanStamp(world.harness.db, world.nick.developerId, "mute"));
     await send(world, "PUT", "/api/settings/presence", { optOut: true });
 
     // Act

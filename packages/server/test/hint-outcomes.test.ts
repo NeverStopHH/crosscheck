@@ -910,7 +910,6 @@ describe("the person's words on one pointer", () => {
     // Arrange — a tie the write path no longer makes (it stamps strictly later): a legacy pair of rows
     const world = await createOutcomeWorld();
     const at = world.harness.clock.now();
-    const stamp = await seedHumanStamp(world.harness.db, world.nick.developerId);
     await world.harness.db.insert(hintOutcomes).values({
       id: "ho_tied",
       repo: REPO,
@@ -920,7 +919,7 @@ describe("the person's words on one pointer", () => {
       recordedBy: world.nick.developerId,
       createdAt: at,
       recordedVia: "person",
-      ...stamp,
+      ...(await seedHumanStamp(world.harness.db, world.nick.developerId, "outcome")),
     });
     await world.harness.db.insert(pilotMarks).values({
       id: "pm_tied",
@@ -932,7 +931,8 @@ describe("the person's words on one pointer", () => {
       captureMode: "human",
       createdAt: at,
       reason: null,
-      ...stamp,
+      // Its own item, of its own kind: the database admits a row under no other (round-2 M5).
+      ...(await seedHumanStamp(world.harness.db, world.nick.developerId, "label")),
     });
     world.harness.clock.advanceSeconds(60);
 

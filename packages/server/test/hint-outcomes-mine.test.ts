@@ -478,7 +478,7 @@ describe("ties and self-pointing hints (review M5: surviving mutations)", () => 
       captureMode: "human",
       createdAt: world.harness.clock.now(),
       reason: null,
-      ...(await seedHumanStamp(world.harness.db, world.nick.developerId)),
+      ...(await seedHumanStamp(world.harness.db, world.nick.developerId, "label")),
     });
 
     // Act

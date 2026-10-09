@@ -50,6 +50,7 @@ import {
 } from "./helpers.ts";
 import type { TestDeveloper, TestHarness } from "./helpers.ts";
 import { seedHumanStamp } from "./fixtures/human-confirmation.ts";
+import type { DraftKind } from "@crosscheck/schema";
 
 const REPO = "github.com/acme/api";
 const NOW = new Date(TEST_START_ISO);
@@ -183,14 +184,14 @@ const label = async (
     createdAt: at(hoursAgo),
     reason,
     // A person's label is what a passkey confirmation leaves; 0.10's off_target never was one.
-    ...(mark === "off_target" ? LEGACY : await confirmedBy(world)),
+    ...(mark === "off_target" ? LEGACY : await confirmedBy(world, "label")),
   });
 };
 
 const LEGACY = { provenance: "unknown_legacy" as const, confirmationId: null };
 
-/** The stamp a passkey confirmation by the test developer leaves on what it writes. */
-const confirmedBy = (world: World) => seedHumanStamp(world.harness.db, world.developer.developerId);
+/** The stamp a passkey confirmation by the test developer leaves on what it writes: an item of the row's own kind. */
+const confirmedBy = (world: World, kind: DraftKind) => seedHumanStamp(world.harness.db, world.developer.developerId, kind);
 
 /** A finished session in the set, in the cohort named. */
 const inCohort = async (
@@ -558,14 +559,14 @@ describe("proof 3 — attribution accuracy", () => {
 
   /** A confirmation whose passkey is still in its cool-off at the report's instant: it stands, but counts nowhere yet. */
   const coolingStamp = async (world: World) => {
-    const stamp = await confirmedBy(world);
+    const stamp = await confirmedBy(world, "pin_broke");
     await world.harness.db.execute(sql`UPDATE passkeys SET usable_from = ${new Date(NOW.getTime() + HOUR).toISOString()}::timestamptz
       WHERE credential_id = (SELECT credential_id FROM human_confirmations WHERE id = ${stamp.confirmationId})`);
     return stamp;
   };
 
   const breakStamp = (world: World, breakBy: "passkey" | "cooling") =>
-    (breakBy === "cooling" ? coolingStamp(world) : confirmedBy(world)).then((stamp) => ({
+    (breakBy === "cooling" ? coolingStamp(world) : confirmedBy(world, "pin_broke")).then((stamp) => ({
       brokeConfirmationId: stamp.confirmationId,
       brokeConfirmationPosition: stamp.confirmationPosition,
     }));
@@ -590,7 +591,7 @@ describe("proof 3 — attribution accuracy", () => {
       brokeAtCommit,
       createdAt: at(200),
       // Proof 3 scores a break and a repair only when a passkey confirmed both.
-      ...(await confirmedBy(world)),
+      ...(await confirmedBy(world, "pin")),
       ...(breakBy === "legacy"
         ? LEGACY_BREAK
         : { brokeProvenance: "human_passkey_confirmed" as const, ...(await breakStamp(world, breakBy)) }),
@@ -616,7 +617,7 @@ describe("proof 3 — attribution accuracy", () => {
       repairsPinId: repairs,
       repairsPinVersion: 1,
       createdAt: at(hoursAgo),
-      ...(repairBy === "legacy" ? { provenance: "unknown_legacy" as const } : await confirmedBy(world)),
+      ...(repairBy === "legacy" ? { provenance: "unknown_legacy" as const } : await confirmedBy(world, "pin")),
     });
   };
 

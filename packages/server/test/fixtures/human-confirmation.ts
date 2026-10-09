@@ -5,6 +5,7 @@
  * authenticator: confirm-batch.test.ts). The `seedPasskey` precedent.
  */
 import { randomUUID } from "node:crypto";
+import type { DraftDecision, DraftKind } from "@crosscheck/schema";
 
 import { humanConfirmationItems, humanConfirmations, humanDrafts } from "../../src/db/schema.ts";
 import { humanStamp } from "../../src/services/human-provenance.ts";
@@ -17,9 +18,16 @@ const AT = new Date("2026-07-24T09:00:00.000Z");
 /**
  * A confirmation by `developerId`'s own (seeded) passkey, past its cool-off,
  * with the one item it signed (a row names its item: review M5/P9), and the
- * stamp a writer takes from it. Several rows may share one stamp.
+ * stamp a writer takes from it. Several rows may share one stamp. The item
+ * is a draft of `kind`, decided `decision`: the database admits a row only
+ * under a CONFIRMED item of its own kind (round-2 M5).
  */
-export const seedHumanStamp = async (db: DbExecutor, developerId: string): Promise<HumanStamp> => {
+export const seedHumanStamp = async (
+  db: DbExecutor,
+  developerId: string,
+  kind: DraftKind,
+  decision: DraftDecision = "confirm",
+): Promise<HumanStamp> => {
   const { credentialId } = await seedPasskey(db, developerId);
   const id = `hc_seed_${randomUUID()}`;
   const draftId = `dr_seed_${randomUUID()}`;
@@ -27,7 +35,7 @@ export const seedHumanStamp = async (db: DbExecutor, developerId: string): Promi
     id: draftId,
     developerId,
     repo: null,
-    kind: "outcome",
+    kind,
     subjectKey: `seeded:${draftId}`,
     version: 1,
     payload: {},
@@ -56,7 +64,7 @@ export const seedHumanStamp = async (db: DbExecutor, developerId: string): Promi
     draftId,
     draftVersion: 1,
     draftDigest: "seeded",
-    decision: "confirm",
+    decision,
     content: {},
   });
   return humanStamp(id, 0);

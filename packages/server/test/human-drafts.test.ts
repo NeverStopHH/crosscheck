@@ -207,7 +207,7 @@ describe("human drafts", () => {
     const before = await pendingOf(harness, nick.developerId);
 
     // Act
-    await addMute(deps, nick.developerId, ken.developerId, await seedHumanStamp(harness.db, nick.developerId));
+    await addMute(deps, nick.developerId, ken.developerId, await seedHumanStamp(harness.db, nick.developerId, "mute"));
     const after = await pendingOf(harness, nick.developerId);
 
     // Assert — a mute that already holds is no decision anybody can make
