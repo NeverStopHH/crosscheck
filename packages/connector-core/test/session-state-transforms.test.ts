@@ -155,6 +155,39 @@ describe("a SessionStart re-fire keeps the turns the prompt path stood down on (
   });
 });
 
+/**
+ * THE SEEN-SET IS THE SESSION'S, NOT ONE FIRE'S (release gate, production
+ * lane, 2026-10-09): a compact that dropped it left the turn's git lane
+ * seeing every file the tool lane had already filed as new again, so a root
+ * 100 files dirty spent the lane's whole cap on files the hub already held
+ * and the six Bash-only files behind them never reached it — exactly the
+ * pilot's silence, and `capture-capped` was all that moved.
+ */
+describe("a SessionStart re-fire keeps the seen-set of the same life", () => {
+  test("a compact on the same life carries every seen target", () => {
+    // Arrange — the tool lane filed two files, one under a topic
+    const previous = { ...baseState(), seenTargets: ["src/a.ts", "~t1/src/b.ts"] };
+
+    // Act — the re-fire re-creates the state with an empty seen-set
+    const next = withCarriedCapture(baseState(), previous);
+
+    // Assert
+    expect(next.seenTargets).toEqual(["src/a.ts", "~t1/src/b.ts"]);
+  });
+
+  test("a re-fire onto another life of the same binding starts with nothing seen: that life must file again", () => {
+    // Arrange — the hub ended the life; a heal moved the session to the next rung
+    const previous = { ...baseState(), seenTargets: ["src/a.ts"] };
+    const nextLife = { ...baseState(), crosscheckSessionId: "cc_s1~r1", workContextId: "wc_cc_s1~r1" };
+
+    // Act
+    const next = withCarriedCapture(nextLife, previous);
+
+    // Assert
+    expect(next.seenTargets ?? []).toEqual([]);
+  });
+});
+
 describe("the derive fire ring is read entry by entry (review round 3, MEDIUM-5)", () => {
   test("a malformed fire costs only itself, never the whole state file", () => {
     // One fire booked with an unsafe deadline used to fail the whole parse:

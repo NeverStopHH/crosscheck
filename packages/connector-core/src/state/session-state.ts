@@ -1370,6 +1370,13 @@ const routingFieldsOf = (previous: SessionState, state: SessionStateInput): Part
         startHead: previous.startHead ?? state.startHead ?? null,
         startBranches: previous.startBranches ?? state.startBranches ?? [],
         sessionTouchedAt: previous.sessionTouchedAt,
+        // THE SEEN-SET IS THE LIFE'S, NOT ONE FIRE'S (release gate, production
+        // lane, 2026-10-09): dropped, the turn's git lane saw every file the
+        // tool lane had already filed as new again, spent its cap on them and
+        // never reached the Bash-only files behind — the pilot's silence, with
+        // only `capture-capped` moving. Another life must file again, so a
+        // re-fire onto one starts empty.
+        seenTargets: previous.seenTargets,
       }
     : {}),
   topicOverflowCount: previous.topicOverflowCount,
