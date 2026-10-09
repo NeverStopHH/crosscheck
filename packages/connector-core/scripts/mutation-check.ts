@@ -14535,16 +14535,10 @@ export const MUTATIONS: readonly Mutation[
       "measured figures for eight weeks — artefacts of a vocabulary with no " +
       "`helpful` in it",
   },
-  {
-    label: "a 0.10 noise mark enters the precision denominator",
-    file: `${SERVER}/src/services/pilot-label-figures.ts`,
-    from: "           count(*) FILTER (WHERE mark = 'noise')::int AS noise,",
-    to: "           count(*) FILTER (WHERE mark IN ${NOISE_WORDS})::int AS noise,",
-    test: `${SERVER}/test/pilot-report.test.ts`,
-    because:
-      "an off_target from an era that could not say helpful is scored against " +
-      "precision, which then falls for a reason that is not about the product",
-  },
+  // ("a 0.10 noise mark enters the precision denominator" is retired as equivalent since human
+  // provenance: an `off_target` mark is only ever a 0.10 row, `unknown_legacy` — a confirmed label is
+  // written as `noise` — and the tally reads confirmed rows alone, which "legacy rows read as human"
+  // anchors.)
   {
     label: "a 0.10 team's complaints vanish from the report",
     file: `${SERVER}/src/services/pilot-label-figures.ts`,
