@@ -26195,10 +26195,18 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the briefing-omission ledger grows for ever",
     file: `${CORE}/src/state/omission-ledger.ts`,
-    from: "      if (size >= MAX_BRIEFING_OMISSION_LEDGER_BYTES) {\n        return;\n      }\n",
+    from: "      if (room >= MAX_BRIEFING_OMISSION_LEDGER_BYTES) {\n        return;\n      }\n",
     to: "",
     test: `${CORE}/test/briefing-omissions.test.ts`,
     because: "a hub that never answers grows a file in the home on every session start",
+  },
+  {
+    label: "a full omission ledger stops counting for good",
+    file: `${CORE}/src/state/omission-ledger.ts`,
+    from: "      const room = size < MAX_BRIEFING_OMISSION_LEDGER_BYTES ? size : await prunedToWindow(at, entry.now);",
+    to: "      const room = size;",
+    test: `${CORE}/test/omission-ledger-cap.test.ts`,
+    because: "once 64 KiB of old lines fill it, every new cut and omission goes unrecorded and doctor reads 0 forever (batch-2 M7)",
   },
   // The tripwire takes the large-change rule too (release gate, 2026-10-08):
   // the ask names the hub's first row, so the order is the decision.
@@ -35545,6 +35553,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
  * PRINTS: packages/connector-core/test/network-guard.test.ts 15
+ * PRINTS: packages/connector-core/test/omission-ledger-cap.test.ts 1
  * PRINTS: packages/connector-core/test/outcome-clause.test.ts 2
  * PRINTS: packages/connector-core/test/owed-debt-rules.test.ts 22
  * PRINTS: packages/connector-core/test/owed-work-context.test.ts 17

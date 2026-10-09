@@ -20,7 +20,8 @@ import { dirname, join } from "node:path";
 import { z } from "zod";
 
 import { BRIEFING_OMISSION_WINDOW_DAYS, MAX_BRIEFING_OMISSION_LEDGER_BYTES } from "../constants.ts";
-import { ensureDir, readTextOrNull } from "../config/paths.ts";
+import { ensureDir, readTextOrNull, writePrivateFile } from "../config/paths.ts";
+import { withLock } from "../spool/lock.ts";
 
 const MS_PER_DAY = 86_400_000;
 
@@ -65,6 +66,29 @@ const parseLine = (line: string): z.infer<typeof LineSchema> | null => {
   }
 };
 
+/**
+ * AT THE CAP, THE LINES THE WINDOW NO LONGER COUNTS GO (batch-2 review, M7).
+ * Appends used to stop at MAX_BRIEFING_OMISSION_LEDGER_BYTES for good, and
+ * the reader counts only the last BRIEFING_OMISSION_WINDOW_DAYS — so a full
+ * ledger read 0 forever and every new omission went unrecorded. The file is
+ * rewritten, under its own lock, with only the lines the reader still counts
+ * (an unparseable line counts nothing, and goes too); answers the new size,
+ * or the cap itself when the lock is busy — this line is then skipped, as
+ * every line used to be. An append racing the rewrite can be lost: rare, and
+ * the cap lost all of them before.
+ */
+const prunedToWindow = (at: string, now: Date): Promise<number> =>
+  withLock(`${at}.lock`, MAX_BRIEFING_OMISSION_LEDGER_BYTES, async () => {
+    const since = now.getTime() - BRIEFING_OMISSION_WINDOW_DAYS * MS_PER_DAY;
+    const kept = ((await readTextOrNull(at)) ?? "").split("\n").filter((line) => {
+      const entry = line.length === 0 ? null : parseLine(line);
+      return entry !== null && Date.parse(entry.at) >= since;
+    });
+    const body = kept.map((line) => `${line}\n`).join("");
+    await writePrivateFile(at, body);
+    return Buffer.byteLength(body);
+  });
+
 export const omissionLedger = <R extends string>(file: string, reasons: readonly R[]): OmissionLedger<R> => {
   const path = (home: string): string => join(home, "state", file);
   const none: OmissionCounts<R> = {
@@ -81,7 +105,8 @@ export const omissionLedger = <R extends string>(file: string, reasons: readonly
         (info) => info.size,
         () => 0,
       );
-      if (size >= MAX_BRIEFING_OMISSION_LEDGER_BYTES) {
+      const room = size < MAX_BRIEFING_OMISSION_LEDGER_BYTES ? size : await prunedToWindow(at, entry.now);
+      if (room >= MAX_BRIEFING_OMISSION_LEDGER_BYTES) {
         return;
       }
       await ensureDir(dirname(at));

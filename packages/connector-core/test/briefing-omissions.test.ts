@@ -90,16 +90,19 @@ describe("the briefing-omission ledger", () => {
   });
 
   test("the ledger stops growing at its cap", async () => {
-    // Arrange: a ledger already at the cap.
+    // Arrange: a ledger already at the cap with lines the window still counts —
+    // the ones a full ledger cannot let go of (batch-2 review, M7 prunes the rest).
     const home = await freshHome("omit-cap");
     const path = briefingOmissionsPath(home);
     await mkdir(dirname(path), { recursive: true });
-    await Bun.write(path, "x".repeat(MAX_BRIEFING_OMISSION_LEDGER_BYTES));
+    const line = `${JSON.stringify({ at: NOW.toISOString(), reason: "hub", key: KEY })}\n`;
+    await Bun.write(path, line.repeat(Math.ceil(MAX_BRIEFING_OMISSION_LEDGER_BYTES / line.length)));
+    const full = (await stat(path)).size;
 
     // Act
     await recordBriefingOmission(home, { key: KEY, reason: "hub", now: NOW });
 
     // Assert
-    expect((await stat(path)).size).toBe(MAX_BRIEFING_OMISSION_LEDGER_BYTES);
+    expect((await stat(path)).size).toBe(full);
   });
 });

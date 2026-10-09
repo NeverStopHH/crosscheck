@@ -281,13 +281,17 @@ describe("the cut-checks ledger", () => {
     const h = await home("cuts-cap");
     const path = landedProbeCutsPath(h);
     await mkdir(dirname(path), { recursive: true });
-    await Bun.write(path, "x".repeat(MAX_BRIEFING_OMISSION_LEDGER_BYTES));
+    // Lines the window still counts: the ones a full ledger cannot let go of
+    // (batch-2 review, M7 prunes the rest — test/omission-ledger-cap.test.ts).
+    const line = `${JSON.stringify({ at: NOW.toISOString(), reason: "deadline", key: KEY })}\n`;
+    await Bun.write(path, line.repeat(Math.ceil(MAX_BRIEFING_OMISSION_LEDGER_BYTES / line.length)));
+    const full = (await stat(path)).size;
 
     // Act
     await recordLandedProbeCut(h, { key: KEY, reason: "deadline", now: NOW });
 
     // Assert
     expect(path.endsWith("landed-probe-cuts.jsonl")).toBe(true);
-    expect((await stat(path)).size).toBe(MAX_BRIEFING_OMISSION_LEDGER_BYTES);
+    expect((await stat(path)).size).toBe(full);
   });
 });
