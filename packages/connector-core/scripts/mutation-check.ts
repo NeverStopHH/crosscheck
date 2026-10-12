@@ -36945,6 +36945,24 @@ export const MUTATIONS: readonly Mutation[
     because: "the room another hook made is rewritten again, dropping lines this reader cannot parse and racing a third hook's append",
   },
   {
+    // edab8f9e (pilot, 2026-10-07): the two hosts' doctors say the person is
+    // never told of a collision there — untested until the final review's §3.
+    label: "Cursor's doctor no longer says the person is never told of a collision there",
+    file: `${CURSOR}/src/capabilities.ts`,
+    from: '      name: "person-facing collision notice",\n      sentence:\n        "no event this connector registers',
+    to: '      name: "person-facing collision notice (withdrawn)",\n      sentence:\n        "no event this connector registers',
+    test: `${CURSOR}/test/derive-doctor.test.ts`,
+    because: "a Cursor user reads a doctor with no line about it and assumes the person is told, as on Claude Code",
+  },
+  {
+    label: "ACP's doctor no longer says the person is never told of a collision there",
+    file: `${ACP}/src/capabilities.ts`,
+    from: '      name: "person-facing collision notice",\n      sentence:\n        "stable ACP v1 has no session update',
+    to: '      name: "person-facing collision notice (withdrawn)",\n      sentence:\n        "stable ACP v1 has no session update',
+    test: `${ACP}/test/derive-doctor.test.ts`,
+    because: "an ACP user reads a doctor with no line about it and assumes the person is told, as on Claude Code",
+  },
+  {
     // Final review of batch 2, N10: the M8 fallback booked the rests, the hook
     // was cut before its delete, and the reaper booked them once more.
     label: "the reaper books the rests SessionEnd already booked under a busy lock",
@@ -37486,7 +37504,7 @@ interface Outcome {
  * PRINTS: packages/connector-acp/test/announce-position.test.ts 1
  * PRINTS: packages/connector-acp/test/capture-engine.test.ts 4
  * PRINTS: packages/connector-acp/test/capture-hardening.test.ts 2
- * PRINTS: packages/connector-acp/test/derive-doctor.test.ts 4
+ * PRINTS: packages/connector-acp/test/derive-doctor.test.ts 5
  * PRINTS: packages/connector-acp/test/derive-gap.test.ts 1
  * PRINTS: packages/connector-acp/test/derive.test.ts 8
  * PRINTS: packages/connector-acp/test/draft-nudge-inject.test.ts 6
@@ -37781,7 +37799,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/briefing-omission.test.ts 3
  * PRINTS: packages/connector-cursor/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-cursor/test/budget.test.ts 2
- * PRINTS: packages/connector-cursor/test/derive-doctor.test.ts 3
+ * PRINTS: packages/connector-cursor/test/derive-doctor.test.ts 4
  * PRINTS: packages/connector-cursor/test/derive-transcript.test.ts 3
  * PRINTS: packages/connector-cursor/test/derive.test.ts 5
  * PRINTS: packages/connector-cursor/test/draft-nudge.test.ts 3

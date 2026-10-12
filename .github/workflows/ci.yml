@@ -234,7 +234,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 3870
+    # PRINTS: 3872
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -310,7 +310,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/wiring-lookalikes.ts 2
     # PRINTS: packages/cli/src/cli/wiring-removal.ts 7
     # PRINTS: packages/cli/src/cli/wiring-scope.ts 3
-    # PRINTS: packages/connector-acp/src/capabilities.ts 4
+    # PRINTS: packages/connector-acp/src/capabilities.ts 5
     # PRINTS: packages/connector-acp/src/capture/engine.ts 31
     # PRINTS: packages/connector-acp/src/derive/slice.ts 2
     # PRINTS: packages/connector-acp/src/derive/triggers.ts 3
@@ -534,7 +534,7 @@ jobs:
     # PRINTS: packages/connector-core/test/network-guard.ts 9
     # PRINTS: packages/connector-core/test/render-surface-registry.test.ts 1
     # PRINTS: packages/connector-core/test/spool-concurrency.test.ts 1
-    # PRINTS: packages/connector-cursor/src/capabilities.ts 3
+    # PRINTS: packages/connector-cursor/src/capabilities.ts 4
     # PRINTS: packages/connector-cursor/src/derive/transcript.ts 1
     # PRINTS: packages/connector-cursor/src/derive/triggers.ts 5
     # PRINTS: packages/connector-cursor/src/doctor.ts 11
@@ -750,7 +750,7 @@ jobs:
     # PRINTS: bootstrap.sql 58
     # PRINTS: briefing.ts 14
     # PRINTS: calibration.ts 1
-    # PRINTS: capabilities.ts 9
+    # PRINTS: capabilities.ts 11
     # PRINTS: capture-bookkeeping.ts 7
     # PRINTS: capture-git-touches.ts 9
     # PRINTS: capture-health.ts 6
