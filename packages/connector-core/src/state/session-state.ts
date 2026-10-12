@@ -16,6 +16,7 @@ import {
   MINUTES_PER_HOUR,
   MS_PER_SECOND,
   SECONDS_PER_MINUTE,
+  GIT_TOUCHES_TIMEOUT_MS,
   SESSION_STATE_LOCK_RETRIES,
   STATUS_MAX_SESSION_STATES,
   SUMMARIZER_TIMEOUT_MS,
@@ -33,6 +34,7 @@ import { NO_GENERATED, addGeneratedTally } from "../capture/generated.ts";
 import type { GeneratedTally } from "../capture/generated.ts";
 import { recordCaptureLoss } from "./loss-ledger.ts";
 import { recordRestOmission } from "./rest-omissions.ts";
+import { removeOwedRestsBooked } from "./rests-booked.ts";
 import {
   listSessionStateFiles,
   sessionSilentForMs,
@@ -702,6 +704,15 @@ const SessionStateObjectSchema = z.looseObject({
    * older state reads as nothing owed either.
    */
   gitLaneSweptLife: z.string().nullable().optional(),
+  /**
+   * WHEN A HOOK CLAIMED THE SWEEP A HEALED LIFE IS OWED (final review of
+   * batch 2, N4): "sweeping since <iso>", taken inside the locked transform
+   * that reads the debt (claimOwedSweep) and honoured for one
+   * GIT_TOUCHES_TIMEOUT_MS, so one hook pays the lane and its siblings find
+   * the claim; a lane that ran under the life clears it. Absent or null on
+   * an older state reads as no claim.
+   */
+  gitLaneSweepingSince: z.string().nullable().optional(),
   /**
    * The generated-target rule's counters (capture/generated.ts): how many of
    * this session's spooled targets each signal kept out of overlap as
@@ -1437,26 +1448,42 @@ export const publishSessionState = async (
   state: SessionStateInput,
   startOf: () => Promise<SeqStart> = () => Promise.resolve({ seqEpoch: state.seqEpoch ?? null, eventSeq: state.eventSeq ?? 0 }),
 ): Promise<void> => {
-  const published = await withSessionStateLock(
+  const published = await withSessionStateLock<{ readonly leftBehind: RestsLeftBehind | null } | null>(
     sessionStateLockPath(home, state.hostSessionKey),
-    false,
+    null,
     async () => {
       const previous = await readSessionState(home, state.hostSessionKey);
       await writeSessionState(home, withCarriedCapture(measuredFromStart({ ...state, ...(await startOf()) }), previous));
-      if (previous !== null && !isSameBinding(previous, state)) {
-        await bookRestsLeftBehind(home, previous, new Date(state.startedAt));
-      }
-      return true;
+      // COUNTED UNDER THE LOCK, BOOKED AFTER IT (final review of batch 2, N7):
+      // the count is read from the state this write replaces; the two ledger
+      // appends — one of which may wait on the omission ledger's own lock —
+      // are not held under the state lock on SessionStart's path.
+      return { leftBehind: previous !== null && !isSameBinding(previous, state) ? restsLeftBehind(previous) : null };
     },
   );
-  if (!published) {
+  if (published === null) {
     const unlocked = await readSessionState(home, state.hostSessionKey);
     await writeSessionState(home, withCarriedRouting(withCarriedCollisions(measuredFromStart(state), unlocked), unlocked));
+    return;
+  }
+  if (published.leftBehind !== null) {
+    await bookRestsLeftBehind(home, published.leftBehind, new Date(state.startedAt));
   }
 };
 
 /** The loss-ledger detail for rechecks a re-fire of another binding left behind. */
 const REBOUND_REST_DETAIL = "session-start";
+
+/** The rechecks a replaced state still owed, and the repo they are booked under. */
+interface RestsLeftBehind {
+  readonly count: number;
+  readonly key: string;
+}
+
+const restsLeftBehind = (previous: SessionState): RestsLeftBehind => ({
+  count: (previous.tripwireCheckedFiles ?? []).length + (previous.tripwireRestsDropped ?? 0),
+  key: repoKey(previous.hubUrl, previous.repoId),
+});
 
 /**
  * A RE-FIRE BOUND ELSEWHERE BOOKS THE RECHECKS IT REPLACES (review batch 2,
@@ -1465,14 +1492,12 @@ const REBOUND_REST_DETAIL = "session-start";
  * hook of that binding will pay them: booked under that binding's own repo,
  * in both ledgers, the way SessionEnd books what it cannot pay.
  */
-const bookRestsLeftBehind = async (home: string, previous: SessionState, now: Date): Promise<void> => {
-  const count = (previous.tripwireCheckedFiles ?? []).length + (previous.tripwireRestsDropped ?? 0);
-  if (count === 0) {
+const bookRestsLeftBehind = async (home: string, left: RestsLeftBehind, now: Date): Promise<void> => {
+  if (left.count === 0) {
     return;
   }
-  const key = repoKey(previous.hubUrl, previous.repoId);
-  await recordCaptureLoss(home, { kind: "rest_unchecked", count, key, detail: REBOUND_REST_DETAIL, now });
-  await recordRestOmission(home, { key, reason: "rest_unchecked", now });
+  await recordCaptureLoss(home, { kind: "rest_unchecked", count: left.count, key: left.key, detail: REBOUND_REST_DETAIL, now });
+  await recordRestOmission(home, { key: left.key, reason: "rest_unchecked", now });
 };
 
 /**
@@ -1624,6 +1649,9 @@ const closeState = async (
 ): Promise<MovedLife | null> => {
   const fresh = await readSessionState(home, hostSessionKey);
   await deleteSessionState(home, hostSessionKey);
+  // The rests this end booked before the delete need no marker once the
+  // state is gone (state/rests-booked.ts; final review of batch 2, N10).
+  await removeOwedRestsBooked(home, hostSessionKey);
   if (fresh === null || fresh.crosscheckSessionId === crosscheckSessionId) {
     return null;
   }
@@ -1896,7 +1924,8 @@ export const withGitTouches = (
   gitTouchCount: state.gitTouchCount + outcome.captured.length,
   gitLaneSkipped: state.gitLaneSkipped + (outcome.skipped ? 1 : 0),
   gitLaneRan: state.gitLaneRan + (outcome.skipped ? 0 : 1),
-  ...(outcome.sweptLife === undefined ? {} : { gitLaneSweptLife: outcome.sweptLife }),
+  // ...and a lane that ran under the life spends any claim on its sweep (N4).
+  ...(outcome.sweptLife === undefined ? {} : { gitLaneSweptLife: outcome.sweptLife, gitLaneSweepingSince: null }),
 });
 
 /**
@@ -1908,6 +1937,25 @@ export const owesSweepToLife = (state: SessionState): boolean =>
   state.gitLaneSweptLife !== undefined &&
   state.gitLaneSweptLife !== null &&
   state.gitLaneSweptLife !== state.crosscheckSessionId;
+
+/** Whether a claim on the owed sweep is younger than the lane's own deadline — a stamp off the clock either way is no claim. */
+const isSweepClaimFresh = (state: SessionState, now: Date): boolean => {
+  const sinceMs = Date.parse(state.gitLaneSweepingSince ?? "");
+  return !Number.isNaN(sinceMs) && Math.abs(now.getTime() - sinceMs) < GIT_TOUCHES_TIMEOUT_MS;
+};
+
+/**
+ * THE SWEEP A HEALED LIFE IS OWED IS CLAIMED BY ONE HOOK (final review of
+ * batch 2, N4). Read outside any claim, every hook with the room under a
+ * subagent fan-out found it owed in the same second and each ran the whole
+ * lane and a flush — N times the lane, once per heal, on the loaded hooks.
+ * Taken inside the locked transform that reads the debt, the claim is
+ * honoured for one GIT_TOUCHES_TIMEOUT_MS, the lane's own deadline, so a
+ * claim a cut hook left behind costs the next hook that wait and nothing
+ * more. Null: nothing owed, or a fresh claim holds — the caller pays nothing.
+ */
+export const claimOwedSweep = (state: SessionState, now: Date): SessionState | null =>
+  !owesSweepToLife(state) || isSweepClaimFresh(state, now) ? null : { ...state, gitLaneSweepingSince: now.toISOString() };
 
 /**
  * One capture's generated-target counts, added in. Absent leaves the state as

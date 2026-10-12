@@ -459,3 +459,20 @@ describe("the cursor doctor section says what is inferred and what is refused", 
     }
   });
 });
+
+describe("the person-facing collision notice refusal (pilot, 2026-10-07)", () => {
+  test("Cursor's doctor says the person is never told of a collision here, and names the one field that could and why it cannot", async () => {
+    // Arrange
+    const { repo, home } = await installed("cursor-doctor-person-notice");
+
+    // Act
+    const checks = await cursorDoctorChecks({ repoRoot: repo, env: {}, home, repoKey: "k" });
+    const line = checks.find((entry) => entry.name === "person-facing collision notice (cursor)");
+
+    // Assert — a refusal is a decision working, never a fault: printed, PASS,
+    // and the sentence is the platform fact, not a code
+    expect(line?.level).toBe("PASS");
+    expect(line?.detail).toContain("user_message appears only when an action is denied or a prompt blocked");
+    expect(line?.detail).toContain("the person learns of it when the agent says so");
+  });
+});

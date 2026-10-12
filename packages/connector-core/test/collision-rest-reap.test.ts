@@ -6,15 +6,23 @@
  * own repo, dated when the newest rest began, and evicted debts with them.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmod, rm, utimes } from "node:fs/promises";
-import { dirname } from "node:path";
+import { existsSync } from "node:fs";
+import { chmod, mkdir, rm, utimes, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 
-import { MAX_SPOOL_AGE_DAYS, MS_PER_DAY } from "../src/constants.ts";
+import { MAX_BRIEFING_OMISSION_LEDGER_BYTES, MAX_SPOOL_AGE_DAYS, MS_PER_DAY } from "../src/constants.ts";
 import { repoKey, sessionStatePath } from "../src/config/paths.ts";
-import { readCaptureLosses } from "../src/state/loss-ledger.ts";
+import { withLock } from "../src/spool/lock.ts";
+import { lossLedgerPath, readCaptureLosses } from "../src/state/loss-ledger.ts";
 import { readRestOmissions } from "../src/state/rest-omissions.ts";
 import { reapStaleSessionStates } from "../src/state/session-reap.ts";
-import { deriveSessionState, publishSessionState, readSessionState, writeSessionState } from "../src/state/session-state.ts";
+import {
+  deriveSessionState,
+  publishSessionState,
+  readSessionState,
+  sessionStateLockPath,
+  writeSessionState,
+} from "../src/state/session-state.ts";
 import { makeHome } from "./helpers.ts";
 
 const REPO_ID = "github.com/acme/api";
@@ -143,5 +151,55 @@ describe("a SessionStart re-fire bound elsewhere books the rechecks it replaces 
     expect((await readSessionState(home, KEY))?.tripwireCheckedFiles ?? []).toEqual([]);
     expect((await readCaptureLosses(home, repoKey(HUB_URL, REPO_ID))).byDetail["rest_unchecked:session-start"]).toBe(2);
     expect((await readCaptureLosses(home, repoKey(OTHER_HUB_URL, REPO_ID))).total).toBe(0);
+  });
+
+  test("the bookings land after the publish has let go of the state lock (final review of batch 2, N7)", async () => {
+    // Arrange: a live session owing one recheck, and the rest-omissions ledger
+    // at its cap with its lock held by another hook for the whole test — so
+    // the omission booking waits out its patience, where the state lock must
+    // not be held: this is SessionStart's path, at 80 % of its budget under
+    // load in the budget review.
+    const home = await makeHome("rebind-unlocked");
+    homes.push(home);
+    const live = deriveSessionState({
+      hostSessionKey: KEY,
+      repoId: REPO_ID,
+      repoRoot: "/tmp/acme-api",
+      hubUrl: HUB_URL,
+      developerId: "dev_self",
+      startedAt: NOW.toISOString(),
+    });
+    await writeSessionState(home, { ...live, tripwireCheckedFiles: [{ file: "src/a.ts", at: NOW.toISOString() }] });
+    const ledger = join(home, "state", "rest-omissions.jsonl");
+    await mkdir(dirname(ledger), { recursive: true });
+    const line = `${JSON.stringify({ at: NOW.toISOString(), reason: "rest_unchecked", key: null })}\n`;
+    await writeFile(ledger, line.repeat(Math.ceil(MAX_BRIEFING_OMISSION_LEDGER_BYTES / line.length) + 1), "utf8");
+    const release: { value: () => void } = { value: () => undefined };
+    const held = withLock(`${ledger}.lock`, undefined, () =>
+      new Promise<void>((done) => {
+        release.value = done;
+      }),
+    );
+    const lossLedger = lossLedgerPath(home);
+    const stateLock = sessionStateLockPath(home, KEY);
+
+    // Act: the re-fire publishes bound elsewhere; the moment its loss line lands, is the state lock still held?
+    const publishing = publishSessionState(home, { ...live, hubUrl: OTHER_HUB_URL });
+    const started = Date.now();
+    while (!existsSync(lossLedger) && Date.now() - started < 5_000) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    const isStateLockHeldAtBooking = existsSync(stateLock);
+    try {
+      await publishing;
+    } finally {
+      release.value();
+      await held;
+    }
+
+    // Assert: booked, and booked after the lock was let go.
+    expect(existsSync(lossLedger)).toBe(true);
+    expect(isStateLockHeldAtBooking).toBe(false);
+    expect((await readCaptureLosses(home, repoKey(HUB_URL, REPO_ID))).byDetail["rest_unchecked:session-start"]).toBe(1);
   });
 });

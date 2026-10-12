@@ -69,7 +69,7 @@ describe("a relayed group is unnamed only when a presence answer omits the teamm
     expect(relayed[0]?.branch).toBeNull();
     expect(relayed[0]?.lastActiveAt).toBeNull();
     expect(renderCollisionNotice(relayed[0] ?? nick(), NOW)).toBe(
-      "crosscheck: A teammate recently worked on refresh.ts — talk to your team before you change it",
+      "crosscheck: A teammate was working on refresh.ts while your subagent edited it — talk to your team before you change it",
     );
   });
 
@@ -139,7 +139,7 @@ describe("a relayed group is unnamed only when a presence answer omits the teamm
 
     // Assert
     expect(line).toBe(
-      "crosscheck: A teammate recently worked on 2 files you also touched, e.g. refresh.ts — " +
+      "crosscheck: A teammate was working on 2 files you also touched, e.g. refresh.ts, while your subagent edited them — " +
         `talk to your team before you change them${PARTIAL_RECORD_CLAUSE}`,
     );
   });

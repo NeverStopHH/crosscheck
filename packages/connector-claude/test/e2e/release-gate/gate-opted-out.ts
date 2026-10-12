@@ -90,8 +90,9 @@ export const describeOptedOut = (ctx: GateContext): void => {
     // The owner's decision on I1, as the coordinator read it (2026-10-09): a nameless
     // teammate is ONE group, told once — the rule for a named one, whose group is their
     // work context. Nick's subagents meet Mike's files first (mappingApi, MappingRow,
-    // index), so the person hears "A teammate recently worked on 3 files you also
-    // touched, e.g. index.ts" by relay, and the main thread's own edit of the shared
+    // index), so the person hears "A teammate is working right now on 3 files you also
+    // touched, e.g. index.ts" by relay (the drain asks the tripwire again; final review
+    // of batch 2, §5), and the main thread's own edit of the shared
     // file has nothing new to tell about the same teammate. Read from the first subagent
     // hit through that edit, relay included: the line names a teammate and one of the
     // files the hits were on. The loaded lane also accepts a dated booking.

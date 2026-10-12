@@ -36,8 +36,17 @@ import {
 afterEach(cleanupCollisionFixtures);
 
 const LIVE_LINE = "crosscheck: A teammate is working on refresh.ts right now — talk to your team before you change it";
-const PAST_LINE = "crosscheck: A teammate recently worked on refresh.ts — talk to your team before you change it";
+/** The relay's live line for several of her files: the one nameless group, confirmed at the drain. */
+const LIVE_LINE_TWO =
+  "crosscheck: A teammate is working right now on 2 files you also touched, e.g. refresh.ts — talk to your team before you change them";
+/** The relay's past tense: the subagent's edit is the reader's own moment, so no time of hers is said. */
+const PAST_LINE = "crosscheck: A teammate was working on refresh.ts while your subagent edited it — talk to your team before you change it";
+const PAST_LINE_TWO =
+  "crosscheck: A teammate was working on 2 files you also touched, e.g. refresh.ts, while your subagent edited them — " +
+  "talk to your team before you change them";
 const AGENT_LINE = "crosscheck: A teammate is working on src/auth/refresh.ts right now — talk to your team before you change it.";
+/** What a hub that cannot answer the tripwire returns. */
+const SERVICE_UNAVAILABLE = 503;
 const ANONYMOUS_ROWS = [{ anonymous: true }];
 /** Wide enough that the relay's own refresh cap, not the request timeout, decides (collision-relay-unconfirmed.test.ts). */
 const ROOMY_TIMEOUT_MS = "2000";
@@ -143,23 +152,27 @@ describe("a teammate the hub will not name, live on the file being edited", () =
     expect(prompt.systemMessage).toBe(GHOST_LINE);
   });
 
-  test("a subagent's hit reaches the main thread unnamed and in the past tense, even beside a teammate presence lists", async () => {
+  test("a subagent's hit reaches the main thread live and nameless while the hub still says a teammate is on the file, even beside a teammate presence lists", async () => {
+    // Arrange: a subagent ran into her; presence lists Nick, who is not her
     const fix = await anonymousFixture("ca-relay");
     await runHook("pre-tool-use", editPayload(fix.repo, OVERLAP_FILE, SUBAGENT), fix.env);
     await presentNow(fix, [TEAMMATE_DEVELOPER_ID]);
+    const asked = fix.hub.calls.tripwire;
 
+    // Act: the drain asks the tripwire about her file once more
     const prompt = parsed(await runHook("user-prompt-submit", promptPayload(fix.repo), fix.env));
 
-    expect(prompt.systemMessage).toBe(PAST_LINE);
-    expect(prompt.hookSpecificOutput?.additionalContext).toContain(PAST_LINE);
+    // Assert
+    expect(prompt.systemMessage).toBe(LIVE_LINE);
+    expect(prompt.hookSpecificOutput?.additionalContext).toContain(LIVE_LINE);
     expect(JSON.stringify(prompt)).not.toContain("Nick");
+    expect(fix.hub.calls.tripwire).toBe(asked + 1);
   });
 
-  test("with no presence answer to hold it to, the relay still says it as nobody in particular", async () => {
+  test("with no presence answer to hold it to, the relay still says it live, as nobody in particular", async () => {
     // Arrange: a subagent's hit, no presence cache, and a hub whose presence
-    // answer cannot be read — the one path that relays a hit as its row
-    // named it, so the group read back from the session state must still
-    // know it was nameless.
+    // answer cannot be read — presence is the wrong oracle for her anyway;
+    // the tripwire, which still answers her row, is the right one.
     const fix = await anonymousFixture("ca-relay-blind");
     const env = { ...fix.env, CROSSCHECK_TIMEOUT_MS: ROOMY_TIMEOUT_MS };
     await runHook("pre-tool-use", editPayload(fix.repo, OVERLAP_FILE, SUBAGENT), env);
@@ -168,7 +181,57 @@ describe("a teammate the hub will not name, live on the file being edited", () =
     const prompt = parsed(await runHook("user-prompt-submit", promptPayload(fix.repo), env));
 
     // Assert
+    expect(prompt.systemMessage).toBe(LIVE_LINE);
+    expect(prompt.hookSpecificOutput?.additionalContext).toContain(LIVE_LINE);
+    expect(JSON.stringify(prompt)).not.toContain("Nick");
+  });
+
+  test("a nameless teammate who left the file since is relayed in the past tense, with no time of hers", async () => {
+    // Arrange: her row was there at the subagent's edit and is gone at the drain
+    const fix = await anonymousFixture("ca-relay-gone");
+    await runHook("pre-tool-use", editPayload(fix.repo, OVERLAP_FILE, SUBAGENT), fix.env);
+    fix.hub.setTripwireAnonymous(undefined);
+
+    // Act
+    const prompt = parsed(await runHook("user-prompt-submit", promptPayload(fix.repo), fix.env));
+
+    // Assert
     expect(prompt.systemMessage).toBe(PAST_LINE);
     expect(prompt.hookSpecificOutput?.additionalContext).toContain(PAST_LINE);
+    expect(JSON.stringify(prompt)).not.toContain("recently");
+  });
+
+  test("a hub that will not answer the re-ask relays the hit in the past tense rather than claim she is still there", async () => {
+    // Arrange
+    const fix = await anonymousFixture("ca-relay-silent");
+    await runHook("pre-tool-use", editPayload(fix.repo, OVERLAP_FILE, SUBAGENT), fix.env);
+    fix.hub.setTripwireFailure(SERVICE_UNAVAILABLE);
+
+    // Act
+    const prompt = parsed(await runHook("user-prompt-submit", promptPayload(fix.repo), fix.env));
+
+    // Assert
+    expect(prompt.systemMessage).toBe(PAST_LINE);
+  });
+
+  test("several of her files are one group: live when any still answers her row, past tense when none does", async () => {
+    // Arrange: two subagent hits, one nameless group of two files
+    const live = await anonymousFixture("ca-relay-two");
+    await runHook("pre-tool-use", editPayload(live.repo, OVERLAP_FILE, SUBAGENT), live.env);
+    await runHook("pre-tool-use", editPayload(live.repo, SECOND_FILE, SUBAGENT), live.env);
+    const asked = live.hub.calls.tripwire;
+    const gone = await anonymousFixture("ca-relay-two-gone");
+    await runHook("pre-tool-use", editPayload(gone.repo, OVERLAP_FILE, SUBAGENT), gone.env);
+    await runHook("pre-tool-use", editPayload(gone.repo, SECOND_FILE, SUBAGENT), gone.env);
+    gone.hub.setTripwireAnonymous(undefined);
+
+    // Act
+    const liveLine = parsed(await runHook("user-prompt-submit", promptPayload(live.repo), live.env)).systemMessage;
+    const goneLine = parsed(await runHook("user-prompt-submit", promptPayload(gone.repo), gone.env)).systemMessage;
+
+    // Assert: one re-ask per file, at most TURN_END_RECHECK_MAX_FILES
+    expect(liveLine).toBe(LIVE_LINE_TWO);
+    expect(live.hub.calls.tripwire).toBe(asked + 2);
+    expect(goneLine).toBe(PAST_LINE_TWO);
   });
 });

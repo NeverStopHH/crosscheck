@@ -141,7 +141,7 @@ import { namedLandedCommits } from "@crosscheck/connector-core/landed-changes/na
 import { LANDED_STOP_MAX_SUBJECT_CHARS, LandedStopSchema, containsSecret } from "@crosscheck/schema";
 import { NO_LANDED_ANSWER, landedWhyFor } from "./landed-why.ts";
 import { requestLandingFetchFor } from "./landing-fetch.ts";
-import { onePerKey, oweUnansweredRecheck, recheckOverdueRests } from "./rest-recheck.ts";
+import { bookUncheckedRests, onePerKey, oweUnansweredRecheck, recheckOverdueRests } from "./rest-recheck.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
 /** The ONLY decision this connector can emit — the ladder's ceiling (§4). */
@@ -747,7 +747,7 @@ const releaseCutStop = async (ctx: HookContext, claim: ClaimMade): Promise<void>
   if (!isLiveLost && !claim.isLandedWon) {
     return;
   }
-  await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => {
+  const isWritten = await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => {
     const unasked =
       claim.askKey === null
         ? fresh
@@ -760,6 +760,14 @@ const releaseCutStop = async (ctx: HookContext, claim: ClaimMade): Promise<void>
   });
   if (isLiveLost) {
     await recordRestOmission(ctx.config.home, { key: ctx.repoKey, reason: TRIPWIRE_CUT, now: ctx.now() });
+  }
+  // A LOCK THAT STAYS BUSY LEAVES THE CLAIM AS IT IS — the ask spent, the
+  // group told, no rest owed — so the file would be told nobody about and
+  // counted nowhere (final review of batch 2, N3). Booked at once instead, the
+  // way an unanswered tripwire's recheck is (hooks/rest-recheck.ts
+  // oweUnansweredRecheck): counted, where it cannot be re-told.
+  if (isLiveLost && !isWritten) {
+    await bookUncheckedRests(ctx, 1, TRIPWIRE_CUT);
   }
 };
 

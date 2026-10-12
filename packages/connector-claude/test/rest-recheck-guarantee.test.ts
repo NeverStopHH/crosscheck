@@ -11,14 +11,18 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 
+import { utimes } from "node:fs/promises";
+
 import { runHook } from "../src/index.ts";
+import { bookOwedRestsAtEnd } from "../src/hooks/rest-recheck.ts";
 import { prepareHook } from "../src/hooks/runner.ts";
 import { handleTurnEnd } from "../src/hooks/turn-end.ts";
 import { COLLISION_RELAY_SENTENCE, collisionKey } from "@crosscheck/connector-core/hints/collision-notice.ts";
-import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
-import { TURN_END_RECHECK_MAX_FILES } from "@crosscheck/connector-core/constants.ts";
+import { repoKey, sessionStatePath } from "@crosscheck/connector-core/config/paths.ts";
+import { MAX_SPOOL_AGE_DAYS, MS_PER_DAY, TURN_END_RECHECK_MAX_FILES } from "@crosscheck/connector-core/constants.ts";
 import { readCaptureLosses } from "@crosscheck/connector-core/state/loss-ledger.ts";
 import { readRestOmissions } from "@crosscheck/connector-core/state/rest-omissions.ts";
+import { reapStaleSessionStates } from "@crosscheck/connector-core/state/session-reap.ts";
 import { readSessionState, sessionStateLockPath, updateSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { withLock } from "@crosscheck/connector-core/spool/lock.ts";
 import { activeTeammateSession } from "../../connector-core/test/fixtures/hint-hub.ts";
@@ -394,6 +398,47 @@ describe("a session that ends owing rechecks (round 3, F-M2)", () => {
     }
 
     // Assert: the state is gone, and its debts went to the ledgers, not with it.
+    expect(await readSessionState(fix.home, SESSION_ID)).toBeNull();
+    expect(await restLosses(fix)).toEqual({ total: 2, byDetail: { "session-end": 2 } });
+    expect(await restOmissions(fix)).toBe(1);
+  });
+
+  test("the debts SessionEnd booked under a busy lock are not booked again by the reaper that finds the state (final review of batch 2, N10)", async () => {
+    // Arrange: two files owed; a sibling holds the state lock past SessionEnd's
+    // patience, so the booking comes from the unlocked read — and the hook is
+    // cut before its state delete, so the state survives with its rests.
+    const fix = await settled("rg-end-busy-cut", [OVERLAP_FILE, SECOND_FILE]);
+    const release: { value: () => void } = { value: () => undefined };
+    const held = withLock(sessionStateLockPath(fix.home, SESSION_ID), undefined, () =>
+      new Promise<void>((done) => {
+        release.value = done;
+      }),
+    );
+    const ctx = await prepareHook(sessionEnded(fix.repo), fix.env);
+    if (ctx === null) {
+      throw new Error("the fixture did not resolve a reportable repo");
+    }
+    try {
+      await bookOwedRestsAtEnd(ctx, "session-end");
+    } finally {
+      release.value();
+      await held;
+    }
+    expect(await restLosses(fix)).toEqual({ total: 2, byDetail: { "session-end": 2 } });
+    expect((await readSessionState(fix.home, SESSION_ID))?.tripwireCheckedFiles).toHaveLength(2);
+
+    // Act: a week later the reaper finds the corpse
+    const deadAt = new Date(Date.now() - (MAX_SPOOL_AGE_DAYS + 1) * MS_PER_DAY);
+    await updateSessionState(fix.home, SESSION_ID, (fresh) => ({
+      ...fresh,
+      startedAt: deadAt.toISOString(),
+      lastHeartbeatAt: deadAt.toISOString(),
+    }));
+    await utimes(sessionStatePath(fix.home, SESSION_ID), deadAt, deadAt);
+    const reaped = await reapStaleSessionStates(fix.home, new Date());
+
+    // Assert: the state goes, and the debts are counted once
+    expect(reaped).toBe(1);
     expect(await readSessionState(fix.home, SESSION_ID)).toBeNull();
     expect(await restLosses(fix)).toEqual({ total: 2, byDetail: { "session-end": 2 } });
     expect(await restOmissions(fix)).toBe(1);

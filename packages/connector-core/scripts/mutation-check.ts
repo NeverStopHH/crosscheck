@@ -26954,12 +26954,38 @@ export const MUTATIONS: readonly Mutation[
     because: "the agent is asked and the person is not: the pilot's hints reached only agents, 0 of 157 opened",
   },
   {
-    label: "the anonymous live line says the teammate only recently worked on the file",
+    label: "the anonymous live line is told in the past tense",
     file: `${CORE}/src/hints/collision-notice.ts`,
-    from: "  return group.unconfirmed === true\n    ? `crosscheck: ${UNKNOWN_TEAMMATE} recently worked on",
-    to: "  return true\n    ? `crosscheck: ${UNKNOWN_TEAMMATE} recently worked on",
+    from: "  if (group.unconfirmed === true) {\n    return (\n      `crosscheck: ${UNKNOWN_TEAMMATE} was working on",
+    to: "  if (true) {\n    return (\n      `crosscheck: ${UNKNOWN_TEAMMATE} was working on",
     test: `${CONNECTOR}/test/collision-anonymous-hook.test.ts`,
     because: "a teammate live on the file this second reads as old news, and \"right now\" is the whole warning",
+  },
+  {
+    // Final review of batch 2, §5: the relay of a nameless group was always
+    // the past tense, where the decision asks for a live warning.
+    label: "a drained nameless group is never asked of the tripwire again",
+    file: `${CONNECTOR}/src/hooks/collision-relay.ts`,
+    from: '  return answers.some(Boolean) ? "live" : "unconfirmed";',
+    to: '  return "unconfirmed";',
+    test: `${CONNECTOR}/test/collision-anonymous-hook.test.ts`,
+    because: "the person reads the past tense of a teammate who is on the file this second — the relay is anonymous but not live",
+  },
+  {
+    label: "a nameless group the hub still confirms is relayed in the past tense",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: '      return nameless === "live" ? liveNamelessCollision(group) : anonymousCollision(group);',
+    to: "      return anonymousCollision(group);",
+    test: `${CONNECTOR}/test/collision-anonymous-hook.test.ts`,
+    because: "the tripwire's answer at the drain is asked for and thrown away",
+  },
+  {
+    label: "a nameless teammate who left the file is relayed as still there",
+    file: `${CONNECTOR}/src/hooks/collision-relay.ts`,
+    from: "  return result.ok && result.data.anonymous;",
+    to: "  return result.ok;",
+    test: `${CONNECTOR}/test/collision-anonymous-hook.test.ts`,
+    because: "any answered re-ask reads as her row, and the person is told she is on a file she left",
   },
   {
     label: "the session state forgets that a stored group was nameless",
@@ -30549,7 +30575,7 @@ export const MUTATIONS: readonly Mutation[
     from: "    if (presence === null) {\n      return unconfirmedCollision(group);\n    }",
     to: "    if (presence === null) {\n      return anonymousCollision(group);\n    }",
     test: `${CONNECTOR}/test/collision-relay-unconfirmed.test.ts`,
-    because: "with no contrary evidence the person reads 'A teammate recently worked on 8 files' in every IDE session",
+    because: "with no contrary evidence the person reads 'A teammate was working on 8 files … while your subagent edited them' in every IDE session",
   },
   {
     label: "the relay's presence refresh waits out the request timeout",
@@ -30562,8 +30588,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a drain that only owns up to dropped groups asks presence anyway",
     file: `${CONNECTOR}/src/hooks/collision-relay.ts`,
-    from: "  takenFrom(state).groups.length === 0 ? null : presenceAnswer(ctx, budget);",
-    to: "  presenceAnswer(ctx, budget);",
+    from: "  const presence = groups.length === 0 ? null : await presenceAnswer(ctx, budget);",
+    to: "  const presence = await presenceAnswer(ctx, budget);",
     test: `${CONNECTOR}/test/subagent-return-hook.test.ts`,
     because: "a count that names nobody costs a hub call on the main thread",
   },
@@ -36733,8 +36759,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a resume starts its window and its roots afresh",
     file: `${CORE}/src/flows/register-session.ts`,
-    from: "    ...(await carriedFromLineage(input)),\n",
-    to: "",
+    from: "    ...carried,\n  };",
+    to: "  };",
     test: `${CORE}/test/capture-across-lives.test.ts`,
     because: "H1: 0 of 6 pre-resume shared files reach the teammate's tripwire after a SessionEnd and a resume",
   },
@@ -36785,6 +36811,106 @@ export const MUTATIONS: readonly Mutation[
     to: "    const kept = capture;",
     test: `${CORE}/test/capture-across-lives.test.ts`,
     because: "a heal that retires an orphan life writes the lineage again, and the resume after it sweeps nothing",
+  },
+  {
+    // Final review of batch 2, N1: the resumed life swept the carried roots,
+    // died without SessionEnd, and the note still carried life 1's marks.
+    label: "a lineage whose capture a resume consumed books nothing when reaped",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "  if (Object.keys(carried).length > 0) {\n    await consumeCarriedCapture(input.home, input.hostSessionKey);\n  }\n",
+    to: "",
+    test: `${CORE}/test/capture-across-lives.test.ts`,
+    because: "N1: a sweep the resumed life made is booked hook_timed_out on the wire, and the hub reads the repo as telemetry_lost for 14 days",
+  },
+  {
+    label: "a stale lineage beside a live state books nothing",
+    file: `${CORE}/src/state/session-lineage.ts`,
+    from: "    if (capture !== null && lineage?.success === true && !isOwedElsewhere) {",
+    to: "    if (capture !== null && lineage?.success === true) {",
+    test: `${CORE}/test/capture-across-lives.test.ts`,
+    because: "N1: a sweep the live life still owes is counted now and filed by its next Stop — counted AND delivered",
+  },
+  {
+    // Final review of batch 2, the gap behind N1: the state reaper booked a
+    // dead life's owed rechecks and never its owed sweeps.
+    label: "a life killed with an owed sweep is counted when its state is reaped",
+    file: `${CORE}/src/state/session-reap.ts`,
+    from: "    if (pendingSweepsOf(capture) > 0) {\n      await recordReapedCapture(home, parsed.data.hostSessionKey, capture, now);\n    }\n",
+    to: "",
+    test: `${CORE}/test/capture-across-lives.test.ts`,
+    because: "a Bash-marked root no lane swept is neither delivered nor counted once the corpse goes — an I1 violation, and for a resumed life a regression of N1",
+  },
+  {
+    label: "a resume after the reap still sweeps it",
+    file: `${CORE}/src/state/session-lineage.ts`,
+    from: "    const { capture: _replaced, ...ladder } = prior.success ? prior.data : {};",
+    to: "    const ladder = { crosscheckSessionId: `cc_${hostSessionKey}` };",
+    test: `${CORE}/test/capture-across-lives.test.ts`,
+    because: "the reap's note ends the life the hub still holds, so the resume climbs a rung past the counter its marker restores instead of continuing the life (review-2 round 9, M1 + M2)",
+  },
+  {
+    // ...and the same note for a RESUMED life: the last end it keeps is the
+    // only thing that says the life before was ended.
+    label: "a reaped life's note forgets the last end, so the resume lands on the ended life",
+    file: `${CORE}/src/state/session-lineage.ts`,
+    from: "    const { capture: _replaced, ...ladder } = prior.success ? prior.data : {};",
+    to: "    const ladder = {};",
+    test: `${CORE}/test/capture-across-lives.test.ts`,
+    because: "a state-less resume walks from the base id onto a life the hub ended, and the next flush spends the repo's spool under it (review E2E-2)",
+  },
+  {
+    label: "a reaped life's capture is booked again over the one its cut end wrote",
+    file: `${CORE}/src/state/session-lineage.ts`,
+    from: "    if (priorCapture !== null && !isSameCaptureBinding(priorCapture, capture)) {",
+    to: "    if (priorCapture !== null) {",
+    test: `${CORE}/test/capture-across-lives.test.ts`,
+    because: "a SessionEnd cut before its delete wrote the same debt the corpse carries, and it reaches the wire twice as hook_timed_out",
+  },
+  {
+    label: "a reaped life bound elsewhere drops the capture it replaces unbooked",
+    file: `${CORE}/src/state/session-lineage.ts`,
+    from: "    if (priorCapture !== null && !isSameCaptureBinding(priorCapture, capture)) {",
+    to: "    if (false) {",
+    test: `${CORE}/test/capture-across-lives.test.ts`,
+    because: "a capture no resume of this conversation can carry any more vanishes silently once the reap writes over it",
+  },
+  {
+    // Final review of batch 2, LOW-a: the live-state guard read a resume bound
+    // elsewhere as the owner of a capture it had carried nothing of.
+    label: "a stale lineage beside a live state of another binding drops the sweep it still carries",
+    file: `${CORE}/src/state/session-lineage.ts`,
+    from: "  return state.success && isSameCaptureBinding(state.data, capture);",
+    to: "  return state.success;",
+    test: `${CORE}/test/capture-across-lives.test.ts`,
+    because: "LOW-a: a sweep no life of this conversation carried goes with the note — made by nobody, counted nowhere",
+  },
+  {
+    // Final review of batch 2, LOW-b: a resume's consume that could not
+    // rewrite the note left the capture on it; the life paid it and died.
+    label: "a resumed life that paid the carried sweep is booked for it when its consume could not rewrite the note",
+    file: `${CORE}/src/state/session-reap.ts`,
+    from: "    if (pendingSweepsOf(capture) === 0) {\n      await strikePaidCapture(home, parsed.data.hostSessionKey, capture);\n    }\n",
+    to: "",
+    test: `${CORE}/test/capture-across-lives.test.ts`,
+    because: "LOW-b: a sweep the resumed life made is booked hook_timed_out on the wire once its note goes stale, and the hub reads the repo as telemetry_lost for 14 days",
+  },
+  {
+    label: "a killed life bound elsewhere that owes nothing strikes the note's capture of this hub as paid",
+    file: `${CORE}/src/state/session-lineage.ts`,
+    from: "  strikeCapture(home, hostSessionKey, (carried) => isSameCaptureBinding(carried, binding));",
+    to: "  strikeCapture(home, hostSessionKey, () => true);",
+    test: `${CORE}/test/capture-across-lives.test.ts`,
+    because: "LOW-b: a capture the dead life carried nothing of is struck as paid — made by nobody, counted nowhere",
+  },
+  {
+    // Final review of batch 2, N3: the undo's locked write gave up and the
+    // claim stood — the ask spent, the group told, nothing owed, nothing counted.
+    label: "a cut whose undo meets a busy lock leaves the file uncounted",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "  if (isLiveLost && !isWritten) {\n    await bookUncheckedRests(ctx, 1, TRIPWIRE_CUT);\n  }\n",
+    to: "",
+    test: `${CONNECTOR}/test/tripwire-claim-cut.test.ts`,
+    because: "N3: a person told nobody about the file is counted nowhere; the next hook pays nothing because nothing is owed",
   },
   {
     label: "an unanswered tripwire owes no recheck",
@@ -36891,6 +37017,34 @@ export const MUTATIONS: readonly Mutation[
     because: "the room another hook made is rewritten again, dropping lines this reader cannot parse and racing a third hook's append",
   },
   {
+    // edab8f9e (pilot, 2026-10-07): the two hosts' doctors say the person is
+    // never told of a collision there — untested until the final review's §3.
+    label: "Cursor's doctor no longer says the person is never told of a collision there",
+    file: `${CURSOR}/src/capabilities.ts`,
+    from: '      name: "person-facing collision notice",\n      sentence:\n        "no event this connector registers',
+    to: '      name: "person-facing collision notice (withdrawn)",\n      sentence:\n        "no event this connector registers',
+    test: `${CURSOR}/test/derive-doctor.test.ts`,
+    because: "a Cursor user reads a doctor with no line about it and assumes the person is told, as on Claude Code",
+  },
+  {
+    label: "ACP's doctor no longer says the person is never told of a collision there",
+    file: `${ACP}/src/capabilities.ts`,
+    from: '      name: "person-facing collision notice",\n      sentence:\n        "stable ACP v1 has no session update',
+    to: '      name: "person-facing collision notice (withdrawn)",\n      sentence:\n        "stable ACP v1 has no session update',
+    test: `${ACP}/test/derive-doctor.test.ts`,
+    because: "an ACP user reads a doctor with no line about it and assumes the person is told, as on Claude Code",
+  },
+  {
+    // Final review of batch 2, N10: the M8 fallback booked the rests, the hook
+    // was cut before its delete, and the reaper booked them once more.
+    label: "the reaper books the rests SessionEnd already booked under a busy lock",
+    file: `${CORE}/src/state/session-reap.ts`,
+    from: "  if (await wereOwedRestsBooked(home, state.hostSessionKey, state.crosscheckSessionId)) {\n    return;\n  }\n",
+    to: "",
+    test: `${CONNECTOR}/test/rest-recheck-guarantee.test.ts`,
+    because: "N10: doctor and status over-count by the rests of every SessionEnd cut between its booking and its delete",
+  },
+  {
     label: "SessionEnd under a busy lock drops owed rests unbooked",
     file: `${CONNECTOR}/src/hooks/rest-recheck.ts`,
     from: "    const unlocked = isWritten ? null : await readSessionState(ctx.config.home, ctx.payload.session_id);",
@@ -36957,10 +37111,24 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a re-fire bound elsewhere drops the owed rechecks unbooked",
     file: `${CORE}/src/state/session-state.ts`,
-    from: "        await bookRestsLeftBehind(home, previous, new Date(state.startedAt));\n",
+    from: "  if (published.leftBehind !== null) {\n    await bookRestsLeftBehind(home, published.leftBehind, new Date(state.startedAt));\n  }\n",
     to: "",
     test: `${CORE}/test/collision-rest-reap.test.ts`,
     because: "L4: a re-fire that changes hub or repo erases its debts with no line in any ledger",
+  },
+  {
+    // Final review of batch 2, N7: two ledger appends, one of which may wait
+    // on the omission ledger's own lock, held under the state lock on
+    // SessionStart's path.
+    label: "the rests a rebound re-fire leaves behind are booked under the state lock",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "      return { leftBehind: previous !== null && !isSameBinding(previous, state) ? restsLeftBehind(previous) : null };",
+    to:
+      "      if (previous !== null && !isSameBinding(previous, state)) {\n" +
+      "        await bookRestsLeftBehind(home, restsLeftBehind(previous), new Date(state.startedAt));\n      }\n" +
+      "      return { leftBehind: null };",
+    test: `${CORE}/test/collision-rest-reap.test.ts`,
+    because: "N7: every sibling hook of the re-fire waits on the state lock while the ledgers are appended, on the hook already at 80 % of its budget under load",
   },
   {
     label: "the runner returns before the handler's cut is on disk",
@@ -37117,6 +37285,16 @@ export const MUTATIONS: readonly Mutation[
     to: "  const names = [...new Set([...bunStartupKeysIn(env), ...restartedWithoutRuntimeKeys()])].sort();\n  if (names.length >= 0) {",
     test: `${CLI}/test/doctor.test.ts`,
     because: "L12: a BUN_CONFIG_REGISTRY in the shell costs every hook about 75 ms, and nothing says so",
+  },
+  {
+    // Final review of batch 2, N4: every hook with the room found the sweep
+    // owed in the same second and each ran the whole lane.
+    label: "every hook with room pays the sweep a healed life is owed",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  !owesSweepToLife(state) || isSweepClaimFresh(state, now) ? null : { ...state, gitLaneSweepingSince: now.toISOString() };",
+    to: "  !owesSweepToLife(state) ? null : { ...state, gitLaneSweepingSince: now.toISOString() };",
+    test: `${CONNECTOR}/test/heal-sweep-claim.test.ts`,
+    because: "N4: under a 12-subagent fan-out twelve hooks each run the lane and a flush for one heal, on the hooks that are already the loaded ones",
   },
   {
     label: "a healed life waits for the next Stop before its files are filed again",
@@ -37398,7 +37576,7 @@ interface Outcome {
  * PRINTS: packages/connector-acp/test/announce-position.test.ts 1
  * PRINTS: packages/connector-acp/test/capture-engine.test.ts 4
  * PRINTS: packages/connector-acp/test/capture-hardening.test.ts 2
- * PRINTS: packages/connector-acp/test/derive-doctor.test.ts 4
+ * PRINTS: packages/connector-acp/test/derive-doctor.test.ts 5
  * PRINTS: packages/connector-acp/test/derive-gap.test.ts 1
  * PRINTS: packages/connector-acp/test/derive.test.ts 8
  * PRINTS: packages/connector-acp/test/draft-nudge-inject.test.ts 6
@@ -37428,7 +37606,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/briefing-omission-hook.test.ts 4
  * PRINTS: packages/connector-claude/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-claude/test/capture-latency.test.ts 1
- * PRINTS: packages/connector-claude/test/collision-anonymous-hook.test.ts 8
+ * PRINTS: packages/connector-claude/test/collision-anonymous-hook.test.ts 11
  * PRINTS: packages/connector-claude/test/collision-notice-hook.test.ts 12
  * PRINTS: packages/connector-claude/test/collision-order-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/collision-prompt-render.test.ts 1
@@ -37456,6 +37634,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/ghost-notice.test.ts 1
  * PRINTS: packages/connector-claude/test/ghost-worker.test.ts 5
  * PRINTS: packages/connector-claude/test/global-wiring-silence.test.ts 4
+ * PRINTS: packages/connector-claude/test/heal-sweep-claim.test.ts 1
  * PRINTS: packages/connector-claude/test/hint-hook.test.ts 4
  * PRINTS: packages/connector-claude/test/hook-budget.test.ts 3
  * PRINTS: packages/connector-claude/test/hook-contract.test.ts 1
@@ -37479,7 +37658,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/recovery-epoch.test.ts 2
  * PRINTS: packages/connector-claude/test/recovery-losses.test.ts 1
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
- * PRINTS: packages/connector-claude/test/rest-recheck-guarantee.test.ts 18
+ * PRINTS: packages/connector-claude/test/rest-recheck-guarantee.test.ts 19
  * PRINTS: packages/connector-claude/test/resumed-session.test.ts 10
  * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
  * PRINTS: packages/connector-claude/test/settings-merge-removal.test.ts 1
@@ -37500,7 +37679,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/summarizer-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/topic-git-lane.test.ts 9
  * PRINTS: packages/connector-claude/test/topic-nick-shape.test.ts 19
- * PRINTS: packages/connector-claude/test/tripwire-claim-cut.test.ts 8
+ * PRINTS: packages/connector-claude/test/tripwire-claim-cut.test.ts 9
  * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 12
  * PRINTS: packages/connector-claude/test/turn-end-hook.test.ts 10
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 4
@@ -37517,7 +37696,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/briefing-presence-topics.test.ts 6
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 5
  * PRINTS: packages/connector-core/test/briefing-withheld-age.test.ts 1
- * PRINTS: packages/connector-core/test/capture-across-lives.test.ts 11
+ * PRINTS: packages/connector-core/test/capture-across-lives.test.ts 21
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 5
  * PRINTS: packages/connector-core/test/capture-losses.test.ts 7
  * PRINTS: packages/connector-core/test/claim-drift.test.ts 4
@@ -37535,7 +37714,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/collision-person-strip.test.ts 11
  * PRINTS: packages/connector-core/test/collision-publish-busy-lock.test.ts 3
  * PRINTS: packages/connector-core/test/collision-relay-presence.test.ts 8
- * PRINTS: packages/connector-core/test/collision-rest-reap.test.ts 6
+ * PRINTS: packages/connector-core/test/collision-rest-reap.test.ts 7
  * PRINTS: packages/connector-core/test/collision-state-eviction.test.ts 6
  * PRINTS: packages/connector-core/test/collision-state.test.ts 4
  * PRINTS: packages/connector-core/test/commit-evidence.test.ts 1
@@ -37692,7 +37871,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/briefing-omission.test.ts 3
  * PRINTS: packages/connector-cursor/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-cursor/test/budget.test.ts 2
- * PRINTS: packages/connector-cursor/test/derive-doctor.test.ts 3
+ * PRINTS: packages/connector-cursor/test/derive-doctor.test.ts 4
  * PRINTS: packages/connector-cursor/test/derive-transcript.test.ts 3
  * PRINTS: packages/connector-cursor/test/derive.test.ts 5
  * PRINTS: packages/connector-cursor/test/draft-nudge.test.ts 3

@@ -1166,7 +1166,37 @@ None of these lines reaches the hub: the omission ledgers (`state/omission-ledge
 and `rest_unchecked` is a capture-loss kind `toLossReport` leaves out of its wire scope
 (`state/loss-ledger.ts` `LOCAL_CAPTURE_LOSS_KINDS`; `test/rest-unchecked-scope.test.ts`), so no coverage row is
 marked `telemetry_lost` for one person's unwarned moment. Locally they can only add a WARN. A line that reaches
-nobody's judgment cannot strengthen one.
+nobody's judgment cannot strengthen one. Counted once, too: a SessionEnd that booked the rests from an unlocked
+read (M8) and was cut before its state delete leaves a marker beside the state (`sessions/<slug>.rests-booked`,
+`state/rests-booked.ts`) naming the life, and the reaper that finds that state honours it instead of booking the
+same rests again (final review of batch 2, N10).
+
+The one capture debt an ended life leaves that DOES reach the wire is the sweep it still owed (batch-2 review H1):
+`hook_timed_out:session-end`, booked by an end that could not write its lineage, by an end or a state reap that
+replaced a capture of another binding, or by the lineage reap of a conversation that never came back — booked once,
+never dropped, and never booked twice (final review of batch 2, N1). A resume takes the capture into its state and strikes it off the
+note (`flows/register-session.ts` → `state/session-lineage.ts` `consumeCarriedCapture`), so the live state owns the
+debt from then on — its next Stop files the roots, its SessionEnd writes the next capture — and a note the reaper
+finds beside a live state of the same host session AND the capture's own binding books nothing (`reapStaleLineages`).
+A live state bound elsewhere — a resume that landed in another repo or on another hub — carried nothing of it
+(`carriedFromLineage` carries only its own binding's capture and strikes nothing), so a note gone stale beside it is
+booked as beside no state at all (final review of batch 2, LOW-a; until then it went with the note, uncounted). Before N1, a resumed life
+that swept the carried roots and then died without SessionEnd was booked for the sweep it had made, and the hub read
+the repo as `telemetry_lost` for fourteen days (`test/capture-across-lives.test.ts`). A life that dies WITHOUT
+SessionEnd while it still owes a sweep is not dropped either: when the state reaper removes its corpse
+(`state/session-reap.ts`) it writes that capture back into the host session's note (`recordReapedCapture`), the way
+SessionEnd's `recordEndedLife` does — but without naming the life as ended, since its end marker still restores it for
+a state-less resume (review-2 round 9, M1 + M2), and keeping the last end the note names, which keeps the resume of a
+resumed life off the life before it — so a resume carries and sweeps it, and a note nobody resumes is booked when it
+goes stale. A capture of the same binding already on the note — a SessionEnd cut before its delete wrote it from this
+very state — is the same debt, replaced and never booked twice; one of another binding is booked, as an end's is.
+And a corpse of the note's own binding that owes NOTHING pays the note (`strikePaidCapture`, final review of batch 2,
+LOW-b): the resume carried the note's capture into that very state, a consume that could not rewrite the note
+(fail-open) left it there, and the life swept every root it carried before it died — so the lineage reap would have
+booked, as never made, the sweep it had made. Struck only when the note's capture is of the dead life's own binding;
+another binding's stays, since that life carried nothing of it, and the lineage reap books it (LOW-a).
+First and resumed lives alike; before this the reaper booked a dead life's owed rechecks
+and never its owed sweeps, and for a resumed life N1's consume had taken the only count there was.
 
 **4.8.9 Foreign-hub refusals (#33).** A session the key binding refuses never registers — not with the hub the key
 belongs to, not with the one the repo named — and no hook of it captures anything (`config/key-binding.ts` refuses

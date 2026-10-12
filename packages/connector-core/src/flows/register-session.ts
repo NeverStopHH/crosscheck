@@ -39,6 +39,7 @@ import {
   workContextRecord,
 } from "../capture/records.ts";
 import {
+  consumeCarriedCapture,
   ladderRungs,
   ladderStart,
   lifeRungOf,
@@ -553,6 +554,7 @@ export const registerSessionFlow = async (
   const adopted = isMinted && restored === null ? (registration?.held ?? null) : null;
   const isUnconfirmed =
     isMinted && restored === null && registration !== null && registration.held === undefined && registration.preexisted;
+  const carried = await carriedFromLineage(input);
 
   // BEFORE the first append, always: `reap` decides that a spool file has no
   // writer left by finding no session state file for it, and that inference
@@ -621,7 +623,7 @@ export const registerSessionFlow = async (
     ...(input.briefingPending === true ? { briefingPending: true } : {}),
     // Where the next lane sweeps, when an earlier life of this conversation
     // ended (review batch 2, H1).
-    ...(await carriedFromLineage(input)),
+    ...carried,
   };
   const startsAt = {
     ...stateInput,
@@ -669,6 +671,12 @@ export const registerSessionFlow = async (
         : { seqEpoch: marked.epoch, eventSeq: marked.n };
     };
     await publishSessionState(input.home, startsAt, startOf);
+  }
+  // THE STATE OWNS THE CARRIED CAPTURE NOW (final review N1): the note that
+  // handed it over is rewritten without it, so a reap of that note after
+  // this life has swept the roots — or while it still can — books nothing.
+  if (Object.keys(carried).length > 0) {
+    await consumeCarriedCapture(input.home, input.hostSessionKey);
   }
   // The state names the epoch now; the reservation has done its job.
   await removeFile(sessionEpochPathForSlug(input.home, sessionSlug(input.hostSessionKey)));

@@ -320,9 +320,13 @@ export const pastRecheckWindow = async (home: string): Promise<void> => {
  */
 export const NICK_RECENT_NOTICE = "crosscheck: Nick recently worked on refresh.ts — talk before you change it";
 
-/** The relayed line for a teammate live presence did not confirm, on OVERLAP_FILE. */
+/**
+ * The relayed line for a teammate live presence did not confirm, on
+ * OVERLAP_FILE: the past tense of the subagent's own moment, no time of hers
+ * (final review of batch 2, §5).
+ */
 export const UNNAMED_REFRESH_NOTICE =
-  "crosscheck: A teammate recently worked on refresh.ts — talk to your team before you change it";
+  "crosscheck: A teammate was working on refresh.ts while your subagent edited it — talk to your team before you change it";
 
 /** A second live teammate, Ken, on his own work context. */
 export const kenSession = (): Record<string, unknown> => ({

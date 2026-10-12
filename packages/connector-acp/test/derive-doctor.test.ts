@@ -372,3 +372,20 @@ describe("the ACP derive section says every rung and every refusal", () => {
     expect(detail).not.toContain("`crosscheck doctor` names which");
   });
 });
+
+describe("the person-facing collision notice refusal (pilot, 2026-10-07)", () => {
+  test("ACP's doctor says the person is never told of a collision here, and names the one visible stream the proxy will not forge", async () => {
+    // Arrange
+    const dir = await home("acp-doctor-person-notice");
+    await withProxyLog(dir);
+
+    // Act
+    const checks = await acpDoctorChecks({ home: dir, liveStates: [] });
+    const line = named(checks, "person-facing collision notice (acp)");
+
+    // Assert — a refusal is a decision working, never a fault
+    expect(line?.level).toBe("PASS");
+    expect(line?.detail).toContain("agent_message_chunk, which the proxy will not forge");
+    expect(line?.detail).toContain("the person learns of it when the agent says so");
+  });
+});

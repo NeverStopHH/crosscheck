@@ -26,7 +26,7 @@ const FILE = "src/auth/refresh.ts";
 const SECOND = "src/auth/rotate.ts";
 
 const LIVE_LINE = "crosscheck: A teammate is working on refresh.ts right now — talk to your team before you change it";
-const PAST_LINE = "crosscheck: A teammate recently worked on refresh.ts — talk to your team before you change it";
+const PAST_LINE = "crosscheck: A teammate was working on refresh.ts while your subagent edited it — talk to your team before you change it";
 
 const mike: TripwireSession = {
   sessionId: "cc_mike",
