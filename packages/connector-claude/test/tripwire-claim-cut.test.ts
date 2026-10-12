@@ -32,8 +32,11 @@ import { prepareHook, runHookWith } from "../src/hooks/runner.ts";
 import type { HookBudget, HookContext } from "../src/hooks/runner.ts";
 import type { Env } from "../src/index.ts";
 import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
+import { SESSION_STATE_LOCK_RETRIES, SPOOL_LOCK_RETRY_DELAY_MS } from "@crosscheck/connector-core/constants.ts";
+import { withLock } from "@crosscheck/connector-core/spool/lock.ts";
+import { readCaptureLosses } from "@crosscheck/connector-core/state/loss-ledger.ts";
 import { readRestOmissions } from "@crosscheck/connector-core/state/rest-omissions.ts";
-import { overdueRests, readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import { overdueRests, readSessionState, sessionStateLockPath } from "@crosscheck/connector-core/state/session-state.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { TEAMMATE_DEVELOPER_ID } from "../../connector-core/test/fixtures/hint-hub.ts";
 import {
@@ -237,6 +240,49 @@ describe("a cut hook gives its claim back, and the cut is booked (H2 b)", () => 
       expect(afterCut.collisionRelayQueue).toHaveLength(1);
       expect(await tripwireCuts(fix)).toBe(1);
       expect(prompt.systemMessage).toContain(NICK_NOTICE);
+    },
+    CUT_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "a cut whose undo finds the state lock busy books the recheck it could not owe",
+    async () => {
+      // Arrange: the claim lands, then a sibling holds the state lock past the
+      // undo's whole patience — so the undo can neither release the ask nor
+      // owe the rest, and the file would be told nobody about, uncounted.
+      const fix = await collisionFixture("cc-cut-busy", BEHAVIOUR_TIMING);
+      const release: { value: () => void } = { value: () => undefined };
+      const held: { value: Promise<void> | null } = { value: null };
+      const claimsThenHoldsTheLock = async (ctx: HookContext, budget: HookBudget): Promise<string> => {
+        const output = await handlePreToolUse(ctx, budget);
+        held.value = withLock(sessionStateLockPath(fix.home, SESSION_ID), undefined, () =>
+          new Promise<void>((done) => {
+            release.value = done;
+          }),
+        );
+        await untilCut(budget);
+        await sleep(SESSION_STATE_LOCK_RETRIES * SPOOL_LOCK_RETRY_DELAY_MS * 2);
+        release.value();
+        return output;
+      };
+
+      // Act
+      await runHookWith(
+        "pre-tool-use",
+        claimsThenHoldsTheLock,
+        editPayload(fix.repo, OVERLAP_FILE, { tool_use_id: TOOL_USE_ID }),
+        { ...fix.env, CROSSCHECK_TIMEOUT_MS: CUT_REQUEST_TIMEOUT_MS },
+      );
+      await held.value;
+
+      // Assert: the claim stands (the lock refused the undo), and the recheck
+      // it could not owe is booked at once, the way an unanswered tripwire's is.
+      const state = await stateOf(fix.home);
+      expect(state.tripwireAskedGroups ?? []).toEqual([NICK_ASK_KEY]);
+      expect(overdueRests(state, new Date())).toEqual([]);
+      const losses = await readCaptureLosses(fix.home, repoKey(fix.hub.url, REPO_ID));
+      expect(losses.byDetail["rest_unchecked:tripwire_cut"]).toBe(1);
+      expect(await tripwireCuts(fix)).toBe(1);
     },
     CUT_TEST_TIMEOUT_MS,
   );

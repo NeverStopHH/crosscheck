@@ -234,7 +234,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 3866
+    # PRINTS: 3867
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -347,7 +347,7 @@ jobs:
     # PRINTS: hooks/landing-fetch.ts 2
     # PRINTS: hooks/post-tool-use-failure.ts 5
     # PRINTS: hooks/post-tool-use.ts 16
-    # PRINTS: hooks/pre-tool-use.ts 51
+    # PRINTS: hooks/pre-tool-use.ts 52
     # PRINTS: hooks/presence-refresh.ts 2
     # PRINTS: hooks/rest-recheck.ts 14
     # PRINTS: hooks/runner.ts 21
@@ -990,7 +990,7 @@ jobs:
     # PRINTS: post-tool-use-failure.ts 5
     # PRINTS: post-tool-use.ts 17
     # PRINTS: post.ts 1
-    # PRINTS: pre-tool-use.ts 51
+    # PRINTS: pre-tool-use.ts 52
     # PRINTS: precision.ts 2
     # PRINTS: presence-cache.ts 3
     # PRINTS: presence-notice.ts 2

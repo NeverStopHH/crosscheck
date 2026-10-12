@@ -36831,6 +36831,16 @@ export const MUTATIONS: readonly Mutation[
     because: "N1: a sweep the live life still owes is counted now and filed by its next Stop — counted AND delivered",
   },
   {
+    // Final review of batch 2, N3: the undo's locked write gave up and the
+    // claim stood — the ask spent, the group told, nothing owed, nothing counted.
+    label: "a cut whose undo meets a busy lock leaves the file uncounted",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "  if (isLiveLost && !isWritten) {\n    await bookUncheckedRests(ctx, 1, TRIPWIRE_CUT);\n  }\n",
+    to: "",
+    test: `${CONNECTOR}/test/tripwire-claim-cut.test.ts`,
+    because: "N3: a person told nobody about the file is counted nowhere; the next hook pays nothing because nothing is owed",
+  },
+  {
     label: "an unanswered tripwire owes no recheck",
     file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
     from: "    isLiveUnanswered: !answered.isLiveFresh && hub === null,",
@@ -37544,7 +37554,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/summarizer-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/topic-git-lane.test.ts 9
  * PRINTS: packages/connector-claude/test/topic-nick-shape.test.ts 19
- * PRINTS: packages/connector-claude/test/tripwire-claim-cut.test.ts 8
+ * PRINTS: packages/connector-claude/test/tripwire-claim-cut.test.ts 9
  * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 12
  * PRINTS: packages/connector-claude/test/turn-end-hook.test.ts 10
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 4

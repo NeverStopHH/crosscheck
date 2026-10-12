@@ -155,8 +155,11 @@ export const recheckRests = async (
  * off the hub's coverage, which no record was lost to, review batch 2 M3) and
  * the local omission ledger (one line per booking — the machine's count of
  * moments its person may not have been told; core state/rest-omissions.ts).
+ * Exported for the one other hook that owes a rest it may fail to write: a
+ * cut tripwire's undo under a lock that stays busy (hooks/pre-tool-use.ts
+ * releaseCutStop; final review of batch 2, N3).
  */
-const bookUncheckedRests = async (ctx: HookContext, count: number, detail: string): Promise<void> => {
+export const bookUncheckedRests = async (ctx: HookContext, count: number, detail: string): Promise<void> => {
   await recordCaptureLoss(ctx.config.home, {
     kind: "rest_unchecked",
     count,
