@@ -452,11 +452,31 @@ export const anonymousCollision = (group: CollisionNotice): RenderableCollision 
 });
 
 /**
+ * A nameless group the tripwire CONFIRMED at the drain (final review of
+ * batch 2, §5): the relay asked about its files once more and the hub still
+ * answered the nameless row, so the line is the live one — the warning the
+ * decision asks for, "A teammate is working on <file> right now". Presence
+ * cannot confirm her (it has no row of hers); the tripwire can.
+ */
+export const liveNamelessCollision = (group: CollisionNotice): RenderableCollision => ({
+  ...group,
+  name: "",
+  branch: null,
+  lastActiveAt: null,
+  anonymous: true,
+});
+
+/**
  * A nameless group's ONE line (the owner's decision on the batch-2
  * integration review's I1): the tripwire's live row as it is told —
  * `crosscheck: A teammate is working on refresh.ts right now — talk to your
- * team before you change it` — the same group told later in the past tense,
- * or a ghost check's count, which names no file:
+ * team before you change it`, or for several of her files `… is working
+ * right now on 3 files you also touched, e.g. refresh.ts — …` — the same
+ * group told later by a relay the tripwire could not confirm, in the past
+ * tense that names the SUBAGENT'S moment and none of hers (final review of
+ * batch 2, §5: "recently" was a time word about her): `crosscheck: A teammate
+ * was working on refresh.ts while your subagent edited it — …`; or a ghost
+ * check's count, which names no file:
  * `crosscheck: A teammate's work in progress also touches 3 of your files — …`.
  */
 const anonymousLine = (group: RenderableCollision, what: string, pronoun: string, partial: string): string => {
@@ -467,8 +487,15 @@ const anonymousLine = (group: RenderableCollision, what: string, pronoun: string
       `talk to your team before you change ${count === 1 ? "it" : "them"}${partial}`
     );
   }
-  return group.unconfirmed === true
-    ? `crosscheck: ${UNKNOWN_TEAMMATE} recently worked on ${what} — talk to your team before you change ${pronoun}${partial}`
+  const isGroup = group.fileCount > 1;
+  if (group.unconfirmed === true) {
+    return (
+      `crosscheck: ${UNKNOWN_TEAMMATE} was working on ${what}${isGroup ? "," : ""} while your subagent edited ${pronoun} — ` +
+      `talk to your team before you change ${pronoun}${partial}`
+    );
+  }
+  return isGroup
+    ? `crosscheck: ${UNKNOWN_TEAMMATE} is working right now on ${what} — talk to your team before you change ${pronoun}${partial}`
     : `crosscheck: ${UNKNOWN_TEAMMATE} is working on ${what} right now — talk to your team before you change ${pronoun}${partial}`;
 };
 
@@ -489,7 +516,7 @@ export const unconfirmedCollision = (group: CollisionNotice): RenderableCollisio
  * ONE LINE for the person:
  * `crosscheck: Mike is working on PlayerMappingGrid.tsx on branch feat/x (last active 3m ago) — talk before you both change it`;
  * with no presence answer, `crosscheck: Mike recently worked on PlayerMappingGrid.tsx — talk before you change it`;
- * or, omitted by presence, `crosscheck: A teammate recently worked on PlayerMappingGrid.tsx — talk to your team before you change it`.
+ * or, omitted by presence, `crosscheck: A teammate was working on PlayerMappingGrid.tsx while your subagent edited it — talk to your team before you change it`.
  * Every field is sanitized HERE, at render, whatever the group was built
  * from — a group read back from a state file is no more trusted than a row.
  */
@@ -612,17 +639,29 @@ const locatedBy = (group: CollisionNotice, entry: PresenceFact): CollisionNotice
  * subagent's run, and its location is exactly what an opt-out since would
  * withhold. The outcome depends on the answer alone, never on how old a
  * cache was.
+ *
+ * A group the hub NEVER NAMED is held to the tripwire instead (final review
+ * of batch 2, §5): presence has no row of hers to confirm, so the relay asks
+ * the tripwire about her files once more at the drain, and `nameless` is
+ * what it said — "live" when any file still answered her row, "unconfirmed"
+ * when none did or nothing could be asked. Live, the person reads the
+ * warning the decision asks for; unconfirmed, the past tense of the
+ * subagent's own moment, which names no time of hers.
  */
+export type NamelessAnswer = "live" | "unconfirmed";
+
 export const relayedCollisions = (
   groups: readonly CollisionNotice[],
   presence: readonly PresenceFact[] | null,
   now: Date,
+  nameless: NamelessAnswer = "unconfirmed",
 ): readonly RenderableCollision[] =>
   groups.map((group) => {
     // A teammate the hub never named stays unnamed: no presence answer can
-    // upgrade them, since presence has no row of theirs to confirm.
+    // upgrade them, since presence has no row of theirs to confirm — the
+    // tripwire's re-ask at the drain is what says whether she is still there.
     if (group.anonymous === true) {
-      return anonymousCollision(group);
+      return nameless === "live" ? liveNamelessCollision(group) : anonymousCollision(group);
     }
     if (presence === null) {
       return unconfirmedCollision(group);

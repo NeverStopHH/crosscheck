@@ -21,8 +21,9 @@ import {
   renderCollisionNotices,
   renderSubagentCollisionRelay,
 } from "@crosscheck/connector-core/hints/collision-notice.ts";
-import type { RenderableCollision } from "@crosscheck/connector-core/hints/collision-notice.ts";
-import { RELAY_PRESENCE_REFRESH_MS } from "@crosscheck/connector-core/constants.ts";
+import type { NamelessAnswer, RenderableCollision } from "@crosscheck/connector-core/hints/collision-notice.ts";
+import { RELAY_PRESENCE_REFRESH_MS, TURN_END_RECHECK_MAX_FILES } from "@crosscheck/connector-core/constants.ts";
+import { getTripwireSessions } from "@crosscheck/connector-core/http/hub.ts";
 import type { PresenceEntry } from "@crosscheck/connector-core/http/hub.ts";
 import { isCacheFresh, readPresenceCache } from "@crosscheck/connector-core/state/presence-cache.ts";
 import { refreshPresence } from "./presence-refresh.ts";
@@ -113,20 +114,70 @@ const takenFrom = (state: SessionState): TakenRelay => {
 };
 
 /**
+ * ONE tripwire call about one of her files, held to the request timeout and
+ * to what the budget spares, exactly as an owed rest's recheck is
+ * (hooks/rest-recheck.ts recheckOf): true only when the hub still answers
+ * the nameless row for it. Unasked, unanswered and "nobody there" all read
+ * false — the past tense is the honest line for each.
+ */
+const isNamelessStillOn = async (ctx: HookContext, budget: HookBudget, file: string): Promise<boolean> => {
+  const timeoutMs = Math.min(ctx.hub.timeoutMs, budget.spareMs());
+  if (timeoutMs <= 0) {
+    return false;
+  }
+  const result = await getTripwireSessions({ ...ctx.hub, timeoutMs }, ctx.identity.repoId, file);
+  return result.ok && result.data.anonymous;
+};
+
+/**
+ * WHETHER THE NAMELESS TEAMMATE IS STILL THERE (final review of batch 2, §5).
+ * A group the hub never named cannot be held to presence — presence has no
+ * row of hers — so a relay of it was always the past tense, where the
+ * decision asks for a LIVE warning. The tripwire is the right oracle, and
+ * the turn-end recheck already asks it per rested file: the drain asks it
+ * about the group's files, newest first, at most TURN_END_RECHECK_MAX_FILES
+ * of them, side by side; her row on any of them makes the line live. No new
+ * route, no new state. A queue with no nameless group asks nothing.
+ */
+const namelessAnswer = async (
+  ctx: HookContext,
+  budget: HookBudget,
+  groups: readonly CollisionNotice[],
+): Promise<NamelessAnswer> => {
+  const files = [...new Set(groups.filter((group) => group.anonymous === true).flatMap((group) => group.files))];
+  if (files.length === 0) {
+    return "unconfirmed";
+  }
+  const answers = await Promise.all(files.reverse().slice(0, TURN_END_RECHECK_MAX_FILES).map((file) => isNamelessStillOn(ctx, budget, file)));
+  return answers.some(Boolean) ? "live" : "unconfirmed";
+};
+
+/** What the drained groups are held to: the presence answer for the named, the tripwire's for the nameless. */
+interface DrainAnswers {
+  readonly presence: readonly PresenceEntry[] | null;
+  readonly nameless: NamelessAnswer;
+}
+
+/**
  * The presence answer the drained groups will be held to, asked BEFORE the
  * queue is emptied (round 3, F-M1): drained first, a refresh that threw or a
  * hook abandoned while it waited on the hub — up to RELAY_PRESENCE_REFRESH_MS
  * — lost groups already recorded as told. Asked from the unlocked read: the
  * answer is the repo's, so a group a racing sibling queues before the drain
  * is held to it too. No queued group still remembered, no presence call: a
- * drain that only owns up to dropped groups asks the hub nothing.
+ * drain that only owns up to dropped groups asks the hub nothing. Presence
+ * first, then the nameless group's tripwire re-ask with what the budget
+ * still spares: the named groups' answer keeps its priority.
  */
 const answerBeforeDrain = async (
   ctx: HookContext,
   state: SessionState,
   budget: HookBudget,
-): Promise<readonly PresenceEntry[] | null> =>
-  takenFrom(state).groups.length === 0 ? null : presenceAnswer(ctx, budget);
+): Promise<DrainAnswers> => {
+  const { groups } = takenFrom(state);
+  const presence = groups.length === 0 ? null : await presenceAnswer(ctx, budget);
+  return { presence, nameless: await namelessAnswer(ctx, budget, groups) };
+};
 
 /**
  * The queue taken and emptied in ONE locked transform, so a racing sibling
@@ -158,7 +209,7 @@ export const drainCollisionRelay = async (ctx: HookContext, budget: HookBudget):
       return withDrainedCollisionRelays(fresh);
     });
     return drained
-      ? { groups: relayedCollisions(taken.value.groups, answer, ctx.now()), hidden: taken.value.hidden }
+      ? { groups: relayedCollisions(taken.value.groups, answer.presence, ctx.now(), answer.nameless), hidden: taken.value.hidden }
       : NO_DRAIN;
   } catch {
     // Fail open: the hosting hook's own job is untouched.

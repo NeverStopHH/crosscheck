@@ -71,10 +71,12 @@
  * three times by the sweep a healed life is owed (hooks/git-lane.ts
  * sweepIfLifeMoved; batch-2 review, L10): PostToolUse asks whether the
  * envelope spares a lane before it loads the lane's modules, the sweep
- * asks once more before it runs, and its flush carries what is left:
+ * asks once more before it runs, and its flush carries what is left — and
+ * once more by the relay's tripwire re-ask of a nameless group, each call
+ * bounded by the request timeout and the spare (final review of batch 2, §5):
  *
  * VERIFY: grep -rn 'budget\.spareMs()' packages/connector-claude/src | wc -l | tr -d ' '
- * PRINTS: 19
+ * PRINTS: 20
  */
 import { describe, expect, test } from "bun:test";
 

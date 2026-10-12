@@ -26954,12 +26954,38 @@ export const MUTATIONS: readonly Mutation[
     because: "the agent is asked and the person is not: the pilot's hints reached only agents, 0 of 157 opened",
   },
   {
-    label: "the anonymous live line says the teammate only recently worked on the file",
+    label: "the anonymous live line is told in the past tense",
     file: `${CORE}/src/hints/collision-notice.ts`,
-    from: "  return group.unconfirmed === true\n    ? `crosscheck: ${UNKNOWN_TEAMMATE} recently worked on",
-    to: "  return true\n    ? `crosscheck: ${UNKNOWN_TEAMMATE} recently worked on",
+    from: "  if (group.unconfirmed === true) {\n    return (\n      `crosscheck: ${UNKNOWN_TEAMMATE} was working on",
+    to: "  if (true) {\n    return (\n      `crosscheck: ${UNKNOWN_TEAMMATE} was working on",
     test: `${CONNECTOR}/test/collision-anonymous-hook.test.ts`,
     because: "a teammate live on the file this second reads as old news, and \"right now\" is the whole warning",
+  },
+  {
+    // Final review of batch 2, §5: the relay of a nameless group was always
+    // the past tense, where the decision asks for a live warning.
+    label: "a drained nameless group is never asked of the tripwire again",
+    file: `${CONNECTOR}/src/hooks/collision-relay.ts`,
+    from: '  return answers.some(Boolean) ? "live" : "unconfirmed";',
+    to: '  return "unconfirmed";',
+    test: `${CONNECTOR}/test/collision-anonymous-hook.test.ts`,
+    because: "the person reads the past tense of a teammate who is on the file this second — the relay is anonymous but not live",
+  },
+  {
+    label: "a nameless group the hub still confirms is relayed in the past tense",
+    file: `${CORE}/src/hints/collision-notice.ts`,
+    from: '      return nameless === "live" ? liveNamelessCollision(group) : anonymousCollision(group);',
+    to: "      return anonymousCollision(group);",
+    test: `${CONNECTOR}/test/collision-anonymous-hook.test.ts`,
+    because: "the tripwire's answer at the drain is asked for and thrown away",
+  },
+  {
+    label: "a nameless teammate who left the file is relayed as still there",
+    file: `${CONNECTOR}/src/hooks/collision-relay.ts`,
+    from: "  return result.ok && result.data.anonymous;",
+    to: "  return result.ok;",
+    test: `${CONNECTOR}/test/collision-anonymous-hook.test.ts`,
+    because: "any answered re-ask reads as her row, and the person is told she is on a file she left",
   },
   {
     label: "the session state forgets that a stored group was nameless",
@@ -30549,7 +30575,7 @@ export const MUTATIONS: readonly Mutation[
     from: "    if (presence === null) {\n      return unconfirmedCollision(group);\n    }",
     to: "    if (presence === null) {\n      return anonymousCollision(group);\n    }",
     test: `${CONNECTOR}/test/collision-relay-unconfirmed.test.ts`,
-    because: "with no contrary evidence the person reads 'A teammate recently worked on 8 files' in every IDE session",
+    because: "with no contrary evidence the person reads 'A teammate was working on 8 files … while your subagent edited them' in every IDE session",
   },
   {
     label: "the relay's presence refresh waits out the request timeout",
@@ -30562,8 +30588,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a drain that only owns up to dropped groups asks presence anyway",
     file: `${CONNECTOR}/src/hooks/collision-relay.ts`,
-    from: "  takenFrom(state).groups.length === 0 ? null : presenceAnswer(ctx, budget);",
-    to: "  presenceAnswer(ctx, budget);",
+    from: "  const presence = groups.length === 0 ? null : await presenceAnswer(ctx, budget);",
+    to: "  const presence = await presenceAnswer(ctx, budget);",
     test: `${CONNECTOR}/test/subagent-return-hook.test.ts`,
     because: "a count that names nobody costs a hub call on the main thread",
   },
@@ -37446,7 +37472,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/briefing-omission-hook.test.ts 4
  * PRINTS: packages/connector-claude/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-claude/test/capture-latency.test.ts 1
- * PRINTS: packages/connector-claude/test/collision-anonymous-hook.test.ts 8
+ * PRINTS: packages/connector-claude/test/collision-anonymous-hook.test.ts 11
  * PRINTS: packages/connector-claude/test/collision-notice-hook.test.ts 12
  * PRINTS: packages/connector-claude/test/collision-order-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/collision-prompt-render.test.ts 1
