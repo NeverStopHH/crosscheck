@@ -36849,6 +36849,32 @@ export const MUTATIONS: readonly Mutation[
     because: "the reap's note ends the life the hub still holds, so the resume climbs a rung past the counter its marker restores instead of continuing the life (review-2 round 9, M1 + M2)",
   },
   {
+    // ...and the same note for a RESUMED life: the last end it keeps is the
+    // only thing that says the life before was ended.
+    label: "a reaped life's note forgets the last end, so the resume lands on the ended life",
+    file: `${CORE}/src/state/session-lineage.ts`,
+    from: "    const { capture: _replaced, ...ladder } = prior.success ? prior.data : {};",
+    to: "    const ladder = {};",
+    test: `${CORE}/test/capture-across-lives.test.ts`,
+    because: "a state-less resume walks from the base id onto a life the hub ended, and the next flush spends the repo's spool under it (review E2E-2)",
+  },
+  {
+    label: "a reaped life's capture is booked again over the one its cut end wrote",
+    file: `${CORE}/src/state/session-lineage.ts`,
+    from: "    if (priorCapture !== null && !isSameCaptureBinding(priorCapture, capture)) {",
+    to: "    if (priorCapture !== null) {",
+    test: `${CORE}/test/capture-across-lives.test.ts`,
+    because: "a SessionEnd cut before its delete wrote the same debt the corpse carries, and it reaches the wire twice as hook_timed_out",
+  },
+  {
+    label: "a reaped life bound elsewhere drops the capture it replaces unbooked",
+    file: `${CORE}/src/state/session-lineage.ts`,
+    from: "    if (priorCapture !== null && !isSameCaptureBinding(priorCapture, capture)) {",
+    to: "    if (false) {",
+    test: `${CORE}/test/capture-across-lives.test.ts`,
+    because: "a capture no resume of this conversation can carry any more vanishes silently once the reap writes over it",
+  },
+  {
     // Final review of batch 2, N3: the undo's locked write gave up and the
     // claim stood — the ask spent, the group told, nothing owed, nothing counted.
     label: "a cut whose undo meets a busy lock leaves the file uncounted",
@@ -37642,7 +37668,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/briefing-presence-topics.test.ts 6
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 5
  * PRINTS: packages/connector-core/test/briefing-withheld-age.test.ts 1
- * PRINTS: packages/connector-core/test/capture-across-lives.test.ts 15
+ * PRINTS: packages/connector-core/test/capture-across-lives.test.ts 18
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 5
  * PRINTS: packages/connector-core/test/capture-losses.test.ts 7
  * PRINTS: packages/connector-core/test/claim-drift.test.ts 4

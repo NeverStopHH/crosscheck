@@ -514,11 +514,16 @@ describe("a sweep no life will make is booked, never dropped (H1)", () => {
     expect(await unsweptBooked(world.home)).toBe(0);
   });
 
-  /** A life that died without SessionEnd a week ago, still owing one sweep (a Bash-marked sibling root). */
-  const killed = async (world: World, label: string): Promise<SessionState> => {
+  /**
+   * A life that died without SessionEnd a week ago, still owing one sweep (a
+   * Bash-marked sibling root) — the first life of `label`, unless `life`
+   * names another rung or binding.
+   */
+  const killed = async (world: World, label: string, life: Partial<SessionState> = {}): Promise<SessionState> => {
     const deadAt = new Date(Date.now() - STALE_MS);
     const state: SessionState = {
       ...stateFor(world, deadAt.toISOString(), label),
+      ...life,
       lastHeartbeatAt: deadAt.toISOString(),
       knownWorktreeRoots: [knownRoot(world.sibling, new Date(deadAt.getTime() + MINUTE_MS).toISOString(), new Date(deadAt.getTime() + MINUTE_MS).toISOString())],
     };
@@ -570,6 +575,77 @@ describe("a sweep no life will make is booked, never dropped (H1)", () => {
     expect(resumed.knownWorktreeRoots.map((entry) => [entry.root, entry.bashTouchedAt !== null])).toEqual([[world.sibling, true]]);
     expect(await readCarriedCapture(world.home, label)).toBeNull();
     expect(await laneFiles(world, resumed, SUBAGENT_STOP)).toContain("src/by-bash.ts");
+  });
+
+  test("a resumed life killed with an owed sweep keeps the last end on its note, so the next resume goes on with it", async () => {
+    // Arrange: the first life ended owing a sweep; the resume carried it and
+    // took it off the note (N1), then was killed and went silent a week ago,
+    // still owing it — and its shell's file is still unswept.
+    const label = "cal-killed-resumed";
+    const world = await worldFor(label);
+    const first = owing(world, label, isoAgo(8 * MINUTE_MS));
+    await writeSessionState(world.home, first);
+    await endLife(world, first);
+    await registerNextLife(world, label);
+    const second = await readSessionState(world.home, label);
+    if (second === null) {
+      throw new Error("the first resume published no state");
+    }
+    const deadAt = new Date(Date.now() - STALE_MS);
+    await writeSessionState(world.home, { ...second, lastHeartbeatAt: deadAt.toISOString() });
+    await utimes(sessionStatePath(world.home, label), deadAt, deadAt);
+    await bashWrote(world.sibling, "src/by-bash.ts", 7);
+
+    // Act: the reaper takes the corpse, and the conversation resumes again.
+    await reapStaleSessionStates(world.home, new Date());
+    await registerNextLife(world, label);
+    const third = await readSessionState(world.home, label);
+    if (third === null) {
+      throw new Error("the second resume published no state");
+    }
+
+    // Assert: the note still names the first life as the last end, so the
+    // resume goes on with the killed life — not with the ended one — and
+    // carries the marked root, takes the capture off the note, and files it.
+    expect(second.crosscheckSessionId).toBe(`${first.crosscheckSessionId}~r1`);
+    expect(third.crosscheckSessionId).toBe(second.crosscheckSessionId);
+    expect(third.knownWorktreeRoots.filter((entry) => entry.bashTouchedAt !== null).map((entry) => entry.root)).toEqual([world.sibling]);
+    expect(await readCarriedCapture(world.home, label)).toBeNull();
+    expect(await laneFiles(world, third, SUBAGENT_STOP)).toContain("src/by-bash.ts");
+  });
+
+  test("a killed life whose cut SessionEnd already wrote its capture is counted once when reaped", async () => {
+    // Arrange: the life's SessionEnd wrote its note — the very sweep its
+    // state still owes — and was cut before it deleted the state.
+    const label = "cal-killed-after-end";
+    const world = await worldFor(label);
+    const dead = await killed(world, label);
+    await recordEndedLife(world.home, label, dead.crosscheckSessionId, new Date(Date.now() - STALE_MS), null, null, carriedCaptureOf(dead));
+
+    // Act: the reaper takes the corpse, and nobody resumes.
+    await reapStaleSessionStates(world.home, new Date());
+    const old = new Date(Date.now() - STALE_MS);
+    await utimes(sessionLineagePathForSlug(world.home, sessionSlug(label)), old, old);
+    await reapStaleLineages(world.home, new Date());
+
+    // Assert: the note's capture and the corpse's were one debt, booked once.
+    expect(await unsweptBooked(world.home)).toBe(1);
+  });
+
+  test("a killed life bound elsewhere books the capture its reap replaces", async () => {
+    // Arrange: the last end left a capture of this hub still owing a sweep;
+    // a later life of the conversation, bound to another hub, was killed.
+    const label = "cal-killed-elsewhere";
+    const world = await worldFor(label);
+    await recordEndedLife(world.home, label, `cc_${label}`, new Date(), null, null, carriedCaptureOf(owing(world, label, isoAgo(8 * MINUTE_MS))));
+    await killed(world, label, { crosscheckSessionId: `cc_${label}~r1`, hubUrl: OTHER_HUB });
+
+    // Act
+    await reapStaleSessionStates(world.home, new Date());
+
+    // Assert: the first capture is booked to its own repo; the dead life's is on file.
+    expect(await unsweptBooked(world.home)).toBe(1);
+    expect((await readCarriedCapture(world.home, label))?.hubUrl).toBe(OTHER_HUB);
   });
 
   test("an end in another binding books the capture it replaces", async () => {
