@@ -37011,10 +37011,24 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a re-fire bound elsewhere drops the owed rechecks unbooked",
     file: `${CORE}/src/state/session-state.ts`,
-    from: "        await bookRestsLeftBehind(home, previous, new Date(state.startedAt));\n",
+    from: "  if (published.leftBehind !== null) {\n    await bookRestsLeftBehind(home, published.leftBehind, new Date(state.startedAt));\n  }\n",
     to: "",
     test: `${CORE}/test/collision-rest-reap.test.ts`,
     because: "L4: a re-fire that changes hub or repo erases its debts with no line in any ledger",
+  },
+  {
+    // Final review of batch 2, N7: two ledger appends, one of which may wait
+    // on the omission ledger's own lock, held under the state lock on
+    // SessionStart's path.
+    label: "the rests a rebound re-fire leaves behind are booked under the state lock",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "      return { leftBehind: previous !== null && !isSameBinding(previous, state) ? restsLeftBehind(previous) : null };",
+    to:
+      "      if (previous !== null && !isSameBinding(previous, state)) {\n" +
+      "        await bookRestsLeftBehind(home, restsLeftBehind(previous), new Date(state.startedAt));\n      }\n" +
+      "      return { leftBehind: null };",
+    test: `${CORE}/test/collision-rest-reap.test.ts`,
+    because: "N7: every sibling hook of the re-fire waits on the state lock while the ledgers are appended, on the hook already at 80 % of its budget under load",
   },
   {
     label: "the runner returns before the handler's cut is on disk",
@@ -37600,7 +37614,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/collision-person-strip.test.ts 11
  * PRINTS: packages/connector-core/test/collision-publish-busy-lock.test.ts 3
  * PRINTS: packages/connector-core/test/collision-relay-presence.test.ts 8
- * PRINTS: packages/connector-core/test/collision-rest-reap.test.ts 6
+ * PRINTS: packages/connector-core/test/collision-rest-reap.test.ts 7
  * PRINTS: packages/connector-core/test/collision-state-eviction.test.ts 6
  * PRINTS: packages/connector-core/test/collision-state.test.ts 4
  * PRINTS: packages/connector-core/test/commit-evidence.test.ts 1

@@ -1447,26 +1447,42 @@ export const publishSessionState = async (
   state: SessionStateInput,
   startOf: () => Promise<SeqStart> = () => Promise.resolve({ seqEpoch: state.seqEpoch ?? null, eventSeq: state.eventSeq ?? 0 }),
 ): Promise<void> => {
-  const published = await withSessionStateLock(
+  const published = await withSessionStateLock<{ readonly leftBehind: RestsLeftBehind | null } | null>(
     sessionStateLockPath(home, state.hostSessionKey),
-    false,
+    null,
     async () => {
       const previous = await readSessionState(home, state.hostSessionKey);
       await writeSessionState(home, withCarriedCapture(measuredFromStart({ ...state, ...(await startOf()) }), previous));
-      if (previous !== null && !isSameBinding(previous, state)) {
-        await bookRestsLeftBehind(home, previous, new Date(state.startedAt));
-      }
-      return true;
+      // COUNTED UNDER THE LOCK, BOOKED AFTER IT (final review of batch 2, N7):
+      // the count is read from the state this write replaces; the two ledger
+      // appends — one of which may wait on the omission ledger's own lock —
+      // are not held under the state lock on SessionStart's path.
+      return { leftBehind: previous !== null && !isSameBinding(previous, state) ? restsLeftBehind(previous) : null };
     },
   );
-  if (!published) {
+  if (published === null) {
     const unlocked = await readSessionState(home, state.hostSessionKey);
     await writeSessionState(home, withCarriedRouting(withCarriedCollisions(measuredFromStart(state), unlocked), unlocked));
+    return;
+  }
+  if (published.leftBehind !== null) {
+    await bookRestsLeftBehind(home, published.leftBehind, new Date(state.startedAt));
   }
 };
 
 /** The loss-ledger detail for rechecks a re-fire of another binding left behind. */
 const REBOUND_REST_DETAIL = "session-start";
+
+/** The rechecks a replaced state still owed, and the repo they are booked under. */
+interface RestsLeftBehind {
+  readonly count: number;
+  readonly key: string;
+}
+
+const restsLeftBehind = (previous: SessionState): RestsLeftBehind => ({
+  count: (previous.tripwireCheckedFiles ?? []).length + (previous.tripwireRestsDropped ?? 0),
+  key: repoKey(previous.hubUrl, previous.repoId),
+});
 
 /**
  * A RE-FIRE BOUND ELSEWHERE BOOKS THE RECHECKS IT REPLACES (review batch 2,
@@ -1475,14 +1491,12 @@ const REBOUND_REST_DETAIL = "session-start";
  * hook of that binding will pay them: booked under that binding's own repo,
  * in both ledgers, the way SessionEnd books what it cannot pay.
  */
-const bookRestsLeftBehind = async (home: string, previous: SessionState, now: Date): Promise<void> => {
-  const count = (previous.tripwireCheckedFiles ?? []).length + (previous.tripwireRestsDropped ?? 0);
-  if (count === 0) {
+const bookRestsLeftBehind = async (home: string, left: RestsLeftBehind, now: Date): Promise<void> => {
+  if (left.count === 0) {
     return;
   }
-  const key = repoKey(previous.hubUrl, previous.repoId);
-  await recordCaptureLoss(home, { kind: "rest_unchecked", count, key, detail: REBOUND_REST_DETAIL, now });
-  await recordRestOmission(home, { key, reason: "rest_unchecked", now });
+  await recordCaptureLoss(home, { kind: "rest_unchecked", count: left.count, key: left.key, detail: REBOUND_REST_DETAIL, now });
+  await recordRestOmission(home, { key: left.key, reason: "rest_unchecked", now });
 };
 
 /**
