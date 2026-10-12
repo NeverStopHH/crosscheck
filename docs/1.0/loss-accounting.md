@@ -1190,6 +1190,11 @@ a state-less resume (review-2 round 9, M1 + M2), and keeping the last end the no
 resumed life off the life before it — so a resume carries and sweeps it, and a note nobody resumes is booked when it
 goes stale. A capture of the same binding already on the note — a SessionEnd cut before its delete wrote it from this
 very state — is the same debt, replaced and never booked twice; one of another binding is booked, as an end's is.
+And a corpse of the note's own binding that owes NOTHING pays the note (`strikePaidCapture`, final review of batch 2,
+LOW-b): the resume carried the note's capture into that very state, a consume that could not rewrite the note
+(fail-open) left it there, and the life swept every root it carried before it died — so the lineage reap would have
+booked, as never made, the sweep it had made. Struck only when the note's capture is of the dead life's own binding;
+another binding's stays, since that life carried nothing of it, and the lineage reap books it (LOW-a).
 First and resumed lives alike; before this the reaper booked a dead life's owed rechecks
 and never its owed sweeps, and for a resumed life N1's consume had taken the only count there was.
 

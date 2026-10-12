@@ -366,6 +366,26 @@ export const recordReapedCapture = async (
   }
 };
 
+/** Rewrites the note without its capture when `isStruck` says so; fail-open, and false when nothing was struck. */
+const strikeCapture = async (
+  home: string,
+  hostSessionKey: string,
+  isStruck: (carried: CarriedCapture) => boolean,
+): Promise<boolean> => {
+  try {
+    const path = lineagePath(home, hostSessionKey);
+    const prior = LineageSchema.safeParse(await readJsonOrNull(path));
+    if (!prior.success || prior.data.capture === undefined || !isStruck(prior.data.capture)) {
+      return false;
+    }
+    const { capture: _taken, ...note } = prior.data;
+    await writePrivateFile(path, `${JSON.stringify(note)}\n`);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 /**
  * THE CAPTURE A RESUME TOOK IS STRUCK OFF THE NOTE (review batch 2, final
  * review N1): once the next life's state holds the roots and their marks,
@@ -377,20 +397,22 @@ export const recordReapedCapture = async (
  * only the capture goes. Fail-open, like every write here: a note that will
  * not rewrite is still never booked beside a live state (reapStaleLineages).
  */
-export const consumeCarriedCapture = async (home: string, hostSessionKey: string): Promise<boolean> => {
-  try {
-    const path = lineagePath(home, hostSessionKey);
-    const prior = LineageSchema.safeParse(await readJsonOrNull(path));
-    if (!prior.success || prior.data.capture === undefined) {
-      return false;
-    }
-    const { capture: _taken, ...note } = prior.data;
-    await writePrivateFile(path, `${JSON.stringify(note)}\n`);
-    return true;
-  } catch {
-    return false;
-  }
-};
+export const consumeCarriedCapture = async (home: string, hostSessionKey: string): Promise<boolean> =>
+  strikeCapture(home, hostSessionKey, () => true);
+
+/**
+ * THE CAPTURE A DEAD LIFE PAID IS STRUCK OFF THE NOTE (final review of batch
+ * 2, LOW-b): a resume whose consume could not rewrite the note (fail-open,
+ * above) left the capture on it, and the life that then swept every root it
+ * carried and died without SessionEnd was booked by the lineage reap for the
+ * sweep it had made. The state reaper, finding a corpse of the note's own
+ * binding that owes nothing (session-reap.ts), strikes the capture: the
+ * register carried it into that very state, so what the state no longer
+ * owes was paid under that life. One of another binding stays — that life
+ * carried nothing of it, and the lineage reap books it (LOW-a).
+ */
+export const strikePaidCapture = async (home: string, hostSessionKey: string, binding: CaptureBinding): Promise<boolean> =>
+  strikeCapture(home, hostSessionKey, (carried) => isSameCaptureBinding(carried, binding));
 
 const isLineageStale = async (path: string, nowMs: number): Promise<boolean> => {
   try {

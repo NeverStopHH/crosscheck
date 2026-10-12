@@ -36885,6 +36885,24 @@ export const MUTATIONS: readonly Mutation[
     because: "LOW-a: a sweep no life of this conversation carried goes with the note — made by nobody, counted nowhere",
   },
   {
+    // Final review of batch 2, LOW-b: a resume's consume that could not
+    // rewrite the note left the capture on it; the life paid it and died.
+    label: "a resumed life that paid the carried sweep is booked for it when its consume could not rewrite the note",
+    file: `${CORE}/src/state/session-reap.ts`,
+    from: "    if (pendingSweepsOf(capture) === 0) {\n      await strikePaidCapture(home, parsed.data.hostSessionKey, capture);\n    }\n",
+    to: "",
+    test: `${CORE}/test/capture-across-lives.test.ts`,
+    because: "LOW-b: a sweep the resumed life made is booked hook_timed_out on the wire once its note goes stale, and the hub reads the repo as telemetry_lost for 14 days",
+  },
+  {
+    label: "a killed life bound elsewhere that owes nothing strikes the note's capture of this hub as paid",
+    file: `${CORE}/src/state/session-lineage.ts`,
+    from: "  strikeCapture(home, hostSessionKey, (carried) => isSameCaptureBinding(carried, binding));",
+    to: "  strikeCapture(home, hostSessionKey, () => true);",
+    test: `${CORE}/test/capture-across-lives.test.ts`,
+    because: "LOW-b: a capture the dead life carried nothing of is struck as paid — made by nobody, counted nowhere",
+  },
+  {
     // Final review of batch 2, N3: the undo's locked write gave up and the
     // claim stood — the ask spent, the group told, nothing owed, nothing counted.
     label: "a cut whose undo meets a busy lock leaves the file uncounted",
@@ -37678,7 +37696,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/briefing-presence-topics.test.ts 6
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 5
  * PRINTS: packages/connector-core/test/briefing-withheld-age.test.ts 1
- * PRINTS: packages/connector-core/test/capture-across-lives.test.ts 19
+ * PRINTS: packages/connector-core/test/capture-across-lives.test.ts 21
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 5
  * PRINTS: packages/connector-core/test/capture-losses.test.ts 7
  * PRINTS: packages/connector-core/test/claim-drift.test.ts 4

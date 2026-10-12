@@ -37,7 +37,13 @@ import { recordCaptureLoss } from "./loss-ledger.ts";
 import { recordRestOmission } from "./rest-omissions.ts";
 import { removeOwedRestsBooked, wereOwedRestsBooked } from "./rests-booked.ts";
 import { listSessionStateFiles, sessionSilentForMs } from "./session-scan.ts";
-import { carriedCaptureOf, lifeRungOf, pendingSweepsOf, recordReapedCapture } from "./session-lineage.ts";
+import {
+  carriedCaptureOf,
+  lifeRungOf,
+  pendingSweepsOf,
+  recordReapedCapture,
+  strikePaidCapture,
+} from "./session-lineage.ts";
 import { crosscheckSessionIdFor, SessionStateSchema, updateSessionState } from "./session-state.ts";
 import type { SessionState } from "./session-state.ts";
 
@@ -239,6 +245,16 @@ export const reapStaleSessionStates = async (
     const capture = carriedCaptureOf(parsed.data);
     if (pendingSweepsOf(capture) > 0) {
       await recordReapedCapture(home, parsed.data.hostSessionKey, capture, now);
+    }
+    // ...AND A CORPSE THAT OWES NOTHING PAYS THE NOTE (final review of batch
+    // 2, LOW-b): the resume carried the note's capture into this state, and
+    // a consume that could not rewrite the note left it there; this life
+    // then swept every root it carried and died — and the lineage reap would
+    // book, as never made, the sweep it had made. Struck when the note's
+    // capture is of this life's own binding; another binding's stays, since
+    // this life carried nothing of it.
+    if (pendingSweepsOf(capture) === 0) {
+      await strikePaidCapture(home, parsed.data.hostSessionKey, capture);
     }
     try {
       await rm(file.path, { force: true });
