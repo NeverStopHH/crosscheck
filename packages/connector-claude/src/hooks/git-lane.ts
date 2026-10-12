@@ -33,8 +33,7 @@ import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
 import { recordCaptureLoss } from "@crosscheck/connector-core/state/loss-ledger.ts";
 import {
   allocateSeq,
-  owesSweepToLife,
-  readSessionState,
+  claimOwedSweep,
   updateSessionState,
   withGitTouches,
 } from "@crosscheck/connector-core/state/session-state.ts";
@@ -164,8 +163,16 @@ export const sweepIfLifeMoved = async (ctx: HookContext, budget: HookBudget): Pr
   if (budget.spareMs() < GIT_TOUCHES_TIMEOUT_MS) {
     return false;
   }
-  const state = await readSessionState(ctx.config.home, ctx.payload.session_id);
-  if (state === null || !owesSweepToLife(state)) {
+  // CLAIMED IN THE TRANSFORM THAT READS THE DEBT (final review of batch 2,
+  // N4): one hook pays the lane; a sibling that finds the claim fresh pays
+  // nothing, and a busy lock is the same answer — the next hook asks again.
+  const claimed: { value: SessionState | null } = { value: null };
+  const isClaimed = await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => {
+    claimed.value = claimOwedSweep(fresh, ctx.now());
+    return claimed.value;
+  });
+  const state = claimed.value;
+  if (!isClaimed || state === null) {
     return false;
   }
   await runGitLane(ctx, budget, state, { cwdRoot: ownCwdRoot(ctx, state) }, HEAL_GIT_LANE_LOSS_DETAIL);

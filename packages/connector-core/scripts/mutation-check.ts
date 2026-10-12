@@ -37173,6 +37173,16 @@ export const MUTATIONS: readonly Mutation[
     because: "L12: a BUN_CONFIG_REGISTRY in the shell costs every hook about 75 ms, and nothing says so",
   },
   {
+    // Final review of batch 2, N4: every hook with the room found the sweep
+    // owed in the same second and each ran the whole lane.
+    label: "every hook with room pays the sweep a healed life is owed",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  !owesSweepToLife(state) || isSweepClaimFresh(state, now) ? null : { ...state, gitLaneSweepingSince: now.toISOString() };",
+    to: "  !owesSweepToLife(state) ? null : { ...state, gitLaneSweepingSince: now.toISOString() };",
+    test: `${CONNECTOR}/test/heal-sweep-claim.test.ts`,
+    because: "N4: under a 12-subagent fan-out twelve hooks each run the lane and a flush for one heal, on the hooks that are already the loaded ones",
+  },
+  {
     label: "a healed life waits for the next Stop before its files are filed again",
     file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
     from: '  if (owesSweep && budget.spareMs() >= GIT_TOUCHES_TIMEOUT_MS) {\n    const { sweepIfLifeMoved } = await import("./git-lane.ts");\n    await sweepIfLifeMoved(ctx, budget);\n  }\n',
@@ -37510,6 +37520,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/ghost-notice.test.ts 1
  * PRINTS: packages/connector-claude/test/ghost-worker.test.ts 5
  * PRINTS: packages/connector-claude/test/global-wiring-silence.test.ts 4
+ * PRINTS: packages/connector-claude/test/heal-sweep-claim.test.ts 1
  * PRINTS: packages/connector-claude/test/hint-hook.test.ts 4
  * PRINTS: packages/connector-claude/test/hook-budget.test.ts 3
  * PRINTS: packages/connector-claude/test/hook-contract.test.ts 1

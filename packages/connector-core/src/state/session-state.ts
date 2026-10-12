@@ -16,6 +16,7 @@ import {
   MINUTES_PER_HOUR,
   MS_PER_SECOND,
   SECONDS_PER_MINUTE,
+  GIT_TOUCHES_TIMEOUT_MS,
   SESSION_STATE_LOCK_RETRIES,
   STATUS_MAX_SESSION_STATES,
   SUMMARIZER_TIMEOUT_MS,
@@ -702,6 +703,15 @@ const SessionStateObjectSchema = z.looseObject({
    * older state reads as nothing owed either.
    */
   gitLaneSweptLife: z.string().nullable().optional(),
+  /**
+   * WHEN A HOOK CLAIMED THE SWEEP A HEALED LIFE IS OWED (final review of
+   * batch 2, N4): "sweeping since <iso>", taken inside the locked transform
+   * that reads the debt (claimOwedSweep) and honoured for one
+   * GIT_TOUCHES_TIMEOUT_MS, so one hook pays the lane and its siblings find
+   * the claim; a lane that ran under the life clears it. Absent or null on
+   * an older state reads as no claim.
+   */
+  gitLaneSweepingSince: z.string().nullable().optional(),
   /**
    * The generated-target rule's counters (capture/generated.ts): how many of
    * this session's spooled targets each signal kept out of overlap as
@@ -1896,7 +1906,8 @@ export const withGitTouches = (
   gitTouchCount: state.gitTouchCount + outcome.captured.length,
   gitLaneSkipped: state.gitLaneSkipped + (outcome.skipped ? 1 : 0),
   gitLaneRan: state.gitLaneRan + (outcome.skipped ? 0 : 1),
-  ...(outcome.sweptLife === undefined ? {} : { gitLaneSweptLife: outcome.sweptLife }),
+  // ...and a lane that ran under the life spends any claim on its sweep (N4).
+  ...(outcome.sweptLife === undefined ? {} : { gitLaneSweptLife: outcome.sweptLife, gitLaneSweepingSince: null }),
 });
 
 /**
@@ -1908,6 +1919,25 @@ export const owesSweepToLife = (state: SessionState): boolean =>
   state.gitLaneSweptLife !== undefined &&
   state.gitLaneSweptLife !== null &&
   state.gitLaneSweptLife !== state.crosscheckSessionId;
+
+/** Whether a claim on the owed sweep is younger than the lane's own deadline — a stamp off the clock either way is no claim. */
+const isSweepClaimFresh = (state: SessionState, now: Date): boolean => {
+  const sinceMs = Date.parse(state.gitLaneSweepingSince ?? "");
+  return !Number.isNaN(sinceMs) && Math.abs(now.getTime() - sinceMs) < GIT_TOUCHES_TIMEOUT_MS;
+};
+
+/**
+ * THE SWEEP A HEALED LIFE IS OWED IS CLAIMED BY ONE HOOK (final review of
+ * batch 2, N4). Read outside any claim, every hook with the room under a
+ * subagent fan-out found it owed in the same second and each ran the whole
+ * lane and a flush — N times the lane, once per heal, on the loaded hooks.
+ * Taken inside the locked transform that reads the debt, the claim is
+ * honoured for one GIT_TOUCHES_TIMEOUT_MS, the lane's own deadline, so a
+ * claim a cut hook left behind costs the next hook that wait and nothing
+ * more. Null: nothing owed, or a fresh claim holds — the caller pays nothing.
+ */
+export const claimOwedSweep = (state: SessionState, now: Date): SessionState | null =>
+  !owesSweepToLife(state) || isSweepClaimFresh(state, now) ? null : { ...state, gitLaneSweepingSince: now.toISOString() };
 
 /**
  * One capture's generated-target counts, added in. Absent leaves the state as
