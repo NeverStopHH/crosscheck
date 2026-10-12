@@ -36831,6 +36831,24 @@ export const MUTATIONS: readonly Mutation[
     because: "N1: a sweep the live life still owes is counted now and filed by its next Stop — counted AND delivered",
   },
   {
+    // Final review of batch 2, the gap behind N1: the state reaper booked a
+    // dead life's owed rechecks and never its owed sweeps.
+    label: "a life killed with an owed sweep is counted when its state is reaped",
+    file: `${CORE}/src/state/session-reap.ts`,
+    from: "    if (pendingSweepsOf(capture) > 0) {\n      await recordReapedCapture(home, parsed.data.hostSessionKey, capture, now);\n    }\n",
+    to: "",
+    test: `${CORE}/test/capture-across-lives.test.ts`,
+    because: "a Bash-marked root no lane swept is neither delivered nor counted once the corpse goes — an I1 violation, and for a resumed life a regression of N1",
+  },
+  {
+    label: "a resume after the reap still sweeps it",
+    file: `${CORE}/src/state/session-lineage.ts`,
+    from: "    const { capture: _replaced, ...ladder } = prior.success ? prior.data : {};",
+    to: "    const ladder = { crosscheckSessionId: `cc_${hostSessionKey}` };",
+    test: `${CORE}/test/capture-across-lives.test.ts`,
+    because: "the reap's note ends the life the hub still holds, so the resume climbs a rung past the counter its marker restores instead of continuing the life (review-2 round 9, M1 + M2)",
+  },
+  {
     // Final review of batch 2, N3: the undo's locked write gave up and the
     // claim stood — the ask spent, the group told, nothing owed, nothing counted.
     label: "a cut whose undo meets a busy lock leaves the file uncounted",
@@ -37624,7 +37642,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/briefing-presence-topics.test.ts 6
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 5
  * PRINTS: packages/connector-core/test/briefing-withheld-age.test.ts 1
- * PRINTS: packages/connector-core/test/capture-across-lives.test.ts 13
+ * PRINTS: packages/connector-core/test/capture-across-lives.test.ts 15
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 5
  * PRINTS: packages/connector-core/test/capture-losses.test.ts 7
  * PRINTS: packages/connector-core/test/claim-drift.test.ts 4

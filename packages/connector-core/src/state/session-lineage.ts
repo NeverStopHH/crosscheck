@@ -82,7 +82,13 @@ const CarriedCaptureSchema = z.looseObject({
 export type CarriedCapture = z.infer<typeof CarriedCaptureSchema>;
 
 const LineageSchema = z.looseObject({
-  crosscheckSessionId: z.string().min(1),
+  /**
+   * The life the last END closed. Absent on a note the state reaper wrote for
+   * a life that died without one (recordReapedCapture): that life is not
+   * ended here — its marker still restores it for a resume — the note only
+   * carries what it owed.
+   */
+  crosscheckSessionId: z.string().min(1).optional(),
   epoch: z.string().min(1).optional(),
   /** The position the end took under `epoch`, past everything the life's counter handed out. */
   n: z.number().int().min(0).optional(),
@@ -313,6 +319,43 @@ export const recordEndedLife = async (
     return true;
   } catch {
     // The ladder still finds the next life without it.
+    return false;
+  }
+};
+
+/**
+ * A LIFE THAT DIED WITHOUT SESSIONEND STILL OWES ITS SWEEP (final review of
+ * batch 2, the gap behind N1): the state reaper removes its corpse a week on,
+ * and the Bash-marked roots no lane swept were then neither delivered nor
+ * counted — for a resumed life, N1's consume had taken that count off the
+ * note. The reaper writes the capture back here, the way SessionEnd's
+ * recordEndedLife does, so a resume still carries and sweeps it and a note
+ * nobody resumes is booked when it goes stale (reapStaleLineages, with no
+ * live state beside it). WITHOUT ENDING THE LIFE: the ladder's fields stay
+ * exactly as the last end wrote them (none, for a first life), because a
+ * reaped life is one its end marker still restores for a state-less resume
+ * (flows/register-session.ts readMarkedPosition; review-2 round 9, M1 + M2)
+ * — naming it ended here would send that resume one rung up, past the
+ * counter the hub still holds. A capture of another binding replaced here is
+ * booked, as recordEndedLife books it.
+ */
+export const recordReapedCapture = async (
+  home: string,
+  hostSessionKey: string,
+  capture: CarriedCapture,
+  now: Date,
+): Promise<boolean> => {
+  try {
+    const path = lineagePath(home, hostSessionKey);
+    const prior = LineageSchema.safeParse(await readJsonOrNull(path));
+    const priorCapture = prior.success ? (prior.data.capture ?? null) : null;
+    const { capture: _replaced, ...ladder } = prior.success ? prior.data : {};
+    await writePrivateFile(path, `${JSON.stringify({ ...ladder, at: now.toISOString(), capture })}\n`);
+    if (priorCapture !== null && !isSameCaptureBinding(priorCapture, capture)) {
+      await bookUnsweptCapture(home, priorCapture, instantOr(prior.success ? prior.data.at : undefined, now));
+    }
+    return true;
+  } catch {
     return false;
   }
 };

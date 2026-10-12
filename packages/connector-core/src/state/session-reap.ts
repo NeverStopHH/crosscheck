@@ -37,7 +37,7 @@ import { recordCaptureLoss } from "./loss-ledger.ts";
 import { recordRestOmission } from "./rest-omissions.ts";
 import { removeOwedRestsBooked, wereOwedRestsBooked } from "./rests-booked.ts";
 import { listSessionStateFiles, sessionSilentForMs } from "./session-scan.ts";
-import { lifeRungOf } from "./session-lineage.ts";
+import { carriedCaptureOf, lifeRungOf, pendingSweepsOf, recordReapedCapture } from "./session-lineage.ts";
 import { crosscheckSessionIdFor, SessionStateSchema, updateSessionState } from "./session-state.ts";
 import type { SessionState } from "./session-state.ts";
 
@@ -231,6 +231,15 @@ export const reapStaleSessionStates = async (
     // is as old as this state, and would expire it at the next SessionStart.
     await stampReleased(home, key, slug, now);
     await writeDownReapedLife(home, key, slug, parsed.data, now);
+    // THE SWEEP THE DEAD LIFE STILL OWED GOES TO ITS LINEAGE NOTE (final
+    // review of batch 2, the gap behind N1): a Bash-marked root no lane
+    // swept is carried for a resume, and booked by the lineage reap when
+    // nobody resumes — before the unlink, so a state that will not go leaves
+    // a note the live-state guard keeps quiet, never an uncounted debt.
+    const capture = carriedCaptureOf(parsed.data);
+    if (pendingSweepsOf(capture) > 0) {
+      await recordReapedCapture(home, parsed.data.hostSessionKey, capture, now);
+    }
     try {
       await rm(file.path, { force: true });
       reaped += 1;

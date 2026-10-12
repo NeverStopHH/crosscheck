@@ -1179,7 +1179,13 @@ note (`flows/register-session.ts` → `state/session-lineage.ts` `consumeCarried
 debt from then on — its next Stop files the roots, its SessionEnd writes the next capture — and a note the reaper
 finds beside a live state of the same host session books nothing (`reapStaleLineages`). Before that, a resumed life
 that swept the carried roots and then died without SessionEnd was booked for the sweep it had made, and the hub read
-the repo as `telemetry_lost` for fourteen days (`test/capture-across-lives.test.ts`).
+the repo as `telemetry_lost` for fourteen days (`test/capture-across-lives.test.ts`). A life that dies WITHOUT
+SessionEnd while it still owes a sweep is not dropped either: when the state reaper removes its corpse
+(`state/session-reap.ts`) it writes that capture back into the host session's note (`recordReapedCapture`), the way
+SessionEnd's `recordEndedLife` does — but without naming the life as ended, since its end marker still restores it for
+a state-less resume (review-2 round 9, M1 + M2) — so a resume carries and sweeps it, and a note nobody resumes is
+booked when it goes stale. First and resumed lives alike; before this the reaper booked a dead life's owed rechecks
+and never its owed sweeps, and for a resumed life N1's consume had taken the only count there was.
 
 **4.8.9 Foreign-hub refusals (#33).** A session the key binding refuses never registers — not with the hub the key
 belongs to, not with the one the repo named — and no hook of it captures anything (`config/key-binding.ts` refuses
