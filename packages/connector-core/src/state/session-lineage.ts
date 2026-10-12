@@ -41,6 +41,7 @@ import {
   repoKey,
   sessionLineagePathForSlug,
   sessionSlug,
+  sessionStatePathForSlug,
   writePrivateFile,
 } from "../config/paths.ts";
 import { recordCaptureLoss } from "./loss-ledger.ts";
@@ -314,6 +315,32 @@ export const recordEndedLife = async (
   }
 };
 
+/**
+ * THE CAPTURE A RESUME TOOK IS STRUCK OFF THE NOTE (review batch 2, final
+ * review N1): once the next life's state holds the roots and their marks,
+ * that live state owns the debt — its first lane sweeps them, its SessionEnd
+ * writes the next capture — and a note that still carried them was booked by
+ * the reaper as sweeps never made, after the resumed life had made them: a
+ * `hook_timed_out` on the wire, so the hub read the repo's coverage as lost
+ * for a fortnight, for a loss that did not happen. The ladder's fields stay;
+ * only the capture goes. Fail-open, like every write here: a note that will
+ * not rewrite is still never booked beside a live state (reapStaleLineages).
+ */
+export const consumeCarriedCapture = async (home: string, hostSessionKey: string): Promise<boolean> => {
+  try {
+    const path = lineagePath(home, hostSessionKey);
+    const prior = LineageSchema.safeParse(await readJsonOrNull(path));
+    if (!prior.success || prior.data.capture === undefined) {
+      return false;
+    }
+    const { capture: _taken, ...note } = prior.data;
+    await writePrivateFile(path, `${JSON.stringify(note)}\n`);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 const isLineageStale = async (path: string, nowMs: number): Promise<boolean> => {
   try {
     return nowMs - (await stat(path)).mtimeMs > MAX_SPOOL_AGE_DAYS * MS_PER_DAY;
@@ -321,6 +348,16 @@ const isLineageStale = async (path: string, nowMs: number): Promise<boolean> => 
     return false;
   }
 };
+
+/**
+ * Whether the host session a lineage note belongs to is still named by a
+ * state file: its live life owns whatever the note carried (final review
+ * N1) — the resume took the capture into that state, and its next lane or
+ * SessionEnd is what delivers or books it. A note beside a live state is
+ * spent, never a loss.
+ */
+const isHostSessionLive = async (home: string, lineageName: string): Promise<boolean> =>
+  Bun.file(sessionStatePathForSlug(home, lineageName.slice(0, -LINEAGE_SUFFIX.length))).exists();
 
 /**
  * Lineage notes and heal stamps of host sessions that never came back,
@@ -350,8 +387,12 @@ export const reapStaleLineages = async (home: string, now: Date): Promise<number
     }
     // A conversation that never came back leaves the sweeps its last life
     // still owed unmade (review batch 2, H1): booked once the note is gone,
-    // so a note that will not go is not booked again on every run.
-    const lineage = name.endsWith(LINEAGE_SUFFIX) ? LineageSchema.safeParse(await readJsonOrNull(path)) : null;
+    // so a note that will not go is not booked again on every run — and
+    // never beside a live state of the same host session (final review N1),
+    // whose life owns the debt and delivers or books it itself.
+    const isLineage = name.endsWith(LINEAGE_SUFFIX);
+    const lineage = isLineage ? LineageSchema.safeParse(await readJsonOrNull(path)) : null;
+    const isOwedElsewhere = isLineage && (await isHostSessionLive(home, name));
     try {
       await rm(path, { force: true });
       reaped += 1;
@@ -360,7 +401,7 @@ export const reapStaleLineages = async (home: string, now: Date): Promise<number
       continue;
     }
     const capture = lineage?.success === true ? (lineage.data.capture ?? null) : null;
-    if (capture !== null && lineage?.success === true) {
+    if (capture !== null && lineage?.success === true && !isOwedElsewhere) {
       await bookUnsweptCapture(home, capture, instantOr(lineage.data.at, now));
     }
   }

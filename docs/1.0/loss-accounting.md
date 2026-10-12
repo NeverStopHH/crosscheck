@@ -1168,6 +1168,16 @@ and `rest_unchecked` is a capture-loss kind `toLossReport` leaves out of its wir
 marked `telemetry_lost` for one person's unwarned moment. Locally they can only add a WARN. A line that reaches
 nobody's judgment cannot strengthen one.
 
+The one capture debt an ended life leaves that DOES reach the wire is the sweep it still owed (batch-2 review H1):
+`hook_timed_out:session-end`, booked by an end that could not write its lineage, by an end that replaced a capture of
+another binding, or by the lineage reap of a conversation that never came back — booked once, never dropped, and
+never booked twice (final review of batch 2, N1). A resume takes the capture into its state and strikes it off the
+note (`flows/register-session.ts` → `state/session-lineage.ts` `consumeCarriedCapture`), so the live state owns the
+debt from then on — its next Stop files the roots, its SessionEnd writes the next capture — and a note the reaper
+finds beside a live state of the same host session books nothing (`reapStaleLineages`). Before that, a resumed life
+that swept the carried roots and then died without SessionEnd was booked for the sweep it had made, and the hub read
+the repo as `telemetry_lost` for fourteen days (`test/capture-across-lives.test.ts`).
+
 **4.8.9 Foreign-hub refusals (#33).** A session the key binding refuses never registers — not with the hub the key
 belongs to, not with the one the repo named — and no hook of it captures anything (`config/key-binding.ts` refuses
 before capture; `state/foreign-hub.ts`: no key ever lands in the ledger). The bound hub's coverage for that repo

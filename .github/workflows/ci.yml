@@ -234,7 +234,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 3861
+    # PRINTS: 3863
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -424,7 +424,7 @@ jobs:
     # PRINTS: flows/heal-session.ts 23
     # PRINTS: flows/heartbeat.ts 3
     # PRINTS: flows/hint.ts 38
-    # PRINTS: flows/register-session.ts 40
+    # PRINTS: flows/register-session.ts 41
     # PRINTS: flows/solved-hint.ts 4
     # PRINTS: flows/topic-base-word.ts 1
     # PRINTS: flows/topic-contexts.ts 16
@@ -521,7 +521,7 @@ jobs:
     # PRINTS: state/presence-cache.ts 3
     # PRINTS: state/rest-omissions.ts 1
     # PRINTS: state/seq-cost.ts 9
-    # PRINTS: state/session-lineage.ts 8
+    # PRINTS: state/session-lineage.ts 9
     # PRINTS: state/session-reap.ts 13
     # PRINTS: state/session-scan.ts 2
     # PRINTS: state/session-state.ts 77
@@ -1020,7 +1020,7 @@ jobs:
     # PRINTS: referee.ts 4
     # PRINTS: refusal.ts 3
     # PRINTS: refused-lives.ts 7
-    # PRINTS: register-session.ts 40
+    # PRINTS: register-session.ts 41
     # PRINTS: reject-cause.ts 3
     # PRINTS: release-preflight.ts 5
     # PRINTS: release.ts 1
@@ -1055,7 +1055,7 @@ jobs:
     # PRINTS: session-control.ts 9
     # PRINTS: session-end.ts 1
     # PRINTS: session-events.ts 9
-    # PRINTS: session-lineage.ts 8
+    # PRINTS: session-lineage.ts 9
     # PRINTS: session-order.ts 9
     # PRINTS: session-reap.ts 13
     # PRINTS: session-scan.ts 2

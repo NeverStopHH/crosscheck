@@ -21,7 +21,7 @@ import { mkdir, realpath, rm, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { DEFAULT_AGENT_KIND, MAX_SPOOL_AGE_DAYS, MAX_TARGETS_PER_INVOCATION, MS_PER_DAY } from "../src/constants.ts";
-import { repoKey, sessionLineagePathForSlug, sessionSlug } from "../src/config/paths.ts";
+import { repoKey, sessionLineagePathForSlug, sessionSlug, sessionStatePath } from "../src/config/paths.ts";
 import { endSessionFlow } from "../src/flows/end-session.ts";
 import { selectGitLaneRoots, sweepGitRoots, windowStartOf } from "../src/flows/git-lane.ts";
 import type { GitLaneChoice } from "../src/flows/git-lane.ts";
@@ -42,6 +42,7 @@ import {
   publishSessionState,
   readSessionState,
   sessionStateLockPath,
+  withSweptRoot,
   writeSessionState,
 } from "../src/state/session-state.ts";
 import type { KnownWorktreeRoot, SessionState, SessionStateInput } from "../src/state/session-state.ts";
@@ -464,6 +465,51 @@ describe("a sweep no life will make is booked, never dropped (H1)", () => {
     await reapStaleLineages(world.home, new Date());
 
     // Assert
+    expect(await unsweptBooked(world.home)).toBe(0);
+  });
+
+  test("a lineage whose capture a resume consumed books nothing when reaped", async () => {
+    // Arrange: the last end left a sweep owed; the resume carried it, and the
+    // next life's Stop swept it. That life then died without SessionEnd, its
+    // state was reaped, and the lineage went stale.
+    const label = "cal-consumed";
+    const world = await worldFor(label);
+    await recordEndedLife(world.home, label, `cc_${label}`, new Date(), null, null, carriedCaptureOf(owing(world, label, isoAgo(8 * MINUTE_MS))));
+    await registerNextLife(world, label);
+    const resumed = await readSessionState(world.home, label);
+    expect(resumed?.knownWorktreeRoots.some((root) => root.bashTouchedAt !== null)).toBe(true);
+    // The live state owns the debt from here on: the note carries it no more.
+    expect(await readCarriedCapture(world.home, label)).toBeNull();
+    await writeSessionState(world.home, withSweptRoot(resumed as SessionState, world.sibling, new Date().toISOString()));
+    await rm(sessionStatePath(world.home, label), { force: true });
+    const old = new Date(Date.now() - STALE_MS);
+    await utimes(sessionLineagePathForSlug(world.home, sessionSlug(label)), old, old);
+
+    // Act
+    await reapStaleLineages(world.home, new Date());
+
+    // Assert: the sweep was made, under the resumed life; nothing is counted.
+    expect(await unsweptBooked(world.home)).toBe(0);
+  });
+
+  test("a stale lineage beside a live state books nothing", async () => {
+    // Arrange: a resumed life still owes the carried sweep, and a note that
+    // still carries it — one no resume could strip — has gone stale beside it.
+    const label = "cal-alive";
+    const world = await worldFor(label);
+    const capture = carriedCaptureOf(owing(world, label, isoAgo(8 * MINUTE_MS)));
+    await recordEndedLife(world.home, label, `cc_${label}`, new Date(), null, null, capture);
+    await registerNextLife(world, label);
+    await recordEndedLife(world.home, label, `cc_${label}`, new Date(), null, null, capture);
+    const old = new Date(Date.now() - STALE_MS);
+    await utimes(sessionLineagePathForSlug(world.home, sessionSlug(label)), old, old);
+
+    // Act
+    await reapStaleLineages(world.home, new Date());
+
+    // Assert: the live state owns the debt — its next Stop files it — so the
+    // reap counts nothing it may yet deliver.
+    expect((await readSessionState(world.home, label))?.knownWorktreeRoots.some((root) => root.bashTouchedAt !== null)).toBe(true);
     expect(await unsweptBooked(world.home)).toBe(0);
   });
 

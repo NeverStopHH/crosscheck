@@ -36733,8 +36733,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a resume starts its window and its roots afresh",
     file: `${CORE}/src/flows/register-session.ts`,
-    from: "    ...(await carriedFromLineage(input)),\n",
-    to: "",
+    from: "    ...carried,\n  };",
+    to: "  };",
     test: `${CORE}/test/capture-across-lives.test.ts`,
     because: "H1: 0 of 6 pre-resume shared files reach the teammate's tripwire after a SessionEnd and a resume",
   },
@@ -36785,6 +36785,24 @@ export const MUTATIONS: readonly Mutation[
     to: "    const kept = capture;",
     test: `${CORE}/test/capture-across-lives.test.ts`,
     because: "a heal that retires an orphan life writes the lineage again, and the resume after it sweeps nothing",
+  },
+  {
+    // Final review of batch 2, N1: the resumed life swept the carried roots,
+    // died without SessionEnd, and the note still carried life 1's marks.
+    label: "a lineage whose capture a resume consumed books nothing when reaped",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "  if (Object.keys(carried).length > 0) {\n    await consumeCarriedCapture(input.home, input.hostSessionKey);\n  }\n",
+    to: "",
+    test: `${CORE}/test/capture-across-lives.test.ts`,
+    because: "N1: a sweep the resumed life made is booked hook_timed_out on the wire, and the hub reads the repo as telemetry_lost for 14 days",
+  },
+  {
+    label: "a stale lineage beside a live state books nothing",
+    file: `${CORE}/src/state/session-lineage.ts`,
+    from: "    if (capture !== null && lineage?.success === true && !isOwedElsewhere) {",
+    to: "    if (capture !== null && lineage?.success === true) {",
+    test: `${CORE}/test/capture-across-lives.test.ts`,
+    because: "N1: a sweep the live life still owes is counted now and filed by its next Stop — counted AND delivered",
   },
   {
     label: "an unanswered tripwire owes no recheck",
@@ -37517,7 +37535,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/briefing-presence-topics.test.ts 6
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 5
  * PRINTS: packages/connector-core/test/briefing-withheld-age.test.ts 1
- * PRINTS: packages/connector-core/test/capture-across-lives.test.ts 11
+ * PRINTS: packages/connector-core/test/capture-across-lives.test.ts 13
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 5
  * PRINTS: packages/connector-core/test/capture-losses.test.ts 7
  * PRINTS: packages/connector-core/test/claim-drift.test.ts 4
