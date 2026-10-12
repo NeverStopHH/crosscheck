@@ -35,6 +35,7 @@ import { stampReleased } from "../spool/release.ts";
 import { lastWorkContextRecords } from "../spool/work-context-ack.ts";
 import { recordCaptureLoss } from "./loss-ledger.ts";
 import { recordRestOmission } from "./rest-omissions.ts";
+import { removeOwedRestsBooked, wereOwedRestsBooked } from "./rests-booked.ts";
 import { listSessionStateFiles, sessionSilentForMs } from "./session-scan.ts";
 import { lifeRungOf } from "./session-lineage.ts";
 import { crosscheckSessionIdFor, SessionStateSchema, updateSessionState } from "./session-state.ts";
@@ -155,6 +156,11 @@ const bookOwedRests = async (home: string, state: SessionState, now: Date): Prom
   if (count === 0) {
     return;
   }
+  // ...unless the life's own SessionEnd booked them from an unlocked read and
+  // was cut before its delete (final review of batch 2, N10): counted once.
+  if (await wereOwedRestsBooked(home, state.hostSessionKey, state.crosscheckSessionId)) {
+    return;
+  }
   const newest = Math.max(...owed.map((check) => Date.parse(check.at)).filter((ms) => !Number.isNaN(ms)));
   const at = Number.isFinite(newest) && newest <= now.getTime() ? new Date(newest) : now;
   const key = repoKey(state.hubUrl, state.repoId);
@@ -236,6 +242,7 @@ export const reapStaleSessionStates = async (
     // state that would not go was booked again on every run — three bookings
     // for one rest — and the run that finally removes it books it once.
     await bookOwedRests(home, parsed.data, now);
+    await removeOwedRestsBooked(home, parsed.data.hostSessionKey);
   }
   return reaped;
 };

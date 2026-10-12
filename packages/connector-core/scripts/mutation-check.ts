@@ -36945,6 +36945,16 @@ export const MUTATIONS: readonly Mutation[
     because: "the room another hook made is rewritten again, dropping lines this reader cannot parse and racing a third hook's append",
   },
   {
+    // Final review of batch 2, N10: the M8 fallback booked the rests, the hook
+    // was cut before its delete, and the reaper booked them once more.
+    label: "the reaper books the rests SessionEnd already booked under a busy lock",
+    file: `${CORE}/src/state/session-reap.ts`,
+    from: "  if (await wereOwedRestsBooked(home, state.hostSessionKey, state.crosscheckSessionId)) {\n    return;\n  }\n",
+    to: "",
+    test: `${CONNECTOR}/test/rest-recheck-guarantee.test.ts`,
+    because: "N10: doctor and status over-count by the rests of every SessionEnd cut between its booking and its delete",
+  },
+  {
     label: "SessionEnd under a busy lock drops owed rests unbooked",
     file: `${CONNECTOR}/src/hooks/rest-recheck.ts`,
     from: "    const unlocked = isWritten ? null : await readSessionState(ctx.config.home, ctx.payload.session_id);",
@@ -37558,7 +37568,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/recovery-epoch.test.ts 2
  * PRINTS: packages/connector-claude/test/recovery-losses.test.ts 1
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
- * PRINTS: packages/connector-claude/test/rest-recheck-guarantee.test.ts 18
+ * PRINTS: packages/connector-claude/test/rest-recheck-guarantee.test.ts 19
  * PRINTS: packages/connector-claude/test/resumed-session.test.ts 10
  * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
  * PRINTS: packages/connector-claude/test/settings-merge-removal.test.ts 1

@@ -55,7 +55,9 @@ const LINEAGE_SUFFIX = ".lineage";
 const HEAL_SUFFIX = ".heal";
 /** A register's reserved epoch (flows/register-session.ts), swept the same way. */
 const EPOCH_SUFFIX = ".epoch";
-const SIDE_FILE_SUFFIXES = [LINEAGE_SUFFIX, HEAL_SUFFIX, EPOCH_SUFFIX] as const;
+/** SessionEnd's "rests booked" marker (state/rests-booked.ts), swept the same way. */
+const RESTS_BOOKED_SUFFIX = ".rests-booked";
+const SIDE_FILE_SUFFIXES = [LINEAGE_SUFFIX, HEAL_SUFFIX, EPOCH_SUFFIX, RESTS_BOOKED_SUFFIX] as const;
 /** A rung as the ladder spells it: no sign, no leading zero, nine digits at most. */
 const RUNG_PATTERN = /^[1-9][0-9]{0,8}$/;
 

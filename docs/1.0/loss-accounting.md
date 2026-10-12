@@ -1166,7 +1166,10 @@ None of these lines reaches the hub: the omission ledgers (`state/omission-ledge
 and `rest_unchecked` is a capture-loss kind `toLossReport` leaves out of its wire scope
 (`state/loss-ledger.ts` `LOCAL_CAPTURE_LOSS_KINDS`; `test/rest-unchecked-scope.test.ts`), so no coverage row is
 marked `telemetry_lost` for one person's unwarned moment. Locally they can only add a WARN. A line that reaches
-nobody's judgment cannot strengthen one.
+nobody's judgment cannot strengthen one. Counted once, too: a SessionEnd that booked the rests from an unlocked
+read (M8) and was cut before its state delete leaves a marker beside the state (`sessions/<slug>.rests-booked`,
+`state/rests-booked.ts`) naming the life, and the reaper that finds that state honours it instead of booking the
+same rests again (final review of batch 2, N10).
 
 The one capture debt an ended life leaves that DOES reach the wire is the sweep it still owed (batch-2 review H1):
 `hook_timed_out:session-end`, booked by an end that could not write its lineage, by an end that replaced a capture of

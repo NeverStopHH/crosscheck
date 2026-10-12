@@ -34,6 +34,7 @@ import { NO_GENERATED, addGeneratedTally } from "../capture/generated.ts";
 import type { GeneratedTally } from "../capture/generated.ts";
 import { recordCaptureLoss } from "./loss-ledger.ts";
 import { recordRestOmission } from "./rest-omissions.ts";
+import { removeOwedRestsBooked } from "./rests-booked.ts";
 import {
   listSessionStateFiles,
   sessionSilentForMs,
@@ -1648,6 +1649,9 @@ const closeState = async (
 ): Promise<MovedLife | null> => {
   const fresh = await readSessionState(home, hostSessionKey);
   await deleteSessionState(home, hostSessionKey);
+  // The rests this end booked before the delete need no marker once the
+  // state is gone (state/rests-booked.ts; final review of batch 2, N10).
+  await removeOwedRestsBooked(home, hostSessionKey);
   if (fresh === null || fresh.crosscheckSessionId === crosscheckSessionId) {
     return null;
   }

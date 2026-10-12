@@ -32,6 +32,7 @@ import type { CoverageRecord } from "@crosscheck/connector-core/http/coverage.ts
 import type { TripwireSession } from "@crosscheck/connector-core/http/hub.ts";
 import { recordCaptureLoss } from "@crosscheck/connector-core/state/loss-ledger.ts";
 import { recordRestOmission } from "@crosscheck/connector-core/state/rest-omissions.ts";
+import { markOwedRestsBooked } from "@crosscheck/connector-core/state/rests-booked.ts";
 import {
   newCollisionKeys,
   owedRests,
@@ -250,6 +251,12 @@ const owedCountOf = (state: SessionState): number =>
  * it, so giving up here dropped them unbooked — 9 of 9 trials in the review.
  * A sibling paying one of them at the same moment books it once more, the
  * over-count's safe side.
+ *
+ * ...AND LEAVES A MARKER BESIDE THE STATE (final review of batch 2, N10): a
+ * hook cut between this booking and the delete leaves the state on disk with
+ * the rests it just booked, and the reaper would book them again. The marker
+ * (core state/rests-booked.ts) names the life; the reaper honours it and
+ * removes it with the state. Written after the booking, never before.
  */
 export const bookOwedRestsAtEnd = async (ctx: HookContext, detail: string): Promise<void> => {
   try {
@@ -262,6 +269,9 @@ export const bookOwedRestsAtEnd = async (ctx: HookContext, detail: string): Prom
     const booked = isWritten ? owed.value : unlocked === null ? 0 : owedCountOf(unlocked);
     if (booked > 0) {
       await bookUncheckedRests(ctx, booked, detail);
+    }
+    if (unlocked !== null && booked > 0) {
+      await markOwedRestsBooked(ctx.config.home, ctx.payload.session_id, unlocked.crosscheckSessionId, booked, ctx.now());
     }
   } catch {
     // Fail open: an unbooked debt stays in the state file, where the reaper books it.

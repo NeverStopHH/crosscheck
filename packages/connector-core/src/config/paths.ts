@@ -184,6 +184,18 @@ export const sessionHealPathForSlug = (home: string, slug: string): string =>
 export const sessionEpochPathForSlug = (home: string, slug: string): string =>
   join(home, "sessions", `${slug}.epoch`);
 
+/**
+ * The rests a SessionEnd booked from an unlocked read (connector-claude
+ * hooks/rest-recheck.ts bookOwedRestsAtEnd; review batch 2, M8) when the
+ * hook was then cut before its state delete: the state survives with the
+ * rests it booked, and the reaper that finds it would book them again
+ * (final review of batch 2, N10). Its own file, no lock — the lock is what
+ * was not to be had — honoured by state/session-reap.ts for the life it
+ * names, removed with the state, swept with the lineage notes.
+ */
+export const sessionRestsBookedPathForSlug = (home: string, slug: string): string =>
+  join(home, "sessions", `${slug}.rests-booked`);
+
 export const sessionStatePath = (
   home: string,
   hostSessionKey: string,
