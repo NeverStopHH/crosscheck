@@ -36875,6 +36875,16 @@ export const MUTATIONS: readonly Mutation[
     because: "a capture no resume of this conversation can carry any more vanishes silently once the reap writes over it",
   },
   {
+    // Final review of batch 2, LOW-a: the live-state guard read a resume bound
+    // elsewhere as the owner of a capture it had carried nothing of.
+    label: "a stale lineage beside a live state of another binding drops the sweep it still carries",
+    file: `${CORE}/src/state/session-lineage.ts`,
+    from: "  return state.success && isSameCaptureBinding(state.data, capture);",
+    to: "  return state.success;",
+    test: `${CORE}/test/capture-across-lives.test.ts`,
+    because: "LOW-a: a sweep no life of this conversation carried goes with the note — made by nobody, counted nowhere",
+  },
+  {
     // Final review of batch 2, N3: the undo's locked write gave up and the
     // claim stood — the ask spent, the group told, nothing owed, nothing counted.
     label: "a cut whose undo meets a busy lock leaves the file uncounted",
@@ -37668,7 +37678,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/briefing-presence-topics.test.ts 6
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 5
  * PRINTS: packages/connector-core/test/briefing-withheld-age.test.ts 1
- * PRINTS: packages/connector-core/test/capture-across-lives.test.ts 18
+ * PRINTS: packages/connector-core/test/capture-across-lives.test.ts 19
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 5
  * PRINTS: packages/connector-core/test/capture-losses.test.ts 7
  * PRINTS: packages/connector-core/test/claim-drift.test.ts 4

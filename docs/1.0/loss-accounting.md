@@ -1177,7 +1177,10 @@ replaced a capture of another binding, or by the lineage reap of a conversation 
 never dropped, and never booked twice (final review of batch 2, N1). A resume takes the capture into its state and strikes it off the
 note (`flows/register-session.ts` → `state/session-lineage.ts` `consumeCarriedCapture`), so the live state owns the
 debt from then on — its next Stop files the roots, its SessionEnd writes the next capture — and a note the reaper
-finds beside a live state of the same host session books nothing (`reapStaleLineages`). Before that, a resumed life
+finds beside a live state of the same host session AND the capture's own binding books nothing (`reapStaleLineages`).
+A live state bound elsewhere — a resume that landed in another repo or on another hub — carried nothing of it
+(`carriedFromLineage` carries only its own binding's capture and strikes nothing), so a note gone stale beside it is
+booked as beside no state at all (final review of batch 2, LOW-a; until then it went with the note, uncounted). Before N1, a resumed life
 that swept the carried roots and then died without SessionEnd was booked for the sweep it had made, and the hub read
 the repo as `telemetry_lost` for fourteen days (`test/capture-across-lives.test.ts`). A life that dies WITHOUT
 SessionEnd while it still owes a sweep is not dropped either: when the state reaper removes its corpse

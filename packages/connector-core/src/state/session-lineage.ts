@@ -46,7 +46,7 @@ import {
 } from "../config/paths.ts";
 import { recordCaptureLoss } from "./loss-ledger.ts";
 import { sessionStateDir } from "./session-scan.ts";
-import { KnownWorktreeRootSchema } from "./session-state.ts";
+import { KnownWorktreeRootSchema, SessionStateSchema } from "./session-state.ts";
 import type { KnownWorktreeRoot, SessionState } from "./session-state.ts";
 
 const LIFE_SUFFIX = "~r";
@@ -263,7 +263,13 @@ export const bookUnsweptCapture = async (home: string, capture: CarriedCapture, 
   });
 };
 
-const isSameCaptureBinding = (left: CarriedCapture, right: CarriedCapture): boolean =>
+/** What a capture, or a state, is bound to: one repo, on one hub. */
+interface CaptureBinding {
+  readonly repoId: string;
+  readonly hubUrl: string;
+}
+
+const isSameCaptureBinding = (left: CaptureBinding, right: CaptureBinding): boolean =>
   left.repoId === right.repoId && left.hubUrl === right.hubUrl;
 
 /** The capture the last end wrote down, if any (review batch 2, H1). */
@@ -395,14 +401,24 @@ const isLineageStale = async (path: string, nowMs: number): Promise<boolean> => 
 };
 
 /**
- * Whether the host session a lineage note belongs to is still named by a
- * state file: its live life owns whatever the note carried (final review
- * N1) — the resume took the capture into that state, and its next lane or
- * SessionEnd is what delivers or books it. A note beside a live state is
+ * Whether a live state OF THE CAPTURE'S OWN BINDING names the host session a
+ * lineage note belongs to: that life owns what the note carried (final
+ * review N1) — the resume took the capture into its state, and its next lane
+ * or SessionEnd is what delivers or books it. A note beside such a state is
  * spent, never a loss.
+ *
+ * A LIVE STATE OF ANOTHER BINDING OWNS NOTHING OF IT (final review of batch
+ * 2, LOW-a): a resume that landed in another repo or on another hub carries
+ * only a capture of its own binding (flows/register-session.ts
+ * carriedFromLineage) and strikes nothing, so the sweep the note still owes
+ * will be made by no lane of that life — as lost as beside no state at all,
+ * and booked the same way. A state that will not parse names no binding.
  */
-const isHostSessionLive = async (home: string, lineageName: string): Promise<boolean> =>
-  Bun.file(sessionStatePathForSlug(home, lineageName.slice(0, -LINEAGE_SUFFIX.length))).exists();
+const isCaptureOwedByLiveState = async (home: string, lineageName: string, capture: CarriedCapture): Promise<boolean> => {
+  const slug = lineageName.slice(0, -LINEAGE_SUFFIX.length);
+  const state = SessionStateSchema.safeParse(await readJsonOrNull(sessionStatePathForSlug(home, slug)));
+  return state.success && isSameCaptureBinding(state.data, capture);
+};
 
 /**
  * Lineage notes and heal stamps of host sessions that never came back,
@@ -433,11 +449,13 @@ export const reapStaleLineages = async (home: string, now: Date): Promise<number
     // A conversation that never came back leaves the sweeps its last life
     // still owed unmade (review batch 2, H1): booked once the note is gone,
     // so a note that will not go is not booked again on every run — and
-    // never beside a live state of the same host session (final review N1),
-    // whose life owns the debt and delivers or books it itself.
+    // never beside a live state of the same host session AND the capture's
+    // binding (final review N1; LOW-a), whose life owns the debt and
+    // delivers or books it itself.
     const isLineage = name.endsWith(LINEAGE_SUFFIX);
     const lineage = isLineage ? LineageSchema.safeParse(await readJsonOrNull(path)) : null;
-    const isOwedElsewhere = isLineage && (await isHostSessionLive(home, name));
+    const capture = lineage?.success === true ? (lineage.data.capture ?? null) : null;
+    const isOwedElsewhere = capture !== null && (await isCaptureOwedByLiveState(home, name, capture));
     try {
       await rm(path, { force: true });
       reaped += 1;
@@ -445,7 +463,6 @@ export const reapStaleLineages = async (home: string, now: Date): Promise<number
       // A file that will not go stays; the next SessionStart tries again.
       continue;
     }
-    const capture = lineage?.success === true ? (lineage.data.capture ?? null) : null;
     if (capture !== null && lineage?.success === true && !isOwedElsewhere) {
       await bookUnsweptCapture(home, capture, instantOr(lineage.data.at, now));
     }

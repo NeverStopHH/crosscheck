@@ -514,6 +514,27 @@ describe("a sweep no life will make is booked, never dropped (H1)", () => {
     expect(await unsweptBooked(world.home)).toBe(0);
   });
 
+  test("a stale lineage beside a live state of another binding books the sweep it still carries", async () => {
+    // Arrange: the last end left a sweep owed on this hub; the conversation
+    // resumed bound to ANOTHER hub — a register carries nothing of a foreign
+    // binding and strikes nothing off the note — and the note went stale
+    // beside that live state.
+    const label = "cal-alive-elsewhere";
+    const world = await worldFor(label);
+    await recordEndedLife(world.home, label, `cc_${label}`, new Date(), null, null, carriedCaptureOf(owing(world, label, isoAgo(8 * MINUTE_MS))));
+    await writeSessionState(world.home, { ...stateFor(world, new Date().toISOString(), label), crosscheckSessionId: `cc_${label}~r1`, hubUrl: OTHER_HUB });
+    const old = new Date(Date.now() - STALE_MS);
+    await utimes(sessionLineagePathForSlug(world.home, sessionSlug(label)), old, old);
+
+    // Act
+    await reapStaleLineages(world.home, new Date());
+
+    // Assert: the live life carried none of it, so no lane of it will file
+    // the root — counted, to the capture's own repo, as beside no state at all.
+    expect((await readSessionState(world.home, label))?.hubUrl).toBe(OTHER_HUB);
+    expect(await unsweptBooked(world.home)).toBe(1);
+  });
+
   /**
    * A life that died without SessionEnd a week ago, still owing one sweep (a
    * Bash-marked sibling root) — the first life of `label`, unless `life`
