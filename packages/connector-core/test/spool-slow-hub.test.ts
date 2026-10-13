@@ -32,12 +32,16 @@ const KEY = repoKey(HUB_URL, REPO_ID);
 const SLUG = sessionSlug(SESSION);
 const PRODUCER = { sessionId: "cc_live", developerId: "dev_1" };
 
-/** The per-request bound these tests give the hub context: the product's 400 ms, scaled down. */
-const REQUEST_BOUND_MS = 150;
-/** How long the slow hub holds a batch it was sent: past the bound, inside the room. */
-const SLOW_ANSWER_MS = 450;
+/**
+ * The per-request bound these tests give the hub context: the product's own
+ * 400 ms, which a loopback answer with nothing held back meets with a wide
+ * margin even on a runner several times slower than usual.
+ */
+const REQUEST_BOUND_MS = 400;
+/** How long the slow hub holds a batch it was sent: three bounds, inside the room. */
+const SLOW_ANSWER_MS = 1200;
 /** The room a drain is given: several slow answers wide. */
-const ROOM_MS = 6000;
+const ROOM_MS = 12_000;
 /** The largest batch the half-speed hub answers in time. */
 const FAST_UP_TO = 24;
 
