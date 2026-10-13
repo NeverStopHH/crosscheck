@@ -102,15 +102,20 @@ const JUNE_LANDING = {
 } as const;
 
 describe("a landing branch git cannot answer for", () => {
+  /** The real runner, with staging's missing query — and only that — failing. */
+  const failingStagingMissing = async (r: LandingRepos): Promise<GitRunner> => {
+    const stagingTip = await gitIn(r.reader, ["rev-parse", "refs/remotes/origin/staging"]);
+    return runnerFor(r.reader, (args) =>
+      args.includes("--left-only") && args.some((arg) => arg.startsWith(`${stagingTip}...`)) ? "fail" : "pass",
+    );
+  };
+
   test("is named, and the other branches still say what they know", async () => {
     // Arrange — Ken's change is missing via main; staging's query will fail
     const r = await repos("unchecked");
     await landWithSquash(r, { ...JUNE_LANDING, landing: "main", author: KEN, subject: "Ken on main" });
     await readerFetches(r);
-    const stagingTip = await gitIn(r.reader, ["rev-parse", "refs/remotes/origin/staging"]);
-    const failStaging = runnerFor(r.reader, (args) =>
-      args.includes("--left-only") && args.some((arg) => arg.startsWith(`${stagingTip}...`)) ? "fail" : "pass",
-    );
+    const failStaging = await failingStagingMissing(r);
 
     // Act
     const changes = await probe(r.reader, { runGit: failStaging });
@@ -119,6 +124,23 @@ describe("a landing branch git cannot answer for", () => {
     expect(changes?.missing.map((c) => c.subject)).toEqual(["Ken on main"]);
     expect(changes?.unchecked).toEqual(["staging"]);
     expect(changes?.cleanKey).toBeNull();
+  });
+
+  test("never has its change from yesterday called one the checkout has when the checkout lacks it", async () => {
+    // Arrange — Mike's change landed on staging yesterday and Nick has not
+    // merged it. Staging's missing query fails, so nothing placed the change
+    // outside HEAD (batch-2 review, M6): the recent half asks git itself
+    const r = await repos("unchecked-recent");
+    await landWithMergeCommit(r, { ...JUNE_LANDING, writtenAt: "2026-09-22T10:00:00Z", landedAt: "2026-09-23T15:00:00Z" });
+    await readerFetches(r);
+    const failStaging = await failingStagingMissing(r);
+
+    // Act
+    const changes = await probe(r.reader, { runGit: failStaging });
+
+    // Assert — staging is unchecked, and its change is not "recent and present"
+    expect(changes?.unchecked).toEqual(["staging"]);
+    expect(changes?.recent).toEqual([]);
   });
 });
 

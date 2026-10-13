@@ -10551,12 +10551,16 @@ export const MUTATIONS: readonly Mutation[
       "the working-day window is measured from the wrong moment, so a change merged yesterday can read as a week old",
   },
   {
-    // Landed changes. Recent means already in the checkout.
+    // Landed changes. Recent means already in the checkout. Since the recent
+    // half skips every commit the missing half placed outside HEAD (batch-2
+    // review, M6), this check is reached by a commit the checkout lacks only
+    // when its branch's missing query could not answer — so the guard fails
+    // that one query.
     label: "a change the checkout lacks is also reported as one it has",
     file: `${CORE}/src/landed-changes/probe.ts`,
     from: "        isReachableFromAny(context, commit.sha, [probe.state.headSha]),",
     to: "        isReachableFromAny(context, commit.sha, [probe.state.headSha]).then(() => true),",
-    test: `${CORE}/test/landed-changes.test.ts`,
+    test: `${CORE}/test/landed-changes-completeness.test.ts`,
     because:
       "the stop tells the reader their checkout has a change it is missing — the one reassurance it must never give falsely",
   },
@@ -10941,7 +10945,9 @@ export const MUTATIONS: readonly Mutation[
       "during a big merge or pick, commits that stay missing are thrown away with the arriving ones, and the stop says nothing",
   },
   {
-    // Landed changes. The file path is literal for ls-tree too.
+    // Landed changes. The file path is literal for ls-tree too. Real git
+    // reads both tips in one cat-file batch (batch-2 review, M6), so the
+    // guard is the blobless partial clone, where each copy is its own ls-tree.
     label: "a file whose name starts with a colon hides its missing change",
     file: `${CORE}/src/landed-changes/git-queries.ts`,
     from: '  const stdout = await gitStdout(context, ["ls-tree", rev, "--", literalPath(context.file)]);',
@@ -37776,9 +37782,9 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/key-origin-client.test.ts 7
  * PRINTS: packages/connector-core/test/kit.test.ts 1
  * PRINTS: packages/connector-core/test/landed-capture.test.ts 5
- * PRINTS: packages/connector-core/test/landed-changes-completeness.test.ts 26
+ * PRINTS: packages/connector-core/test/landed-changes-completeness.test.ts 27
  * PRINTS: packages/connector-core/test/landed-changes-edges.test.ts 19
- * PRINTS: packages/connector-core/test/landed-changes.test.ts 7
+ * PRINTS: packages/connector-core/test/landed-changes.test.ts 6
  * PRINTS: packages/connector-core/test/landed-notice.test.ts 21
  * PRINTS: packages/connector-core/test/landed-probe-cuts.test.ts 6
  * PRINTS: packages/connector-core/test/landed-probe-facts.test.ts 9
