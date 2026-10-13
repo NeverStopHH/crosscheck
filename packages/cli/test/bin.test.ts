@@ -49,7 +49,14 @@ const modulesLoadedBy = async (args: readonly string[]): Promise<readonly string
       env: { ...process.env, CROSSCHECK_DISABLED: "1", CX_MODULE_LOG: log },
     });
     await proc.exited;
-    return JSON.parse(await readFile(log, "utf8")) as string[];
+    const modules = JSON.parse(await readFile(log, "utf8")) as string[];
+    // Every process loads its entry at least: none means the recorder could
+    // not read the runtime's module list, and every "not loaded" below would
+    // pass without looking.
+    if (modules.length === 0) {
+      throw new Error("record-modules.ts saw no module at all: this runtime's module list is unreadable");
+    }
+    return modules;
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
