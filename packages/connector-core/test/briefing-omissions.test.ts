@@ -94,17 +94,25 @@ describe("the briefing-omission ledger", () => {
   test("the ledger never grows past its cap, even when it cannot prune or rotate", async () => {
     // Arrange: a ledger already at the cap, and its lock — the prune's and
     // the rotation's — held by another writer for the whole record (review
-    // batch 2, M7).
+    // batch 2, M7). The record starts only once the lock is held: under load
+    // an unawaited holder lost the race to the record, which then pruned the
+    // file it was meant to leave alone.
     const home = await freshHome("omit-cap");
     const path = briefingOmissionsPath(home);
     await mkdir(dirname(path), { recursive: true });
     await Bun.write(path, "x".repeat(MAX_BRIEFING_OMISSION_LEDGER_BYTES));
     const release: { value: () => void } = { value: () => undefined };
+    const acquired: { value: () => void } = { value: () => undefined };
+    const isHeld = new Promise<void>((done) => {
+      acquired.value = done;
+    });
     const held = withLock(`${path}.lock`, undefined, () =>
       new Promise<void>((done) => {
         release.value = done;
+        acquired.value();
       }),
     );
+    await isHeld;
 
     // Act
     try {
