@@ -28,8 +28,12 @@
  * because the head-versus-merge-sha decision lives there and nowhere else.)
  *
  *   bun run packages/connector-core/scripts/mutation-check.ts
+ *   ... --shard 3/8                      # one of CI's shards (scripts/mutation-shards.ts)
+ *   ... --label "<label>" --label "..."  # the anchors a change added or touched
  */
 import { resolve } from "node:path";
+
+import { selectMutations } from "./mutation-shards.ts";
 
 const REPO_ROOT = resolve(import.meta.dir, "..", "..", "..");
 const CONNECTOR = "packages/connector-claude";
@@ -9622,7 +9626,7 @@ export const MUTATIONS: readonly Mutation[
   {
     // 01a §3.3d. A touch the connector sent as `./src/x.ts` is `src/x.ts`.
     label: "the hub canonicalises every target except files",
-    file: `${SERVER}/src/services/record-handlers.ts`,
+    file: `${SERVER}/src/services/target-run.ts`,
     from: '  const value = body.kind === "file" ? canonicalFileValue(body.value) : body.value;',
     to: '  const value = body.kind === "file" ? body.value : canonicalFileValue(body.value);',
     test: `${SERVER}/test/suspect.test.ts`,
@@ -9732,9 +9736,9 @@ export const MUTATIONS: readonly Mutation[
   {
     // 01a §3.3d. The touch's identity is computed from the SESSION's repo.
     label: "a touch's identity drops the repo it happened in",
-    file: `${SERVER}/src/services/record-handlers.ts`,
-    from: '      ...(body.kind === "file" ? { fileRef: touchFileRef(owner.repo, value) } : {}),',
-    to: '      ...(body.kind === "file" ? { fileRef: touchFileRef("", value) } : {}),',
+    file: `${SERVER}/src/services/target-run.ts`,
+    from: '    ...(body.kind === "file" ? { fileRef: touchFileRef(owner.repo, value) } : {}),',
+    to: '    ...(body.kind === "file" ? { fileRef: touchFileRef("", value) } : {}),',
     test: `${SERVER}/test/skeleton-identity.test.ts`,
     because:
       "no touch ever equals a pin's identity, so every pin protects nothing, " +
@@ -9744,8 +9748,8 @@ export const MUTATIONS: readonly Mutation[
     // 01a §3.2. The vendor is copied from the session row, exactly.
     label: "the skeleton row stops recording its vendor",
     file: `${SERVER}/src/services/session-events.ts`,
-    from: "             ${seqReason}, ${input.refKind}, ${input.refId}, ${deps.now()}, s.agent_kind,",
-    to: "             ${seqReason}, ${input.refKind}, ${input.refId}, ${deps.now()}, NULL,",
+    from: "           v.ref_kind, v.ref_id, ${deps.now()}, s.agent_kind, v.work_context_id, v.file_ref",
+    to: "           v.ref_kind, v.ref_id, ${deps.now()}, NULL, v.work_context_id, v.file_ref",
     test: `${SERVER}/test/skeleton-identity.test.ts`,
     because:
       "which vendor produced an order becomes a join through the session row, " +
@@ -9754,9 +9758,9 @@ export const MUTATIONS: readonly Mutation[
   {
     // 01a §3.2. A touch's row carries the context of the record it projects.
     label: "a touch's row forgets its work context",
-    file: `${SERVER}/src/services/record-handlers.ts`,
-    from: "      workContextId: body.workContextId,\n      // THE FILE",
-    to: "      workContextId: `${body.workContextId}_other`,\n      // THE FILE",
+    file: `${SERVER}/src/services/target-run.ts`,
+    from: "    workContextId: body.workContextId,\n    // THE FILE",
+    to: "    workContextId: `${body.workContextId}_other`,\n    // THE FILE",
     test: `${SERVER}/test/skeleton-identity.test.ts`,
     because:
       "the skeleton cannot say which context an edit belonged to without a " +
@@ -10133,9 +10137,9 @@ export const MUTATIONS: readonly Mutation[
   {
     // 01a CSK-10. The skeleton carries a hash of a path, never the path.
     label: "a touch's row stores the path instead of its identity",
-    file: `${SERVER}/src/services/record-handlers.ts`,
-    from: '      ...(body.kind === "file" ? { fileRef: touchFileRef(owner.repo, value) } : {}),',
-    to: '      ...(body.kind === "file" ? { fileRef: value } : {}),',
+    file: `${SERVER}/src/services/target-run.ts`,
+    from: '    ...(body.kind === "file" ? { fileRef: touchFileRef(owner.repo, value) } : {}),',
+    to: '    ...(body.kind === "file" ? { fileRef: value } : {}),',
     test: `${SERVER}/test/skeleton-identity.test.ts`,
     because:
       "the skeleton, which outlives every content policy, carries the paths a redaction exists to hide",
@@ -10144,8 +10148,8 @@ export const MUTATIONS: readonly Mutation[
     // 01a §3.3g. A retired skeleton is never partly rebuilt.
     label: "a late record rebuilds part of a retired skeleton",
     file: `${SERVER}/src/services/session-events.ts`,
-    from: "       WHERE s.id = ${input.sessionId} AND s.skeleton_retired_at IS NULL",
-    to: "       WHERE s.id = ${input.sessionId}",
+    from: "     WHERE s.skeleton_retired_at IS NULL\n     ORDER BY v.ord",
+    to: "     WHERE TRUE\n     ORDER BY v.ord",
     test: `${SERVER}/test/skeleton-sweep.test.ts`,
     because:
       "a claim flushed by a successor lands one row in a swept session, and that single row reads as a usable order the whole skeleton may have contradicted",
@@ -15083,8 +15087,9 @@ export const MUTATIONS: readonly Mutation[
     label: "a contradicting session_events row is counted nowhere and caps nothing",
     file: `${SERVER}/src/services/session-events.ts`,
     // Re-pointed by review M1: the reap exemption, and its argument, are gone.
-    from: "    if (contradictsGuaranteed(input.seqKind, seqN !== null)) {\n      await capContradictedGuarantee(",
-    to: "    if (false) {\n      await capContradictedGuarantee(",
+    // RETARGETED (the run's events, 2026-10-13): one cap per (session, kind) a run contradicts.
+    from: "  const contradicting = rows.filter((row) => contradictsGuaranteed(row.seqKind, row.seqN !== null));",
+    to: "  const contradicting = rows.filter(() => false);",
     test: `${SERVER}/test/causal-guarantees.test.ts`,
     because: "an unbracketed edit from a session that declared bracketed leaves every surface reading guaranteed (CSK-9)",
   },
@@ -15363,16 +15368,16 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a reap leaves a lifecycle end standing",
     file: `${SERVER}/src/services/session-events.ts`,
-    from: "    if (contradictsGuaranteed(input.seqKind, seqN !== null)) {",
-    to: '    if (contradictsGuaranteed(input.seqKind, seqN !== null || seqReason === "reaped_end")) {',
+    from: "  const contradicting = rows.filter((row) => contradictsGuaranteed(row.seqKind, row.seqN !== null));",
+    to: '  const contradicting = rows.filter((row) => contradictsGuaranteed(row.seqKind, row.seqN !== null || row.seqReason === "reaped_end"));',
     test: `${SERVER}/test/causal-guarantees.test.ts`,
     because: "a session whose end nobody observed reads session.ended guaranteed / lifecycle for as long as its row lives",
   },
   {
     label: "a positioned skeleton row is never held to lifecycle",
     file: `${SERVER}/src/services/session-events.ts`,
-    from: "    if (seqEpoch !== null && seqN !== null) {",
-    to: "    if (false) {",
+    from: "  const positioned = rows.filter((row) => row.seqEpoch !== null && row.seqN !== null);",
+    to: "  const positioned = rows.filter(() => false);",
     test: `${SERVER}/test/causal-guarantees.test.ts`,
     because: "an end below a row the session already wrote stays lifecycle-guaranteed",
   },
@@ -15436,8 +15441,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "an event that loses its position to another caps nothing",
     file: `${SERVER}/src/services/session-events.ts`,
-    from: '    id: await write(null, null, "epoch_conflict"),',
-    to: '    id: await write(stamp.epoch, stamp.n, "epoch_conflict"),',
+    from: 'conflict: rowOf(entry.input, null, null, "epoch_conflict", null) },',
+    to: 'conflict: rowOf(entry.input, entry.stamp?.epoch ?? null, entry.stamp?.n ?? null, "epoch_conflict", null) },',
     test: `${SERVER}/test/causal-guarantees.test.ts`,
     because: "two events claiming one slot leave the kind reading guaranteed, and the second event's row is dropped",
   },
@@ -18149,8 +18154,8 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "a batch carries two lives' records",
     file: `${CORE}/src/spool/flush.ts`,
-    from: "  const batch = oneLife(spool.lines.slice(0, BATCH_LINES));",
-    to: "  const batch = spool.lines.slice(0, BATCH_LINES);",
+    from: "  const batch = oneLife(spool.lines.slice(0, batchLines));",
+    to: "  const batch = spool.lines.slice(0, batchLines);",
     test: `${CORE}/test/owed-work-context.test.ts`,
     because: "review-2 round 7: two owed lives in one batch, and a heal inside it re-sends another life's records under the wrong debt",
   },
@@ -18809,15 +18814,15 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the hub refuses an envelope it holds when its producer has ended (M4)",
     file: `${SERVER}/src/services/records.ts`,
-    from: "    if (holds === undefined) {\n      return { outcome: rejectedOutcome(gateIssue) };\n    }",
-    to: "    if (true) {\n      return { outcome: rejectedOutcome(gateIssue) };\n    }",
+    from: "    if (holds === undefined) {\n      return { answered: { outcome: rejectedOutcome(gateIssue) } };\n    }",
+    to: "    if (true) {\n      return { answered: { outcome: rejectedOutcome(gateIssue) } };\n    }",
     test: `${SERVER}/test/record-receipts.test.ts`,
     because: "review-2 round 8 M4: a re-send of a batch whose answer timed out reads rejected, and the connector counts records the hub holds as lost",
   },
   {
     label: "the hub keeps no receipt of what it took (M4)",
     file: `${SERVER}/src/services/records.ts`,
-    from: "      await writeReceipt(deps, developerId, receipt);\n",
+    from: "    await writeReceipts(deps, developerId, settled.flatMap((result) => (result.receipt === undefined ? [] : [result.receipt])));\n",
     to: "",
     test: `${SERVER}/test/record-receipts.test.ts`,
     because: "review-2 round 8 M4: nothing ever answers duplicate before the producer check, and over-counts return",
@@ -26070,9 +26075,9 @@ export const MUTATIONS: readonly Mutation[
   // A target's re-touch: the honest recency beside the honest age.
   {
     label: "a re-touch never moves a target's last_seen_at",
-    file: `${SERVER}/src/services/record-handlers.ts`,
-    from: "        lastSeenAt: deps.now(),\n        source: sql`case when",
-    to: "        source: sql`case when",
+    file: `${SERVER}/src/services/target-run.ts`,
+    from: "       SET last_seen_at = ${deps.now()},\n",
+    to: "       SET last_seen_at = t.last_seen_at,\n",
     test: `${SERVER}/test/target-last-seen.test.ts`,
     because: "a long-lived session's edit today reads as the day it first touched the file",
   },
@@ -27215,9 +27220,9 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "a re-touch that could not classify keeps the old silence",
-    file: `${SERVER}/src/services/record-handlers.ts`,
-    from: "'both') then 'both' else ${workContextTargets.source} end`,\n        generated,\n",
-    to: "'both') then 'both' else ${workContextTargets.source} end`,\n",
+    file: `${SERVER}/src/services/target-run.ts`,
+    from: "then 'both' else t.source end,\n           generated = v.generated\n",
+    to: "then 'both' else t.source end\n",
     test: `${SERVER}/test/generated-targets.test.ts`,
     because: "a label nobody can repeat silences the file for the life of the context — toward silence",
   },
@@ -28076,8 +28081,8 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "two git lanes sighting one file label it as a tool edit too",
-    file: `${SERVER}/src/services/record-handlers.ts`,
-    from: "case when ((${workContextTargets.source} = 'tool_edit') <> (${source}::text = 'tool_edit')) and",
+    file: `${SERVER}/src/services/target-run.ts`,
+    from: "case when ((t.source = 'tool_edit') <> (v.source = 'tool_edit')) and",
     to: "case when (TRUE) and",
     test: `${SERVER}/test/topic-contexts.test.ts`,
     because: "a file a codemod changed and a shell committed reads as `both`, claiming an Edit nobody reported",
@@ -28112,9 +28117,9 @@ export const MUTATIONS: readonly Mutation[
   },
   {
     label: "a target sighted again keeps its first-seen time as its last",
-    file: `${SERVER}/src/services/record-handlers.ts`,
-    from: "        lastSeenAt: deps.now(),\n        source: sql`case when ((",
-    to: "        lastSeenAt: sql`last_seen_at`,\n        source: sql`case when ((",
+    file: `${SERVER}/src/services/target-run.ts`,
+    from: "       SET last_seen_at = ${deps.now()},\n",
+    to: "       SET last_seen_at = t.last_seen_at,\n",
     test: `${SERVER}/test/pilot-report-window.test.ts`,
     because: "an old file re-touched this week dates its session to the week it was first touched",
   },
@@ -37384,6 +37389,137 @@ export const MUTATIONS: readonly Mutation[
       "a Stop whose lane and state write landed and whose drain the race cut books hook_timed_out for records " +
       "still safe in the spool, and the hub's coverage answer then contradicts the connector's ledger",
   },
+  // THE RESUMED LIFE'S TAIL (release gate on ubuntu-latest, 2026-10-13): a
+  // re-filing of two batches whose first the hub stored in 406 ms, past the
+  // 400 ms bound, was abandoned, and the rest waited for a hook that never came.
+  {
+    label: "a hook nobody waits for still abandons a slow hub's answer at the request bound",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "  timeoutMs: isAnswerless ? roomMs : Math.min(ctx.timeoutMs, roomMs),",
+    to: "  timeoutMs: Math.min(ctx.timeoutMs, roomMs),",
+    test: `${CORE}/test/spool-slow-hub.test.ts`,
+    because: "Stop and SubagentStop drop a batch the hub is storing, and a resumed life's files stay off every tripwire",
+  },
+  {
+    label: "a batch that timed out is never sent smaller",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "      batchLines = Math.max(MIN_FLUSH_BATCH_LINES, Math.floor(delivered.timedOutLines / 2));\n      continue;",
+    to: '      return { outcome: "failed", remaining: pendingTotal(spools) };',
+    test: `${CORE}/test/spool-slow-hub.test.ts`,
+    because: "a hub slower than the bound for a whole batch is sent the same batch by every hook and never answers in time",
+  },
+  {
+    label: "a batch halves past its floor",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: '    if (delivered === null || ("timedOutLines" in delivered && delivered.timedOutLines <= MIN_FLUSH_BATCH_LINES)) {',
+    to: "    if (delivered === null) {",
+    test: `${CORE}/test/spool-slow-hub.test.ts`,
+    because: "a hub that is down eats the hook's whole envelope in requests of ten that all time out",
+  },
+  {
+    label: "a timed-out records request reads as a refusal",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "  return result.ok ? result.data : isTimedOut(result) ? TIMED_OUT : null;",
+    to: "  return result.ok ? result.data : null;",
+    test: `${CORE}/test/spool-slow-hub.test.ts`,
+    because: "the one failure a smaller batch cures ends the drain like a 503",
+  },
+  {
+    label: "a halved batch's cursor drops what an earlier walk counted beyond it",
+    file: `${CORE}/src/spool/flush.ts`,
+    from: "  const beyond = [...earlier].filter((end) => end > consumed);",
+    to: "  const beyond: readonly number[] = [];",
+    test: `${CORE}/test/spool-slow-hub.test.ts`,
+    because: "a torn or refused line a walk already counted is counted again once a smaller batch moves the cursor (I1)",
+  },
+  {
+    label: "a budget without a reserve does not say nobody waits for it",
+    file: `${CORE}/src/config/hook-budget.ts`,
+    from: "  ...(holdsReserve ? {} : { isAnswerless: true }),",
+    to: "",
+    test: `${CONNECTOR}/test/hook-reserve.test.ts`,
+    because: "Stop and SubagentStop hold every records request to the bound a waiting host needs",
+  },
+  {
+    label: "the Stop hook's drain keeps the request bound",
+    file: `${CONNECTOR}/src/hooks/stop.ts`,
+    from: "      isAnswerless: budget.isAnswerless === true,",
+    to: "",
+    test: `${CONNECTOR}/test/stop-answerless-flush.test.ts`,
+    because: "the turn's last drain abandons the slow hub's answer and the turn's files wait for the next prompt",
+  },
+  {
+    label: "the SubagentStop hook's drain keeps the request bound",
+    file: `${CONNECTOR}/src/hooks/subagent-stop.ts`,
+    from: "      isAnswerless: budget.isAnswerless === true,",
+    to: "",
+    test: `${CONNECTOR}/test/stop-answerless-flush.test.ts`,
+    because: "a subagent's lane files its root and the drain after it abandons the slow hub's answer",
+  },
+  {
+    label: "the sweep a healed life is owed keeps the request bound",
+    file: `${CONNECTOR}/src/hooks/git-lane.ts`,
+    from: "isAnswerless: budget.isAnswerless === true }",
+    to: "isAnswerless: false }",
+    test: `${CONNECTOR}/test/stop-answerless-flush.test.ts`,
+    because: "a resumed life's re-filing is swept inside Stop and then dropped at the bound like any waited-for hook's",
+  },
+  {
+    label: "a flush's targets are stored one record at a time",
+    file: `${SERVER}/src/services/records.ts`,
+    from: '    if ("admitted" in screened && screened.admitted.kind === "target") {',
+    to: "    if (false) {",
+    test: `${SERVER}/test/target-run.test.ts`,
+    because: "a 99-target batch costs about fifteen statements a record and outlasts the connector's 400 ms request bound",
+  },
+  {
+    label: "a run's events are written one at a time",
+    file: `${SERVER}/src/services/session-events.ts`,
+    from: "  await insertRows(deps, firsts.map((entry) => entry.row));\n  await capRows(deps, firsts.map((entry) => entry.row));",
+    to: "  for (const entry of firsts) {\n    await insertRows(deps, [entry.row]);\n    await capRows(deps, [entry.row]);\n  }",
+    test: `${SERVER}/test/target-run.test.ts`,
+    because: "the run's projection alone grows with the batch, and the batch outlasts the request bound again",
+  },
+  {
+    label: "the producer check runs again for every record of one producer",
+    file: `${SERVER}/src/services/records.ts`,
+    from: "    if (known !== undefined) {\n      return known;\n    }",
+    to: "",
+    test: `${SERVER}/test/target-run.test.ts`,
+    because: "a flush of one producer pays one session read per record",
+  },
+  {
+    label: "a run's targets never reach the search doc",
+    file: `${SERVER}/src/services/target-run.ts`,
+    from: "  for (const workContextId of grown) {\n    await refreshNormalizedDoc(deps.db, workContextId);\n  }",
+    to: "",
+    test: `${SERVER}/test/target-run.test.ts`,
+    because: "the files a flush added are unfindable by every teammate's search until some later record rebuilds the doc",
+  },
+  {
+    label: "a file's second sighting in one flush is not re-touched",
+    file: `${SERVER}/src/services/target-run.ts`,
+    from: "  for (let round = 0; round <= lastRound; round += 1) {",
+    to: "  for (let round = 0; round <= 0; round += 1) {",
+    test: `${SERVER}/test/target-run.test.ts`,
+    because: "the git lane's sighting of a file the tool lane reported in the same flush never labels it both",
+  },
+  {
+    label: "a re-sent envelope the hub holds is stored again",
+    file: `${SERVER}/src/services/records.ts`,
+    from: '  if (holds !== undefined && !holds.isIgnored && kind !== "work_context") {',
+    to: "  if (false) {",
+    test: `${SERVER}/test/target-run.test.ts`,
+    because: "a batch re-sent after a timeout re-touches every file at the hour it was re-delivered, not touched",
+  },
+  {
+    label: "a re-sent work context the hub holds is answered as held while its producer lives",
+    file: `${SERVER}/src/services/records.ts`,
+    from: '  if (holds !== undefined && !holds.isIgnored && kind !== "work_context") {',
+    to: "  if (holds !== undefined && !holds.isIgnored) {",
+    test: `${SERVER}/test/record-receipts.test.ts`,
+    because: "a life's newer status, which goes with every re-send of its context, is never applied (I4)",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -37644,7 +37780,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/hint-hook.test.ts 4
  * PRINTS: packages/connector-claude/test/hook-budget.test.ts 3
  * PRINTS: packages/connector-claude/test/hook-contract.test.ts 1
- * PRINTS: packages/connector-claude/test/hook-reserve.test.ts 2
+ * PRINTS: packages/connector-claude/test/hook-reserve.test.ts 3
  * PRINTS: packages/connector-claude/test/hook-seq.test.ts 3
  * PRINTS: packages/connector-claude/test/hook-time-budget.test.ts 2
  * PRINTS: packages/connector-claude/test/hook-timeout-loss.test.ts 6
@@ -37673,6 +37809,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/state-reap.test.ts 1
  * PRINTS: packages/connector-claude/test/statusline-last-seen.test.ts 1
  * PRINTS: packages/connector-claude/test/statusline-person-strip.test.ts 4
+ * PRINTS: packages/connector-claude/test/stop-answerless-flush.test.ts 3
  * PRINTS: packages/connector-claude/test/stop-gate.test.ts 6
  * PRINTS: packages/connector-claude/test/stop-git-touches.test.ts 2
  * PRINTS: packages/connector-claude/test/stop-hook.test.ts 2
@@ -37858,6 +37995,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/spool-lock.test.ts 2
  * PRINTS: packages/connector-core/test/spool-ownership.test.ts 12
  * PRINTS: packages/connector-core/test/spool-simulation.test.ts 10
+ * PRINTS: packages/connector-core/test/spool-slow-hub.test.ts 5
  * PRINTS: packages/connector-core/test/ssh-hostname-deadline.test.ts 2
  * PRINTS: packages/connector-core/test/staleness-axis.test.ts 1
  * PRINTS: packages/connector-core/test/target-paths.test.ts 1
@@ -38049,7 +38187,7 @@ interface Outcome {
  * PRINTS: packages/server/test/questions.test.ts 8
  * PRINTS: packages/server/test/record-receipts-bloat.test.ts 1
  * PRINTS: packages/server/test/record-receipts-boot.test.ts 1
- * PRINTS: packages/server/test/record-receipts.test.ts 17
+ * PRINTS: packages/server/test/record-receipts.test.ts 18
  * PRINTS: packages/server/test/records.test.ts 2
  * PRINTS: packages/server/test/retention-registry.test.ts 3
  * PRINTS: packages/server/test/review-survivors-r2.test.ts 2
@@ -38085,6 +38223,7 @@ interface Outcome {
  * PRINTS: packages/server/test/startup-upgrades.test.ts 5
  * PRINTS: packages/server/test/suspect.test.ts 9
  * PRINTS: packages/server/test/target-last-seen.test.ts 1
+ * PRINTS: packages/server/test/target-run.test.ts 6
  * PRINTS: packages/server/test/team-settings.test.ts 9
  * PRINTS: packages/server/test/topic-contexts.test.ts 4
  * PRINTS: packages/server/test/tripwire-large-change.test.ts 5
@@ -38179,7 +38318,16 @@ const applyAndRun = async (mutation: Mutation): Promise<Outcome> => {
 
 const main = async (): Promise<number> => {
   const outcomes: Outcome[] = [];
-  for (const mutation of MUTATIONS) {
+  // The whole list, one CI shard of it, or the anchors named by --label
+  // (scripts/mutation-shards.ts): a refused argument ends the run here.
+  let selected: readonly Mutation[];
+  try {
+    selected = selectMutations(MUTATIONS, process.argv.slice(2));
+  } catch (error) {
+    process.stdout.write(`::error::${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+  for (const mutation of selected) {
     process.stdout.write(`· ${mutation.label}\n`);
     let outcome: Outcome;
     try {

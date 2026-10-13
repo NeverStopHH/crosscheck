@@ -234,7 +234,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 3880
+    # PRINTS: 3896
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -341,7 +341,7 @@ jobs:
     # PRINTS: doctor.ts 1
     # PRINTS: hooks/collision-relay.ts 15
     # PRINTS: hooks/ghost-notice.ts 3
-    # PRINTS: hooks/git-lane.ts 3
+    # PRINTS: hooks/git-lane.ts 4
     # PRINTS: hooks/index.ts 2
     # PRINTS: hooks/landed-why.ts 2
     # PRINTS: hooks/landing-fetch.ts 2
@@ -353,8 +353,9 @@ jobs:
     # PRINTS: hooks/runner.ts 21
     # PRINTS: hooks/session-end.ts 1
     # PRINTS: hooks/session-start.ts 11
-    # PRINTS: hooks/stop.ts 3
+    # PRINTS: hooks/stop.ts 4
     # PRINTS: hooks/subagent-return.ts 7
+    # PRINTS: hooks/subagent-stop.ts 1
     # PRINTS: hooks/turn-end.ts 6
     # PRINTS: hooks/user-prompt-submit.ts 20
     # PRINTS: landing-fetch/worker-entry.ts 1
@@ -386,7 +387,7 @@ jobs:
     # PRINTS: config/clean-restart.ts 8
     # PRINTS: config/config.ts 8
     # PRINTS: config/connected-repo.ts 5
-    # PRINTS: config/hook-budget.ts 5
+    # PRINTS: config/hook-budget.ts 6
     # PRINTS: config/key-binding.ts 9
     # PRINTS: config/launcher-check.ts 4
     # PRINTS: config/launcher.ts 6
@@ -494,7 +495,7 @@ jobs:
     # PRINTS: spool/drops.ts 14
     # PRINTS: spool/end-marker.ts 2
     # PRINTS: spool/flush-heal.ts 14
-    # PRINTS: spool/flush.ts 35
+    # PRINTS: spool/flush.ts 40
     # PRINTS: spool/held-deliveries.ts 13
     # PRINTS: spool/ledger-read.ts 2
     # PRINTS: spool/lock.ts 2
@@ -692,16 +693,16 @@ jobs:
     # PRINTS: packages/server/src/services/presence.ts 1
     # PRINTS: packages/server/src/services/pushable-claims.ts 1
     # PRINTS: packages/server/src/services/questions.ts 12
-    # PRINTS: packages/server/src/services/record-handlers.ts 38
+    # PRINTS: packages/server/src/services/record-handlers.ts 30
     # PRINTS: packages/server/src/services/record-receipts.ts 10
-    # PRINTS: packages/server/src/services/records.ts 9
+    # PRINTS: packages/server/src/services/records.ts 13
     # PRINTS: packages/server/src/services/referee.ts 4
     # PRINTS: packages/server/src/services/refusal.ts 3
     # PRINTS: packages/server/src/services/retention-registry.ts 11
     # PRINTS: packages/server/src/services/retention.ts 24
     # PRINTS: packages/server/src/services/search-tokens.ts 4
     # PRINTS: packages/server/src/services/search.ts 28
-    # PRINTS: packages/server/src/services/session-events.ts 9
+    # PRINTS: packages/server/src/services/session-events.ts 10
     # PRINTS: packages/server/src/services/session-order.ts 9
     # PRINTS: packages/server/src/services/session-window.ts 1
     # PRINTS: packages/server/src/services/sessions.ts 27
@@ -713,6 +714,7 @@ jobs:
     # PRINTS: packages/server/src/services/stale-docs.ts 2
     # PRINTS: packages/server/src/services/startup-upgrades.ts 7
     # PRINTS: packages/server/src/services/suspect.ts 6
+    # PRINTS: packages/server/src/services/target-run.ts 10
     # PRINTS: packages/server/src/services/team-settings.ts 15
     # PRINTS: packages/server/src/services/time-window.ts 1
     # PRINTS: packages/server/src/services/topic-base-commit.ts 1
@@ -864,7 +866,7 @@ jobs:
     # PRINTS: fix-diff.ts 7
     # PRINTS: fixture.ts 1
     # PRINTS: flush-heal.ts 14
-    # PRINTS: flush.ts 35
+    # PRINTS: flush.ts 40
     # PRINTS: foreign-hub.ts 11
     # PRINTS: format.ts 1
     # PRINTS: forwarded.ts 10
@@ -879,7 +881,7 @@ jobs:
     # PRINTS: ghost-overlap.ts 22
     # PRINTS: ghost.ts 6
     # PRINTS: git-lane-cost.ts 2
-    # PRINTS: git-lane.ts 21
+    # PRINTS: git-lane.ts 22
     # PRINTS: git-queries.ts 17
     # PRINTS: git.ts 10
     # PRINTS: harness-turn.ts 28
@@ -894,7 +896,7 @@ jobs:
     # PRINTS: hint-outcomes.ts 27
     # PRINTS: hint.ts 43
     # PRINTS: hints.ts 97
-    # PRINTS: hook-budget.ts 5
+    # PRINTS: hook-budget.ts 6
     # PRINTS: hub-install.ts 2
     # PRINTS: hub-status.ts 5
     # PRINTS: hub.ts 22
@@ -1013,9 +1015,9 @@ jobs:
     # PRINTS: question.ts 2
     # PRINTS: questions.ts 14
     # PRINTS: reap.ts 15
-    # PRINTS: record-handlers.ts 38
+    # PRINTS: record-handlers.ts 30
     # PRINTS: record-receipts.ts 10
-    # PRINTS: records.ts 13
+    # PRINTS: records.ts 17
     # PRINTS: recover.ts 4
     # PRINTS: referee.ts 4
     # PRINTS: refusal.ts 3
@@ -1054,7 +1056,7 @@ jobs:
     # PRINTS: seq-cost.ts 9
     # PRINTS: session-control.ts 9
     # PRINTS: session-end.ts 1
-    # PRINTS: session-events.ts 9
+    # PRINTS: session-events.ts 10
     # PRINTS: session-lineage.ts 15
     # PRINTS: session-order.ts 9
     # PRINTS: session-reap.ts 16
@@ -1087,15 +1089,17 @@ jobs:
     # PRINTS: status.ts 25
     # PRINTS: statusline.ts 8
     # PRINTS: stop-words.ts 2
-    # PRINTS: stop.ts 4
+    # PRINTS: stop.ts 5
     # PRINTS: stream.ts 3
     # PRINTS: subagent-return.ts 7
+    # PRINTS: subagent-stop.ts 1
     # PRINTS: substance-sentence.ts 15
     # PRINTS: substance-trust.ts 14
     # PRINTS: suspect-render.ts 4
     # PRINTS: suspect.ts 11
     # PRINTS: sweep.ts 3
     # PRINTS: target-paths.ts 1
+    # PRINTS: target-run.ts 10
     # PRINTS: team-settings.ts 16
     # PRINTS: telemetry-loss.ts 9
     # PRINTS: temp-sweep.ts 15
@@ -1149,13 +1153,26 @@ jobs:
     # PRINTS: worker.ts 13
     # PRINTS: working-days.ts 3
     # PRINTS: yield-to-requests.ts 2
-    name: Mutation proof
+    #
+    # IN EIGHT SHARDS (scripts/mutation-shards.ts). One after another, the
+    # base branch's 1,825 anchors took 3 h 19 min on a hosted runner, and the
+    # list above at that pace is about seven hours against GitHub's six-hour
+    # job limit. A shard is whole guards, dealt evenly and the same on every
+    # runner, so each anchor still runs once and each guard's unmutated run is
+    # paid once; a red shard is a red proof (fail-fast off, so every shard
+    # still says what it caught).
+    name: Mutation proof (${{ matrix.shard }}/8)
     runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
-      - run: bun run packages/connector-core/scripts/mutation-check.ts
+      - run: bun run packages/connector-core/scripts/mutation-check.ts --shard ${{ matrix.shard }}/8
 
   cpu-starved:
     # The ACP proxy wedged deterministically on Linux hosts with <= 2
