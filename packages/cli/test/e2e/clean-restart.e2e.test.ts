@@ -29,6 +29,29 @@ const POLL_MS = 50;
 /** A bun startup variable that changes nothing a test can see. */
 const HOST_ENV = { BUN_OPTIONS: "--smol" };
 
+/**
+ * `cmd` with core dumps off for it and for everything it starts. SIGQUIT's
+ * default action dumps core, and a bun MCP server maps about 6 GB it never
+ * touched (Linux, bun 1.4.3: 5.7 GB dumpable, 57 MB resident). Where
+ * core_pattern pipes cores to a handler, as systemd-coredump does on GitHub's
+ * Ubuntu runners, the kernel writes all of it, untouched pages as zeros, and
+ * `ulimit -c 0` does not stop a piped dump. There the restarted server and
+ * then its re-raising supervisor each dump in turn: SIGQUIT did not end the
+ * first pid within PROCESS_TIMEOUT_MS on ubuntu-latest, where SIGTERM, SIGINT
+ * and SIGHUP took about 0.2 s, and macOS (no dumps by default) 0.19 s. These
+ * tests prove the forwarding, not the host's crash handler: coredump_filter 0
+ * leaves a Linux core its headers only, `ulimit -c 0` covers the rest, both
+ * are inherited by the restarted process, and `exec` keeps the pid the host
+ * started.
+ */
+const withoutCoreDumps = (cmd: readonly string[]): readonly string[] => [
+  "/bin/sh",
+  "-c",
+  'ulimit -c 0; if [ -w /proc/self/coredump_filter ]; then echo 0 > /proc/self/coredump_filter; fi; exec "$@"',
+  "sh",
+  ...cmd,
+];
+
 const homes: string[] = [];
 const started: ReturnType<typeof Bun.spawn>[] = [];
 /** Every pid these tests made, by number: only these are ever killed, and only if a test failed to end them. */
@@ -145,7 +168,7 @@ const startMcp = async (
   }
   const held = heldFds.at(-1);
   const host = Bun.spawn({
-    cmd: [process.execPath, ...RUNTIME_ISOLATION_FLAGS, ENTRY, "mcp"],
+    cmd: [...withoutCoreDumps([process.execPath, ...RUNTIME_ISOLATION_FLAGS, ENTRY, "mcp"])],
     cwd: home,
     env: envFor(home),
     stdin: heldStdin && held !== undefined ? held : "pipe",
