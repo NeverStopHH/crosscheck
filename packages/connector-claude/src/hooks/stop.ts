@@ -172,6 +172,8 @@ export const handleStop = async (
       sessionId: state.crosscheckSessionId,
       developerId: state.developerId,
       heal: healerFor(ctx),
+      // Nobody waits for this hook: a slow hub's answer is waited out (spool/flush.ts).
+      isAnswerless: budget.isAnswerless === true,
     },
     budget.spareMs(),
   );

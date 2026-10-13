@@ -52,6 +52,12 @@ export interface HookBudget {
    * outside a race.
    */
   readonly captured?: () => void;
+  /**
+   * No host waits for this hook's answer (it holds no reserve; Stop and
+   * SubagentStop): a records request it makes may take the room left in its
+   * envelope instead of the per-request bound (spool/flush.ts `isAnswerless`).
+   */
+  readonly isAnswerless?: boolean;
 }
 
 /** Undoes one claim of a hook the race abandoned; never throws (the race's settle swallows it). */
@@ -89,6 +95,7 @@ export const hookBudget = (
 ): HookBudget => ({
   spareMs: () =>
     Math.max(0, deadlineMs - now() - (holdsReserve ? timeoutMs * HOOK_RESERVE_RATIO : 0)),
+  ...(holdsReserve ? {} : { isAnswerless: true }),
 });
 
 /** One hook run's race: the budget its handler sees, and the cut its runner settles. */

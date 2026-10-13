@@ -55,7 +55,13 @@ export const handleSubagentStop = async (
   const current = (await readSessionState(ctx.config.home, ctx.payload.session_id)) ?? state;
   await flushSpool(
     ctx.hub,
-    { sessionId: current.crosscheckSessionId, developerId: current.developerId, heal: healerFor(ctx) },
+    {
+      sessionId: current.crosscheckSessionId,
+      developerId: current.developerId,
+      heal: healerFor(ctx),
+      // Nobody waits for this hook: a slow hub's answer is waited out (spool/flush.ts).
+      isAnswerless: budget.isAnswerless === true,
+    },
     budget.spareMs(),
   );
   // A heal in that flush moved the life away from the lane above (L10):

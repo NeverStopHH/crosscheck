@@ -555,6 +555,18 @@ export const MAX_INGEST_BATCH = 100;
  * reserve. This is the hard ceiling for a hub that answers instantly.
  */
 export const MAX_FLUSH_BATCHES_PER_HOOK = 20;
+/**
+ * THE SMALLEST BATCH A DRAIN HALVES DOWN TO after a records request timed out
+ * (spool/flush.ts). A hub slower than the request bound for a full batch
+ * stored it and was abandoned anyway, so the same batch went again on every
+ * hook and never once came back in time: the release gate's resumed life,
+ * red on ubuntu-latest and traced in an x86_64 container at 406 ms for 99
+ * records against the 400 ms bound (2026-10-13). Halving cures a batch that
+ * is too big for the bound; one of
+ * ten that still times out is a hub that is down or stalled, and the drain
+ * ends there instead of spending its hook on ever smaller requests.
+ */
+export const MIN_FLUSH_BATCH_LINES = 10;
 export const SPOOL_LOCK_STALE_MS = 5000;
 /**
  * THE SPOOL's patience, and only the spool's. A busy flush or reap lock costs a

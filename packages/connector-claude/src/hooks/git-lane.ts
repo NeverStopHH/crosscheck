@@ -178,6 +178,10 @@ export const sweepIfLifeMoved = async (ctx: HookContext, budget: HookBudget): Pr
   await runGitLane(ctx, budget, state, { cwdRoot: ownCwdRoot(ctx, state) }, HEAL_GIT_LANE_LOSS_DETAIL);
   // No healer: the life was healed a moment ago, and a refusal now is the
   // next hook's to walk — this flush only carries the sweep's records.
-  await flushSpool(ctx.hub, { sessionId: state.crosscheckSessionId, developerId: state.developerId }, budget.spareMs());
+  await flushSpool(
+    ctx.hub,
+    { sessionId: state.crosscheckSessionId, developerId: state.developerId, isAnswerless: budget.isAnswerless === true },
+    budget.spareMs(),
+  );
   return true;
 };

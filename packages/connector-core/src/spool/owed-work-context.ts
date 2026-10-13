@@ -42,6 +42,7 @@ import {
 import { withProducer, workContextRecord } from "../capture/records.ts";
 import { TOPIC_TITLE_SOURCE } from "../flows/topic-contexts.ts";
 import type { Producer } from "../capture/records.ts";
+import { isTimedOut } from "../http/client.ts";
 import type { HubContext } from "../http/client.ts";
 import { postRecords } from "../http/hub.ts";
 import type { IngestSummary, RecordResult } from "../http/hub.ts";
@@ -407,10 +408,14 @@ export interface OwedDelivery {
   readonly owedSent: Record<string, unknown>;
 }
 
+/** A send the hub did not answer inside its bound — the failure a smaller batch can cure (spool/flush.ts). */
+export const TIMED_OUT = "timed-out";
+export type TimedOut = typeof TIMED_OUT;
+
 /**
  * Sends the batch with the owed work context at its head, built now
- * (`owedRecordNow`). Null when the hub did not take the request at all; the
- * debt and the batch both wait.
+ * (`owedRecordNow`). Null when the hub did not take the request at all, and
+ * TIMED_OUT when it did not answer in time; the debt and the batch both wait.
  */
 export const deliverOwed = async (
   ctx: HubContext,
@@ -419,7 +424,7 @@ export const deliverOwed = async (
   developerId: string | null,
   flusherSessionId: string,
   records: readonly Record<string, unknown>[],
-): Promise<OwedDelivery | null> => {
+): Promise<OwedDelivery | TimedOut | null> => {
   const ahead = withProducer(
     await owedRecordNow(ctx.home, ctx.repoKey, slug, owed, ctx.now()),
     developerId,
@@ -427,7 +432,7 @@ export const deliverOwed = async (
   );
   const result = await postRecords(ctx, [ahead, ...records]);
   if (!result.ok) {
-    return null;
+    return isTimedOut(result) ? TIMED_OUT : null;
   }
   return {
     summary: withoutAhead(result.data),

@@ -81,6 +81,14 @@ export type HubResult<T> =
       readonly cause?: ConnectionCause;
     };
 
+/**
+ * The hub did not answer inside the request's bound: the one failure a
+ * smaller request can cure (spool/flush.ts halves its batch on it). A refusal,
+ * a 5xx or a connection the hub refused says nothing about size.
+ */
+export const isTimedOut = <T>(result: HubResult<T>): boolean =>
+  !result.ok && result.kind === "network" && result.cause === "timeout";
+
 export interface HubRequest<T> {
   readonly method: "GET" | "POST" | "PUT" | "DELETE";
   readonly path: string;

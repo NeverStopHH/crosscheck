@@ -42,7 +42,9 @@
  * PRINTS: packages/connector-core/src/config/hook-budget.ts
  * PRINTS: packages/connector-core/src/constants.ts
  *
- * — and `spareMs` is in turn the sole accessor on HookBudget, taken as a whole
+ * — and `spareMs` is in turn the sole accessor on HookBudget that does
+ * arithmetic (`isAnswerless` beside it is a flag the reserve's absence sets,
+ * asserted at the end of this file), taken as a whole
  * deadline by the drain in each of the six hooks that host one (SessionStart,
  * SessionEnd, PostToolUse, PostToolUseFailure, Stop, SubagentStop), read once
  * more by SessionStart's deferred end, once more by the git lane Stop and
@@ -183,5 +185,17 @@ describe("an answerless hook holds nothing back", () => {
 
   test("a hook with an answer holds the reserve by default", () => {
     expect(hookBudget(NOW_MS + REMAINING_MS, HTTP_TIMEOUT_MS, frozen(NOW_MS)).spareMs()).toBe(REMAINING_MS - HTTP_TIMEOUT_MS);
+  });
+
+  // ...AND SAYS SO (release gate on ubuntu-latest, 2026-10-13): its drain may
+  // then give a records request the room left instead of the request bound,
+  // which abandoned a slow hub's answer after the hub had stored the batch
+  // (core spool/flush.ts `isAnswerless`; test/stop-answerless-flush.test.ts).
+  test("its budget says nobody waits for it, so a request may take the room left", () => {
+    expect(hookBudget(NOW_MS + REMAINING_MS, HTTP_TIMEOUT_MS, frozen(NOW_MS), false).isAnswerless).toBe(true);
+  });
+
+  test("a hook with an answer says nothing of the kind, and its requests keep the bound", () => {
+    expect(hookBudget(NOW_MS + REMAINING_MS, HTTP_TIMEOUT_MS, frozen(NOW_MS)).isAnswerless).toBeUndefined();
   });
 });
