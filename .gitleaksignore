@@ -6,3 +6,23 @@
 # A synthetic 16-hex clone key in the landing-fetch trigger test, read as a
 # generic API key. The test no longer writes it out; history keeps the line.
 a4ee67ce9c0ba9751b32742a7c08853b7c2307a0:packages/connector-core/test/landing-fetch-trigger.test.ts:generic-api-key:306
+#
+# The same class from the 10/06 batch, all synthetic hex identifiers in tests,
+# read as generic API keys only because the name beside them says KEY, key or
+# SECRET:
+# - SECRET_SHA, SECRET_SHA2 and SECRET_TOPIC_SHA are made-up 40-hex commit
+#   ids a presence opt-out must keep from teammates ("secret" is the privacy
+#   boundary under test, not a credential);
+# - `key: "<12 hex>.1"` is a topic context's key, the session's 12-hex id
+#   plus a topic number;
+# - KEY and OTHER_KEY are 16-hex clone keys, as in the entry above.
+0ab7727701c8da565524b006f220e85e70232f01:packages/server/test/opted-out-world.ts:generic-api-key:46
+0ab7727701c8da565524b006f220e85e70232f01:packages/server/test/opted-out-world.ts:generic-api-key:47
+b330d93c4e21feb65c89dcfb803fac38e4ce6d1c:packages/server/test/opted-out-world.ts:generic-api-key:57
+0d8dd07aae5ecc45c42891c911ac1bbe622e449c:packages/server/test/live-location-privacy.test.ts:generic-api-key:42
+b330d93c4e21feb65c89dcfb803fac38e4ce6d1c:packages/connector-core/test/topic-record-marker.test.ts:generic-api-key:59
+6101237520b81ee67267e512a65bd8283bdb62c4:packages/connector-core/test/topic-base-word.test.ts:generic-api-key:64
+6101237520b81ee67267e512a65bd8283bdb62c4:packages/connector-core/test/topic-base-word.test.ts:generic-api-key:113
+6101237520b81ee67267e512a65bd8283bdb62c4:packages/connector-core/test/topic-base-word.test.ts:generic-api-key:241
+57f8c0fd0da27a6b147d87b55c1d70de31895239:packages/connector-core/test/abandoned-temps.test.ts:generic-api-key:33
+57f8c0fd0da27a6b147d87b55c1d70de31895239:packages/connector-core/test/abandoned-temps.test.ts:generic-api-key:34
