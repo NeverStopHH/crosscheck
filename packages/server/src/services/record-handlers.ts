@@ -12,11 +12,8 @@ import type {
   Intent,
   SeqField,
   SeqKind,
-  Target,
   WorkContext,
 } from "@crosscheck/schema";
-
-import { canonicalRepoPath } from "@crosscheck/schema";
 
 import { EVENT_KINDS } from "../constants.ts";
 import {
@@ -25,17 +22,13 @@ import {
   claimSurfaces,
   claims,
   workContexts,
-  workContextTargets,
 } from "../db/schema.ts";
 import { appendEvent } from "./events.ts";
 import { appendIntentVersion } from "./intent-ledger.ts";
 import { refreshNormalizedDoc } from "./normalized-doc.ts";
 import { recordDeveloperBranch } from "./developer-branches.ts";
-import { hubGeneratedSignal } from "./generated-targets.ts";
-import { touchFileRef } from "./skeleton-identity.ts";
 import {
   recordSessionEvent,
-  targetDigest,
   windowFloorOf,
 } from "./session-events.ts";
 import {
@@ -167,34 +160,6 @@ const resolveSessionOwner = async (
     .where(eq(agentSessions.id, sessionId))
     .limit(1);
   return rows[0]?.developerId;
-};
-
-/**
- * The owner AND the session of a work context in one lookup.
- *
- * The session half is what keeps a position out of the wrong sequence: a
- * `target` body carries only a workContextId, and `producer.sessionId` is
- * rewritten to the FLUSHING session by every spool drain, so the context's own
- * session is the only honest answer to "whose order does this edit belong to".
- */
-const resolveWorkContextOwner = async (
-  db: DbExecutor,
-  workContextId: string,
-): Promise<
-  | { readonly developerId: string; readonly sessionId: string; readonly repo: string }
-  | undefined
-> => {
-  const rows = await db
-    .select({
-      developerId: agentSessions.developerId,
-      sessionId: workContexts.sessionId,
-      repo: agentSessions.repo,
-    })
-    .from(workContexts)
-    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
-    .where(eq(workContexts.id, workContextId))
-    .limit(1);
-  return rows[0];
 };
 
 // Deliberately does not check endedAt: author sessions MAY already be ended —
@@ -672,136 +637,8 @@ export const seqKindFor = (
     ? "emitted"
     : "observed";
 
-/** A file target's value in its one spelling, or as sent when it has none (01a §3.3d). */
-const canonicalFileValue = (raw: string): string => {
-  const canonical = canonicalRepoPath(raw);
-  return canonical.ok ? canonical.path : raw;
-};
-
-export const ingestTarget = async (
-  deps: Deps,
-  developerId: string,
-  body: Target,
-  seq?: SeqField,
-): Promise<HandlerOutcome> => {
-  const owner = await resolveWorkContextOwner(deps.db, body.workContextId);
-  if (owner === undefined) {
-    return rejectedOutcome(
-      `workContextId: work context "${body.workContextId}" not found`,
-    );
-  }
-  if (owner.developerId !== developerId) {
-    return rejectedOutcome(
-      "workContextId: work context belongs to another developer",
-    );
-  }
-  const source = body.source;
-  // ONE SPELLING PER FILE (01a §3.3d). `suspect` and the retention graph join
-  // a pin to a touch by exact string, so a connector that sent `./src/x.ts`
-  // would otherwise be a touch no pin ever meets — an exoneration produced by
-  // a spelling. A value that cannot be made canonical is KEPT as sent: a
-  // touch is evidence, and dropping it would be deciding the question it
-  // exists to answer.
-  const value = body.kind === "file" ? canonicalFileValue(body.value) : body.value;
-  // THE GENERATED-TARGET LABEL (services/generated-targets.ts): the
-  // connector's, or the path signal applied here to a target that carries
-  // none — so an older connector's nested lockfile is labelled all the same —
-  // and never one for a target the connector marked authoritative. Stored,
-  // never a reason to refuse or drop: the touch is kept either way.
-  const generated = hubGeneratedSignal(body.kind, value, body.generated, body.authoritative);
-  const eventKind = TARGET_EVENT_KINDS[body.kind as keyof typeof TARGET_EVENT_KINDS];
-  /**
-   * PROJECTED ON BOTH BRANCHES, accepted AND duplicate. The git lane's
-   * `file.modified` for a file the tool lane already saw arrives on the
-   * duplicate branch below — the primary key collapses the two observations
-   * into one target row — and that second observation is exactly the one a
-   * happens-before question cares about. Writing the event only on `accepted`
-   * would leave `seq_kind = observed` a value no real row ever carries.
-   */
-  const project = async (): Promise<void> => {
-    if (eventKind === undefined) {
-      return;
-    }
-    await recordSessionEvent(deps, {
-      sessionId: owner.sessionId,
-      kind: eventKind,
-      seq,
-      seqKind: seqKindFor(source, seq),
-      refKind: "target_digest",
-      refId: targetDigest(body.workContextId, body.kind, value),
-      workContextId: body.workContextId,
-      // THE FILE, in the identity a pin's history is written in (01a §3.3d):
-      // the SESSION's repo and the canonical path, computed here on the hub
-      // so two developers' connectors cannot disagree about it.
-      ...(body.kind === "file" ? { fileRef: touchFileRef(owner.repo, value) } : {}),
-    });
-  };
-  const inserted = await deps.db
-    .insert(workContextTargets)
-    .values({
-      workContextId: body.workContextId,
-      kind: body.kind,
-      value,
-      source,
-      generated,
-      // First-seen age for the targets-only pointer (#19). onConflictDoNothing
-      // below means a duplicate touch never bumps it — the honest age.
-      // `last_seen_at` stays null until the first re-touch (below); every
-      // window reads greatest(created_at, last_seen_at) or coalesce(…), so a
-      // first touch counts by its created_at.
-      createdAt: deps.now(),
-    })
-    .onConflictDoNothing()
-    .returning({ workContextId: workContextTargets.workContextId });
-  if (inserted[0] === undefined) {
-    // The row exists. If the OTHER lane saw this file too, the label is
-    // upgraded to "both" — the primary key collapses the two observations
-    // into one row, and without this the lane that arrived first would
-    // silently own the label and `suspect` would report a second source as
-    // dead. Still a DUPLICATE record either way: nothing new was learned
-    // about the file, only about who saw it.
-    //
-    // THE RE-TOUCH IS RECORDED TOO (pilot finding, 2026-10-05): one UPDATE
-    // moves `last_seen_at` to now and, only when the other lane saw it,
-    // upgrades the label — first-seen stays where it was. The topic branch's
-    // session windows read the same instant (DESIGN.md "One session, many
-    // topics"): a long-lived session's re-touch counts in the week it happened.
-    //
-    // "both" is the TOOL lane and A GIT lane: two git lanes sighting one file
-    // (a change, then its commit) are still one kind of observer, and the
-    // label must not claim an Edit nobody reported (DESIGN.md "One session,
-    // many topics" added `git_commit` beside `git_diff`).
-    //
-    // THE GENERATED LABEL IS THE LATEST TOUCH'S: a classification that could
-    // not run this time sends none, and the row turns ordinary again rather
-    // than staying silenced on an answer nobody can repeat — toward warning.
-    await deps.db
-      .update(workContextTargets)
-      .set({
-        lastSeenAt: deps.now(),
-        source: sql`case when ((${workContextTargets.source} = 'tool_edit') <> (${source}::text = 'tool_edit')) and ${workContextTargets.source} NOT IN (${source}, 'both') then 'both' else ${workContextTargets.source} end`,
-        generated,
-      })
-      .where(
-        and(
-          eq(workContextTargets.workContextId, body.workContextId),
-          eq(workContextTargets.kind, body.kind),
-          eq(workContextTargets.value, value),
-        ),
-      );
-    await project();
-    return duplicate();
-  }
-  // The doc regenerates so the new target value is searchable. Not wrapped in
-  // a transaction with the insert: a crash between the two leaves a doc one
-  // target short until the next ingest touches the context — self-healing,
-  // and the record itself is already durable.
-  await refreshNormalizedDoc(deps.db, body.workContextId);
-  await project();
-  // No per-target event: a busy session emits dozens of targets and would
-  // flood the outbox, drowning the signals SSE consumers care about.
-  return accepted();
-};
+// A `target` record is stored by services/target-run.ts, a flush's consecutive
+// targets as one run in a few statements, each answered as it was alone.
 
 // Accepted v0 limitation: homoglyph lookalikes (e.g. Cyrillic "а" for "a")
 // bypass this normalization; the similarity block's embedding dedup covers

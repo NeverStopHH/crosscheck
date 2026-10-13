@@ -64,18 +64,24 @@ export const heldReceipts = async (
 };
 
 /**
- * Writes the receipt of one envelope the hub now holds, as its record lands
+ * Writes the receipts of envelopes the hub now holds, as their records land
  * (review-2 round 9, L3): written after the whole flush, a batch that failed
  * midway left the records before the failure landed and unreceipted, and
- * their re-send was refused. Keyed by developer and id, so it is only ever
- * this developer's own. Best-effort: a receipt that does not land costs a
- * later re-send its answer.
+ * their re-send was refused. One record's receipt, or one run of targets'
+ * (services/target-run.ts) in one statement — an envelope twice in a run
+ * keeps its last answer, as two writes in a row did. Keyed by developer and
+ * id, so it is only ever this developer's own. Best-effort: a receipt that
+ * does not land costs a later re-send its answer.
  */
-export const writeReceipt = async (deps: Deps, developerId: string, receipt: Receipt): Promise<void> => {
+export const writeReceipts = async (deps: Deps, developerId: string, receipts: readonly Receipt[]): Promise<void> => {
+  const last = [...new Map(receipts.map((receipt) => [receipt.id, receipt])).values()];
+  if (last.length === 0) {
+    return;
+  }
   try {
     await deps.db
       .insert(recordReceipts)
-      .values({ ...receipt, developerId, receivedAt: deps.now() })
+      .values(last.map((receipt) => ({ ...receipt, developerId, receivedAt: deps.now() })))
       .onConflictDoUpdate({
         target: [recordReceipts.developerId, recordReceipts.id],
         set: { resultId: sql`excluded.result_id`, isIgnored: sql`excluded.ignored`, receivedAt: sql`excluded.received_at` },
