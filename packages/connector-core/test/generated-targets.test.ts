@@ -12,17 +12,22 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { classifyGenerated, hasGeneratedHeader } from "../src/capture/generated.ts";
+import type { GeneratedClassification } from "../src/capture/generated.ts";
 import { generatedAttributesCachePath, repoKey } from "../src/config/paths.ts";
 import { captureFileTargets } from "../src/flows/capture-targets.ts";
 import type { Producer } from "../src/capture/records.ts";
 import { readSpoolLines } from "../src/spool/files.ts";
-import { git, makeHome, makeRepo, writeRepoFile } from "./helpers.ts";
+import { git, makeHome, makeRepo, makeStalledGitDir, runProbeWithGit, writeRepoFile } from "./helpers.ts";
 
 const KEY = repoKey("http://127.0.0.1:9", "github.com/acme/api");
 const NOW = new Date("2026-10-08T10:00:00.000Z");
 const PRODUCER: Producer = { developerId: "dev_1", agentKind: "test", sessionId: "cc_1" };
-/** A deadline no git can meet: the attribute call cannot answer. */
-const UNMEETABLE_MS = 0;
+/**
+ * The attribute call's deadline under a git that never answers (helpers.ts
+ * `makeStalledGitDir`): the call cannot answer, whatever the machine's speed.
+ */
+const STALLED_GIT_TIMEOUT_MS = 250;
+const CLASSIFY_PROBE = join(import.meta.dir, "fixtures", "classify-generated-probe.ts");
 const ATTRIBUTE_RULES = [
   "packages/proto/** linguist-generated=true",
   "third_party/** linguist-vendored",
@@ -79,13 +84,27 @@ const spooled = async (fx: Fixture): Promise<ReadonlyMap<string, string | undefi
       .map((record) => [record.body.value, record.body.generated]),
   );
 
-const classify = async (fx: Fixture, paths: readonly string[], attrTimeoutMs?: number) =>
-  classifyGenerated({
+const classify = async (fx: Fixture, paths: readonly string[]) =>
+  classifyGenerated({ home: fx.home, root: fx.repo, paths });
+
+/**
+ * `classify` in a child process whose git never answers: the attribute call
+ * times out there on any machine, so whatever answers instead is the cache.
+ */
+const classifyWithStalledGit = async (
+  fx: Fixture,
+  paths: readonly string[],
+): Promise<ReadonlyMap<string, GeneratedClassification>> => {
+  const gitDir = await makeStalledGitDir();
+  cleanups.push(gitDir);
+  const pairs = await runProbeWithGit<readonly (readonly [string, GeneratedClassification])[]>(CLASSIFY_PROBE, gitDir, {
     home: fx.home,
     root: fx.repo,
     paths,
-    ...(attrTimeoutMs === undefined ? {} : { attrTimeoutMs }),
+    attrTimeoutMs: STALLED_GIT_TIMEOUT_MS,
   });
+  return new Map(pairs);
+};
 
 describe("the path signal", () => {
   test("a nested lockfile and a __generated__ file are spooled KEPT, labelled `path`", async () => {
@@ -170,8 +189,8 @@ describe("the attribute signal", () => {
     await writeRepoFile(fx.repo, "src/plain.ts", "export {};\n");
     const first = await classify(fx, ["packages/proto/src/messages.ts", "src/plain.ts"]);
 
-    // Act: the same paths with a deadline git cannot meet.
-    const second = await classify(fx, ["packages/proto/src/messages.ts", "src/plain.ts"], UNMEETABLE_MS);
+    // Act: the same paths with a git that cannot answer.
+    const second = await classifyWithStalledGit(fx, ["packages/proto/src/messages.ts", "src/plain.ts"]);
 
     // Assert: the cache answered both — a git call would have made them unknown.
     expect(first.get("packages/proto/src/messages.ts")).toBe("attribute");
@@ -276,7 +295,7 @@ describe("fail toward warning: a classification that cannot run keeps the target
     await writeRepoFile(fx.repo, "packages/proto/src/messages.ts", "export {};\n");
 
     // Act
-    const timedOut = await classify(fx, ["packages/proto/src/messages.ts"], UNMEETABLE_MS);
+    const timedOut = await classifyWithStalledGit(fx, ["packages/proto/src/messages.ts"]);
     const retried = await classify(fx, ["packages/proto/src/messages.ts"]);
 
     // Assert: unknown, not generated; the next capture asked git again.
@@ -296,8 +315,8 @@ describe("fail toward warning: a classification that cannot run keeps the target
       prefetch: ["packages/proto/src/hand-written.ts"],
     });
 
-    // Act: the sibling's own edit, with a deadline no git could meet
-    const sibling = await classify(fx, ["packages/proto/src/hand-written.ts"], UNMEETABLE_MS);
+    // Act: the sibling's own edit, with a git that cannot answer
+    const sibling = await classifyWithStalledGit(fx, ["packages/proto/src/hand-written.ts"]);
 
     // Assert: the rules' answer for it, from the cache — git was not asked again
     expect(sibling.get("packages/proto/src/hand-written.ts")).toBe("ordinary");

@@ -7,19 +7,24 @@
  */
 import { afterAll, describe, expect, test } from "bun:test";
 import { realpath, rm } from "node:fs/promises";
+import { join } from "node:path";
 
 import { MAX_GIT_LANE_TARGETS_PER_ROOT, MAX_TARGETS_PER_INVOCATION } from "../src/constants.ts";
 import { sweepGitRoots } from "../src/flows/git-lane.ts";
-import type { SweepGitRootsInput } from "../src/flows/git-lane.ts";
+import type { GitLaneSweep, SweepGitRootsInput } from "../src/flows/git-lane.ts";
 import { readDropDetail } from "../src/spool/drops.ts";
 import { deriveSessionState } from "../src/state/session-state.ts";
-import { makeHome, makeRepo, writeRepoFile } from "./helpers.ts";
+import { makeHome, makeRepo, makeStalledGitDir, runProbeWithGit, writeRepoFile } from "./helpers.ts";
 
 const REPO_ID = "github.com/acme/api";
-/** A deadline no git process can meet: the spawn alone takes longer. */
-const UNMEETABLE_GIT_TIMEOUT_MS = 1;
+/**
+ * Each git call's deadline under a git that never answers (helpers.ts
+ * `makeStalledGitDir`): the call times out on it whatever the machine's speed.
+ */
+const STALLED_GIT_TIMEOUT_MS = 250;
 /** A deadline any git process meets on a loaded machine. */
 const WIDE_GIT_TIMEOUT_MS = 30_000;
+const SWEEP_PROBE = join(import.meta.dir, "fixtures", "sweep-git-roots-probe.ts");
 
 const cleanups: string[] = [];
 
@@ -59,11 +64,13 @@ const sweepOf = async (label: string, gitTimeoutMs: number): Promise<{ readonly 
 
 describe("a sweep answers only for the roots git answered for (review mutation #4)", () => {
   test("a root git did not answer in time is unavailable and not swept", async () => {
-    // Arrange
-    const { input } = await sweepOf("sweep-unanswered", UNMEETABLE_GIT_TIMEOUT_MS);
+    // Arrange: a git that never answers, so no machine is fast enough to beat the deadline
+    const { input } = await sweepOf("sweep-unanswered", STALLED_GIT_TIMEOUT_MS);
+    const gitDir = await makeStalledGitDir();
+    cleanups.push(gitDir);
 
     // Act
-    const sweep = await sweepGitRoots(input);
+    const sweep = await runProbeWithGit<Pick<GitLaneSweep, "unavailable" | "swept">>(SWEEP_PROBE, gitDir, input);
 
     // Assert: a skip the hook books, and the root keeps its turn
     expect(sweep.unavailable).toBe(true);
