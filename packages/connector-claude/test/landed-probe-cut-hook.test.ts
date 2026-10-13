@@ -63,12 +63,21 @@ const HELD_GIT_SECONDS = 3;
  * The handler's own cases: a timeout long enough that the HOOK's budget
  * (twice it) is never what decides them, even on a loaded machine — so a
  * held walk is cut by the probe and booked by the handler, never by the
- * runner — and, in the found case, a delay per walk that three sequential
- * walks of the missing half add up past the OLD 300 ms deadline, while each
- * one still answers well inside LANDED_GIT_TIMEOUT_MS (250 ms).
+ * runner — and, in the found case, a delay per walk that the probe's
+ * sequential stages add up past the OLD 300 ms deadline, while each walk
+ * still answers well inside LANDED_GIT_TIMEOUT_MS (250 ms).
+ *
+ * TWO STAGES, NOT THREE: since the M6 probe change the `log` walks of the
+ * missing half run at once, and only `merge-base` waits for them (logged on
+ * Linux, 2026-10-13: four `log` walks starting within 2 ms, then one
+ * `merge-base`). At 0.12 s a walk, the two stages took 266 ms on Linux, inside
+ * the old deadline, and the mutation that restores it went uncaught there,
+ * while macOS's slower process start pushed the same walks past 300 ms. At
+ * 0.17 s the stages take about 350 ms with a fast exec and each walk stays
+ * 75 ms inside its own deadline.
  */
 const ROOMY_TIMEOUT_MS = "1500";
-const DELAYED_GIT_SECONDS = 0.12;
+const DELAYED_GIT_SECONDS = 0.17;
 /** A prompt with no meaning to hint on and no intent to derive: the cut line alone answers it. */
 const BARE_PROMPT = "ok";
 
