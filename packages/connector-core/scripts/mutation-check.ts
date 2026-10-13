@@ -31806,7 +31806,7 @@ export const MUTATIONS: readonly Mutation[
     from: "new RegExp(`[^>]{0,${String(MAX_WRAPPER_ATTRIBUTE_CHARS)}}>`, \"y\")",
     to: "new RegExp(`[^>]*>`, \"y\")",
     test: `${SCHEMA}/test/harness-turn.test.ts`,
-    because: "a megabyte of unterminated openings turns the scan quadratic inside the 800 ms hook (M2)",
+    because: "an opening whose attributes run past the bound is read as a wrapper, and a megabyte of unterminated openings turns the scan quadratic inside the 800 ms hook (M2)",
   },
   {
     label: "the whole turn is scanned, however long",
@@ -34395,7 +34395,7 @@ export const MUTATIONS: readonly Mutation[
     from: "  // round 5, L1: the system dictionary's word one slip from the signal word \"proceeding\"\n  \"preceding\",\n",
     to: "",
     test: `${SCHEMA}/test/continuation.test.ts`,
-    because: "\"the preceding migration dropped the index\" is floored as a continuation (round 5, L1)",
+    because: "\"ok, preceding\" carries the session on as proceeding would; the dictionary sweep runs only where /usr/share/dict/words exists (round 5, L1)",
   },
   {
     label: "a bare shell command is a task to the verdict",

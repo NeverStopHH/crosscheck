@@ -41,7 +41,7 @@ export const SYSTEM_NOTIFICATION_MARKER = "[SYSTEM NOTIFICATION - NOT USER INPUT
 export const HARNESS_SCAN_MAX_CHARS = 32_768;
 
 /** The longest attribute run a wrapper's opening tag may carry. */
-const MAX_WRAPPER_ATTRIBUTE_CHARS = 256;
+export const MAX_WRAPPER_ATTRIBUTE_CHARS = 256;
 
 export interface HarnessShape {
   /**

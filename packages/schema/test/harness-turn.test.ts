@@ -14,6 +14,7 @@ import { describe, expect, test } from "bun:test";
 import {
   HARNESS_SCAN_MAX_CHARS,
   HARNESS_SHAPES,
+  MAX_WRAPPER_ATTRIBUTE_CHARS,
   SYSTEM_NOTIFICATION_MARKER,
   humanPromptText,
   isHarnessTurn,
@@ -323,6 +324,19 @@ describe("the scan is linear and bounded (M2)", () => {
     humanPromptText(turn);
     isHarnessTurn(turn);
     expect(performance.now() - started).toBeLessThan(SCAN_BUDGET_MS);
+  });
+
+  test("an opening tag is read to its > only within the attribute bound — one character past it is no wrapper", () => {
+    // The budget above catches an unbounded scan only on a slow enough
+    // machine (a Linux runner did the megabyte in time); the bound itself is
+    // a shape: an opening whose attributes run past it is the human's text.
+    const turnWithAttributes = (run: number): string =>
+      `<agent-message ${"a".repeat(run - 1)}>report</agent-message> fix the export`;
+    const pastTheBound = turnWithAttributes(MAX_WRAPPER_ATTRIBUTE_CHARS + 1);
+
+    expect(humanPromptText(turnWithAttributes(MAX_WRAPPER_ATTRIBUTE_CHARS))).toBe("fix the export");
+    expect(humanPromptText(pastTheBound)).toBe(pastTheBound);
+    expect(isHarnessTurn(pastTheBound)).toBe(false);
   });
 
   test("round 4, M3: a leading wrapper longer than the window is closed in the whole prompt, and the human's task after it kept", () => {
