@@ -11,6 +11,7 @@
  * commits left out — with the .mailmap line that fixes each for the whole
  * team. PASS throughout: an outside contributor is no fault.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -68,7 +69,7 @@ interface Setup {
 }
 
 const setup = async (label: string): Promise<Setup> => {
-  const server = Bun.serve({ port: 0, fetch: createServer({ db: await createDb(), adminToken: ADMIN_TOKEN }).fetch });
+  const server = serveLoopback({ port: 0, fetch: createServer({ db: await createDb(), adminToken: ADMIN_TOKEN }).fetch });
   servers.push(server);
   const hubUrl = `http://127.0.0.1:${String(server.port)}`;
   const created = await post(hubUrl, "/api/developers", ADMIN_TOKEN, { name: NICK.name, email: NICK.email });
@@ -82,6 +83,7 @@ const setup = async (label: string): Promise<Setup> => {
 const hubFor = (s: Setup): HubContext => ({
   hubUrl: s.hubUrl,
   apiKey: s.nickKey,
+  keyOrigin: s.hubUrl,
   timeoutMs: 2000,
   home: s.home,
   repoKey: "",
@@ -249,7 +251,7 @@ describe("doctor's landed-change reasons line", () => {
   test(
     "an older hub without the question is said, not warned about",
     async () => {
-      const fake = Bun.serve({
+      const fake = serveLoopback({
         port: 0,
         fetch: () => Response.json({ ok: false, error: { code: "not_found", message: "no route" } }, { status: 404 }),
       });
@@ -260,6 +262,7 @@ describe("doctor's landed-change reasons line", () => {
       const line = await checkLandedAuthors(s.repos.reader, {
         ...hubFor(s),
         hubUrl: `http://127.0.0.1:${String(fake.port)}`,
+        keyOrigin: `http://127.0.0.1:${String(fake.port)}`,
       });
 
       expect(line.level).toBe("PASS");

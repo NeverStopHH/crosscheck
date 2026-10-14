@@ -2,7 +2,7 @@
  * The ONE character-budget reducer the briefing's bounded blocks share.
  *
  * A block bounded only in ITEMS is not bounded: a question body may be 400
- * characters and a ghost line 491, so "at most three" and "at most two" say
+ * characters and a ghost line 536, so "at most three" and "at most two" say
  * nothing about what is left for the sections below. Every block that carries
  * untrusted, variable-length text therefore carries a second bound in
  * CHARACTERS, and this is the one place that bound is spent.

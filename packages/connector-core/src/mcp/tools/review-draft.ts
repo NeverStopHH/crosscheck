@@ -29,11 +29,12 @@ import {
 import { toolFailure, toolText } from "../protocol.ts";
 import type { ToolResult } from "../protocol.ts";
 import type { McpContext } from "../context.ts";
-import { quotedBody, quotingText, safeId } from "../render.ts";
+import { quotedBody, quotingOwnText, safeId } from "../render.ts";
 import { checkClaim, explainRejection } from "../violations.ts";
 import { containsSecret } from "../../capture/secret-scan.ts";
 import { isEchoOfDeliveredHint } from "../../hints/echo.ts";
-import { getDrafts, postRecords } from "../../http/hub.ts";
+import { getDraftListing, postRecords } from "../../http/hub.ts";
+import type { HubResult } from "../../http/client.ts";
 import type { DraftEntry } from "../../http/hub.ts";
 import { readSessionState } from "../../state/session-state.ts";
 import type { OwnWorkContext } from "../session.ts";
@@ -194,16 +195,44 @@ export const successText = (
   const verb = action === "edit" ? "Promoted (edited)" : "Promoted";
   // The body is untrusted twice over — a derived draft's body came FROM the
   // hub, and an edit body is agent text — so it is framed and the sentence
-  // that contains a frame travels under the notice that names it
-  // (quotingText), like every framed tool answer. BODY class (`quotedBody`),
+  // that contains a frame travels under the notice that names it. That notice
+  // is the OWN-drafts one (quotingOwnText): the text is the caller's own
+  // auto-captured draft or their agent's edit of it, and the teammate notice
+  // would name the wrong author; the trust level is the same. BODY class (`quotedBody`),
   // matching the briefing line this call answers: the agent is being told
   // WHICH assertion it just promoted, and an echo that blanks the assertion
   // whole answers a different question than the one it was asked.
-  return quotingText(
+  return quotingOwnText(
     `${verb} draft ${safeId(draftId)} as your declared claim ${claimId} ` +
       `(a supersedes edge marks the draft reviewed): ${quotedBody(body, CLAIM_ECHO_MAX_CHARS)}. ` +
       "Pass this id as an evidenceRefs entry when you publish what supports it.",
   );
+};
+
+/**
+ * The draft by id, from either end of the backlog. The newest-first page is
+ * capped, and the review nudge names the drafts that waited LONGEST — the
+ * ones a backlog past the cap leaves off that page — so when the hub says the
+ * backlog runs past it, the oldest-first page is asked too. A hub too old to
+ * honour `order=oldest` answers newest-first again and changes nothing.
+ */
+const findOwnDraft = async (
+  ctx: McpContext,
+  draftId: string,
+): Promise<HubResult<DraftEntry | undefined>> => {
+  const newest = await getDraftListing(ctx.hub, ctx.identity.repoId);
+  if (!newest.ok) {
+    return newest;
+  }
+  const hit = newest.data.drafts.find((entry) => entry.id === draftId);
+  const pastPage = newest.data.total !== null && newest.data.total > newest.data.drafts.length;
+  if (hit !== undefined || !pastPage) {
+    return { ...newest, data: hit };
+  }
+  const oldest = await getDraftListing(ctx.hub, ctx.identity.repoId, "oldest");
+  return oldest.ok
+    ? { ...oldest, data: oldest.data.drafts.find((entry) => entry.id === draftId) }
+    : oldest;
 };
 
 export const run = async (
@@ -226,11 +255,11 @@ export const run = async (
   // The hub's own-drafts list IS the authority on what is reviewable: it is
   // developer-scoped by the api key, so a teammate's draft or an already
   // reviewed one simply is not in it.
-  const drafts = await getDrafts(ctx.hub, ctx.identity.repoId);
-  if (!drafts.ok) {
-    return hubFailure(ctx, drafts);
+  const found = await findOwnDraft(ctx, draftId);
+  if (!found.ok) {
+    return hubFailure(ctx, found);
   }
-  const draft = drafts.data.find((entry) => entry.id === draftId);
+  const draft = found.data;
   if (draft === undefined) {
     return toolFailure(NOT_A_DRAFT);
   }

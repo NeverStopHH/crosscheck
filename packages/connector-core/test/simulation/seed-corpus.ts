@@ -167,8 +167,8 @@ const ROUND_8_REVIEW: readonly CorpusSeed[] = [
 ];
 
 /**
- * L7's last word, again (first found by feat/topic-contexts' topics sweep,
- * seed 416, and fixed there in 7322b132; searched for here in `sleep`): a
+ * L7's last word, again (first found by the topics sweep, seed 416, and fixed
+ * in 7322b132; found again in `sleep`, seed 10478, with its reaper half): a
  * set_intent post whose answer was lost — the hub took it — then one failing
  * back to the status the hub last acknowledged. The state and the
  * acknowledgement agreed, so neither SessionEnd nor, for a host that died,
@@ -193,6 +193,17 @@ const L7_LAST_WORD: readonly CorpusSeed[] = [
     events: [start(1), intent(1, "blocked"), fault("recordsLate", 2, 0), intent(1, "done"), fault("records503", 1, 0), intent(1, "blocked"), age(1)],
   },
   { seed: 10478, generator: "sleep", invariant: "I4", fix: "7322b132", bug: "the generated scenario", events: scenarioOf(10478, GENERATORS.sleep) },
+  // Where it was first found: the topics sweep. No topic defect — the seed's
+  // topic edit only moved a slow answer onto a set_intent post.
+  { seed: 416, generator: "topics", invariant: "I4", fix: "7322b132", bug: "the generated scenario", events: scenarioOf(416, GENERATORS.topics) },
+  {
+    seed: 416,
+    generator: "topics",
+    invariant: "I4",
+    fix: "7322b132",
+    bug: "L7: shrunk past its topic edit, a set_intent post answered too late, then one failing back to the acknowledged status",
+    events: [start(0), intent(0, "blocked"), slow(1400, 1, 0), fault("records503", 1, 1), intent(0, "done"), intent(0, "blocked")],
+  },
 ];
 
 /**

@@ -39,7 +39,10 @@ import { readTelemetryLossReport } from "../spool/loss-report.ts";
 import { recordRefusedLife } from "../spool/refused-lives.ts";
 import { lastWorkContextRecords } from "../spool/work-context-ack.ts";
 import { seqAt } from "../capture/seq.ts";
-import { lifeRungOf, recordEndedLife } from "../state/session-lineage.ts";
+import { foldDeriveHistory } from "../state/derive-history.ts";
+import { recordSlotAtEnd } from "../state/draft-nudge-spent.ts";
+import { bookUnsweptCapture, carriedCaptureOf, lifeRungOf, recordEndedLife } from "../state/session-lineage.ts";
+import type { CarriedCapture } from "../state/session-lineage.ts";
 import { allocateSeq, closeSessionState, crosscheckSessionIdFor, readSessionState } from "../state/session-state.ts";
 import { isSeqStamp } from "@crosscheck/schema";
 import type { SeqField } from "@crosscheck/schema";
@@ -92,8 +95,16 @@ const lifeEnd = (input: EndSessionFlowInput, sessionId: string, seq: SeqField): 
   markerPath: pendingEndPathOf(input, sessionId),
 });
 
-/** The marker (spool/end-marker.ts), then the lineage — both before the state goes. */
-const writeDownEnd = async (input: EndSessionFlowInput, end: LifeEnd, standing: WorkContextStanding): Promise<void> => {
+/**
+ * The marker (spool/end-marker.ts), then the lineage — both before the state
+ * goes. False when the lineage could not be written.
+ */
+const writeDownEnd = async (
+  input: EndSessionFlowInput,
+  end: LifeEnd,
+  standing: WorkContextStanding,
+  capture: CarriedCapture | null,
+): Promise<boolean> => {
   await writeEndMarker(end.markerPath, { sessionId: end.sessionId, at: input.now(), seq: end.seq, standing });
   // The life this end closes, written down BEFORE its state goes: the state
   // file is what named it, and a host that resumes this conversation under
@@ -103,13 +114,17 @@ const writeDownEnd = async (input: EndSessionFlowInput, end: LifeEnd, standing: 
   // L2): a heal may have registered it under that epoch already. And with
   // the end's position, which outlives the marker (all seed 30495): a
   // re-fire beside this end that settles back on the life goes on from it.
-  await recordEndedLife(
+  // And with what the next life's git lane needs of this one (review batch
+  // 2, H1): the window's start and the roots this life touched — the
+  // state that knew them is about to go.
+  return recordEndedLife(
     input.home,
     input.hostSessionKey,
     end.sessionId,
     input.now(),
     isSeqStamp(end.seq) ? end.seq.epoch : null,
     isSeqStamp(end.seq) ? end.seq.n : null,
+    capture,
   );
 };
 
@@ -149,6 +164,8 @@ const spoolLastWorkContext = async (input: EndSessionFlowInput): Promise<void> =
   if (state?.crosscheckSessionId !== input.crosscheckSessionId) {
     return;
   }
+  // The life's own work context and every topic's the hub may be behind on
+  // (spool/work-context-ack.ts lastWorkContextRecords).
   const records = lastWorkContextRecords(state, input.now());
   if (records.length > 0) {
     await appendRecords(input.home, input.repoKey, input.hostSessionKey, records, input.now());
@@ -184,20 +201,32 @@ export const endSessionFlow = async (
     input.crosscheckSessionId,
     seqAt(await allocateSeq(input.home, input.hostSessionKey, 1), 0),
   );
+  // The derive counters outlive the file they were booked in: `doctor` asks
+  // "why does my agent share nothing?" after the session that could answer is
+  // gone (state/derive-history.ts). Fail-open, and read before the close.
+  await foldDeriveHistory(input.home, input.hostSessionKey, input.now());
+  // ...and so does the draft nudge's spent slot, so the conversation resumed
+  // later starts with it spent (state/draft-nudge-spent.ts). Read before the
+  // close, recorded HERE rather than on the prompt that spent it.
+  await recordSlotAtEnd(input.home, input.hostSessionKey, input.now());
   const state = await readSessionState(input.home, input.hostSessionKey);
   const standing: WorkContextStanding = {
     workContextTitle: state?.workContextTitle ?? null,
     workContextStatus: state?.workContextStatus ?? null,
   };
-  await writeDownEnd(input, own, standing);
+  const capture = state === null ? null : carriedCaptureOf(state);
+  const isOwnWritten = await writeDownEnd(input, own, standing, capture);
   // COMPARED, NOT BLIND (review-2 finding 2): a heal that moved the state
   // after this SessionEnd read it registered a life that ends with this host
   // session too. Left open with no state naming it, the next resume would
   // land on it under a fresh epoch and split its order.
   const moved = await closeSessionState(input.home, input.hostSessionKey, input.crosscheckSessionId);
   const healed = moved === null ? null : lifeEnd(input, moved.crosscheckSessionId, seqAt(moved.seq, 0));
-  if (healed !== null) {
-    await writeDownEnd(input, healed, standing);
+  const isCaptureKept = healed === null ? isOwnWritten : await writeDownEnd(input, healed, standing, capture);
+  // A lineage that could not be written carries nothing to the next life:
+  // the sweeps this one still owed are booked here instead (H1).
+  if (capture !== null && !isCaptureKept) {
+    await bookUnsweptCapture(input.home, capture, input.now());
   }
   // A first prompt parked for the derived-intent worker that never ran (a
   // spawn that failed, a session ending inside the worker's deadline) must

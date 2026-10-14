@@ -17,7 +17,7 @@ import {
 
 import { getTableConfig } from "drizzle-orm/pg-core";
 
-import { sessionCausalGuarantees } from "../src/db/schema.ts";
+import { sessionCausalGuarantees, workContextTargets } from "../src/db/schema.ts";
 import { BOOTSTRAP_SQL_URL, guardedBlockNamed } from "./fixtures/bootstrap-sql.ts";
 import { createTestHarness } from "./helpers.ts";
 
@@ -388,6 +388,27 @@ describe("bootstrap.sql DDL sync", () => {
     );
   });
 
+  test("work_context_targets.generated reaches an EXISTING hub, nullable, in both authorities", async () => {
+    // Arrange: the drizzle column is nullable with no default, so an upgraded
+    // hub's old rows read as ordinary — the direction that can only warn.
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+    const harness = await createTestHarness();
+
+    // Act
+    const rows = await harness.db.execute(
+      sql`SELECT is_nullable AS n, column_default AS d FROM information_schema.columns WHERE table_name = 'work_context_targets' AND column_name = 'generated'`,
+    );
+    const drizzleColumn = getTableConfig(workContextTargets).columns.find((column) => column.name === "generated");
+
+    // Assert
+    expect(bootstrapSql).toContain("ALTER TABLE work_context_targets ADD COLUMN IF NOT EXISTS generated text;");
+    expect(rows.rows.length).toBe(1);
+    expect(rows.rows[0]?.n).toBe("YES");
+    expect(rows.rows[0]?.d ?? null).toBeNull();
+    expect(drizzleColumn?.notNull).toBe(false);
+    expect(drizzleColumn?.hasDefault).toBe(false);
+  });
+
   test("ci_test_results test_id CHECK matches MAX_CI_TEST_ID_CHARS", async () => {
     // Arrange: the wire bound and the column bound are two authorities over
     // one value. A test id longer than the column accepts would be refused by
@@ -492,6 +513,21 @@ describe("bootstrap.sql DDL sync", () => {
       "channel text NOT NULL DEFAULT 'unknown',",
       "ALTER TABLE team_settings ADD COLUMN IF NOT EXISTS pilot_enrolled boolean NOT NULL DEFAULT false",
       "pilot_enrolled boolean NOT NULL DEFAULT false,",
+    ]) {
+      expect(bootstrapSql, fragment).toContain(fragment);
+    }
+  });
+
+  test("M7's two delivery columns reach an EXISTING hub, not only a fresh one (review 1006b)", async () => {
+    // Arrange — the same trap as the channel column: read as text, because
+    // every harness database is fresh and never runs the ALTER
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+
+    // Assert — both halves of each
+    for (const fragment of [
+      "ALTER TABLE hint_deliveries ADD COLUMN IF NOT EXISTS matched_on text;",
+      "ALTER TABLE hint_deliveries ADD COLUMN IF NOT EXISTS intent_provenance text;",
+      "  matched_on text,\n  intent_provenance text,",
     ]) {
       expect(bootstrapSql, fragment).toContain(fragment);
     }
@@ -644,7 +680,7 @@ describe("bootstrap.sql DDL sync", () => {
     expect(check.rows).toHaveLength(1);
   });
 
-  test("the four pilot tables really exist after a bootstrap", async () => {
+  test("the five pilot tables really exist after a bootstrap", async () => {
     // Arrange — the case above reads SQL as text. This one asks the database,
     // which is the only authority that settles whether the statements ran.
     const harness = await createTestHarness();
@@ -658,6 +694,8 @@ describe("bootstrap.sql DDL sync", () => {
     expect(rows.rows.map((row) => String(row["t"]))).toEqual([
       "pilot_attributions",
       "pilot_counters",
+      // 07 §13.11 (review M3): when each repo was in the pilot.
+      "pilot_enrolments",
       "pilot_marks",
       "pilot_sessions",
     ]);
@@ -690,11 +728,18 @@ describe("bootstrap.sql DDL sync", () => {
     // `uniqueIndex` to `index` leaves every test in this repository green.
     // The two authorities are held together by the text assertions above;
     // this one asks the database, and the database only ever saw the SQL.
+    //
+    // Since human provenance (0.11) the key carries the provenance too: a
+    // mark recorded before provenance existed stays as it was, never
+    // upgraded, beside the one the person confirms with their passkey — and
+    // since round 2 (R2-M1) the confirmation: one row per confirmation, so a
+    // retracted or voided label frees the person's place, while "one label in
+    // effect" is the writer's rule (test/label-slot.test.ts).
     const harness = await createTestHarness();
 
     // Act
     const rows = await harness.db.execute(
-      sql`SELECT indexdef AS d FROM pg_indexes WHERE indexname = 'pilot_marks_ref_marker_idx'`,
+      sql`SELECT indexdef AS d FROM pg_indexes WHERE indexname = 'pilot_marks_ref_marker_confirmation_idx'`,
     );
 
     // Assert
@@ -703,6 +748,8 @@ describe("bootstrap.sql DDL sync", () => {
     expect(definition).toContain("ref_kind");
     expect(definition).toContain("ref_id");
     expect(definition).toContain("marked_by");
+    expect(definition).toContain("provenance");
+    expect(definition).toContain("confirmation_id");
   });
 
   test("a waiver's two kinds have a shape the DATABASE enforces", async () => {

@@ -7,10 +7,16 @@
  */
 import {
   HINT_MIN_TOKEN_CHARS,
+  INTENT_MAX_NONE_REFUNDS,
   INTENT_MIN_PROMPT_CHARS,
+  INTENT_MIN_TOPICAL_WORDS,
   SUMMARIZER_FAILURE_MAX_CHARS,
 } from "../../constants.ts";
+import { classifyPrompt, promptTerms } from "@crosscheck/schema";
+import type { ClassifiedPrompt } from "@crosscheck/schema";
+
 import { cutWellFormed } from "../../briefing/cut.ts";
+import { withDeriveFire } from "../../state/session-state.ts";
 import type { SessionState } from "../../state/session-state.ts";
 
 /**
@@ -44,17 +50,72 @@ export const isSubstantivePrompt = (prompt: string): boolean => {
     .some((token) => token.length >= HINT_MIN_TOKEN_CHARS);
 };
 
-/** One fire, booked BEFORE the spawn (the Stop hook's ordering contract). */
-export const withIntentFire = (state: SessionState): SessionState => ({
+/**
+ * What the session's ONE intent fire is spent on, or null (review 1006b, H2):
+ * never a turn the harness wrote, never a prompt that carries no task, and
+ * only the HUMAN text of a turn — the wrapper neither parks its words nor
+ * lends its length to the floor. A notification as the first long turn used
+ * to spend the fire and park "Monitor event: CI checks pass" as the intent.
+ * A turn that is all harness has no human text, so it fails the length
+ * floor below — `isHarnessTurn` is exactly that, and needs no second call.
+ *
+ * AND ONLY A TURN WITH A TOPIC (hold-out review round 3, H2): at least
+ * INTENT_MIN_TOPICAL_WORDS words of no closed class, so a task made of the
+ * session's machinery never parks a sentence the model can only answer with
+ * machinery. That floor is the content-free rule too: a content-free prompt
+ * is one whose every word is of a closed class, so it has no topical word.
+ */
+export const intentPromptFrom = (classified: ClassifiedPrompt): string | null => {
+  const human = classified.human;
+  // A PROMPT THAT CARRIES THE SESSION ON names the session's own work, not a
+  // new task (round 4, H2; continuation.ts): "the checkout tests pass now,
+  // carry on" would park a status report as the intent.
+  if (!isSubstantivePrompt(human) || classified.terms.hasContinuation) {
+    return null;
+  }
+  // UNCLASSED, not topical (round 4, M1): in a task a meta word is a topic
+  // for the hint floor, but a turn of nothing but machinery still parks none.
+  return classified.terms.unclassed.length >= INTENT_MIN_TOPICAL_WORDS ? human : null;
+};
+
+/** The same, for a caller that has not classified the prompt yet (the worker's re-read). */
+export const intentPromptOf = (prompt: string): string | null => intentPromptFrom(classifyPrompt(prompt));
+
+/**
+ * A derived intent with a topic (round 3, H2): at least one of its content
+ * words of no closed class. "Continue the session after the usage limit
+ * reset" is all machinery, and such an intent pulled limit chatter onto an
+ * intent-only tree on every teammate's prompt.
+ */
+export const hasTopic = (sentence: string): boolean => promptTerms(sentence).unclassed.length > 0;
+
+/**
+ * One fire, booked BEFORE the spawn (the Stop hook's ordering contract), with
+ * the deadline the spawned worker will run under (runner.ts
+ * resolveSummarizerTimeoutMs of the hook's environment).
+ */
+export const withIntentFire = (state: SessionState, firedAt: Date, deadlineMs: number): SessionState => ({
   ...state,
+  deriveFires: withDeriveFire(state.deriveFires, firedAt, deadlineMs),
   intentFireCount: state.intentFireCount + 1,
 });
 
-/** The model answered NONE — an answer, not a failure. */
+/** The model answered NONE — an answer, not a failure, and a fire given back (H2, below). */
 export const withIntentNone = (state: SessionState): SessionState => ({
   ...state,
   intentNoneCount: state.intentNoneCount + 1,
 });
+
+/**
+ * THE SESSION'S INTENT FIRE IS SPENT while its fires outnumber the ones a
+ * NONE gave back (hold-out review round 4, H2): a NONE says the prompt named
+ * no task, and the session's next prompt that does may still find its
+ * intent — at most INTENT_MAX_NONE_REFUNDS times, so a session of status
+ * reports costs at most that many model calls more. Derived from the
+ * counters the state already keeps: every NONE answered a fire.
+ */
+export const isIntentFireSpent = (state: SessionState): boolean =>
+  state.intentFireCount > Math.min(state.intentNoneCount, INTENT_MAX_NONE_REFUNDS);
 
 /** An intent record reached the spool — booked AFTER the append, never before. */
 export const withIntentSet = (state: SessionState): SessionState => ({
@@ -63,12 +124,11 @@ export const withIntentSet = (state: SessionState): SessionState => ({
 });
 
 /**
- * A fire that landed neither: a runner loss (binary missing, exit, deadline
- * — runner.ts formatSummarizerFailure's line) or a drop the worker decided
- * (secret-like sentence, a delivered hint echoed, an empty answer, a state
- * file predating intent support) — the reason named, bounded by THIS writer
- * to SUMMARIZER_FAILURE_MAX_CHARS like its summarizer twin, so one chatty
- * binary can never grow the state file.
+ * A RUNNER loss: the binary missing, a non-zero exit, the deadline
+ * (runner.ts formatSummarizerFailure's line) — the reason named, bounded by
+ * THIS writer to SUMMARIZER_FAILURE_MAX_CHARS like its summarizer twin, so
+ * one chatty binary can never grow the state file. What the worker dropped
+ * on its own is a refusal or a skip (below), never this.
  */
 export const withIntentFailure = (
   state: SessionState,
@@ -77,4 +137,18 @@ export const withIntentFailure = (
   ...state,
   intentFailCount: state.intentFailCount + 1,
   intentLastFailure: cutWellFormed(detail, SUMMARIZER_FAILURE_MAX_CHARS),
+});
+
+/** The model answered and the worker kept nothing of it — an answer, not a failure. */
+export const withIntentRefusal = (state: SessionState, detail: string): SessionState => ({
+  ...state,
+  intentRefusedCount: state.intentRefusedCount + 1,
+  intentLastDrop: cutWellFormed(detail, SUMMARIZER_FAILURE_MAX_CHARS),
+});
+
+/** The worker dropped the run before the model was asked — neither an answer nor a failure. */
+export const withIntentSkip = (state: SessionState, detail: string): SessionState => ({
+  ...state,
+  intentSkippedCount: state.intentSkippedCount + 1,
+  intentLastDrop: cutWellFormed(detail, SUMMARIZER_FAILURE_MAX_CHARS),
 });

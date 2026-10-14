@@ -61,7 +61,8 @@ import {
 import { ingestClaimWithin, prepareClaimVector } from "./record-handlers.ts";
 import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
 import type { EvidenceAxes } from "@crosscheck/schema";
-import { notMutedCondition } from "./visibility.ts";
+import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
+import { locationHiddenAmong, locationHiddenFrom, projectRow } from "./live-location.ts";
 import type { Db, DbExecutor } from "../db/client.ts";
 import type { Embedder } from "./embedder.ts";
 import type { Clock } from "../types.ts";
@@ -739,28 +740,55 @@ const listInbox = async (
   repo: string,
   excludeMuted: boolean,
 ): Promise<readonly InboxQuestion[]> => {
-  const rows = await deps.db
-    .select({
-      question: questions,
-      authorDeveloperName: developers.name,
-      workContextTitle: workContexts.title,
-    })
-    .from(questions)
-    .innerJoin(developers, eq(questions.authorDeveloperId, developers.id))
-    .leftJoin(workContexts, eq(questions.workContextId, workContexts.id))
-    .where(inboxCondition(deps.now(), developerId, repo, excludeMuted))
-    .orderBy(desc(questions.createdAt))
-    .limit(MAX_QUESTIONS_LISTED);
-  return rows.map((row) => ({
-    id: row.question.id,
-    authorDeveloperId: row.question.authorDeveloperId,
-    authorDeveloperName: row.authorDeveloperName,
-    body: row.question.body,
-    workContextId: row.question.workContextId,
-    workContextTitle: row.workContextTitle,
-    createdAt: row.question.createdAt.toISOString(),
-    expiresAt: row.question.expiresAt.toISOString(),
-  }));
+  const [rows, hidden] = await Promise.all([
+    deps.db
+      .select({
+        question: questions,
+        authorDeveloperName: developers.name,
+        workContextTitle: workContexts.title,
+        // The CONTEXT's owner, not the asker: a fallback title names where
+        // that owner is (services/live-location.ts).
+        contextOwnerId: agentSessions.developerId,
+        contextRepo: agentSessions.repo,
+        contextBranch: agentSessions.branch,
+        contextTitleSource: workContexts.titleSource,
+      })
+      .from(questions)
+      .innerJoin(developers, eq(questions.authorDeveloperId, developers.id))
+      .leftJoin(workContexts, eq(questions.workContextId, workContexts.id))
+      .leftJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
+      .where(inboxCondition(deps.now(), developerId, repo, excludeMuted))
+      .orderBy(desc(questions.createdAt))
+      .limit(MAX_QUESTIONS_LISTED),
+    locationHiddenFrom(deps.db, developerId),
+  ]);
+  return rows.map((row) => {
+    const view: InboxQuestion = {
+      id: row.question.id,
+      authorDeveloperId: row.question.authorDeveloperId,
+      authorDeveloperName: row.authorDeveloperName,
+      body: row.question.body,
+      workContextId: row.question.workContextId,
+      workContextTitle: row.workContextTitle,
+      createdAt: row.question.createdAt.toISOString(),
+      expiresAt: row.question.expiresAt.toISOString(),
+    };
+    // Two owners: the question is its asker's, the title its context's.
+    const asked = projectRow(hidden, { developerId: view.authorDeveloperId, kind: "question" }, view);
+    return row.contextOwnerId === null
+      ? asked
+      : {
+          ...asked,
+          ...projectRow(hidden, {
+            developerId: row.contextOwnerId,
+            titleFacts: {
+              repo: row.contextRepo ?? repo,
+              branch: row.contextBranch,
+              titleSource: row.contextTitleSource,
+            },
+          }, { workContextTitle: view.workContextTitle }),
+        };
+  });
 };
 
 /**
@@ -845,11 +873,18 @@ export const listUndeliveredAnswers = async (
   const answerWindowStart = new Date(
     deps.now().getTime() - QUESTION_ANSWER_WINDOW_DAYS * MS_PER_DAY,
   );
+  // WHEN SHE ANSWERED IS HERS (integration review M4): the hub stamped her
+  // answer, and its evidence rung's age is when her session observed the
+  // failure. An answerer who opted out of presence is ordered by her claim's
+  // own creation, which every route publishes, and her part of the row is
+  // projected below.
+  const answeredSeen = sql`coalesce((case when ${visiblePresenceCondition(developerId, questionAnswers.answererDeveloperId)} then ${questionAnswers.createdAt} end), ${claims.createdAt})`;
   const rows = await deps.db
     .select({
       questionId: questionAnswers.questionId,
       questionBody: questions.body,
       claim: claims,
+      answererDeveloperId: questionAnswers.answererDeveloperId,
       answererDeveloperName: developers.name,
       answeredAt: questionAnswers.createdAt,
     })
@@ -873,8 +908,11 @@ export const listUndeliveredAnswers = async (
         )`,
       ),
     )
-    .orderBy(desc(questionAnswers.createdAt))
+    .orderBy(sql`${answeredSeen} DESC`, asc(questionAnswers.claimId))
     .limit(MAX_QUESTION_ANSWERS_LISTED);
+  // The answerers among them whose location this asker may not be told: an
+  // answer row carries no title, so their branches are never read for it.
+  const hidden = await locationHiddenAmong(deps.db, developerId, rows.map((row) => row.answererDeveloperId));
   // An answer IS a declared claim, and it arrives unsolicited in a briefing
   // carrying a confidence — so the evidence labels travel with it for the same
   // reason they travel with a hint (08 §3.6, EV-5). One batched read for the
@@ -885,21 +923,28 @@ export const listUndeliveredAnswers = async (
     claims: rows.map((row) => row.claim),
   });
   return rows.map((row) => ({
+    // The question is the asker's own — the reader's.
     questionId: row.questionId,
     questionBody: row.questionBody,
-    claimId: row.claim.id,
-    workContextId: row.claim.workContextId,
-    claimBody: row.claim.body,
-    claimKind: row.claim.kind,
-    claimStatus: row.claim.status,
-    confidence: row.claim.confidence,
-    provenance: row.claim.provenance,
-    // The weakest rung rather than an omission, for the reason the diagnosis
-    // and hint surfaces use it: an absent field says "this hub does not report
-    // one", which points the reader at the wrong remedy.
-    axes: axes.get(row.claim.id) ?? UNRESOLVED_AXES,
-    answererDeveloperName: row.answererDeveloperName,
-    answeredAt: row.answeredAt.toISOString(),
+    // The answer is the ANSWERER's, projected by her (live-location.ts):
+    // when she answered reads LOCATION_WITHHELD, which every reader prints as
+    // an unknown time, and the evidence rung's age and commit go null, as on
+    // every other route.
+    ...projectRow(hidden, { developerId: row.answererDeveloperId, kind: "claim" }, {
+      claimId: row.claim.id,
+      workContextId: row.claim.workContextId,
+      claimBody: row.claim.body,
+      claimKind: row.claim.kind,
+      claimStatus: row.claim.status,
+      confidence: row.claim.confidence,
+      provenance: row.claim.provenance,
+      // The weakest rung rather than an omission, for the reason the diagnosis
+      // and hint surfaces use it: an absent field says "this hub does not report
+      // one", which points the reader at the wrong remedy.
+      axes: axes.get(row.claim.id) ?? UNRESOLVED_AXES,
+      answererDeveloperName: row.answererDeveloperName,
+      answeredAt: row.answeredAt.toISOString(),
+    }),
   }));
 };
 

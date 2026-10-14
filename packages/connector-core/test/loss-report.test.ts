@@ -8,7 +8,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmod, rm, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { EMPTY_LOSS_REPORT, MAX_LOSS_COUNT, TelemetryLossReportSchema } from "@crosscheck/schema";
+import { EMPTY_LOSS_REPORT, MAX_LOSS_COUNT, MAX_LOSS_KIND_ENTRIES, TelemetryLossReportSchema } from "@crosscheck/schema";
 
 import { HUB_COVERAGE_WINDOW_DAYS, MAX_LOSS_LEDGER_BYTES } from "../src/constants.ts";
 import {
@@ -478,13 +478,15 @@ describe("review C1/M2, connector half: the report always parses on the hub's sc
 
   test("a report that still fails the wire schema is sent as a loss with no span", () => {
     // Arrange: more kinds than the hub admits — the last line of defence
-    const kinds = Object.fromEntries(Array.from({ length: 30 }, (_unused, index) => [`k${String(index)}`, 1]));
+    // (one past the cap, whatever the vocabulary has grown to)
+    const count = MAX_LOSS_KIND_ENTRIES + 1;
+    const kinds = Object.fromEntries(Array.from({ length: count }, (_unused, index) => [`k${String(index)}`, 1]));
 
     // Act
-    const wire = toWireReport({ total: 30, kinds, oldestAt: T0.toISOString(), newestAt: T4.toISOString() });
+    const wire = toWireReport({ total: count, kinds, oldestAt: T0.toISOString(), newestAt: T4.toISOString() });
 
     // Assert: never zero, never a refused session call
-    expect(wire).toEqual({ total: 30, kinds: { unattributed: 30 }, oldestAt: null, newestAt: null });
+    expect(wire).toEqual({ total: count, kinds: { unattributed: count }, oldestAt: null, newestAt: null });
     expect(TelemetryLossReportSchema.safeParse(wire).success).toBe(true);
   });
 });
@@ -711,7 +713,47 @@ describe("losses a connector before 1.0 left are counted as legacy, apart from t
     // Assert
     expect(lines.legacy).toStartWith("10 records lost by a connector before 1.0, whose ledgers kept only counts: ");
     expect(lines.legacy).toContain("3 rejected by the hub with no cause recorded · 7 in a ledger archive that kept only the total");
-    expect(lines.rejected).toStartWith("5 records rejected by the hub: 2 because the session delivering them was one the hub held as ended");
+    expect(lines.rejected).toStartWith("2 records rejected by the hub: 2 because the session delivering them was one the hub held as ended");
+  });
+
+  /**
+   * ONE LINE PER RECORD (batch-2 integration review, L5). The rejected line
+   * counted the cause-less records a second time, as "with no cause
+   * recorded", beside the legacy line that already names them and carries
+   * their remedy: status printed `5 records rejected … · 3 with no cause
+   * recorded` and `3 rejected by the hub with no cause recorded` for the same
+   * three, and the totals of its one losses line no longer added up.
+   */
+  test("a cause-less rejection is counted on the legacy line alone, and the rejected line holds only what names a cause", async () => {
+    // Arrange: three 0.10 lines, two this connector refused with their cause
+    const path = await home();
+    await recordDrop(path, KEY, SLUG, 3, "rejected", T3);
+    await recordDrop(path, KEY, SLUG, 2, "rejected", T4, { target: 2 }, { session_ended: 2 });
+
+    // Act
+    const lines = formatLossLines(await readLocalLosses(path, KEY), T4);
+
+    // Assert
+    expect(lines.rejected).toStartWith("2 records rejected by the hub: 2 because the session delivering them was one the hub held as ended");
+    expect(lines.legacy).toContain("3 rejected by the hub with no cause recorded");
+    const mentions = [lines.rejected, lines.legacy].join("\n").match(/no cause/g) ?? [];
+    expect(mentions).toHaveLength(1);
+  });
+
+  test("rejections that are all cause-less leave the rejected line empty: the legacy line is the only place they count", async () => {
+    // Arrange
+    const path = await home();
+    await recordDrop(path, KEY, SLUG, 3, "rejected", T3);
+
+    // Act
+    const lines = formatLossLines(await readLocalLosses(path, KEY), T4);
+
+    // Assert
+    expect(lines.rejected).toBeNull();
+    expect(lines.legacy).toBe(
+      "3 records lost by a connector before 1.0, whose ledgers kept only counts: 3 rejected by the hub with no cause recorded — " +
+        "the records are no longer on disk to send again; a 0.10 refusal was often a late write into a session the hub had ended, and only the hub's own log says which",
+    );
   });
 
   test("this connector's own losses alone leave the legacy line empty", async () => {

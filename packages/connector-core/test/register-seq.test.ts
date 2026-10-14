@@ -20,6 +20,7 @@
  * into the HTTP body, a shape no connector produced. This test reads the body
  * the flow actually posts.
  */
+import { loopbackUrl, serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -33,17 +34,20 @@ import {
 } from "../src/state/session-state.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
 
-/** Throwaway hub, in the band reserved for them. */
-const PORT = 7931;
-const HUB_URL = `http://127.0.0.1:${String(PORT)}`;
 const REPO_ID = "github.com/acme/api";
 const SESSION_KEY = "register-seq-uuid";
 
 const bodies: Record<string, unknown>[] = [];
 const paths: string[] = [];
 
-const server = Bun.serve({
-  port: PORT,
+/**
+ * Throwaway hub on an EPHEMERAL loopback port. It used to bind the fixed 7931
+ * on the wildcard, which two concurrent runs of this suite (another worktree,
+ * another agent) share by reuse semantics on macOS — each then answers some
+ * of the other's requests.
+ */
+const server = serveLoopback({
+  port: 0,
   fetch: async (request) => {
     const url = new URL(request.url);
     if (url.pathname === "/api/sessions" && request.method === "POST") {
@@ -55,6 +59,7 @@ const server = Bun.serve({
     return new Response("not found", { status: 404 });
   },
 });
+const HUB_URL = loopbackUrl(server);
 
 afterEach(async () => {
   bodies.length = 0;
@@ -81,6 +86,7 @@ describe("registerSessionFlow positions the session it opens", () => {
       hub: {
         hubUrl: HUB_URL,
         apiKey: "test-key",
+        keyOrigin: HUB_URL,
         timeoutMs: 2000,
         home,
         repoKey: repoKey(HUB_URL, REPO_ID),
@@ -96,7 +102,7 @@ describe("registerSessionFlow positions the session it opens", () => {
       baseCommit: "abc1234",
       status: "implementing",
       fallbackDeveloperId: "dev_self",
-      title: "register seq",
+      title: "register seq", titleSource: "host",
       now: new Date(),
       guarantees: [],
     });
@@ -157,6 +163,7 @@ describe("a SessionStart re-fire registers under the epoch the session uses", ()
         hub: {
           hubUrl: HUB_URL,
           apiKey: "test-key",
+          keyOrigin: HUB_URL,
           timeoutMs: 2000,
           home,
           repoKey: repoKey(HUB_URL, REPO_ID),
@@ -172,7 +179,7 @@ describe("a SessionStart re-fire registers under the epoch the session uses", ()
         baseCommit: "abc1234",
         status: "implementing",
         fallbackDeveloperId: "dev_self",
-        title: "register seq",
+        title: "register seq", titleSource: "host",
         now: new Date(),
         guarantees: [],
       });
@@ -246,6 +253,7 @@ describe("a re-fire over a foreign binding carries nothing", () => {
       hub: {
         hubUrl: HUB_URL,
         apiKey: "test-key",
+        keyOrigin: HUB_URL,
         timeoutMs: 2000,
         home,
         repoKey: repoKey(HUB_URL, REPO_ID),
@@ -261,7 +269,7 @@ describe("a re-fire over a foreign binding carries nothing", () => {
       baseCommit: "abc1234",
       status: "implementing",
       fallbackDeveloperId: "dev_self",
-      title: "register seq",
+      title: "register seq", titleSource: "host",
       now: new Date(),
       guarantees: [],
     });

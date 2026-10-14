@@ -5,10 +5,12 @@
  * commands through `runCli`, so the field names on the wire and the sentences
  * a person reads are the ones under test.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
-import { createDb, createServer } from "@crosscheck/server";
+import { createDb } from "@crosscheck/server";
+import { createServerConfirmingAtOnce } from "../../server/test/fixtures/immediate-confirmation.ts";
 import type { Db } from "@crosscheck/server";
 import { sql } from "drizzle-orm";
 
@@ -63,7 +65,8 @@ const seedApprovedWaiver = async (pinId: string): Promise<string> => {
 
 beforeAll(async () => {
   db = await createDb();
-  server = Bun.serve({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
+  // Applies a pin at once, as every hub before 0.11 did (drafts: drafted-gestures-cli.test.ts).
+  server = serveLoopback({ port: 0, fetch: createServerConfirmingAtOnce({ db, adminToken: ADMIN_TOKEN }).fetch });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
   home = await makeHome("passkey-revocation");
   repo = await makeRepo("passkey-revocation", { remote: "git@github.com:acme/api.git" });

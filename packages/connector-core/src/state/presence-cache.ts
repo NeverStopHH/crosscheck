@@ -65,6 +65,11 @@ export const writePresenceCache = async (
  * ninety characters and this is a suffix on a line that already has a job.
  * Rows with no usable name or date are dropped rather than rendered as
  * "unknown": a half-fact on a status line is noise.
+ *
+ * A row the hub marks `locationWithheld` is dropped too (batch-2 integration
+ * review, M5): its owner opted out of presence, so its only date is its
+ * creation, and "Robin last seen 2m ago" off a topic context created at her
+ * first edit in a sibling worktree is the presence line she turned off.
  */
 export const deriveLastSeen = (
   workContexts: readonly WorkContextEntry[],
@@ -72,7 +77,7 @@ export const deriveLastSeen = (
 ): readonly LastSeenEntry[] => {
   const newest = new Map<string, LastSeenEntry>();
   for (const entry of workContexts) {
-    if (entry.developerId === selfDeveloperId) {
+    if (entry.developerId === selfDeveloperId || entry.locationWithheld === true) {
       continue;
     }
     const name = entry.developerName;

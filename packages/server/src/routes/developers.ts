@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
+import { PASSKEY_REVOKE_REASONS } from "@crosscheck/schema";
 
 import { fail, ok } from "../http/envelope.ts";
 import { readJsonBody, formatIssues } from "../http/request.ts";
@@ -15,7 +16,14 @@ import {
   rotateDeveloperKey,
 } from "../services/developers.ts";
 import { listPasskeys, mintEnrolmentCode, revokePasskey } from "../services/passkeys.ts";
+import { finishRevocation, revocationSentence } from "../services/confirmation-rollback.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
+
+/** The admin's revoke takes an optional reason, and only one is the admin's to give. */
+const AdminRevokeBodySchema = z.object({ reason: z.enum(PASSKEY_REVOKE_REASONS).optional() });
+
+const ADMIN_COMPROMISE_SENTENCE =
+  "a passkey is declared compromised with another of its owner's passkeys on /ui/passkeys, never with the admin token — this route retires it, which keeps what it confirmed";
 
 const AddEmailBodySchema = z.object({ email: z.email() });
 
@@ -143,8 +151,22 @@ export const developersRoutes = (deps: AppDeps): Hono<AppEnv> => {
   // 04a §4.5 — recovery: a lost device, or a passkey nobody expected. The
   // admin may revoke at any time; the path names the developer so a typo in
   // the passkey id cannot close somebody else's device.
+  //
+  // ALWAYS A RETIREMENT (round-2 R2-H3): what the passkey confirmed while it
+  // stood keeps counting — a lost laptop must not erase its owner's pilot
+  // record. Declaring it compromised, which retracts that, is signed with
+  // another of the owner's passkeys on /ui/passkeys, never with this token.
+  // (During its cool-off it never stood, whoever revokes it: its drafts go back
+  // to its owner's page.)
   router.post("/:id/passkeys/:passkeyId/revoke", async (c) => {
     const passkeyId = c.req.param("passkeyId");
+    const body = AdminRevokeBodySchema.safeParse((await readJsonBody(c)) ?? {});
+    if (!body.success) {
+      return fail(c, 400, "validation_failed", formatIssues(body.error));
+    }
+    if (body.data.reason === "compromised") {
+      return fail(c, 400, "compromised_needs_another_passkey", ADMIN_COMPROMISE_SENTENCE);
+    }
     const owned = await listPasskeys({ db: deps.db, developerId: c.req.param("id"), now: deps.now() });
     if (!owned.some((passkey) => passkey.id === passkeyId)) {
       return fail(c, 404, "not_found", "this developer has no passkey with this id");
@@ -154,12 +176,21 @@ export const developersRoutes = (deps: AppDeps): Hono<AppEnv> => {
       passkeyId,
       by: { kind: "admin" },
       now: deps.now(),
+      reason: "retired",
     });
+    if ("refusal" in outcome) {
+      return fail(c, 409, outcome.refusal, "that passkey has already been revoked");
+    }
+    await finishRevocation(deps, outcome);
     // How many open fences closed with it (04a D-PK-1), so the admin who
-    // revoked a lost device learns what that undid.
-    return "refusal" in outcome
-      ? fail(c, 409, outcome.refusal, "that passkey has already been revoked")
-      : ok(c, { revoked: true, terminatedWaivers: outcome.terminated });
+    // revoked a lost device learns what that undid — and what it kept.
+    return ok(c, {
+      revoked: true,
+      reason: "retired",
+      voided: outcome.voided,
+      terminatedWaivers: outcome.terminated,
+      message: revocationSentence(outcome, "retired"),
+    });
   });
 
   router.delete("/:id/emails/:email", async (c) => {

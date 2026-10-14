@@ -17,7 +17,7 @@ import {
 } from "../src/constants.ts";
 import { withCaptureBookkeeping } from "../src/state/capture-bookkeeping.ts";
 import type { TouchedRootsResolution } from "../src/capture/touched-root.ts";
-import { deriveSessionState } from "../src/state/session-state.ts";
+import { deriveSessionState, withGitTouches } from "../src/state/session-state.ts";
 import type { SessionState } from "../src/state/session-state.ts";
 
 const NOW = new Date("2026-08-26T10:00:00.000Z");
@@ -42,6 +42,7 @@ const resolution = (
   outsideDrops: 0,
   newlyResolved: [],
   firstResolvedRoot: null,
+  headByRoot: new Map(),
   ...overrides,
 });
 
@@ -219,6 +220,17 @@ describe("the counters a WARN is measured on", () => {
   });
 });
 
+/** A root the identity pass judged and no HEAD read has reached yet. */
+const NO_TOPIC = {
+  branch: null,
+  headStamp: null,
+  firstHead: null,
+  firstTouchedAt: null,
+  lastTouchedAt: null,
+  bashTouchedAt: null,
+  gitSweptAt: null,
+} as const;
+
 describe("the root cache and the drops it explains", () => {
   test("newly resolved roots are folded in with the attempts they cost", () => {
     // Arrange
@@ -246,15 +258,49 @@ describe("the root cache and the drops it explains", () => {
     });
 
     // Assert: a positive and an UNKNOWN answer are both remembered, and the
-    // unknown keeps its attempt budget so the resolver may retry it
+    // unknown keeps its attempt budget so the resolver may retry it — and
+    // neither has a topic yet: no HEAD read reached them
     expect(after.knownWorktreeRoots).toEqual([
       {
         root: "/repos/api-featB",
         repoId: "github.com/acme/api",
         attempts: 1,
         stamp: "1:2:3",
+        ...NO_TOPIC,
       },
-      { root: "/repos/mystery", repoId: null, attempts: 2, stamp: null },
+      { root: "/repos/mystery", repoId: null, attempts: 2, stamp: null, ...NO_TOPIC },
+    ]);
+  });
+
+  test("a HEAD the touch read is folded in as the root's topic", () => {
+    // Act
+    const after = withCaptureBookkeeping(state(), {
+      resolution: resolution({
+        headByRoot: new Map([
+          [
+            "/repos/api-featB",
+            {
+              root: "/repos/api-featB",
+              repoId: "github.com/acme/api",
+              branch: "feat/b",
+              headStamp: "ref: refs/heads/feat/b",
+              firstHead: null,
+              head: null,
+              touchedAt: NOW.toISOString(),
+            },
+          ],
+        ]),
+      }),
+      capturedCount: 1,
+      editFired: true,
+      toolLabel: "Edit",
+      firstPath: "/repos/api-featB/src/a.ts",
+      now: NOW,
+    });
+
+    // Assert
+    expect(after.knownWorktreeRoots.map((entry) => [entry.root, entry.branch, entry.lastTouchedAt])).toEqual([
+      ["/repos/api-featB", "feat/b", NOW.toISOString()],
     ]);
   });
 
@@ -398,5 +444,52 @@ describe("the two diagnosis fields the agent gets to choose (finding A5)", () =>
     // ...and the drop it explains is still counted, so the WARN still fires
     expect(after.editToolFires).toBe(1);
     expect(after.outsideRootDrops).toBe(1);
+  });
+});
+
+describe("the generated-target counters doctor prints", () => {
+  test("each capture's classification adds in, on the tool lane and the git lane alike", () => {
+    // Arrange: a session measured from its start.
+    const before = state();
+
+    // Act
+    const edited = withCaptureBookkeeping(before, {
+      resolution: resolution(),
+      capturedCount: 3,
+      editFired: true,
+      toolLabel: "Edit",
+      firstPath: "/repos/api/apps/x/package-lock.json",
+      now: NOW,
+      generated: { path: 1, attribute: 1, header: 0, authoritative: 0, unknown: 1 },
+    });
+    const afterStop = withGitTouches(edited, {
+      captured: ["packages/proto/src/a_pb.ts"],
+      skipped: false,
+      generated: { path: 1, attribute: 0, header: 0, authoritative: 0, unknown: 0 },
+    });
+
+    // Assert
+    expect(before.generatedTargets).toEqual({ path: 0, attribute: 0, header: 0, authoritative: 0, unknown: 0 });
+    expect(afterStop.generatedTargets).toEqual({ path: 2, attribute: 1, header: 0, authoritative: 0, unknown: 1 });
+  });
+
+  test("a state that predates the counters starts counting at its first classified capture", () => {
+    // Arrange: an older state file, parsed — no field at all.
+    const { generatedTargets: _absent, ...older } = state();
+
+    // Act
+    const after = withCaptureBookkeeping(older, {
+      resolution: resolution(),
+      capturedCount: 1,
+      editFired: true,
+      toolLabel: "Edit",
+      firstPath: "/repos/api/src/a.ts",
+      now: NOW,
+      generated: { path: 0, attribute: 0, header: 1, authoritative: 0, unknown: 0 },
+    });
+
+    // Assert
+    expect(older.generatedTargets).toBeUndefined();
+    expect(after.generatedTargets).toEqual({ path: 0, attribute: 0, header: 1, authoritative: 0, unknown: 0 });
   });
 });

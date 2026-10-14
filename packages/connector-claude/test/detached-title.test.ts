@@ -63,14 +63,20 @@ const fixture = async (label: string, subject?: string): Promise<Fixture> => {
 
 interface SpooledWorkContext {
   readonly kind: string;
-  readonly body: { readonly title?: string };
+  readonly body: { readonly title?: string; readonly titleSource?: string };
 }
 
-const spooledTitles = async (fix: Fixture): Promise<readonly string[]> =>
+const spooledWorkContexts = async (fix: Fixture): Promise<readonly SpooledWorkContext[]> =>
   (await readSpoolLines(fix.home, fix.key))
     .map((line) => JSON.parse(line) as SpooledWorkContext)
-    .filter((record) => record.kind === "work_context")
-    .map((record) => record.body.title ?? "");
+    .filter((record) => record.kind === "work_context");
+
+const spooledTitles = async (fix: Fixture): Promise<readonly string[]> =>
+  (await spooledWorkContexts(fix)).map((record) => record.body.title ?? "");
+
+/** How each uploaded title says it was written (review round 3: the hub's marker). */
+const spooledTitleSources = async (fix: Fixture): Promise<readonly (string | undefined)[]> =>
+  (await spooledWorkContexts(fix)).map((record) => record.body.titleSource);
 
 const sessionStartPayload = (fix: Fixture, title?: string): string =>
   JSON.stringify({
@@ -81,16 +87,59 @@ const sessionStartPayload = (fix: Fixture, title?: string): string =>
     ...(title === undefined ? {} : { session_title: title }),
   });
 
+describe("the uploaded title says how it was written (review round 3, the title marker)", () => {
+  // The hub withholds a FALLBACK title — it is the branch — from colleagues
+  // of a developer who opted out of presence, and keeps a host's. Without
+  // the marker it can only guess from the title's shape.
+  test("the connector's own fallback is marked fallback", async () => {
+    const fix = await fixture("marker-fallback");
+
+    await runHook("session-start", sessionStartPayload(fix), fix.env);
+
+    expect(await spooledTitleSources(fix)).toEqual(["fallback"]);
+  });
+
+  test("a Claude session_title is marked host, even one ending like a fallback", async () => {
+    const fix = await fixture("marker-host");
+
+    await runHook("session-start", sessionStartPayload(fix, "Fix the 500 on POST /login @ api"), fix.env);
+
+    expect(await spooledTitleSources(fix)).toEqual(["host"]);
+  });
+
+  test("PostToolUse recovery's derived title is marked fallback", async () => {
+    const fix = await fixture("marker-recovery", "feat: limiter tokens per tenant");
+    const file = await writeRepoFile(fix.worktree, "src/limiter.ts", "export const a = 1;\n");
+
+    await runHook(
+      "post-tool-use",
+      JSON.stringify({
+        session_id: SESSION_ID,
+        cwd: fix.worktree,
+        hook_event_name: "PostToolUse",
+        tool_name: "Edit",
+        tool_input: { file_path: file },
+        tool_response: {},
+      }),
+      fix.env,
+    );
+
+    expect(await spooledTitleSources(fix)).toEqual(["fallback"]);
+  });
+});
+
 describe("a detached worktree session uploads a readable title", () => {
-  test("SessionStart on a worktree at the branch tip titles it by the branch", async () => {
+  test("SessionStart on a worktree at the branch tip keeps the sha, never the branch", async () => {
     // Arrange
     const fix = await fixture("tip");
 
     // Act
     await runHook("session-start", sessionStartPayload(fix), fix.env);
 
-    // Assert: `git worktree add --detach` left HEAD on main's tip
-    expect(await spooledTitles(fix)).toEqual(["main @ api"]);
+    // Assert: `git worktree add --detach` left HEAD on main's tip, and `main`
+    // is still not what this checkout is on — a stale branch at an old
+    // commit titled every topic of a long-lived detached session.
+    expect(await spooledTitles(fix)).toEqual([`detached@${fix.sha} · initial @ api`]);
   });
 
   test("SessionStart off the branch tip carries the sha and the commit subject", async () => {

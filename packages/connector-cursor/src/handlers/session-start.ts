@@ -4,7 +4,7 @@
  * flow) — record the observed cursor_version for doctor, assemble the
  * briefing through the SAME core flow as the Claude SessionStart, then
  * maintenance on the spare budget: flush what earlier sessions left, reap
- * what nothing owns.
+ * what nothing owns, sweep the temp files abandoned writes left behind.
  *
  * INJECTION ORDER IS THE CLAUDE ORDER: everything the developer actually
  * sees — the session, the work context, the briefing — is in hand before
@@ -35,6 +35,7 @@ import {
   recordBriefingDeliveries,
 } from "@crosscheck/connector-core/flows/briefing.ts";
 import { registerSessionFlow } from "@crosscheck/connector-core/flows/register-session.ts";
+import { probeBaseOnDefault } from "@crosscheck/connector-core/capture/landed.ts";
 import { guaranteeDeclarationFor } from "@crosscheck/connector-core/guarantees/declarations.ts";
 import { resolveFallbackWorkContextTitle } from "@crosscheck/connector-core/flows/work-context-title.ts";
 import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
@@ -48,6 +49,7 @@ import type {
 } from "@crosscheck/connector-core/spool/reap.ts";
 import { CURSOR_BACKGROUND_AGENT_KIND } from "@crosscheck/connector-core/state/host-session-key.ts";
 import { updateSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
+import { sweepAbandonedTemps } from "@crosscheck/connector-core/state/temp-sweep.ts";
 import type { HookBudget } from "@crosscheck/connector-core/config/hook-budget.ts";
 
 import type { CursorHookContext } from "../runner.ts";
@@ -103,6 +105,14 @@ export const handleCursorSessionStart = async (
   budget: HookBudget,
 ): Promise<string> => {
   const now = ctx.now();
+  // The base probe (was this base already on the default branch? — the hub
+  // never stamps such a context landed) runs beside the title: two git calls
+  // on a named branch, where the title asks git nothing; skipped on a
+  // detached HEAD, where the title asks twice. At most two either way.
+  const [title, baseOnDefault] = await Promise.all([
+    resolveFallbackWorkContextTitle(ctx.identity),
+    probeBaseOnDefault(ctx.identity),
+  ]);
   const { crosscheckSessionId, developerId } = await registerSessionFlow({
     home: ctx.config.home,
     repoKey: ctx.repoKey,
@@ -113,13 +123,17 @@ export const handleCursorSessionStart = async (
     repoRoot: ctx.identity.root,
     branch: ctx.identity.branch,
     baseCommit: ctx.identity.baseCommit,
+    baseOnDefault,
     hubUrl: ctx.config.hubUrl,
     fallbackDeveloperId: ctx.config.developerId,
     // Cursor supplies no session title, and none is synthesized from
     // conversation content (§2.4 privacy posture — same as ACP). The core
     // builder labels a detached worktree by its branch tip or commit
     // subject (trial finding #15), two bounded git calls at most.
-    title: await resolveFallbackWorkContextTitle(ctx.identity),
+    title,
+    // Always the connector's own: the hub withholds it, the branch it names,
+    // from colleagues of a developer who opted out of presence.
+    titleSource: "fallback",
     status: INITIAL_STATUS,
     now,
     guarantees: guaranteeDeclarationFor("cursor-ide"),
@@ -179,6 +193,12 @@ export const handleCursorSessionStart = async (
   // way Claude's SessionStart sweeps them (state/session-reap.ts): a corpse
   // pins its spool against reap.
   await reapStaleSessionStates(ctx.config.home, now, { keepHostSessionKey: ctx.hostSessionKey });
+  // Abandoned writePrivateFile temps, home-wide — the Claude SessionStart's
+  // sweep at the same point, because a Cursor-only machine has no Claude
+  // SessionStart to run it (state/temp-sweep.ts carries the finding and
+  // the cost). Held to the spare budget and a per-run cap, never the
+  // reserve; local readdirs only, no hub call, never throws.
+  await sweepAbandonedTemps(ctx.config.home, now, budget.spareMs);
 
   return briefing.length === 0 ? "" : cursorInjectionOutput(briefing);
 };

@@ -98,7 +98,7 @@
  */
 import { readFileSync, unlinkSync } from "node:fs";
 import { open, rm } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, sep } from "node:path";
 
 import {
   PRIVATE_FILE_MODE,
@@ -107,6 +107,7 @@ import {
   SPOOL_LOCK_STALE_MS,
 } from "../constants.ts";
 import { ensureDir, readTextOrNull } from "../config/paths.ts";
+import { traceMark, traceSpan } from "../trace/hook-trace.ts";
 
 const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => {
@@ -459,14 +460,28 @@ const rememberHeldLock = (path: string, token: string): void => {
   heldLocks.set(path, token);
 };
 
+/**
+ * The retries that fit inside `budgetMs`, for a caller whose wait for a
+ * lock must end with its budget rather than with the lock's own patience.
+ * Zero still makes the one first attempt.
+ */
+export const lockRetriesWithin = (budgetMs: number): number =>
+  Math.max(0, Math.floor(budgetMs / SPOOL_LOCK_RETRY_DELAY_MS));
+
+/** A lock's kind for a phase trace (trace/hook-trace.ts) — never its path. */
+const lockKindOf = (path: string): string =>
+  path.endsWith("flush.lock") ? "spool-flush" : path.includes(`${sep}sessions${sep}`) ? "session-state" : "other";
+
 export const withLock = async <T>(
   path: string,
   fallback: T,
   action: () => Promise<T>,
   retries: number = SPOOL_LOCK_RETRIES,
 ): Promise<T> => {
-  const token = await acquireLock(path, retries);
+  const kind = lockKindOf(path);
+  const token = await traceSpan(`lock-wait:${kind}`, async () => acquireLock(path, retries));
   if (token === null) {
+    traceMark(`lock-busy:${kind}`);
     return fallback;
   }
   rememberHeldLock(path, token);

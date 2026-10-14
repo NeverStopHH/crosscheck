@@ -8,6 +8,7 @@
  * later hook), and every failure of the new query costing the notice and
  * never the intent that was just recorded.
  */
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -218,7 +219,7 @@ const stateOf = async (developer: Developer): Promise<SessionState> => {
 
 beforeAll(async () => {
   db = await createDb();
-  server = Bun.serve({
+  server = serveLoopback({
     port: 0,
     fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch,
   });
@@ -227,7 +228,7 @@ beforeAll(async () => {
   // /api/ghost-checks, which 404s the way a deployment that predates this
   // feature does. That is what fail open has to survive, and forwarding the
   // rest is what makes the comparison honest — only the new route differs.
-  olderHub = Bun.serve({
+  olderHub = serveLoopback({
     port: 0,
     fetch: async (request) => {
       const url = new URL(request.url);
@@ -267,6 +268,9 @@ describe("set_intent and the ghost check", () => {
     expect(state.workContextIntent).toBe(
       "Rework how verifyToken refetches the JWKS",
     );
+    // Declared by the developer's own agent — the one provenance a prompt
+    // hint may call plainly "this session's intent"
+    expect(state.workContextIntentProvenance).toBe("declared");
     expect(state.ghostPending).toBe(true);
     expect(state.ghostNoticeCount).toBe(0);
   });

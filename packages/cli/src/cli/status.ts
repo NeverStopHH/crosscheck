@@ -1,6 +1,8 @@
 import {
   EXIT_OK,
   EXIT_UNREACHABLE,
+  EXIT_WARN,
+  MAX_TOPICS_PER_TEAMMATE,
   STATUS_MAX_ABSENCE_LINES,
   STATUS_SESSION_IDLE_HOURS,
   TRIPWIRE_MODE_ENV,
@@ -12,12 +14,21 @@ import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { renderIntent } from "@crosscheck/connector-core/briefing/intent.ts";
 import { formatQuestionCounts } from "@crosscheck/connector-core/briefing/questions.ts";
+import { PRESENCE_ON_WAITING_LINE, presenceReenabledLine } from "@crosscheck/connector-core/briefing/presence-notice.ts";
 import { formatSolvedCounts } from "@crosscheck/connector-core/hints/precision.ts";
 import {
+  countOf,
   formatAbsenceLine,
   formatAge,
   formatCloudAgentLink,
+  groupTeammates,
+  moreTopicsTail,
 } from "@crosscheck/connector-core/briefing/render.ts";
+import type {
+  PresenceTopicRow,
+  TeammateGroup,
+} from "@crosscheck/connector-core/briefing/render.ts";
+import type { Topic } from "@crosscheck/connector-core/briefing/topic-group.ts";
 import {
   HUB_UNREACHABLE_CLAUSE,
   coverageClause,
@@ -30,6 +41,7 @@ import { getCiVerdict } from "@crosscheck/connector-core/http/hub.ts";
 import type {
   CiBehaviorDelta,
   CiCoverage,
+  PresenceEntry,
 } from "@crosscheck/connector-core/http/hub.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import {
@@ -62,6 +74,11 @@ import {
 import { spoolDepth } from "@crosscheck/connector-core/spool/files.ts";
 import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
 import { readLiveSessionStates } from "@crosscheck/connector-core/state/session-state.ts";
+import { readSharingInput, sharingStatusLine } from "./doctor-sharing.ts";
+import { landedProbeCutsStatusLines } from "./landed-probe-cuts.ts";
+import { readLandedProbeCuts } from "@crosscheck/connector-core/state/landed-probe-cuts.ts";
+import { collisionOmissionsStatusLines } from "./collision-omissions.ts";
+import { readRestOmissions } from "@crosscheck/connector-core/state/rest-omissions.ts";
 import {
   formatConferenceCost,
   readConferenceCost,
@@ -80,6 +97,8 @@ import {
   summarizeSummarizerCost,
 } from "@crosscheck/connector-claude";
 import type { CliResult } from "./login.ts";
+import { readForeignHubRefusals } from "@crosscheck/connector-core/state/foreign-hub.ts";
+import { foreignHubLines, otherForeignHubRepos } from "./foreign-hub.ts";
 
 const ageOrNever = (iso: string | null, now: Date): string => {
   if (iso === null) {
@@ -91,6 +110,50 @@ const ageOrNever = (iso: string | null, now: Date): string => {
 
 const plural = (count: number, noun: string): string =>
   `${String(count)} ${noun}${count === 1 ? "" : "s"}`;
+
+/** `feat/x · implementing · 3 sessions · intent: «…»` — one topic's fields. */
+const topicFields = (topic: Topic<PresenceTopicRow>): readonly string[] => {
+  const intent = renderIntent(topic.rows[0]?.entry.intent);
+  return [
+    topic.label,
+    topic.status,
+    ...(topic.sessions === 1 ? [] : [countOf(topic.sessions, "session", false)]),
+    ...(intent === null ? [] : [intent]),
+  ];
+};
+
+/**
+ * One teammate's entry, grouped by topic exactly as the briefing groups it
+ * (connector-core briefing/topic-group.ts, through `groupTeammates` with the
+ * BARE sanitizer). One topic is the line it always was; several are a head
+ * line with the totals, the most active topics one per line, and the rest
+ * counted — never one line per session, which put a teammate live in six
+ * worktrees of one branch on six lines.
+ */
+const teammateStatusLines = (group: TeammateGroup): readonly string[] => {
+  const [only] = group.topics;
+  if (group.topics.length === 1 && only !== undefined) {
+    return [[`  - ${group.name}`, ...topicFields(only)].join(" · ")];
+  }
+  const shown = group.topics.slice(0, MAX_TOPICS_PER_TEAMMATE);
+  const hidden = group.topics.length - shown.length;
+  return [
+    `  - ${group.name} · ${countOf(group.topics.length, "topic", false)}, ${countOf(group.sessions, "session", false)}`,
+    ...shown.map((topic) => `    ${topicFields(topic).join(" · ")}`),
+    ...(hidden > 0 ? [`    ${moreTopicsTail(hidden, false)}`] : []),
+  ];
+};
+
+/**
+ * The whole `teammates:` block from the hub's presence rows — exported as
+ * ONE pure function so the injection corpus walks exactly what the command
+ * prints (test/status-teammates-corpus.test.ts), not a copy of it.
+ */
+export const teammateLines = (
+  presence: readonly PresenceEntry[],
+  now: Date,
+): readonly string[] =>
+  groupTeammates(presence, now, bareUntrusted).flatMap(teammateStatusLines);
 
 /**
  * ONE `losses:` LINE, ABOVE ZERO ONLY (docs/1.0/loss-accounting.md §5.1),
@@ -150,6 +213,24 @@ const targetsLine = (health: CaptureHealth, now: Date): string => {
 };
 
 /**
+ * The turns the prompt path stood down on before any call (review 1006b, M7),
+ * apart and above zero only: a quiet hints line then says whether nothing was
+ * ASKED — content-free prompts, harness turns — or nothing matched.
+ */
+const stoodDownPart = (health: CaptureHealth): string =>
+  health.flooredPrompts === 0 && health.harnessTurns === 0
+    ? ""
+    : ` · stood down on ${plural(health.flooredPrompts, "content-free prompt")}, ${plural(health.harnessTurns, "harness turn")}`;
+
+/**
+ * The calls that DID reach the hub and came back with nothing (hold-out
+ * review round 3, L5), above zero only: beside the turns never asked, this
+ * is "asked, and nothing matched" — the reach of a quiet session, counted.
+ */
+const quietCallsPart = (health: CaptureHealth): string =>
+  health.quietCalls === 0 ? "" : ` · ${plural(health.quietCalls, "hub call")} returned no hint`;
+
+/**
  * Hint visibility (#19/#20/M1): delivered = the live sessions' seen-sets here;
  * the hub's delivered/pulled over its bounded window when it answers (an
  * older hub has no /api/hints/stats — "not measured", never a guess);
@@ -170,7 +251,7 @@ const hintsLine = (health: CaptureHealth, stats: HubResult<HintStats>): string =
     stats.ok && stats.data.claims !== undefined
       ? ` · claims on this repo ${String(stats.data.claims)}`
       : "";
-  return `hints: delivered ${String(health.hintsDelivered)} (${hubPart}), candidates ${String(health.hintCandidatesSeen)}${claims}`;
+  return `hints: delivered ${String(health.hintsDelivered)} (${hubPart}), candidates ${String(health.hintCandidatesSeen)}${claims}${stoodDownPart(health)}${quietCallsPart(health)}`;
 };
 
 /** The Q2 knob, visible: which PreToolUse decision this machine's hooks emit. */
@@ -273,6 +354,28 @@ export const runStatus = async (
   }
 
   const now = new Date();
+  // ONE read of the foreign-hub ledger (core state/foreign-hub.ts), for the
+  // WARN below or for the line about other repos on this machine.
+  const foreignLedger = await readForeignHubRefusals(config.home, now);
+  // A HUB THE KEY DOES NOT BELONG TO (core config/key-binding.ts): this repo's
+  // .crosscheck.json, or CROSSCHECK_HUB_URL, names another origin than the
+  // login's. Nothing below may ask it anything — every line would carry the
+  // key there — so the command says what was refused, both origins and the
+  // fix, and stops. The HTTP client would refuse each call regardless.
+  if (config.foreignHub !== null) {
+    return {
+      stdout: [
+        `hub: ${config.hubUrl}`,
+        `repo: ${identity.repoId} (${identity.branch})`,
+        ...foreignHubLines(config.foreignHub, foreignLedger, identity.repoId),
+        "",
+      ].join("\n"),
+      // doctor's WARN code: nothing is broken and the key is safe — what is
+      // missing is a config fix, which the line above names.
+      exitCode: EXIT_WARN,
+    };
+  }
+  const otherForeign = otherForeignHubRepos(foreignLedger, identity.repoId);
   const key = repoKey(config.hubUrl, identity.repoId);
   const sync = await readSyncState(config.home, key);
   const depth = await spoolDepth(config.home, key);
@@ -328,6 +431,17 @@ export const runStatus = async (
     foreignDrops.drops === 0
       ? []
       : [`foreign-repo drops: ${formatForeignDropLine(foreignDrops)}`];
+  // Pre-edit landed-change checks cut short this week, beside the tripwire
+  // line they belong to; zero prints nothing, doctor says the same sentence
+  // (landed-probe-cuts.ts).
+  const probeCutLines = landedProbeCutsStatusLines(
+    await readLandedProbeCuts(config.home, key, now),
+  );
+  // Collisions that may have reached the agent and not the person this week,
+  // beside the same tripwire line (collision-omissions.ts; batch-2 L2).
+  const collisionOmissionLines = collisionOmissionsStatusLines(
+    await readRestOmissions(config.home, key, now),
+  );
   // repoKey "" so this command's own three reads do not stamp the sync record
   // it is about to print (trial finding H5): with the real key, `status` wrote
   // `lastOkAt` and then reported it, so the age it showed was always its own.
@@ -337,6 +451,7 @@ export const runStatus = async (
   const hubCtx = {
     hubUrl: config.hubUrl,
     apiKey: config.apiKey,
+    keyOrigin: config.keyOrigin,
     timeoutMs: config.timeoutMs,
     home: config.home,
     repoKey: "",
@@ -411,9 +526,29 @@ export const runStatus = async (
   const announcements = await getPasskeyAnnouncements(hubCtx);
   const passkeyLines = passkeyStatusLines(announcementAnswerOf(announcements), config.hubUrl, now);
   const privacy = await getPrivacySettings(hubCtx);
+  // "Why does my agent share nothing?" in one line — the same causes doctor
+  // prints in full (doctor-sharing.ts), for one more GET and one small file.
+  const sharing = await readSharingInput({
+    env,
+    hub: hubCtx,
+    repoId: identity.repoId,
+    home: config.home,
+    key,
+    liveStates: liveStates.states,
+    now,
+  });
+  // Hub hardening, item 6: an opt-out switched back off through the API key
+  // is told here, where the person looks, since an agent could have done it.
+  const reenabledLine =
+    privacy.ok && privacy.data.presenceReenabledAt !== null
+      ? presenceReenabledLine(privacy.data.presenceReenabledAt, privacy.data.presenceOptOut)
+      : null;
   const privacyLines = privacy.ok
     ? [
         presenceStateLine(privacy.data.presenceOptOut),
+        ...(reenabledLine === null ? [] : [reenabledLine]),
+        // §8: presence on by key is a draft; say that it waits for the passkey.
+        ...(privacy.data.presenceOnPending ? [PRESENCE_ON_WAITING_LINE] : []),
         `muted: ${
           privacy.data.mutes.length === 0
             ? "(none)"
@@ -449,19 +584,10 @@ export const runStatus = async (
   // line, so they take the BARE class (bareUntrusted — no minting a second
   // field; the MCP claim lines' rule), and the session's intent — WHAT they
   // are doing, trial finding #16 — is the one framed fragment every surface
-  // spells (briefing/intent.ts).
+  // spells (briefing/intent.ts). Grouped per teammate by topic, the
+  // briefing's own grouping (`groupTeammates`, which also drops isSelf).
   const teammates = presence.ok
-    ? presence.data
-        .filter((entry) => entry.isSelf !== true)
-        .map((entry) => {
-          const facts = [
-            `  - ${bareUntrusted(entry.developerName)}`,
-            bareUntrusted(entry.branch),
-            bareUntrusted(entry.status),
-          ];
-          const intent = renderIntent(entry.intent);
-          return [...facts, ...(intent === null ? [] : [intent])].join(" · ");
-        })
+    ? teammateLines(presence.data, now)
     : ["  (hub unreachable)"];
 
   return {
@@ -504,6 +630,7 @@ export const runStatus = async (
       `spool: ${depth} pending, ${drops.records} dropped${unrecorded === null ? "" : " (lower bound — at least one batch its ledger could not take)"}`,
       ...lossLines,
       ...foreignDropLines,
+      ...(otherForeign === null ? [] : [`WARN key origin elsewhere: ${otherForeign}`]),
       ...questionLines,
       ...solvedLines,
       ...pinLines,
@@ -512,9 +639,12 @@ export const runStatus = async (
       targetsLine(captureHealth, now),
       hintsLine(captureHealth, hintStats),
       tripwireLine(env),
+      ...probeCutLines,
+      ...collisionOmissionLines,
       `summarizer: ${formatSummarizerCost(summarizerCost)}`,
       `intent: ${formatIntentCost(intentCost)}`,
       `ghost checks: ${formatGhostCost(ghostCost)}`,
+      sharingStatusLine(sharing),
       `git evidence lane: ${formatGitLaneCost(gitLaneCost)}`,
       // Beside the lane it is measured with: both answer "what can this
       // machine still tell you", and both fail by going quiet.

@@ -6,17 +6,17 @@ import {
 import { formatAge, groupTeammates } from "@crosscheck/connector-core/briefing/render.ts";
 import type { TeammateGroup } from "@crosscheck/connector-core/briefing/render.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
-import { getPresence } from "@crosscheck/connector-core/http/hub.ts";
 import type { PresenceEntry } from "@crosscheck/connector-core/http/hub.ts";
-import {
-  isCacheFresh,
-  readPresenceCache,
-  writePresenceCache,
-} from "@crosscheck/connector-core/state/presence-cache.ts";
+import { isCacheFresh, readPresenceCache } from "@crosscheck/connector-core/state/presence-cache.ts";
 import type { LastSeenEntry } from "@crosscheck/connector-core/state/presence-cache.ts";
 import { recordStatuslineRendered } from "@crosscheck/connector-core/state/fired-markers.ts";
+import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
-import { prepareHook } from "../hooks/runner.ts";
+import { personName, personText, renderOverlapIndicator } from "@crosscheck/connector-core/hints/collision-notice.ts";
+import { tripsPhraseFilter } from "@crosscheck/connector-core/briefing/sanitize.ts";
+import type { HubFailureKind } from "@crosscheck/connector-core/http/client.ts";
+import { refreshPresence } from "../hooks/presence-refresh.ts";
+import { prepareHookFor } from "../hooks/runner.ts";
 import type { HookContext } from "../hooks/runner.ts";
 
 const ELLIPSIS = "…";
@@ -26,10 +26,30 @@ const capName = (name: string): string =>
     ? name
     : `${name.slice(0, STATUSLINE_NAME_CHARS - ELLIPSIS.length)}${ELLIPSIS}`;
 
+/**
+ * What `groupTeammates` cleans each presence field with HERE: nothing. Every
+ * field this line prints goes through the PERSON strip where it is printed
+ * (renderNames, lastSeenSuffix), and a field a sanitizer emptied would drop
+ * its teammate from the `cx N` count — a name of symbols alone is still a
+ * teammate on the repo.
+ */
+const asReceived = (raw: string): string => raw;
+
+/** `(implementing)`, or nothing for a status the strip empties or the phrase filter fears. */
+const statusSuffix = (raw: string): string => {
+  const status = personText(raw);
+  return status.length === 0 || tripsPhraseFilter(status) ? "" : `(${status})`;
+};
+
+/**
+ * `Nick(implementing), Ken(analyzing)` — through the same PERSON strip and
+ * phrase decision as the `⚠ overlap:` segment the line leads with (round 3,
+ * F-L4): both are read by the person, and only that segment used to get them.
+ */
 const renderNames = (groups: readonly TeammateGroup[]): string => {
   const shown = groups
     .slice(0, STATUSLINE_MAX_NAMES)
-    .map((group) => `${capName(group.name)}(${group.status})`)
+    .map((group) => `${capName(personName(group.name))}${statusSuffix(group.status)}`)
     .join(", ");
   const hidden = groups.length - Math.min(groups.length, STATUSLINE_MAX_NAMES);
   return hidden > 0 ? `${shown} +${hidden}` : shown;
@@ -65,7 +85,7 @@ const lastSeenSuffix = (
 ): string => {
   const rendered = lastSeen.flatMap((entry) => {
     const age = ageSince(entry.at, now);
-    return age === null ? [] : [`${capName(entry.name)} last seen ${age} ago`];
+    return age === null ? [] : [`${capName(personName(entry.name))} last seen ${age} ago`];
   });
   return rendered.length === 0 ? "" : ` · ${rendered.join(", ")}`;
 };
@@ -77,7 +97,7 @@ const presenceLine = (
   now: Date,
   lastSeen: readonly LastSeenEntry[] = [],
 ): string => {
-  const teammates = groupTeammates(entries, now);
+  const teammates = groupTeammates(entries, now, asReceived);
   if (teammates.length === 0) {
     return capLine(
       `cx 0 · no teammates on this repo${lastSeenSuffix(lastSeen, now)} · capture ${syncAge}`,
@@ -106,10 +126,10 @@ const HTTP_UNAUTHORIZED = 401;
  * at a protocol or version problem (review finding B2-L5). A 5xx, a 403 and a
  * 404 are a hub that is up and failing, and the status is the actionable part.
  */
-const failureHead = (
-  status: number,
-  kind: "network" | "http" | "malformed",
-): string => {
+const failureHead = (status: number, kind: HubFailureKind): string => {
+  if (kind === "refused") {
+    return KEY_NOT_SENT;
+  }
   if (status === HTTP_UNAUTHORIZED) {
     return "key rejected · crosscheck login";
   }
@@ -122,10 +142,24 @@ const failureHead = (
   return `hub error ${String(status)}`;
 };
 
+/**
+ * A repo connected to another hub than the key's (config/key-binding.ts):
+ * nothing is captured or sent, and this is where a person in a terminal
+ * session sees it. Neither origin is printed — `doctor` names both — so the
+ * line fits the bar and carries no text the repo chose.
+ */
+const KEY_NOT_SENT = "key not sent · hub mismatch · crosscheck doctor";
+
 const failureLine = (head: string, age: string | null): string =>
   capLine(age === null ? `cx ! ${head}` : `cx ! ${head} · last capture ${age}`);
 
-const renderForContext = async (ctx: HookContext): Promise<string> => {
+/** The presence line, and the presence answer it was drawn from — none when the hub could not be read. */
+interface RenderedPresence {
+  readonly line: string;
+  readonly present: readonly PresenceEntry[];
+}
+
+const renderForContext = async (ctx: HookContext): Promise<RenderedPresence> => {
   const now = ctx.now();
   const cache = await readPresenceCache(ctx.config.home, ctx.repoKey);
   const sync = await readSyncState(ctx.config.home, ctx.repoKey);
@@ -140,37 +174,50 @@ const renderForContext = async (ctx: HookContext): Promise<string> => {
     // call is the newest thing known about the hub, and saying "sync 12s"
     // over it would launder a rejected key into health (M4's cached path).
     if (sync.lastErrorStatus === HTTP_UNAUTHORIZED) {
-      return failureLine(failureHead(HTTP_UNAUTHORIZED, "http"), captureAge);
+      return { line: failureLine(failureHead(HTTP_UNAUTHORIZED, "http"), captureAge), present: [] };
     }
-    return presenceLine(
-      cache.entries,
-      captureAge ?? "never",
-      now,
-      cache.lastSeen,
-    );
+    return {
+      line: presenceLine(cache.entries, captureAge ?? "never", now, cache.lastSeen),
+      present: cache.entries,
+    };
   }
 
-  const result = await getPresence(ctx.hub, ctx.identity.repoId);
+  // The one presence call and the cache it refreshes, shared with the
+  // collision relay (hooks/presence-refresh.ts), at the full request timeout.
+  const result = await refreshPresence(ctx, ctx.hub.timeoutMs, cache);
   if (result.ok) {
-    // The last-seen list is SessionStart's to derive (it holds the work
-    // contexts); this write carries whatever the cache already had, so a
-    // refresh here never erases it.
-    await writePresenceCache(
-      ctx.config.home,
-      ctx.repoKey,
-      result.data,
-      now,
-      cache?.lastSeen ?? [],
-    );
-    return presenceLine(
-      result.data,
-      captureAge ?? "never",
-      now,
-      cache?.lastSeen ?? [],
-    );
+    return {
+      line: presenceLine(result.data, captureAge ?? "never", now, cache?.lastSeen ?? []),
+      present: result.data,
+    };
   }
 
-  return failureLine(failureHead(result.status, result.kind), captureAge);
+  return { line: failureLine(failureHead(result.status, result.kind), captureAge), present: [] };
+};
+
+/**
+ * `⚠ overlap: Mike · 3 files` while THIS session has told its person about a
+ * teammate collision (hints/collision-notice.ts; pilot, 2026-10-07) — read
+ * from the session's own state file, which the session id on stdin names, so
+ * no hub call and no budget. Names only, never a branch — and only teammates
+ * the presence answer this line is drawn from STILL lists (review M2): the
+ * record outlives the moment its row was projected, and presence drops a
+ * teammate who opted out, one the reader muted, and one who went offline or
+ * ended their session. Those are COUNTED instead — `⚠ overlap: 1 teammate ·
+ * 3 files` (round 2, M1): the pilot's teammate was offline, and an indicator
+ * that hid him hid the overlap. A hub that could not be read names nobody and
+ * still counts everybody. LEADING, in a bound of its own, so it never takes
+ * the characters of the capture-health indicator the line exists for. Fail
+ * open: no state, no segment.
+ */
+const overlapSegment = async (ctx: HookContext, present: readonly PresenceEntry[]): Promise<string> => {
+  try {
+    const state = await readSessionState(ctx.config.home, ctx.payload.session_id);
+    const indicator = renderOverlapIndicator(state?.collisionNotices ?? [], present);
+    return indicator.length === 0 ? "" : `${indicator} · `;
+  } catch {
+    return "";
+  }
 };
 
 /**
@@ -182,11 +229,17 @@ export const runStatusline = async (
   env: Env,
 ): Promise<string> => {
   try {
-    const ctx = await prepareHook(stdin, env);
-    if (ctx === null) {
+    const prepared = await prepareHookFor(stdin, env);
+    if (prepared.kind === "foreign_hub") {
+      return failureLine(KEY_NOT_SENT, null);
+    }
+    if (prepared.kind === "silent") {
       return "";
     }
-    const line = await renderForContext(ctx);
+    const { ctx } = prepared;
+    const presence = await renderForContext(ctx);
+    const overlap = await overlapSegment(ctx, presence.present);
+    const line = `${overlap}${presence.line}`;
     // The RENDERED fact, which nothing recorded before (trial finding H7).
     // `doctor`'s `statusline registered` line reads the settings file and
     // reports what it says — and the statusline is a terminal-TUI feature, so

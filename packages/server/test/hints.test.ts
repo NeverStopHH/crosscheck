@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
+import { DELIVERY_CHANNELS, SUBSTANCE_DELIVERY_CHANNEL } from "@crosscheck/schema";
+
 import { createRecordingEmbedder } from "./fixtures/fake-embedder.ts";
 import { HINT_MAX_CLAIMS_PER_CONTEXT } from "../src/services/hints.ts";
 import {
@@ -48,6 +50,7 @@ interface ContextCandidateView {
   };
   readonly claims: readonly ClaimCandidateView[];
   readonly matchedTargets: readonly MatchedTargetView[];
+  readonly claimsTruncated?: boolean;
 }
 
 const fetchCandidates = async (
@@ -145,6 +148,24 @@ const setupTwoDevelopers = async (): Promise<{
 };
 
 describe("GET /api/hints/candidates", () => {
+  test("the answer advertises every delivery channel this hub records, prompt_substance among them", async () => {
+    // Arrange — a connector books a shown finding on prompt_substance only
+    // where the hub says it records that channel; an older hub rejects it
+    const { harness, robin } = await setupTwoDevelopers();
+    const params = new URLSearchParams({ query: "why does refresh.ts 500", repo: REPO });
+
+    // Act
+    const response = await harness.app.request(
+      `/api/hints/candidates?${params.toString()}`,
+      jsonRequest("GET", robin.apiKey),
+    );
+
+    // Assert — the very list the hint_delivery record validator accepts
+    const body = (await response.json()) as { data: { deliveryChannels?: readonly string[] } };
+    expect(body.data.deliveryChannels).toEqual([...DELIVERY_CHANNELS]);
+    expect(body.data.deliveryChannels).toContain(SUBSTANCE_DELIVERY_CHANNEL);
+  });
+
   test("returns a matching teammate context with claims and trust fields", async () => {
     // Arrange
     const { harness, robin } = await setupTwoDevelopers();
@@ -527,6 +548,35 @@ describe("candidate pool integrity", () => {
     );
   });
 
+  test.each([
+    // Nick's context already holds two claims
+    ["exactly fills", HINT_MAX_CLAIMS_PER_CONTEXT - 2, false],
+    ["outgrows", HINT_MAX_CLAIMS_PER_CONTEXT - 1, true],
+  ])("a context that %s its claim window says whether rows stayed behind", async (_, fillerCount, truncated) => {
+    // Arrange — a hint counts "N more claims" off this window, so a window
+    // that cut rows must say so, or a 50-claim tree reads as 30
+    const { harness, nick, robin } = await setupTwoDevelopers();
+    const fillers = Array.from({ length: fillerCount }, (_unused, index) =>
+      recordEnvelope(
+        "claim",
+        validClaimBody({
+          id: `clm_window_${String(index).padStart(2, "0")}`,
+          body: `Window observation number ${String(index)}`,
+        }),
+      ),
+    );
+    const seeded = await postRecords(harness, nick, { records: fillers });
+    expect(seeded.data?.accepted).toBe(fillerCount);
+
+    // Act
+    const result = await fetchCandidates(harness, robin, "why does refresh.ts 500");
+
+    // Assert — the window itself never grows past its bound
+    const candidate = result.candidates.find((row) => row.workContext.id === WORK_CONTEXT_ID);
+    expect(candidate?.claims).toHaveLength(HINT_MAX_CLAIMS_PER_CONTEXT);
+    expect(candidate?.claimsTruncated).toBe(truncated);
+  });
+
   test("a flood of newer derived drafts cannot evict declared substance from the window", async () => {
     // Arrange — the conclusion summarizer's whole purpose is more derived
     // drafts per context, and the declared-only injection gate runs CLIENT
@@ -578,7 +628,7 @@ describe("candidate pool integrity", () => {
     );
   });
 
-  test("an unpromoted draft's body never leaves the hub, only its row", async () => {
+  test("an unpromoted draft never leaves the hub, neither its body nor its row", async () => {
     // Arrange (audit row V2-X4): a teammate's context carrying one DECLARED
     // evidence-backed claim and one derived, unreviewed draft. Nobody has
     // vouched for the draft and no reader's renderer may show it as
@@ -613,8 +663,10 @@ describe("candidate pool integrity", () => {
     expect(seeded.data?.accepted).toBe(2);
 
     // Act — the raw payload, because "must not ship" is a fact about bytes.
+    // The query shares the declared claim's topical words, so the control
+    // below is a body the hub's strong-match test lets through (round 3, H3).
     const params = new URLSearchParams({
-      query: "why does refresh.ts 500",
+      query: "why does refresh.ts 500 when the rotated key never propagated",
       repo: REPO,
     });
     const response = await harness.app.request(
@@ -633,14 +685,9 @@ describe("candidate pool integrity", () => {
 
     // Assert
     expect(payload).not.toContain("MACHINE GUESS");
-    // The ROW still travels: a pointer tells the reader how many claims it
-    // withholds, so withholding the body must not shrink that count.
-    expect(candidate?.claims.map((row) => row.id)).toContain(
-      "clm_unpromoted_draft",
-    );
-    expect(
-      candidate?.claims.find((row) => row.id === "clm_unpromoted_draft")?.body,
-    ).toBe("");
+    // Nor the ROW (draft-nudge review): a draft is not one of the tree's
+    // claims on the push path, so no pointer counts it as one it withholds.
+    expect(payload).not.toContain("clm_unpromoted_draft");
     // …and the control, on the same response: this is a rule about who
     // vouched for a body, not a renderer that stopped sending bodies.
     expect(

@@ -42,6 +42,7 @@ import { recordRefusedLife } from "../src/spool/refused-lives.ts";
 import { toLines } from "../src/spool/lines.ts";
 import { readSessionState } from "../src/state/session-state.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 
 const ADMIN_TOKEN = "owed-rules-admin";
 const REPO_ID = "github.com/acme/api";
@@ -94,7 +95,7 @@ const fixture = async (label: string): Promise<Fixture> => {
     key,
     hostSessionKey: `acp-rules--${label}`,
     clock,
-    hub: { hubUrl: proxyUrl, apiKey, timeoutMs: TIMEOUT_MS, home, repoKey: key, now: () => new Date(clock.ms) },
+    hub: { hubUrl: proxyUrl, keyOrigin: proxyUrl, apiKey, timeoutMs: TIMEOUT_MS, home, repoKey: key, now: () => new Date(clock.ms) },
   };
 };
 
@@ -112,6 +113,7 @@ const register = (fx: Fixture, hostSessionKey: string = fx.hostSessionKey) =>
     hubUrl: fx.hub.hubUrl,
     fallbackDeveloperId: developerId,
     title: fallbackWorkContextTitle(BRANCH, REPO_ID),
+    titleSource: "fallback",
     status: "analyzing",
     now: new Date(),
     guarantees: guaranteeDeclarationFor(ACP_CONNECTOR),
@@ -183,9 +185,9 @@ const forward = async (request: Request, pathname: string, search: string): Prom
 
 beforeAll(async () => {
   db = await createDb();
-  server = Bun.serve({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
+  server = serveLoopback({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
   hubUrl = `http://127.0.0.1:${server.port}`;
-  proxy = Bun.serve({
+  proxy = serveLoopback({
     port: 0,
     fetch: async (request) => {
       const { pathname, search } = new URL(request.url);

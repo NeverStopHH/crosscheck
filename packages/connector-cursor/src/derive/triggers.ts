@@ -40,13 +40,15 @@ import {
   sessionSlug,
   writePrivateFile,
 } from "@crosscheck/connector-core/config/paths.ts";
+import { selfSpawnCmd } from "@crosscheck/connector-core/config/runtime-isolation.ts";
 import { spawnDeriveWorker } from "@crosscheck/connector-core/derive/spawn.ts";
 import {
   hasGhostAllowance,
   withGhostClaimed,
 } from "@crosscheck/connector-core/derive/ghost/gate.ts";
 import {
-  isSubstantivePrompt,
+  intentPromptOf,
+  isIntentFireSpent,
   withIntentFire,
 } from "@crosscheck/connector-core/derive/intent/gate.ts";
 import {
@@ -57,7 +59,7 @@ import {
   withSummarizerNoSlice,
   withSummarizerSliceShape,
 } from "@crosscheck/connector-core/derive/summarizer/gate.ts";
-import { SUMMARIZER_PROMPT } from "@crosscheck/connector-core/model/runner.ts";
+import { SUMMARIZER_PROMPT, resolveSummarizerTimeoutMs } from "@crosscheck/connector-core/model/runner.ts";
 import {
   readSessionState,
   updateSessionState,
@@ -116,21 +118,21 @@ export const maybeSpawnCursorIntentWorker = async (
   ctx: CursorHookContext,
 ): Promise<void> => {
   try {
-    const prompt = ctx.payload.prompt ?? "";
-    if (!isSubstantivePrompt(prompt)) {
+    const prompt = intentPromptOf(ctx.payload.prompt ?? "");
+    if (prompt === null) {
       return;
     }
     const state = await readSessionState(ctx.config.home, ctx.hostSessionKey);
-    if (state === null || state.intentFireCount > 0) {
+    if (state === null || isIntentFireSpent(state)) {
       return;
     }
     let fired = false;
     await updateSessionState(ctx.config.home, ctx.hostSessionKey, (fresh) => {
-      if (fresh.intentFireCount > 0) {
+      if (isIntentFireSpent(fresh)) {
         return null;
       }
       fired = true;
-      return withIntentFire(fresh);
+      return withIntentFire(fresh, ctx.now(), resolveSummarizerTimeoutMs(ctx.env));
     });
     if (!fired) {
       return;
@@ -144,8 +146,7 @@ export const maybeSpawnCursorIntentWorker = async (
       cutWellFormed(prompt, INTENT_PROMPT_MAX_CHARS),
     );
     spawn(ctx, [
-      process.execPath,
-      INTENT_WORKER_ENTRY_PATH,
+      ...selfSpawnCmd(INTENT_WORKER_ENTRY_PATH),
       "--session",
       ctx.hostSessionKey,
       "--prompt-file",
@@ -188,8 +189,7 @@ export const maybeSpawnCursorGhostWorker = async (
       return;
     }
     spawn(ctx, [
-      process.execPath,
-      GHOST_WORKER_ENTRY_PATH,
+      ...selfSpawnCmd(GHOST_WORKER_ENTRY_PATH),
       "--session",
       ctx.hostSessionKey,
     ]);
@@ -321,13 +321,12 @@ export const runCursorSummarizerGate = async (
       return decoded;
     }
     fired = true;
-    return withSummarizerFire(decoded, estimateFireTokens(look.sliceText));
+    return withSummarizerFire(decoded, estimateFireTokens(look.sliceText), ctx.now(), resolveSummarizerTimeoutMs(ctx.env));
   });
 
   if (fired && look.slice !== null && look.transcriptPath !== null) {
     spawn(ctx, [
-      process.execPath,
-      SUMMARIZER_WORKER_ENTRY_PATH,
+      ...selfSpawnCmd(SUMMARIZER_WORKER_ENTRY_PATH),
       "--session",
       ctx.hostSessionKey,
       "--transcript",

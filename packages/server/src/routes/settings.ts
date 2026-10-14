@@ -9,15 +9,22 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { Context } from "hono";
 
+import { refusePreDraftingClient } from "../http/client-release.ts";
 import { fail, ok } from "../http/envelope.ts";
 import { readJsonBody, formatIssues } from "../http/request.ts";
 import { developerAuth } from "../middleware/auth.ts";
+import { getDeveloperSettings, setPresenceOptOut } from "../services/developer-settings.ts";
+import { countPendingForBanner } from "../services/human-drafts.ts";
 import {
-  addMute,
-  getDeveloperSettings,
-  removeMute,
-  setPresenceOptOut,
-} from "../services/developer-settings.ts";
+  DRAFT_REFUSAL_SENTENCE,
+  draftMuteChange,
+  draftPresenceOn,
+} from "../services/draft-doors.ts";
+
+/** Accepted, not in effect: a draft waits for the person's passkey. */
+const HTTP_ACCEPTED = 202;
+/** Nothing new waits: the same request is already on the page. */
+const HTTP_OK = 200;
 // One bound for one concept: a reference too long to mute must not be short
 // enough to filter a search by (services/developer-lookup.ts).
 import {
@@ -91,69 +98,135 @@ export const settingsRoutes = (deps: AppDeps): Hono<AppEnv> => {
   router.use("*", developerAuth(deps));
 
   router.get("/", async (c) => {
-    const settings = await getDeveloperSettings(deps.db, c.get("developer").id);
-    return ok(c, settings);
+    const developerId = c.get("developer").id;
+    // A banner's count: liveness reused while the pending set is unchanged (round-1 M8).
+    const [settings, pending] = await Promise.all([
+      getDeveloperSettings(deps.db, developerId, deps.now()),
+      countPendingForBanner(deps, developerId),
+    ]);
+    return ok(c, {
+      ...settings,
+      // human provenance §8: a key's request to show the caller again waits for their passkey.
+      presenceOnPending: (pending.presence_on ?? 0) > 0,
+      // How many of the caller's drafts wait at /ui/confirm.
+      pendingDrafts: Object.values(pending).reduce((total, count) => total + count, 0),
+    });
   });
 
+  /**
+   * GOING MORE PRIVATE NEVER WAITS; GOING LESS PRIVATE WAITS FOR THE PERSON
+   * (human provenance §8). An opt-out takes effect at once — a works-council
+   * opt-out must never wait for a passkey — and is recorded `agent_asserted`
+   * and shown to the person, since the key cannot say who sent it. Switching
+   * presence back on is a draft: the person stays hidden until they confirm.
+   */
   router.put("/presence", async (c) => {
     const parsed = PresenceBodySchema.safeParse(await readJsonBody(c));
     if (!parsed.success) {
       return fail(c, 400, "validation_failed", formatIssues(parsed.error));
     }
-    await setPresenceOptOut(
-      deps.db,
-      c.get("developer").id,
-      parsed.data.optOut,
-    );
-    return ok(c, { presenceOptOut: parsed.data.optOut });
+    const developerId = c.get("developer").id;
+    if (parsed.data.optOut) {
+      await setPresenceOptOut(
+        { db: deps.db, now: deps.now, embedder: deps.embedder },
+        developerId,
+        true,
+        "agent_asserted",
+      );
+      return ok(c, { presenceOptOut: true });
+    }
+    // Presence back on drafts, so a client older than 0.11 may be refused here — never above.
+    const preDrafting = refusePreDraftingClient(c, deps);
+    if (preDrafting !== null) {
+      return preDrafting;
+    }
+    const outcome = await draftPresenceOn(deps, developerId);
+    if ("refusal" in outcome) {
+      return fail(c, 422, outcome.refusal, DRAFT_REFUSAL_SENTENCE[outcome.refusal]);
+    }
+    // 202 only with the request waiting on the person's page (review H2).
+    return "unchanged" in outcome
+      ? ok(c, { presenceOptOut: false })
+      : ok(
+          c,
+          { presenceOptOut: true, draft: true, waiting: outcome.waiting, provenance: outcome.provenance, notice: outcome.notice },
+          outcome.waiting ? HTTP_ACCEPTED : HTTP_OK,
+        );
   });
 
   router.post("/mutes", async (c) => {
+    const preDrafting = refusePreDraftingClient(c, deps);
+    if (preDrafting !== null) {
+      return preDrafting;
+    }
     const parsed = MuteBodySchema.safeParse(await readJsonBody(c));
     if (!parsed.success) {
       return fail(c, 400, "validation_failed", formatIssues(parsed.error));
     }
-    const result = await addMute(
-      deps,
-      c.get("developer").id,
-      parsed.data.developer,
-    );
+    // A DRAFT (human provenance §8): any mute is the person's setting, so a
+    // key's mute waits for their passkey. The teammate is resolved now.
+    const result = await draftMuteChange(deps, c.get("developer").id, parsed.data.developer, "mute");
+    if ("refusal" in result) {
+      return fail(c, 422, result.refusal, DRAFT_REFUSAL_SENTENCE[result.refusal]);
+    }
     switch (result.outcome) {
       case "not_found":
       case "ambiguous":
         return failForResolution(c, deps, parsed.data.developer, result.outcome);
       case "self":
         return fail(c, 400, "validation_failed", "you cannot mute yourself");
-      case "limit_reached":
-        return fail(
+      case "unchanged":
+        return ok(c, { muted: result.developer, alreadyMuted: true });
+      case "drafted":
+        return ok(
           c,
-          409,
-          "mute_limit_reached",
-          "your mute list is full — unmute someone first",
+          {
+            muted: result.developer,
+            alreadyMuted: false,
+            draft: true,
+            waiting: result.waiting,
+            provenance: result.provenance,
+            notice: result.notice,
+          },
+          result.waiting ? HTTP_ACCEPTED : HTTP_OK,
         );
-      case "muted":
-        return ok(c, {
-          muted: result.developer,
-          alreadyMuted: result.alreadyMuted,
-        });
     }
   });
 
   router.delete("/mutes/:ref", async (c) => {
+    const preDrafting = refusePreDraftingClient(c, deps);
+    if (preDrafting !== null) {
+      return preDrafting;
+    }
     const ref = c.req.param("ref");
     if (ref.length === 0 || ref.length > MAX_DEVELOPER_REF_CHARS) {
       return fail(c, 400, "validation_failed", "invalid developer reference");
     }
-    const result = await removeMute(deps.db, c.get("developer").id, ref);
+    // A DRAFT too: only going more private takes effect from a key (§8).
+    const result = await draftMuteChange(deps, c.get("developer").id, ref, "unmute");
+    if ("refusal" in result) {
+      return fail(c, 422, result.refusal, DRAFT_REFUSAL_SENTENCE[result.refusal]);
+    }
     switch (result.outcome) {
       case "not_found":
       case "ambiguous":
-        return failForResolution(c, deps, ref, result.outcome);
-      case "unmuted":
-        return ok(c, {
-          unmuted: result.developer,
-          wasMuted: result.wasMuted,
-        });
+      case "self":
+        return failForResolution(c, deps, ref, result.outcome === "ambiguous" ? "ambiguous" : "not_found");
+      case "unchanged":
+        return ok(c, { unmuted: result.developer, wasMuted: false });
+      case "drafted":
+        return ok(
+          c,
+          {
+            unmuted: result.developer,
+            wasMuted: true,
+            draft: true,
+            waiting: result.waiting,
+            provenance: result.provenance,
+            notice: result.notice,
+          },
+          result.waiting ? HTTP_ACCEPTED : HTTP_OK,
+        );
     }
   });
 

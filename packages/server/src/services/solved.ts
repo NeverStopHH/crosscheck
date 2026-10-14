@@ -5,9 +5,16 @@
  * A work context is SOLVED when it holds at least one likely_root_cause claim
  * that (a) still stands — not revised away by a supersedes edge, the same
  * probe the hints path applies (services/hints.ts notSuperseded) — and
- * (b) carries evidence refs, the anchoring-asymmetry evidence rule: a root
- * cause without evidence is a theory, and a theory must never earn the solved
- * ranking floor or the solved label readers treat as settled — and
+ * (b) carries evidence that RESOLVES, the anchoring-asymmetry evidence rule: a
+ * root cause without evidence is a theory, and a theory must never earn the
+ * solved ranking floor or the solved label readers treat as settled. A ref
+ * counts by the one rule the hint's evidenceBacked and the connector's
+ * mirror apply too (`@crosscheck/schema` evidence-resolution.ts, hold-out
+ * review H5 + M2): its revision head a standing, declared observation or
+ * piece of evidence with content, in the same repo, and neither the claim
+ * itself nor its own revision chain. A count of refs used to be the floor, and
+ * a self-cite, a draft, a refuted observation or a decision citing it back
+ * read SOLVED — and
  * (c) carries DECLARED provenance, the gate every sibling trust surface
  * applies (contradictions on both sides, similarity-gate, the hint
  * selector's isDeclared): a machine-derived row is nobody's vouched answer,
@@ -18,9 +25,9 @@
  * another qualifying likely_root_cause in the same tree, the tree holds two
  * standing answers that cannot both be right. That is the referee-mode
  * dispute (DESIGN.md §4), and a dispute must not read settled on any
- * surface. A rival that is evidence-free, derived or superseded does not
- * count — a drive-by theory cannot unsolve a tree, and retracting one side
- * of a deadlock settles it again.
+ * surface. A rival whose evidence does not resolve, derived or superseded
+ * does not count — a drive-by theory cannot unsolve a tree, and retracting
+ * one side of a deadlock settles it again.
  *
  * SOLVED is a fact about the DIAGNOSIS (the tree says what the root cause
  * was); LANDED (work_contexts.landed_at, services/landed.ts) is a fact about
@@ -33,7 +40,8 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { AnyColumn, SQL } from "drizzle-orm";
 
-import { claimEdges, claims } from "../db/schema.ts";
+import { agentSessions, claimEdges, claims } from "../db/schema.ts";
+import { resolvedEvidenceCounts } from "./evidence-resolution.ts";
 import { DECLARED_PROVENANCE } from "./similarity-gate.ts";
 import type { Db } from "../db/client.ts";
 
@@ -44,9 +52,20 @@ export const SOLVED_CLAIM_STATUS = "likely_root_cause";
  * Evidence floor for the solving claim — mirrors the connector's
  * HINT_MIN_EVIDENCE_REFS (packages/connector-core/src/constants.ts) and the
  * wire rule in @crosscheck/schema (likely_root_cause requires ≥1 evidence
- * ref); enforced here too so a row that bypassed ingest cannot count.
+ * ref); enforced here too so a row that bypassed ingest cannot count, and
+ * counted in RESOLVED refs, not stored ones.
  */
 export const SOLVED_MIN_EVIDENCE_REFS = 1;
+
+/**
+ * Read bound on candidate rows PER CONTEXT (hold-out review round 3, M3). It
+ * used to bound the whole lookup, newest first, BEFORE evidence resolved — so
+ * 210 newer root causes citing themselves in one tree filled the window and
+ * hid the next tree's backed cause, and its solved label with it. Per tree,
+ * one tree's noise can only crowd itself; a tree holds a handful of standing
+ * root causes, so this is the usual "bounded like every other query" floor.
+ */
+const SOLVED_CANDIDATE_MAX_ROWS_PER_CONTEXT = 50;
 
 /** Same-author revision edge; its TARGET is the retracted claim. */
 const SUPERSEDES_EDGE_KIND = "supersedes";
@@ -54,62 +73,97 @@ const SUPERSEDES_EDGE_KIND = "supersedes";
 /** Disagreement edge; between two qualifying root causes it is a deadlock. */
 const CONTRADICTS_EDGE_KIND = "contradicts";
 
-/** Driver-agnostic timestamp read: raw aggregates bypass drizzle's mapping. */
-const toDate = (value: unknown): Date | null => {
-  if (value instanceof Date) {
-    return value;
-  }
-  if (typeof value === "string") {
-    const ms = Date.parse(value);
-    return Number.isNaN(ms) ? null : new Date(ms);
-  }
-  return null;
-};
-
 /**
- * THE solved predicate, as one expression: every rule the header states,
- * over a caller-bounded id list. Extracted because two readers now need it —
- * "is this tree solved, and when" and "what does it say the cause was" — and
- * two spellings of a trust rule are two rules. A body served under the
- * solved label by a query that had drifted from this one would be substance
- * injected on a vouch nobody made.
+ * The claims that could solve a tree, before their evidence is resolved:
+ * standing, declared root causes carrying at least one stored ref. The
+ * stored count is a necessary bound for the query, never the rule.
  */
-const solvedClaimCondition = (contextIds: readonly string[]): SQL =>
+const candidateClaimCondition = (contextIds: readonly string[]): SQL =>
   and(
     inArray(claims.workContextId, [...contextIds]),
     eq(claims.status, SOLVED_CLAIM_STATUS),
     eq(claims.provenance, DECLARED_PROVENANCE),
     sql`jsonb_array_length(${claims.evidenceRefs}) >= ${SOLVED_MIN_EVIDENCE_REFS}`,
     sql`NOT EXISTS (SELECT 1 FROM ${claimEdges} WHERE ${claimEdges.toClaimId} = ${claims.id} AND ${claimEdges.kind} = ${SUPERSEDES_EDGE_KIND})`,
-    // The deadlock probe: raw identifiers because the same two tables
-    // appear twice (peer, se) and drizzle's table refs cannot alias
-    // inside a sql fragment. Peer scope is THE SAME TREE — the
-    // connector's mirror (mcp/render.ts solvedAtFromTree) only sees
-    // local claims, and the two rules must answer identically.
-    sql`NOT EXISTS (
-      SELECT 1 FROM claim_edges dl
-      JOIN claims peer ON peer.id = CASE
-        WHEN dl.from_claim_id = ${claims.id} THEN dl.to_claim_id
-        ELSE dl.from_claim_id
-      END
-      WHERE dl.kind = ${CONTRADICTS_EDGE_KIND}
-        AND (dl.from_claim_id = ${claims.id} OR dl.to_claim_id = ${claims.id})
-        AND peer.work_context_id = ${claims.workContextId}
-        AND peer.status = ${SOLVED_CLAIM_STATUS}
-        AND peer.provenance = ${DECLARED_PROVENANCE}
-        AND jsonb_array_length(peer.evidence_refs) >= ${SOLVED_MIN_EVIDENCE_REFS}
-        AND NOT EXISTS (
-          SELECT 1 FROM claim_edges se
-          WHERE se.to_claim_id = peer.id AND se.kind = ${SUPERSEDES_EDGE_KIND}
-        )
-    )`,
   ) as SQL;
+
+interface SolvingClaim {
+  readonly id: string;
+  readonly workContextId: string;
+  readonly createdAt: Date;
+  readonly body: string;
+  readonly confidence: number;
+  readonly verificationRef: string | null;
+  readonly commitBinding: string;
+  readonly observedAtCommit: string | null;
+  /** Who wrote it: its commit is that author's HEAD (SolvedRootCause.authorDeveloperId). */
+  readonly authorDeveloperId: string;
+}
+
+/**
+ * Qualifying claims a contradicts edge joins to another qualifying claim of
+ * the same tree. The connector's mirror (mcp/render.ts solvedAtFromTree)
+ * only sees one tree's claims, and the two rules answer identically.
+ */
+const listDeadlocked = async (db: Db, qualifying: readonly SolvingClaim[]): Promise<ReadonlySet<string>> => {
+  if (qualifying.length < 2) {
+    return new Set();
+  }
+  const ids = qualifying.map((claim) => claim.id);
+  const treeOf = new Map(qualifying.map((claim) => [claim.id, claim.workContextId]));
+  const edges = await db
+    .select({ from: claimEdges.fromClaimId, to: claimEdges.toClaimId })
+    .from(claimEdges)
+    .where(and(eq(claimEdges.kind, CONTRADICTS_EDGE_KIND), inArray(claimEdges.fromClaimId, ids), inArray(claimEdges.toClaimId, ids)));
+  return new Set(edges.filter((edge) => treeOf.get(edge.from) === treeOf.get(edge.to)).flatMap((edge) => [edge.from, edge.to]));
+};
+
+/**
+ * THE solved predicate: every rule the header states, over a caller-bounded
+ * id list, newest first. Two readers need it — "is this tree solved, and
+ * when" and "what does it say the cause was" — and two spellings of a trust
+ * rule are two rules. A body served under the solved label by a query that
+ * had drifted from this one would be substance injected on a vouch nobody
+ * made.
+ */
+/** The candidate claims of `contextIds`, newest first, within one bound (M3: one tree per call). */
+const listCandidatesOf = (db: Db, contextIds: readonly string[]) =>
+  db
+    .select({
+      id: claims.id,
+      workContextId: claims.workContextId,
+      createdAt: claims.createdAt,
+      body: claims.body,
+      confidence: claims.confidence,
+      verificationRef: claims.verificationRef,
+      commitBinding: claims.commitBinding,
+      observedAtCommit: claims.observedAtCommit,
+      authorDeveloperId: agentSessions.developerId,
+    })
+    .from(claims)
+    .innerJoin(agentSessions, eq(claims.authorSessionId, agentSessions.id))
+    .where(candidateClaimCondition(contextIds))
+    .orderBy(desc(claims.createdAt))
+    .limit(SOLVED_CANDIDATE_MAX_ROWS_PER_CONTEXT);
+
+const listSolvingClaims = async (db: Db, contextIds: readonly string[]): Promise<readonly SolvingClaim[]> => {
+  if (contextIds.length === 0) {
+    return [];
+  }
+  // PER TREE (round 3, M3): each bounded on its own, so no tree's flood can
+  // push another tree's cause out of the window before evidence resolves.
+  const candidates = (await Promise.all(contextIds.map((contextId) => listCandidatesOf(db, [contextId])))).flat();
+  const resolved = await resolvedEvidenceCounts(db, candidates.map((claim) => claim.id));
+  const qualifying = candidates.filter((claim) => (resolved.get(claim.id) ?? 0) >= SOLVED_MIN_EVIDENCE_REFS);
+  const deadlocked = await listDeadlocked(db, qualifying);
+  return qualifying.filter((claim) => !deadlocked.has(claim.id));
+};
 
 /**
  * A NECESSARY condition for solvedness, as a correlated EXISTS over whichever
  * work-context column a listing already has in hand — the cheap half of the
- * predicate above (status + provenance + evidence), WITHOUT the supersedes
- * and deadlock probes.
+ * predicate above (status + provenance + a stored ref), WITHOUT the
+ * supersedes probe, the evidence resolution and the deadlock probe.
  *
  * WHY A SECOND, WEAKER SPELLING EXISTS at all, when this file's whole point
  * is that the solved rule has one: because a listing that JOINS to find
@@ -121,10 +175,11 @@ const solvedClaimCondition = (contextIds: readonly string[]): SQL =>
  * (test/solved-fanout.test.ts).
  *
  * THE DIRECTION IS THE CONTRACT: this may over-include, never under-include.
- * It admits a superseded or deadlocked tree; `listSolvedInfo` — still run by
- * every caller afterwards, on the ids this narrowed down to — then refuses
- * it. So the trust rule keeps exactly one spelling; this is a read bound
- * wearing its shape, and a tree it wrongly admits costs a row, never a claim.
+ * It admits a superseded, unbacked or deadlocked tree; `listSolvedInfo` —
+ * still run by every caller afterwards, on the ids this narrowed down to —
+ * then refuses it. So the trust rule keeps exactly one spelling; this is a
+ * read bound wearing its shape, and a tree it wrongly admits costs a row,
+ * never a claim.
  */
 export const solvedCandidateCondition = (contextId: SQL | AnyColumn): SQL =>
   sql`EXISTS (
@@ -138,7 +193,7 @@ export const solvedCandidateCondition = (contextId: SQL | AnyColumn): SQL =>
 /**
  * Which of `contextIds` are solved, and when — `solvedAt` is the newest
  * qualifying claim's createdAt, the "diagnosed N days ago" every surface
- * states plainly (honest presentation). One bounded query: the id list is
+ * states plainly (honest presentation). Bounded queries: the id list is
  * caller-bounded (search tier candidates, hint candidates), and the
  * supersedes probe rides the claim_edges_to_kind_idx index the hints path
  * already created.
@@ -147,32 +202,14 @@ export const listSolvedInfo = async (
   db: Db,
   contextIds: readonly string[],
 ): Promise<ReadonlyMap<string, Date>> => {
-  if (contextIds.length === 0) {
-    return new Map();
-  }
-  const rows = await db
-    .select({
-      workContextId: claims.workContextId,
-      solvedAt: sql`max(${claims.createdAt})`,
-    })
-    .from(claims)
-    .where(solvedClaimCondition(contextIds))
-    .groupBy(claims.workContextId);
-  return new Map(
-    rows.flatMap((row) => {
-      const solvedAt = toDate(row.solvedAt);
-      return solvedAt === null ? [] : [[row.workContextId, solvedAt] as const];
-    }),
-  );
+  const solving = await listSolvingClaims(db, contextIds);
+  return solving.reduce<ReadonlyMap<string, Date>>((solvedAt, claim) => {
+    const known = solvedAt.get(claim.workContextId);
+    return known !== undefined && known.getTime() >= claim.createdAt.getTime()
+      ? solvedAt
+      : new Map([...solvedAt, [claim.workContextId, claim.createdAt]]);
+  }, new Map());
 };
-
-/**
- * Read bound on qualifying root-cause rows per lookup. The caller's id list
- * is already capped (SOLVED_MATCH_MAX_FINDINGS trees), and a tree holds a
- * handful of standing root causes at most, so this is the usual "bounded
- * like every other query" floor rather than a working limit.
- */
-export const SOLVED_ROOT_CAUSE_MAX_ROWS = 50;
 
 /** A solved tree's recorded cause, with the label the reader weighs it by. */
 export interface SolvedRootCause {
@@ -205,6 +242,11 @@ export interface SolvedRootCause {
   readonly verificationRef: string | null;
   readonly commitBinding: string;
   readonly observedAtCommit: string | null;
+  /**
+   * Who wrote the cause: its commit is that author's HEAD, which a viewer
+   * their live location is hidden from does not get (services/live-location.ts).
+   */
+  readonly authorDeveloperId: string;
 }
 
 /**
@@ -215,43 +257,35 @@ export interface SolvedRootCause {
  * always describe one claim. Its confidence rides along for the same reason:
  * one claim, one set of labels.
  *
- * Newest-first plus first-wins in JS rather than DISTINCT ON: the row cap
- * above keeps it small, and the two readers then share the predicate instead
- * of one of them growing a dialect-specific clause the other lacks.
+ * ONE PER TREE, NEVER A CUT ACROSS TREES (round 3, M3): the answer holds at
+ * most one cause per caller-bounded id, and a cut of the qualifying rows —
+ * a cap of fifty, newest first — let a tree of sixty backed causes push the
+ * next tree's out of it.
  */
 export const listSolvedRootCauses = async (
   db: Db,
   contextIds: readonly string[],
 ): Promise<ReadonlyMap<string, SolvedRootCause>> => {
-  if (contextIds.length === 0) {
-    return new Map();
-  }
-  const rows = await db
-    .select({
-      id: claims.id,
-      workContextId: claims.workContextId,
-      body: claims.body,
-      confidence: claims.confidence,
-      verificationRef: claims.verificationRef,
-      commitBinding: claims.commitBinding,
-      observedAtCommit: claims.observedAtCommit,
-    })
-    .from(claims)
-    .where(solvedClaimCondition(contextIds))
-    .orderBy(desc(claims.createdAt))
-    .limit(SOLVED_ROOT_CAUSE_MAX_ROWS);
-  const newest = new Map<string, SolvedRootCause>();
-  for (const row of rows) {
-    if (!newest.has(row.workContextId)) {
-      newest.set(row.workContextId, {
-        claimId: row.id,
-        body: row.body,
-        confidence: row.confidence,
-        verificationRef: row.verificationRef,
-        commitBinding: row.commitBinding,
-        observedAtCommit: row.observedAtCommit,
-      });
-    }
-  }
-  return newest;
+  const solving = await listSolvingClaims(db, contextIds);
+  return solving.reduce<ReadonlyMap<string, SolvedRootCause>>(
+    (newest, claim) =>
+      newest.has(claim.workContextId)
+        ? newest
+        : new Map([
+            ...newest,
+            [
+              claim.workContextId,
+              {
+                claimId: claim.id,
+                body: claim.body,
+                confidence: claim.confidence,
+                verificationRef: claim.verificationRef,
+                commitBinding: claim.commitBinding,
+                observedAtCommit: claim.observedAtCommit,
+                authorDeveloperId: claim.authorDeveloperId,
+              },
+            ],
+          ]),
+    new Map(),
+  );
 };

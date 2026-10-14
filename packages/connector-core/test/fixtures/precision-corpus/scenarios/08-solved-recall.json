@@ -76,7 +76,7 @@
       "workContextId": "wc_indexer_solved",
       "authorSessionId": "s_priya_indexer",
       "kind": "root_cause",
-      "body": "foldToken strips combining marks before normalization so accented terms never reach the index",
+      "body": "foldToken drops the diacritics as combining marks before normalization, so accented terms never reach the index",
       "status": "likely_root_cause",
       "confidence": 0.9,
       "captureMode": "agent",

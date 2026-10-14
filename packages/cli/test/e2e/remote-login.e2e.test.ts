@@ -20,6 +20,7 @@
  * hub's slowness IS what is under test, and every timeout that meets it is
  * the code's own.
  */
+import { serveLoopback } from "../../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -52,7 +53,7 @@ afterEach(async () => {
 
 /** A hub that answers everything correctly — 600 ms later. */
 const farHub = (): ReturnType<typeof Bun.serve> =>
-  Bun.serve({
+  serveLoopback({
     port: 0,
     fetch: async () => {
       await Bun.sleep(HUB_DELAY_MS);
@@ -72,7 +73,16 @@ describe("first login from far away, zero configuration", () => {
     paths.push(home, repo);
     const server = farHub();
     const hubUrl = `http://127.0.0.1:${server.port}`;
-    const env = { CROSSCHECK_HOME: home, HOME: home };
+    // A teammate's machine has a model backend (claude on PATH); this env has
+    // no PATH at all, so the backend is named outright — without one, doctor
+    // rightly WARNs that this agent can derive nothing — and the runner probe
+    // is skipped rather than spawning it.
+    const env = {
+      CROSSCHECK_HOME: home,
+      HOME: home,
+      CROSSCHECK_SUMMARIZER_CMD: process.execPath,
+      CROSSCHECK_DOCTOR_NO_PROBE: "1",
+    };
 
     // Act 1: the front door, real probes against the real 600 ms hub
     const login = await runLogin([hubUrl], env, async () => "test-key");
@@ -97,8 +107,21 @@ describe("first login from far away, zero configuration", () => {
     const init = await runInit([], env, repo);
     expect(init.exitCode).toBe(0);
 
-    // Act 3: the health check, at the stored timeout, over the same far hub
-    const doctor = await runDoctor(env, repo);
+    // Act 3: the health check, at the stored timeout, over the same far hub.
+    // SIMULATED: a hub running under its own OS user. This test's far hub is
+    // served on loopback by the test process itself, so it shares the test's
+    // uid, and the hub separation check (doctor-hub-separation.ts) would
+    // rightly WARN about that. This file tests login from far away, not
+    // separation, so the listener lookup reports what a teammate's hub would
+    // show: another uid's bun. The check itself still runs on that answer.
+    const separatedHub = {
+      listListeners: () =>
+        Promise.resolve({
+          kind: "found" as const,
+          listeners: [{ uid: (process.getuid?.() ?? 0) + 1, user: "crosscheck-hub", command: "bun" }],
+        }),
+    };
+    const doctor = await runDoctor(env, repo, undefined, undefined, separatedHub);
     server.stop(true);
 
     // Assert 3: GREEN — every check passes, and the three connection lines

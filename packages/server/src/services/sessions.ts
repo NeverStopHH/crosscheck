@@ -28,7 +28,9 @@ import { recordSessionEvent } from "./session-events.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 import type { RegisterSessionBody } from "../http/schemas.ts";
+import { recordDeveloperBranch } from "./developer-branches.ts";
 import { sweepSkeleton } from "./retention.ts";
+import { visiblePresenceCondition } from "./visibility.ts";
 import type { RetentionRelation } from "./retention-registry.ts";
 
 const DEFAULT_END_STATUS: SessionStatus = "done";
@@ -150,6 +152,20 @@ const lossColumns = (
     : reportedColumns(report, settleLossReport(report), now);
 
 /**
+ * WHAT A RE-REGISTER LEAVES IN `base_on_default`. Sent wins. Unsaid keeps the
+ * stored answer only while the base commit is unchanged — a recovery path
+ * re-registers without probing git, and wiping a known answer would demote
+ * the session to "never said" for nothing. Unsaid about a NEW base is
+ * unknown: the old answer was about a different commit.
+ */
+const carriedBaseOnDefault = (
+  existing: SessionRow,
+  input: RegisterSessionBody,
+): boolean | null =>
+  input.baseOnDefault ??
+  (existing.baseCommit === input.baseCommit ? existing.baseOnDefault : null);
+
+/**
  * THE ORDER THE HUB ALREADY HOLDS FOR A SESSION THAT REGISTERS AGAIN (seeds
  * 31214, 4286): the epoch its `session.started` was filed under, and the
  * highest position the hub holds in it. A connector that resumes the session
@@ -207,6 +223,8 @@ export const registerSession = async (
       repo: input.repo,
       branch: input.branch,
       baseCommit: input.baseCommit,
+      baseOnDefault: input.baseOnDefault ?? null,
+      baseChangedAt: timestamp,
       status: input.status,
       startedAt: timestamp,
       lastHeartbeatAt: timestamp,
@@ -216,6 +234,10 @@ export const registerSession = async (
     .returning();
   const insertedRow = inserted[0];
   if (insertedRow !== undefined) {
+    // Every branch a session reports is remembered for its developer
+    // (services/developer-branches.ts): what an opted-out owner's unmarked
+    // titles are judged against (services/live-location.ts).
+    await recordDeveloperBranch(deps.db, developerId, insertedRow.branch, timestamp);
     await appendEvent(deps, EVENT_KINDS.SESSION_STARTED, {
       sessionId: insertedRow.id,
       developerId,
@@ -276,11 +298,17 @@ export const registerSession = async (
       status: input.status,
       branch: input.branch,
       baseCommit: input.baseCommit,
+      baseOnDefault: carriedBaseOnDefault(existing, input),
+      // When the session took this base: only a new base moves it.
+      baseChangedAt: existing.baseCommit === input.baseCommit ? existing.baseChangedAt : timestamp,
       lastHeartbeatAt: timestamp,
       ...lossColumns(input.losses, timestamp),
     })
     .where(eq(agentSessions.id, input.id))
     .returning();
+  // A re-registration may have MOVED the branch: the old one stays known
+  // (it is already a row), the new one joins it.
+  await recordDeveloperBranch(deps.db, developerId, input.branch, timestamp);
   // A RE-REGISTER ONLY WEAKENS (01a §3.6): the rows already stored were
   // produced under the first declaration.
   await weakenDeclaredGuarantees(deps.db, input.id, input.guarantees);
@@ -741,9 +769,14 @@ export const listOpenSessions = async (
       and(
         isNull(agentSessions.endedAt),
         lt(agentSessions.lastHeartbeatAt, cutoff),
-        ...(options.mine === true
-          ? [eq(agentSessions.developerId, developerId)]
-          : []),
+        // Another developer's row with its branch, commit and heartbeat
+        // withheld carries nothing a reader can use but THAT the session
+        // exists — which is presence. So an opted-out developer's open
+        // sessions are not listed to anyone else at all; their own read
+        // (mine=1) is untouched (services/visibility.ts).
+        options.mine === true
+          ? eq(agentSessions.developerId, developerId)
+          : visiblePresenceCondition(developerId, agentSessions.developerId),
       ),
     )
     .orderBy(desc(agentSessions.lastHeartbeatAt))

@@ -1,8 +1,12 @@
 import { z } from "zod";
+import { WorkContextTitleSourceSchema } from "@crosscheck/schema";
 
 import {
+  DERIVE_FIRES_KEPT,
   DOCTOR_ZOMBIE_STATE_WARN_HOURS,
   MAX_BRIEFING_SOLVED_REFS,
+  MAX_COLLISION_FILES,
+  MAX_COLLISION_NOTICES,
   MAX_SHOWN_LANDED_NOTICE_IDS,
   MAX_KNOWN_WORKTREE_ROOTS,
   MAX_PROBED_FINGERPRINTS,
@@ -12,16 +16,25 @@ import {
   MINUTES_PER_HOUR,
   MS_PER_SECOND,
   SECONDS_PER_MINUTE,
+  GIT_TOUCHES_TIMEOUT_MS,
   SESSION_STATE_LOCK_RETRIES,
   STATUS_MAX_SESSION_STATES,
+  SUMMARIZER_TIMEOUT_MS,
+  TRIPWIRE_RECHECK_TTL_MS,
 } from "../constants.ts";
 import {
   readJsonOrNull,
   removeFile,
+  repoKey,
   sessionStatePath,
   writePrivateFile,
 } from "../config/paths.ts";
 import { withLock } from "../spool/lock.ts";
+import { NO_GENERATED, addGeneratedTally } from "../capture/generated.ts";
+import type { GeneratedTally } from "../capture/generated.ts";
+import { recordCaptureLoss } from "./loss-ledger.ts";
+import { recordRestOmission } from "./rest-omissions.ts";
+import { removeOwedRestsBooked } from "./rests-booked.ts";
 import {
   listSessionStateFiles,
   sessionSilentForMs,
@@ -46,7 +59,8 @@ const withSessionStateLock = async <T>(
   path: string,
   fallback: T,
   action: () => Promise<T>,
-): Promise<T> => withLock(path, fallback, action, SESSION_STATE_LOCK_RETRIES);
+  retries: number = SESSION_STATE_LOCK_RETRIES,
+): Promise<T> => withLock(path, fallback, action, retries);
 
 /**
  * Past this much silence a state file is a CORPSE, not a live session: the
@@ -112,6 +126,160 @@ const dropRetiredToolWindowKeys = (value: unknown): unknown => {
   );
 };
 
+/**
+ * One model run's start and the deadline its worker was given, as the fire's
+ * gate booked them (`deriveFires`). An entry without a deadline was booked
+ * before it existed, under the default one.
+ */
+export const DeriveFireSchema = z.object({
+  at: z.string().min(1),
+  deadlineMs: z.number().int().positive().default(SUMMARIZER_TIMEOUT_MS),
+});
+
+export type DeriveFire = z.infer<typeof DeriveFireSchema>;
+
+/**
+ * The ring read ENTRY BY ENTRY: one fire booked malformed (an unsafe deadline,
+ * a missing instant) costs only itself, and a value that is not a list reads
+ * as no fires. Parsed as one array, a single bad entry failed the whole state
+ * file — readSessionState returned null and every later update of the
+ * session was refused (review round 3). The derive history reads its copy the
+ * same way (state/derive-history.ts).
+ */
+export const DeriveFiresSchema = z
+  .array(z.unknown())
+  .optional()
+  .catch(undefined)
+  .transform((entries): DeriveFire[] =>
+    (entries ?? []).flatMap((entry) => {
+      const parsed = DeriveFireSchema.safeParse(entry);
+      return parsed.success ? [parsed.data] : [];
+    }),
+  );
+
+/**
+ * ONE TEAMMATE FILE GROUP THIS SESSION'S PERSON WAS TOLD ABOUT (pilot,
+ * 2026-10-07; hints/collision-notice.ts renders it). The group is a teammate's
+ * WORK CONTEXT — `key` is the (developer, work context) pair — so a second
+ * file of the same group joins it silently and the person is told once.
+ *
+ * Stored as the renderer will need it and no more: the display name and the
+ * branch already BARE-sanitized and capped (they are re-sanitized at every
+ * render all the same), the branch null whenever the row withheld it, and
+ * the files the reader's own repo-relative paths, capped in count and length.
+ */
+export const CollisionNoticeSchema = z.object({
+  key: z.string().min(1),
+  developerId: z.string().min(1),
+  name: z.string(),
+  files: z.array(z.string().min(1)),
+  fileCount: z.number().int().min(0),
+  branch: z.string().nullable(),
+  lastActiveAt: z.string().nullable(),
+  /** The answer it came from said a rung of the record is incomplete (COV-9). */
+  partial: z.boolean().optional(),
+  /** The teammate's work context had LANDED when the row was read. */
+  landed: z.boolean().optional(),
+  /** The files their LARGE change touched, when the row said so — a qualifier the line prints (release gate, gap 6). */
+  largeChangeFiles: z.number().int().min(0).optional(),
+  /**
+   * A teammate the hub would not name — one who opted out of presence — and
+   * never will be: no name, no branch, no age, on this record or any surface
+   * that reads it (hints/collision-notice.ts anonymousTripwireCollision).
+   */
+  anonymous: z.boolean().optional(),
+});
+
+export type CollisionNotice = z.infer<typeof CollisionNoticeSchema>;
+
+/**
+ * Read ENTRY BY ENTRY like the derive ring below, and OPTIONAL: one malformed
+ * entry costs only itself, a value that is not a list reads as none (the
+ * person may then be told once more — the fail-open direction), and a state
+ * written before the field existed, or by a test, parses unchanged.
+ */
+const CollisionNoticesSchema = z
+  .array(z.unknown())
+  .transform((entries): CollisionNotice[] =>
+    entries.flatMap((entry) => {
+      const parsed = CollisionNoticeSchema.safeParse(entry);
+      return parsed.success ? [parsed.data] : [];
+    }),
+  )
+  .optional()
+  .catch(undefined);
+
+/**
+ * A list of KEYS — the relay queue, the tripwire's asked (file, group)
+ * pairs — read ENTRY BY ENTRY like the notices: a key that is not a non-empty
+ * string costs only itself, and a value that is not a list reads as an empty
+ * list — never as a state file nobody can read.
+ */
+const TolerantKeyListSchema = z
+  .array(z.unknown())
+  .transform((entries): string[] =>
+    entries.filter((entry): entry is string => typeof entry === "string" && entry.length > 0),
+  )
+  .optional()
+  .catch(undefined);
+
+/**
+ * One file the live tripwire last answered for and left nothing new to say
+ * about (round 2, L1), and when. Read entry by entry like the keys above.
+ */
+const TripwireCheckSchema = z.object({ file: z.string().min(1), at: z.string().min(1) });
+
+export type TripwireCheck = z.infer<typeof TripwireCheckSchema>;
+
+const TripwireChecksSchema = z
+  .array(z.unknown())
+  .transform((entries): TripwireCheck[] =>
+    entries.flatMap((entry) => {
+      const parsed = TripwireCheckSchema.safeParse(entry);
+      return parsed.success ? [parsed.data] : [];
+    }),
+  )
+  .optional()
+  .catch(undefined);
+
+/** The ring after one more fire: appended, the newest DERIVE_FIRES_KEPT kept. */
+export const withDeriveFire = (
+  fires: readonly DeriveFire[],
+  firedAt: Date,
+  deadlineMs: number,
+): DeriveFire[] => [...fires, { at: firedAt.toISOString(), deadlineMs }].slice(-DERIVE_FIRES_KEPT);
+
+/**
+ * One worktree root the session resolved (`knownWorktreeRoots` below). Its
+ * own schema because the conversation's lineage carries the same entries
+ * across a SessionEnd (state/session-lineage.ts, review batch 2, H1).
+ */
+export const KnownWorktreeRootSchema = z.object({
+  root: z.string().min(1),
+  repoId: z.string().min(1).nullable(),
+  attempts: z.number().int().min(1).default(1),
+  stamp: z.string().min(1).nullable().default(null),
+  // THE ROOT'S TOPIC (capture/touched-root.ts `RootHead`): the branch
+  // read from its HEAD file, the bytes that were read, the commit at
+  // the session's first touch and the touch times — null on an entry
+  // written before topics existed, which reads as "not seen yet".
+  branch: z.string().min(1).nullable().default(null),
+  headStamp: z.string().min(1).nullable().default(null),
+  firstHead: z.string().min(1).nullable().default(null),
+  firstTouchedAt: z.string().min(1).nullable().default(null),
+  lastTouchedAt: z.string().min(1).nullable().default(null),
+  bashTouchedAt: z.string().min(1).nullable().default(null),
+  // When the Stop-time git lane last swept the root (flows/git-lane.ts):
+  // past MAX_GIT_LANE_ROOTS, the root swept longest ago goes next.
+  gitSweptAt: z.string().min(1).nullable().default(null),
+  // The life whose git lane already booked this root's untracked
+  // listing as cut at the bound (review M8): booked once per root per
+  // life, never once per Stop. Absent on entries written before it.
+  untrackedCutLife: z.string().min(1).nullable().optional(),
+});
+
+export type KnownWorktreeRoot = z.infer<typeof KnownWorktreeRootSchema>;
+
 const SessionStateObjectSchema = z.looseObject({
   /**
    * The HOST's own id for this session — for Claude Code the raw `session_id`
@@ -127,6 +295,16 @@ const SessionStateObjectSchema = z.looseObject({
   hubUrl: z.string().min(1),
   developerId: z.string().min(1).nullable().default(null),
   startedAt: z.string().min(1),
+  /**
+   * WHERE THE GIT LANE'S WINDOW OPENS when it reaches back past this life's
+   * own start (review batch 2, H1): the conversation's FIRST start, carried
+   * from its lineage when a SessionEnd ended the life before this one
+   * (state/session-lineage.ts). A resumed conversation's lane then sweeps
+   * the work its earlier lives left dirty, committed or Bash-created, and
+   * files it under the life that is live now — the one a teammate's
+   * tripwire can see. Absent: the window is `startedAt`.
+   */
+  captureSince: z.string().min(1).optional(),
   lastHeartbeatAt: z.string().nullable().default(null),
   seenTargets: z.array(z.string().min(1)).default([]),
   /**
@@ -156,6 +334,17 @@ const SessionStateObjectSchema = z.looseObject({
    * not once per edit. Only complete answers carry a key.
    */
   landedCleanKeys: z.array(z.string().min(1)).default([]),
+  /**
+   * Landed-change checks this session's edits had CUT SHORT — the probe's
+   * deadline ended it, or a landing branch git could not answer for
+   * (state/landed-probe-cuts.ts). Counted per edit, told once: the next
+   * prompt says how many (`landedProbeCutsTold`), so a slow repo never adds
+   * a line per edit and never stays silent either. Optional, absent meaning
+   * none yet: the state every earlier connector wrote is a state with no cut.
+   */
+  landedProbeCuts: z.number().int().min(0).optional(),
+  /** True once this session was told about its cut checks — once per session. */
+  landedProbeCutsTold: z.boolean().optional(),
   /**
    * Work contexts the SessionStart briefing already pointed at as "solved
    * before" (VISION.md §1). A SEPARATE list from deliveredHintRefs on
@@ -219,16 +408,7 @@ const SessionStateObjectSchema = z.looseObject({
    * `stamp` existed reads as UNSTAMPED (capture/touched-root.ts: accepted
    * once, then bound to whatever checkout is at that path now).
    */
-  knownWorktreeRoots: z
-    .array(
-      z.object({
-        root: z.string().min(1),
-        repoId: z.string().min(1).nullable(),
-        attempts: z.number().int().min(1).default(1),
-        stamp: z.string().min(1).nullable().default(null),
-      }),
-    )
-    .default([]),
+  knownWorktreeRoots: z.array(KnownWorktreeRootSchema).default([]),
   /**
    * Capture observability (trial finding #17/#18/#20 — the counters `status`
    * and `doctor` read so "N edit-tool fires → 0 targets" stops being silent):
@@ -258,6 +438,24 @@ const SessionStateObjectSchema = z.looseObject({
    * Booked in flows/hint.ts. Default 0 keeps every pre-#19 state file parsing.
    */
   hintCandidatesSeen: z.number().int().min(0).default(0),
+  /**
+   * The turns the prompt path stood down on before any call (review 1006b,
+   * M7), counted apart: a content-free prompt the floor refused, and a turn
+   * the harness wrote. COUNTS ONLY, never a word of either turn — so the
+   * per-person followed/overrode measurement can tell "nothing was asked"
+   * from "something was asked and nothing matched". Booked in flows/hint.ts;
+   * default 0 keeps every older state file parsing.
+   */
+  flooredPromptCount: z.number().int().min(0).default(0),
+  harnessTurnCount: z.number().int().min(0).default(0),
+  /**
+   * The prompt path's calls the hub ANSWERED that ended in no hint (hold-out
+   * review round 3, L5) — a count only, beside the turns stood down on before
+   * any call, so "reached the hub, nothing matched" reads apart from "never
+   * asked". A call that failed is not one of them. Booked in flows/hint.ts;
+   * default 0 keeps every older state file parsing.
+   */
+  quietCallCount: z.number().int().min(0).default(0),
   /**
    * True when registration happened OUTSIDE SessionStart — PostToolUse's
    * state-less recovery, the parent-workspace/finding-#9 shape — so this
@@ -387,6 +585,15 @@ const SessionStateObjectSchema = z.looseObject({
   workContextTitle: z.string().min(1).nullable().default(null),
   workContextStatus: z.string().min(1).nullable().default(null),
   /**
+   * How `workContextTitle` was written (@crosscheck/schema
+   * WORK_CONTEXT_TITLE_SOURCES), re-sent beside it by the intent writers so
+   * the hub's marker never lapses on an update. Null on a state file from
+   * before the marker, and on a value this build does not know — the hub
+   * then keeps what it stored while the title is unchanged. Optional, so a
+   * state built by an older writer (or a test) without it still parses.
+   */
+  workContextTitleSource: WorkContextTitleSourceSchema.nullable().optional().catch(null),
+  /**
    * The agent kind the life registered as (review-2 round 8, L7): the producer
    * of the work context SessionEnd sends for it. Null on a state from before
    * the field, whose end sends none.
@@ -401,8 +608,9 @@ const SessionStateObjectSchema = z.looseObject({
    * work context was coming to make the two agree.
    *
    * `uncertain`: a set_intent post since then may have landed and was never
-   * answered, so the hub may hold ITS status instead — SessionEnd sends the
-   * work context whatever the state's status is. The next acknowledgement
+   * answered, so the hub may hold ITS status instead — SessionEnd (or, for a
+   * host that died, session-reap) sends the work context whatever the state's
+   * status is (topics seed 416, sleep seed 10478). The next acknowledgement
    * clears it.
    */
   workContextAcked: z
@@ -413,16 +621,30 @@ const SessionStateObjectSchema = z.looseObject({
    * Derived-intent telemetry (trial finding #16; the finding-#14 lesson — a
    * fire that lands nothing must be a number somebody can explain): fires
    * booked by the UserPromptSubmit hook under the lock BEFORE the worker
-   * spawns, and the worker's outcome — NONE, an intent set on the spool, or
-   * a failure with its reason (runner loss, or a drop: secret, echo, empty —
-   * bounded by the writer to SUMMARIZER_FAILURE_MAX_CHARS). Defaults keep
-   * every pre-intent state file parsing.
+   * spawns, and the worker's outcome — NONE, an intent set on the spool, a
+   * runner failure with its reason (bounded by the writer to
+   * SUMMARIZER_FAILURE_MAX_CHARS), or one of the two drops below. Defaults
+   * keep every pre-intent state file parsing.
    */
   intentFireCount: z.number().int().min(0).default(0),
   intentNoneCount: z.number().int().min(0).default(0),
   intentSetCount: z.number().int().min(0).default(0),
   intentFailCount: z.number().int().min(0).default(0),
   intentLastFailure: z.string().nullable().default(null),
+  /**
+   * The model ANSWERED and the worker kept nothing of it (cut at the output
+   * cap, empty, not a sentence, an echo of a delivered hint, secret-like, off
+   * the wire contract): an answer, so doctor never reads it as a runner that
+   * fails (derive/sharing.ts).
+   */
+  intentRefusedCount: z.number().int().min(0).default(0),
+  /**
+   * The worker dropped the run before asking the model (an empty prompt file,
+   * a state file predating intent support): no answer and no model failure.
+   */
+  intentSkippedCount: z.number().int().min(0).default(0),
+  /** The newest refusal's or skip's reason, bounded like intentLastFailure. */
+  intentLastDrop: z.string().nullable().default(null),
   /**
    * The intent sentence this session last put on the hub (VISION.md §3), and
    * the reason it is stored rather than re-read: the ghost check compares
@@ -433,6 +655,15 @@ const SessionStateObjectSchema = z.looseObject({
    * would see.
    */
   workContextIntent: z.string().min(1).nullable().default(null),
+  /**
+   * WHO WROTE that sentence: `declared` by `set_intent`, `derived` by the
+   * intent worker's model. The prompt hint matched on it says "this
+   * session's intent" or "this session's derived intent" from this field,
+   * by positive equality on `declared` like every intent surface
+   * (briefing/intent.ts) — so absent, as in a state file older than the
+   * field, reads as derived, never as vouched for.
+   */
+  workContextIntentProvenance: z.enum(["declared", "derived"]).nullable().optional(),
   /**
    * A ghost check is OWED (VISION.md §3): an intent was recorded and nothing
    * has compared it against the team's live plans yet. The DEBT shape, not a
@@ -460,6 +691,50 @@ const SessionStateObjectSchema = z.looseObject({
   gitTouchCount: z.number().int().min(0).default(0),
   gitLaneSkipped: z.number().int().min(0).default(0),
   gitLaneRan: z.number().int().min(0).default(0),
+  /**
+   * THE LIFE THE GIT LANE LAST SWEPT UNDER (batch-2 integration review,
+   * L10). A mid-life heal moves the state to the next life with an empty
+   * seen-set (flows/heal-session.ts swapLife), and everything the refused
+   * life had filed stays invisible to a teammate's tripwire until the next
+   * Stop or SubagentStop lane — 0 of 6 pre-heal files in the review's V1b.
+   * The lane writes the life it swept here; a hook that finds it behind the
+   * state's life owes a sweep, and the first hook with the room pays it
+   * (connector-claude hooks/git-lane.ts sweepIfLifeMoved). Set to the life
+   * at register, so a fresh session owes nothing; absent or null on an
+   * older state reads as nothing owed either.
+   */
+  gitLaneSweptLife: z.string().nullable().optional(),
+  /**
+   * WHEN A HOOK CLAIMED THE SWEEP A HEALED LIFE IS OWED (final review of
+   * batch 2, N4): "sweeping since <iso>", taken inside the locked transform
+   * that reads the debt (claimOwedSweep) and honoured for one
+   * GIT_TOUCHES_TIMEOUT_MS, so one hook pays the lane and its siblings find
+   * the claim; a lane that ran under the life clears it. Absent or null on
+   * an older state reads as no claim.
+   */
+  gitLaneSweepingSince: z.string().nullable().optional(),
+  /**
+   * The generated-target rule's counters (capture/generated.ts): how many of
+   * this session's spooled targets each signal kept out of overlap as
+   * mechanically generated and non-authoritative, how many a signal fired on
+   * but counted anyway as authoritative, and how many could not be classified
+   * and stayed ordinary. `doctor` prints them.
+   * OPTIONAL, NOT DEFAULTED: a state file written before the counters existed
+   * says nothing about them, and a zero it never measured would read as "no
+   * generated file was ever touched here". Every session published since
+   * begins at zeros (`publishSessionState`, `deriveSessionState`).
+   */
+  generatedTargets: z
+    .object({
+      path: z.number().int().min(0),
+      attribute: z.number().int().min(0),
+      header: z.number().int().min(0),
+      // Added after the other four: a state file that predates it counted no
+      // authoritative file because the rule had none, so 0 is what it measured.
+      authoritative: z.number().int().min(0).default(0),
+      unknown: z.number().int().min(0),
+    })
+    .optional(),
   /**
    * Deterministic ghost notices this session actually SHOWED the reader (the
    * briefing block plus the `set_intent` answer). The precision half of the
@@ -600,6 +875,162 @@ const SessionStateObjectSchema = z.looseObject({
    */
   toolWindowMisses: z.number().int().min(0).default(0),
   /**
+   * The draft review nudge's ONE slot per session (flows/draft-nudge.ts):
+   * null until a prompt-time check got an answer from the hub, then
+   * `delivered` (the nudge went out) or `nothing_due` (no own draft had
+   * waited DRAFT_NUDGE_MIN_AGE_HOURS). Either spends it. Carried across a
+   * SessionStart re-fire (withCarriedCapture): compact and resume are the same
+   * session, and a second nudge inside it is the nag the slot exists to stop.
+   */
+  draftNudge: z.enum(["delivered", "nothing_due"]).nullable().default(null),
+  /**
+   * Until when the nudge leaves the hub alone after a FAILED draft fetch
+   * (flows/draft-nudge.ts DRAFT_NUDGE_RETRY_COOLDOWN_MS); null when nothing
+   * failed. Not a spent slot: the nudge is still owed once it passes.
+   */
+  draftNudgeRetryAt: z.string().min(1).nullable().default(null),
+  /**
+   * The teammate file groups this session's PERSON was told about — the
+   * human-facing collision notice (hints/collision-notice.ts), once per
+   * (teammate, work context) per session, and the statusline's overlap
+   * indicator reads the same list. Absent on every state written before it.
+   */
+  collisionNotices: CollisionNoticesSchema,
+  /**
+   * Group keys a SUBAGENT ran into (its hook payload carried `agent_id`),
+   * waiting for the MAIN thread's next UserPromptSubmit: a subagent's own
+   * context is not the conversation the person reads, and 91% of the pilot
+   * owner's edits were made by subagents. Drained under the lock, so a group
+   * is relayed at most once.
+   */
+  collisionRelayQueue: TolerantKeyListSchema,
+  /**
+   * Queued groups the record had to let go of before the main thread drained
+   * them (round 2, L6): only when MAX_COLLISION_NOTICES queued groups left no
+   * merely told one to evict first. COUNTED, so the relay's `+N more` still
+   * says they existed; reset by the drain.
+   */
+  collisionRelayDropped: z.number().int().min(0).optional().catch(undefined),
+  /**
+   * The (file, teammate work context) pairs the tripwire already ASKED about
+   * (review M4) — the live half's once-per rule, which used to be per FILE
+   * alone in `tripwireAskedFiles`, so a second teammate on a file already
+   * asked about was never named. `tripwireAskedFiles` still records every
+   * file asked at least once; this list decides who is new on it.
+   */
+  tripwireAskedGroups: TolerantKeyListSchema,
+  /**
+   * Files whose live tripwire answer was fully dealt with — every teammate on
+   * it asked about, every group recorded told — and when (round 2, L1):
+   * within TRIPWIRE_RECHECK_TTL_MS the next edit of the file asks the hub
+   * nothing and writes nothing.
+   *
+   * EACH ENTRY IS A RECHECK STILL OWED (round 3, F-M2, the owner's
+   * condition): a teammate who starts on the file inside its rest is seen by
+   * no edit of it, so the entry stays until a tripwire call has asked about
+   * the file again — the turn's end (hooks/turn-end.ts), any later hook that
+   * finds the rest expired, or the file's next edit, whose answer starts a new
+   * rest. An entry no hook could recheck is booked as a `rest_unchecked`
+   * capture loss, never dropped in silence. FIFO-capped like the asked files,
+   * the evicted ones counted in `tripwireRestsDropped`.
+   */
+  tripwireCheckedFiles: TripwireChecksSchema,
+  /**
+   * Owed rechecks the FIFO cap above had to evict before any hook rechecked
+   * them — counted, so the next hook that books losses books these too.
+   */
+  tripwireRestsDropped: z.number().int().min(0).optional().catch(undefined),
+  /**
+   * When each summarizer or derived-intent fire was booked, oldest first, the
+   * newest DERIVE_FIRES_KEPT — what lets doctor tell a model run still in
+   * flight (or one that finished after SessionEnd, with nowhere left to book
+   * its answer) from a worker that never reported back, RUN BY RUN
+   * (derive/sharing.ts). Empty on a state written before it existed, whose
+   * runs doctor then never blames.
+   */
+  deriveFires: DeriveFiresSchema,
+  /**
+   * THE TOPICS THIS LIFE HAS OPENED (DESIGN.md "One session, many topics";
+   * flows/topic-contexts.ts). One long-lived session edits sibling worktrees
+   * on many branches, and filing all of it under one context made a sweep
+   * every overlap check ignores. Each entry is one (repo, branch) the life
+   * touched outside its start topic, and the work context it spooled for it —
+   * spooled BEFORE its first target, which is why an entry is written only
+   * after that append persisted.
+   *
+   * PER LIFE: `sessionId` is the life that registered it, and an entry of any
+   * other life is no registration at all — a heal moves to the next life, and
+   * its topics' work contexts are owed again, spooled ahead of the next
+   * target each one gets (flows/heal-session.ts clears the list). Capped at
+   * MAX_TOPICS_PER_SESSION; `status` and `ackedStatus` are the topic's own,
+   * for set_intent, the flush-time rewrite and SessionEnd's last word.
+   */
+  topicContexts: z
+    .array(
+      z.object({
+        // The topic's MINTED id (flows/topic-contexts.ts `mintTopicId`): a
+        // keyed digest of its conversation, root and opening branch — never
+        // the branch itself, so a rename keeps it. An id minted before the
+        // key (sha256 of the branch) stays as it was: never re-derived.
+        key: z.string().min(1),
+        sessionId: z.string().min(1),
+        workContextId: z.string().min(1),
+        // The branch the topic was opened on — its title's, and its wire
+        // `branch` — and its AFFINITY: every branch the rules attached to it
+        // since (a rename, a continuation, a detached HEAD on top of it).
+        branch: z.string().min(1),
+        branches: z.array(z.string().min(1)).default([]),
+        // The commit the topic was last seen at: what "descends from the
+        // topic's HEAD" is asked of (git/head-history.ts).
+        head: z.string().min(1).nullable().default(null),
+        title: z.string().min(1),
+        status: z.string().min(1),
+        baseCommit: z.string().min(1).nullable().default(null),
+        // Was `baseCommit` already on the default branch when the topic
+        // opened (flows/topic-base-word.ts; topic review C1)? Sent with every
+        // record of the topic, so the hub lands it by its own word. Optional:
+        // a state from before it, or a git that could not answer, says nothing.
+        baseOnDefault: z.boolean().nullable().optional(),
+        root: z.string().min(1),
+        registeredAt: z.string().min(1),
+        lastTouchedAt: z.string().min(1),
+        ackedStatus: z.string().min(1).nullable().default(null),
+        // The topic's twin of `workContextAcked.uncertain`.
+        ackUncertain: z.boolean().optional(),
+      }),
+    )
+    .default([]),
+  /**
+   * The branch the START checkout was on when this life registered, read
+   * from its HEAD file exactly as a touched root's is — the topic whose
+   * touches file under the session's own work context. Null on a state from
+   * before topics: the session's own checkout then files there whatever its
+   * branch, and every other root opens a topic.
+   */
+  startBranch: z.string().min(1).nullable().default(null),
+  /**
+   * The start topic's own affinity, beside `startBranch`: the commit it was
+   * last seen at and the branches the topic rules attached to it since — a
+   * rename of the start branch, a detached HEAD on top of it. Optional, so a
+   * state from before them reads as the start branch alone.
+   */
+  startHead: z.string().min(1).nullable().optional(),
+  startBranches: z.array(z.string().min(1)).optional(),
+  /** When a touch last filed under the session's own context — set_intent's "most recent topic" needs both sides. */
+  sessionTouchedAt: z.string().min(1).nullable().default(null),
+  /** Touches filed under the session's own context because the topic cap was reached (counted, never silent). */
+  topicOverflowCount: z.number().int().min(0).default(0),
+  /**
+   * When a Bash call ran since the last full Stop sweep (review H2): the next
+   * Stop and SubagentStop also sweep the repo's worktrees that changed since
+   * their last sweep (git/shell-roots.ts `changedWorktreesOf`), because a
+   * shell's words cannot always tell where it worked. Optional, so a state
+   * from before it reads as no shell.
+   */
+  shellSweepSince: z.string().min(1).nullable().optional(),
+  /** Candidate roots the git lane's root cap left for a later Stop — counted, never silently skipped (review H2). */
+  gitLaneRootsDeferred: z.number().int().min(0).optional(),
+  /**
    * A LIFE RESUMED ON AN EPOCH ITS HUB COULD NOT CONFIRM (seeds 31214, 4286):
    * a register with no epoch of its own, onto a session the hub already held,
    * answered by a hub too old to say which epoch it holds. The life's order on
@@ -622,6 +1053,9 @@ export const SessionStateSchema = z.preprocess(
 );
 
 export type SessionState = z.infer<typeof SessionStateObjectSchema>;
+
+/** One topic a life opened (`topicContexts`). */
+export type TopicContext = SessionState["topicContexts"][number];
 
 /**
  * What a WRITER may pass: the defaulted fields are optional, exactly as they
@@ -698,12 +1132,16 @@ export const sessionStateLockPath = (
  * steal only from the provably dead, worst case ~100 ms of retries
  * (SPOOL_LOCK_RETRIES × SPOOL_LOCK_RETRY_DELAY_MS) inside budgets that allow
  * for it. writeSessionState stays for the CREATE paths (SessionStart,
- * recovery), which run before any sibling exists.
+ * recovery), which run before any sibling exists. `retries` is for a caller
+ * whose own budget is shorter than that patience (spool/lock.ts
+ * lockRetriesWithin): it gives up — false, nothing written — when its budget
+ * does.
  */
 export const updateSessionState = async (
   home: string,
   hostSessionKey: string,
   transform: (fresh: SessionState) => SessionState | null,
+  retries?: number,
 ): Promise<boolean> =>
   withSessionStateLock(sessionStateLockPath(home, hostSessionKey), false, async () => {
     const fresh = await readSessionState(home, hostSessionKey);
@@ -716,7 +1154,7 @@ export const updateSessionState = async (
     }
     await writeSessionState(home, next);
     return true;
-  });
+  }, retries);
 
 /** What a state file is BOUND TO: one repo, on one hub. */
 interface SessionBinding {
@@ -810,9 +1248,22 @@ export const withCarriedCapture = (
         foreignRepoDrops: previous.foreignRepoDrops,
         outsideRootDrops: previous.outsideRootDrops,
         hintCandidatesSeen: previous.hintCandidatesSeen,
-        // The #17 root cache is the session's, not the fire's: dropping it
-        // makes the next tool call pay git again for a root already judged.
-        knownWorktreeRoots: previous.knownWorktreeRoots,
+        // The generated-target counters describe the session's captures, not
+        // one fire's — and an unmeasured state stays unmeasured.
+        ...(previous.generatedTargets === undefined
+          ? {}
+          : { generatedTargets: previous.generatedTargets }),
+        // The session's cut landed-change checks, and whether it was told:
+        // a re-register neither forgets them nor tells them twice.
+        landedProbeCuts: previous.landedProbeCuts,
+        landedProbeCutsTold: previous.landedProbeCutsTold,
+        // ...and the prompt floor's own counters (hint-substance): what the
+        // floor turned away is the session's, not one fire's.
+        flooredPromptCount: previous.flooredPromptCount,
+        harnessTurnCount: previous.harnessTurnCount,
+        quietCallCount: previous.quietCallCount,
+        // ...and where the lanes look, and since when (routingFieldsOf).
+        ...routingFieldsOf(previous, state),
         // THE PAIR MOVES TOGETHER OR NOT AT ALL (spec 01 §3.4). The counter
         // alone under the incoming fire's fresh epoch would be harmless; the
         // EPOCH alone beside a counter reset to 0 re-issues positions this
@@ -835,6 +1286,15 @@ export const withCarriedCapture = (
         // reason: a number that restarts on every compact cannot say whether
         // this machine is losing them.
         toolWindowMisses: previous.toolWindowMisses,
+        // The nudge is once per SESSION, and a re-fire is the same session.
+        draftNudge: previous.draftNudge,
+        // ...and so is its cooldown: dropped, the re-fire's first prompt
+        // asks the hub that just failed again at once (review round 3).
+        draftNudgeRetryAt: previous.draftNudgeRetryAt,
+        // The turns this session already finished: dropped, the nudge waits
+        // for a "first" finished turn the session had long ago, and doctor
+        // counts a compacted session as a short one.
+        stopTurnCount: previous.stopTurnCount,
         // ...and the life it fires in stays on the epoch it resumed on, so the
         // count of an epoch the hub could not confirm stays too.
         ...(previous.epochUnconfirmed === undefined ? {} : { epochUnconfirmed: previous.epochUnconfirmed }),
@@ -846,11 +1306,21 @@ export const withCarriedCapture = (
         ...(previous.crosscheckSessionId === state.crosscheckSessionId
           ? {
               workContextTitle: previous.workContextTitle ?? state.workContextTitle,
+              // THE MARKER TRAVELS WITH THE TITLE IT DESCRIBES: a kept
+              // fallback title (the branch) under this fire's `host` marker
+              // would never be withheld from colleagues of an opted-out
+              // developer (services/live-location.ts on the hub).
+              ...(previous.workContextTitle === null
+                ? {}
+                : { workContextTitleSource: previous.workContextTitleSource ?? null }),
               workContextStatus: previous.workContextStatus ?? state.workContextStatus,
               // ...and what the hub acknowledged of it (L7).
               workContextAcked: previous.workContextAcked,
             }
           : {}),
+        // ...and the collision lane's record of who the person was told
+        // about, its queued relays and owed rechecks (round 3, F-L5).
+        ...collisionFieldsOf(previous),
       };
 
 /** The epoch and counter a state that carries nothing starts on. */
@@ -858,6 +1328,94 @@ export interface SeqStart {
   readonly seqEpoch: string | null;
   readonly eventSeq: number;
 }
+
+/**
+ * The person is told about a teammate's file group once per SESSION, and a
+ * compact or resume is the same session: dropped, the re-fire's briefing
+ * would tell them again about the same ghost row. The relay queue and its
+ * drop tally come with it, or a subagent's hit waiting for the main thread is
+ * lost to a compact — and so do the rechecks still owed and their eviction
+ * tally (round 3, F-M2): a resume after a crash is exactly when an owed
+ * recheck has to survive.
+ */
+const collisionFieldsOf = (previous: SessionState): Partial<SessionStateInput> => ({
+  ...(previous.collisionNotices === undefined ? {} : { collisionNotices: previous.collisionNotices }),
+  ...(previous.collisionRelayQueue === undefined ? {} : { collisionRelayQueue: previous.collisionRelayQueue }),
+  ...(previous.collisionRelayDropped === undefined ? {} : { collisionRelayDropped: previous.collisionRelayDropped }),
+  ...(previous.tripwireCheckedFiles === undefined ? {} : { tripwireCheckedFiles: previous.tripwireCheckedFiles }),
+  ...(previous.tripwireRestsDropped === undefined ? {} : { tripwireRestsDropped: previous.tripwireRestsDropped }),
+});
+
+/**
+ * The collision fields ALONE carried across a re-fire of the same binding —
+ * what a publication that could not take the lock may still carry (round 3,
+ * F-L5): read without the lock, a queue a sibling is draining may be relayed
+ * twice, which is the safe side of never; the sequence pair and the capture
+ * counters may not be, since a position read beside a lock holder advancing
+ * it would be handed out twice.
+ */
+export const withCarriedCollisions = (
+  state: SessionStateInput,
+  previous: SessionState | null,
+): SessionStateInput => (!isSameBinding(previous, state) ? state : { ...state, ...collisionFieldsOf(previous) });
+
+/**
+ * WHERE THE LANES LOOK, AND SINCE WHEN — the session's, not one fire's
+ * (review batch 2, H1 and L1).
+ *
+ *   - `startedAt` and `captureSince`: the git lane's window opens at the
+ *     session's FIRST start (flows/git-lane.ts). A compact or resume re-fire
+ *     that restamped it moved the window past every Bash-only file written
+ *     before the fire, and the turn's Stop never filed them: three to ten of
+ *     twelve in the review's storm, with no ledger moving.
+ *   - the #17 root cache: dropping it makes the next tool call pay git again
+ *     for a root already judged, and a sibling worktree only the cache knew
+ *     is never swept again;
+ *   - the topics this life opened, whose work contexts are spooled already: a
+ *     re-fire that dropped them would spool every one again, and one that
+ *     re-read the start branch would move the life's own topic under it
+ *     (DESIGN.md "One session, many topics") — this life's only;
+ *   - the overflow count, a shell's pending sweep and the lane's deferred
+ *     count (review H2).
+ *
+ * Unlike the sequence pair, none of these hands anything out, so the
+ * busy-lock fallback may carry them from its unlocked read too
+ * (`withCarriedRouting`): a stale root or an older stamp at worst sweeps
+ * once more.
+ */
+const routingFieldsOf = (previous: SessionState, state: SessionStateInput): Partial<SessionStateInput> => ({
+  startedAt: previous.startedAt,
+  ...(previous.captureSince === undefined ? {} : { captureSince: previous.captureSince }),
+  knownWorktreeRoots: previous.knownWorktreeRoots,
+  ...(previous.crosscheckSessionId === state.crosscheckSessionId
+    ? {
+        topicContexts: previous.topicContexts,
+        startBranch: previous.startBranch ?? state.startBranch ?? null,
+        startHead: previous.startHead ?? state.startHead ?? null,
+        startBranches: previous.startBranches ?? state.startBranches ?? [],
+        sessionTouchedAt: previous.sessionTouchedAt,
+        // THE SEEN-SET IS THE LIFE'S, NOT ONE FIRE'S (release gate, production
+        // lane, 2026-10-09): dropped, the turn's git lane saw every file the
+        // tool lane had already filed as new again, spent its cap on them and
+        // never reached the Bash-only files behind — the pilot's silence, with
+        // only `capture-capped` moving. Another life must file again, so a
+        // re-fire onto one starts empty.
+        seenTargets: previous.seenTargets,
+        // ...and the life the lane last swept under (L10): a re-fire is the
+        // same life, and must neither owe a sweep nor forgive one.
+        ...(previous.gitLaneSweptLife === undefined ? {} : { gitLaneSweptLife: previous.gitLaneSweptLife }),
+      }
+    : {}),
+  topicOverflowCount: previous.topicOverflowCount,
+  shellSweepSince: previous.shellSweepSince ?? null,
+  gitLaneRootsDeferred: previous.gitLaneRootsDeferred ?? 0,
+});
+
+/** The routing fields ALONE carried across a re-fire of the same binding — the busy-lock fallback's (L1). */
+export const withCarriedRouting = (
+  state: SessionStateInput,
+  previous: SessionState | null,
+): SessionStateInput => (isSameBinding(previous, state) ? { ...state, ...routingFieldsOf(previous, state) } : state);
 
 /**
  * SessionStart's publication: create the state file, or replace one of the
@@ -868,7 +1426,11 @@ export interface SeqStart {
  * read-then-write outside the lock would drop whatever it recorded. A lock
  * that stays busy falls back to the plain create — publishing state is not
  * optional (spool reap infers "no writer left" from its absence), so the
- * counters lose rather than the file.
+ * counters lose rather than the file. The COLLISION and ROUTING fields are
+ * still carried there, from a best-effort unlocked read (round 3, F-L5;
+ * review batch 2, L1): without them a compact under a busy lock lost every
+ * queued relay and the record of who the person was told about, and forgot
+ * the sibling worktrees and the window the next Stop sweeps.
  *
  * `startOf` answers the epoch and counter a publish that finds nothing to
  * carry starts on, read under the lock (review-2 round 8, L2): the register's
@@ -886,19 +1448,67 @@ export const publishSessionState = async (
   state: SessionStateInput,
   startOf: () => Promise<SeqStart> = () => Promise.resolve({ seqEpoch: state.seqEpoch ?? null, eventSeq: state.eventSeq ?? 0 }),
 ): Promise<void> => {
-  const published = await withSessionStateLock(
+  const published = await withSessionStateLock<{ readonly leftBehind: RestsLeftBehind | null } | null>(
     sessionStateLockPath(home, state.hostSessionKey),
-    false,
+    null,
     async () => {
       const previous = await readSessionState(home, state.hostSessionKey);
-      await writeSessionState(home, withCarriedCapture({ ...state, ...(await startOf()) }, previous));
-      return true;
+      await writeSessionState(home, withCarriedCapture(measuredFromStart({ ...state, ...(await startOf()) }), previous));
+      // COUNTED UNDER THE LOCK, BOOKED AFTER IT (final review of batch 2, N7):
+      // the count is read from the state this write replaces; the two ledger
+      // appends — one of which may wait on the omission ledger's own lock —
+      // are not held under the state lock on SessionStart's path.
+      return { leftBehind: previous !== null && !isSameBinding(previous, state) ? restsLeftBehind(previous) : null };
     },
   );
-  if (!published) {
-    await writeSessionState(home, state);
+  if (published === null) {
+    const unlocked = await readSessionState(home, state.hostSessionKey);
+    await writeSessionState(home, withCarriedRouting(withCarriedCollisions(measuredFromStart(state), unlocked), unlocked));
+    return;
+  }
+  if (published.leftBehind !== null) {
+    await bookRestsLeftBehind(home, published.leftBehind, new Date(state.startedAt));
   }
 };
+
+/** The loss-ledger detail for rechecks a re-fire of another binding left behind. */
+const REBOUND_REST_DETAIL = "session-start";
+
+/** The rechecks a replaced state still owed, and the repo they are booked under. */
+interface RestsLeftBehind {
+  readonly count: number;
+  readonly key: string;
+}
+
+const restsLeftBehind = (previous: SessionState): RestsLeftBehind => ({
+  count: (previous.tripwireCheckedFiles ?? []).length + (previous.tripwireRestsDropped ?? 0),
+  key: repoKey(previous.hubUrl, previous.repoId),
+});
+
+/**
+ * A RE-FIRE BOUND ELSEWHERE BOOKS THE RECHECKS IT REPLACES (review batch 2,
+ * L4). A state of another binding — another hub, another repo — carries
+ * nothing across (`withCarriedCapture`), its owed rechecks included, and no
+ * hook of that binding will pay them: booked under that binding's own repo,
+ * in both ledgers, the way SessionEnd books what it cannot pay.
+ */
+const bookRestsLeftBehind = async (home: string, left: RestsLeftBehind, now: Date): Promise<void> => {
+  if (left.count === 0) {
+    return;
+  }
+  await recordCaptureLoss(home, { kind: "rest_unchecked", count: left.count, key: left.key, detail: REBOUND_REST_DETAIL, now });
+  await recordRestOmission(home, { key: left.key, reason: "rest_unchecked", now });
+};
+
+/**
+ * A session published from here on is MEASURED from its first capture: its
+ * generated-target counters start at zeros rather than absent — absent is
+ * kept for the state files written before the counters existed.
+ */
+const measuredFromStart = (state: SessionStateInput): SessionStateInput => ({
+  generatedTargets: NO_GENERATED,
+  ...state,
+});
 
 /** A block of positions this caller now owns, and the epoch they belong to. */
 export interface SeqRange {
@@ -953,24 +1563,65 @@ export const withWindowFloor = (
  * on every hook path and this is no exception; worst case is the spool lock's
  * own, SPOOL_LOCK_RETRIES × SPOOL_LOCK_RETRY_DELAY_MS.
  */
-export const allocateSeq = async (
+export const allocateSeq = (
   home: string,
   hostSessionKey: string,
   count: number,
 ): Promise<SeqRange | null> =>
-  withSessionStateLock<SeqRange | null>(
+  allocateUnderLock(home, hostSessionKey, (fresh) => seqAllocation(fresh, count));
+
+/**
+ * What one allocator DECIDED: the state it writes, and what it hands back.
+ * The three allocators below are each a read, one of these decisions and a
+ * write, all inside the state file's lock; the decisions are exported on
+ * their own so the pairing proof (test/tool-window-pairing.test.ts) can run
+ * its hundreds of scripts against the allocators' real rules without a file
+ * write per step — the I/O that put that proof past bun's per-test budget
+ * whenever every suite shared the disk. The locked path is unchanged.
+ */
+export interface Allocation<T> {
+  readonly next: SessionState;
+  readonly value: T;
+}
+
+/**
+ * Reads, decides and writes inside the state file's own lock. Null — nothing
+ * written — when there is no state file, when the decision declines (a state
+ * from before the protocol field), or when the lock stayed busy.
+ */
+const allocateUnderLock = <T>(
+  home: string,
+  hostSessionKey: string,
+  decide: (fresh: SessionState) => Allocation<T> | null,
+): Promise<T | null> =>
+  withSessionStateLock<T | null>(
     sessionStateLockPath(home, hostSessionKey),
     null,
     async () => {
       const fresh = await readSessionState(home, hostSessionKey);
-      if (fresh === null || fresh.seqEpoch === null) {
+      const allocation = fresh === null ? null : decide(fresh);
+      if (allocation === null) {
         return null;
       }
-      const from = fresh.eventSeq + 1;
-      await writeSessionState(home, { ...fresh, eventSeq: from + count - 1 });
-      return { epoch: fresh.seqEpoch, from, count };
+      await writeSessionState(home, allocation.next);
+      return allocation.value;
     },
   );
+
+/** `allocateSeq`'s decision: the next `count` positions, as one block. */
+export const seqAllocation = (
+  fresh: SessionState,
+  count: number,
+): Allocation<SeqRange> | null => {
+  if (fresh.seqEpoch === null) {
+    return null;
+  }
+  const from = fresh.eventSeq + 1;
+  return {
+    next: { ...fresh, eventSeq: from + count - 1 },
+    value: { epoch: fresh.seqEpoch, from, count },
+  };
+};
 
 /**
  * A step that must not interleave with the state's own writers — a heal's
@@ -998,6 +1649,9 @@ const closeState = async (
 ): Promise<MovedLife | null> => {
   const fresh = await readSessionState(home, hostSessionKey);
   await deleteSessionState(home, hostSessionKey);
+  // The rests this end booked before the delete need no marker once the
+  // state is gone (state/rests-booked.ts; final review of batch 2, N10).
+  await removeOwedRestsBooked(home, hostSessionKey);
   if (fresh === null || fresh.crosscheckSessionId === crosscheckSessionId) {
     return null;
   }
@@ -1052,31 +1706,34 @@ export const closeSessionState = async (
  * still running loses its bracket and nothing else, and the count is the only
  * thing that can say whether the cap is too small.
  */
-export const openToolWindow = async (
+export const openToolWindow = (
   home: string,
   hostSessionKey: string,
   windowKey: string,
 ): Promise<number | null> =>
-  withSessionStateLock<number | null>(
-    sessionStateLockPath(home, hostSessionKey),
-    null,
-    async () => {
-      const fresh = await readSessionState(home, hostSessionKey);
-      if (fresh === null || fresh.seqEpoch === null) {
-        return null;
-      }
-      const taken = fresh.eventSeq + 1;
-      const appended = [...fresh.toolWindows, { key: windowKey, floor: taken }];
-      const evicted = Math.max(0, appended.length - MAX_TOOL_WINDOWS);
-      await writeSessionState(home, {
-        ...fresh,
-        eventSeq: taken,
-        toolWindows: appended.slice(evicted),
-        toolWindowEvictions: fresh.toolWindowEvictions + evicted,
-      });
-      return taken;
+  allocateUnderLock(home, hostSessionKey, (fresh) => toolWindowOpening(fresh, windowKey));
+
+/** `openToolWindow`'s decision: one position taken, the window recorded on it. */
+export const toolWindowOpening = (
+  fresh: SessionState,
+  windowKey: string,
+): Allocation<number> | null => {
+  if (fresh.seqEpoch === null) {
+    return null;
+  }
+  const taken = fresh.eventSeq + 1;
+  const appended = [...fresh.toolWindows, { key: windowKey, floor: taken }];
+  const evicted = Math.max(0, appended.length - MAX_TOOL_WINDOWS);
+  return {
+    next: {
+      ...fresh,
+      eventSeq: taken,
+      toolWindows: appended.slice(evicted),
+      toolWindowEvictions: fresh.toolWindowEvictions + evicted,
     },
-  );
+    value: taken,
+  };
+};
 
 /**
  * THE FLOOR A TOOL'S OWN WINDOW OPENED ON, or null when this session holds no
@@ -1154,31 +1811,35 @@ export const closedToolWindow = (
  * tool context and three arguments, has no window, and is a different function
  * with the same name.
  */
-export const allocateToolSeq = async (
+export const allocateToolSeq = (
   home: string,
   hostSessionKey: string,
   count: number,
   windowKey: string | null,
 ): Promise<SeqRange | null> =>
-  withSessionStateLock<SeqRange | null>(
-    sessionStateLockPath(home, hostSessionKey),
-    null,
-    async () => {
-      const fresh = await readSessionState(home, hostSessionKey);
-      if (fresh === null || fresh.seqEpoch === null) {
-        return null;
-      }
-      const from = fresh.eventSeq + 1;
-      const floor =
-        windowKey === null ? null : toolWindowFloorFor(fresh, windowKey);
-      await writeSessionState(home, {
-        ...fresh,
-        eventSeq: from + count - 1,
-        ...(windowKey === null ? {} : closedToolWindow(fresh, windowKey)),
-      });
-      return withWindowFloor({ epoch: fresh.seqEpoch, from, count }, floor);
+  allocateUnderLock(home, hostSessionKey, (fresh) => toolSeqAllocation(fresh, count, windowKey));
+
+/** `allocateToolSeq`'s decision: the block, bracketed by its window, which it closes. */
+export const toolSeqAllocation = (
+  fresh: SessionState,
+  count: number,
+  windowKey: string | null,
+): Allocation<SeqRange | null> | null => {
+  if (fresh.seqEpoch === null) {
+    return null;
+  }
+  const from = fresh.eventSeq + 1;
+  const floor =
+    windowKey === null ? null : toolWindowFloorFor(fresh, windowKey);
+  return {
+    next: {
+      ...fresh,
+      eventSeq: from + count - 1,
+      ...(windowKey === null ? {} : closedToolWindow(fresh, windowKey)),
     },
-  );
+    value: withWindowFloor({ epoch: fresh.seqEpoch, from, count }, floor),
+  };
+};
 
 export interface SessionStateClaim {
   /** True when THIS caller published the state; false when it adopted one. */
@@ -1246,13 +1907,70 @@ export const withSeenTargets = (
  */
 export const withGitTouches = (
   state: SessionState,
-  outcome: { readonly captured: readonly string[]; readonly skipped: boolean },
+  outcome: {
+    readonly captured: readonly string[];
+    readonly skipped: boolean;
+    /** How the lane's recorded paths were classified (capture/generated.ts). */
+    readonly generated?: GeneratedTally;
+    /**
+     * The life the sweep ran under, when it ran and that life is still the
+     * state's (L10): what `gitLaneSweptLife` records. Absent — skipped, or
+     * the life moved under the sweep — leaves the record as it was.
+     */
+    readonly sweptLife?: string;
+  },
 ): SessionState => ({
-  ...withSeenTargets(state, outcome.captured),
+  ...withGeneratedTargets(withSeenTargets(state, outcome.captured), outcome.generated),
   gitTouchCount: state.gitTouchCount + outcome.captured.length,
   gitLaneSkipped: state.gitLaneSkipped + (outcome.skipped ? 1 : 0),
   gitLaneRan: state.gitLaneRan + (outcome.skipped ? 0 : 1),
+  // ...and a lane that ran under the life spends any claim on its sweep (N4).
+  ...(outcome.sweptLife === undefined ? {} : { gitLaneSweptLife: outcome.sweptLife, gitLaneSweepingSince: null }),
 });
+
+/**
+ * Whether a sweep is owed to the life the state names (L10): the lane last
+ * swept under another one — a heal moved the state — and nothing has swept
+ * since. An older state, which recorded no life, owes nothing.
+ */
+export const owesSweepToLife = (state: SessionState): boolean =>
+  state.gitLaneSweptLife !== undefined &&
+  state.gitLaneSweptLife !== null &&
+  state.gitLaneSweptLife !== state.crosscheckSessionId;
+
+/** Whether a claim on the owed sweep is younger than the lane's own deadline — a stamp off the clock either way is no claim. */
+const isSweepClaimFresh = (state: SessionState, now: Date): boolean => {
+  const sinceMs = Date.parse(state.gitLaneSweepingSince ?? "");
+  return !Number.isNaN(sinceMs) && Math.abs(now.getTime() - sinceMs) < GIT_TOUCHES_TIMEOUT_MS;
+};
+
+/**
+ * THE SWEEP A HEALED LIFE IS OWED IS CLAIMED BY ONE HOOK (final review of
+ * batch 2, N4). Read outside any claim, every hook with the room under a
+ * subagent fan-out found it owed in the same second and each ran the whole
+ * lane and a flush — N times the lane, once per heal, on the loaded hooks.
+ * Taken inside the locked transform that reads the debt, the claim is
+ * honoured for one GIT_TOUCHES_TIMEOUT_MS, the lane's own deadline, so a
+ * claim a cut hook left behind costs the next hook that wait and nothing
+ * more. Null: nothing owed, or a fresh claim holds — the caller pays nothing.
+ */
+export const claimOwedSweep = (state: SessionState, now: Date): SessionState | null =>
+  !owesSweepToLife(state) || isSweepClaimFresh(state, now) ? null : { ...state, gitLaneSweepingSince: now.toISOString() };
+
+/**
+ * One capture's generated-target counts, added in. Absent leaves the state as
+ * it was; a state whose counters predate the field starts counting here.
+ */
+export const withGeneratedTargets = (
+  state: SessionState,
+  tally: GeneratedTally | undefined,
+): SessionState =>
+  tally === undefined
+    ? state
+    : {
+        ...state,
+        generatedTargets: addGeneratedTally(state.generatedTargets ?? NO_GENERATED, tally),
+      };
 
 /**
  * One delivered hint, remembered forever within the session: the ref for the
@@ -1357,10 +2075,37 @@ export const withKnownWorktreeRoot = (
    */
   stamp: string | null = null,
 ): SessionState => {
-  const withoutRoot = state.knownWorktreeRoots.filter(
-    (entry) => entry.root !== root,
-  );
-  const merged = [...withoutRoot, { root, repoId, attempts, stamp }];
+  const previous = state.knownWorktreeRoots.find((entry) => entry.root === root);
+  // A re-judged identity is a new answer about the REPO, not about the
+  // topic: what the HEAD pass recorded on the entry stays with it — unless
+  // the checkout itself was replaced, when nothing it said survives.
+  const isSameCheckout =
+    previous !== undefined && (previous.stamp === null || stamp === null || previous.stamp === stamp);
+  return withRootEntry(state, {
+    ...(isSameCheckout ? previous : EMPTY_ROOT_TOPIC),
+    root,
+    repoId,
+    attempts,
+    stamp,
+  });
+};
+
+type KnownRootEntry = SessionState["knownWorktreeRoots"][number];
+
+/** An entry's topic fields before any HEAD has been read for it. */
+const EMPTY_ROOT_TOPIC = {
+  branch: null,
+  headStamp: null,
+  firstHead: null,
+  firstTouchedAt: null,
+  lastTouchedAt: null,
+  bashTouchedAt: null,
+  gitSweptAt: null,
+} as const;
+
+/** Dedup by root, newest last, FIFO-capped — the one write every root entry takes. */
+const withRootEntry = (state: SessionState, entry: KnownRootEntry): SessionState => {
+  const merged = [...state.knownWorktreeRoots.filter((known) => known.root !== entry.root), entry];
   return {
     ...state,
     knownWorktreeRoots:
@@ -1369,6 +2114,95 @@ export const withKnownWorktreeRoot = (
         : merged.slice(merged.length - MAX_KNOWN_WORKTREE_ROOTS),
   };
 };
+
+/** What one touch read of a root's HEAD (capture/touched-root.ts `RootHead`). */
+export interface RootHeadFold {
+  readonly root: string;
+  readonly repoId: string;
+  readonly branch: string | null;
+  readonly headStamp: string | null;
+  readonly firstHead: string | null;
+  readonly touchedAt: string;
+}
+
+/**
+ * A touch's HEAD read, folded into the root's cache entry — created for a
+ * root the identity pass never had to judge, which is the session's own
+ * checkout. The first touch is kept once set (`firstTouchedAt`, `firstHead`):
+ * the git lane's commit window opens there (flows/capture-git-touches.ts).
+ * The entry moves to the end, so the FIFO cap evicts the root touched least
+ * recently rather than the one judged first.
+ */
+export const withRootHead = (state: SessionState, head: RootHeadFold): SessionState => {
+  const previous = state.knownWorktreeRoots.find((entry) => entry.root === head.root);
+  const base: KnownRootEntry = previous ?? {
+    root: head.root,
+    repoId: head.repoId,
+    attempts: 1,
+    stamp: null,
+    ...EMPTY_ROOT_TOPIC,
+  };
+  return withRootEntry(state, {
+    ...base,
+    branch: head.branch,
+    headStamp: head.headStamp,
+    firstHead: base.firstHead ?? head.firstHead,
+    firstTouchedAt: base.firstTouchedAt ?? head.touchedAt,
+    lastTouchedAt: head.touchedAt,
+  });
+};
+
+/**
+ * A SHELL RAN IN THIS ROOT (DESIGN.md "One session, many topics"): a Bash
+ * call's `cp`, `mv`, redirect, generator or `git commit` names no file to any
+ * edit event, so nothing is parsed out of it — the root is marked, and the
+ * next Stop or SubagentStop sweeps it FIRST (flows/git-lane.ts), the git lane
+ * doing the capture. A root no touch has judged yet is entered under the
+ * repo id the hook already resolved for its cwd; its first touch, if this is
+ * it, opens the lane's window there.
+ */
+export const withBashTouch = (state: SessionState, root: string, repoId: string, at: string): SessionState => {
+  const previous = state.knownWorktreeRoots.find((entry) => entry.root === root);
+  const base: KnownRootEntry = previous ?? { root, repoId, attempts: 1, stamp: null, ...EMPTY_ROOT_TOPIC };
+  return withRootEntry(state, {
+    ...base,
+    bashTouchedAt: at,
+    firstTouchedAt: base.firstTouchedAt ?? at,
+    lastTouchedAt: at,
+  });
+};
+
+/**
+ * ONE BASH CALL, written down (review H2): every root it is known to have
+ * worked in — the cwd's and the ones its words named — marked for the next
+ * sweep, and the shell's instant kept so that sweep also looks at every
+ * worktree of the repo that changed, for what the words could not tell.
+ */
+/**
+ * A root the git lane swept, written down (review H2): its bash mark spent and
+ * its turn stamped, and — for a worktree only a shell worked in, which the
+ * sweep found by discovery — an entry of its own, so the next discovery finds
+ * it already swept and its first sweep opens its window from here.
+ */
+export const withSweptRoot = (state: SessionState, root: string, at: string, isUntrackedCut = false): SessionState => {
+  const previous = state.knownWorktreeRoots.find((entry) => entry.root === root);
+  const base: KnownRootEntry = previous ?? {
+    root,
+    repoId: state.repoId,
+    attempts: 1,
+    stamp: null,
+    ...EMPTY_ROOT_TOPIC,
+    firstTouchedAt: at,
+    lastTouchedAt: at,
+  };
+  const cut = isUntrackedCut ? { untrackedCutLife: state.crosscheckSessionId } : {};
+  return withRootEntry(state, { ...base, bashTouchedAt: null, gitSweptAt: at, ...cut });
+};
+
+export const withShellRun = (state: SessionState, roots: readonly string[], repoId: string, at: string): SessionState => ({
+  ...roots.reduce((marked, root) => withBashTouch(marked, root, repoId, at), state),
+  shellSweepSince: state.shellSweepSince ?? at,
+});
 
 /** Remembers a probe key that answered "nothing", same FIFO cap as the markers. */
 export const withLandedClean = (
@@ -1384,6 +2218,22 @@ export const withLandedClean = (
         : merged.slice(merged.length - MAX_TRIPWIRE_ASKED_FILES),
   };
 };
+
+/** Counts one landed-change check this session's edit had cut short. */
+export const withLandedProbeCut = (state: SessionState): SessionState => ({
+  ...state,
+  landedProbeCuts: (state.landedProbeCuts ?? 0) + 1,
+});
+
+/** Marks this session told about its cut checks — the once-per-session line. */
+export const withLandedProbeCutsTold = (state: SessionState): SessionState => ({
+  ...state,
+  landedProbeCutsTold: true,
+});
+
+/** Cut checks this session has not been told about: the line is still owed. */
+export const hasUntoldProbeCuts = (state: SessionState): boolean =>
+  (state.landedProbeCuts ?? 0) > 0 && state.landedProbeCutsTold !== true;
 
 /** Remembers a landed-change stop on `file`, same FIFO cap as the live one. */
 export const withLandedAsked = (
@@ -1416,6 +2266,215 @@ export const withTripwireAsked = (
 };
 
 /**
+ * The groups among `groups` this session has NOT told its person about yet —
+ * the once-per-(teammate, file group) rule as a pure read. The caller asks it
+ * on the FRESHEST state inside its update, so two racing hooks cannot both
+ * see a group as new (the tripwire marker's check-and-set shape).
+ */
+export const newCollisionKeys = (
+  state: SessionState,
+  groups: readonly CollisionNotice[],
+): readonly string[] => {
+  const told = new Set((state.collisionNotices ?? []).map((notice) => notice.key));
+  return [...new Set(groups.map((group) => group.key))].filter((key) => !told.has(key));
+};
+
+/**
+ * One group folded into a told one: files unioned (capped), the larger count,
+ * and PARTIAL if either answer was — a later complete answer does not vouch
+ * for the gap an earlier one reported.
+ */
+const mergedCollision = (told: CollisionNotice, group: CollisionNotice): CollisionNotice => {
+  const files = [...new Set([...told.files, ...group.files])].slice(0, MAX_COLLISION_FILES);
+  const isPartial = told.partial === true || group.partial === true;
+  const { partial: _dropped, ...rest } = group;
+  return {
+    ...rest,
+    files,
+    fileCount: Math.max(told.fileCount, group.fileCount, files.length),
+    ...(isPartial ? { partial: true } : {}),
+  };
+};
+
+/** `count` more queued groups the record could not keep, added to the tally the relay reports. */
+const withRelayDrops = (state: SessionState, count: number): Partial<SessionState> =>
+  count <= 0 ? {} : { collisionRelayDropped: (state.collisionRelayDropped ?? 0) + count };
+
+/**
+ * The FIFO cap of MAX_COLLISION_NOTICES, MERELY TOLD groups first (round 2,
+ * L6): a group still queued for the main thread is never evicted while a told
+ * one can go — the drain reads the queued group's facts from this list, and a
+ * queue key without them was relayed as nothing. A queued group the cap must
+ * take anyway leaves the queue too and is COUNTED.
+ */
+const withinNoticeCap = (state: SessionState, merged: readonly CollisionNotice[]): SessionState => {
+  const overflow = merged.length - MAX_COLLISION_NOTICES;
+  if (overflow <= 0) {
+    return { ...state, collisionNotices: [...merged] };
+  }
+  const queue = state.collisionRelayQueue ?? [];
+  const evictable = merged.filter((notice) => !queue.includes(notice.key)).slice(0, overflow);
+  const forced = merged.filter((notice) => queue.includes(notice.key)).slice(0, overflow - evictable.length);
+  const gone = new Set([...evictable, ...forced].map((notice) => notice.key));
+  return {
+    ...state,
+    collisionNotices: merged.filter((notice) => !gone.has(notice.key)),
+    ...(forced.length === 0 ? {} : { collisionRelayQueue: queue.filter((key) => !gone.has(key)) }),
+    ...withRelayDrops(state, forced.length),
+  };
+};
+
+/**
+ * Remembers the groups as told. A group already told GROWS — a second file of
+ * the same teammate context joins it, which is what the statusline counts —
+ * and a new one is appended; capped at MAX_COLLISION_NOTICES, oldest TOLD
+ * group out first (`withinNoticeCap`). A subagent's new groups are queued
+ * BEFORE they are remembered (hooks/pre-tool-use.ts), so the cap knows them
+ * for queued.
+ */
+export const withCollisionNotices = (
+  state: SessionState,
+  groups: readonly CollisionNotice[],
+): SessionState => {
+  const merged = groups.reduce<readonly CollisionNotice[]>((notices, group) => {
+    const told = notices.find((notice) => notice.key === group.key);
+    return told === undefined
+      ? [...notices, group]
+      : notices.map((notice) => (notice.key === group.key ? mergedCollision(told, group) : notice));
+  }, state.collisionNotices ?? []);
+  return withinNoticeCap(state, merged);
+};
+
+/**
+ * A subagent's newly told groups, queued for the main thread (deduped,
+ * capped at MAX_COLLISION_NOTICES, oldest out) — and every key the cap pushes
+ * out is COUNTED (round 2, L6), never dropped in silence.
+ */
+export const withQueuedCollisionRelays = (
+  state: SessionState,
+  keys: readonly string[],
+): SessionState => {
+  const merged = [...new Set([...(state.collisionRelayQueue ?? []), ...keys])];
+  const overflow = merged.length - MAX_COLLISION_NOTICES;
+  return {
+    ...state,
+    collisionRelayQueue: overflow <= 0 ? merged : merged.slice(overflow),
+    ...withRelayDrops(state, overflow),
+  };
+};
+
+/** The queue emptied and its drop tally spent — what the main thread's drain writes once it took them. */
+export const withDrainedCollisionRelays = (state: SessionState): SessionState => ({
+  ...state,
+  collisionRelayQueue: [],
+  collisionRelayDropped: 0,
+});
+
+/**
+ * These groups back to untold (batch-2 review, H2): the hook that recorded
+ * them told nobody — the race abandoned it before its output left — so the
+ * next answer that names one tells the person after all. A group queued for
+ * the main thread stays: its relay still tells the person.
+ */
+export const withoutCollisionNotices = (state: SessionState, keys: readonly string[]): SessionState => {
+  const queued = new Set(state.collisionRelayQueue ?? []);
+  const untold = new Set(keys.filter((key) => !queued.has(key)));
+  return untold.size === 0
+    ? state
+    : { ...state, collisionNotices: (state.collisionNotices ?? []).filter((notice) => !untold.has(notice.key)) };
+};
+
+/**
+ * Whether the live tripwire's last answer for `file` was fully dealt with
+ * less than TRIPWIRE_RECHECK_TTL_MS ago (round 2, L1). An instant ahead of
+ * the clock or unreadable is no answer at all.
+ */
+export const isTripwireFresh = (state: SessionState, file: string, now: Date): boolean => {
+  const at = (state.tripwireCheckedFiles ?? []).find((check) => check.file === file)?.at;
+  const ageMs = at === undefined ? Number.NaN : now.getTime() - Date.parse(at);
+  return ageMs >= 0 && ageMs < TRIPWIRE_RECHECK_TTL_MS;
+};
+
+/** The newest rest first; an undatable stamp counts as the oldest. */
+const byNewestRest = (left: TripwireCheck, right: TripwireCheck): number =>
+  (Date.parse(right.at) || 0) - (Date.parse(left.at) || 0);
+
+/**
+ * Every recheck this session still owes (round 3, F-M2), newest rest first:
+ * what the turn-end hook asks about.
+ */
+export const owedRests = (state: SessionState): readonly TripwireCheck[] =>
+  [...(state.tripwireCheckedFiles ?? [])].sort(byNewestRest);
+
+/**
+ * The owed rechecks whose rest is OVER — expired, or stamped by a clock that
+ * stepped back — with no recheck after it: what every other hook asks about
+ * at its own next opportunity (round 3, F-M2). A rest still running is the
+ * turn's end's to recheck.
+ */
+export const overdueRests = (state: SessionState, now: Date): readonly TripwireCheck[] =>
+  owedRests(state).filter((check) => !isTripwireFresh(state, check.file, now));
+
+/**
+ * These owed rechecks discharged — each only while its entry is the SAME rest
+ * (file and stamp) the caller read: a rest a racing edit started since is a
+ * new debt and stays.
+ */
+export const withoutTripwireRests = (state: SessionState, rests: readonly TripwireCheck[]): SessionState => ({
+  ...state,
+  tripwireCheckedFiles: (state.tripwireCheckedFiles ?? []).filter(
+    (check) => !rests.some((rest) => rest.file === check.file && rest.at === check.at),
+  ),
+});
+
+/** The owed rechecks among `rests` this state still holds — what a writer may book or discharge. */
+export const stillOwed = (state: SessionState, rests: readonly TripwireCheck[]): readonly TripwireCheck[] =>
+  rests.filter((rest) => (state.tripwireCheckedFiles ?? []).some((check) => check.file === rest.file && check.at === rest.at));
+
+/** The eviction tally spent: the caller has booked it. */
+export const withRestsDroppedBooked = (state: SessionState): SessionState => ({ ...state, tripwireRestsDropped: 0 });
+
+/**
+ * `file`'s live answer dealt with now — one entry per file, which replaces an
+ * older debt for the same file (this answer IS its recheck) and starts a new
+ * one; FIFO-capped like the asked files, an evicted debt counted, never lost.
+ */
+export const withTripwireChecked = (state: SessionState, file: string, now: Date): SessionState => {
+  const merged = [...(state.tripwireCheckedFiles ?? []).filter((check) => check.file !== file), { file, at: now.toISOString() }];
+  const evicted = Math.max(0, merged.length - MAX_TRIPWIRE_ASKED_FILES);
+  return {
+    ...state,
+    tripwireCheckedFiles: evicted === 0 ? merged : merged.slice(evicted),
+    ...(evicted === 0 ? {} : { tripwireRestsDropped: (state.tripwireRestsDropped ?? 0) + evicted }),
+  };
+};
+
+/**
+ * A RECHECK OWED AT ONCE (review batch 2, M1 and H2): `file`'s live tripwire
+ * was asked and did not answer — or answered too late, or was cut — so this
+ * edit told nobody, not the agent, not the person, and counted nothing. Owed
+ * as a rest that is already over: it never keeps the file's next edit from
+ * asking the hub again, and every other sync hook pays the debt at its next
+ * opportunity (connector-claude hooks/rest-recheck.ts) — it tells the person
+ * of a teammate it finds, or books `rest_unchecked`, as every rest is.
+ */
+export const withOverdueRest = (state: SessionState, file: string, now: Date): SessionState =>
+  withTripwireChecked(state, file, new Date(now.getTime() - TRIPWIRE_RECHECK_TTL_MS));
+
+/** A (file, group) pair the tripwire asked about — FIFO-capped like the asked files. */
+export const withTripwireGroupAsked = (
+  state: SessionState,
+  key: string,
+): SessionState => {
+  const merged = [...new Set([...(state.tripwireAskedGroups ?? []), key])];
+  return {
+    ...state,
+    tripwireAskedGroups:
+      merged.length <= MAX_TRIPWIRE_ASKED_FILES ? merged : merged.slice(merged.length - MAX_TRIPWIRE_ASKED_FILES),
+  };
+};
+
+/**
  * An intent reached the hub or the spool (VISION.md §3): remember the
  * sentence and book the ghost-check debt in ONE transform, because they are
  * one fact — a plan the team has not been compared against yet. Re-declaring
@@ -1426,9 +2485,11 @@ export const withTripwireAsked = (
 export const withRecordedIntent = (
   state: SessionState,
   summary: string,
+  provenance: "declared" | "derived",
 ): SessionState => ({
   ...state,
   workContextIntent: summary,
+  workContextIntentProvenance: provenance,
   ghostPending: true,
 });
 
@@ -1570,6 +2631,8 @@ export const deriveSessionState = (
     tripwireAskedFiles: [],
     landedAskedFiles: [],
     landedCleanKeys: [],
+    landedProbeCuts: 0,
+    landedProbeCutsTold: false,
     briefingSolvedRefs: [],
     shownLandedNoticeIds: [],
     probedFingerprints: [],
@@ -1583,6 +2646,9 @@ export const deriveSessionState = (
     lastEditedPath: null,
     lastEditedPathResolvedAgainst: null,
     hintCandidatesSeen: 0,
+    flooredPromptCount: 0,
+    harnessTurnCount: 0,
+    quietCallCount: 0,
     briefingPending: false,
     stopTurnCount: 0,
     summarizerFireCount: 0,
@@ -1602,6 +2668,7 @@ export const deriveSessionState = (
     summarizerLastUnreadable: null,
     workContextTitle: null,
     workContextStatus: null,
+    workContextTitleSource: null,
     agentKind: null,
     workContextAcked: null,
     intentFireCount: 0,
@@ -1609,11 +2676,17 @@ export const deriveSessionState = (
     intentSetCount: 0,
     intentFailCount: 0,
     intentLastFailure: null,
+    intentRefusedCount: 0,
+    intentSkippedCount: 0,
+    intentLastDrop: null,
     workContextIntent: null,
+    workContextIntentProvenance: null,
     ghostPending: false,
     gitTouchCount: 0,
     gitLaneSkipped: 0,
     gitLaneRan: 0,
+    gitLaneSweptLife: crosscheckSessionId,
+    generatedTargets: NO_GENERATED,
     ghostNoticeCount: 0,
     ghostFireCount: 0,
     ghostNoOverlapCount: 0,
@@ -1632,5 +2705,12 @@ export const deriveSessionState = (
     toolWindows: [],
     toolWindowEvictions: 0,
     toolWindowMisses: 0,
+    draftNudge: null,
+    draftNudgeRetryAt: null,
+    deriveFires: [],
+    topicContexts: [],
+    startBranch: null,
+    sessionTouchedAt: null,
+    topicOverflowCount: 0,
   };
 };

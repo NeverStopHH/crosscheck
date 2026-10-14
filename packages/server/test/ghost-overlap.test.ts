@@ -10,8 +10,9 @@
  * design
  * on exactly this: how much overlap is enough, and which files must never
  * count. So: one shared file is not a plan, one shared FAILURE is; a lockfile
- * everybody touches is nothing; a fifty-file sweep collides with everybody
- * and is therefore excluded from both sides.
+ * everybody touches is nothing; a fifty-file change collides with everybody,
+ * so its row says how large it is and ranks after a focused one — but it is
+ * never dropped, because a large surface is still collision-relevant.
  */
 import { describe, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
@@ -19,11 +20,14 @@ import { eq } from "drizzle-orm";
 import {
   GHOST_HOT_TARGET_MAX_CONTEXTS,
   GHOST_MAX_CONTEXT_TARGETS,
+  GHOST_MAX_PROBE_VALUES,
 } from "../src/constants.ts";
 import { agentSessions, workContexts } from "../src/db/schema.ts";
 import {
   addTestDeveloperWithSession,
   createHarnessWithSession,
+  createTestDeveloper,
+  createTestHarness,
   jsonRequest,
   postRecords,
   recordEnvelope,
@@ -35,6 +39,15 @@ import {
 import type { TestDeveloper, TestHarness } from "./helpers.ts";
 
 const REPO = VALID_SESSION_BODY.repo;
+/** An old main commit a long-lived worktree stays detached at. */
+const STALE_DETACHED_BASE = "51eae4d8f0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5";
+/** When it was committed: six weeks before the contexts open. */
+const STALE_DETACHED_AT = "2026-06-12T09:00:00.000Z";
+/** Past GHOST_ACTIVE_WINDOW_DAYS, as a clock advance and as the instant it reaches. */
+const TEN_DAYS_S = 10 * 86_400;
+const TEN_DAYS_AFTER_START = "2026-08-03T09:00:00.000Z";
+/** The incident's context held 180 files; all but the two shared ones are old here. */
+const LONG_LIVED_OLD_TOUCHES = 178;
 const MY_SESSION = "ses_mine";
 const THEIR_SESSION = "ses_theirs";
 const MY_CONTEXT = "wc_mine";
@@ -42,11 +55,17 @@ const THEIR_CONTEXT = "wc_theirs";
 const FINGERPRINT = "sha256:0f1e2d3c4b5a69788796a5b4c3d2e1f0";
 
 /**
- * Targets on the sweeping worktree of the test above: more than the whole
- * read window that two of my own contexts share, so a bound spent in id
- * order would leave the other context nothing.
+ * Targets on my own renaming worktree: more than the probe one context may
+ * spend, so a probe ranked across my contexts instead of within each would
+ * leave the other context nothing.
  */
-const OWN_SWEEP_TARGETS = 110;
+const OWN_SWEEP_TARGETS = GHOST_MAX_PROBE_VALUES + 10;
+
+/** A teammate's change the size of the pilot incident's, all of it touched today. */
+const INCIDENT_FILES = 180;
+
+/** A row's qualifier: the files its large change touched, or null for a focused one. */
+const largeChangeOf = (row: GhostView | undefined): number | null => row?.largeChangeFiles ?? null;
 
 /** Warm values the crowd carries, each on CROWD_SHARERS foreign contexts. */
 const CROWD_VALUES = 45;
@@ -62,6 +81,8 @@ interface GhostView {
   readonly sharedTargetCount: number;
   readonly intentTokenHits: number;
   readonly intent: { summary?: string } | null;
+  readonly largeChangeFiles?: number | null;
+  readonly branch?: string | null;
 }
 
 const fetchGhostChecks = async (
@@ -85,6 +106,7 @@ const contextRecords = (
   title: string,
   targets: readonly { kind: string; value: string }[],
   intent?: Record<string, unknown>,
+  overrides: Record<string, unknown> = {},
 ): readonly Record<string, unknown>[] => [
   recordEnvelope(
     "work_context",
@@ -95,6 +117,7 @@ const contextRecords = (
       description: undefined,
       createdAt: TEST_START_ISO,
       ...(intent === undefined ? {} : { intent }),
+      ...overrides,
     }),
     { sessionId },
   ),
@@ -240,7 +263,10 @@ describe("ghost checks, the deterministic overlap", () => {
 
   test("a hot value everybody touches is not evidence of a plan", async () => {
     const { harness, me, them } = await setup();
-    const lockfiles = ["package-lock.json", "bun.lock"];
+    // ORDINARY files every session edits — the config and the router. Not
+    // lockfiles: those are labelled generated and never evidence at all
+    // (services/generated-targets.ts), so they could not show the HOT rule.
+    const lockfiles = ["src/config.ts", "src/router.ts"];
     const plan = ["src/auth/token.ts", "src/auth/session.ts"];
     const asTargets = (values: readonly string[]): readonly {
       kind: string;
@@ -333,55 +359,164 @@ describe("ghost checks, the deterministic overlap", () => {
     );
   });
 
-  test("a fifty-file sweep collides with nobody", async () => {
+  test("a change over the large-change line still collides — qualified, and after a focused one", async () => {
+    // Arrange: Ken's rename shares THREE of my files, Mike's focused plan two.
+    const { harness, me, them } = await setup();
+    const shared = ["src/auth/token.ts", "src/auth/session.ts", "src/auth/store.ts"];
+    const files = (values: readonly string[]) => values.map((value) => ({ kind: "file", value }));
+    await seed(harness, me, contextRecords(MY_CONTEXT, MY_SESSION, "Token refresh rework", files(shared)));
+    const renamed = [
+      ...shared,
+      ...Array.from({ length: GHOST_MAX_CONTEXT_TARGETS }, (_unused, index) => `src/renamed/file-${String(index)}.ts`),
+    ];
+    await seed(harness, them, contextRecords(THEIR_CONTEXT, THEIR_SESSION, "Rename the whole module", files(renamed)));
+    const mike = await addTestDeveloperWithSession(harness, "Mike", "mike@example.com", { id: "ses_mike" });
+    await seed(harness, mike, contextRecords("wc_modest", "ses_mike", "Session store migration", files(shared.slice(0, 2))));
+
+    // Act
+    const checks = await fetchGhostChecks(harness, me.apiKey);
+
+    // Assert: both collide. Ken's row says how large his change is and ranks
+    // after Mike's although it shares more — a file shared with a rename is
+    // weaker evidence than one shared with a plan, never no evidence.
+    expect(renamed.length).toBeGreaterThan(GHOST_MAX_CONTEXT_TARGETS);
+    expect(checks.map((row) => row.workContextId)).toEqual(["wc_modest", THEIR_CONTEXT]);
+    expect(checks.map(largeChangeOf)).toEqual([null, renamed.length]);
+    expect(checks[1]?.sharedTargetCount).toBe(shared.length);
+  });
+
+  test("the incident's shape: a 180-file change touched today still collides, qualified", async () => {
+    // Arrange: the reviewer's demo. Ken's one context touched 180 files today,
+    // two of them mine; I am in those two.
     const { harness, me, them } = await setup();
     const shared = ["src/auth/token.ts", "src/auth/session.ts"];
+    const files = (values: readonly string[]) => values.map((value) => ({ kind: "file", value }));
+    await seed(harness, me, contextRecords(MY_CONTEXT, MY_SESSION, "Token refresh rework", files(shared)));
+    const kens = contextRecords(
+      THEIR_CONTEXT,
+      THEIR_SESSION,
+      "Orchestration worktree",
+      files([...shared, ...Array.from({ length: INCIDENT_FILES - shared.length }, (_unused, i) => `src/other/f${String(i)}.ts`)]),
+    );
+    for (let start = 0; start < kens.length; start += INGEST_CHUNK) {
+      await seed(harness, them, kens.slice(start, start + INGEST_CHUNK));
+    }
+
+    // Act
+    const checks = await fetchGhostChecks(harness, me.apiKey);
+
+    // Assert
+    expect(INCIDENT_FILES).toBeGreaterThan(GHOST_MAX_CONTEXT_TARGETS);
+    expect(checks.map((row) => row.workContextId)).toEqual([THEIR_CONTEXT]);
+    expect(largeChangeOf(checks[0])).toBe(INCIDENT_FILES);
+    expect(checks[0]?.sharedTargetCount).toBe(shared.length);
+  });
+
+  test("my own large change still collides with the teammate in it", async () => {
+    // Arrange: MY context touched sixty files today, two of them Ken's.
+    const { harness, me, them } = await setup();
+    const shared = ["src/auth/token.ts", "src/auth/session.ts"];
+    const files = (values: readonly string[]) => values.map((value) => ({ kind: "file", value }));
+    const mine = [...shared, ...Array.from({ length: GHOST_MAX_CONTEXT_TARGETS + 8 }, (_unused, i) => `src/gen/file-${String(i)}.ts`)];
+    await seed(harness, me, contextRecords(MY_CONTEXT, MY_SESSION, "Rename the whole module", files(mine)));
+    await seed(harness, them, contextRecords(THEIR_CONTEXT, THEIR_SESSION, "Session store migration", files(shared)));
+
+    // Act
+    const checks = await fetchGhostChecks(harness, me.apiKey);
+
+    // Assert: my size is no reason to hide Ken from me, and his row is his
+    // focused plan — the qualifier is about THEIR change, never mine.
+    expect(mine.length).toBeGreaterThan(GHOST_MAX_CONTEXT_TARGETS);
+    expect(checks.map((row) => row.workContextId)).toEqual([THEIR_CONTEXT]);
+    expect(largeChangeOf(checks[0])).toBeNull();
+  });
+
+  test("a long-lived context's old touches do not make it a large change — only what it touched in the window counts", async () => {
+    // Arrange: the pilot incident's real shape. Ken's one long-lived context
+    // touched 178 files ten days ago and the two I am in today; Mike's
+    // touched sixty files today — a large change now.
+    const harness = await createTestHarness();
+    const me = await createTestDeveloper(harness, "Nick", "nick@example.com");
+    const ken = await createTestDeveloper(harness, "Ken", "ken@example.com");
+    const mike = await createTestDeveloper(harness, "Mike", "mike@example.com");
+    await registerTestSession(harness, me.apiKey, { id: MY_SESSION });
+    await registerTestSession(harness, ken.apiKey, { id: THEIR_SESSION });
+    await registerTestSession(harness, mike.apiKey, { id: "ses_mike" });
+    const shared = ["src/auth/token.ts", "src/auth/session.ts"];
+    const files = (values: readonly string[]) => values.map((value) => ({ kind: "file", value }));
+    const opened = { createdAt: TEN_DAYS_AFTER_START };
+    const kensOldTouches = contextRecords(
+      THEIR_CONTEXT,
+      THEIR_SESSION,
+      "Orchestration worktree",
+      files(Array.from({ length: LONG_LIVED_OLD_TOUCHES }, (_unused, i) => `src/old/file-${String(i)}.ts`)),
+      undefined,
+      opened,
+    );
+    for (let start = 0; start < kensOldTouches.length; start += INGEST_CHUNK) {
+      await seed(harness, ken, kensOldTouches.slice(start, start + INGEST_CHUNK));
+    }
+    harness.clock.advanceSeconds(TEN_DAYS_S);
+
+    // Act: today's touches.
+    await seed(
+      harness,
+      ken,
+      shared.map((value) => recordEnvelope("target", { workContextId: THEIR_CONTEXT, kind: "file", value }, { sessionId: THEIR_SESSION })),
+    );
+    await seed(harness, me, contextRecords(MY_CONTEXT, MY_SESSION, "Token refresh rework", files(shared), undefined, opened));
+    await seed(
+      harness,
+      mike,
+      contextRecords(
+        "wc_mike_sweep",
+        "ses_mike",
+        "Rename the whole module",
+        files([...shared, ...Array.from({ length: GHOST_MAX_CONTEXT_TARGETS + 8 }, (_unused, i) => `src/gen/file-${String(i)}.ts`)]),
+        undefined,
+        opened,
+      ),
+    );
+
+    // Assert: Ken is in my way as a focused plan; Mike's change collides
+    // too, qualified by what it touched today and ranked after Ken.
+    const checks = await fetchGhostChecks(harness, me.apiKey);
+    expect(LONG_LIVED_OLD_TOUCHES + shared.length).toBeGreaterThan(GHOST_MAX_CONTEXT_TARGETS);
+    expect(checks.map((row) => row.workContextId)).toEqual([THEIR_CONTEXT, "wc_mike_sweep"]);
+    expect(checks.map(largeChangeOf)).toEqual([null, GHOST_MAX_CONTEXT_TARGETS + 8 + shared.length]);
+  });
+
+  test("my own long-lived context is compared newest touch first", async () => {
+    // Arrange: MY context touched more files ten days ago than the probe
+    // holds — spelled to sort before the two I touch today — and Ken is in
+    // those two now. My old values must not spend the probe my live ones need.
+    const { harness, me, them } = await setup();
+    const shared = ["src/auth/token.ts", "src/auth/session.ts"];
+    const files = (values: readonly string[]) => values.map((value) => ({ kind: "file", value }));
+    const opened = { createdAt: TEN_DAYS_AFTER_START };
+    const myOldTouches = contextRecords(
+      MY_CONTEXT,
+      MY_SESSION,
+      "Orchestration worktree",
+      files(Array.from({ length: GHOST_MAX_PROBE_VALUES + 10 }, (_unused, i) => `src/aaa-old/file-${String(i)}.ts`)),
+      undefined,
+      opened,
+    );
+    for (let start = 0; start < myOldTouches.length; start += INGEST_CHUNK) {
+      await seed(harness, me, myOldTouches.slice(start, start + INGEST_CHUNK));
+    }
+    harness.clock.advanceSeconds(TEN_DAYS_S);
+
+    // Act
     await seed(
       harness,
       me,
-      contextRecords(
-        MY_CONTEXT,
-        MY_SESSION,
-        "Token refresh rework",
-        shared.map((value) => ({ kind: "file", value })),
-      ),
+      shared.map((value) => recordEnvelope("target", { workContextId: MY_CONTEXT, kind: "file", value }, { sessionId: MY_SESSION })),
     );
-    const sweepTargets = [
-      ...shared,
-      ...Array.from(
-        { length: GHOST_MAX_CONTEXT_TARGETS },
-        (_unused, index) => `src/generated/file-${String(index)}.ts`,
-      ),
-    ].map((value) => ({ kind: "file", value }));
-    await seed(
-      harness,
-      them,
-      contextRecords(
-        THEIR_CONTEXT,
-        THEIR_SESSION,
-        "Rename the whole module",
-        sweepTargets,
-      ),
-    );
-    expect(sweepTargets.length).toBeGreaterThan(GHOST_MAX_CONTEXT_TARGETS);
-    expect(await fetchGhostChecks(harness, me.apiKey)).toEqual([]);
+    await seed(harness, them, contextRecords(THEIR_CONTEXT, THEIR_SESSION, "Session store migration", files(shared), undefined, opened));
 
-    // The control: the same two shared files on a context that is NOT a sweep
-    // do produce the notice, so the exclusion is what silenced it above.
-    const modestSession = "ses_modest";
-    await registerTestSession(harness, them.apiKey, { id: modestSession });
-    await seed(
-      harness,
-      them,
-      contextRecords(
-        "wc_modest",
-        modestSession,
-        "Session store migration",
-        shared.map((value) => ({ kind: "file", value })),
-      ),
-    );
-    const checks = await fetchGhostChecks(harness, me.apiKey);
-    expect(checks.map((row) => row.workContextId)).toEqual(["wc_modest"]);
+    // Assert
+    expect((await fetchGhostChecks(harness, me.apiKey)).map((row) => row.workContextId)).toEqual([THEIR_CONTEXT]);
   });
 
   test("my own second worktree never collides with me", async () => {
@@ -536,15 +671,17 @@ describe("ghost checks, the deterministic overlap", () => {
       them,
       contextRecords(THEIR_CONTEXT, THEIR_SESSION, "Session store migration", plan),
     );
-    // The control FIRST: without the sweep this is a notice, so the silence
-    // below can only be the sweep's doing.
+    // The control FIRST: without the rename this is a notice, so a silence
+    // below could only be the rename's doing.
     expect(
       (await fetchGhostChecks(harness, me.apiKey)).map((row) => row.workContextId),
     ).toEqual([THEIR_CONTEXT]);
 
-    // Now the other worktree does a mass rename. It is a sweep and must
-    // contribute nothing — but it must not take my other context's targets
-    // with it, which is what a read bound spent id-first would do.
+    // Now the other worktree does a mass rename, a minute later — every one
+    // of its values newer than my plan's. It is compared like any context of
+    // mine, but it must not take my other context's share of the probe,
+    // which is what a probe ranked across my contexts would do.
+    harness.clock.advanceSeconds(60);
     const sweep = contextRecords(
       "wc_mine_a_sweep",
       MY_SESSION,
@@ -559,7 +696,7 @@ describe("ghost checks, the deterministic overlap", () => {
     for (let at = 0; at < sweep.length; at += INGEST_CHUNK) {
       await seed(harness, me, sweep.slice(at, at + INGEST_CHUNK));
     }
-    expect(OWN_SWEEP_TARGETS).toBeGreaterThan(GHOST_MAX_CONTEXT_TARGETS);
+    expect(OWN_SWEEP_TARGETS).toBeGreaterThan(GHOST_MAX_PROBE_VALUES);
     const after = await fetchGhostChecks(harness, me.apiKey);
     expect(after.map((row) => row.workContextId)).toEqual([THEIR_CONTEXT]);
     expect(after[0]?.sharedTargetCount).toBe(2);
@@ -683,6 +820,80 @@ describe("ghost checks, the deterministic overlap", () => {
       .update(workContexts)
       .set({ landedAt: new Date() })
       .where(eq(workContexts.id, MY_CONTEXT));
+    expect(await fetchGhostChecks(harness, me.apiKey)).toEqual([]);
+  });
+
+  test("a stale detached base a teammate reported landed is still a collision", async () => {
+    // Arrange: the pilot incident. Ken's long-lived session sits detached at
+    // a six-week-old main commit while its work goes on; I am on a feature
+    // branch and my SessionStart reports Ken's base as an ancestor of main.
+    const harness = await createTestHarness();
+    const me = await createTestDeveloper(harness, "Nick", "nick@example.com");
+    const them = await createTestDeveloper(harness, "Ken", "ken@example.com");
+    await registerTestSession(harness, me.apiKey, { id: MY_SESSION, baseOnDefault: false });
+    await registerTestSession(harness, them.apiKey, {
+      id: THEIR_SESSION,
+      branch: `detached@${STALE_DETACHED_BASE.slice(0, 9)}`,
+      baseCommit: STALE_DETACHED_BASE,
+    });
+    const plan = [
+      { kind: "file", value: "src/auth/token.ts" },
+      { kind: "file", value: "src/auth/session.ts" },
+    ];
+    await seed(harness, me, contextRecords(MY_CONTEXT, MY_SESSION, "Token refresh rework", plan));
+    await seed(harness, them, contextRecords(THEIR_CONTEXT, THEIR_SESSION, "Session store migration", plan));
+
+    // Act: a current connector's report, dating the base as git does.
+    await seed(harness, me, [
+      recordEnvelope(
+        "landed_evidence",
+        {
+          repo: REPO,
+          defaultBranch: "origin/main",
+          checkedAt: TEST_START_ISO,
+          commits: [STALE_DETACHED_BASE],
+          commitDates: [{ sha: STALE_DETACHED_BASE, committedAt: STALE_DETACHED_AT }],
+        },
+        { sessionId: MY_SESSION },
+      ),
+    ]);
+
+    // Assert: Ken's files are still in my way.
+    expect(
+      (await fetchGhostChecks(harness, me.apiKey)).map((row) => row.workContextId),
+    ).toEqual([THEIR_CONTEXT]);
+  });
+
+  test("a teammate's base that reached main after they registered is landed, and out", async () => {
+    // Arrange: the lane still works — Ken's connector said his base was NOT
+    // on main when his session started, and now it is.
+    const harness = await createTestHarness();
+    const me = await createTestDeveloper(harness, "Nick", "nick@example.com");
+    const them = await createTestDeveloper(harness, "Ken", "ken@example.com");
+    await registerTestSession(harness, me.apiKey, { id: MY_SESSION, baseOnDefault: false });
+    await registerTestSession(harness, them.apiKey, {
+      id: THEIR_SESSION,
+      branch: "feat/session-store",
+      baseCommit: STALE_DETACHED_BASE,
+      baseOnDefault: false,
+    });
+    const plan = [
+      { kind: "file", value: "src/auth/token.ts" },
+      { kind: "file", value: "src/auth/session.ts" },
+    ];
+    await seed(harness, me, contextRecords(MY_CONTEXT, MY_SESSION, "Token refresh rework", plan));
+    await seed(harness, them, contextRecords(THEIR_CONTEXT, THEIR_SESSION, "Session store migration", plan));
+
+    // Act
+    await seed(harness, me, [
+      recordEnvelope(
+        "landed_evidence",
+        { repo: REPO, defaultBranch: "origin/main", checkedAt: TEST_START_ISO, commits: [STALE_DETACHED_BASE] },
+        { sessionId: MY_SESSION },
+      ),
+    ]);
+
+    // Assert: merged work collides with nothing.
     expect(await fetchGhostChecks(harness, me.apiKey)).toEqual([]);
   });
 
@@ -836,8 +1047,9 @@ describe("ghost checks, the deterministic overlap", () => {
     );
     // Their context is over GHOST_MAX_CONTEXT_TARGETS — a sixty-file
     // implementation session, which is ordinary work and not a rename. The
-    // sweep rule is an argument about SHARING A FILE with somebody who shares
-    // files with everybody; this tier shares no file at all.
+    // large-change qualifier is an argument about SHARING A FILE with somebody
+    // who shares files with everybody; this tier shares no file at all, so
+    // the row is neither qualified nor ranked down for its size.
     const theirs = contextRecords(
       THEIR_CONTEXT,
       THEIR_SESSION,
@@ -858,6 +1070,7 @@ describe("ghost checks, the deterministic overlap", () => {
     expect(checks.map((row) => row.workContextId)).toEqual([THEIR_CONTEXT]);
     expect(checks[0]?.sharedTargetCount).toBe(0);
     expect(checks[0]?.intentTokenHits).toBeGreaterThanOrEqual(3);
+    expect(largeChangeOf(checks[0])).toBeNull();
   });
 
   test("a muted teammate's plan is not reported to me", async () => {
@@ -886,5 +1099,44 @@ describe("ghost checks, the deterministic overlap", () => {
     );
     expect(muted.status).toBe(200);
     expect(await fetchGhostChecks(harness, me.apiKey)).toEqual([]);
+  });
+});
+
+/**
+ * A GHOST ROW SAYS WHERE THE TEAMMATE WORKS ON IT (release gate, 1b): a
+ * topic's own branch — where that work lives — and its session's only when
+ * the context has none. The session's branch of a long detached session is
+ * the stale checkout it started in, which the person must never be told.
+ */
+describe("a ghost row names the branch its work context is on", () => {
+  const PLAN = [
+    { kind: "file", value: "src/practice/mapping.ts" },
+    { kind: "file", value: "src/practice/columns.ts" },
+  ];
+
+  test("a topic's row names the topic's branch, not its session's", async () => {
+    // Arrange
+    const { harness, me, them } = await setup();
+    await seed(harness, me, contextRecords(MY_CONTEXT, MY_SESSION, "Mine", PLAN));
+    await seed(harness, them, contextRecords(THEIR_CONTEXT, THEIR_SESSION, "Theirs", PLAN, undefined, { branch: "feat/numlabs-practices" }));
+
+    // Act
+    const rows = await fetchGhostChecks(harness, me.apiKey);
+
+    // Assert
+    expect(rows.map((row) => [row.workContextId, row.branch])).toEqual([[THEIR_CONTEXT, "feat/numlabs-practices"]]);
+  });
+
+  test("a context with no branch of its own names its session's", async () => {
+    // Arrange
+    const { harness, me, them } = await setup();
+    await seed(harness, me, contextRecords(MY_CONTEXT, MY_SESSION, "Mine", PLAN));
+    await seed(harness, them, contextRecords(THEIR_CONTEXT, THEIR_SESSION, "Theirs", PLAN));
+
+    // Act
+    const rows = await fetchGhostChecks(harness, me.apiKey);
+
+    // Assert
+    expect(rows.map((row) => [row.workContextId, row.branch])).toEqual([[THEIR_CONTEXT, VALID_SESSION_BODY.branch]]);
   });
 });

@@ -7,7 +7,7 @@
  * from CI removes the laptop; these checks remove the rest.
  */
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -21,6 +21,9 @@ import {
 
 const SHA = "0123456789abcdef0123456789abcdef01234567";
 const REPO = "NeverStopHH/crosscheck";
+/** ci.yml `release-gate`: the gate at production budgets. */
+const RELEASE_GATE_JOB = "Release gate (production budgets)";
+const CI_WORKFLOW_PATH = join(import.meta.dir, "..", "..", "..", ".github", "workflows", "ci.yml");
 
 describe("the release tag", () => {
   test("names a plain semantic version with a v prefix", () => {
@@ -163,5 +166,32 @@ describe("CI on the tagged commit", () => {
   test("refuses when a required job is missing from the run", async () => {
     const result = await checkCiGreen(api([run()], green.slice(1)), REPO, SHA);
     expect(result.ok).toBe(false);
+  });
+
+  test("refuses a tag whose release gate at production budgets is red, naming it", async () => {
+    // Arrange: both Test & Typecheck legs green, the release gate red.
+    const jobs = green.map((entry) => (entry["name"] === RELEASE_GATE_JOB ? job(RELEASE_GATE_JOB, "failure") : entry));
+
+    // Act
+    const result = await checkCiGreen(api([run({ conclusion: "failure" })], jobs), REPO, SHA);
+
+    // Assert
+    expect(REQUIRED_CI_JOBS).toContain(RELEASE_GATE_JOB);
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain(RELEASE_GATE_JOB);
+  });
+
+  test("every required job is a job ci.yml actually runs, so a rename cannot drop it silently", async () => {
+    // Arrange: the job names ci.yml gives, a matrix job once per leg.
+    const workflow = await readFile(CI_WORKFLOW_PATH, "utf8");
+    const names = [...workflow.matchAll(/^ {4}name: (.+)$/gm)].map((match) => (match[1] ?? "").trim());
+    const legs = [...workflow.matchAll(/^ {8}os: \[(.+)\]$/gm)].flatMap((match) => (match[1] ?? "").split(",").map((os) => os.trim()));
+    const runs = new Set([...names, ...names.flatMap((name) => legs.map((os) => `${name} (${os})`))]);
+
+    // Act
+    const unknown = REQUIRED_CI_JOBS.filter((name) => !runs.has(name));
+
+    // Assert
+    expect(unknown).toEqual([]);
   });
 });

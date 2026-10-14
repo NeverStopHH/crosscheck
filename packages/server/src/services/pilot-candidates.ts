@@ -25,6 +25,7 @@ import {
 } from "../constants.ts";
 import { agentSessions, hintDeliveries } from "../db/schema.ts";
 import { readTeamSettings } from "./team-settings.ts";
+import { locationHiddenFrom, projectRow, titleSourceOf } from "./live-location.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
@@ -142,6 +143,10 @@ type UnlabeledRow = {
   readonly ref_id: string;
   readonly delivered_at: string | Date;
   readonly title: string | null;
+  /** Whose context the delivery pointed at — the title names where they are. */
+  readonly owner_developer_id: string | null;
+  readonly owner_branch: string | null;
+  readonly title_source: string | null;
 };
 
 /**
@@ -179,12 +184,14 @@ export const readUnlabeledInterventions = async (
   const since = new Date(deps.now().getTime() - input.withinMinutes * MS_PER_MINUTE);
   const rows = await deps.db.execute<UnlabeledRow>(sql`
     SELECT hd.id, hd.session_id, hd.channel, hd.ref_kind, hd.ref_id, hd.delivered_at,
-           wc.title AS title
+           wc.title AS title, wc.title_source AS title_source,
+           pointed_owner.developer_id AS owner_developer_id, pointed_owner.branch AS owner_branch
     FROM hint_deliveries hd
     JOIN agent_sessions s ON s.id = hd.session_id
     LEFT JOIN work_contexts wc ON wc.id = (${POINTED_WORK_CONTEXT})
       AND EXISTS (SELECT 1 FROM agent_sessions owner
                   WHERE owner.id = wc.session_id AND owner.repo = ${input.repo})
+    LEFT JOIN agent_sessions pointed_owner ON pointed_owner.id = wc.session_id
     JOIN team_settings ts ON ts.repo = s.repo
     WHERE s.repo = ${input.repo}
       AND s.started_at >= ts.pilot_labels_since
@@ -196,18 +203,45 @@ export const readUnlabeledInterventions = async (
         WHERE m.ref_kind = 'hint_delivery' AND m.ref_id = hd.id
           AND m.marked_by = ${input.developerId}
       )
+      -- human provenance §4: a pointer whose label draft WAITS at /ui/confirm is not asked for
+      -- again; one the person discarded there is offered again (review H3) — a confirmed one
+      -- is a pilot_marks row, above
+      AND NOT EXISTS (
+        SELECT 1 FROM human_drafts dr
+        WHERE dr.developer_id = ${input.developerId}
+          AND dr.subject_key = 'label:' || hd.session_id || ':' || hd.ref_id
+          AND dr.version = (SELECT max(v.version) FROM human_drafts v
+                            WHERE v.developer_id = dr.developer_id AND v.subject_key = dr.subject_key)
+          AND NOT EXISTS (SELECT 1 FROM human_confirmation_items i
+                          WHERE i.draft_id = dr.id AND i.decision IN ('confirm', 'discard'))
+      )
     ORDER BY hd.delivered_at DESC, hd.id ASC
     LIMIT ${PILOT_LABEL_MAX_CANDIDATES + 1}`);
+  const hidden = await locationHiddenFrom(deps.db, input.developerId);
   return {
-    candidates: rows.rows.slice(0, PILOT_LABEL_MAX_CANDIDATES).map((row) => ({
-      id: row.id,
-      sessionId: row.session_id,
-      channel: row.channel,
-      refKind: row.ref_kind,
-      refId: row.ref_id,
-      deliveredAt: new Date(row.delivered_at).toISOString(),
-      title: row.title,
-    })),
+    candidates: rows.rows.slice(0, PILOT_LABEL_MAX_CANDIDATES).map((row) => {
+      const candidate = {
+        id: row.id,
+        sessionId: row.session_id,
+        channel: row.channel,
+        refKind: row.ref_kind,
+        refId: row.ref_id,
+        deliveredAt: new Date(row.delivered_at).toISOString(),
+        title: row.title,
+      };
+      // The delivery is the caller's own; the TITLE is the pointed
+      // context's, and judged by its owner (services/live-location.ts). Only
+      // the title is handed over: the delivery's instant is the caller's.
+      return row.owner_developer_id === null
+        ? candidate
+        : {
+            ...candidate,
+            ...projectRow(hidden, {
+              developerId: row.owner_developer_id,
+              titleFacts: { repo: input.repo, branch: row.owner_branch, titleSource: titleSourceOf(row.title_source) },
+            }, { title: candidate.title }),
+          };
+    }),
     more: rows.rows.length > PILOT_LABEL_MAX_CANDIDATES,
   };
 };

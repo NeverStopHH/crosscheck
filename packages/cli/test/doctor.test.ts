@@ -1,3 +1,4 @@
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { chmod, mkdir, mkdtemp, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -66,7 +67,7 @@ const startOpenSessionsHub = (
     status: "done",
     lastHeartbeatAt: new Date(Date.now() - MS_PER_DAY).toISOString(),
   }));
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: (request) => {
       const { pathname } = new URL(request.url);
@@ -842,6 +843,42 @@ describe("crosscheck doctor mcp registration", () => {
  * (npm's crosscheck-cli ships one). Both are silent in the hooks by design,
  * so doctor must resolve and identify the launcher the way a hook would.
  */
+/**
+ * BUN'S STARTUP VARIABLES IN THE SHELL (batch-2 integration review, L12): any
+ * BUN_OPTIONS, BUN_CONFIG_* or BUN_INSPECT* restarts every crosscheck process
+ * without it, a second process start per hook. Doctor names the variable, so
+ * the person can decide — and never its value, which could be a token.
+ */
+describe("crosscheck doctor runtime variables check", () => {
+  test("names the variables that make every hook restart, never a value", async () => {
+    // Arrange
+    const { repo, home } = await fixture();
+    const env = { ...doctorEnv(home), BUN_CONFIG_REGISTRY: "https://registry.example.test/secret-path", BUN_OPTIONS: "--smol" };
+
+    // Act
+    const result = await runCli(["doctor"], env, repo);
+
+    // Assert
+    expect(result.stdout).toContain("WARN  runtime variables  BUN_CONFIG_REGISTRY, BUN_OPTIONS are set in this shell");
+    expect(result.stdout).toContain("starts itself a second time without them");
+    expect(result.stdout).not.toContain("registry.example.test");
+    expect(result.stdout).not.toContain("--smol");
+  });
+
+  test("passes on a clean shell, and on the watch-mode variable proven harmless", async () => {
+    // Arrange
+    const { repo, home } = await fixture();
+
+    // Act
+    const clean = await runCli(["doctor"], doctorEnv(home), repo);
+    const watch = await runCli(["doctor"], { ...doctorEnv(home), BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD: "1" }, repo);
+
+    // Assert
+    expect(clean.stdout).toContain("PASS  runtime variables  none of bun's startup variables is set in this shell");
+    expect(watch.stdout).toContain("PASS  runtime variables");
+  });
+});
+
 describe("crosscheck doctor hook launcher check", () => {
   const launcherEnv = (home: string, pathDir?: string) => ({
     CROSSCHECK_HOME: home,

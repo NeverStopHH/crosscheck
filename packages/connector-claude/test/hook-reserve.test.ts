@@ -42,22 +42,43 @@
  * PRINTS: packages/connector-core/src/config/hook-budget.ts
  * PRINTS: packages/connector-core/src/constants.ts
  *
- * — and `spareMs` is in turn the sole accessor on HookBudget, taken as a whole
- * deadline by the drain in each of the five hooks that host one (SessionStart,
- * SessionEnd, PostToolUse, PostToolUseFailure, Stop), read once more by
- * SessionStart's deferred end, once more by Stop, which asks whether the
- * remaining time affords a `git diff --name-only` BEFORE spawning one — the
- * regression guard's second evidence lane pays for itself out of the same
- * envelope or does not run — once more by PreToolUse, whose landed-change
+ * — and `spareMs` is in turn the sole accessor on HookBudget that does
+ * arithmetic (`isAnswerless` beside it is a flag the reserve's absence sets,
+ * asserted at the end of this file), taken as a whole
+ * deadline by the drain in each of the six hooks that host one (SessionStart,
+ * SessionEnd, PostToolUse, PostToolUseFailure, Stop, SubagentStop), read once
+ * more by SessionStart's deferred end, once more by the git lane Stop and
+ * SubagentStop share (hooks/git-lane.ts), which asks whether the remaining
+ * time affords one git deadline BEFORE sweeping any root — the regression
+ * guard's second evidence lane pays for itself out of the same envelope or
+ * does not run — once more by PreToolUse, whose landed-change
  * stop asks the hub for its why only once the stop is booked, with no more
  * than the envelope still spares (hooks/landed-why.ts) — and once more by
  * UserPromptSubmit, which tells an author's notice only while the envelope
  * spares room to post it and still print it (connector-core hints/delivery.ts)
  * — and once more by a heartbeat the hub refuses, whose mid-life heal walks
- * the ladder only to the deadline the envelope still spares (hooks/heal.ts):
+ * the ladder only to the deadline the envelope still spares (hooks/heal.ts)
+ * — and once for a teammate collision (review L3): the main thread's hooks
+ * drain a subagent's queued relay (hooks/collision-relay.ts) only while the
+ * envelope spares room to carry the line out. PreToolUse no longer marks a
+ * group told by the envelope: it tells with the ask, and a race the budget
+ * wins gives the claim back (batch-2 review, H2; config/hook-budget.ts
+ * hookRace) — and once more by UserPromptSubmit, which holds the prompt's
+ * own hub calls to what the envelope spares once a queued relay was drained
+ * first (round 2, M3) — and once more by the relay's one presence refresh,
+ * bounded by what the envelope spares (hooks/collision-relay.ts) — and twice
+ * by the recheck every 30 s rest owes (hooks/rest-recheck.ts; round 3, F-M2):
+ * each tripwire call is bounded the same way, and a hook with nothing to
+ * spare leaves the debt for the next one instead of asking at all — and
+ * three times by the sweep a healed life is owed (hooks/git-lane.ts
+ * sweepIfLifeMoved; batch-2 review, L10): PostToolUse asks whether the
+ * envelope spares a lane before it loads the lane's modules, the sweep
+ * asks once more before it runs, and its flush carries what is left — and
+ * once more by the relay's tripwire re-ask of a nameless group, each call
+ * bounded by the request timeout and the spare (final review of batch 2, §5):
  *
  * VERIFY: grep -rn 'budget\.spareMs()' packages/connector-claude/src | wc -l | tr -d ' '
- * PRINTS: 10
+ * PRINTS: 20
  */
 import { describe, expect, test } from "bun:test";
 
@@ -135,5 +156,46 @@ describe("the hook reserve", () => {
     // timeout and is the one value no caller of spareMs checks for.
     expect(spareWith(-REMAINING_MS, HTTP_TIMEOUT_MS)).toBe(0);
     expect(spareWith(-REMAINING_MS, LATENCY_TIMEOUT_MAX_MS)).toBe(0);
+  });
+});
+
+/**
+ * WHAT THE RESERVE CARRIES OUT IS THE HOOK'S ANSWER — and Stop and
+ * SubagentStop have none (cli/settings-merge.ts: async, their response
+ * ignored). Holding one request timeout back on them starved exactly the
+ * work they exist for (release gate, loaded lane, 2026-10-09): the git lane
+ * needs one git deadline of the hook's 800 ms left and the drain after it
+ * ships a resumed life's re-filing in two hub batches; with 400 ms held
+ * back for an answer nobody reads, a lane that started 150 ms in was skipped
+ * and a drain that started at 140 ms shipped one batch of two. An answerless
+ * hook's spare is its whole remainder, floored the same way.
+ */
+describe("an answerless hook holds nothing back", () => {
+  test("its spare is the whole remainder", () => {
+    // Arrange / Act
+    const spare = hookBudget(NOW_MS + REMAINING_MS, HTTP_TIMEOUT_MS, frozen(NOW_MS), false).spareMs();
+
+    // Assert
+    expect(spare).toBe(REMAINING_MS);
+  });
+
+  test("and still floors at zero once its deadline is gone", () => {
+    expect(hookBudget(NOW_MS - 1, HTTP_TIMEOUT_MS, frozen(NOW_MS), false).spareMs()).toBe(0);
+  });
+
+  test("a hook with an answer holds the reserve by default", () => {
+    expect(hookBudget(NOW_MS + REMAINING_MS, HTTP_TIMEOUT_MS, frozen(NOW_MS)).spareMs()).toBe(REMAINING_MS - HTTP_TIMEOUT_MS);
+  });
+
+  // ...AND SAYS SO (release gate on ubuntu-latest, 2026-10-13): its drain may
+  // then give a records request the room left instead of the request bound,
+  // which abandoned a slow hub's answer after the hub had stored the batch
+  // (core spool/flush.ts `isAnswerless`; test/stop-answerless-flush.test.ts).
+  test("its budget says nobody waits for it, so a request may take the room left", () => {
+    expect(hookBudget(NOW_MS + REMAINING_MS, HTTP_TIMEOUT_MS, frozen(NOW_MS), false).isAnswerless).toBe(true);
+  });
+
+  test("a hook with an answer says nothing of the kind, and its requests keep the bound", () => {
+    expect(hookBudget(NOW_MS + REMAINING_MS, HTTP_TIMEOUT_MS, frozen(NOW_MS)).isAnswerless).toBeUndefined();
   });
 });

@@ -9,6 +9,7 @@
  * point (`runHook`) against a throwaway hub and asserts the file it leaves
  * behind, including the two states where a hook deliberately records nothing.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -37,7 +38,7 @@ afterEach(async () => {
 
 /** Answers everything with an empty ok envelope — the hook must not need more. */
 const acceptingHub = (): string => {
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: () =>
       Response.json({

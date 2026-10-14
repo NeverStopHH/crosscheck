@@ -13,13 +13,17 @@ import { draftsRoutes } from "./routes/drafts.ts";
 import { eventsRoutes } from "./routes/events.ts";
 import { ghostChecksRoutes } from "./routes/ghost-checks.ts";
 import { hintsRoutes } from "./routes/hints.ts";
+import { hubStatusRoutes } from "./routes/hub-status.ts";
+import { confirmStatusRoutes } from "./routes/confirm-status.ts";
 import { intentLedgerRoutes } from "./routes/intent-ledger.ts";
 import { landedRoutes } from "./routes/landed.ts";
 import { passkeyRoutes } from "./routes/passkeys.ts";
+import { artifactRoutes } from "./routes/artifacts.ts";
 import { pinsRoutes } from "./routes/pins.ts";
 import { presenceRoutes } from "./routes/presence.ts";
 import { questionsRoutes } from "./routes/questions.ts";
 import { recordsRoutes } from "./routes/records.ts";
+import { hintOutcomeRoutes } from "./routes/hint-outcomes.ts";
 import { pilotMarkRoutes } from "./routes/pilot-marks.ts";
 import { pilotRoutes } from "./routes/pilot.ts";
 import { searchRoutes } from "./routes/search.ts";
@@ -49,6 +53,9 @@ export const createApp = (deps: AppDeps): Hono<AppEnv> => {
   app.route("/api/contradictions", contradictionsRoutes(deps));
   app.route("/api/absences", absencesRoutes(deps));
   app.route("/api/pilot-marks", pilotMarkRoutes(deps));
+  // 07 §13. Beside the marks and never inside them: the one pilot record an
+  // agent may write, so it has a route the label path does not share.
+  app.route("/api/hint-outcomes", hintOutcomeRoutes(deps));
   app.route("/api/pilot", pilotRoutes(deps));
   app.route("/api/solved-matches", solvedMatchesRoutes(deps));
   app.route("/api/ghost-checks", ghostChecksRoutes(deps));
@@ -76,6 +83,11 @@ export const createApp = (deps: AppDeps): Hono<AppEnv> => {
   // renders every sentence exactly as before and reports healthy; this is
   // the one instrument that makes that visible rather than quiet.
   app.route("/api/intent-ledger", intentLedgerRoutes(deps));
+  // What the hub is still doing on its own after an upgrade — a count, read
+  // by any member, printed by doctor while it is not zero (round 4, M2).
+  app.route("/api/hub-status", hubStatusRoutes(deps));
+  // human provenance §6, §9: the caller's pending drafts and whether they can confirm here.
+  app.route("/api/confirm", confirmStatusRoutes(deps));
   app.route("/api/settings", settingsRoutes(deps));
   // The regression guard's two TEAM decisions — who may pin, and whether
   // `suspect` names sessions. Read by any member (everybody affected has to
@@ -95,6 +107,8 @@ export const createApp = (deps: AppDeps): Hono<AppEnv> => {
   app.route("/api/waiver-requests", waiverRequestRoutes(deps));
   // 04a §4.3: the enrolment announcements status and doctor print.
   app.route("/api/passkeys", passkeyRoutes(deps));
+  // The operator's re-hide of a released artifact (admin token only).
+  app.route("/api/artifacts", artifactRoutes(deps));
   // The human-facing web surface (DESIGN.md §2.1 v0.5) — same hub, same
   // visibility rules, session-cookie auth instead of bearer keys.
   app.route("/ui", uiRoutes(deps));

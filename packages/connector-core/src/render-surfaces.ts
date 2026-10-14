@@ -20,7 +20,8 @@
 import type { CommitDrift } from "./git/commit-drift.ts";
 import type { LandedChanges, LandedCommit } from "./landed-changes/probe.ts";
 import type { CoverageRecord } from "./http/coverage.ts";
-import { renderBriefing } from "./briefing/render.ts";
+import { OWN_DRAFTS_QUOTED_DATA_NOTICE, QUOTED_DATA_NOTICE, renderBriefing } from "./briefing/render.ts";
+import { renderDraftNudge } from "./briefing/draft-nudge.ts";
 import { renderConferenceReport } from "./conference/report.ts";
 import { formatSummarizerFailure } from "./model/runner.ts";
 import { ghostDraftBody } from "./briefing/ghost.ts";
@@ -33,7 +34,23 @@ import {
   renderLandedNoticeHint,
   renderTripwireReason,
 } from "./hints/render.ts";
+import {
+  anonymousCollision,
+  anonymousGhostCollision,
+  anonymousTripwireCollision,
+  ghostCollisions,
+  renderCollisionNotices,
+  renderOverlapIndicator,
+  renderSubagentCollisionRelay,
+  tripwireCollision,
+} from "./hints/collision-notice.ts";
 import { renderOpenQuestions } from "./mcp/tools/list-open-questions.ts";
+import { successText as reviewDraftSuccessText } from "./mcp/tools/review-draft.ts";
+import {
+  appendOutcomeClause,
+  withBriefingOutcomeClause,
+  withOutcomeClause,
+} from "./hints/outcome-clause.ts";
 import {
   quotingText,
   renderDiagnosis,
@@ -51,6 +68,7 @@ import type {
   ConferenceCorpus,
   ContradictionEntry,
   Diagnosis,
+  DraftEntry,
   GhostCheckEntry,
   HintClaimCandidate,
   InboxQuestion,
@@ -68,7 +86,8 @@ import { describeConnectionFailure } from "./http/connection-error.ts";
 
 /**
  * How a surface's output is classed, which decides its corpus assertions:
- *   framed    — a full document: carries QUOTED_DATA_NOTICE, every line under
+ *   framed    — a full document: carries its quoted-data notices
+ *               (QUOTED_DATA_NOTICE unless it declares `notices`), every line under
  *               the character invariants, at most one « » pair per line;
  *   sanitized — PROSE cleaned for a frame applied LATER (a title on its way
  *               to the hub): character invariants, and no « » at all;
@@ -111,6 +130,15 @@ export interface CorpusRenderSurface {
   /** Package-relative module the surface lives in, e.g. "src/mcp/render.ts". */
   readonly module: string;
   readonly framing: RenderSurfaceFraming;
+  /**
+   * The quoted-data notices a `framed` surface must carry — QUOTED_DATA_NOTICE
+   * alone when omitted. The blocks that quote the reader's OWN auto-captured
+   * drafts carry OWN_DRAFTS_QUOTED_DATA_NOTICE; the briefing carries both,
+   * because its header's teammate notice is on every briefing (one notice too
+   * many rather than one too few). The registry test holds every surface to
+   * exactly its own: each one listed present, no other.
+   */
+  readonly notices?: readonly string[];
   /** Renders with the payload planted in the surface's most exposed slot. */
   readonly render: (untrusted: string) => string;
 }
@@ -151,6 +179,7 @@ export const RENDER_LAYER_MODULES: readonly string[] = [
   "src/briefing/landed-notices.ts",
   "src/briefing/questions.ts",
   "src/briefing/render.ts",
+  "src/hints/collision-notice.ts",
   "src/hints/render.ts",
   "src/mcp/render.ts",
   "src/mcp/render-referee.ts",
@@ -165,6 +194,8 @@ export const RENDER_BARREL_MODULES: readonly string[] = [
 
 const NOW = new Date("2026-08-18T12:00:00.000Z");
 const ISO = "2026-08-18T11:55:00.000Z";
+/** Three days before NOW: a draft old enough for the review nudge to name it. */
+const DRAFT_DUE_ISO = "2026-08-15T12:00:00.000Z";
 const NO_DRIFT: CommitDrift | null = null;
 
 /**
@@ -222,6 +253,17 @@ const presenceWith = (payload: string): PresenceEntry => ({
   isSelf: false,
   intent: intentWith(payload),
 });
+
+/** briefing-topics presence: feat/a (index 1) leads, the payload (0) next. */
+const TOPICS_BLOCKED_HEARTBEAT = "2026-08-18T11:54:00.000Z";
+const TOPICS_TRAILING_HEARTBEAT = "2026-08-18T11:53:00.000Z";
+
+const topicsHeartbeat = (index: number): string => {
+  if (index === 0) {
+    return TOPICS_BLOCKED_HEARTBEAT;
+  }
+  return index === 1 ? ISO : TOPICS_TRAILING_HEARTBEAT;
+};
 
 const workContextWith = (payload: string): WorkContextEntry => ({
   id: "wc_cc_11111111-2222-4333-8444-555555555555",
@@ -297,6 +339,11 @@ const ghostCheckWith = (payload: string): GhostCheckEntry => ({
   ],
   sharedTargetCount: 4,
   intentTokenHits: 3,
+  // The qualifier sits beside the payload-carrying share clause, so the
+  // corpus proves it cannot become a seam a payload mints a field through.
+  largeChangeFiles: 180,
+  // And so does the generated qualifier, for the same reason.
+  generatedSharedCount: 3,
 });
 
 /**
@@ -375,6 +422,9 @@ const conferenceCorpusWith = (payload: string): ConferenceCorpus => ({
         { kind: "file", value: payload },
       ],
       sharedTargetCount: 4,
+      // Beside the payload-carrying owner name the qualifier is printed with.
+      largeChangeFilesA: 180,
+      generatedSharedCount: 3,
     },
   ],
   questions: [
@@ -485,6 +535,8 @@ const tripwireSessionWith = (payload: string): TripwireSession => ({
   workContextId: "wc_cc_11111111-2222-4333-8444-555555555555",
   workContextTitle: payload,
   workContextIntent: intentWith(payload),
+  // The ask's qualifier sits right after the payload-carrying branch and file.
+  largeChangeFiles: 180,
 });
 
 /**
@@ -534,6 +586,35 @@ const landedNoticeWith = (payload: string): LandedNotice => ({
     { id: "lnt_22222222-2222-4333-8444-555555555555", sha: "1a2b3c4d41e1f309f8a6d3056726744bb8ddd613", subject: payload, missing: false },
   ],
 });
+
+/**
+ * The reader's own drafts, as the hub lists them, with the payload in every
+ * hub-sent string the nudge prints: the kind, the body — and the id, on a
+ * second row, so the body slot is still attacked when the id sanitizes away.
+ */
+const draftsWith = (payload: string): readonly DraftEntry[] => [
+  {
+    id: "clm_11111111-2222-4333-8444-555555555555",
+    workContextId: "wc_cc_11111111-2222-4333-8444-555555555555",
+    kind: payload,
+    body: payload,
+    status: "proposed",
+    confidence: 0.3,
+    createdAt: DRAFT_DUE_ISO,
+  },
+  {
+    id: payload,
+    workContextId: "wc_cc_11111111-2222-4333-8444-555555555555",
+    kind: "root_cause",
+    body: "The reaper closes a session whose spool is still flushing",
+    status: "proposed",
+    confidence: 0.3,
+    createdAt: DRAFT_DUE_ISO,
+  },
+];
+
+/** A backlog bigger than its rows, so the corpus also reaches the exact-total clause. */
+const DRAFT_CORPUS_BACKLOG = 35;
 
 const diagnosisWith = (payload: string): Diagnosis => ({
   workContext: {
@@ -660,6 +741,53 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
       }),
   },
   {
+    // The TOPIC shapes (briefing/topic-group.ts): one teammate with the
+    // payload's topic open in two sessions beside four clean ones, cut short
+    // by the hub's row bound — so the head line, the topic lines, the lead
+    // intent, the "… and N more topics" tail and the "at least" counts all
+    // render — and live on five branches, so presence prints its bounded
+    // branch list with the payload in it.
+    kind: "corpus",
+    name: "briefing-topics",
+    delivery: "unsolicited",
+    module: "src/briefing/render.ts",
+    framing: "framed",
+    render: (payload) =>
+      renderBriefing({
+        repoId: "github.com/acme/api",
+        selfDeveloperId: "dev_self",
+        // The payload's branch is BLOCKED and second-freshest: not the lead
+        // (feat/a is fresher), so "blocked on <its label>" renders — the slot
+        // a lead topic never reaches — and still inside the bounded branch
+        // list, so that slot carries the payload too.
+        presence: [payload, "feat/a", "feat/b", "feat/c", "feat/d"].map(
+          (branch, index) => ({
+            ...presenceWith(payload),
+            sessionId: `cc_topics_${String(index)}`,
+            branch,
+            lastHeartbeatAt: topicsHeartbeat(index),
+            ...(index === 0 ? { status: "blocked" } : {}),
+          }),
+        ),
+        // The first two rows carry the payload as their SESSION branch — the
+        // key a topic is grouped by when the hub sends one — under two
+        // different titles, so the topic is CALLED by that branch; the rest
+        // take the older hub's title fallback.
+        workContexts: [payload, "A second session", "feat/a", "feat/b", "feat/c", "feat/d"].map(
+          (title, index) => ({
+            ...workContextWith(payload),
+            id: `wc_topics_${String(index)}`,
+            sessionId: `cc_topics_${String(index)}`,
+            title: `${title} @ api`,
+            status: payload,
+            developerContextCount: 9,
+            ...(index < 2 ? { branch: payload } : {}),
+          }),
+        ),
+        now: NOW,
+      }),
+  },
+  {
     kind: "corpus",
     name: "briefing-questions",
     delivery: "unsolicited",
@@ -718,6 +846,38 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
         ghostChecks: [ghostCheckWith(payload)],
         now: NOW,
       }),
+  },
+  {
+    kind: "corpus",
+    name: "briefing-drafts",
+    delivery: "unsolicited",
+    module: "src/briefing/render.ts",
+    framing: "framed",
+    notices: [QUOTED_DATA_NOTICE, OWN_DRAFTS_QUOTED_DATA_NOTICE],
+    // The OWN-DRAFTS slot of the briefing, which no surface above reaches:
+    // the reader's own auto-captured drafts, alone — the block's own notice,
+    // and the header's teammate notice that every briefing carries.
+    render: (payload) =>
+      renderBriefing({
+        repoId: "github.com/acme/api",
+        selfDeveloperId: "dev_self",
+        presence: [],
+        workContexts: [],
+        drafts: draftsWith(payload),
+        draftTotals: { total: DRAFT_CORPUS_BACKLOG, oldestCreatedAt: DRAFT_DUE_ISO },
+        now: NOW,
+      }),
+  },
+  {
+    kind: "corpus",
+    name: "review-draft-confirmation",
+    delivery: "pulled",
+    module: "src/mcp/tools/review-draft.ts",
+    framing: "framed",
+    notices: [OWN_DRAFTS_QUOTED_DATA_NOTICE],
+    // review_draft's answer echoes the caller's OWN draft body (or their
+    // agent's edit of it) back as the claim just promoted.
+    render: (payload) => reviewDraftSuccessText("confirm", "clm_promoted", "clm_draft1", payload),
   },
   {
     kind: "corpus",
@@ -872,6 +1032,59 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
       }),
   },
   {
+    // THE SUBSTANCE SLOT (DESIGN.md §4, 2026-10): a prompt hint shows only the
+    // FIRST SENTENCE of the body, cut before the sanitizer runs
+    // (@crosscheck/schema substance-sentence.ts). The payload is planted twice, so the
+    // cut lands inside it, after it, or across the seam — every side of the
+    // boundary the corpus can reach — with the rest pointer rendered too.
+    kind: "corpus",
+    name: "substance-hint-sentence",
+    delivery: "unsolicited",
+    module: "src/hints/render.ts",
+    framing: "framed",
+    render: (payload) =>
+      renderClaimHint({
+        claim: { ...hintClaimWith(payload), body: `${payload} ${payload}` },
+        context: hintContextWith(payload),
+        drift: NO_DRIFT,
+        now: NOW,
+        restCount: 2,
+      }),
+  },
+  {
+    // The same two hints when the hub matched the session's INTENT in place
+    // of a content-free prompt (DESIGN.md §4): a header of their own, the
+    // same untrusted slots under it.
+    kind: "corpus",
+    name: "claim-hint-on-intent",
+    delivery: "unsolicited",
+    module: "src/hints/render.ts",
+    framing: "framed",
+    render: (payload) =>
+      renderClaimHint({
+        claim: hintClaimWith(payload),
+        context: hintContextWith(payload),
+        drift: NO_DRIFT,
+        now: NOW,
+        matchedOn: "intent",
+      }),
+  },
+  {
+    kind: "corpus",
+    name: "pointer-hint-on-intent",
+    delivery: "unsolicited",
+    module: "src/hints/render.ts",
+    framing: "framed",
+    render: (payload) =>
+      renderPointerHint({
+        context: hintContextWith(payload),
+        claimCount: 2,
+        drift: NO_DRIFT,
+        now: NOW,
+        matchedOn: "intent",
+      }),
+  },
+  {
     // The #19 targets-only pointer: the touched-file `value` is teammate-
     // controlled text (a path they edited), planted here alongside the title
     // and author so bare() + the title cap are exercised on it too.
@@ -914,6 +1127,74 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     framing: "framed",
     render: (payload) =>
       renderTripwireReason(tripwireSessionWith(payload), "src/app.ts", NOW),
+  },
+  {
+    // The PERSON-facing line of the same collision (pilot, 2026-10-07), on
+    // both lanes that raise one: the tripwire's row — name, branch, and the
+    // reader's own file, which is planted too — and a briefing ghost row's
+    // name and shared file. BARE: Claude Code shows it as `systemMessage`,
+    // outside any frame, so no field may carry a separator the line owns.
+    kind: "corpus",
+    name: "collision-notice",
+    delivery: "unsolicited",
+    module: "src/hints/collision-notice.ts",
+    framing: "bare",
+    // The tripwire half carries the FIXED incomplete record, so the clause a
+    // partial answer adds (COV-9) is held to the same invariants.
+    render: (payload) =>
+      renderCollisionNotices(
+        [
+          tripwireCollision(tripwireSessionWith(payload), payload, CORPUS_COVERAGE),
+          // ...and the LANDED shape, which words the same fields differently
+          tripwireCollision({ ...tripwireSessionWith(payload), landedAt: ISO }, payload),
+          ...ghostCollisions([ghostCheckWith(payload)]),
+          // ...and the UNNAMED shape a relay falls back to when live presence
+          // cannot confirm the teammate (round 2, H1): only the file remains
+          anonymousCollision(tripwireCollision(tripwireSessionWith(payload), payload, CORPUS_COVERAGE)),
+        ],
+        NOW,
+      ),
+  },
+  {
+    // The NAMELESS lines (the owner's decision on the batch-2 integration
+    // review's I1): a teammate who opted out of presence, live on the reader's
+    // planted file, and the ghost check's count of the reader's files. Only
+    // the reader's own file reaches them, held to the same BARE invariants.
+    kind: "corpus",
+    name: "collision-notice-anonymous",
+    delivery: "unsolicited",
+    module: "src/hints/collision-notice.ts",
+    framing: "bare",
+    render: (payload) =>
+      renderCollisionNotices([anonymousTripwireCollision(payload, CORPUS_COVERAGE), anonymousGhostCollision(3)], NOW),
+  },
+  {
+    // What the MAIN thread is handed for a group its subagent ran into: the
+    // same lines under a header of their own, plus the one relay sentence.
+    kind: "corpus",
+    name: "collision-subagent-relay",
+    delivery: "unsolicited",
+    module: "src/hints/collision-notice.ts",
+    framing: "bare",
+    render: (payload) =>
+      renderSubagentCollisionRelay([tripwireCollision(tripwireSessionWith(payload), payload)], NOW),
+  },
+  {
+    // The statusline's segment: names only, one group per person, bounded —
+    // the tripwire's teammate presence lists, so named, and the ghost row's
+    // third teammate it does not, so counted (round 2, M1).
+    kind: "corpus",
+    name: "collision-overlap-indicator",
+    delivery: "unsolicited",
+    module: "src/hints/collision-notice.ts",
+    framing: "bare",
+    render: (payload) => {
+      const named = tripwireCollision(tripwireSessionWith(payload), payload);
+      return renderOverlapIndicator(
+        [named, ...ghostCollisions([{ ...ghostCheckWith(payload), developerId: "dev_third" }])],
+        [{ developerId: named.developerId, isSelf: false }],
+      );
+    },
   },
   {
     // The landed-change half of the same ask (docs/1.0/landed-changes.md):
@@ -961,6 +1242,23 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     module: "src/hints/render.ts",
     framing: "framed",
     render: (payload) => renderLandedNoticeHint(landedNoticeWith(payload), NOW)?.text ?? "",
+  },
+  {
+    // The once-per-session draft review nudge (flows/draft-nudge.ts), told on
+    // a prompt: the counts and the ask are renderer-owned, the kinds are
+    // counted against the claim-kind enum, the pointer lines are the
+    // briefing's own formatDraftLine.
+    kind: "corpus",
+    name: "draft-nudge",
+    delivery: "unsolicited",
+    module: "src/briefing/draft-nudge.ts",
+    framing: "framed",
+    notices: [OWN_DRAFTS_QUOTED_DATA_NOTICE],
+    render: (payload) =>
+      renderDraftNudge({
+        backlog: { listed: draftsWith(payload), oldestFirst: null, total: DRAFT_CORPUS_BACKLOG, oldestCreatedAt: DRAFT_DUE_ISO },
+        now: NOW,
+      }),
   },
   {
     kind: "corpus",
@@ -1171,7 +1469,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     name: "briefing-flow",
     delivery: "unsolicited",
     module: "src/flows/briefing.ts",
-    note: "emits renderBriefing output verbatim (registered above); formatSolvedLine only re-derives lines the rendered text already contains",
+    note: "emits renderBriefing output verbatim, plus withBriefingOutcomeClause (both registered above); formatSolvedLine only re-derives lines the rendered text already contains",
     corpusCoveredBy: ["test/briefing-flow.test.ts"],
   },
   {
@@ -1179,7 +1477,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     name: "hint-flow",
     delivery: "unsolicited",
     module: "src/flows/hint.ts",
-    note: "emits renderClaimHint/renderPointerHint output verbatim (registered above)",
+    note: "emits renderClaimHint/renderPointerHint output verbatim, plus withOutcomeClause (both registered above)",
     corpusCoveredBy: ["test/hint-flow.test.ts"],
   },
   {
@@ -1257,7 +1555,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     name: "mcp-tool-review-draft",
     delivery: "pulled",
     module: "src/mcp/tools/review-draft.ts",
-    note: "ids through safeId; promoted body through quoted under quotingText",
+    note: "ids through safeId; the caller's own promoted body through quotedBody under quotingOwnText, the own-drafts notice (the review-draft-confirmation corpus surface above)",
     corpusCoveredBy: ["test/mcp-hostile-hub.test.ts"],
   },
   {
@@ -1282,5 +1580,37 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     delivery: "pulled",
     module: "src/mcp/tools/search-related-work.ts",
     note: "renders through renderSearchResults/renderUnusableQuery/renderUnappliedFilters (registered above)",
+  },
+  {
+    // 07 §13. Echoes only the caller's own ref and the hub's outcome words,
+    // all through safeId; the reason is never echoed, and a hub refusal goes
+    // through hubFailure (mcp-tools-shared, registered above).
+    kind: "composite",
+    name: "mcp-tool-mark-hint-outcome",
+    delivery: "pulled",
+    module: "src/mcp/tools/mark-hint-outcome.ts",
+    note: "ids and outcome words through safeId; hub failures through hubFailure; the reason is never echoed",
+    corpusCoveredBy: ["test/mark-hint-outcome-tool.test.ts"],
+  },
+  {
+    // 07 §13. The clause a delivered hint ends with on a repo that records
+    // outcomes. UNSOLICITED, like the hint it rides; the ref it names is the
+    // delivery's own and goes through safeId, so the payload is planted in
+    // the ref as well as in every slot of the pointer it is appended to.
+    kind: "corpus",
+    name: "outcome-clause",
+    delivery: "unsolicited",
+    module: "src/hints/outcome-clause.ts",
+    framing: "framed",
+    // D-O3: the same clause on the tripwire ask (no cap) and the briefing's
+    // own sentence for its solved pointers (within the briefing's cap).
+    render: (payload) => {
+      const pointer = renderPointerHint({ context: hintContextWith(payload), claimCount: 2, drift: NO_DRIFT, now: NOW });
+      return [
+        withOutcomeClause(pointer, payload),
+        appendOutcomeClause(renderTripwireReason(tripwireSessionWith(payload), "src/app.ts", NOW), payload),
+        withBriefingOutcomeClause(pointer),
+      ].join("\n");
+    },
   },
 ];

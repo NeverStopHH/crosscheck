@@ -3,7 +3,11 @@ import {
   crosscheckSessionIdFor,
   readSessionState,
 } from "@crosscheck/connector-core/state/session-state.ts";
+import { bookOwedRestsAtEnd } from "./rest-recheck.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
+
+/** This hook, as the loss ledger names it. */
+const SESSION_END_HOOK = "session-end";
 
 /**
  * The whole SessionEnd body is the §1.3 `endSessionFlow`
@@ -21,6 +25,10 @@ export const handleSessionEnd = async (
   ctx: HookContext,
   budget: HookBudget,
 ): Promise<string> => {
+  // No hook of this session runs after this one, so a recheck its rests still
+  // owe can never be made: booked as `rest_unchecked`, BEFORE the flow deletes
+  // the state that holds them (round 3, F-M2; hooks/rest-recheck.ts).
+  await bookOwedRestsAtEnd(ctx, SESSION_END_HOOK);
   const stored = await readSessionState(ctx.config.home, ctx.payload.session_id);
   await endSessionFlow({
     home: ctx.config.home,

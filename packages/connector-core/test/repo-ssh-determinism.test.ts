@@ -27,7 +27,11 @@
  *     case SSH_RESOLVE_TIMEOUT_MS each under a pathological config).
  *
  * Deterministic throughout: every subprocess sees only the fake `ssh` the
- * test put first on PATH — never this machine's config.
+ * test put first on PATH — never this machine's config — and the two probes
+ * that assert an ANSWER await ssh's own exit (fixtures/run-to-exit.ts)
+ * rather than race the 500 ms hook deadline: a contended first spawn ran it
+ * out and both went red only when the whole suite ran at once. A deadline's
+ * memo is pinned in-process by ssh-hostname-deadline.test.ts.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -68,10 +72,11 @@ const envOptedIn = (): Record<string, string | undefined> => {
 const runFixture = async (
   fixture: string,
   env: Record<string, string | undefined>,
+  args: readonly string[] = [],
 ): Promise<string> => {
   const probe = join(import.meta.dir, "fixtures", fixture);
   const proc = Bun.spawn({
-    cmd: [process.execPath, probe],
+    cmd: [process.execPath, probe, ...args],
     cwd: import.meta.dir,
     stdin: "ignore",
     stdout: "pipe",
@@ -120,11 +125,14 @@ describe("the suite never consults this machine's ssh config", () => {
       '#!/bin/sh\necho "hostname corp-proxy.example"\nexit 0\n',
     );
 
-    // Act
-    const stdout = await runFixture("repo-identity-probe.ts", {
-      ...envOptedIn(),
-      PATH: `${binDir}:${process.env.PATH ?? ""}`,
-    });
+    // Act: awaiting ssh's own answer — the subject is the switch, not the
+    // 500 ms hook deadline a contended first spawn runs out (12 of 36 runs
+    // under load answered the literal host when this raced it)
+    const stdout = await runFixture(
+      "repo-identity-probe.ts",
+      { ...envOptedIn(), PATH: `${binDir}:${process.env.PATH ?? ""}` },
+      ["--await-ssh"],
+    );
 
     // Assert: an unrelated resolved host is a genuine alias and canonicalizes
     expect(JSON.parse(stdout)).toEqual({ repoId: "corp-proxy.example/acme/api" });

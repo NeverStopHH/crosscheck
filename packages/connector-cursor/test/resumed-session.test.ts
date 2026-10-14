@@ -83,6 +83,7 @@ describe("a Cursor conversation reopened after sessionEnd", () => {
     const key = repoKey(hub.hubUrl, REPO_ID);
     const hubCtx: HubContext = {
       hubUrl: hub.hubUrl,
+      keyOrigin: hub.hubUrl,
       apiKey: hub.apiKey,
       timeoutMs: 4000,
       home,
@@ -131,7 +132,7 @@ describe("a Cursor conversation the hub ends while it keeps going", () => {
       CROSSCHECK_TIMEOUT_MS: "4000",
     };
     const key = repoKey(hub.hubUrl, REPO_ID);
-    const hubCtx: HubContext = { hubUrl: hub.hubUrl, apiKey: hub.apiKey, timeoutMs: 4000, home, repoKey: key, now: () => new Date() };
+    const hubCtx: HubContext = { hubUrl: hub.hubUrl, keyOrigin: hub.hubUrl, apiKey: hub.apiKey, timeoutMs: 4000, home, repoKey: key, now: () => new Date() };
     const conv = "conv-mid-life";
     const editOf = async (file: string): Promise<void> => {
       await writeRepoFile(repo, file, "export const a = 1;\n");

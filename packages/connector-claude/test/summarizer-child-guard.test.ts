@@ -120,6 +120,14 @@ const payloadFor = (fix: Fixture, name: HookName): string => {
       tool_input: { file_path: fix.file },
       tool_response: {},
     },
+    "subagent-return": {
+      ...base,
+      hook_event_name: "PostToolUse",
+      tool_name: "Agent",
+      tool_input: { description: "x", prompt: "y" },
+      tool_response: { status: "completed" },
+    },
+    "turn-end": { ...base, hook_event_name: "Stop", stop_hook_active: false },
     "post-tool-use-failure": {
       ...base,
       hook_event_name: "PostToolUseFailure",
@@ -132,6 +140,13 @@ const payloadFor = (fix: Fixture, name: HookName): string => {
       ...base,
       hook_event_name: "Stop",
       transcript_path: fix.transcript,
+      stop_hook_active: false,
+    },
+    "subagent-stop": {
+      ...base,
+      hook_event_name: "SubagentStop",
+      agent_id: "agent-1",
+      agent_type: "general-purpose",
       stop_hook_active: false,
     },
     "session-end": { ...base, hook_event_name: "SessionEnd", reason: "exit" },

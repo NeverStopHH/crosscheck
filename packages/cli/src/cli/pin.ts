@@ -43,6 +43,7 @@ import {
   sweepPins,
 } from "@crosscheck/connector-core/http/hub.ts";
 import type { HubContext, PinSweepUpdate } from "@crosscheck/connector-core/http/hub.ts";
+import type { HubFailureKind } from "@crosscheck/connector-core/http/client.ts";
 import {
   COMMIT_SHA_PATTERN,
   MAX_PIN_FILES,
@@ -56,7 +57,10 @@ import { hubSaid, noSuchPinLine, renderPinList, renderWaiverRequested } from "./
 import { deniedPinPaths, pinDenylistRefusal, sweepDenylistLines } from "./pin-observability.ts";
 import type { DeniedMove } from "./pin-observability.ts";
 import type { PinPathOutcome } from "@crosscheck/connector-core/git/pin-sweep.ts";
-import { markFailureLine, markRecordedLine } from "./pilot-mark.ts";
+import { PROTECTS_NOTHING_YET } from "./draft-lines.ts";
+import { markAnswerLine, markFailureLine } from "./pilot-mark.ts";
+import { agentHostRefusalLine, personGate } from "./agent-host.ts";
+import type { PersonGate } from "./agent-host.ts";
 import type { CliResult } from "./login.ts";
 
 export const PIN_FLAG_FILES = "--files";
@@ -146,6 +150,7 @@ const resolve = async (
     ctx: {
       hubUrl: config.hubUrl,
       apiKey: config.apiKey,
+      keyOrigin: config.keyOrigin,
       timeoutMs: config.timeoutMs,
       home: config.home,
       repoKey: repoKey(config.hubUrl, identity.repoId),
@@ -164,9 +169,15 @@ const resolve = async (
  * instruction here would land in exactly the reader it should not reach.
  */
 const failureResult = (result: {
-  readonly kind: "network" | "http" | "malformed";
+  readonly kind: HubFailureKind;
   readonly message: string;
 }): CliResult => {
+  // Never sent (http/client.ts key-origin check): the sentence is the
+  // client's own, two canonical origins, printed whole — the bare class
+  // would strip the colons out of both URLs.
+  if (result.kind === "refused") {
+    return { stdout: `${result.message}\n`, exitCode: EXIT_FAIL };
+  }
   const said = hubSaid(result.message);
   return result.kind === "network"
     ? { stdout: `hub unreachable: ${said}\n`, exitCode: EXIT_UNREACHABLE }
@@ -541,6 +552,17 @@ const create = async (
     return failureResult(created);
   }
   const speaking = parsed.data.files.length <= MAX_SPEAKING_PIN_FILES;
+  if (created.data.draft === true) {
+    // A DRAFT PIN (human provenance §7): nothing watches the surface yet.
+    return {
+      stdout: [
+        `drafted pin ${created.data.id}: ${String(parsed.data.files.length)} file(s) at ${parsed.data.verifiedAtCommit}`,
+        `${PROTECTS_NOTHING_YET}.`,
+        "",
+      ].join("\n"),
+      exitCode: EXIT_OK,
+    };
+  }
   return {
     stdout: [
       `pinned ${created.data.id}: ${String(parsed.data.files.length)} file(s) at ${parsed.data.verifiedAtCommit}`,
@@ -561,13 +583,15 @@ const create = async (
  * register says, it records that a notice was right — and it takes the same
  * human gate, because "the check passed" is a human's word or nothing.
  */
-const confirmPin = async (
-  resolved: Resolved,
-  pinId: string,
-  isInteractive: InteractiveProbe,
-): Promise<CliResult> => {
-  if (!isInteractive()) {
-    return { stdout: AGENT_REFUSAL, exitCode: EXIT_USAGE };
+/** A person-only pin gesture refused: which marker took the door away, if one did, then why (round-6 follow-up). */
+const agentRefused = (gate: PersonGate): CliResult => ({
+  stdout: `${agentHostRefusalLine(gate)}${AGENT_REFUSAL}`,
+  exitCode: EXIT_USAGE,
+});
+
+const confirmPin = async (resolved: Resolved, pinId: string, gate: PersonGate): Promise<CliResult> => {
+  if (!gate.isPerson) {
+    return agentRefused(gate);
   }
   const result = await postPilotMark(resolved.ctx, {
     repo: resolved.repoId,
@@ -581,7 +605,7 @@ const confirmPin = async (
     };
   }
   return {
-    stdout: markRecordedLine("pin", pinId, result.data.repeated),
+    stdout: markAnswerLine("pin", pinId, result.data),
     exitCode: EXIT_OK,
   };
 };
@@ -610,8 +634,9 @@ export const runPin = async (
     // The retraction takes the human gate too: it is the falsifier
     // `crosscheck suspect` reads before it names any session, so an agent
     // recording "the check failed" would unlock attribution on its own word.
-    if (!isInteractive()) {
-      return { stdout: AGENT_REFUSAL, exitCode: EXIT_USAGE };
+    const gate = personGate(env, isInteractive);
+    if (!gate.isPerson) {
+      return agentRefused(gate);
     }
     // THE COMMIT IS SENT when git named one: proof 3's fix range starts at
     // the break, not at the last commit the surface worked on (07 §3.4).
@@ -627,6 +652,16 @@ export const runPin = async (
     if (!broken.ok) {
       return failureResult(broken);
     }
+    if (broken.data.draft === true) {
+      // A DRAFTED BREAK (human provenance §7): suspect names nobody on it until it is confirmed.
+      return {
+        stdout: [
+          `drafted the retraction of ${broken.data.id}: checked and failing — nothing names anyone on it until you confirm it with your passkey — crosscheck confirm opens the page`,
+          "",
+        ].join("\n"),
+        exitCode: EXIT_OK,
+      };
+    }
     return {
       stdout: [
         `retracted ${broken.data.id}: recorded as checked and failing, with your name and the time.`,
@@ -637,13 +672,14 @@ export const runPin = async (
     };
   }
   if (args.ok !== null) {
-    return confirmPin(resolved, args.ok, isInteractive);
+    return confirmPin(resolved, args.ok, personGate(env, isInteractive));
   }
   if (args.surface === null || args.files.length === 0) {
     return { stdout: PIN_USAGE, exitCode: EXIT_USAGE };
   }
-  if (!isInteractive()) {
-    return { stdout: AGENT_REFUSAL, exitCode: EXIT_USAGE };
+  const gate = personGate(env, isInteractive);
+  if (!gate.isPerson) {
+    return agentRefused(gate);
   }
   return create(resolved, args, args.surface, cwd);
 };

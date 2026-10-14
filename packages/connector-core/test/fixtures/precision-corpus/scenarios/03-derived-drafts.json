@@ -57,9 +57,8 @@
       "kind": "prompt",
       "reader": "Riley",
       "prompt": "thumbnail resizer flooding its queue on burst uploads",
-      "expect": "pointer",
-      "expectContextId": "wc_thumbs",
-      "rationale": "Tier-1 drafts are never proactively injected (DESIGN.md 3): a machine-derived likely_root_cause with evidence refs at the 0.5 cap still arrives as a pull-able pointer only — a summarizer guess must not land under trust labels."
+      "expect": "silence",
+      "rationale": "Tier-1 drafts are invisible to the push path (DESIGN.md 4, draft-nudge review): a machine-derived likely_root_cause with evidence refs at the 0.5 cap is neither injected nor pointed at — it lends no word to the floor and is no claim of its tree until its author confirms it; the pull (get_diagnosis, search) still shows it."
     }
   ]
 }

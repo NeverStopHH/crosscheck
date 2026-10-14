@@ -122,18 +122,67 @@ export const listOwnedNeedsApproval = async (
   return rows.map(toArtifactView);
 };
 
+/**
+ * One needs_approval artifact the viewer owns, for the terms a release
+ * ceremony signs (routes/ui-ceremony-artifacts.ts). Null for a missing id
+ * and for somebody else's artifact alike, as setArtifactApproval answers.
+ */
+export const readOwnedNeedsApproval = async (
+  db: Db,
+  ownerDeveloperId: string,
+  artifactId: string,
+): Promise<{ readonly content: string } | null> => {
+  const rows = await db
+    .select({ content: artifacts.content })
+    .from(artifacts)
+    .innerJoin(claims, eq(artifacts.claimId, claims.id))
+    .innerJoin(agentSessions, eq(claims.authorSessionId, agentSessions.id))
+    .where(
+      and(
+        eq(artifacts.id, artifactId),
+        eq(artifacts.sensitivity, NEEDS_APPROVAL_SENSITIVITY),
+        eq(agentSessions.developerId, ownerDeveloperId),
+      ),
+    )
+    .limit(1);
+  return rows[0] ?? null;
+};
+
 export type ApprovalOutcome = "updated" | "not_found";
+
+/**
+ * THE OPERATOR'S RE-HIDE (review of the hub hardening, M3): withdraw any
+ * needs_approval artifact's release, whoever owns it, for an incident such as
+ * a release an agent made through the 0.10 form post. Withdrawing only makes
+ * content MORE private, so it takes the admin token and nothing else.
+ * `not_found` for a missing id or an artifact that never needed approval.
+ */
+export const withdrawArtifactAsOperator = async (db: Db, artifactId: string): Promise<ApprovalOutcome> => {
+  const updated = await db
+    .update(artifacts)
+    .set({ approvedBy: null })
+    .where(and(eq(artifacts.id, artifactId), eq(artifacts.sensitivity, NEEDS_APPROVAL_SENSITIVITY)))
+    .returning({ id: artifacts.id });
+  return updated.length > 0 ? "updated" : "not_found";
+};
 
 /**
  * Approve or revoke one owned needs_approval artifact. `not_found` covers
  * both a missing id and a non-owner caller — deliberately indistinguishable,
  * so probing ids through this endpoint teaches nothing.
+ *
+ * `signedContentDigest`, when given, is the SHA-256 (hex) of the content a
+ * release ceremony signed, and the UPDATE only matches that content: sign A,
+ * release B is impossible even once something can edit an artifact (review
+ * of the hub hardening, L1). The same digest the route computes in JS
+ * (UTF-8, hex), here in SQL.
  */
 export const setArtifactApproval = async (
   db: Db,
   viewerDeveloperId: string,
   artifactId: string,
   isApproving: boolean,
+  signedContentDigest?: string,
 ): Promise<ApprovalOutcome> => {
   const updated = await db
     .update(artifacts)
@@ -150,6 +199,9 @@ export const setArtifactApproval = async (
           WHERE owner_claim.id = ${artifacts.claimId}
             AND owner_session.developer_id = ${viewerDeveloperId}
         )`,
+        ...(signedContentDigest === undefined
+          ? []
+          : [sql`encode(sha256(convert_to(${artifacts.content}, 'UTF8')), 'hex') = ${signedContentDigest}`]),
       ),
     )
     .returning({ id: artifacts.id });

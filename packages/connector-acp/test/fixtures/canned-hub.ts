@@ -6,7 +6,8 @@
  * instead of a race. The capture suites keep the REAL in-process server
  * (capture-harness.ts); injection decisions need control, not realism.
  */
-import { rejectedApproachCandidate } from "../../../connector-core/test/fixtures/hint-hub.ts";
+import { serveLoopback } from "../../../connector-core/test/fixtures/loopback-serve.ts";
+import { injectableCandidate } from "../../../connector-core/test/fixtures/hint-hub.ts";
 
 export interface CannedHubLatency {
   presence: number;
@@ -34,7 +35,7 @@ const sleep = (ms: number): Promise<void> =>
 
 export const startCannedHub = (): CannedHub => {
   const latency: CannedHubLatency = { presence: 0, candidates: 0 };
-  let candidates: readonly unknown[] = [rejectedApproachCandidate()];
+  let candidates: readonly unknown[] = [injectableCandidate()];
   let solvedMatches: readonly unknown[] = [];
   let notices: readonly unknown[] = [];
   const postedKinds: string[] = [];
@@ -47,7 +48,7 @@ export const startCannedHub = (): CannedHub => {
     lastHeartbeatAt: new Date().toISOString(),
     isSelf: false,
   };
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: async (request) => {
       const { pathname } = new URL(request.url);

@@ -102,6 +102,16 @@ const mergeOnOrigin = async (r: LandingRepos, from: string, into: string, at: st
   await gitIn(r.teammate, ["push", "-q", "origin", into]);
 };
 
+/** Nick's blobless partial clone of origin, on `nick/work` cut from `origin/main`. */
+const partialReader = async (r: LandingRepos): Promise<string> => {
+  await gitIn(r.origin, ["config", "uploadpack.allowFilter", "true"]);
+  const partial = join(r.base, "partial");
+  await gitIn(r.base, ["clone", "-q", "--filter=blob:none", `file://${r.origin}`, partial]);
+  await gitIn(partial, ["config", "user.email", NICK.email]);
+  await gitIn(partial, ["checkout", "-q", "-b", "nick/work", "origin/main"]);
+  return partial;
+};
+
 describe("clones the probe cannot read honestly", () => {
   test("a shallow clone answers unknown, never 'every file changed recently'", async () => {
     // Arrange — the tip of main never touched README.md
@@ -120,11 +130,7 @@ describe("clones the probe cannot read honestly", () => {
   test("a blobless partial clone is probed without fetching anything", async () => {
     // Arrange — both sides touched the file, which is what makes patch ids need blobs
     const r = await repos("partial");
-    await gitIn(r.origin, ["config", "uploadpack.allowFilter", "true"]);
-    const partial = join(r.base, "partial");
-    await gitIn(r.base, ["clone", "-q", "--filter=blob:none", `file://${r.origin}`, partial]);
-    await gitIn(partial, ["config", "user.email", NICK.email]);
-    await gitIn(partial, ["checkout", "-q", "-b", "nick/work", "origin/main"]);
+    const partial = await partialReader(r);
     await commitFile(partial, FILE, "export const offset = 5;\n", "Nick's offset", { as: NICK });
     await landWithMergeCommit(r, JUNE_LANDING);
     await gitIn(partial, ["fetch", "-q", "origin"]);
@@ -551,6 +557,21 @@ describe("what the probe reports", () => {
     const changes = await find(r.reader, ":colon.ts");
 
     // Assert
+    expect(changes?.missing.map((c) => c.subject)).toEqual(["Colon change"]);
+  });
+
+  test("a file whose name starts with a colon is a file in a partial clone too, where each copy is its own ls-tree", async () => {
+    // Arrange — the same change, read from a blobless clone: no batched read
+    // of the file there, so whether both sides hold it is asked by ls-tree
+    const r = await repos("colon-partial");
+    await landWithSquash(r, { ...JUNE_LANDING, file: ":colon.ts", subject: "Colon change" });
+    const partial = await partialReader(r);
+
+    // Act
+    const changes = await find(partial, ":colon.ts");
+
+    // Assert — ls-tree read as magic finds the file on neither side, and the
+    // change would be dropped as nothing to undo
     expect(changes?.missing.map((c) => c.subject)).toEqual(["Colon change"]);
   });
 

@@ -19,7 +19,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 const REPO_ROOT = resolve(import.meta.dir, "..", "..", "..", "..");
 const PACK_SCRIPT = join(
@@ -66,8 +66,16 @@ const SHUTDOWN_TIMEOUT_MS = 5_000;
  * 4.77 MB unpacked, of which `connector-core` is 1.76 MB and `server` 1.51 MB.
  * A `node_modules` leak still trips this cap many times over; `docs` and every
  * `test/` are refused by name below, whatever the number.
+ *
+ * RAISED TO 2 500 000 (owner decision, 2026-10-09). The package ships
+ * TypeScript sources, and 0.11 adds security, provenance and isolation code:
+ * with human provenance merged it packed 2 058 422 bytes. The computed
+ * pack-reach trim (cli/scripts/pack-reach.ts) still keeps test-only modules
+ * out, so the growth is source the package is meant to ship. The cap stays a
+ * guard against accidentally shipping something big; revisit it before the
+ * packed size reaches 3 MB.
  */
-const TARBALL_SIZE_CAP_BYTES = 2_000_000;
+const TARBALL_SIZE_CAP_BYTES = 2_500_000;
 
 const nodeExe = Bun.which("node");
 const npmExe = Bun.which("npm");
@@ -241,9 +249,18 @@ describe("packed npm tarball", () => {
       "packages/connector-core/NOTICE",
       "packages/connector-core/src/mcp/server.ts",
       "packages/connector-core/src/spool/append.ts",
+      // The bunfig the shim names with --config= (non-TS runtime asset): a
+      // package without it refuses to start rather than read the repo's.
+      "packages/connector-core/src/config/isolated.bunfig.toml",
       "packages/connector-acp/LICENSE",
       "packages/connector-acp/NOTICE",
       "packages/connector-acp/src/proxy.ts",
+      // Loaded by path, which no bundler sees (cli/scripts/pack-reach.ts).
+      "packages/connector-acp/src/fd-reader.worker.ts",
+      // Reached only through `import type`: kept so a consumer's type-check resolves them.
+      "packages/server/src/types.ts",
+      "packages/connector-core/src/git/solved-staleness.ts",
+      "packages/cli/src/index.ts", // the root export
       "packages/connector-claude/LICENSE",
       "packages/connector-claude/NOTICE",
       "packages/connector-claude/src/hooks/index.ts",
@@ -267,6 +284,17 @@ describe("packed npm tarball", () => {
       "packages/cli/scripts",
       "docs",
       "bun.lock",
+      // Under src/, but reached by no runtime entry or export — only tests,
+      // CI and an ops script import them (cli/scripts/pack-reach.ts).
+      "packages/cli/src/render-surfaces.ts",
+      "packages/cli/src/render-surfaces-outcomes.ts",
+      "packages/connector-acp/src/render-surfaces.ts",
+      "packages/connector-claude/src/render-surfaces.ts",
+      "packages/connector-core/src/render-surfaces.ts",
+      "packages/connector-cursor/src/render-surfaces.ts",
+      "packages/connector-core/src/guarantees/check.ts",
+      "packages/server/src/services/calibration.ts",
+      "packages/server/src/services/landed-repair.ts",
       // One package, one manifest — ALL SEVEN guarded: a nested package.json
       // would also change self-name resolution for everything beneath it.
       "packages/connector-claude/package.json",
@@ -557,4 +585,125 @@ describe("packed npm tarball", () => {
     expect(result.stdout).toContain("config present");
     expect(result.stdout).toContain("hub reachable");
   }, DRIVE_TIMEOUT_MS);
+
+  test("init, then the SessionStart hook and the MCP server it wrote, run from the tarball", async () => {
+    // Arrange: a repo, a scratch home, a loopback hub, and a PATH whose only
+    // `crosscheck` is this install, so init writes the tarball's own bin and
+    // never a developer's global one. The package now ships only what a
+    // runtime entry reaches (cli/scripts/pack-reach.ts); this drives the
+    // three surfaces a session uses.
+    const installed = await getInstalled();
+    if (!installed.ok) {
+      return warnSkip(installed.reason);
+    }
+    const repoDir = await mkdtemp(join(tmpdir(), "crosscheck-init-repo-"));
+    const home = await mkdtemp(join(tmpdir(), "crosscheck-init-home-"));
+    cleanups.push(repoDir, home);
+    await run(["git", "init", "-q"], { cwd: repoDir });
+    await run(["git", "remote", "add", "origin", "git@github.com:acme/pack-probe.git"], { cwd: repoDir });
+    const seen: string[] = [];
+    const hub = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: (request) => {
+        const keyed = request.headers.get("authorization") === "Bearer pack-e2e-key";
+        seen.push(`${request.method} ${new URL(request.url).pathname}${keyed ? " keyed" : ""}`);
+        return Response.json({ ok: true, data: { session: { id: "cc_pack", developerId: "dev_pack" }, sessions: [] } });
+      },
+    });
+    const env = {
+      PATH: [
+        join(installed.installDir, "node_modules", ".bin"),
+        dirname(process.execPath),
+        dirname(nodeExe ?? "/usr/bin/node"),
+        "/usr/bin",
+        "/bin",
+      ].join(":"),
+      HOME: home,
+      CROSSCHECK_HOME: home,
+      CROSSCHECK_HUB_URL: `http://127.0.0.1:${String(hub.port)}`,
+      CROSSCHECK_API_KEY: "pack-e2e-key",
+    };
+    const spawnIn = async (cmd: readonly string[], stdin: string) => {
+      const proc = Bun.spawn({ cmd: [...cmd], cwd: repoDir, env, stdin: new TextEncoder().encode(stdin), stdout: "pipe", stderr: "pipe" });
+      const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+      return { stdout, exitCode };
+    };
+
+    try {
+      // Act
+      const init = await run([installed.binPath, "init"], { cwd: repoDir, env });
+      const settings = JSON.parse(await readFile(join(repoDir, ".claude", "settings.json"), "utf8")) as {
+        hooks: Record<string, readonly { hooks: readonly { command: string }[] }[]>;
+      };
+      const sessionStart = settings.hooks["SessionStart"]?.at(-1)?.hooks[0]?.command ?? "";
+      const hook = await spawnIn(
+        ["/bin/sh", "-c", sessionStart],
+        JSON.stringify({ session_id: "pack-e2e-session", cwd: repoDir, hook_event_name: "SessionStart", source: "startup" }),
+      );
+      const mcpEntry = (
+        JSON.parse(await readFile(join(repoDir, ".mcp.json"), "utf8")) as {
+          mcpServers: Record<string, { command: string; args: readonly string[] }>;
+        }
+      ).mcpServers["crosscheck"];
+      const mcp = await spawnIn(
+        [mcpEntry?.command ?? "", ...(mcpEntry?.args ?? [])],
+        `${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })}\n` +
+          `${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} })}\n`,
+      );
+
+      // Assert: init wrote this install's bin by its bare name, unless its
+      // identity probe stayed silent under load — then it wired the absolute
+      // launcher and said so in exactly one line (core launcher.ts
+      // silentBareNote). Either way the branch taken is the one written down;
+      // the hook reported with the key; the server listed its tools.
+      expect(init.exitCode).toBe(0);
+      const marker = "didn't answer in time; wired the absolute launcher ";
+      const fallbacks = init.stdout.split("\n").filter((line) => line.includes(marker));
+      const fallback = fallbacks[0];
+      const expectedLauncher =
+        fallback === undefined
+          ? "crosscheck"
+          : fallback.slice(fallback.indexOf(marker) + marker.length, fallback.indexOf(" instead; rerun init"));
+      console.log(`[npm-package] init wired ${fallback === undefined ? "the bare crosscheck" : "the absolute launcher (identity probe silent)"}`);
+      expect(fallbacks.length).toBeLessThanOrEqual(1);
+      expect(sessionStart).toBe(`${expectedLauncher} hook session-start`);
+      expect(hook.exitCode).toBe(0);
+      expect(seen).toContain("POST /api/sessions keyed");
+      expect(mcp.exitCode).toBe(0);
+      expect(mcp.stdout).toMatch(/"id":2,"result":\{"tools":\[\{/);
+    } finally {
+      hub.stop(true);
+    }
+  }, DRIVE_TIMEOUT_MS * 2);
+
+  test("every worker entry in the tarball loads: nothing a worker imports was left out", async () => {
+    // Arrange: the ten detached workers, started the way a trigger starts
+    // them but with no arguments, so each exits as soon as it has loaded
+    const installed = await getInstalled();
+    if (!installed.ok) {
+      return warnSkip(installed.reason);
+    }
+    const { packageDir } = installed;
+    const home = await mkdtemp(join(tmpdir(), "crosscheck-workers-"));
+    cleanups.push(home);
+    const bunfig = join(packageDir, "packages", "connector-core", "src", "config", "isolated.bunfig.toml");
+    const entries = Array.from(new Bun.Glob("packages/*/src/**/*worker-entry.ts").scanSync({ cwd: packageDir })).sort();
+
+    // Act
+    const unresolved: string[] = [];
+    for (const entry of entries) {
+      const result = await run([process.execPath, "--no-env-file", `--config=${bunfig}`, join(packageDir, entry)], {
+        cwd: home,
+        env: { PATH: `${dirname(process.execPath)}:/usr/bin:/bin`, HOME: home, CROSSCHECK_HOME: home, CROSSCHECK_SUMMARIZER_CMD: "/nonexistent/model" },
+      });
+      if (/Cannot find module|Could not resolve|ResolveMessage/.test(result.stderr)) {
+        unresolved.push(`${entry}: ${result.stderr.trim().split("\n")[0] ?? ""}`);
+      }
+    }
+
+    // Assert
+    expect(entries).toHaveLength(10);
+    expect(unresolved).toEqual([]);
+  }, DRIVE_TIMEOUT_MS * 2);
 });

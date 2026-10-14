@@ -22,6 +22,7 @@
  * The injection ledger records WHICH event delivered: the §6-q4 instrument
  * the dogfood checklist reads.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -75,7 +76,7 @@ import {
   CANDIDATE_CLAIM_ID,
   SOLVED_CONTEXT_ID,
   SOLVED_ROOT_CAUSE,
-  rejectedApproachCandidate,
+  injectableCandidate,
   solvedFingerprintMatch,
   startHintHub,
 } from "../../connector-core/test/fixtures/hint-hub.ts";
@@ -88,9 +89,16 @@ const TIMEOUT_MS = "4000";
 let hub: CursorTestHub;
 const cleanups: string[] = [];
 
+/**
+ * Booting the in-process hub (PGlite) took longer than bun's 5 s hook
+ * default on a loaded machine (the load run's round 5); the boot is not what
+ * this file measures.
+ */
+const HUB_BOOT_TIMEOUT_MS = 60_000;
+
 beforeAll(async () => {
   hub = await bootCursorHub("cursor-injection");
-});
+}, HUB_BOOT_TIMEOUT_MS);
 
 afterAll(async () => {
   await hub.close();
@@ -121,7 +129,7 @@ const startCapturingHub = (): CapturingHub => {
   const calls = { candidates: 0, solvedMatches: 0 };
   let solvedMatches: readonly unknown[] = [];
   const postedRecords: unknown[] = [];
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: async (request) => {
       const { pathname } = new URL(request.url);
@@ -129,7 +137,7 @@ const startCapturingHub = (): CapturingHub => {
         calls.candidates += 1;
         return Response.json({
           ok: true,
-          data: { candidates: [rejectedApproachCandidate()] },
+          data: { candidates: [injectableCandidate()] },
         });
       }
       if (pathname === "/api/solved-matches") {
@@ -244,6 +252,9 @@ const seededState = (
   intentSetCount: 0,
   intentFailCount: 0,
   intentLastFailure: null,
+  intentRefusedCount: 0,
+  intentSkippedCount: 0,
+  intentLastDrop: null,
   workContextIntent: null,
   ghostPending: false,
   gitTouchCount: 0,
@@ -262,6 +273,13 @@ const seededState = (
   toolWindows: [],
   toolWindowEvictions: 0,
   toolWindowMisses: 0,
+  draftNudge: null,
+  draftNudgeRetryAt: null,
+  deriveFires: [],
+  topicContexts: [],
+  startBranch: null,
+  sessionTouchedAt: null,
+  topicOverflowCount: 0,
   outsideRootDrops: 0,
   knownWorktreeRoots: [],
   editToolFires: 0,
@@ -271,6 +289,9 @@ const seededState = (
   lastEditedPath: null,
   lastEditedPathResolvedAgainst: null,
   hintCandidatesSeen: 0,
+  flooredPromptCount: 0,
+  harnessTurnCount: 0,
+  quietCallCount: 0,
   ...overrides,
 });
 
@@ -314,6 +335,7 @@ const seedTeammate = async (label: string): Promise<void> => {
     {
       hubUrl: hub.hubUrl,
       apiKey: body.data.apiKey,
+      keyOrigin: hub.hubUrl,
       timeoutMs: 4000,
       home: mateHome,
       repoKey: repoKey(hub.hubUrl, REPO_ID),

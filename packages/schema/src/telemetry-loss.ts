@@ -51,6 +51,23 @@ export const LOSS_KINDS = [
   "host_contract_drift",
   /** ACP wire lines the observer could not read (lines, not records). */
   "wire_unobserved",
+  /**
+   * Touches filed under the session's own work context because the session
+   * had opened MAX_TOPICS_PER_SESSION topics already (touches, not records):
+   * delivered, but no longer told apart by branch (DESIGN.md "One session,
+   * many topics").
+   */
+  "topic_overflow",
+  /**
+   * Collision files whose 30 s tripwire rest was never followed by its recheck
+   * — the turn ended in a crash, a kill or a budget cut, or the recheck could
+   * not reach the hub (files, not records): a teammate who started on one
+   * inside the rest may never have been told. Sent only by connectors from
+   * before the integration review of batch 2 (M3): a current one keeps it on
+   * the machine, since no record was lost, and a hub still folds an older
+   * connector's count.
+   */
+  "rest_unchecked",
   /** Counted before the ledger kept reasons, or a kind this hub does not know. */
   "unattributed",
 ] as const;

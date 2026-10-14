@@ -40,6 +40,8 @@ ADMIN_TOKEN=<pick-one> bunx crosscheck-hub serve      # or: npx crosscheck-hub s
 
 Set `CROSSCHECK_DATA_DIR` for durable storage (unset = in-memory, for trying it out). From a checkout of this repo the same hub is `bun install && ADMIN_TOKEN=<pick-one> bun run packages/server/src/index.ts`.
 
+**Where it listens.** A new hub listens on loopback only (`127.0.0.1`, and `::1` where the machine has it), so nothing off the machine reaches it until you say so. `CROSSCHECK_LISTEN` takes a comma list of IP addresses, one listener each on the same port: `CROSSCHECK_LISTEN=127.0.0.1,100.101.4.7` adds the machine's tailnet address (`tailscale ip -4`). Behind `tailscale serve --bg 7100` leave it at loopback. A hub whose data dir predates the setting keeps listening on every interface, so an upgrade cuts off no teammate, and its boot log and every member's `crosscheck doctor` say what to set. `CROSSCHECK_TRUSTED_PROXIES` lists the proxies besides loopback, as addresses or CIDRs, whose `X-Forwarded-*` headers the hub believes, for example the Docker kit's Caddy. [docs/OPERATIONS.md](docs/OPERATIONS.md#where-the-hub-listens) has the details and the upgrade from 0.10.
+
 The npm package is assembled by `bun packages/connector-claude/scripts/pack-npm.ts` and proven by installing the packed tarball into a clean directory and driving the binary end to end ([`npm-package.e2e.test.ts`](packages/connector-claude/test/e2e/npm-package.e2e.test.ts)); the release runbook is [docs/PUBLISHING.md](docs/PUBLISHING.md).
 
 **2. Issue one API key per developer** — provenance is a core feature, so keys are never shared:
@@ -100,6 +102,14 @@ crosscheck doctor                                      # verifies config, hooks,
 
 **4. One teammate connects each repo:** `crosscheck init` inside the repo writes `.crosscheck.json` (the hub URL), which is meant to be committed. Wiring travels with the machine, trust travels with the repo: sessions report ONLY in repos carrying that committed file — every other directory stays silent no matter how the machine is wired. The API key never enters the repo.
 
+Files that are mechanically generated and non-authoritative — lockfiles, `__generated__/` and `dist/` output, `*.generated.*`, protobuf bindings beside their `.proto`, anything marked `linguist-generated` or carrying an `@generated` header — are recorded but never count as overlap. Schemas, API descriptions and migrations always count. If your repo checks in other generated files that two pieces of work genuinely meet on, name them in the same committed file, and they count as overlap again:
+
+```json
+{ "hubUrl": "https://hub.example.com", "authoritativeGenerated": ["api/openapi.json", "migrations/**", "clients/**"] }
+```
+
+The list is repo-relative globs (at most 32); it can only make crosscheck warn about more files, never fewer, and `crosscheck doctor` names any entry it could not honour. Re-running `crosscheck init` keeps every field it does not own: it changes only `hubUrl` and `protocol`, in place and only when they differ, and leaves the file byte for byte otherwise.
+
 Plain `crosscheck init` (no flag) remains the narrower alternative: besides connecting the repo it wires that one checkout's `.claude/settings.json` + `.mcp.json`, committable so teammates are wired on `git pull`. It covers exactly that checkout — fresh worktrees and editor workspaces rooted at the repo's parent folder are only covered by `--global`. Running both is harmless (identical hook commands run once; `doctor` flags the redundancy); `crosscheck init --global --remove` uninstalls the user-level side, and `crosscheck init --remove` the project side (it keeps `.crosscheck.json`, so the repo stays connected).
 
 ### What you actually see
@@ -111,7 +121,18 @@ cx 2 · Alice(implementing), Sam(analyzing) · capture 12s
 cx 0 · no teammates on this repo · Alice last seen 10h ago · capture 3m
 cx ! hub unreachable · last capture 14m
 cx ! key rejected · crosscheck login · last capture 2h
+⚠ overlap: Mike · 3 files · cx 1 · Mike(implementing) · capture 8s
 ```
+
+**When your work collides with a teammate's, YOU are told — not only your agent.** Claude Code shows a hook's `systemMessage` to the person ("Warning message shown to the user"), and crosscheck uses it for exactly one thing: the moment an edit lands on a file a teammate's live session is working on, or a SessionStart briefing finds a teammate whose live work shares files with yours, one line appears in your session:
+
+```
+crosscheck: Mike is working on PlayerMappingGrid.tsx on branch feat/streaming-practice-beta (last active 3m ago) — talk before you both change it
+crosscheck: Mike is working on 3 files you also touched, e.g. PlayerMappingGrid.tsx (last active 2d ago) — talk before you both change them
+crosscheck: Mike changed PlayerMappingGrid.tsx (merged) — talk before you change it
+```
+
+Once per teammate and piece of their work per session — a second file of the same work is counted, not announced; several teammates at once are at most five lines and a `+N more` count — and the statusline's `⚠ overlap` segment (above) keeps the tally while the session runs. The agent is asked, in one sentence after its own copy of the facts, to mention the overlap in its next reply; when the edit happened inside a SUBAGENT, the same line is shown to you, and handed to the main conversation, the moment that subagent returns (or at your next prompt, for one running in the background), because a subagent's context is not the conversation you read. Names come only from what the hub lets you see, and are held to it again whenever they are shown later: the line at the edit names only a teammate the hub's opt-out and mute filters let through at that moment; the statusline's `⚠ overlap` names only teammates the hub's presence answer still lists, and COUNTS the rest — a teammate who has since turned presence off, been muted by you, gone offline or ended their session reads `⚠ overlap: 1 teammate · 3 files`, and so does everybody when the hub cannot be read; a relayed subagent line is never dropped: it names the teammate with the branch and age a presence answer gives — the cached one when it is fresh, otherwise one quick presence check (at most 300 ms) — and reaches you as `crosscheck: A teammate recently worked on refresh.ts — talk to your team before you change it` only when that answer leaves them out; when no answer can be had, it names them as the edit's own check did. A withheld branch is never printed. A teammate who turned presence off is still a collision: while they are live on the file you are about to change, the line reads `crosscheck: A teammate is working on refresh.ts right now — talk to your team before you change it`, with no name, branch or age anywhere, and the statusline counts them as one teammate; opting out hides who, where and when, never that someone is on a file you touch (`crosscheck presence` says so before anyone opts out). Cursor and ACP clients have no hook field shown to the person without blocking, so there the overlap reaches the agent only and `crosscheck doctor` says so (`docs/RESEARCH.md` §7).
 
 The statusline is a terminal-TUI feature: **headless and VS Code-extension
 sessions have no statusline at all**, so in those the whole of the above simply
@@ -138,6 +159,13 @@ Teammate work contexts on this repo:
 - the agent can state it outright with the `set_intent` MCP tool — a **declared** intent at confidence 1, which replaces a derived one and is never overwritten by a late derived record; re-declaring supersedes.
 
 Every surface shows it: the briefing lines above, `crosscheck status`, the prompt hint and the PreToolUse tripwire reason (`Their intent (derived): «…»`), `get_diagnosis` / `search_related_work`, and the `/ui` work-context and member pages. And it is **searchable like a title**: a teammate's prompt that shares only the TOPIC with your intent — different files, no claims yet — now earns the existing pointer hint, which is what "same topic, different files" looks like.
+
+**One session, many topics.** You can run ONE long-lived session — in any checkout, even one detached at an old commit — and do all of your work from it in sibling worktrees, each on its own branch, by hand or through subagents. Crosscheck files every worktree's work under a work context of its own, a **topic**, titled after that worktree's branch (`feat/importer @ api`) and measured from the commit it started at, so your teammates see three pieces of work where there are three, never one sweep titled after the checkout you happened to start in. Edits in the checkout the session started in stay on the session's own context, exactly as before.
+
+- **It follows the work, not only the branch name.** Rename a branch, move on to a follow-up branch that keeps editing the same files, or detach HEAD on top of the work, and the touches stay on the same topic; start a new branch from somewhere else, or edit other files, and you get a new one. All of this is read from git's own files in the worktree — no extra git process runs on an edit.
+- **Work your agent did through a shell counts too** (Claude Code). At the end of each turn (and each subagent), Crosscheck sweeps every worktree the session touched: changed and untracked files, and the files of the commits **you made in that worktree** since the session first touched it — a commit a teammate made, or one merged in from another branch, never counts as this worktree's. A shell command marks its own worktree and any worktree its words name (`cd ../wt-b && …`), and the next sweep also finds the worktrees a script changed without naming them; nothing in the command is ever run or expanded.
+- **`set_intent` lands on the topic you are in**: the one touched most recently, or the one you name with `topic: "<branch>"`. When two branches were edited within a minute of each other — parallel subagents, usually — it does not guess: it refuses and names both, and the agent names its own.
+- **Bounded and counted.** A session opens at most 24 topics; a touch past that still reaches the hub, under the session's own context, and `crosscheck status` and `doctor` count it — once per file — as a topic overflow rather than letting it disappear. Claude Code, Cursor and ACP agents all file their edits by topic; the end-of-turn sweep of shell work is Claude Code's.
 
 Teammate-written text is untrusted input. It is quoted inside a frame the header labels as data rather than instruction, and stripped of control, bidi, zero-width and frame-breaking characters before rendering. A blunt "ignore previous instructions" title is additionally redacted — but that phrase list is opportunistic defence-in-depth, not a guarantee; the framing and the structural stripping are what the safety of this pipeline actually rests on. Details in [the connector README](packages/connector-claude/README.md#briefing-safety).
 
@@ -229,24 +257,43 @@ passkey can approve only after 24 hours. Until then `crosscheck status`,
 nobody expected is seen before it can act, and its owner can revoke it with
 nothing more than a login.
 
-Browsers allow passkeys only over https, or on `localhost`. On the hub's own
-machine `http://localhost:7100` works, and it is accepted only from that
-machine. Teammates on a tailnet need the hub behind https, for example
-`tailscale serve --bg 7100`. List every address people open it at, then restart
-the hub:
+Browsers allow passkeys only over https, or on `localhost`. On a hub nobody
+reaches through a proxy, `http://localhost:7100` works on the hub's own machine,
+and only from there. Teammates on a tailnet need the hub behind https, for
+example `tailscale serve --bg 7100`. List the https address, then restart the
+hub:
 
 ```bash
-CROSSCHECK_WEBAUTHN_ORIGINS=http://localhost:7100,https://hub.example.ts.net
+CROSSCHECK_WEBAUTHN_ORIGINS=https://hub.example.ts.net
 ```
 
-A passkey works only at the address it was enrolled at.
+**Once an https address is listed, or the hub is reached through a proxy, it
+takes no passkey at `localhost` at all.** Behind `tailscale serve` every request
+reaches the hub from loopback, and a localhost prompt cannot say which machine
+asked, so an agent on another of your devices could otherwise collect your
+touch for its own terms. The boot log and `crosscheck doctor` say so if
+`localhost` is still listed beside an https address. A passkey works only at the
+address it was enrolled at, so enrol yours at the https address.
+
+**Releasing an artifact takes the passkey too.** A `needs_approval` artifact
+stays visible to its owner only until the owner approves it on `/ui/approvals`,
+and that approval is a passkey ceremony with the same 24-hour cool-off. An API
+key opens a web session, and every agent on your machine can read the key, so
+the session alone releases nothing. Revoking a release makes it private again,
+so it takes no passkey: the owner revokes it with the plain button on the same
+page, and the operator re-hides any release with the admin token:
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $ADMIN_TOKEN" "$HUB_URL/api/artifacts/<artifact-id>/withdraw"
+```
 
 **The hub's own machine is the exception.** An agent running there as the same
 OS user can read the hub's database and bypass all of this. It can also put its
 own page in front of `localhost`. If agents run on the hub's machine, run the
 hub under its own OS user or on another machine. There, list only the https
 address. Everything this still leaves open is stated in
-[spec 04a §8 and §12](docs/1.0/04a-human-waiver-authority.md).
+[spec 04a §8, §12 and §13](docs/1.0/04a-human-waiver-authority.md), including
+the person-attested writes any agent key can still make (§13).
 
 #### What this makes visible about people
 
@@ -382,6 +429,7 @@ fourth one that forgets it fails CI rather than losing edits quietly.
 | **Drop counters** — a touch that could not be captured | `foreign-repo` and `outside-root`, split and counted | same | same |
 | **Capture health** in `crosscheck status` / `doctor` | `N edit-tool fires → M targets`, last tool, last edited path + the root it resolved against, WARN at 3 fires with 0 targets on a session still being heard from | same, with the event name `afterFileEdit` as the tool | same, with the ACP tool-call `kind` (or `fs/write_text_file`) as the tool. One edit an agent signals BOTH ways reads `2 fires → 1 target`: both are honest edit signals, dropping either would leave some real agent permanently at `0 → 0` and unable to WARN, and the doubling can never cause a FALSE warn because the first signal captures the target (pinned in `connector-acp/test/worktree-capture.test.ts`) |
 | **Before-edit tripwire** — telling the model about an overlap *before* it edits | yes — `PreToolUse`, `permissionDecision: "ask"` plus the facts as `additionalContext` | **not possible on this host today** | **not possible on this host today** |
+| **Person-facing collision notice** — telling the PERSON, not only the agent | yes — one `systemMessage` line on `PreToolUse` and `SessionStart` (or the first prompt, for a briefing paid late), once per teammate's work per session; a subagent's hit handed to the main thread, and shown to you, when the subagent returns or at the next prompt; `⚠ overlap` on the statusline while the teammate is still present | **no channel on this host** — `user_message` shows only when an action is denied or a prompt blocked, so the agent is told and `doctor` prints the gap | **no channel in stable ACP v1** — the Session Notices RFD is an unstable Preview, so the agent is told and `doctor` prints the gap |
 
 The last row is a limitation we document rather than a gap we forgot, and each
 of those two connectors' module headers carries the same sentences with its

@@ -37,6 +37,7 @@ import {
 } from "../src/mcp/render.ts";
 import type { SearchHit } from "../src/mcp/render.ts";
 import { UNKNOWN_COVERAGE } from "../src/http/coverage.ts";
+import { MAX_ID_CHARS } from "../src/constants.ts";
 import type {
   Diagnosis,
   DiagnosisClaim,
@@ -115,7 +116,7 @@ const workContext = (
   ...overrides,
 });
 
-const hit = (entry: WorkContextEntry, ageMs: number): SearchHit => ({
+const hit = (entry: WorkContextEntry, ageMs: number | null): SearchHit => ({
   entry,
   ageMs,
 });
@@ -158,7 +159,7 @@ describe("safeId", () => {
   });
 
   test("caps an oversized id instead of letting it fill the output", () => {
-    expect(safeId("c".repeat(500)).length).toBeLessThanOrEqual(64);
+    expect(safeId("c".repeat(500)).length).toBeLessThanOrEqual(MAX_ID_CHARS);
   });
 });
 
@@ -324,6 +325,24 @@ describe("renderDiagnosis", () => {
     expect(rendered).toContain("wc_other");
   });
 
+  test("a linked claim in another tree says when it is a draft or rejected", () => {
+    // A same-author similarity link may point at an unreviewed draft or a
+    // discard; the reader of the tree must not take it for a vouched finding.
+    const tree = diagnosis({
+      externalClaims: [
+        { id: "clm_draft", kind: "hypothesis", workContextId: "wc_a", provenance: "derived", status: "proposed" },
+        { id: "clm_gone", kind: "hypothesis", workContextId: "wc_b", provenance: "derived", status: "rejected" },
+        { id: "clm_vouched", kind: "root_cause", workContextId: "wc_c", provenance: "declared", status: "proposed" },
+      ] as never,
+    });
+
+    const lines = renderDiagnosis(tree, NOW).split("\n");
+
+    expect(lines.find((line) => line.includes("clm_draft"))).toContain("provenance derived (unreviewed draft)");
+    expect(lines.find((line) => line.includes("clm_gone"))).toContain("status rejected");
+    expect(lines.find((line) => line.includes("clm_vouched"))).not.toContain("derived");
+  });
+
   test("a display name cannot mint a second status, author or confidence", () => {
     // Arrange: the author label is printed OUTSIDE the « » frame, on the same
     // line as the renderer's own facts, and those facts are separated by ` · `.
@@ -371,6 +390,22 @@ describe("renderDiagnosis", () => {
     // Assert
     expect(contextLine.split(" · status ").length - 1).toBe(1);
     expect(edgeLine).not.toContain(" · status ");
+  });
+
+  test("a searched work context of an opted-out author prints no age (integration review M5)", () => {
+    // Arrange: the hub withheld her last touch and marked the row; the tool
+    // then hands the renderer no age at all, rather than the creation's.
+    const rendered = renderSearchResults(
+      [hit(workContext({ developerName: "Mike", locationWithheld: true }), null), hit(workContext({ id: "wc_02" }), 60_000)],
+      "login",
+    );
+    const withheld = rendered.split("\n").find((entry) => entry.startsWith("- wc_01")) ?? "";
+    const dated = rendered.split("\n").find((entry) => entry.startsWith("- wc_02")) ?? "";
+
+    // Assert
+    expect(withheld).toStartWith("- wc_01 · Mike · status analyzing");
+    expect(withheld).not.toMatch(/\b\d+[smhd] ago\b/);
+    expect(dated).toStartWith("- wc_02 · Nick · 1m ago · status analyzing");
   });
 
   test("a searched work context's author cannot mint a field either", () => {
@@ -1032,6 +1067,16 @@ describe("renderDiagnosis", () => {
 });
 
 describe("renderSearchResults", () => {
+  test("a tree found only through an unreviewed draft's words says so", () => {
+    // The hub marks a result whose only match was a derived draft: a pull the
+    // searcher asked for, never presented as a vouched finding.
+    const drafted = renderSearchResults([hit(workContext({ derivedOnly: true } as Partial<WorkContextEntry>), 60_000)], "login");
+    const vouched = renderSearchResults([hit(workContext({ derivedOnly: false } as Partial<WorkContextEntry>), 60_000)], "login");
+
+    expect(drafted).toContain("matched only an unreviewed draft (provenance derived)");
+    expect(vouched).not.toContain("unreviewed draft");
+  });
+
   test("labels the results as quoted data too", () => {
     // Act
     const rendered = renderSearchResults([hit(workContext(), 60_000)], "login");

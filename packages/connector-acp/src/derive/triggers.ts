@@ -42,13 +42,15 @@ import {
   writePrivateFile,
 } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
+import { selfSpawnCmd } from "@crosscheck/connector-core/config/runtime-isolation.ts";
 import { spawnDeriveWorker } from "@crosscheck/connector-core/derive/spawn.ts";
 import {
   hasGhostAllowance,
   withGhostClaimed,
 } from "@crosscheck/connector-core/derive/ghost/gate.ts";
 import {
-  isSubstantivePrompt,
+  intentPromptOf,
+  isIntentFireSpent,
   withIntentFire,
 } from "@crosscheck/connector-core/derive/intent/gate.ts";
 import {
@@ -58,7 +60,7 @@ import {
   withSummarizerFire,
   withSummarizerSliceDropped,
 } from "@crosscheck/connector-core/derive/summarizer/gate.ts";
-import { SUMMARIZER_PROMPT } from "@crosscheck/connector-core/model/runner.ts";
+import { SUMMARIZER_PROMPT, resolveSummarizerTimeoutMs } from "@crosscheck/connector-core/model/runner.ts";
 import {
   readSessionState,
   updateSessionState,
@@ -134,20 +136,21 @@ export const maybeSpawnAcpIntentWorker = async (
   prompt: string,
 ): Promise<boolean> => {
   try {
-    if (!isSubstantivePrompt(prompt)) {
+    const human = intentPromptOf(prompt);
+    if (human === null) {
       return false;
     }
     const state = await readSessionState(ctx.home, ctx.hostSessionKey);
-    if (state === null || state.intentFireCount > 0) {
+    if (state === null || isIntentFireSpent(state)) {
       return false;
     }
     let fired = false;
     await updateSessionState(ctx.home, ctx.hostSessionKey, (fresh) => {
-      if (fresh.intentFireCount > 0) {
+      if (isIntentFireSpent(fresh)) {
         return null;
       }
       fired = true;
-      return withIntentFire(fresh);
+      return withIntentFire(fresh, new Date(), resolveSummarizerTimeoutMs(ctx.env));
     });
     if (!fired) {
       return false;
@@ -158,11 +161,10 @@ export const maybeSpawnAcpIntentWorker = async (
     );
     await writePrivateFile(
       promptFile,
-      cutWellFormed(prompt, INTENT_PROMPT_MAX_CHARS),
+      cutWellFormed(human, INTENT_PROMPT_MAX_CHARS),
     );
     spawn(ctx, [
-      process.execPath,
-      INTENT_WORKER_ENTRY_PATH,
+      ...selfSpawnCmd(INTENT_WORKER_ENTRY_PATH),
       "--session",
       ctx.hostSessionKey,
       "--prompt-file",
@@ -204,8 +206,7 @@ export const maybeSpawnAcpGhostWorker = async (
       return false;
     }
     spawn(ctx, [
-      process.execPath,
-      GHOST_WORKER_ENTRY_PATH,
+      ...selfSpawnCmd(GHOST_WORKER_ENTRY_PATH),
       "--session",
       ctx.hostSessionKey,
     ]);
@@ -267,7 +268,7 @@ export const runAcpSummarizerGate = async (
         return counted;
       }
       fired = true;
-      return withSummarizerFire(counted, estimateFireTokens(sliceText));
+      return withSummarizerFire(counted, estimateFireTokens(sliceText), new Date(), resolveSummarizerTimeoutMs(ctx.env));
     });
     if (!fired) {
       return false;
@@ -278,8 +279,7 @@ export const runAcpSummarizerGate = async (
     spawn(
       ctx,
       [
-        process.execPath,
-        SUMMARIZER_WORKER_ENTRY_PATH,
+        ...selfSpawnCmd(SUMMARIZER_WORKER_ENTRY_PATH),
         "--session",
         ctx.hostSessionKey,
       ],

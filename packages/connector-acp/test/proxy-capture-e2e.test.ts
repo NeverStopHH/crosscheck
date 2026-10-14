@@ -10,6 +10,7 @@
  * proxy-e2e.test.ts and are deliberately NOT restated here — this file only
  * ADDS the capture half on top of the same spawn plumbing.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -50,6 +51,7 @@ const cleanups: string[] = [];
 const hub = (): HubContext => ({
   hubUrl,
   apiKey,
+  keyOrigin: hubUrl,
   timeoutMs: Number(TIMEOUT_MS),
   home,
   repoKey: repoKey(hubUrl, REPO_ID),
@@ -59,7 +61,7 @@ const hub = (): HubContext => ({
 beforeAll(async () => {
   const db = await createDb();
   const app = createServer({ db, adminToken: ADMIN_TOKEN });
-  server = Bun.serve({ port: 0, fetch: app.fetch });
+  server = serveLoopback({ port: 0, fetch: app.fetch });
   hubUrl = `http://127.0.0.1:${server.port}`;
   const response = await fetch(`${hubUrl}/api/developers`, {
     method: "POST",

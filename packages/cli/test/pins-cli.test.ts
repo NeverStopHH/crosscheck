@@ -15,18 +15,20 @@
  *      developer's name appears nowhere in the output;
  *   5. an unreachable hub says UNKNOWN, never "nobody".
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import { createDb, createServer } from "@crosscheck/server";
+import { createDb } from "@crosscheck/server";
+import { createServerConfirmingAtOnce } from "../../server/test/fixtures/immediate-confirmation.ts";
 import { sql } from "drizzle-orm";
 import { runGit } from "@crosscheck/connector-core/git/git.ts";
 import type { Db } from "@crosscheck/server";
 
 import { sweepPins } from "@crosscheck/connector-core/http/hub.ts";
 import { UNKNOWN_COVERAGE } from "@crosscheck/connector-core/http/coverage.ts";
-import { MAX_PIN_SWEEP_UPDATES } from "@crosscheck/schema";
+import { LOCATION_WITHHELD, MAX_PIN_SWEEP_UPDATES } from "@crosscheck/schema";
 import { EXIT_USAGE } from "@crosscheck/connector-core/constants.ts";
 import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
 import type { PinEntry as PinRow } from "@crosscheck/connector-core/http/hub.ts";
@@ -170,9 +172,10 @@ const pinIdFrom = (stdout: string): string => {
 
 beforeAll(async () => {
   db = await createDb();
-  server = Bun.serve({
+  server = serveLoopback({
     port: 0,
-    fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch,
+    // Applies a pin at once, as every hub before 0.11 did (drafts: drafted-gestures-cli.test.ts).
+    fetch: createServerConfirmingAtOnce({ db, adminToken: ADMIN_TOKEN }).fetch,
   });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
   home = await makeHome("pins-cli");
@@ -223,6 +226,31 @@ describe("crosscheck pin", () => {
     expect(listed.stdout).toContain("nothing in this repo is watched");
   });
 
+  test("round-6 follow-up: at a pty inside an agent host, pin is refused as with no terminal, naming the marker", async () => {
+    // Arrange / Act — the TTY probe says yes; Codex's sandbox set its marker
+    const result = await runCli(
+      ["pin", "Play button plays/pauses", "--files", PINNED, "--check", "open /workbench, press Play"],
+      {
+        CROSSCHECK_HOME: home,
+        HOME: home,
+        CROSSCHECK_HUB_URL: hubUrl,
+        CROSSCHECK_API_KEY: nickKey,
+        CROSSCHECK_TIMEOUT_MS: "4000",
+        CODEX_SANDBOX: "seatbelt",
+      },
+      repo,
+      undefined,
+      { isInteractive: () => true },
+    );
+
+    // Assert: refused exactly as with no terminal, and nothing pinned
+    expect(result.exitCode).toBe(EXIT_USAGE);
+    expect(result.stdout).toStartWith("this command ran inside an agent's tool (CODEX_SANDBOX is set)");
+    expect(result.stdout).toContain("needs a person at a terminal");
+    const listed = await runFor(nickKey, ["pin", "list"]);
+    expect(listed.stdout).toContain("nothing in this repo is watched");
+  });
+
   test("refuses a speaking-sized pin with no check recipe", async () => {
     // Arrange / Act
     const result = await runFor(nickKey, [
@@ -256,8 +284,8 @@ describe("crosscheck pin", () => {
     expect(listed.stdout).toContain("pins: 1 (2 files");
     // The DENOMINATOR sentence: what is NOT watched, on the same line.
     expect(listed.stdout).toContain("nothing else is watched");
-    // The trust label prints the capture mode, not only the provenance.
-    expect(listed.stdout).toContain("verified by Nick (a human, at a terminal)");
+    // The trust label says who made it a pin: the person, with their passkey (human provenance §7).
+    expect(listed.stdout).toContain("verified by Nick (confirmed with their passkey)");
     expect(listed.stdout).toContain("«Play button plays/pauses»");
   });
 });
@@ -330,6 +358,48 @@ describe("crosscheck suspect", () => {
     // Assert
     expect(result.stdout).toContain("hub unreachable");
     expect(result.stdout).toContain("UNKNOWN");
+  });
+});
+
+describe("crosscheck pin list: who made it a pin (round-1 review L3)", () => {
+  test("a confirmed pin is the person's, a pin from before provenance is listed as such, and an older hub's as before", () => {
+    // Arrange — the same pin three times: confirmed, from before 0.11, and from a hub that sends no provenance
+    const base = {
+      repo: REPO_ID,
+      surface: "Play button plays/pauses",
+      files: [{ path: PINNED, status: "present" }],
+      check: "open /workbench, press Play",
+      captureMode: "human",
+      verifiedById: "dev_nick",
+      verifiedByName: "Nick",
+      verifiedAtCommit: "a1b2c3d4",
+      verifiedAt: new Date().toISOString(),
+      brokeAt: null,
+      brokeByName: null,
+      speaking: true,
+      missingPaths: 0,
+      renamedPaths: 0,
+      renamedAt: null,
+      renamedByName: null,
+      liveWaiver: null,
+      version: 1,
+    };
+    const registry = {
+      pins: [
+        { ...base, id: "pin_11111111-2222-4333-8444-000000000001", provenance: "human_passkey_confirmed" },
+        { ...base, id: "pin_11111111-2222-4333-8444-000000000002", provenance: "unknown_legacy" },
+        { ...base, id: "pin_11111111-2222-4333-8444-000000000003" },
+      ],
+      coverage: { pins: 3, files: 3, speaking: 3, broken: 0, missingPaths: 0, oldestVerifiedAt: new Date().toISOString() },
+    };
+
+    // Act
+    const rendered = renderPinList(REPO_ID, registry, new Date());
+
+    // Assert
+    expect(rendered).toContain("verified by Nick (confirmed with their passkey)");
+    expect(rendered).toContain("pinned by Nick before provenance was recorded — not proven to be theirs");
+    expect(rendered).toContain("verified by Nick (a human, at a terminal)");
   });
 });
 
@@ -524,6 +594,54 @@ describe("crosscheck suspect at scale", () => {
     // Assert
     expect(rendered).toContain("305 session(s) touched this surface");
     expect(rendered).toContain("scored 50 of 305");
+  });
+
+  test("a candidate whose author opted out says its location is withheld, not unknown", () => {
+    // Arrange: the hub keeps the row — it is the collision — and withholds
+    // where its author is now and when they last were (server
+    // services/live-location.ts). "unknown" would read as a hub that lost it.
+    const view = {
+      outcome: "no_separation",
+      falsifier: { kind: "recorded_break", at: new Date().toISOString(), check: null },
+      scope: {
+        kind: "pin",
+        pinId: "pin_playback",
+        surface: "Play button plays/pauses",
+        files: [PINNED],
+        missingFiles: [],
+        rewrittenPaths: 0,
+        rewrittenAt: null,
+      },
+      totals: { sessionsTouching: 1, sessionsScored: 1, windowDays: 14 },
+      attribution: "sessions",
+      coverage: UNKNOWN_COVERAGE,
+      verdict: null,
+      candidates: [
+        {
+          sessionId: "cc_one",
+          agentKind: "claude-code",
+          branch: LOCATION_WITHHELD,
+          workContextId: "wc_one",
+          workContextTitle: "Playback transport rework",
+          intent: null,
+          lastActiveAt: LOCATION_WITHHELD,
+          overlap: 2,
+          authorTouches: 8,
+          lift: 0.25,
+          sources: ["tool_edit"],
+          intentTiming: null,
+          readerMuted: false,
+          isSelf: false,
+        },
+      ],
+    };
+
+    // Act
+    const rendered = renderSuspect(view, new Date());
+
+    // Assert
+    expect(rendered).toContain(`last active ${LOCATION_WITHHELD}`);
+    expect(rendered).not.toContain("last active unknown");
   });
 
   test("the intent line says whether the plan preceded the change", () => {
@@ -722,6 +840,7 @@ describe("crosscheck pin --sweep", () => {
     const ctx: HubContext = {
       hubUrl,
       apiKey: nickKey,
+      keyOrigin: hubUrl,
       timeoutMs: 8000,
       home,
       repoKey: REPO_ID,

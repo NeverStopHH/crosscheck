@@ -1,4 +1,5 @@
-import type { SeqField } from "@crosscheck/schema";
+import { isDefaultBranch } from "@crosscheck/schema";
+import type { SeqField, WorkContextTitleSource } from "@crosscheck/schema";
 import {
   HTTP_NOT_FOUND,
   MAX_WORK_CONTEXT_TITLE_CHARS,
@@ -7,19 +8,22 @@ import { aPersonReads } from "@crosscheck/connector-core/config/tripwire.ts";
 import { rememberDeveloper } from "@crosscheck/connector-core/config/config.ts";
 import { sanitizeUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
 import { resolveDefaultBranchRef } from "@crosscheck/connector-core/git/default-branch.ts";
+import { isDetachedBranch } from "@crosscheck/connector-core/git/detached-branch.ts";
 import {
   collectCommitEvidence,
   commitEvidenceRecord,
 } from "@crosscheck/connector-core/capture/commit-evidence.ts";
 import {
-  collectLandedCommits,
+  NOTHING_LANDED,
+  collectLandedReading,
   landedEvidenceRecord,
+  probeBaseOnDefault,
 } from "@crosscheck/connector-core/capture/landed.ts";
 import { UNKNOWN_DEVELOPER_ID } from "@crosscheck/connector-core/capture/records.ts";
 import type { Producer } from "@crosscheck/connector-core/capture/records.ts";
 import { containsSecret } from "@crosscheck/connector-core/capture/secret-scan.ts";
 import { seqAt, withSeq } from "@crosscheck/connector-core/capture/seq.ts";
-import { allocateSeq } from "@crosscheck/connector-core/state/session-state.ts";
+import { allocateSeq, updateSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { endSession } from "@crosscheck/connector-core/http/hub.ts";
 import type { PresenceEntry, WorkContextEntry } from "@crosscheck/connector-core/http/hub.ts";
 import { guaranteeDeclarationFor } from "@crosscheck/connector-core/guarantees/declarations.ts";
@@ -49,9 +53,13 @@ import {
 } from "@crosscheck/connector-core/state/presence-cache.ts";
 import { reapStaleLineages } from "@crosscheck/connector-core/state/session-lineage.ts";
 import { reapStaleSessionStates } from "@crosscheck/connector-core/state/session-reap.ts";
+import { sweepAbandonedTemps } from "@crosscheck/connector-core/state/temp-sweep.ts";
 import { healerFor } from "./heal.ts";
+import { renderCollisionNotices } from "@crosscheck/connector-core/hints/collision-notice.ts";
+import { tellPersonOfGhosts } from "./ghost-notice.ts";
 import { requestLandingFetchFor } from "./landing-fetch.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
+import { sessionStartContext } from "./session-start-output.ts";
 
 const INITIAL_STATUS = "analyzing";
 
@@ -82,14 +90,11 @@ export const isOnDefaultBranch = (
   branch: string,
   defaultBranchRef: string | null,
 ): boolean => {
-  if (branch.startsWith("detached@") || branch === "HEAD") {
+  if (isDetachedBranch(branch)) {
     return true;
   }
-  if (defaultBranchRef === null) {
-    return false;
-  }
-  const localName = defaultBranchRef.split("/").at(-1) ?? defaultBranchRef;
-  return branch === localName || branch === defaultBranchRef;
+  // The same spelling the hub refuses to land by (@crosscheck/schema).
+  return isDefaultBranch(branch, defaultBranchRef);
 };
 
 const MS_PER_DAY = 86_400_000;
@@ -128,6 +133,18 @@ export const resolveWorkContextTitle = (
   repoId: string,
 ): string =>
   sanitizeSessionTitle(sessionTitle) ?? fallbackWorkContextTitle(branch, repoId);
+
+/**
+ * How the chosen title was written, for the hub's marker: `host` when Claude
+ * Code's own `session_title` survived sanitizing, else `fallback` — the
+ * branch-derived title the hub withholds from colleagues of a developer who
+ * opted out of presence. The same test `resolveWorkContextTitle` makes, so
+ * the marker can never describe a different title from the one uploaded.
+ */
+export const workContextTitleSourceOf = (
+  sessionTitle: string | undefined,
+): WorkContextTitleSource =>
+  sanitizeSessionTitle(sessionTitle) === null ? "fallback" : "host";
 
 /**
  * The same choice for a LIVE session: `session_title` when supplied, else the
@@ -225,13 +242,23 @@ export const handleSessionStart = async (
   // register round trip instead of adding to it, and it does not depend on
   // the hub answering.
   const landingFetch = requestLandingFetchFor(ctx);
-  // Detached-aware (trial finding #15): on a worktree session this is up to
-  // two bounded git calls BEFORE the register round trip — see
-  // HEAD_LABEL_GIT_TIMEOUT_MS for why they fit the SessionStart budget.
-  const title = await resolveSessionWorkContextTitle(
-    ctx.payload.session_title,
-    ctx.identity,
-  );
+  // The default ref is resolved FIRST now, because the register itself needs
+  // it: whether this session's base was already on the default branch
+  // (pilot finding, 2026-10-05; capture/landed.ts baseReachableFromDefault)
+  // rides the register body, and a base that was is never stamped landed by
+  // a teammate's report. The same promise feeds the landed rider below.
+  const defaultBranchRefPromise = resolveDefaultBranchRef(ctx.identity.root);
+  // Detached-aware (trial finding #15): on a worktree session the title is up
+  // to two bounded git calls BEFORE the register round trip — see
+  // HEAD_LABEL_GIT_TIMEOUT_MS for why they fit the SessionStart budget. The
+  // base probe is the other way round: skipped on a detached HEAD (the hub
+  // never lands one by its base), two calls on a named branch, where the
+  // title asks git nothing. Run side by side, at most two such calls precede
+  // the register either way (LANDED_GIT_TIMEOUT_MS).
+  const [title, baseOnDefault] = await Promise.all([
+    resolveSessionWorkContextTitle(ctx.payload.session_title, ctx.identity),
+    probeBaseOnDefault(ctx.identity, () => defaultBranchRefPromise),
+  ]);
   // The §1.3 flow: register (+409 retry) → state file BEFORE any append
   // (reap's aliveness invariant) → work-context record. One implementation,
   // shared with every connector (flows/register-session.ts).
@@ -246,21 +273,22 @@ export const handleSessionStart = async (
       repoRoot: ctx.identity.root,
       branch: ctx.identity.branch,
       baseCommit: ctx.identity.baseCommit,
+      baseOnDefault,
       hubUrl: ctx.config.hubUrl,
       fallbackDeveloperId: ctx.config.developerId,
       title,
+      titleSource: workContextTitleSourceOf(ctx.payload.session_title),
       status: INITIAL_STATUS,
       now,
       guarantees: guaranteeDeclarationFor("claude-code"),
     });
-  // Commit-evidence collection and default-branch resolution START here and
-  // resolve DURING the flow's parallel hub-fetch block: their git timeouts
-  // are below the per-request hub timeout that block already waits for
-  // (COMMIT_EVIDENCE_GIT_TIMEOUT_MS / LANDED_GIT_TIMEOUT_MS), so they add no
-  // wall clock of their own — concurrency needs the promises started early,
-  // not membership in the same Promise.all.
+  // Commit-evidence collection STARTS here and resolves DURING the flow's
+  // parallel hub-fetch block: its git timeout is below the per-request hub
+  // timeout that block already waits for (COMMIT_EVIDENCE_GIT_TIMEOUT_MS), so
+  // it adds no wall clock of its own — concurrency needs the promise started
+  // early, not membership in the same Promise.all. The default ref has been
+  // resolving since the top of the hook.
   const commitAuthorsPromise = collectCommitEvidence(ctx.identity.root, now);
-  const defaultBranchRefPromise = resolveDefaultBranchRef(ctx.identity.root);
 
   // The rotation is the day number: every SessionStart on one day probes the
   // same window (idempotent replays), and the window advances daily so a
@@ -296,16 +324,20 @@ export const handleSessionStart = async (
       // session is what makes the label mean what the surface claims; a
       // session on a real feature branch is unaffected.
       if (isOnDefaultBranch(ctx.identity.branch, defaultBranchRef)) {
-        return [];
+        return NOTHING_LANDED;
       }
       const openBaseCommits = workContexts.flatMap((entry: WorkContextEntry) =>
         entry.landedAt === null || entry.landedAt === undefined
           ? (entry.baseCommit === undefined ? [] : [entry.baseCommit])
           : [],
       );
+      // Dated as well as proven (collectLandedReading): the committer date is
+      // what lets the hub tell a stale checkout from new work for a teammate
+      // whose connector never said where its base was (server
+      // services/landed.ts) — read in parallel, one git timeout still.
       return defaultBranchRef === null || openBaseCommits.length === 0
-        ? []
-        : collectLandedCommits(
+        ? NOTHING_LANDED
+        : collectLandedReading(
             ctx.identity.root,
             defaultBranchRef,
             openBaseCommits,
@@ -313,7 +345,7 @@ export const handleSessionStart = async (
           );
     },
   });
-  const { briefing, presence, landedCommits } = assembled;
+  const { briefing, presence, landed } = assembled;
   const [commitAuthors, defaultBranchRef] = await Promise.all([
     commitAuthorsPromise,
     defaultBranchRefPromise,
@@ -377,7 +409,7 @@ export const handleSessionStart = async (
     sessionId: crosscheckSessionId,
   };
   // A local append, microseconds — the maintenance flush below ships it.
-  if (defaultBranchRef !== null && landedCommits.length > 0) {
+  if (defaultBranchRef !== null && landed.commits.length > 0) {
     await appendRecords(
       ctx.config.home,
       ctx.repoKey,
@@ -386,7 +418,7 @@ export const handleSessionStart = async (
         landedEvidenceRecord(
           ctx.identity.repoId,
           defaultBranchRef,
-          landedCommits,
+          landed,
           producer,
           now,
         ),
@@ -460,15 +492,28 @@ export const handleSessionStart = async (
   // (state/session-lineage.ts), on the same bound. Ours was read by the
   // register above and is no longer needed by this run.
   await reapStaleLineages(ctx.config.home, now);
+  // Abandoned writePrivateFile temps (pilot finding, 2026-10-06), home-wide
+  // like the state reap above and for its reason: the writers that abandon
+  // them are every hook of every repo, and this once-a-session region is the
+  // one that already pays for a directory walk. No other hook sweeps — a
+  // readdir per PostToolUse would buy nothing a day-old bound needs. Held to
+  // the SPARE budget and a per-run cap, never the reserve: uncapped, a
+  // 20 000-orphan backlog took this hook past its budget and cost the
+  // briefing (state/temp-sweep.ts). It never throws.
+  await sweepAbandonedTemps(ctx.config.home, now, budget.spareMs);
   await landingFetch;
 
   if (briefing.length === 0) {
     return "";
   }
-  return JSON.stringify({
-    hookSpecificOutput: {
-      hookEventName: "SessionStart",
-      additionalContext: briefing,
-    },
-  });
+  // What the PERSON sees is claimed LAST (review L3), after the maintenance:
+  // a group marked told is then one lock write away from the hook's output,
+  // inside the reserve every maintenance step above leaves for carrying the
+  // briefing out. Not gated on the spare — maintenance spends it on purpose,
+  // and this is the hook's own step, not maintenance. The ONE spelling of the
+  // output carries it (session-start-output.ts): the batch's briefing — its
+  // omission, presence-notice and coverage lines inside — and the person's
+  // collision notice beside it.
+  const told = await tellPersonOfGhosts(ctx, assembled.shownGhosts, assembled.shownAnonymousGhost);
+  return sessionStartContext(briefing, renderCollisionNotices(told, ctx.now()));
 };

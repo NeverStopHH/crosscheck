@@ -1,4 +1,6 @@
 #!/usr/bin/env bun
+// First, before any module that reads config or a key (config/clean-runtime.ts).
+import "@crosscheck/connector-core/config/clean-runtime.ts";
 import { EXIT_FAIL, EXIT_OK, STDIN_TIMEOUT_MS } from "@crosscheck/connector-core/constants.ts";
 import {
   isHookName,
@@ -6,9 +8,11 @@ import {
   runStatusline,
   runSummarizeWorker,
 } from "@crosscheck/connector-claude";
-import { runMcpServer } from "@crosscheck/connector-core/mcp/server.ts";
-import { runCli } from "../cli/index.ts";
-import { interceptHelpOrUnknownFlag } from "../cli/help.ts";
+// Phase timing for hooks: node built-ins only, a null check when CX_HOOK_TRACE is off.
+import { startHookTrace, traceMark, traceSpan } from "@crosscheck/connector-core/trace/hook-trace.ts";
+// The MCP server, the CLI and its help are DYNAMIC imports in their own
+// branches below (batch-2 review, M6): every hook process paid their module
+// evaluation in its boot — the part of a hook's wall clock no budget covers.
 
 /**
  * Bounded: this read runs before the hook budget exists, so an stdin the caller
@@ -32,7 +36,8 @@ const SERVE_USAGE = [
   "usage: crosscheck serve",
   "",
   "  runs the team hub on this machine (env: PORT, CROSSCHECK_DATA_DIR,",
-  "  ADMIN_TOKEN, CROSSCHECK_UI_SECRET)",
+  "  ADMIN_TOKEN, CROSSCHECK_UI_SECRET, CROSSCHECK_LISTEN,",
+  "  CROSSCHECK_TRUSTED_PROXIES, CROSSCHECK_WEBAUTHN_ORIGINS)",
   "",
 ].join("\n");
 
@@ -53,7 +58,12 @@ const main = async (): Promise<void> => {
     if (name === undefined || !isHookName(name)) {
       process.exit(EXIT_OK);
     }
-    emitAndExit(await runHook(name, await readStdin(), process.env), EXIT_OK);
+    // Phase timing, only under CX_HOOK_TRACE=1 (connector-core trace/hook-trace.ts).
+    startHookTrace(name, process.env);
+    const stdin = await traceSpan("stdin", readStdin);
+    const output = await runHook(name, stdin, process.env);
+    traceMark("returned");
+    emitAndExit(output, EXIT_OK);
   }
 
   if (command === "statusline") {
@@ -73,6 +83,7 @@ const main = async (): Promise<void> => {
   // An MCP server's stdin stays open for the life of the session BY DESIGN —
   // that is the transport — so the bounded read would end it after one second.
   if (command === "mcp") {
+    const { runMcpServer } = await import("@crosscheck/connector-core/mcp/server.ts");
     process.exit(await runMcpServer(process.env, process.cwd()));
   }
 
@@ -159,6 +170,7 @@ const main = async (): Promise<void> => {
     // The help gate runs BEFORE the dynamic import: `serve --help` must
     // answer with usage, not boot a hub — the same incident class as
     // `init --help` running a full init (cli/help.ts).
+    const { interceptHelpOrUnknownFlag } = await import("../cli/help.ts");
     const intercepted = interceptHelpOrUnknownFlag(command, rest, {
       usage: SERVE_USAGE,
     });
@@ -177,6 +189,7 @@ const main = async (): Promise<void> => {
     }
   }
 
+  const { runCli } = await import("../cli/index.ts");
   const result = await runCli(argv, process.env, process.cwd());
   process.stdout.write(result.stdout);
   process.exit(result.exitCode);

@@ -218,6 +218,12 @@ const swapLife = (
       crosscheckSessionId: sessionId,
       workContextId: workContextIdFor(sessionId),
       developerId: developerId ?? fresh.developerId,
+      // THE TOPICS START EMPTY TOO (DESIGN.md "One session, many topics"),
+      // for the seen-set's reason below: a topic's work context was spooled
+      // for the refused life, and may never have reached the hub. Cleared,
+      // every topic's context is OWED again — the next touch in it spools its
+      // context ahead of its target, under this life (flows/topic-contexts.ts).
+      topicContexts: [],
       seenTargets: [],
     });
     return "swapped";
@@ -236,6 +242,14 @@ const nextWorkContext = (
       workContextId: workContextIdFor(sessionId),
       sessionId,
       title: state.workContextTitle ?? fallbackWorkContextTitle(input.branch, input.repoId),
+      // ...with its marker (topic review H4): the next life's context is a NEW
+      // row on the hub, so an unmarked title would be judged by its shape alone
+      // — the state's own marker for the state's title, `fallback` for ours.
+      ...(state.workContextTitle === null
+        ? { titleSource: "fallback" as const }
+        : state.workContextTitleSource === undefined || state.workContextTitleSource === null
+          ? {}
+          : { titleSource: state.workContextTitleSource }),
       status: state.workContextStatus ?? HEAL_STATUS,
     },
     {

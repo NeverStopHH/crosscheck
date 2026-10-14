@@ -12,6 +12,7 @@
  *   - heartbeatMaybe: HEARTBEAT_MIN_INTERVAL_MS throttle;
  *   - endSessionFlow: flush → pending-end marker → state delete → end.
  */
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -78,6 +79,7 @@ const cleanups: string[] = [];
 const hubFor = (home: string, key: string, url: string = hubUrl): HubContext => ({
   hubUrl: url,
   apiKey,
+  keyOrigin: url,
   timeoutMs: TIMEOUT_MS,
   home,
   repoKey: key,
@@ -120,6 +122,7 @@ const registerInput = (
   hubUrl,
   fallbackDeveloperId: null,
   title: fallbackWorkContextTitle("main", REPO_ID),
+  titleSource: "fallback" as const,
   status: "analyzing",
   now: new Date(),
   guarantees: guaranteeDeclarationFor(ACP_CONNECTOR),
@@ -129,7 +132,7 @@ const registerInput = (
 beforeAll(async () => {
   const db = await createDb();
   const app = createServer({ db, adminToken: ADMIN_TOKEN });
-  server = Bun.serve({ port: 0, fetch: app.fetch });
+  server = serveLoopback({ port: 0, fetch: app.fetch });
   hubUrl = `http://127.0.0.1:${server.port}`;
   const response = await fetch(`${hubUrl}/api/developers`, {
     method: "POST",
@@ -209,16 +212,20 @@ describe("resolveFallbackWorkContextTitle (detached HEAD, trial finding #15)", (
     expect(title).toBe("main @ api");
   });
 
-  test("a detached HEAD sitting on a branch tip takes that branch's name", async () => {
-    // Arrange: `git worktree add --detach` from a branch leaves HEAD ON its tip
+  test("a detached HEAD sitting on a branch tip keeps its sha — never the branch's name", async () => {
+    // Arrange: `git worktree add --detach` from a branch leaves HEAD ON its
+    // tip. The branch that happens to point there is not what the session is
+    // on: a long-lived detached checkout sits at an old commit that a stale
+    // branch also names, and every topic it worked on was titled by that
+    // stale branch (DESIGN.md "One session, many topics").
     const { identity, sha } = await detachedIdentity("title-tip");
     expect(identity.branch).toBe(`detached@${sha}`);
 
     // Act
     const title = await resolveFallbackWorkContextTitle(identity);
 
-    // Assert: the branch wins outright — no sha, no subject
-    expect(title).toBe("main @ api");
+    // Assert: the sha and the commit subject, and no branch
+    expect(title).toBe(`detached@${sha} · initial @ api`);
   });
 
   test("a detached HEAD off every branch tip carries the sha and the commit subject", async () => {
@@ -598,7 +605,7 @@ describe("captureFileTargets", () => {
     await writeRepoFile(fx.repo, "src/limiter.ts", "export const a = 1;\n");
 
     // Act
-    const captured = await captureFileTargets(
+    const { captured } = await captureFileTargets(
       captureInput(fx, [
         join(fx.repo, "src/limiter.ts"), // absolute inside the repo
         "src/limiter.ts", // duplicate via relative spelling
@@ -623,7 +630,7 @@ describe("captureFileTargets", () => {
   test("respects the seen-set passed in", async () => {
     const fx = await fixture("targets-seen");
 
-    const captured = await captureFileTargets(
+    const { captured } = await captureFileTargets(
       captureInput(fx, ["src/seen-before.ts"], ["src/seen-before.ts"]),
     );
 
@@ -638,7 +645,7 @@ describe("captureFileTargets", () => {
       (_, index) => `src/file-${index}.ts`,
     );
 
-    const captured = await captureFileTargets(captureInput(fx, paths));
+    const { captured } = await captureFileTargets(captureInput(fx, paths));
 
     expect(captured.length).toBe(MAX_TARGETS_PER_INVOCATION);
   });
@@ -707,7 +714,7 @@ describe("heartbeatMaybe", () => {
     const home = await makeHome(label);
     cleanups.push(home);
     let count = 0;
-    const counting = Bun.serve({
+    const counting = serveLoopback({
       port: 0,
       fetch: (request) => {
         if (request.url.includes("/heartbeat")) count += 1;
@@ -718,6 +725,7 @@ describe("heartbeatMaybe", () => {
       hub: {
         hubUrl: `http://127.0.0.1:${counting.port}`,
         apiKey: "k",
+        keyOrigin: `http://127.0.0.1:${counting.port}`,
         timeoutMs: TIMEOUT_MS,
         home,
         repoKey: "",

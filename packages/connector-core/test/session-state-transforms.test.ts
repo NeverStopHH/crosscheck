@@ -15,9 +15,16 @@ import {
   MAX_PROBED_FINGERPRINTS,
 } from "../src/constants.ts";
 import {
+  SessionStateSchema,
+  hasUntoldProbeCuts,
   withBriefingSolvedRefs,
+  withCarriedCapture,
   withKnownWorktreeRoot,
+  withLandedProbeCut,
+  withLandedProbeCutsTold,
   withProbedFingerprint,
+  withRecordedIntent,
+  withRootHead,
 } from "../src/state/session-state.ts";
 import type { SessionState } from "../src/state/session-state.ts";
 
@@ -59,6 +66,7 @@ const baseState = (): SessionState => ({
   summarizerUnreadableCount: 0,
   summarizerLastUnreadable: null,
   workContextTitle: null,
+  workContextTitleSource: null,
   workContextStatus: null,
   agentKind: null,
   workContextAcked: null,
@@ -67,6 +75,9 @@ const baseState = (): SessionState => ({
   intentSetCount: 0,
   intentFailCount: 0,
   intentLastFailure: null,
+  intentRefusedCount: 0,
+  intentSkippedCount: 0,
+  intentLastDrop: null,
   workContextIntent: null,
   ghostPending: false,
   gitTouchCount: 0,
@@ -85,6 +96,13 @@ const baseState = (): SessionState => ({
   toolWindows: [],
   toolWindowEvictions: 0,
   toolWindowMisses: 0,
+  draftNudge: null,
+  draftNudgeRetryAt: null,
+  deriveFires: [],
+  topicContexts: [],
+  startBranch: null,
+  sessionTouchedAt: null,
+  topicOverflowCount: 0,
   outsideRootDrops: 0,
   knownWorktreeRoots: [],
   editToolFires: 0,
@@ -94,6 +112,138 @@ const baseState = (): SessionState => ({
   lastEditedPath: null,
   lastEditedPathResolvedAgainst: null,
   hintCandidatesSeen: 0,
+  flooredPromptCount: 0,
+  harnessTurnCount: 0,
+  quietCallCount: 0,
+});
+
+describe("withRecordedIntent remembers who wrote the intent", () => {
+  test.each([["declared"], ["derived"]] as const)(
+    "a %s intent is recorded with its provenance",
+    (provenance) => {
+      // The prompt hint says "derived intent" or "intent" from this field,
+      // the way every intent surface labels the sentence it shows.
+      const next = withRecordedIntent(baseState(), "Fix the refresh 500s", provenance);
+      expect(next.workContextIntent).toBe("Fix the refresh 500s");
+      expect(next.workContextIntentProvenance).toBe(provenance);
+    },
+  );
+});
+
+describe("a SessionStart re-fire keeps the turns the prompt path stood down on (M7)", () => {
+  test("the floored and harness counts survive a compact on the same binding", () => {
+    // Arrange — the session floored three prompts and skipped two harness turns
+    const previous = { ...baseState(), flooredPromptCount: 3, harnessTurnCount: 2 };
+
+    // Act — the re-fire re-creates the state with fresh zeros
+    const next = withCarriedCapture(baseState(), previous);
+
+    // Assert
+    expect(next.flooredPromptCount).toBe(3);
+    expect(next.harnessTurnCount).toBe(2);
+  });
+
+  test("the quiet calls survive it too (round 3, L5)", () => {
+    // Arrange
+    const previous = { ...baseState(), quietCallCount: 4 };
+
+    // Act
+    const next = withCarriedCapture(baseState(), previous);
+
+    // Assert
+    expect(next.quietCallCount).toBe(4);
+  });
+});
+
+/**
+ * THE SEEN-SET IS THE SESSION'S, NOT ONE FIRE'S (release gate, production
+ * lane, 2026-10-09): a compact that dropped it left the turn's git lane
+ * seeing every file the tool lane had already filed as new again, so a root
+ * 100 files dirty spent the lane's whole cap on files the hub already held
+ * and the six Bash-only files behind them never reached it — exactly the
+ * pilot's silence, and `capture-capped` was all that moved.
+ */
+describe("a SessionStart re-fire keeps the seen-set of the same life", () => {
+  test("a compact on the same life carries every seen target", () => {
+    // Arrange — the tool lane filed two files, one under a topic
+    const previous = { ...baseState(), seenTargets: ["src/a.ts", "~t1/src/b.ts"] };
+
+    // Act — the re-fire re-creates the state with an empty seen-set
+    const next = withCarriedCapture(baseState(), previous);
+
+    // Assert
+    expect(next.seenTargets).toEqual(["src/a.ts", "~t1/src/b.ts"]);
+  });
+
+  test("a re-fire onto another life of the same binding starts with nothing seen: that life must file again", () => {
+    // Arrange — the hub ended the life; a heal moved the session to the next rung
+    const previous = { ...baseState(), seenTargets: ["src/a.ts"] };
+    const nextLife = { ...baseState(), crosscheckSessionId: "cc_s1~r1", workContextId: "wc_cc_s1~r1" };
+
+    // Act
+    const next = withCarriedCapture(nextLife, previous);
+
+    // Assert
+    expect(next.seenTargets ?? []).toEqual([]);
+  });
+});
+
+describe("the derive fire ring is read entry by entry (review round 3, MEDIUM-5)", () => {
+  test("a malformed fire costs only itself, never the whole state file", () => {
+    // One fire booked with an unsafe deadline used to fail the whole parse:
+    // readSessionState returned null and every later update was refused.
+    const good = { at: "2026-10-05T12:00:00.000Z", deadlineMs: 60_000 };
+    const raw = {
+      ...baseState(),
+      deriveFires: [good, { at: "2026-10-05T12:01:00.000Z", deadlineMs: 9_007_199_254_740_992 }, { deadlineMs: 5 }, "junk"],
+    };
+
+    const parsed = SessionStateSchema.safeParse(raw);
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.deriveFires).toEqual([good]);
+  });
+
+  test("a ring that is not a list at all reads as no fires", () => {
+    const parsed = SessionStateSchema.safeParse({ ...baseState(), deriveFires: "nope" });
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.deriveFires).toEqual([]);
+  });
+});
+
+describe("the session's cut landed-change checks (2026-10-08)", () => {
+  test("each cut counts, and the line is owed until it is told, once", () => {
+    // Arrange: a state an earlier connector wrote — no counter at all.
+    const before = SessionStateSchema.parse(baseState());
+
+    // Act
+    const twice = withLandedProbeCut(withLandedProbeCut(before));
+    const told = withLandedProbeCutsTold(twice);
+    const afterTold = withLandedProbeCut(told);
+
+    // Assert
+    expect(hasUntoldProbeCuts(before)).toBe(false);
+    expect(twice.landedProbeCuts).toBe(2);
+    expect(hasUntoldProbeCuts(twice)).toBe(true);
+    expect(hasUntoldProbeCuts(told)).toBe(false);
+    // Told is once per session: a later cut is counted, never told again.
+    expect(afterTold.landedProbeCuts).toBe(3);
+    expect(hasUntoldProbeCuts(afterTold)).toBe(false);
+  });
+
+  test("a re-register of the same binding keeps both the count and the told mark", () => {
+    // Arrange
+    const previous = withLandedProbeCutsTold(withLandedProbeCut(baseState()));
+    const refired = { ...baseState(), landedProbeCuts: 0, landedProbeCutsTold: false };
+
+    // Act
+    const carried = withCarriedCapture(refired, previous);
+
+    // Assert
+    expect(carried.landedProbeCuts).toBe(1);
+    expect(carried.landedProbeCutsTold).toBe(true);
+  });
 });
 
 describe("withBriefingSolvedRefs", () => {
@@ -174,6 +324,17 @@ describe("withProbedFingerprint", () => {
 });
 
 
+/** A root the identity pass judged and no HEAD read has reached yet. */
+const NO_TOPIC = {
+  branch: null,
+  headStamp: null,
+  firstHead: null,
+  firstTouchedAt: null,
+  lastTouchedAt: null,
+  bashTouchedAt: null,
+  gitSweptAt: null,
+} as const;
+
 describe("withKnownWorktreeRoot (the #17 per-session root cache)", () => {
   test("remembers a root's repoId, positive and negative", () => {
     // Arrange + Act: one same-repo worktree, one foreign/unresolvable root
@@ -185,8 +346,8 @@ describe("withKnownWorktreeRoot (the #17 per-session root cache)", () => {
 
     // Assert: both cached, the negative answer kept as null
     expect(state.knownWorktreeRoots).toEqual([
-      { root: "/wt/a", repoId: "github.com/acme/api", attempts: 1, stamp: null },
-      { root: "/wt/foreign", repoId: null, attempts: 1, stamp: null },
+      { root: "/wt/a", repoId: "github.com/acme/api", attempts: 1, stamp: null, ...NO_TOPIC },
+      { root: "/wt/foreign", repoId: null, attempts: 1, stamp: null, ...NO_TOPIC },
     ]);
   });
 
@@ -199,8 +360,31 @@ describe("withKnownWorktreeRoot (the #17 per-session root cache)", () => {
 
     // Assert: one entry, the newest answer
     expect(second.knownWorktreeRoots).toEqual([
-      { root: "/wt/a", repoId: "github.com/acme/api", attempts: 1, stamp: null },
+      { root: "/wt/a", repoId: "github.com/acme/api", attempts: 1, stamp: null, ...NO_TOPIC },
     ]);
+  });
+
+  test("a re-judged identity keeps the topic the HEAD pass recorded; a replaced checkout drops it", () => {
+    // Arrange: a root whose HEAD was read, stamped as one checkout
+    const judged = withKnownWorktreeRoot(baseState(), "/wt/a", "github.com/acme/api", 1, "1:1:1");
+    const touched = withRootHead(judged, {
+      root: "/wt/a",
+      repoId: "github.com/acme/api",
+      branch: "feat/x",
+      headStamp: "ref: refs/heads/feat/x",
+      firstHead: null,
+      touchedAt: "2026-10-07T10:00:00.000Z",
+    });
+
+    // Act
+    const sameCheckout = withKnownWorktreeRoot(touched, "/wt/a", "github.com/acme/api", 2, "1:1:1");
+    const replaced = withKnownWorktreeRoot(touched, "/wt/a", "github.com/acme/web", 1, "2:2:2");
+
+    // Assert
+    expect(sameCheckout.knownWorktreeRoots[0]?.branch).toBe("feat/x");
+    expect(sameCheckout.knownWorktreeRoots[0]?.firstTouchedAt).toBe("2026-10-07T10:00:00.000Z");
+    expect(replaced.knownWorktreeRoots[0]?.branch).toBeNull();
+    expect(replaced.knownWorktreeRoots[0]?.firstTouchedAt).toBeNull();
   });
 
   test("the cache is FIFO-capped at MAX_KNOWN_WORKTREE_ROOTS", () => {

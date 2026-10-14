@@ -89,6 +89,43 @@ export const MAX_HINTS_PER_SESSION = 5;
  */
 export const HINT_MIN_EVIDENCE_REFS = 1;
 /**
+ * Substance also requires RELEVANCE (§4, revised after the 2026-10 pilot:
+ * 95 prompt hints, 0 opened): the claim ITSELF must share this many distinct
+ * words (lexemes, counted by the hub against the query it matched) — or the
+ * match must be an error fingerprint, which is content identity. A claim
+ * that merely sits in a tree the prompt brushed is a pointer, however well
+ * evidenced. The hub's content floor counts in the same unit with the same
+ * number — ONE constant since round 3's follow-up: `@crosscheck/schema`
+ * content-floor.ts, which the hub's floor and this connector's recount of an
+ * old hub both import, so the literal is pinned to exist once:
+ *
+ * VERIFY: grep -c 'MIN_SHARED_TERMS = [2];' packages/schema/src/content-floor.ts packages/server/src/services/hints.ts packages/connector-core/src/constants.ts
+ * PRINTS: packages/schema/src/content-floor.ts:1
+ * PRINTS: packages/server/src/services/hints.ts:0
+ * PRINTS: packages/connector-core/src/constants.ts:0
+ */
+export { HINT_MIN_SHARED_TERMS } from "@crosscheck/schema";
+
+/**
+ * THE ONE MATCH KIND THAT MAY CARRY SUBSTANCE, named here rather than
+ * inferred: a fingerprint is derived from the failure TEXT, so it says the
+ * old answer is about the NEW problem. A shared file says only that two
+ * people were near each other, and "solved before, here is the cause" on
+ * that evidence is the anchoring §4 forbids. Checked again on this side,
+ * although the hub already applies it, because a body arriving beside a
+ * weaker kind is exactly what a newer hub with different rules — or a
+ * hostile one — would send.
+ *
+ * SHARED because three readers need it, each for its own reason: the
+ * briefing's solved line (the body), the failure-time hint, whose header
+ * ASSERTS this kind ("the same error fingerprint as a diagnosis that was
+ * solved"), and the prompt hint's selector, for which content identity is a
+ * strong match without a shared word (hints/select.ts). One name; a second
+ * literal would be a second rule. Lives HERE rather than in briefing/render.ts
+ * (which re-exports it) so the selector need not import the render layer.
+ */
+export const SUBSTANCE_MATCH_KIND = "error_fingerprint";
+/**
  * Words shorter than this carry grammar, not meaning — the same floor the hub
  * search applies (SEARCH_MIN_TOKEN_CHARS). Checked BEFORE the hub call: a
  * prompt with no searchable word costs zero HTTP.
@@ -96,6 +133,15 @@ export const HINT_MIN_EVIDENCE_REFS = 1;
 export const HINT_MIN_TOKEN_CHARS = 3;
 /** Tripwire asks once per file per session; FIFO cap on the remembered set. */
 export const MAX_TRIPWIRE_ASKED_FILES = 100;
+/**
+ * How long a file whose live tripwire answer was fully dealt with — every
+ * teammate on it asked about, every group told — is not asked about again
+ * (round 2, L1): each edit of a collision file used to cost a hub call and a
+ * state write for an answer that could only repeat itself. Short, because a
+ * teammate who STARTS on the file is new on it and only the hub can say so:
+ * the next edit after the window asks again.
+ */
+export const TRIPWIRE_RECHECK_TTL_MS = 30_000;
 /**
  * The failure-time solved probe asks the hub about a fingerprint ONCE per
  * session; FIFO cap on the remembered set, the MAX_TRIPWIRE_ASKED_FILES
@@ -127,6 +173,18 @@ export const GIT_TIMEOUT_MS = 1500;
 export const SSH_RESOLVE_TIMEOUT_MS = 500;
 
 /**
+ * How many times one process lets a host run out SSH_RESOLVE_TIMEOUT_MS
+ * before it stops asking (git/ssh-hostname.ts). A deadline is not an answer:
+ * under CPU contention a perfectly ordinary config outlives half a second on
+ * a process's first spawn, and remembering that null cost a long-lived MCP
+ * server its alias — and so its repo identity — until restart. Below this
+ * many strikes the next call asks again; at it, the null is remembered, so a
+ * config that genuinely never fits bills at most this many deadlines per
+ * process instead of one per tool call.
+ */
+export const SSH_RESOLVE_DEADLINE_STRIKES = 3;
+
+/**
  * Environment switch that disables ssh identity canonicalization outright:
  * when the variable holds "off", the default resolver answers null without
  * spawning anything and every remote keeps its LITERAL host — fail-open,
@@ -143,6 +201,17 @@ export const SSH_RESOLVE_TIMEOUT_MS = 500;
  */
 export const SSH_CANONICALIZE_ENV = "CROSSCHECK_SSH_CANONICALIZE";
 export const SSH_CANONICALIZE_OFF = "off";
+
+/**
+ * How long a working directory's cached repo identity is trusted without git
+ * asking again (git/repo-identity-cache.ts; batch-2 review, M6): its stamps
+ * — the root's `.git`, HEAD and its commit, the repo, worktree, global and
+ * ssh configs — catch every change git itself makes, and this bounds what
+ * they cannot see (an included config file, the system config). Four git
+ * spawns and an `ssh -G` on every hook were 90–108 ms of PreToolUse under
+ * load; one full resolution per directory per ten minutes is not.
+ */
+export const REPO_IDENTITY_CACHE_TTL_MS = 10 * 60 * 1000;
 
 /**
  * Grace between the deadline's SIGTERM and the SIGKILL escalation for a git
@@ -244,8 +313,86 @@ export const MAX_SEEN_TARGETS = 500;
  * answers are cached too — a foreign root under ITS OWN repoId, an
  * unresolvable root as null — so a repeated foreign touch also costs no git
  * after the first.
+ *
+ * SIXTEEN, NOT EIGHT, since every root also carries its TOPIC — the branch it
+ * is on, read from its HEAD file — and the Stop-time git lane sweeps the roots
+ * listed here (flows/capture-git-touches.ts). One long-lived session working
+ * a dozen sibling worktrees evicted the oldest at eight and the git lane then
+ * never looked at it again; the session root counts as one entry now too.
  */
-export const MAX_KNOWN_WORKTREE_ROOTS = 8;
+export const MAX_KNOWN_WORKTREE_ROOTS = 16;
+
+/**
+ * How many hex characters of a detached HEAD's commit its TOPIC LABEL keeps:
+ * `detached@<sha>` read straight from the root's HEAD file, with no git to ask
+ * for the shortest unambiguous prefix. Nine is git's own `--short` length in a
+ * repository of this monorepo's size, and the label only has to tell two
+ * detached roots of one session apart.
+ */
+export const DETACHED_LABEL_SHA_CHARS = 9;
+
+/**
+ * TOPICS ONE LIFE OF A SESSION MAY OPEN (DESIGN.md "One session, many
+ * topics"): one work context per (repo, branch) the session touched, beside
+ * the session's own. A session past this files further topics' touches under
+ * its own context and counts each one (`topic_overflow` in the capture-loss
+ * ledger) — delivered, but no longer told apart.
+ *
+ * WHY A CAP AT ALL: every topic is a work context on the hub and an entry in
+ * the session state read on every hook, and a runaway — a script checking out
+ * a branch per file — must not mint hundreds of either. Twenty-four is twice
+ * the worktrees the owner's busiest week ran from one session.
+ */
+export const MAX_TOPICS_PER_SESSION = 24;
+
+/**
+ * HOW CLOSE TWO TOUCHES MAKE `set_intent`'s DEFAULT A GUESS (review M2): with
+ * no `topic` named, an intent lands on the context this life touched last —
+ * unless another one was touched within this long of it. Then the tool
+ * refuses and names the branches, so the agent names its own.
+ *
+ * WHY: most of the owner's edits come from parallel subagents, and "the
+ * topic touched last" is then whichever one the other subagent touched a
+ * second ago — a misfiled intent, matched by the ghost-intent tier and by
+ * search, the very mislabel the pilot failed on. Measured from the newest
+ * touch, not from now, so the race does not expire while both subagents
+ * think; a single agent that left the other worktree minutes before still
+ * gets the default.
+ */
+export const INTENT_TOPIC_AMBIGUITY_MS = 60_000;
+
+/**
+ * Hex characters of its keyed digest a topic's minted id leads with — the id
+ * is those, a dot, and a number from the digest's next hex
+ * (flows/topic-contexts.ts `mintTopicId`), minted once from the branch the
+ * topic OPENED on, so a rename cannot change it.
+ */
+export const TOPIC_KEY_HEX_CHARS = 12;
+
+/**
+ * Random bytes in this machine's topic key (state/topic-key.ts): the secret
+ * every topic id is an HMAC under, so nobody without it can hash a guessed
+ * branch into one (batch-2 integration review, H3). A SHA-256 block's worth.
+ */
+export const TOPIC_KEY_BYTES = 32;
+
+/**
+ * How much of a worktree's HEAD log (`<gitdir>/logs/HEAD`) the topic rules
+ * read to ask "does this commit descend from that one" without spawning git
+ * (git/head-history.ts) — the newest part, a quarter megabyte: thousands of
+ * moves, and one read, made only when a root shows a branch its topics do not
+ * already name.
+ */
+export const MAX_HEAD_LOG_BYTES = 262_144;
+
+/**
+ * How many of a REFTABLE worktree's HEAD-log entries the git lane's commit
+ * half asks git for (review M3): the reftable keeps the log where no file
+ * read reaches, so one bounded `git reflog show -n` stands in for the
+ * MAX_HEAD_LOG_BYTES tail — about as many moves as a quarter megabyte of
+ * `logs/HEAD` lines holds.
+ */
+export const MAX_REFTABLE_REFLOG_ENTRIES = 2048;
 
 /**
  * Tool-call ids an ACP session remembers as ALREADY having booked their
@@ -408,6 +555,18 @@ export const MAX_INGEST_BATCH = 100;
  * reserve. This is the hard ceiling for a hub that answers instantly.
  */
 export const MAX_FLUSH_BATCHES_PER_HOOK = 20;
+/**
+ * THE SMALLEST BATCH A DRAIN HALVES DOWN TO after a records request timed out
+ * (spool/flush.ts). A hub slower than the request bound for a full batch
+ * stored it and was abandoned anyway, so the same batch went again on every
+ * hook and never once came back in time: the release gate's resumed life,
+ * red on ubuntu-latest and traced in an x86_64 container at 406 ms for 99
+ * records against the 400 ms bound (2026-10-13). Halving cures a batch that
+ * is too big for the bound; one of
+ * ten that still times out is a hub that is down or stalled, and the drain
+ * ends there instead of spending its hook on ever smaller requests.
+ */
+export const MIN_FLUSH_BATCH_LINES = 10;
 export const SPOOL_LOCK_STALE_MS = 5000;
 /**
  * THE SPOOL's patience, and only the spool's. A busy flush or reap lock costs a
@@ -474,6 +633,14 @@ export const SESSION_STATE_LOCK_RETRIES = 20;
 export const MAX_BRIEFING_CHARS = 2200;
 export const MAX_TEAMMATES = 5;
 export const MAX_CONTEXTS = 5;
+/**
+ * Topics one teammate's entry names before "… and N more topics" (the
+ * briefing's work contexts and presence, `crosscheck status`). Three, because
+ * the pilot's busiest developer — 471 contexts over 49 branches — then costs
+ * the briefing about 300 characters, and his two colleagues still fit beside
+ * him under MAX_BRIEFING_CHARS (test/briefing-contexts.test.ts pins both).
+ */
+export const MAX_TOPICS_PER_TEAMMATE = 3;
 export const MAX_TITLE_CHARS = 80;
 /** One git process per distinct teammate base commit, never more. */
 export const MAX_DRIFT_LOOKUPS = 5;
@@ -563,6 +730,25 @@ export const INTENT_MAX_CHARS = 120;
  * PRINTS: 40 true
  */
 export const INTENT_MIN_PROMPT_CHARS = 40;
+/**
+ * TOPICAL words — of no closed class (`@crosscheck/schema` promptTerms) — the
+ * human text must carry before the one intent fire is spent on it (hold-out
+ * review round 3, H2). A prompt of the session's machinery with one stray
+ * word ("fix the session limit reset handling once more please") parks a
+ * sentence the model can only answer with machinery, and an intent that
+ * says "continue after a usage limit reset" became the round-3 magnet:
+ * an intent-only tree took 6 of 10 content-free hints. Two, the content
+ * floor's own number.
+ */
+export const INTENT_MIN_TOPICAL_WORDS = 2;
+/**
+ * How often a NONE gives the session its one intent fire back (hold-out
+ * review round 4, H2). The model answers NONE when the prompt names no task
+ * it can say in a sentence, and the session then had no intent at all,
+ * however clearly its next prompt said what it was doing. Bounded, so a
+ * session of status reports costs at most four model calls.
+ */
+export const INTENT_MAX_NONE_REFUNDS = 3;
 /**
  * How much of the first prompt the worker hands the model — the token bill's
  * bound for the intent call (≈ INTENT_PROMPT_MAX_CHARS / 4 tokens at the
@@ -710,13 +896,24 @@ export const STATUS_MAX_ABSENCE_LINES = 20;
 
 /**
  * Landed detection (DESIGN.md §5) is a nice-to-have like drift: a slow git
- * loses the report, never the briefing. The default-branch resolution rides
- * INSIDE the SessionStart parallel hub-fetch block (its timeout below the
- * per-request hub timeout, same free ride as COMMIT_EVIDENCE_GIT_TIMEOUT_MS),
- * and the ancestry fan-out runs in parallel with the drift lookups — both
- * bounded by this, so the block's wall clock does not grow.
+ * loses the report, never the briefing. The ancestry fan-out — and the read
+ * of those commits' dates beside it — runs in parallel with the drift
+ * lookups, each bounded by this, so the briefing block's wall clock does not
+ * grow.
  *
  * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.LANDED_GIT_TIMEOUT_MS < c.HTTP_TIMEOUT_MS)'
+ * PRINTS: true
+ *
+ * The REGISTER needs it too since the pilot finding of 2026-10-05: whether
+ * the session's base was already on the default branch rides the register
+ * body (capture/landed.ts probeBaseOnDefault), so SessionStart resolves the
+ * default ref and probes the base BEFORE the register round trip — two calls
+ * in sequence, on a named branch only. That is real wall clock there: the
+ * title asks git nothing on a named branch. On a detached HEAD the probe is
+ * skipped and the title's own two (HEAD_LABEL_GIT_TIMEOUT_MS) are the cost.
+ * Either way at most two calls precede the register, inside the same slack:
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(2 * c.LANDED_GIT_TIMEOUT_MS <= c.SESSION_START_BUDGET_RATIO * c.HTTP_TIMEOUT_MS - c.HTTP_TIMEOUT_MS)'
  * PRINTS: true
  */
 export const LANDED_GIT_TIMEOUT_MS = 250;
@@ -799,17 +996,43 @@ export const MAX_LANDING_BRANCHES = 8;
  */
 export const WELL_KNOWN_LANDING_BRANCHES: readonly string[] = ["staging", "develop"];
 /**
- * The whole landed-change probe's deadline inside PreToolUse, and never more
- * than one hub call: the hook also clamps it to the configured hub timeout.
- * It runs beside the live tripwire's hub call, and the state-lock allowance
- * (TRIPWIRE lock retries) assumes the longest step before the marker claim
- * is ONE request — so a slow repo costs the landed warning, never the live
- * one and never the edit. Measured at 40–60 ms on a 10k-commit monorepo.
- *
- * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.LANDED_PROBE_BUDGET_MS <= c.HTTP_TIMEOUT_MS)'
- * PRINTS: true
+ * How long one root's landed-probe facts — the landing tips, partial clone,
+ * the reader's own address — are trusted without git asking again
+ * (landed-changes/probe-facts.ts; batch-2 review, M6). Their stamps catch
+ * every ref and config file git itself writes; this bounds what no stamp
+ * sees (an included config, the system config). The identity cache's own
+ * bound, for the same reason.
  */
-export const LANDED_PROBE_BUDGET_MS = 300;
+export const LANDED_PROBE_FACTS_TTL_MS = REPO_IDENTITY_CACHE_TTL_MS;
+/**
+ * Never-changing answers one root keeps for its probes (a branch tip as of a
+ * moment, a merge base): enough for every landing branch across a week of
+ * HEADs, and a few kilobytes on disk.
+ */
+export const MAX_LANDED_PROBE_MEMO_ENTRIES = 64;
+/**
+ * The whole landed-change probe's deadline when a caller names none — ONE hub
+ * request, exactly. PreToolUse passes its own configured per-request timeout
+ * (hooks/pre-tool-use.ts), so the probe has the very window the live
+ * tripwire's hub call beside it already holds: it starts with that call and
+ * ends no later than it, so the hook's longest step is still ONE request —
+ * what the state-lock allowance (TRIPWIRE lock retries) assumes — and never
+ * more than half of PRE_TOOL_USE_BUDGET_RATIO's budget.
+ *
+ * It was 300 ms below the request's 400, and under load (a load average near
+ * 100, 2026-10-08) 24 of 24 diagnostic probes ran into it (cut at 300–475 ms);
+ * those cut before a landing branch answered stopped nothing, and the reader
+ * edited a teammate's landed change unwarned while the hook was still waiting
+ * on the hub for 100 ms more. The last 100 ms cost the hook nothing; cutting
+ * them cost the warning. Measured at 40–60 ms on a 10k-commit monorepo when
+ * the machine is idle.
+ *
+ * A probe cut short anyway is booked, never silent (state/landed-probe-cuts.ts).
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.LANDED_PROBE_BUDGET_MS === c.HTTP_TIMEOUT_MS, c.LANDED_PROBE_BUDGET_MS * 2 <= c.PRE_TOOL_USE_BUDGET_RATIO * c.HTTP_TIMEOUT_MS)'
+ * PRINTS: true true
+ */
+export const LANDED_PROBE_BUDGET_MS = HTTP_TIMEOUT_MS;
 /**
  * The background fetch of the landing branches (step 2): at most one per
  * clone per interval, however many hooks ask. A fetch is one or two network
@@ -1052,10 +1275,11 @@ export const MAX_GHOST_POINTERS = 2;
  * because a ghost line is a composition and its worst case is not the sum of
  * its caps. Two MAXIMAL rows — a name and an intent at their render caps, a
  * shared fingerprint, GHOST_MAX_SHARED_SHOWN paths at
- * GHOST_SHARED_VALUE_MAX_CHARS each, a "+N more of yours" tail, the word
- * count and a full-length id — compose 491 characters each, so the block
- * measured 983 characters of lines under a 114-character header: 1098 of
- * MAX_BRIEFING_CHARS, HALF the briefing, for two pointer lines. The five
+ * GHOST_SHARED_VALUE_MAX_CHARS each, a "+N more of yours" tail, a large
+ * change's size, the word count and a full-length id — compose 536
+ * characters each, so the block measured 1073 characters of lines under a
+ * 114-character header: 1188 of MAX_BRIEFING_CHARS, OVER HALF the briefing,
+ * for two pointer lines. The five
  * sections below it (teammate contexts, contradictions, solved-before,
  * draft reminders, absences) give way whole to that, which is the ordering
  * appendSection enforces and not one anybody chose.
@@ -1217,6 +1441,15 @@ export const SUMMARIZER_BLOCK_MAX_CHARS = 2_000;
  * PRINTS: 60
  */
 export const SUMMARIZER_TIMEOUT_MS = 60_000;
+/**
+ * The longest deadline CROSSCHECK_SUMMARIZER_TIMEOUT_MS may give a model run.
+ * Every fire books its deadline into session state (`deriveFires`), so the
+ * value must stay a safe integer the state schema accepts — an unbounded one
+ * made the state file unreadable for the rest of the session (review round
+ * 3). Thirty minutes is past any slow local model, and short enough that
+ * doctor can still settle a run the same day.
+ */
+export const SUMMARIZER_TIMEOUT_MAX_MS = 30 * 60_000;
 /**
  * The env marker the summarizer's nested `claude -p` carries
  * (model/worker-env.ts sets it on the worker, model/runner.ts on
@@ -1388,8 +1621,132 @@ export const SUMMARIZER_MODEL = "haiku";
  * the budget exists for the state lock and the maintenance flush it hosts.
  */
 export const STOP_BUDGET_RATIO = 2;
+/**
+ * SubagentStop runs the git lane over the subagent's own root and the roots a
+ * shell touched (flows/git-lane.ts) and a maintenance flush — Stop's work
+ * without the summarizer gate, so Stop's envelope.
+ */
+export const SUBAGENT_STOP_BUDGET_RATIO = STOP_BUDGET_RATIO;
 /** Draft pointers one briefing may spend — pointer discipline like solved. */
 export const MAX_DRAFT_POINTERS = 2;
+/**
+ * THE DRAFT REVIEW NUDGE (flows/draft-nudge.ts) — the once-per-session ask
+ * that turns the briefing's passive own-drafts list into a moment the agent
+ * settles them WITH THE PERSON. Measured reason it exists: twenty
+ * auto-captured drafts on one pilot developer, none reviewed, while the
+ * briefing listed two of them on every SessionStart.
+ *
+ * A draft is DUE once it has waited this long: a younger one may still be
+ * reviewed in the sitting that produced it, and a draft the Stop hook minted
+ * minutes ago is part of the work in progress, not a backlog.
+ */
+export const DRAFT_NUDGE_MIN_AGE_HOURS = 24;
+/**
+ * Turns the session must have FINISHED before the nudge may ride a prompt:
+ * the first prompt carries the person's opening request, and the
+ * SessionStart briefing has only just listed the drafts.
+ */
+export const DRAFT_NUDGE_MIN_FINISHED_TURNS = 1;
+/** Due drafts the nudge names by id; the rest are counted, never silently left out. */
+export const MAX_DRAFT_NUDGE_POINTERS = 5;
+/**
+ * Ids the nudge keeps before its header gives up a descriptive clause (the
+ * kinds, the backlog in all, the retention count — in that order): an id is
+ * what the agent acts on, a clause only describes. Below this many, every
+ * clause is gone first, and the last id is never dropped.
+ */
+export const DRAFT_NUDGE_POINTERS_BEFORE_CLAUSES = 3;
+/**
+ * Below this much of the prompt hook's spare budget the nudge is not even
+ * looked up and waits for the next prompt: a slot spent by a hook that then
+ * runs out of time would be marked delivered and never shown.
+ */
+export const DRAFT_NUDGE_MIN_SPARE_MS = 50;
+/**
+ * Conversations whose spent nudge slot is remembered past SessionEnd
+ * (state/draft-nudge-spent.ts), newest kept: a conversation resumed after it
+ * ended is the same conversation, and is not nudged twice.
+ */
+export const DRAFT_NUDGE_SPENT_MAX_SESSIONS = 500;
+/**
+ * After a draft fetch for the nudge FAILED, how long the session leaves the
+ * nudge alone. Without it an unresponsive hub cost every prompt one more GET
+ * and its timeout (two, when the oldest-first page is due) — the nudge is
+ * housekeeping, and ten minutes late costs nothing.
+ */
+export const DRAFT_NUDGE_RETRY_COOLDOWN_MS = 10 * 60_000;
+/**
+ * Past this age the nudge SAYS how many drafts are that old (binding
+ * principle 6): nothing in crosscheck deletes or auto-discards a draft, so an
+ * old one stays listed until a person settles it. Matched to the hub's
+ * 30-day content windows:
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/server/src/constants.ts");console.log(c.DRAFT_RETENTION_HORIZON_DAYS === s.COMMIT_EVIDENCE_RETENTION_DAYS)'
+ * PRINTS: true
+ */
+export const DRAFT_RETENTION_HORIZON_DAYS = 30;
+/**
+ * The most drafts one `GET /api/drafts` answer carries (the hub's own
+ * MAX_DRAFTS_LISTED, newest first). An answer this long is a FLOOR, and the
+ * nudge and doctor say "at least" rather than print a count the hub cut:
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/server/src/constants.ts");console.log(c.DRAFT_LISTING_CAP === s.MAX_DRAFTS_LISTED)'
+ * PRINTS: true
+ */
+export const DRAFT_LISTING_CAP = 20;
+/**
+ * WHY AN AGENT SHARES NOTHING (derive/sharing.ts) — doctor's `sharing` lines.
+ *
+ * Finished turns with not one summarizer fire before doctor says the Tier-1
+ * gate never saw a conclusion. Below it a short session is simply short; at
+ * it, the agent did a day's worth of turns and none of them read as a
+ * finding, which is the one zero that needs no broken part to explain it.
+ */
+export const DOCTOR_SHARING_QUIET_TURNS_WARN = 20;
+/**
+ * Model runs (summarizer and intent together) that booked no outcome at all
+ * before doctor calls the worker silent. Two, like the intent line's own
+ * threshold: an intent fires once per session, so one silent run is a single
+ * slow laptop and two is a worker that does not report back.
+ */
+export const DOCTOR_SHARING_SILENT_FIRES_WARN = 2;
+/**
+ * How long a model run may go unanswered and still be IN FLIGHT rather than
+ * silent: this many times the deadline THAT RUN was given — booked with its
+ * fire, CROSSCHECK_SUMMARIZER_TIMEOUT_MS honoured (state/session-state.ts
+ * `deriveFires`), because a machine that raised the deadline gives its worker
+ * that long. A run younger than this — counted to now for a live session, to
+ * SessionEnd for an ended one, whose late answer had no state file left to
+ * land in — is never blamed on the host.
+ */
+export const DERIVE_RUN_GRACE_FACTOR = 2;
+/**
+ * The grace at the default deadline — what doctor's lines quote as the usual
+ * figure; each run is settled at its own (DERIVE_RUN_GRACE_FACTOR).
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.DERIVE_RUN_GRACE_MS / 1000, c.DERIVE_RUN_GRACE_MS > c.SUMMARIZER_TIMEOUT_MS)'
+ * PRINTS: 120 true
+ */
+export const DERIVE_RUN_GRACE_MS = DERIVE_RUN_GRACE_FACTOR * SUMMARIZER_TIMEOUT_MS;
+/**
+ * Fire instants a session keeps, newest last (state/session-state.ts
+ * `deriveFires`), so doctor settles EACH run against its own start rather
+ * than the session's newest — one fresh fire used to make every older silent
+ * run read as in flight. Every fire a session can make: its summarizer cap
+ * plus the one derived-intent fire.
+ */
+export const DERIVE_FIRES_KEPT = SUMMARIZER_MAX_FIRES_PER_SESSION + 1;
+/**
+ * Sessions with not one derived-intent fire before doctor says no session
+ * opened with a substantive prompt. Two, because one session is one prompt.
+ */
+export const DOCTOR_SHARING_QUIET_INTENT_SESSIONS_WARN = 2;
+/**
+ * Ended sessions whose derive counters the per-repo history keeps
+ * (state/derive-history.ts) — the evidence doctor reads once the sessions
+ * that could answer are gone. Newest kept; the total folded is counted.
+ */
+export const DERIVE_HISTORY_MAX_SESSIONS = 20;
 /**
  * Most session state files one scan reads (status/doctor, bounded).
  *
@@ -1416,6 +1773,17 @@ export const STATUS_MAX_SESSION_STATES = 50;
 export const STATUS_SESSION_IDLE_HOURS = 24;
 
 export const PRESENCE_CACHE_TTL_MS = 10_000;
+/**
+ * How long a heartbeat keeps a session PRESENT on the hub (server
+ * PRESENCE_TTL_SECONDS), as the connector needs it: a teammate fact older
+ * than this — a branch, a "last active" age — is no longer a presence fact
+ * the hub would still give out, so a relayed collision line drops both
+ * (hints/collision-notice.ts; review M2).
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/server/src/constants.ts");console.log(c.PRESENCE_TTL_MS === s.PRESENCE_TTL_SECONDS * 1000)'
+ * PRINTS: true
+ */
+export const PRESENCE_TTL_MS = 90_000;
 export const STATUSLINE_MAX_CHARS = 90;
 /**
  * Teammates the `cx 0` branch may name as last-seen (Anhang A, A4-09). Three,
@@ -1426,6 +1794,46 @@ export const STATUSLINE_MAX_CHARS = 90;
 export const STATUSLINE_MAX_LAST_SEEN = 3;
 export const STATUSLINE_MAX_NAMES = 3;
 export const STATUSLINE_NAME_CHARS = 12;
+
+/**
+ * The PERSON-facing collision notice (hints/collision-notice.ts; pilot,
+ * 2026-10-07: every collision crosscheck saw reached an agent's context and
+ * no person). Field caps for the one line Claude Code shows the person as a
+ * hook's `systemMessage` — a name, the basename of the file, a branch — so
+ * the line stays a line whatever a teammate's fields hold. The stored path
+ * cap bounds what the session state keeps per file, which is the reader's
+ * own repo-relative path and never shown whole.
+ */
+export const COLLISION_NOTICE_NAME_CHARS = 40;
+export const COLLISION_NOTICE_FILE_CHARS = 60;
+export const COLLISION_NOTICE_BRANCH_CHARS = 60;
+export const COLLISION_NOTICE_PATH_CHARS = 200;
+/**
+ * What one session remembers having told its person: groups (one per
+ * teammate work context), FIFO like the tripwire's asked files, and the files
+ * named per group. Small on purpose — a session that collides with more than
+ * thirty-two teammate contexts is told about the newest ones, and the
+ * statusline counts files rather than listing them.
+ */
+export const MAX_COLLISION_NOTICES = 32;
+export const MAX_COLLISION_FILES = 20;
+/**
+ * How much of that ONE hook output may carry (review L4): a relay can drain
+ * every group a session's subagents ran into, so at most this many lines are
+ * named and the rest counted on a line of their own, and the whole is bounded
+ * in characters — far under the 10,000 Claude Code caps `systemMessage` at,
+ * because past a few lines a person stops reading.
+ */
+export const COLLISION_NOTICE_MAX_LINES = 5;
+export const COLLISION_NOTICE_MAX_CHARS = 1600;
+/**
+ * The statusline's overlap indicator (`⚠ overlap: Mike · 3 files`): at most
+ * this many people by name, then a count, and the whole segment bounded so
+ * it never takes the capture-health indicator's characters — it is printed
+ * BEFORE the presence line, which keeps its own STATUSLINE_MAX_CHARS.
+ */
+export const COLLISION_INDICATOR_MAX_NAMES = 2;
+export const COLLISION_INDICATOR_MAX_CHARS = 48;
 
 export const FINGERPRINT_SOURCE_CHARS = 4000;
 export const FINGERPRINT_KEEP_CHARS = 1200;
@@ -1619,6 +2027,50 @@ export const SESSION_STATE_SCAN_MAX_FILES = 200;
  */
 export const SESSION_STATE_REAP_MAX_PER_RUN = 25;
 /**
+ * Age past which a `writePrivateFile` temp sibling (`<path>.tmp-<pid>-<rand>`)
+ * is certainly abandoned, and SessionStart's sweep removes it
+ * (state/temp-sweep.ts; pilot finding 2026-10-06: 40 in one machine's
+ * `state/`, 0.7 h to 925 h old, nothing ever removing them).
+ *
+ * WHY A DAY, when a writer holds its temp for microseconds. A temp lives from
+ * its `writeFile` to its `rename`: one small write, a chmod and a rename in a
+ * single function, with nothing between them that waits on anything else —
+ * no network call, no lock. Nothing the writer does can stretch that; only
+ * being STOPPED can — a laptop lid closed mid-write, a SIGSTOP, a debugger —
+ * and the wall clock runs on through all three, so a bound in seconds would
+ * read a writer that just woke as abandoned and take its temp the instant
+ * before its rename. A day means that writer sat stopped between two adjacent
+ * steps for over 24 h — and, for a sleeping laptop, then also lost a race to
+ * a sweep that cannot start until the machine is awake again. Even then it
+ * loses one update, never the file: its rename fails, writePrivateFile
+ * throws, and the file the temp was meant to replace is untouched.
+ *
+ * WHY NOT LONGER. Nothing reads a temp name, so there is nothing to wait for
+ * but that rename, and a longer bound only keeps more dead files: the pilot
+ * machine made about one a day.
+ *
+ * NOT MAX_SPOOL_AGE_DAYS: those seven days are for records that might still
+ * be DELIVERED. A temp carries nothing anybody will ever read.
+ */
+export const ABANDONED_TEMP_MAX_AGE_MS = MS_PER_DAY;
+/**
+ * Most abandoned temps ONE sweep removes — the SESSION_STATE_REAP_MAX_PER_RUN
+ * argument, because the sweep runs inside SessionStart's budget race too. A
+ * review measured the uncapped sweep through the real hook against a fast
+ * hub at the default 400 ms request timeout: 20 000 orphans took the hook to
+ * 1006 ms, it answered "" instead of its briefing and booked a false
+ * `hook_timed_out`.
+ *
+ * WHY 100. Twice the pilot machine's whole backlog (44), so a machine like it
+ * drains in one session. One removal measured 55 µs (1000 in 55 ms, bun
+ * 1.3.13, M4 Max), so a full run is about 5.5 ms — under 2% of the 400 ms
+ * reserve, with room for a disk ten times slower. At the pilot's rate of
+ * about one orphan a day the cap only ever binds on a backlog, and a backlog
+ * drains by a hundred per session. The cap bounds the WORK; the caller's
+ * spare budget bounds the TIME, and the sweep stops at whichever comes first.
+ */
+export const ABANDONED_TEMP_SWEEP_MAX_PER_RUN = 100;
+/**
  * Most register calls ONE walk of the life ladder makes (state/session-lineage.ts).
  *
  * The ladder used to be three fixed rungs — `cc_<id>`, `~r1`, `~r2` — and the
@@ -1719,6 +2171,75 @@ export const POST_TOOL_USE_MATCHER = "Edit|Write|MultiEdit|NotebookEdit|Bash";
 export const PRE_TOOL_USE_MATCHER = "Edit|Write|MultiEdit|NotebookEdit";
 
 /**
+ * The SECOND PostToolUse registration, and the only SYNC one (review H1b):
+ * `crosscheck hook subagent-return`, matched on the subagent tools only, so
+ * the moment a foreground subagent RETURNS the main thread drains the
+ * collisions it queued — `systemMessage` for the person, `additionalContext`
+ * "next to the tool result" for the agent, in the same turn. The capture
+ * hook stays async on POST_TOOL_USE_MATCHER; this one never fires on an edit.
+ * `Agent` is the tool the hooks reference documents ("##### Agent — Spawns a
+ * subagent"); `Task` is its earlier name, which older Claude Code builds
+ * still send.
+ */
+export const SUBAGENT_RETURN_HOOK = "subagent-return";
+export const SUBAGENT_RETURN_MATCHER = "Agent|Task";
+/**
+ * Tiny on purpose: one state read and at most one locked drain, and a hub
+ * call only for the one bounded presence refresh a drained group with no
+ * fresh answer gets (RELAY_PRESENCE_REFRESH_MS, below; an empty queue makes
+ * none). Two request timeouts, the least that leaves any spare at all: one is the
+ * reserve that carries the output out (HOOK_RESERVE_RATIO), the other the
+ * room the drain is made in — the hook holds a turn the person waits on.
+ */
+export const SUBAGENT_RETURN_BUDGET_RATIO = 2;
+/**
+ * The SECOND Stop registration, and the only SYNC one (round 3, F-M2):
+ * `crosscheck hook turn-end`. Within TRIPWIRE_RECHECK_TTL_MS of an answer
+ * this session fully dealt with, an edit of the file asks the hub nothing —
+ * so a teammate who started on it inside that rest was seen by no edit, and
+ * if the turn's edits of the file all fell inside the window, by none to
+ * come. When the turn ends, this hook asks again for the files still
+ * resting and tells the person, before the turn is over, about any teammate
+ * the record has not told them of. The capture Stop hook stays async: an
+ * async hook's `systemMessage` is shown to nobody.
+ */
+export const TURN_END_HOOK = "turn-end";
+/**
+ * The most owed rechecks one hook asks about (connector-claude
+ * hooks/rest-recheck.ts) — the turn's end, newest rest first, and every other
+ * sync hook for rests that are over — one bounded tripwire call each, made
+ * side by side. The ones past it are never dropped: they stay owed for the
+ * next hook, and only a recheck the hub would not answer, or a session that
+ * ends still owing, is booked as a `rest_unchecked` loss.
+ */
+export const TURN_END_RECHECK_MAX_FILES = 3;
+/**
+ * Two request timeouts, like SUBAGENT_RETURN_BUDGET_RATIO: one is the reserve
+ * that carries the output out, the other the room the tripwire calls are
+ * made in — the hook holds the end of a turn the person waits on. A turn
+ * with nothing resting answers before the budget is even resolved.
+ */
+export const TURN_END_BUDGET_RATIO = 2;
+/**
+ * The least request timeout a prompt's hub call is given once a relay drained
+ * FIRST holds the rest of the budget (connector-claude hooks/user-prompt-
+ * submit.ts; round 2, M3): `AbortSignal.timeout` wants a positive delay, and
+ * a spare of zero should fail the call at once, not spend the reserve that
+ * carries the drained relay out of the hook.
+ */
+export const MIN_SPARE_BOUND_TIMEOUT_MS = 1;
+/**
+ * The cap on the ONE presence refresh a relay makes when its queue holds a
+ * group and no fresh presence answer is cached (connector-claude
+ * hooks/collision-relay.ts; round 2, H1 as refined): a subagent that runs
+ * past the 10 s cache, in a session with no statusline to refresh it, would
+ * otherwise relay every collision unnamed. Inside the sync budget, under its
+ * spare, and never more than one request timeout; a refresh that fails or
+ * runs out names the teammate as the tripwire's own answer did at the edit.
+ */
+export const RELAY_PRESENCE_REFRESH_MS = 300;
+
+/**
  * The PreToolUse tripwire mode (trial finding #25 + Q2). DESIGN §4 makes `ask`
  * normative and it stays the default. But a headless `claude -p` /
  * Agent-SDK subagent — most of Nick's live sessions — cannot show a permission
@@ -1748,7 +2269,7 @@ export const TRIPWIRE_MODE_ASK = "ask";
 export const TRIPWIRE_MODE_NOTICE = "notice";
 
 /**
- * The seven Claude Code hook events `crosscheck init` registers, mapped to the
+ * The eight Claude Code hook events `crosscheck init` registers, mapped to the
  * `crosscheck hook <name>` subcommand each one calls.
  *
  * ONE LIST, because three places used to keep their own and two of them
@@ -1774,11 +2295,17 @@ export const REGISTERED_HOOK_EVENTS = {
   UserPromptSubmit: "user-prompt-submit",
   PreToolUse: "pre-tool-use",
   Stop: "stop",
+  // The git lane over a subagent's own root the moment it finishes (DESIGN.md
+  // "One session, many topics"): missing, a subagent's shell work in its own
+  // worktree waits for the parent's next Stop, which may come after a revert.
+  // An install from before it is reported unregistered here, and `init`
+  // upgrades it.
+  SubagentStop: "subagent-stop",
 } as const;
 
 export type RegisteredHookEvent = keyof typeof REGISTERED_HOOK_EVENTS;
 
-/** The same seven as a list, for the callers that only need the names. */
+/** The same eight as a list, for the callers that only need the names. */
 export const REGISTERED_HOOK_EVENT_NAMES = Object.keys(
   REGISTERED_HOOK_EVENTS,
 ) as readonly RegisteredHookEvent[];
@@ -1825,6 +2352,15 @@ export const MCP_PROTOCOL_VERSIONS = [
  * and teach an agent that the tools do not work.
  */
 export const MCP_TIMEOUT_MS = 10_000;
+
+/**
+ * How long recording an outcome may spend sending this repo's spooled records
+ * first (07 §13.10, review #14). A prompt hint's delivery is spooled and sent
+ * after the next tool runs, so an outcome recorded right after the hint names a
+ * delivery the hub has not seen; this bounded drain is what lets the outcome
+ * find it. Well inside MCP_TIMEOUT_MS, so the outcome's own call keeps its room.
+ */
+export const OUTCOME_FLUSH_BUDGET_MS = 3_000;
 
 /**
  * Rendering caps for the two tools that put OTHER developers' text into the
@@ -1883,6 +2419,22 @@ export const MAX_DIAGNOSIS_CHARS = 48_000;
 export const UNSOLICITED_CLAIM_BODY_MAX_CHARS = 400;
 
 /**
+ * The substance a PROMPT HINT carries: the claim's first sentence, cut at
+ * this width (DESIGN.md §4, revised after the 2026-10 pilot). Half the
+ * unsolicited body cap, the width the briefing gives a recorded root cause
+ * (SOLVED_ROOT_CAUSE_MAX_CHARS) — enough for one sentence that says what the
+ * finding IS, with the rest one get_diagnosis away. A longer first sentence
+ * is cut with the sanitizer's visible ellipsis, never silently. The hub
+ * scores a claim's relevance on no more than this many characters of the same
+ * sentence (@crosscheck/schema SUBSTANCE_MAX_CHARS), so words past the
+ * ellipsis never make a claim relevant — the two numbers are one:
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/schema/src/index.ts");console.log(c.HINT_SUBSTANCE_MAX_CHARS === c.SOLVED_ROOT_CAUSE_MAX_CHARS, c.HINT_SUBSTANCE_MAX_CHARS < c.UNSOLICITED_CLAIM_BODY_MAX_CHARS, c.HINT_SUBSTANCE_MAX_CHARS === s.SUBSTANCE_MAX_CHARS)'
+ * PRINTS: true true true
+ */
+export const HINT_SUBSTANCE_MAX_CHARS = 200;
+
+/**
  * A body quoted back to the AUTHOR who just wrote it — the receipt on
  * `review_draft` and `answer_question`.
  *
@@ -1935,6 +2487,43 @@ export const HUB_COVERAGE_WINDOW_DAYS = 14;
  * MAX_DRIFT_LEDGER_BYTES), for the same reason.
  */
 export const MAX_LOSS_LEDGER_BYTES = 65_536;
+
+/**
+ * How far back `doctor` counts briefings this machine did not deliver whole
+ * (state/briefing-omissions.ts): one working week, the ghost check's own
+ * horizon — long enough to see a pattern across a person's sessions, short
+ * enough that a slow week last month is not today's warning.
+ */
+export const BRIEFING_OMISSION_WINDOW_DAYS = 7;
+
+/**
+ * The briefing-omission ledger's byte cap, the capture-loss ledger's figure:
+ * a line is ~90 bytes, so the cap holds weeks of a hub that never answers,
+ * and past it the appends stop rather than the file growing for ever.
+ */
+export const MAX_BRIEFING_OMISSION_LEDGER_BYTES = 65_536;
+
+/**
+ * How far back `doctor` and `status` count the refusals of a repo connected
+ * to another hub (state/foreign-hub.ts): the briefing-omission window, for
+ * the same reason — a week shows the pattern, and a bait repo opened once
+ * last month is not today's warning. A repo that is mismatched NOW is warned
+ * about whatever this window holds: the live check reads the configs.
+ */
+export const FOREIGN_HUB_WINDOW_DAYS = 7;
+
+/**
+ * The foreign-hub ledger's byte cap, the capture-loss ledger's figure. A line
+ * is ~200 bytes and one is written per refused SESSION and foreign origin
+ * (not per hook), and every write drops what has left the window, so the cap
+ * holds about 300 refused sessions inside one window — far more than a
+ * machine meets. Past it the oldest lines go and a marker makes the counts
+ * "at least N" until it, too, leaves the window (state/foreign-hub.ts).
+ */
+export const MAX_FOREIGN_HUB_LEDGER_BYTES = 65_536;
+
+/** At most this many refused repos are named in one doctor or status line. */
+export const FOREIGN_HUB_MAX_NAMED = 3;
 
 /**
  * Target rows one diagnosis SHOWS, of however many the hub sent.
@@ -2037,8 +2626,14 @@ export const MAX_SEARCH_QUERY_CHARS = 2_000;
  *
  * VERIFY: bun -e 'const {crosscheckSessionIdFor,workContextIdFor}=await import("./packages/connector-core/src/state/session-state.ts");const s=crosscheckSessionIdFor(crypto.randomUUID());console.log(s.length,workContextIdFor(s).length)'
  * PRINTS: 39 42
+ *
+ * 96, NOT 64, SINCE TOPICS (DESIGN.md "One session, many topics"): a topic's
+ * work context adds `~t<12 hex>.<n>` to its life's, and a healed life on a
+ * Cursor host key (`cur-<uuid>`) is `wc_cc_cur-<uuid>~r3`, so its topic's id
+ * is 65 characters, and an ACP key's longer. At 64 `safeId` cut that id into
+ * one that does not exist (test/pointer-round-trip.test.ts).
  */
-export const MAX_ID_CHARS = 64;
+export const MAX_ID_CHARS = 96;
 
 /**
  * Width of a string THE HUB chose, as a tool prints it back.
@@ -2319,10 +2914,116 @@ export const GIT_TOUCHES_TIMEOUT_MS = 250;
  * deadline (GIT_TOUCHES_TIMEOUT_MS, 250 ms), which leaves a disk ten times
  * slower than the measuring machine inside one git deadline.
  *
- * The per-invocation cap (MAX_TARGETS_PER_INVOCATION) still applies to the
+ * The lane's own cap (MAX_GIT_LANE_TARGETS_PER_ROOT) still applies to the
  * fresh paths afterwards, and counts what it cuts the same way.
  */
 export const MAX_GIT_TOUCH_CANDIDATES = 2000;
+
+/**
+ * How many targets one root's sweep may spool per Stop — the git lane's own
+ * cap, where the tool lane's per-call cap (MAX_TARGETS_PER_INVOCATION, sized
+ * for ONE tool call) used to apply. A long session's root is a hundred files
+ * dirty, and after a resume the next life must file every one of them again
+ * (flows/git-lane.ts `windowStartOf`): at twenty per Stop the shared files
+ * behind the first twenty never reached a teammate — the release gate's
+ * production lane found Mike warned on 8 of 11 files before Nick's resume and
+ * 0 of 11 after it, with only `capture-capped` moving (2026-10-09).
+ *
+ * WHY THE SEEN-SET'S SIZE: a sweep may file at most what the session can
+ * remember having filed, or the next sweep would file the excess again. The
+ * paths past it are examined and still cut, so they are counted
+ * (`capture-capped`), as the candidate bound above counts its own.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.MAX_GIT_LANE_TARGETS_PER_ROOT === c.MAX_SEEN_TARGETS, c.MAX_GIT_LANE_TARGETS_PER_ROOT > c.MAX_TARGETS_PER_INVOCATION, c.MAX_GIT_LANE_TARGETS_PER_ROOT <= c.MAX_GIT_TOUCH_CANDIDATES)'
+ * PRINTS: true true true
+ */
+export const MAX_GIT_LANE_TARGETS_PER_ROOT = MAX_SEEN_TARGETS;
+
+/**
+ * ── The generated-target rule (capture/generated.ts) ─────────────────────────
+ *
+ * The attribute signal's deadline: ONE `git check-attr` per capture call, for
+ * the paths of that call no cache entry answers (at most
+ * MAX_TARGETS_PER_INVOCATION of them). The same 250 ms every other git call on
+ * a hook path takes, well under one HTTP_TIMEOUT_MS. A git that misses it
+ * answers nothing, every path it was asked about is UNKNOWN, and an unknown
+ * target stays ordinary — so a slow machine costs precision, never a warning.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.GENERATED_ATTR_TIMEOUT_MS < c.HTTP_TIMEOUT_MS, c.GENERATED_ATTR_TIMEOUT_MS === c.GIT_TOUCHES_TIMEOUT_MS)'
+ * PRINTS: true true
+ */
+export const GENERATED_ATTR_TIMEOUT_MS = 250;
+
+/**
+ * How much of a file the header signal reads: an `@generated` token or a
+ * `Code generated … DO NOT EDIT.` line sits in the first comment block of
+ * every generator that writes one, and 512 bytes is one read of one page.
+ * Read locally and reduced to a yes or no — no byte of it leaves the machine.
+ */
+export const GENERATED_HEADER_BYTES = 512;
+
+/**
+ * Paths one root's attribute cache remembers. A cache entry is one boolean per
+ * path under one `.gitattributes`, so 4096 of them is a file of a few hundred
+ * kilobytes at the worst path lengths — and past the bound the OLDEST entries
+ * go, which only costs a repeat `git check-attr` for them.
+ */
+export const MAX_GENERATED_ATTRIBUTE_CACHE_ENTRIES = 4096;
+
+/**
+ * ROOTS ONE STOP'S GIT LANE SWEEPS (DESIGN.md "One session, many topics").
+ * The lane used to diff the one checkout the hook's cwd sat in; a session
+ * working sibling worktrees left every one of them unswept. Now it visits the
+ * session's own root, the cwd's and every worktree root the session touched —
+ * bash-touched ones first — up to this many, in parallel, each git call on
+ * its own GIT_TOUCHES_TIMEOUT_MS deadline, so the lane's wall time is one
+ * deadline whatever the count. Eight is half the root cache
+ * (MAX_KNOWN_WORKTREE_ROOTS); the next Stop sweeps the rest, most recently
+ * touched first. Measured with eight roots in connector-claude/test/
+ * topic-git-lane.test.ts.
+ */
+export const MAX_GIT_LANE_ROOTS = 8;
+
+/**
+ * Commits the lane reads per root per Stop (`git log -n`), newest first: the
+ * commits this developer authored on the root's branch since the session
+ * first touched it. Bounded so a long-lived session's history never becomes
+ * an unbounded `git log` inside a hook.
+ */
+export const MAX_GIT_LANE_COMMITS = 50;
+
+/**
+ * How far before a root's first recorded touch the lane's window opens.
+ * A shell command is marked when its PostToolUse fires — AFTER it ran — so a
+ * `cp` or `git commit` it made predates the mark by up to the command's own
+ * run time. Ten minutes is Claude Code's longest Bash timeout.
+ */
+export const GIT_LANE_TOUCH_SLACK_MS = 600_000;
+
+/**
+ * The protobuf binding check's deadline: ONE `git ls-files -- *.proto` per
+ * capture that holds a binding (`*_pb.ts`, `*.pb.go`, …), and none for any
+ * other — bindings are rare among edits. Same bound as the attribute call, and
+ * the same failure direction: no answer, no suppression.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.PROTOBUF_SOURCES_TIMEOUT_MS === c.GENERATED_ATTR_TIMEOUT_MS)'
+ * PRINTS: true
+ */
+export const PROTOBUF_SOURCES_TIMEOUT_MS = 250;
+
+/**
+ * `authoritativeGenerated` in a committed `.crosscheck.json`
+ * (capture/authoritative-generated.ts) is read on every capture, from a file
+ * anyone with push access writes, so it is BOUNDED: at most this many globs
+ * (the rest are ignored, and doctor says how many), each at most
+ * MAX_AUTHORITATIVE_GLOB_CHARS long with at most MAX_AUTHORITATIVE_GLOB_WILDCARDS
+ * `*` or `?`. A team names its schemas, migrations and client directories in a
+ * handful of globs; thirty-two leaves room and keeps a capture's matching
+ * cost a fixed number of anchored regexes over one short path.
+ */
+export const MAX_AUTHORITATIVE_GENERATED_GLOBS = 32;
+export const MAX_AUTHORITATIVE_GLOB_CHARS = 200;
+export const MAX_AUTHORITATIVE_GLOB_WILDCARDS = 8;
 
 /**
  * ── Coverage integrity (docs/1.0/03-coverage-integrity.md §5.3) ─────────────
@@ -2351,3 +3052,29 @@ export const MAX_COVERAGE_LINE_CHARS = 160;
  * minute (COV-1) and the age beside it (COV-11) are never shed.
  */
 export const MAX_COVERAGE_LINES = 2;
+
+/**
+ * The words the outcome clause puts around the ref it names
+ * (hints/outcome-clause.ts `outcomeClause`): the clause is these plus an id
+ * of at most MAX_ID_CHARS.
+ *
+ * VERIFY: bun -e 'const {outcomeClause}=await import("./packages/connector-core/src/hints/outcome-clause.ts");const c=await import("./packages/connector-core/src/constants.ts");console.log(outcomeClause("x").length - 1 === c.OUTCOME_CLAUSE_FRAME_CHARS, c.OUTCOME_CLAUSE_FRAME_CHARS)'
+ * PRINTS: true 84
+ */
+export const OUTCOME_CLAUSE_FRAME_CHARS = 84;
+
+/**
+ * The room a teammate hint leaves for ONE closing line after its coverage
+ * note — the outcome clause the pilot's outcome recording appends, at the
+ * longest id — plus the newline before it. At least the one-line bound of a
+ * coverage line, and WIDER since topics widened MAX_ID_CHARS to 96: the
+ * clause at that id is 180 characters, so a reserve of a coverage line's 161
+ * left a topic's clause 20 short. The note itself is reserved at its actual
+ * length (hints/render.ts `hintTrailerReserve`), so a repo without a gap
+ * spends only this.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.HINT_CLOSING_LINE_RESERVE_CHARS === c.OUTCOME_CLAUSE_FRAME_CHARS + c.MAX_ID_CHARS + 1, c.HINT_CLOSING_LINE_RESERVE_CHARS)'
+ * PRINTS: true 181
+ */
+export const HINT_CLOSING_LINE_RESERVE_CHARS =
+  Math.max(MAX_COVERAGE_LINE_CHARS, OUTCOME_CLAUSE_FRAME_CHARS + MAX_ID_CHARS) + 1;

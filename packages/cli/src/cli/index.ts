@@ -45,6 +45,13 @@ import {
   runPin,
 } from "./pin.ts";
 import { HELPFUL_USAGE, NOISE_USAGE, runHelpful, runNoise } from "./noise.ts";
+import {
+  FOLLOWED_USAGE,
+  OUTCOME_FLAG_REASON,
+  OVERRODE_USAGE,
+  runFollowed,
+  runOverrode,
+} from "./outcome.ts";
 import { KEY_FLAG_PRINT, KEY_USAGE, runKey } from "./key.ts";
 import type { InteractiveProbe } from "./pin.ts";
 import { SUSPECT_USAGE, runSuspect } from "./suspect.ts";
@@ -52,12 +59,16 @@ import {
   PILOT_FLAG_BY_DEVELOPER,
   PILOT_FLAG_DAYS,
   PILOT_FLAG_JSON,
+  PILOT_FLAG_MINE,
   PILOT_USAGE,
   runPilot,
 } from "./pilot.ts";
 import { PILOT_LABEL_SUBCOMMAND, runPilotLabel } from "./pilot-label.ts";
+import { runPilotMine } from "./pilot-mine.ts";
 import type { LabelTerminal } from "./terminal.ts";
 import { REVALIDATE_USAGE, runRevalidate } from "./revalidate.ts";
+import { CONFIRM_USAGE, runConfirm } from "./confirm.ts";
+import type { UrlOpener } from "./confirm.ts";
 import { runStatus } from "./status.ts";
 import { resolveVersion } from "./version.ts";
 
@@ -74,7 +85,9 @@ const USAGE = [
   "usage: crosscheck <command>",
   "",
   "  serve                     run the team hub on this machine (env: PORT,",
-  "                            CROSSCHECK_DATA_DIR, ADMIN_TOKEN, CROSSCHECK_UI_SECRET)",
+  "                            CROSSCHECK_DATA_DIR, ADMIN_TOKEN, CROSSCHECK_UI_SECRET,",
+  "                            CROSSCHECK_LISTEN, CROSSCHECK_TRUSTED_PROXIES,",
+  "                            CROSSCHECK_WEBAUTHN_ORIGINS)",
   "  login <hubUrl>            store credentials; key from stdin or CROSSCHECK_API_KEY",
   "  login <hubUrl> <apiKey>   discouraged: the key lands in your shell history",
   "  init [--command-prefix <p>] [--hub <url>] [--force-statusline] [--cursor]",
@@ -100,8 +113,13 @@ const USAGE = [
   "  noise [<id>]              one word: the intervention a session just got",
   "                            was noise (pilot label's n key, as a command)",
   "  helpful [<id>]            one word: it helped (pilot label's h key)",
+  "  pilot --mine [--days N]   your own hint outcomes, by teammate, with reasons",
+  '  followed [<id>]           a hint you acted on (--reason "…" optional)',
+  '  overrode [<id>] --reason "…"  a hint you saw and deliberately did your way',
   "  revalidate                ask whether the code under this repo's recorded",
   "                            claims has moved, and record what this clone saw",
+  "  confirm                   open the page where your drafts become yours: labels,",
+  "                            ratings, pins and settings count once your passkey says so",
   "  presence [off|on]         hide/show your live presence to teammates",
   "  mute <developer>          stop seeing hints/pointers about them (mute list to review)",
   "  unmute <developer>        see their hints/pointers again",
@@ -190,14 +208,17 @@ const SUBCOMMAND_HELP: Readonly<Record<string, HelpSpec>> = {
   suspect: { usage: SUSPECT_USAGE },
   noise: { usage: NOISE_USAGE },
   helpful: { usage: HELPFUL_USAGE },
+  followed: { usage: FOLLOWED_USAGE, valueFlags: [OUTCOME_FLAG_REASON] },
+  overrode: { usage: OVERRODE_USAGE, valueFlags: [OUTCOME_FLAG_REASON] },
   pilot: {
     usage: PILOT_USAGE,
     valueFlags: [PILOT_FLAG_DAYS],
     // Listed so it reaches the command, which refuses it BY NAME (§8.4)
     // rather than as an unknown flag.
-    booleanFlags: [PILOT_FLAG_JSON, PILOT_FLAG_BY_DEVELOPER],
+    booleanFlags: [PILOT_FLAG_JSON, PILOT_FLAG_BY_DEVELOPER, PILOT_FLAG_MINE],
   },
   revalidate: { usage: REVALIDATE_USAGE },
+  confirm: { usage: CONFIRM_USAGE },
   presence: { usage: PRESENCE_USAGE },
   mute: { usage: MUTE_USAGE },
   unmute: { usage: MUTE_USAGE },
@@ -218,6 +239,11 @@ export interface CliOptions {
    * as `isInteractive`; omitted, it is this process's own terminal.
    */
   readonly terminal?: LabelTerminal;
+  /**
+   * How `crosscheck confirm` opens its page in the person's browser; omitted,
+   * the platform's own opener. A parameter so no test ever opens a browser.
+   */
+  readonly openUrl?: UrlOpener;
 }
 
 export const runCli = async (
@@ -248,7 +274,9 @@ export const runCli = async (
         exitCode: EXIT_OK,
       };
     case "login":
-      return runLogin(rest, env, readSecret);
+      // A person at a terminal only when it would move the key to another
+      // hub (cli/login.ts rebindFrom); a first login or a new key is not gated.
+      return runLogin(rest, env, readSecret, undefined, options.isInteractive);
     case "init": {
       // "Refusing beats ignoring", the --global --hub rule below, for removal
       // (review 2026-10-05): an install-only flag on `--remove` was dropped
@@ -313,10 +341,12 @@ export const runCli = async (
     // 07 §5. A pull like the two above: one hub read, then the fix diffs run
     // on this clone, because the hub holds no repository. 07 §12's label
     // walk is the one subcommand: a person's verdicts, gated like `noise`.
+    // 07 §13: `--mine` is the caller's own outcomes, the one view of a person.
     case "pilot":
-      return rest[0] === PILOT_LABEL_SUBCOMMAND
-        ? runPilotLabel(rest.slice(1), env, cwd, options.isInteractive, options.terminal)
-        : runPilot(rest, env, cwd);
+      if (rest[0] === PILOT_LABEL_SUBCOMMAND) {
+        return runPilotLabel(rest.slice(1), env, cwd, options.isInteractive, options.terminal);
+      }
+      return rest.includes(PILOT_FLAG_MINE) ? runPilotMine(rest, env, cwd) : runPilot(rest, env, cwd);
     // 07 §3.2. The one-word shortcut for `pilot label`'s `n` key: typed beside
     // a session, gated on a person at a terminal exactly as `pin` is.
     case "noise":
@@ -329,11 +359,25 @@ export const runCli = async (
       return options.isInteractive === undefined
         ? runHelpful(rest, env, cwd)
         : runHelpful(rest, env, cwd, options.isInteractive);
+    // 07 §13. What a hint led to. At a terminal it is the person's word, which
+    // their agent's never overturns; with none (an agent's Bash tool) it is
+    // recorded as the agent's, and says so (§13.13 HIGH-1).
+    case "followed":
+      return options.isInteractive === undefined
+        ? runFollowed(rest, env, cwd)
+        : runFollowed(rest, env, cwd, options.isInteractive);
+    case "overrode":
+      return options.isInteractive === undefined
+        ? runOverrode(rest, env, cwd)
+        : runOverrode(rest, env, cwd, options.isInteractive);
     // D5's manual trigger: the same bounded check `get_diagnosis` runs, typed
     // by a person, so a repo nobody pulls a diagnosis from stops reading
     // `unknown` forever. A pull like the two above — no hook, no injection.
     case "revalidate":
       return runRevalidate(rest, env, cwd);
+    // Human provenance §6: where drafts become the person's — the page, opened in their browser.
+    case "confirm":
+      return runConfirm(env, cwd, options.openUrl);
     case "presence":
       return runPresence(rest, env, cwd);
     case "mute":

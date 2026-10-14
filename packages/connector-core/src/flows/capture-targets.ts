@@ -2,8 +2,9 @@
  * `captureFileTargets` + `captureFailure` (DESIGN-agent-agnostic.md §1.3) —
  * the post-tool-use recipes as extracted functions:
  *
- *   - targets: `toRepoRelative` → denylist → seen-set → secret-scan → spool
- *     `target` records, capped at MAX_TARGETS_PER_INVOCATION;
+ *   - targets: `toRepoRelative` → denylist → seen-set → secret-scan →
+ *     generated-target classification → spool `target` records, capped at
+ *     MAX_TARGETS_PER_INVOCATION;
  *   - failure: `fingerprint()` (which refuses secrets and no-signal text) →
  *     spool one `error_fingerprint` target.
  *
@@ -21,9 +22,18 @@
  */
 import { MAX_TARGETS_PER_INVOCATION } from "../constants.ts";
 import { sessionSlug } from "../config/paths.ts";
-import { isDenied, resolveDenylist } from "../capture/denylist.ts";
+import { isDenied, isDeniedUnlessAuthoritative, resolveDenylist } from "../capture/denylist.ts";
 import type { DenylistConfig } from "../capture/denylist.ts";
+import { isAuthoritative, readAuthoritativeGenerated } from "../capture/authoritative-generated.ts";
+import type { AuthoritativeGenerated } from "../capture/authoritative-generated.ts";
 import { fingerprint } from "../capture/fingerprint.ts";
+import {
+  NO_GENERATED,
+  classifyGenerated,
+  tallyGenerated,
+  wireGeneratedSignal,
+} from "../capture/generated.ts";
+import type { GeneratedClassification, GeneratedTally } from "../capture/generated.ts";
 import { targetRecord } from "../capture/records.ts";
 import type { Producer, TargetSource } from "../capture/records.ts";
 import { ALLOCATION_FAILED, seqAt, withSeq } from "../capture/seq.ts";
@@ -91,6 +101,14 @@ export interface CaptureFileTargetsInput {
    * `withCaptureBookkeeping` makes for its counters.
    */
   readonly editFired?: boolean;
+  /**
+   * How many targets this call may still write — MAX_TARGETS_PER_INVOCATION
+   * when absent. One host event whose paths land in several TOPICS spools
+   * one call per topic (flows/capture-touched-files.ts), and they share the
+   * event's one cap and one position block, so each later call is handed what
+   * the earlier ones left. Paths past it are `capture-capped`, as always.
+   */
+  readonly maxTargets?: number;
 }
 
 interface CaptureRefusals {
@@ -120,20 +138,98 @@ const recordCaptureRefusals = async (
   await recordDrop(input.home, input.repoKey, slug, refusals.secretPaths, "secret-path", input.now);
 };
 
+export interface CapturedFileTargets {
+  /** The repo-relative paths spooled — the caller folds them into its seen-set. */
+  readonly captured: readonly string[];
+  /** How each spooled path was classified (capture/generated.ts), counted. */
+  readonly generated: GeneratedTally;
+}
+
+interface Collected {
+  readonly value: string;
+  readonly root: string;
+}
+
 /**
- * Filters, spools, and returns the repo-relative paths captured — the caller
- * folds them into its session state (`withSeenTargets`).
+ * Each root's `authoritativeGenerated`, read once per call (capture/
+ * authoritative-generated.ts): the denylist bypass below and the
+ * classification both need it, and a path's declaration is the one committed
+ * at the root of the worktree it lives in.
+ */
+const declarationsByRoot = (): ((root: string) => Promise<AuthoritativeGenerated>) => {
+  const read = new Map<string, Promise<AuthoritativeGenerated>>();
+  return (root) => {
+    const known = read.get(root);
+    if (known !== undefined) {
+      return known;
+    }
+    const pending = readAuthoritativeGenerated(root);
+    read.set(root, pending);
+    return pending;
+  };
+};
+
+/**
+ * THE GENERATED-TARGET RULE, applied to the paths this call is about to
+ * spool and to no other: they are NEW to the session (the seen-set ran
+ * first), so a file is classified once per session however often it is
+ * edited, and the attribute cache carries the answer across sessions. Grouped
+ * by root, because a path's attributes are those of the worktree it lives in.
+ *
+ * A mechanically generated, non-authoritative target is KEPT and labelled,
+ * never dropped: `suspect` and coverage still see the touch, and only the
+ * hub's overlap reads leave it out.
+ */
+const classifyCollected = async (
+  home: string,
+  collected: readonly Collected[],
+  declaredAt: (root: string) => Promise<AuthoritativeGenerated>,
+): Promise<ReadonlyMap<string, GeneratedClassification>> => {
+  const byRoot = new Map<string, string[]>();
+  for (const entry of collected) {
+    byRoot.set(entry.root, [...(byRoot.get(entry.root) ?? []), entry.value]);
+  }
+  const answers = await Promise.all(
+    [...byRoot].map(async ([root, paths]) =>
+      classifyGenerated({ home, root, paths, authoritative: await declaredAt(root) }),
+    ),
+  );
+  return new Map(answers.flatMap((answer) => [...answer]));
+};
+
+/**
+ * Dropped by the denylist — unless the file is authoritative (declared by the
+ * repo, or a contract or migration) and only generated-output entries drop it
+ * (capture/denylist.ts isDeniedUnlessAuthoritative). The declaration is read
+ * only for a path the denylist would drop, so an ordinary edit costs no extra
+ * read.
+ */
+const isDropped = async (
+  relativePath: string,
+  patterns: readonly string[],
+  root: string,
+  declaredAt: (root: string) => Promise<AuthoritativeGenerated>,
+): Promise<boolean> =>
+  isDenied(relativePath, patterns) &&
+  isDeniedUnlessAuthoritative(relativePath, patterns, isAuthoritative(relativePath, await declaredAt(root)));
+
+/**
+ * Filters, classifies, spools, and returns the repo-relative paths captured —
+ * the caller folds them into its session state (`withSeenTargets`) — with the
+ * generated-target counters its state write books (`withCaptureBookkeeping`).
  */
 export const captureFileTargets = async (
   input: CaptureFileTargetsInput,
-): Promise<readonly string[]> => {
+): Promise<CapturedFileTargets> => {
   const patterns = resolveDenylist(input.denylist ?? undefined);
+  const declaredAt = declarationsByRoot();
   const seen = new Set(input.seenTargets);
-  const collected: string[] = [];
+  const collected: Collected[] = [];
   let secretPaths = 0;
   let examined = 0;
+  const limit = input.maxTargets ?? MAX_TARGETS_PER_INVOCATION;
   for (const path of input.paths) {
-    if (collected.length >= MAX_TARGETS_PER_INVOCATION) {
+    if (collected.length >= limit) {
       break;
     }
     examined += 1;
@@ -149,7 +245,7 @@ export const captureFileTargets = async (
       continue;
     }
     const relativePath = await toRepoRelative(root, input.cwd, path);
-    if (relativePath === null || isDenied(relativePath, patterns)) {
+    if (relativePath === null || (await isDropped(relativePath, patterns, root, declaredAt))) {
       continue;
     }
     if (containsSecret(relativePath)) {
@@ -160,34 +256,41 @@ export const captureFileTargets = async (
       continue;
     }
     seen.add(relativePath);
-    collected.push(relativePath);
+    collected.push({ value: relativePath, root });
   }
   await recordCaptureRefusals(input, {
     capped: input.paths.length - examined,
     secretPaths,
   });
-  if (collected.length > 0) {
-    await appendRecords(
-      input.home,
-      input.repoKey,
-      input.hostSessionKey,
-      collected.map((value, index) =>
-        withSeq(
-          targetRecord(
-            input.workContextId,
-            "file",
-            value,
-            input.producer,
-            input.now,
-            input.source ?? "tool_edit",
-          ),
-          seqAt(input.seq, index),
-        ),
-      ),
-      input.now,
-    );
+  if (collected.length === 0) {
+    return { captured: [], generated: NO_GENERATED };
   }
-  return collected;
+  const classified = await classifyCollected(input.home, collected, declaredAt);
+  await appendRecords(
+    input.home,
+    input.repoKey,
+    input.hostSessionKey,
+    collected.map(({ value }, index) =>
+      withSeq(
+        targetRecord(
+          input.workContextId,
+          "file",
+          value,
+          input.producer,
+          input.now,
+          input.source ?? "tool_edit",
+          wireGeneratedSignal(classified.get(value)),
+          classified.get(value) === "authoritative",
+        ),
+        seqAt(input.seq, index),
+      ),
+    ),
+    input.now,
+  );
+  return {
+    captured: collected.map(({ value }) => value),
+    generated: tallyGenerated(collected.map(({ value }) => classified.get(value) ?? "unknown")),
+  };
 };
 
 export interface CaptureFailureInput {

@@ -1,6 +1,6 @@
 import { chmod, mkdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 import {
   HOME_DIR_MODE,
@@ -10,8 +10,73 @@ import {
 
 export type Env = Readonly<Record<string, string | undefined>>;
 
-export const crosscheckHome = (env: Env): string =>
-  env["CROSSCHECK_HOME"] ?? join(homedir(), ".crosscheck");
+/**
+ * An EMPTY or whitespace-only CROSSCHECK_HOME is unset, not a path (review
+ * 2026-10-06). `""` is not nullish, so it used to come back as the home
+ * itself, and every path joined under it — state/, spool/, config.json, the
+ * temp sweep's deletions — resolved against whatever directory the process
+ * ran in, which for a hook is the developer's repo. A shell that exports the
+ * variable empty is not asking for that. Any other value is used verbatim:
+ * a path with spaces in it is still a path.
+ */
+export const crosscheckHome = (env: Env): string => {
+  const configured = env["CROSSCHECK_HOME"];
+  return refuseRealHome(
+    configured === undefined || configured.trim() === ""
+      ? join(processHome(), ".crosscheck")
+      : configured,
+  );
+};
+
+/**
+ * WHERE THE TEST PRELOAD WROTE DOWN THE REAL USER'S HOME (connector-core
+ * test/network-guard.ts), read from HOME before the preload pointed HOME,
+ * CROSSCHECK_HOME and XDG_* at a temp directory. Set in test processes and
+ * their children only; never by anything a user runs.
+ */
+export const TEST_REAL_HOME_ENV = "CROSSCHECK_TEST_REAL_HOME";
+
+/**
+ * The user's home as the environment says NOW, else the OS's. Not
+ * `os.homedir()` alone: Bun reads HOME once, at process start, so a home a
+ * process was pointed at later — the test preload's — never reached it, and
+ * a test that passed an env without HOME resolved the real one.
+ */
+const processHome = (): string => process.env["HOME"] ?? homedir();
+
+/**
+ * Entries of a home no test may resolve to: crosscheck's own (~/.crosscheck,
+ * ~/.crosscheck-hub and their kin) and the hosts' user-level wiring.
+ */
+const GUARDED_HOME_ENTRY = /^\.(?:crosscheck|claude|cursor|mcp\.json)/u;
+
+/**
+ * IN A TEST PROCESS, NO HOME RESOLVES TO THE REAL USER'S (integration review
+ * of batch 2, track A): a test that passed an empty env read — and, through
+ * the legacy key binding, wrote — the developer's own `~/.crosscheck`. Where
+ * the preload recorded the real home, a path that IS it, or lies in one of
+ * its guarded entries, throws instead of being used. Strings only: nothing
+ * here stats or opens any path, the real home least of all. Outside a test
+ * process the marker is absent and every path passes through unchanged.
+ */
+export const refuseRealHome = (path: string): string => {
+  const marked = process.env[TEST_REAL_HOME_ENV];
+  if (marked === undefined || marked.trim() === "") {
+    return path;
+  }
+  const real = resolve(marked);
+  const target = resolve(path);
+  const entry = target.startsWith(`${real}/`) ? (target.slice(real.length + 1).split("/")[0] ?? "") : null;
+  if (target === real || (entry !== null && GUARDED_HOME_ENTRY.test(entry))) {
+    throw new Error(
+      `test home guard: ${target} is the real user's home — point HOME and CROSSCHECK_HOME at a temp directory`,
+    );
+  }
+  return path;
+};
+
+/** The user's home a command resolves for `env`: its HOME, else the process's — never the real one in a test. */
+export const userHomeOf = (env: Env): string => refuseRealHome(env["HOME"] ?? processHome());
 
 /**
  * Path-safe and hub-scoped: the same repo on two hubs never shares a spool,
@@ -118,6 +183,18 @@ export const sessionHealPathForSlug = (home: string, slug: string): string =>
  */
 export const sessionEpochPathForSlug = (home: string, slug: string): string =>
   join(home, "sessions", `${slug}.epoch`);
+
+/**
+ * The rests a SessionEnd booked from an unlocked read (connector-claude
+ * hooks/rest-recheck.ts bookOwedRestsAtEnd; review batch 2, M8) when the
+ * hook was then cut before its state delete: the state survives with the
+ * rests it booked, and the reaper that finds it would book them again
+ * (final review of batch 2, N10). Its own file, no lock — the lock is what
+ * was not to be had — honoured by state/session-reap.ts for the life it
+ * names, removed with the state, swept with the lineage notes.
+ */
+export const sessionRestsBookedPathForSlug = (home: string, slug: string): string =>
+  join(home, "sessions", `${slug}.rests-booked`);
 
 export const sessionStatePath = (
   home: string,
@@ -290,6 +367,45 @@ export const presenceCachePath = (home: string, key: string): string =>
   join(home, "cache", `${key}-presence.json`);
 
 /**
+ * One worktree root's `git check-attr` answers (capture/generated.ts), keyed
+ * inside by the root's `.gitattributes` blob id. Named by a digest of the ROOT,
+ * not the repo key: two worktrees of one repo can carry different attribute
+ * files, and a path's answer is only as good as the file it was read under.
+ * Flat in `cache/`, so the temp sweep's one level reaches its temps.
+ */
+export const generatedAttributesCachePath = (home: string, root: string): string =>
+  join(
+    home,
+    "cache",
+    `generated-${new Bun.CryptoHasher("sha256").update(root).digest("hex").slice(0, REPO_KEY_CHARS)}.json`,
+  );
+
+/**
+ * One working directory's resolved repo identity and the file stamps it was
+ * resolved under (git/repo-identity-cache.ts). Named by a digest of the
+ * DIRECTORY a hook fires in, which is what git was asked about. Flat in
+ * `cache/` beside the attribute caches, for the temp sweep's one level.
+ */
+export const repoIdentityCachePath = (home: string, cwd: string): string =>
+  join(
+    home,
+    "cache",
+    `identity-${new Bun.CryptoHasher("sha256").update(cwd).digest("hex").slice(0, REPO_KEY_CHARS)}.json`,
+  );
+
+/**
+ * One worktree root's landed-probe facts and never-changing answers
+ * (landed-changes/probe-facts.ts), named by a digest of the ROOT the probe
+ * asks git in. Flat in `cache/`, like the attribute caches.
+ */
+export const landedProbeFactsCachePath = (home: string, root: string): string =>
+  join(
+    home,
+    "cache",
+    `landed-${new Bun.CryptoHasher("sha256").update(root).digest("hex").slice(0, REPO_KEY_CHARS)}.json`,
+  );
+
+/**
  * Where `crosscheck conference` leaves its reports (VISION.md §2). Under the
  * crosscheck home rather than in the repo: a report quotes teammates' claims,
  * so it is private-file material like every other state file here, and a
@@ -328,6 +444,22 @@ export const conferenceCostPath = (home: string, key: string): string =>
 export const conferenceCostLockPath = (home: string, key: string): string =>
   `${conferenceCostPath(home, key)}.lock`;
 
+/** Conversations whose draft review nudge slot is spent (state/draft-nudge-spent.ts). */
+export const draftNudgeSpentPath = (home: string): string =>
+  join(home, "state", "draft-nudge-spent.json");
+
+/** Its lock: two sessions spending their slots at once must not lose one. */
+export const draftNudgeSpentLockPath = (home: string): string =>
+  `${draftNudgeSpentPath(home)}.lock`;
+
+/** Ended sessions' derive counters for this repo+hub (state/derive-history.ts). */
+export const deriveHistoryPath = (home: string, key: string): string =>
+  join(home, "state", `${key}-derive-history.json`);
+
+/** Its lock: two sessions ending at once must not lose a digest between them. */
+export const deriveHistoryLockPath = (home: string, key: string): string =>
+  `${deriveHistoryPath(home, key)}.lock`;
+
 /**
  * The background landing fetch's record for ONE CLONE
  * (landed-changes/fetch-state.ts). Keyed by the clone, not by repo+hub: what
@@ -353,6 +485,19 @@ export const landingFetchLockPath = (home: string, cloneKey: string): string =>
 export const hooksFiredPath = (home: string, key: string): string =>
   join(home, "state", `${key}-hooks.json`);
 
+/** The file name every per-hook stamp of `key` starts with (`hookFiredPath`). */
+export const hookFiredPrefix = (key: string): string => `${key}-hook-`;
+
+/**
+ * ONE FILE PER HOOK EVENT (review batch 2, M9): `<key>-hook-<event>.json`,
+ * written whole by that event alone, so no two hooks ever rewrite the same
+ * file. The combined `-hooks.json` above was a read-modify-write every hook
+ * shared, and twelve racing ones left one key: the other eleven read as
+ * "never fired". It is still read (state/fired-markers.ts), never written.
+ */
+export const hookFiredPath = (home: string, key: string, hook: string): string =>
+  join(home, "state", `${hookFiredPrefix(key)}${hook}.json`);
+
 /**
  * Per-repo record of the last time the STATUSLINE actually rendered (trial
  * finding H7). `statusline registered` is a textual check too, and the
@@ -367,12 +512,41 @@ export const ensureDir = async (path: string): Promise<void> => {
   await mkdir(path, { recursive: true, mode: HOME_DIR_MODE });
 };
 
-const tempSibling = (path: string): string =>
+/**
+ * Exported so the sweep's tests name the files THIS produces, not a copy of
+ * the idea typed out by hand.
+ */
+export const tempSibling = (path: string): string =>
   `${path}.tmp-${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
+
+/**
+ * Exactly the names `tempSibling` produces and nothing looser: a target name,
+ * `.tmp-`, the writer's pid in decimal, `-`, and one to eight lower-case
+ * base36 characters (`slice(2, 10)` of a base36 `Math.random()`), then the
+ * end of the name. The sweep (state/temp-sweep.ts) deletes on this test plus
+ * an age, so every character it accepts beyond that shape is a file nobody
+ * abandoned put up for deletion. `tempSibling` is the only thing that names a
+ * temp — writePrivateFile and the CLI's writeConfigAtomically (cli/init-io.ts)
+ * both call it rather than spell the shape out — so this pattern changes when
+ * `tempSibling` does, and at no other time.
+ */
+const TEMP_SIBLING_NAME = /^.+\.tmp-[0-9]+-[0-9a-z]{1,8}$/;
+
+export const isTempSiblingName = (name: string): boolean =>
+  TEMP_SIBLING_NAME.test(name);
 
 /**
  * Atomic write: a crashed hook must never leave a half-written state file that
  * the next hook parses as truth.
+ *
+ * A FAILED write removes its own temp (pilot finding, 2026-10-06). A
+ * `writeFile` that died part-way, a refused chmod or a rename that threw used
+ * to leave `<path>.tmp-<pid>-<rand>` beside the target for good: nothing
+ * reads those names, and nothing removed them. The removal is best-effort —
+ * `removeFile` swallows its own failure — so what the caller catches is
+ * always the write's own error. A writer that DIES between the two steps
+ * runs no catch at all; that half is SessionStart's age sweep
+ * (state/temp-sweep.ts).
  */
 export const writePrivateFile = async (
   path: string,
@@ -380,9 +554,14 @@ export const writePrivateFile = async (
 ): Promise<void> => {
   await ensureDir(dirname(path));
   const temp = tempSibling(path);
-  await writeFile(temp, content, { mode: PRIVATE_FILE_MODE });
-  await chmod(temp, PRIVATE_FILE_MODE);
-  await rename(temp, path);
+  try {
+    await writeFile(temp, content, { mode: PRIVATE_FILE_MODE });
+    await chmod(temp, PRIVATE_FILE_MODE);
+    await rename(temp, path);
+  } catch (error) {
+    await removeFile(temp);
+    throw error;
+  }
 };
 
 export type TextRead =

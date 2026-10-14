@@ -43,16 +43,21 @@ const claim = (
 ): HintClaimCandidate => ({
   id: "clm_1",
   workContextId: "wc_1",
-  kind: "rejected_approach",
-  status: "rejected",
+  kind: "root_cause",
+  status: "likely_root_cause",
   confidence: 0.8,
   provenance: "declared",
   captureMode: "agent",
   evidenceRefCount: 1,
+  evidenceBacked: true,
   authorDeveloperId: TEAMMATE,
   authorDeveloperName: "Nick",
   body: "Retrying the refresh call does not help; the key is gone",
   validity: validity(),
+  // A strong match by default: this file is about the CODE axis, and the
+  // relevance half is pinned on its own (hint-substance-select.test.ts).
+  matchedTerms: 2,
+  distinctTerms: 2,
   createdAt: ISO,
   ...overrides,
 });
@@ -70,9 +75,12 @@ const context = (
     baseCommit: "a1b2c3d4",
     createdAt: ISO,
     updatedAt: null,
+    // The tree is about the prompt (round 4, C2).
+    matchedTerms: 1,
   },
   claims,
   matchedTargets: [],
+  matchedOn: "prompt",
 });
 
 const select = (claims: readonly HintClaimCandidate[]) =>
@@ -81,6 +89,8 @@ const select = (claims: readonly HintClaimCandidate[]) =>
     seenRefIds: [],
     deliveredCount: 0,
     selfDeveloperId: SELF,
+    promptTerms: [],
+    promptTopicalTerms: [],
   });
 
 describe("the substance gate asks about code", () => {
@@ -204,13 +214,15 @@ describe("negative knowledge is judged by its code, like every other claim", () 
    * With that settled, this gate refuses §5's full set — `stale`,
    * `invalidated` and `superseded` — verbatim.
    */
-  test("a rejected approach whose code did not move stays substance", () => {
+  test("a rejected approach whose code did not move is a pointer since H4", () => {
     // Arrange: the corpus's own shape — kind rejected_approach, status
-    // rejected, one evidence ref, declared — revalidated and unchanged.
-    const negative = claim();
+    // rejected, one evidence ref, declared — revalidated and unchanged. The
+    // owner's decision (review 1006b, H4): negative knowledge is pointed at,
+    // never inlined.
+    const negative = claim({ kind: "rejected_approach", status: "rejected" });
 
     // Act + Assert
-    expect(select([negative]).kind).toBe("claim");
+    expect(select([negative]).kind).toBe("pointer");
   });
 
   test("a rejected approach whose code moved drops to a pointer", () => {
@@ -253,7 +265,7 @@ describe("negative knowledge is judged by its code, like every other claim", () 
     const { validity: _dropped, ...noValidity } = retracted;
 
     // Act + Assert
-    expect(select([retracted]).kind).toBe("pointer");
-    expect(select([noValidity as HintClaimCandidate]).kind).toBe("pointer");
+    expect(select([retracted]).kind).toBe("silence");
+    expect(select([noValidity as HintClaimCandidate]).kind).toBe("silence");
   });
 });

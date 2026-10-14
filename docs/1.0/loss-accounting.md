@@ -88,9 +88,18 @@ loss change a verdict, `suspect`, an absence, a hint, a solved match, or an empt
 | 24 | derived text refused (summarizer / intent / ghost: secret, echo, empty, not-a-sentence) | `session-state.ts:385-400`, `summarizer*`, `intent*`, `ghost*` counters | session state, doctor per rung | no | no — proof §4.8.7 | none |
 | 25 | hint deliveries, tripwire, landed notices lost in the spool | any of #1–#7 | with the spool | with the spool | informational — but every spool loss is reported regardless (the ledger keeps counts, not kinds, for #1–#5) | covered by #1–#7 |
 | 26 | hub's `session` / `hint` kinds "not ingestable" | `records.ts:64-69` | answered `ignored` | — | no connector sends them | covered by #6 |
+| 27 | a touch past `MAX_TOPICS_PER_SESSION` topics in one life (DESIGN.md §3 "One session, many topics") | `flows/topic-rules.ts` `planTopics`; booked `flows/capture-touched-files.ts`, `flows/git-lane.ts` | capture-loss ledger `topic_overflow` (detail `topic-cap`), session state `topicOverflowCount` — one per file the overflow newly SPOOLED, so a re-edit, the next Stop's sweep of the same dirty file, a second worktree's copy of one path and a path the denylist refuses add nothing (review M7) | yes | **yes, its topic only** — the target IS delivered, under the session's own context, so no file is lost; what is lost is which piece of work it belonged to, and an overlap or a landing read off that context is the session's, not the topic's | report → `telemetry_lost` under `topic_overflow` |
 
-Rows 6, 8, 9, 10, 14, 18, 19 are the uncounted or unreported paths this note connects. Rows 11, 12, 13, 15, 16,
-17, 23, 24 stay local, each with a proof in §4.8. Rows 1–5, 7 were counted and stop at doctor; they travel now.
+| 28 | records of a life the hub had already ended, held back and never sent (review-2 honesty residual) | `spool/flush-heal.ts`, `spool/refused-lives.ts` | `.drops` `withheld` | no — never sent; delivering them under another life would file them after that life's end | yes — the records never land | travels as its own kind, `spool_withheld` (§4.1); doctor and status `withheld records` |
+| 29 | a 30 s tripwire rest whose recheck never ran: the next hook's recheck unanswered, the session ended still owing it, its corpse reaped, a re-fire bound elsewhere (round 3 F-M2; batch-2 review L2–L4) | `connector-claude/src/hooks/rest-recheck.ts`; booked `flows/end-session.ts`, `state/session-reap.ts`, `state/session-state.ts` `bookRestsLeftBehind` | capture-loss ledger `rest_unchecked`, per file; and row 32, per booking | no — LOCAL (batch-2 review M3, `LOCAL_CAPTURE_LOSS_KINDS`) | no — proof §4.8.8 | stays local; doctor and status `capture losses` |
+| 30 | a SessionStart briefing that did not arrive whole: the budget race won, the handler threw, the hub's reads did not answer (2026-10-08) | `briefing/omission.ts`; `state/briefing-omissions.ts` (`budget`, `error`, `hub`) | the briefing-omissions ledger, one line per briefing | no — local | no — proof §4.8.8 | stays local; doctor `briefings` |
+| 31 | a PreToolUse landed-change check cut short before it knew: its deadline, a landing branch git could not answer for, the whole hook's budget (2026-10-08) | `landed-changes/probe.ts`; `state/landed-probe-cuts.ts` (`deadline`, `unanswered`, `budget`) | the landed-probe-cuts ledger, one line per check; session state `landedProbeCuts`, told once at the next prompt | no — local | no — proof §4.8.8 | stays local; doctor and status `landed-change checks` |
+| 32 | a collision's person possibly not told: a rest never rechecked (row 29's booking), or a tripwire answer the edit hook's budget cut before its line left (batch-2 review L2, H2) | `state/rest-omissions.ts` (`rest_unchecked`, `tripwire_cut`); written by `hooks/rest-recheck.ts`, `hooks/pre-tool-use.ts`, `state/session-reap.ts` | the rest-omissions ledger, one line per booking | no — local | no — proof §4.8.8 | stays local; doctor and status `collision warnings` |
+| 33 | a session refused whole because the repo's `.crosscheck.json` or `CROSSCHECK_HUB_URL` names a hub the developer's key does not belong to | `config/key-binding.ts`; `state/foreign-hub.ts` | the foreign-hub ledger, once per (session, foreign origin), the session key as a digest | no — neither hub hears of it | no — proof §4.8.9 | stays local; doctor and status WARN naming both origins (`cli/src/cli/foreign-hub.ts`) |
+
+Rows 6, 8, 9, 10, 14, 18, 19, 27 are the uncounted or unreported paths this note connects. Rows 11, 12, 13, 15, 16,
+17, 23, 24, 29–33 stay local, each with a proof in §4.8. Rows 1–5, 7 were counted and stop at doctor; they travel
+now, and row 28 travels under its own kind.
 
 ## 4. Target model
 
@@ -113,6 +122,8 @@ export const LOSS_KINDS = [
   "hook_timed_out",       // hooks that exceeded their budget before capture could finish (hooks, not records)
   "host_contract_drift",  // host payloads that lacked a field capture needs (payloads, not records)
   "wire_unobserved",      // ACP wire lines the observer could not read (lines, not records)
+  "topic_overflow",       // touches filed under the session's own context because the life's topic cap was reached (row 27)
+  "rest_unchecked",       // collision files whose 30 s tripwire rest was never rechecked (files, not records)
   "unattributed",         // counted before the ledger kept reasons, or a kind this hub does not know
 ] as const;
 export const MAX_LOSS_COUNT = 2_147_483_647;               // int4, the type of loss_total (review C1)
@@ -200,7 +211,14 @@ the entries' own `at` the way `newestDropMs` already does (`drops.ts:254-261`). 
 
 **A second ledger for losses that are not records.** `state/loss-ledger.ts`: append-only JSONL at
 `~/.crosscheck/state/losses.jsonl`, one line per event — `{"at", "kind", "count", "key", "detail"}` — where
-`kind` is one of `hook_timed_out`, `host_contract_drift`, `wire_unobserved`; `key` is the repo key when the
+`kind` is one of `hook_timed_out`, `host_contract_drift`, `wire_unobserved`, `topic_overflow` (row 27: a touch
+filed under the session's own context because the life's topic cap was reached; it travels, `detail`
+`topic-cap`) and `rest_unchecked` (round 3 of the
+collision review: a 30 s tripwire rest whose recheck no hook could make — the hub did not answer the next hook's
+recheck, the session ended still owing it, or its corpse was reaped; `detail` names the hook, counted per file —
+LOCAL ONLY since the integration review of batch 2, M3: no record was lost, so `toLossReport` never sees it and
+the hub's coverage is not marked `telemetry_lost` for one file's unwarned person; doctor and status still print it);
+`key` is the repo key when the
 writer knows it and `null` when it does not (a hook that timed out before repo identity resolved, a Cursor
 payload with no workspace root); `detail` is the hook name or host event name from the writer's own enum,
 bounded. Append-only for the sync-state lesson (`drops.ts:5-9`), bounded by `MAX_LOSS_LEDGER_BYTES` the way the
@@ -216,8 +234,11 @@ race — `""` alone cannot tell a handler that chose silence from one the budget
 only on the timeout path and only for capture hooks, keyed once prepare resolved the repo, else by the rule
 below. *Cursor:* every drift rung in `prepareCursorHook` books `host_contract_drift` beside its drift-ledger line,
 by the same rule — drift is counted before repo resolution, so the payload's repo is known there only through its
-conversation's state. *Claude's Stop* books a skipped or unanswered git lane (`hook_timed_out/stop-git-lane`,
-keyed), and the lane's candidate cut is a `capture-capped` drop (review M5). *ACP:* `shutdown` books `ignored`
+conversation's state. *Claude's Stop and SubagentStop* book a skipped or unanswered git lane
+(`hook_timed_out/stop-git-lane` and `subagent-stop-git-lane`, keyed), the sweep a healed life is owed books
+`heal-git-lane` only when it ran and git did not answer (batch-2 review L10: a hook without the room pays and
+books nothing, the next lane files the same work), and the lane's candidate cut is a `capture-capped` drop
+(review M5). *ACP:* `shutdown` books `ignored`
 as `wire_unobserved/unreadable`, `dropped` as `wire_unobserved/pending-cap` and pending-map evictions as
 `wire_unobserved/pending-evicted`, unkeyed — a line that could not be read names no session, and a lost
 `session/new` may be a repo the proxy never registered — and BEFORE the live sessions end, so each end call
@@ -554,7 +575,7 @@ across the generators, a few per thousand, so the sweep runs at three widths:
   and may fall only in that class; a fixed bug allows none. Moving the fixed scenarios into the corpus cost PR CI 1.7 s
   (14.1 to 15.8 s for the fixed scenarios), for one seed the round-9 sweep added (focus 270, L1) and the corpus check.
 - **Every night**, `.github/workflows/simulation-nightly.yml` sweeps every generator (`shipped`, `io`, `sleep`, `focus`,
-  `all`) at 2000 seeds each, one job per generator. The starting seed moves on with each run, so the nights keep drawing
+  `all`, `topics`) at 2000 seeds each, one job per generator. The starting seed moves on with each run, so the nights keep drawing
   seeds no sweep has seen. A failing seed fails its job and is listed in the run's summary table. The job uploads each
   generator's report: its failing seeds, the shrunk events and trace of the first three, its residuals and its
   over-count. 2000 `focus` seeds take about 9 minutes on a laptop; each job is bounded at 150 minutes.
@@ -1060,6 +1081,14 @@ which is the one place the distinction can be acted on.
 doctor derives it from data it already fetches (§5.2). Coverage from such a hub is 03's own `unknown /
 hub_did_not_report` or its five real rows, unchanged.
 
+**Topics against an old hub** (DESIGN.md §3 "One session, many topics"). A topic's work context is an ordinary
+`work_context` record whose body carries two more fields, `branch` and `baseCommit`; the body schema is a loose
+object, so a hub from before topics stores the context and drops the two fields — the topic arrives, titled, and
+its drift is measured from the session's commit as before. The git lane's commit half sends `source:
+"git_commit"`, a value an old hub's target schema does not know: it answers `rejected` and the flush counts each
+such target under `hub_rejected` (row 5) — counted, never silent, and the remedy is the hub upgrade. A new hub takes an old connector's records unchanged: no `branch`, no `baseCommit`, every target under
+the session's one context (`server/test/topic-contexts.test.ts`, back-compat).
+
 **What a connector before 1.0 lost is counted, not migrated** (the 1.0 release gate: "the old late-write losses
 migrated or counted"). The code of 0.10.0 says what is left of a record its hub refused:
 
@@ -1128,6 +1157,54 @@ through the spool, where #1–#7 count any loss. A missing derived sentence remo
 about a session the archive still holds, so an empty answer over that session already carries 03's qualifier from
 the session row; it cannot make the archive look watched where it was not.
 
+**4.8.8 The "person was not told" ledgers and `rest_unchecked` (#29–#32).** Each line counts a MOMENT a person
+may not have been told something — a briefing cut short, a landed-change check that did not finish, a collision
+recheck that never ran, a tripwire line the budget cut — never a record. The targets, claims and sessions behind
+those moments travel the spool as before, and #1–#7 count any loss of them; a landed check that was cut still
+leaves the edit captured, and a cut tripwire leaves the file owing a recheck, which the next hook pays or books.
+None of these lines reaches the hub: the omission ledgers (`state/omission-ledger.ts`) have no wire reader at all,
+and `rest_unchecked` is a capture-loss kind `toLossReport` leaves out of its wire scope
+(`state/loss-ledger.ts` `LOCAL_CAPTURE_LOSS_KINDS`; `test/rest-unchecked-scope.test.ts`), so no coverage row is
+marked `telemetry_lost` for one person's unwarned moment. Locally they can only add a WARN. A line that reaches
+nobody's judgment cannot strengthen one. Counted once, too: a SessionEnd that booked the rests from an unlocked
+read (M8) and was cut before its state delete leaves a marker beside the state (`sessions/<slug>.rests-booked`,
+`state/rests-booked.ts`) naming the life, and the reaper that finds that state honours it instead of booking the
+same rests again (final review of batch 2, N10).
+
+The one capture debt an ended life leaves that DOES reach the wire is the sweep it still owed (batch-2 review H1):
+`hook_timed_out:session-end`, booked by an end that could not write its lineage, by an end or a state reap that
+replaced a capture of another binding, or by the lineage reap of a conversation that never came back — booked once,
+never dropped, and never booked twice (final review of batch 2, N1). A resume takes the capture into its state and strikes it off the
+note (`flows/register-session.ts` → `state/session-lineage.ts` `consumeCarriedCapture`), so the live state owns the
+debt from then on — its next Stop files the roots, its SessionEnd writes the next capture — and a note the reaper
+finds beside a live state of the same host session AND the capture's own binding books nothing (`reapStaleLineages`).
+A live state bound elsewhere — a resume that landed in another repo or on another hub — carried nothing of it
+(`carriedFromLineage` carries only its own binding's capture and strikes nothing), so a note gone stale beside it is
+booked as beside no state at all (final review of batch 2, LOW-a; until then it went with the note, uncounted). Before N1, a resumed life
+that swept the carried roots and then died without SessionEnd was booked for the sweep it had made, and the hub read
+the repo as `telemetry_lost` for fourteen days (`test/capture-across-lives.test.ts`). A life that dies WITHOUT
+SessionEnd while it still owes a sweep is not dropped either: when the state reaper removes its corpse
+(`state/session-reap.ts`) it writes that capture back into the host session's note (`recordReapedCapture`), the way
+SessionEnd's `recordEndedLife` does — but without naming the life as ended, since its end marker still restores it for
+a state-less resume (review-2 round 9, M1 + M2), and keeping the last end the note names, which keeps the resume of a
+resumed life off the life before it — so a resume carries and sweeps it, and a note nobody resumes is booked when it
+goes stale. A capture of the same binding already on the note — a SessionEnd cut before its delete wrote it from this
+very state — is the same debt, replaced and never booked twice; one of another binding is booked, as an end's is.
+And a corpse of the note's own binding that owes NOTHING pays the note (`strikePaidCapture`, final review of batch 2,
+LOW-b): the resume carried the note's capture into that very state, a consume that could not rewrite the note
+(fail-open) left it there, and the life swept every root it carried before it died — so the lineage reap would have
+booked, as never made, the sweep it had made. Struck only when the note's capture is of the dead life's own binding;
+another binding's stays, since that life carried nothing of it, and the lineage reap books it (LOW-a).
+First and resumed lives alike; before this the reaper booked a dead life's owed rechecks
+and never its owed sweeps, and for a resumed life N1's consume had taken the only count there was.
+
+**4.8.9 Foreign-hub refusals (#33).** A session the key binding refuses never registers — not with the hub the key
+belongs to, not with the one the repo named — and no hook of it captures anything (`config/key-binding.ts` refuses
+before capture; `state/foreign-hub.ts`: no key ever lands in the ledger). The bound hub's coverage for that repo
+reads what its other sessions report; a session it never saw is not a partial session in its record, and the repo
+the refusal names is one this developer is not connected to. What the ledger holds is a count for the developer's
+own doctor and status, with both origins, so a capture that silently stopped is a number rather than a silence.
+
 ### 4.9 Where Provider Guarantees meet this — one channel, two statements, no second mechanism
 
 Nick's direction (2026-09-30): minimal Provider Guarantees follow this work, before the pilot — 01a §3.6's
@@ -1176,18 +1253,37 @@ enum-derived states and renderer-built ages; the only strings that reach these l
 `DropReason`, hook and host event names from the writer's own enums, and record kind names screened by the regex
 in §4.1.
 
-`doctor` (`cli/src/cli/doctor.ts:1271-1289`):
+`doctor` prints nine lines when every ledger holds something, one per fragment the formatter answers
+(`cli/src/cli/doctor-losses.ts` `lossChecks`: six) and one per local "person was not told" ledger
+(`doctor-briefings.ts`, `landed-probe-cuts.ts`, `collision-omissions.ts`: three), each `PASS … none` otherwise
+— plus `coverage reporting` (§5.2) and the `foreign hub` warning of §3 row 33:
 
 ```
-WARN  spool drops         382 records discarded in 343 batches (expired 300, rejected 77, cap 5)
-WARN  hub ignored records 377 records in 12 batches ignored by the hub (claim_revalidation 377) — a hub older
-                          than this connector discards record kinds it does not know; upgrade the hub
-WARN  capture losses      3 hooks exceeded their budget before capture could finish (post-tool-use 3) ·
-                          2 host payloads lacked a field capture needs
-PASS  capture losses      none
+WARN  spool drops           382 records discarded in 343 batches (expired 300, rejected 77, cap 5)
+WARN  hub rejected records  77 records rejected by the hub: 77 because the session delivering them was one the hub
+                            held as ended — …
+WARN  withheld records      3 records withheld unsent — the life that wrote them had already been ended on the hub,
+                            and delivering them under another life would have filed them after that end
+WARN  hub ignored records   377 records in 12 batches ignored by the hub (claim_revalidation 377) — a hub older
+                            than this connector discards record kinds it does not know; upgrade the hub
+WARN  capture losses        3 hooks exceeded their budget before capture could finish (post-tool-use 3) ·
+                            2 host payloads lacked a field capture needs · 1 collision file rested without the
+                            recheck that follows — a teammate who started on it meanwhile may not have been told
+WARN  legacy losses         644 records lost by a connector before 1.0, whose ledgers kept only counts: 4 rejected
+                            by the hub with no cause recorded · 640 in a ledger archive that kept only the total — …
+WARN  briefings             2 missing or incomplete in the last 7 days (1 cut by the session-start budget, 1 with
+                            hub reads unanswered) — …
+WARN  landed-change checks  1 cut short in the last 7 days (1 ended by the check's deadline) — …
+WARN  collision warnings    2 possibly not shown in the last 7 days (1 cut by the edit hook's budget before the
+                            line left, 1 rest never rechecked), newest 2026-10-09T07:12Z — …
 ```
 
-`status` prints one `losses:` line from the same fragments, above zero only, beside `spool:` (`status.ts:466`).
+A record rejected without a cause — a 0.10 ledger line — counts on `legacy losses` alone, never on `hub rejected
+records` too (batch-2 review L5), so the lines sum to the ledgers.
+
+`status` prints one `losses:` line from the formatter's fragments above zero — rejected, withheld, ignored,
+capture, legacy; the `dropped` fragment is `spool:`'s — beside `spool:` (`status.ts statusLossLines`), and its own
+`landed-change checks:` and `collision warnings:` lines above zero. The briefing omissions are doctor's alone.
 
 ### 5.2 Doctor's cross-check — the one place an old hub is named
 
@@ -1412,6 +1508,14 @@ flow through as strings. **01** owns the seq vocabulary; nothing here touches `s
    `capture-capped` (§3 row 8), the lane's seq block is the same 20, a refused spool append is §3 row 1, and an
    oversized upload batch is retried (§3 row 22). Test: core `capture-losses` §10 item 8; anchor "the git lane
    examines only sixty dirty paths and books the stale rest as lost".
+   **The untracked half (review M8 of feat/topic-contexts).** Tracked changes take the bound first, and
+   their cut is booked as above. The NEW files git does not track take what is left of it, listed without
+   the denylist's directories (`**/<dir>/**` patterns, the config's own included, passed to git as
+   `:(exclude,glob)` pathspecs — an unignored `node_modules/` is never listed), files in a directory the
+   repository tracks first, so a dump nothing ignores cannot push the real new file in `src/` past the
+   bound. A cut of that listing is ONE `capture-capped` per root per life (`untrackedCutLife` on the
+   root's entry), not one per path per Stop: the measured 38,000 per Stop were the same dump each turn.
+   Test: claude `topic-nick-shape` M8, core `git-touches` "the untracked listing".
 9. **A skipped or unanswered git lane is booked on every turn it happens** (review M5), though the next turn's
    lane (window: the session's start) usually recovers the same touches. *Taken because the last turn's skip and
    a touch reverted before the next run are lost for good.* *Refinement:* book only an unrecovered skip — the

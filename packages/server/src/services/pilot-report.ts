@@ -53,8 +53,10 @@ import {
   DELIVERY_CHANNELS,
   PILOT_COHORTS,
   PULLED_DELIVERY_CHANNEL,
+  SUBSTANCE_DELIVERY_CHANNEL,
   TRIPWIRE_ASKING_HOSTS,
 } from "@crosscheck/schema";
+import { isHumanBreak, isHumanRow } from "./human-provenance.ts";
 import type { DeliveryChannel } from "@crosscheck/schema";
 
 import {
@@ -91,8 +93,14 @@ import {
   readCohorts,
   readLabelledWindow,
 } from "./pilot-label-figures.ts";
-import type { CohortFigures, LabelFigures, LabelReason } from "./pilot-label-figures.ts";
+import type { CohortFigures, LabelFigures, LabelReason, LabelsNotHuman } from "./pilot-label-figures.ts";
 import { readTeamSettings } from "./team-settings.ts";
+import { readEnrolments } from "./outcome-population.ts";
+import { noOutcomeFigures, readOutcomeFigures } from "./pilot-outcome-figures.ts";
+import type { OutcomeFigures } from "./pilot-outcome-figures.ts";
+import { locationHiddenFrom, projectRow, titleSourceOf } from "./live-location.ts";
+import type { HiddenLocations } from "./live-location.ts";
+import { sessionActiveIn } from "./session-window.ts";
 import type { PilotAnswerSurface } from "./pilot.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
@@ -181,6 +189,8 @@ export interface ProofAttribution {
   readonly supersededAnswers: number;
   /** Answers given once the repair already existed — the fix was in hand, so not scored. */
   readonly answersAfterRepair: number;
+  /** Repaired breaks whose break or repair no passkey confirmed (from before 0.11): counted, never scored. */
+  readonly notHumanConfirmed: number;
 }
 
 /** Proof 4: the labelled figures (services/pilot-label-figures.ts) and the two behavioural rates. */
@@ -189,6 +199,8 @@ export interface ProofPrecision extends LabelFigures {
   readonly labelledSinceIso: string | null;
   /** 0.10 `off_target` marks on the window's interventions — counted, and kept outside precision. */
   readonly legacyNoise: number;
+  /** Labels that are no person's judgement yet, by class — never inside any figure above (human provenance §5). */
+  readonly notHuman: LabelsNotHuman;
   /** PILOT_TARGET_INTERVENTION_PRECISION, declared before measuring. */
   readonly precisionTarget: number;
   /** Unsolicited pointers an agent opened, per hundred sessions — a pull, not a verdict. */
@@ -222,6 +234,8 @@ export interface PilotReport {
   readonly collisions: ProofCollisions;
   readonly attribution: ProofAttribution;
   readonly precision: ProofPrecision;
+  /** 07 §13.9 (D-O5): what interventions led to, per repo, counts only — a floor, no target. */
+  readonly outcomes: OutcomeFigures;
   /** Both cohorts, in PILOT_COHORTS order, each over its own sessions. */
   readonly cohorts: readonly CohortFigures[];
   readonly integrity: readonly SurfaceIntegrity[];
@@ -230,6 +244,12 @@ export interface PilotReport {
 export interface ReadPilotReportInput {
   readonly repo: string;
   readonly days: number;
+  /**
+   * Who reads it. The report names no person, but its prior work is titled
+   * with teammates' contexts, and a fallback title names where its owner is
+   * (services/live-location.ts).
+   */
+  readonly viewerDeveloperId: string;
 }
 
 const zeroChannels = (): Record<DeliveryChannel, number> =>
@@ -258,13 +278,23 @@ const POINTED = POINTED_WORK_CONTEXT;
 const OPENED_AT = sql`CASE WHEN hd.pulled_at IS NOT NULL
   AND hd.pulled_at >= hd.delivered_at
   AND hd.pulled_at <= COALESCE(s.ended_at, s.reaped_at, 'infinity'::timestamptz)
+  AND hd.channel <> ${SUBSTANCE_DELIVERY_CHANNEL}
   THEN hd.pulled_at END`;
+
+/**
+ * Deliveries a pointer figure may count at all. An inline finding
+ * (SUBSTANCE_DELIVERY_CHANNEL) carried its answer, so the agent doing the
+ * work afterwards is neither "converged" nor "opened anyway" — those two
+ * measure what a POINTER led to. It stays in `surfaced` and its own bucket.
+ */
+const POINTER_DELIVERY = sql`hd.channel <> ${SUBSTANCE_DELIVERY_CHANNEL}`;
 
 const readDuplicateWork = async (
   deps: Deps,
   repo: string,
   since: Date,
   until: Date,
+  hidden: HiddenLocations,
 ): Promise<ProofDuplicateWork> => {
   const windowed = sql`s.repo = ${repo}
     AND hd.delivered_at >= ${since.toISOString()}::timestamptz
@@ -301,7 +331,7 @@ const readDuplicateWork = async (
              ${POINTED} AS pointed
       FROM hint_deliveries hd
       JOIN agent_sessions s ON s.id = hd.session_id
-      WHERE ${windowed}
+      WHERE ${windowed} AND ${POINTER_DELIVERY}
     ),
     shared AS (
       SELECT d.delivery_id, d.pulled_at, mine.work_context_id AS mine_context,
@@ -339,10 +369,14 @@ const readDuplicateWork = async (
   const named = await deps.db.execute<{
     work_context_id: string;
     title: string;
+    title_source: string | null;
+    owner_developer_id: string;
+    owner_branch: string;
     opened_by: number;
     total: number;
   }>(sql`
-    SELECT wc.id AS work_context_id, wc.title AS title,
+    SELECT wc.id AS work_context_id, wc.title AS title, wc.title_source AS title_source,
+           owner.developer_id AS owner_developer_id, owner.branch AS owner_branch,
            count(DISTINCT d.session_id)::int AS opened_by,
            count(*) OVER ()::int AS total
     FROM (
@@ -353,7 +387,7 @@ const readDuplicateWork = async (
     ) d
     JOIN work_contexts wc ON wc.id = d.pointed
     JOIN agent_sessions owner ON owner.id = wc.session_id AND owner.repo = ${repo}
-    GROUP BY wc.id, wc.title
+    GROUP BY wc.id, wc.title, wc.title_source, owner.developer_id, owner.branch
     ORDER BY opened_by DESC, wc.id ASC
     LIMIT ${PILOT_REPORT_MAX_PRIOR_WORK}`);
 
@@ -369,11 +403,16 @@ const readDuplicateWork = async (
     surfaced += row.surfaced;
     opened += row.opened;
   }
-  const priorWork = named.rows.map((row) => ({
-    workContextId: row.work_context_id,
-    title: row.title,
-    openedBySessions: row.opened_by,
-  }));
+  const priorWork = named.rows.map((row) =>
+    projectRow(hidden, {
+      developerId: row.owner_developer_id,
+      titleFacts: { repo, branch: row.owner_branch, titleSource: titleSourceOf(row.title_source) },
+    }, {
+      workContextId: row.work_context_id,
+      title: row.title,
+      openedBySessions: row.opened_by,
+    }),
+  );
   const priorWorkTotal = named.rows[0]?.total ?? 0;
   return {
     surfaced,
@@ -529,18 +568,22 @@ const readAttribution = async (
               repairsPinId: pins.repairsPinId,
               repairCommit: pins.verifiedAtCommit,
               repairedAt: pins.createdAt,
+              // human provenance §5, H1: the one predicate, never a hand comparison (review L2)
+              counts: sql<boolean>`${isHumanRow("pins", deps.now())}`,
             })
             .from(pins)
             .where(and(eq(pins.repo, repo), inArray(pins.repairsPinId, pinIds))),
           deps.db
-            .select({ id: pins.id, brokeAtCommit: pins.brokeAtCommit })
+            .select({ id: pins.id, brokeAtCommit: pins.brokeAtCommit, breakCounts: sql<boolean>`${isHumanBreak("pins", deps.now())}` })
             .from(pins)
             .where(inArray(pins.id, pinIds)),
         ]);
   const brokeAtCommit = new Map(broken.map((row) => [row.id, row.brokeAtCommit]));
+  // human provenance §5: a break and its repair are a person's judgements — scored only when confirmed.
+  const humanBreak = new Set(broken.filter((row) => row.breakCounts).map((row) => row.id));
   const repairOf = new Map<
     string,
-    { repairPinId: string; repairCommit: string; repairedAt: Date }
+    { repairPinId: string; repairCommit: string; repairedAt: Date; counts: boolean }
   >();
   for (const row of repairs) {
     if (row.repairsPinId !== null) {
@@ -555,10 +598,16 @@ const readAttribution = async (
   let supersededAnswers = 0;
   let answersAfterRepair = 0;
   let repairedWithoutBreakCommit = 0;
+  let notHumanConfirmed = 0;
   const chosen: { pinId: string; topSessionId: string }[] = [];
   for (const pinId of pinIds) {
     const repair = repairOf.get(pinId);
     if (repair === undefined) {
+      continue;
+    }
+    // A legacy break or repair is counted apart, never scored as a person's (human provenance §5).
+    if (!repair.counts || !humanBreak.has(pinId)) {
+      notHumanConfirmed += 1;
       continue;
     }
     const onBreak = answers.filter(
@@ -633,6 +682,7 @@ const readAttribution = async (
     repairedWithoutBreakCommit,
     supersededAnswers,
     answersAfterRepair,
+    notHumanConfirmed,
   };
 };
 
@@ -662,9 +712,10 @@ const readPrecision = async (
   // are comparable with the first pilot's — while the four labelled figures
   // count INTERVENTIONS from when labels existed (07 §12, second review).
   const { since, until } = window;
-  const windowSessions = sql`s.repo = ${repo}
-    AND s.started_at >= ${since.toISOString()}::timestamptz
-    AND s.started_at < ${until.toISOString()}::timestamptz`;
+  // A session is in the window when it started in it OR did work in it — a
+  // target created or last seen there (services/session-window.ts): one
+  // long-lived session's last week counts in the last week.
+  const windowSessions = sql`s.repo = ${repo} AND ${sessionActiveIn(since, until)}`;
   const [labelled, sessions, opened, noisy, surfaceOk] = await Promise.all([
     readLabelledWindow(deps, repo, window, labelsSince),
     deps.db.execute<{ n: number }>(sql`
@@ -681,7 +732,7 @@ const readPrecision = async (
       FROM pilot_marks m
       JOIN hint_deliveries hd ON hd.id = m.ref_id
       JOIN agent_sessions s ON s.id = hd.session_id
-      WHERE m.ref_kind = 'hint_delivery' AND m.mark IN ${NOISE_WORDS}
+      WHERE m.ref_kind = 'hint_delivery' AND m.mark IN ${NOISE_WORDS} AND ${isHumanRow("m", deps.now())}
         AND ${windowSessions}`),
     deps.db
       .select({ n: sql<number>`count(*)::int` })
@@ -690,6 +741,8 @@ const readPrecision = async (
         and(
           eq(pilotMarks.repo, repo),
           eq(pilotMarks.mark, "surface_ok"),
+          // human provenance §5: `pin --ok` is a person's word only once confirmed, by a standing passkey
+          isHumanRow("pilot_marks", deps.now()),
           gte(pilotMarks.createdAt, since),
           lt(pilotMarks.createdAt, until),
         ),
@@ -704,6 +757,7 @@ const readPrecision = async (
     ...labelled.figures,
     labelledSinceIso: labelled.labelledSince.toISOString(),
     legacyNoise: labelled.legacyNoise,
+    notHuman: labelled.notHuman,
     precisionTarget: PILOT_TARGET_INTERVENTION_PRECISION,
     openedPer100: per100(opened.rows[0]?.n ?? 0),
     openedTargetPer100: PILOT_TARGET_HELPFUL_PER_100_SESSIONS,
@@ -754,7 +808,7 @@ const readIntegrity = async (
 /** What an un-enrolled repo reports: nothing measured, and saying so. */
 const notEnrolled = (): Omit<
   PilotReport,
-  "repo" | "enrolled" | "labelsSinceIso" | "sinceIso" | "untilIso" | "days"
+  "repo" | "enrolled" | "labelsSinceIso" | "sinceIso" | "untilIso" | "days" | "outcomes"
 > => ({
   sessionSet: {
     used: 0,
@@ -796,11 +850,13 @@ const notEnrolled = (): Omit<
     repairedWithoutBreakCommit: 0,
     supersededAnswers: 0,
     answersAfterRepair: 0,
+    notHumanConfirmed: 0,
   },
   precision: {
     ...notInstrumentedLabels(),
     labelledSinceIso: null,
     legacyNoise: 0,
+    notHuman: { atTerminal: 0, byAgent: 0, legacy: 0, coolingOff: 0, countingFrom: null, retracted: 0 },
     precisionTarget: PILOT_TARGET_INTERVENTION_PRECISION,
     openedPer100: unavailable("not_instrumented"),
     openedTargetPer100: PILOT_TARGET_HELPFUL_PER_100_SESSIONS,
@@ -844,20 +900,39 @@ export const readPilotReport = async (
     days: input.days,
   };
   if (!settings.pilotEnrolled) {
-    return { ...base, ...notEnrolled() };
+    // review M-2: the closed month is computed from the intervals whatever the repo is now — a month
+    // the team was enrolled for is never "none could be recorded" because it has since left
+    const everEnrolled = (await readEnrolments(deps.db, input.repo)).length > 0;
+    const outcomes = everEnrolled
+      ? await readOutcomeFigures(deps, { repo: input.repo, now: until, outcomesSinceIso: settings.pilotOutcomesSince })
+      : noOutcomeFigures(until);
+    return { ...base, ...notEnrolled(), outcomes };
   }
   // An enrolled repo always has the instant (enrolment and the bootstrap
   // backfill both write it); if one ever lacks it, NOTHING is labelled
   // countable rather than everything — the conservative of the two errors.
   const labelsSince =
     settings.pilotLabelsSince === null ? until : new Date(settings.pilotLabelsSince);
-  const [sessionSet, duplicateWork, collisions, attribution, precision, cohorts, integrity] =
+  const [sessionSet, duplicateWork, collisions, attribution, precision, outcomes, cohorts, integrity] =
     await Promise.all([
       readSessionSet(deps, input.repo),
-      readDuplicateWork(deps, input.repo, since, until),
+      readDuplicateWork(
+        deps,
+        input.repo,
+        since,
+        until,
+        await locationHiddenFrom(deps.db, input.viewerDeveloperId),
+      ),
       readCollisions(deps, input.repo, since, until),
       readAttribution(deps, input.repo, since, until),
       readPrecision(deps, input.repo, { since, until }, labelsSince),
+      // NOT the report's window (review #4): the outcome block covers its
+      // own fixed, closed month, so no `days` can be stepped to isolate a day.
+      readOutcomeFigures(deps, {
+        repo: input.repo,
+        now: until,
+        outcomesSinceIso: settings.pilotOutcomesSince,
+      }),
       readCohorts(deps, input.repo),
       readIntegrity(deps, input.repo, since),
     ]);
@@ -868,6 +943,7 @@ export const readPilotReport = async (
     collisions,
     attribution,
     precision,
+    outcomes,
     cohorts,
     integrity,
   };

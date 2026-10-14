@@ -26,6 +26,8 @@
 import {
   MAX_CLAIM_BODY_LENGTH,
   MAX_VERIFICATION_REF_CHARS,
+  isEvidenceFor,
+  revisionHeads,
 } from "@crosscheck/schema";
 import type { ClaimValidity, ClaimValidityState } from "@crosscheck/schema";
 
@@ -49,6 +51,7 @@ import {
 import { UNKNOWN_COVERAGE } from "../http/coverage.ts";
 import type { CoverageRecord } from "../http/coverage.ts";
 import {
+  OWN_DRAFTS_QUOTED_DATA_NOTICE,
   QUOTED_DATA_NOTICE,
   formatAge,
   formatSolvedAge,
@@ -153,6 +156,14 @@ export const quotedBody = (raw: string, maxChars: number): string =>
  */
 export const quotingText = (...sentences: readonly string[]): string =>
   [QUOTED_DATA_NOTICE, ...sentences].join("\n");
+
+/**
+ * The same document over the caller's OWN text — review_draft echoing the
+ * draft it just promoted, or the agent's edit of it — where "written by other
+ * developers" would be false. Same trust level, a different true author.
+ */
+export const quotingOwnText = (...sentences: readonly string[]): string =>
+  [OWN_DRAFTS_QUOTED_DATA_NOTICE, ...sentences].join("\n");
 
 /**
  * `bare` — a short field the renderer prints OUTSIDE the frame: a claim's kind
@@ -362,16 +373,19 @@ const validityDetail = (validity: ClaimValidity): string => {
   if (validity.state === "invalidated") {
     return "its author rejected it";
   }
-  if (validity.commitBinding === "none" || validity.observedAtCommit === null) {
+  if (validity.commitBinding === "none") {
     // The §8.5 refusal, said where the reader is rather than only in doctor:
     // a claim with no observation point can never be revalidated at all.
-    //
-    // The null test is not redundant with the binding test. The hub's CHECK
-    // makes the two agree in ITS database; this renderer reads a looseObject
-    // off the wire, and without the second half a hub sending
-    // `commitBinding: "reported"` beside a null commit produced a sentence
-    // beginning "; " — a rendering nobody wrote.
     return "recorded against no commit, so it cannot be checked against the code";
+  }
+  if (validity.observedAtCommit === null) {
+    // BOUND, BUT THE COMMIT DID NOT TRAVEL. The hub withholds an opted-out
+    // author's HEAD from every other reader (server services/live-
+    // location.ts) and keeps the binding, so "recorded against no commit"
+    // would be false. The same sentence covers a hub sending `reported`
+    // beside a null commit: without this branch that produced a sentence
+    // beginning "; " — a rendering nobody wrote.
+    return "its commit is not shared with you, so it cannot be checked against the code";
   }
   const observed = safeId(validity.observedAtCommit);
   if (observed.length === 0) {
@@ -607,8 +621,23 @@ const edgeLine = (
   return `- ${safeId(edge.fromClaimId)} ${bare(edge.kind)} ${safeId(edge.toClaimId)} · by ${authorLabel(index, edge.authorSessionId)}${note}`;
 };
 
+/**
+ * What the far end of a cross-tree link IS, when it is not a vouched claim:
+ * an auto similarity link may reach an unreviewed draft or a discard of the
+ * same author, and the line must not read as a finding.
+ */
+const externalTrustFacts = (ref: ExternalClaimRef): readonly string[] => [
+  ...(ref.provenance === "derived" ? ["provenance derived (unreviewed draft)"] : []),
+  ...(ref.status === "rejected" ? ["status rejected"] : []),
+];
+
 const externalLine = (ref: ExternalClaimRef): string =>
-  `- ${safeId(ref.id)} · ${bare(ref.kind)} · in work context ${safeId(ref.workContextId)}`;
+  [
+    `- ${safeId(ref.id)}`,
+    bare(ref.kind),
+    ...externalTrustFacts(ref),
+    `in work context ${safeId(ref.workContextId)}`,
+  ].join(" · ");
 
 /**
  * One captured target — WHERE this investigation happened.
@@ -1064,22 +1093,71 @@ const SOLVED_CLAIM_PROVENANCE = "declared";
  * failed toward not-solved; the truncated gate makes the edge side fail
  * the same honest direction.
  */
+/**
+ * How many of a claim's evidence refs RESOLVE inside this tree, by the one
+ * rule the hub applies (`@crosscheck/schema` evidence-resolution.ts,
+ * hold-out review H5 + M2): each ref followed through the tree's supersedes
+ * edges to its head, and the head judged. A ref to a claim outside the tree
+ * cannot be resolved here, so it does not count — a tree solved only by
+ * evidence elsewhere reads unsolved on this side, the direction that never
+ * vouches too much.
+ */
+/** What resolving one tree's refs needs, built ONCE per tree (round 3, M4). */
+interface TreeEvidence {
+  readonly byId: ReadonlyMap<string, Diagnosis["claims"][number]>;
+  /** The revision heads of every ref the tree cites, each resolved once. */
+  readonly headsOf: ReadonlyMap<string, readonly string[]>;
+  readonly contradicted: ReadonlySet<string>;
+}
+
+/**
+ * The tree's evidence, read once (hold-out review round 3, M4): one id map,
+ * one successor map grouped from the supersedes edges, and each cited ref's
+ * heads resolved ONCE however many claims cite it — the mirror used to rebuild
+ * both maps for every claim and walk the same revisions for every citation.
+ */
+const treeEvidenceOf = (claims: Diagnosis["claims"], supersedes: Diagnosis["edges"], contradicted: ReadonlySet<string>): TreeEvidence => {
+  const successors: ReadonlyMap<string, readonly string[]> = new Map(
+    [...Map.groupBy(supersedes, (edge) => edge.toClaimId)].map(([target, edges]) => [target, edges.map((edge) => edge.fromClaimId)]),
+  );
+  const successorsOf = (id: string): readonly string[] => successors.get(id) ?? [];
+  const refs = [...new Set(claims.flatMap((claim) => claim.evidenceRefs))];
+  return {
+    byId: new Map(claims.map((member) => [member.id, member])),
+    headsOf: new Map(refs.map((ref) => [ref, revisionHeads(ref, successorsOf)])),
+    contradicted,
+  };
+};
+
+const resolvedRefsInTree = (claim: Diagnosis["claims"][number], tree: TreeEvidence): number =>
+  claim.evidenceRefs.filter((ref) =>
+    (tree.headsOf.get(ref) ?? []).some((headId) => {
+      const head = tree.byId.get(headId);
+      // A contradicts edge on what was cited or on its head un-backs it (round 3, M2).
+      return (
+        head !== undefined &&
+        isEvidenceFor(claim, ref, { ...head, isContradicted: tree.contradicted.has(ref) || tree.contradicted.has(head.id) })
+      );
+    }),
+  ).length;
+
 export const solvedAtFromTree = (
   diagnosis: Pick<Diagnosis, "claims" | "edges" | "truncated">,
 ): number | null => {
   if (diagnosis.truncated) {
     return null;
   }
-  const supersededIds = new Set(
-    diagnosis.edges
-      .filter((edge) => edge.kind === SUPERSEDES_EDGE_KIND)
-      .map((edge) => edge.toClaimId),
+  const supersedes = diagnosis.edges.filter((edge) => edge.kind === SUPERSEDES_EDGE_KIND);
+  const supersededIds = new Set(supersedes.map((edge) => edge.toClaimId));
+  const contradicted = new Set(
+    diagnosis.edges.filter((edge) => edge.kind === CONTRADICTS_EDGE_KIND).map((edge) => edge.toClaimId),
   );
+  const tree = treeEvidenceOf(diagnosis.claims, supersedes, contradicted);
   const qualifying = diagnosis.claims.filter(
     (claim) =>
       claim.status === SOLVED_CLAIM_STATUS &&
       claim.provenance === SOLVED_CLAIM_PROVENANCE &&
-      claim.evidenceRefs.length > 0 &&
+      resolvedRefsInTree(claim, tree) > 0 &&
       !supersededIds.has(claim.id),
   );
   const qualifyingIds = new Set(qualifying.map((claim) => claim.id));
@@ -1385,7 +1463,13 @@ export const renderDiagnosis = (
 /** One work context the hub search matched, with its ages at query time. */
 export interface SearchHit {
   readonly entry: SearchResultEntry;
-  readonly ageMs: number;
+  /**
+   * Since the context's last touch, or its creation; null for a row whose
+   * owner opted out of presence (batch-2 integration review, M5): the hub
+   * withheld her last touch, and the creation it left says when she was
+   * there, so the line prints no age at all.
+   */
+  readonly ageMs: number | null;
   /** Age of the solving claim, for solved results; the tool computes it. */
   readonly solvedAgeMs?: number | undefined;
 }
@@ -1404,15 +1488,21 @@ const solvedFact = (hit: SearchHit): readonly string[] =>
       ]
     : [];
 
+/** A search hit the hub found only through an unreviewed draft. */
+const DRAFT_ONLY_MATCH = "matched only an unreviewed draft (provenance derived)";
+
 const searchLine = (hit: SearchHit): string => {
   const author =
     hit.entry.developerName === undefined ? "" : bare(hit.entry.developerName);
   const facts = [
     `- ${safeId(hit.entry.id)}`,
     author.length === 0 ? UNNAMED_AUTHOR : author,
-    `${formatAge(hit.ageMs)} ago`,
+    ...(hit.ageMs === null ? [] : [`${formatAge(hit.ageMs)} ago`]),
     `status ${bare(hit.entry.status)}`,
     ...solvedFact(hit),
+    // A pull the searcher asked for, never a vouched finding: the hub found
+    // this tree only through an unreviewed draft's words.
+    ...(hit.entry.derivedOnly === true ? [DRAFT_ONLY_MATCH] : []),
   ];
   const line = `${facts.join(" · ")}: ${quoted(hit.entry.title, MAX_WORK_CONTEXT_TITLE_CHARS)}`;
   // The intent on a second, indented line of the SAME section entry (one

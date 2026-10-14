@@ -97,8 +97,14 @@ export const TARGET_KINDS = [
  * codemods, `prettier --write` and generators are invisible to the first,
  * which is exactly how a ranking built on it alone names the session that
  * used Edit while the codemod session leaves no trace at all.
+ *
+ * `git_commit` is the git lane's second half (DESIGN.md "One session, many
+ * topics"): a file in a commit THIS developer authored on the root's branch
+ * since the session first touched that root. A working-tree diff cannot see
+ * work that was already committed, and a session whose agent runs `cp`,
+ * `mv` or `git commit` through a shell leaves a clean tree behind it.
  */
-export const TARGET_SOURCES = ["tool_edit", "git_diff"] as const;
+export const TARGET_SOURCES = ["tool_edit", "git_diff", "git_commit"] as const;
 
 /**
  * WHICH SURFACE HANDED A REF TO A READER (1.0 spec 07 §3.1).
@@ -204,6 +210,26 @@ export const PILOT_MARKS_BY_REF_KIND = {
 >;
 
 /**
+ * WHAT A DELIVERED HINT LED TO (07 §13, 2026-10-05) — not a verdict on the
+ * intervention, which is the label above, but what the reader did next:
+ *
+ *   followed          acted on it — reused the teammate's decision, stopped
+ *                     duplicate work, coordinated;
+ *   overrode          saw it and deliberately went another way, with the reason
+ *                     the reader's way was better;
+ *   not_relevant_now  on the topic, not needed for the task at hand.
+ *
+ * FOLLOWING AND OVERRIDING ARE TWO PAIRS OF SHOES. A hint that was read and
+ * deliberately set aside did its job — the reader decided with the
+ * teammate's work in view — while a hint that was off-target did not. So
+ * `overrode` is never folded into noise, and noise is NOT IN THIS LIST: it
+ * already has one word, the person's `noise` label, and the per-person view
+ * reads it from there. A second spelling here, on a path an agent can reach,
+ * would be a second noise concept with the model's taste in it (07 D3, PIL-6).
+ */
+export const HINT_OUTCOMES = ["followed", "overrode", "not_relevant_now"] as const;
+
+/**
  * THE TWO COHORTS OF THE SESSION SET (07 §12). Sessions 1–50 are the
  * preregistered DISCOVERY cohort, frozen once full; 51–200 the REPLICATION
  * cohort, measured with the discovery cohort's figures already on the table.
@@ -263,9 +289,24 @@ export const DELIVERY_CHANNELS = [
   "unknown",
   "briefing",
   "prompt_hint",
+  "prompt_substance",
   "tripwire",
   "suspect",
 ] as const;
+
+/**
+ * THE CHANNEL THAT CARRIES ITS OWN ANSWER (DESIGN.md §4, revised 2026-10). A
+ * prompt hint that delivers a claim's substance — its first sentence, inline —
+ * hands the reader the finding itself; a later read of its tree is the agent
+ * pulling more, never "the pointer was opened". So it is its own channel:
+ * surfaced and counted like every delivery, and kept out of every figure that
+ * measures a POINTER being followed (the pilot report's opened, converged,
+ * opened anyway, opened per hundred sessions) — folded in, the pilot's one
+ * behavioural precision signal would rise by construction the day hints
+ * started carrying their answer.
+ */
+export const SUBSTANCE_DELIVERY_CHANNEL = "prompt_substance" as const satisfies
+  (typeof DELIVERY_CHANNELS)[number];
 
 /**
  * THE CHANNEL A READER ASKED FOR. Every other channel arrives unasked; this
@@ -459,6 +500,7 @@ export type PilotMark = (typeof PILOT_MARKS)[number];
 export type PilotInterventionLabel = (typeof PILOT_INTERVENTION_LABELS)[number];
 export type PilotCohort = (typeof PILOT_COHORTS)[number];
 export type PilotMarkRefKind = (typeof PILOT_MARK_REF_KINDS)[number];
+export type HintOutcome = (typeof HINT_OUTCOMES)[number];
 export type PilotEndReason = (typeof PILOT_END_REASONS)[number];
 export type PilotUnavailableReason =
   (typeof PILOT_UNAVAILABLE_REASONS)[number];

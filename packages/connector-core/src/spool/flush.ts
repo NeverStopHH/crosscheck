@@ -31,11 +31,13 @@
 import {
   MAX_FLUSH_BATCHES_PER_HOOK,
   MAX_INGEST_BATCH,
+  MIN_FLUSH_BATCH_LINES,
 } from "../constants.ts";
 import { spoolFlushLockPath } from "../config/paths.ts";
 import { withProducer } from "../capture/records.ts";
 import { postRecords } from "../http/hub.ts";
 import type { IngestSummary, RecordResult } from "../http/hub.ts";
+import { isTimedOut } from "../http/client.ts";
 import type { HubContext } from "../http/client.ts";
 import { bytesOfLines, lineEnds, readCountedLines, writeCountedLines, writeCursorOffset } from "./cursor.ts";
 import { batchLosses } from "./batch-losses.ts";
@@ -47,6 +49,7 @@ import { readAllSessionSpools } from "./files.ts";
 import type { SessionSpool } from "./files.ts";
 import { healAndResend, isRefusedLifeRecord } from "./flush-heal.ts";
 import {
+  TIMED_OUT,
   answerOwed,
   deliverOwed,
   isOwedFor,
@@ -57,7 +60,7 @@ import {
   withLifeState,
   workContextIdOf,
 } from "./owed-work-context.ts";
-import type { OwedOutcome, OwedWorkContext } from "./owed-work-context.ts";
+import type { OwedOutcome, OwedWorkContext, TimedOut } from "./owed-work-context.ts";
 import type { SessionHeal, SessionHealer } from "./flush-heal.ts";
 import { lineTimestampMs } from "./lines.ts";
 import { withLock } from "./lock.ts";
@@ -66,6 +69,7 @@ import { readRefusedLives, recordRefusedLife } from "./refused-lives.ts";
 import { rejectCauseOf } from "./reject-cause.ts";
 import type { RejectCause } from "./reject-cause.ts";
 import { ackedIn, noteWorkContextAcked } from "./work-context-ack.ts";
+import { traceSpan } from "../trace/hook-trace.ts";
 
 export type { SessionHeal, SessionHealer } from "./flush-heal.ts";
 
@@ -73,12 +77,27 @@ export interface FlushInput {
   readonly sessionId: string;
   readonly developerId: string | null;
   /**
+   * Only this session's own spool (07 §13.11): a caller that is not a hook
+   * sends nothing in another session's name — no FOREIGN_SESSION_DELIVERY.
+   * Absent, every pending spool, as the hooks drain.
+   */
+  readonly onlySlug?: string;
+  /**
    * Re-registers the flushing session when the hub refuses its OWN id
    * (flows/heal-session.ts) — asked at most once per flush. The hooks of a
    * live host session pass one; the SessionEnd drain does not, because a life
    * about to end has nothing to heal for.
    */
   readonly heal?: SessionHealer;
+  /**
+   * NOBODY WAITS FOR THE HOOK THAT FLUSHES (Stop, SubagentStop; connector-
+   * claude hooks/runner.ts ANSWERLESS_HOOKS): a records request may take the
+   * room left in its envelope, not only the per-request bound a waiting host
+   * needs. Bounded by that room, a slow hub's answer is waited out instead of
+   * abandoned after the hub stored the batch (release gate, 2026-10-13).
+   * Absent, every request keeps the bound.
+   */
+  readonly isAnswerless?: boolean;
 }
 
 export type FlushOutcome =
@@ -146,18 +165,19 @@ const NOTHING_SENT: IngestSummary = {
 
 /**
  * Sends the batch. Null when the hub did not take it at all — transport, an
- * HTTP failure — and the records stay on disk for the next drain; an
+ * HTTP failure — and the records stay on disk for the next drain; TIMED_OUT
+ * when it did not answer in time, which a smaller batch may cure; an
  * all-zero summary when there was nothing to send.
  */
 const deliver = async (
   ctx: HubContext,
   records: readonly Record<string, unknown>[],
-): Promise<IngestSummary | null> => {
+): Promise<IngestSummary | TimedOut | null> => {
   if (records.length === 0) {
     return NOTHING_SENT;
   }
   const result = await postRecords(ctx, records);
-  return result.ok ? result.data : null;
+  return result.ok ? result.data : isTimedOut(result) ? TIMED_OUT : null;
 };
 
 /** What a batch's send did: the hub's answer for the batch, and what became of the debt that went ahead of it. */
@@ -181,14 +201,14 @@ const send = async (
   spool: SessionSpool,
   owed: OwedWorkContext | null,
   records: readonly Record<string, unknown>[],
-): Promise<Sent | null> => {
+): Promise<Sent | TimedOut | null> => {
   if (owed === null) {
     const summary = await deliver(ctx, records);
-    return summary === null ? null : { summary, debt: null, owedAnswer: undefined, owedSent: null };
+    return summary === null || summary === TIMED_OUT ? summary : { summary, debt: null, owedAnswer: undefined, owedSent: null };
   }
   const delivery = await deliverOwed(ctx, spool.slug, owed, input.developerId, input.sessionId, records);
-  if (delivery === null) {
-    return null;
+  if (delivery === null || delivery === TIMED_OUT) {
+    return delivery;
   }
   const debt = await answerOwed(
     ctx.home,
@@ -327,6 +347,11 @@ interface BatchOutcome {
 
 const PINNED: BatchOutcome = { sent: 0, heal: null, healAsked: false, isPinned: true };
 
+/** A batch the hub did not answer in time: how many lines it carried, so the next one can carry half. */
+interface TimedOutBatch {
+  readonly timedOutLines: number;
+}
+
 const HELD: ReadonlySet<string> = new Set(["accepted", "duplicate"]);
 
 /**
@@ -378,12 +403,13 @@ const flushOneBatch = async (
   spool: SessionSpool,
   deadlineMs: number,
   refusedLives: ReadonlySet<string>,
-): Promise<BatchOutcome | null> => {
+  batchLines: number,
+): Promise<BatchOutcome | TimedOutBatch | null> => {
   // The owed work context goes at the head of the batch that carries its
   // life's records (spool/owed-work-context.ts) — or alone, when the spool
   // holds nothing more for any life to carry it.
   const owed = await liveDebt(ctx, spool, refusedLives, input.sessionId);
-  const batch = oneLife(spool.lines.slice(0, BATCH_LINES));
+  const batch = oneLife(spool.lines.slice(0, batchLines));
   const consumed = spool.offset + bytesOfLines(spool.pending, batch.length);
   const ends = lineEnds(spool.pending, batch.length, spool.offset);
   // A line an earlier walk already counted, or saw the hub take, is settled:
@@ -409,6 +435,10 @@ const flushOneBatch = async (
   const first = await send(ctx, input, spool, paying, records);
   if (first === null) {
     return null;
+  }
+  if (first === TIMED_OUT) {
+    // Nothing was consumed or counted: the drain may send it again, smaller.
+    return { timedOutLines: batch.length };
   }
   // What the hub accepted of the life's work context, for SessionEnd to
   // compare the state's status with (spool/work-context-ack.ts, L7).
@@ -530,7 +560,15 @@ const flushOneBatch = async (
   // this batch came from. A spool reaped and recreated mid-flush is a different
   // file — same name, and on ext4 the same inode number too — and its records
   // start at offset 0.
-  await writeCursorOffset(spool.dataPath, spool.cursorPath, consumed, spool);
+  //
+  // A NOTE PAST THIS BATCH RIDES THE CURSOR PAST IT. An earlier walk writes
+  // down lines of the batch it met, and a batch halved after a timeout is
+  // shorter than that one: dropped here, the lines beyond would be counted
+  // again, or a line the hub took counted as lost.
+  const beyond = [...earlier].filter((end) => end > consumed);
+  await (beyond.length === 0
+    ? writeCursorOffset(spool.dataPath, spool.cursorPath, consumed, spool)
+    : writeCountedLines(spool.dataPath, spool.cursorPath, consumed, new Set(beyond), spool));
   return { sent: records.length, heal: healed.heal, healAsked: healed.asked, isPinned: isDebtRefused };
 };
 
@@ -583,8 +621,13 @@ const owesAlone = async (ctx: HubContext, spool: SessionSpool): Promise<boolean>
 /** Every spool with a record to send — or a work context it still owes with none (flushOneBatch). */
 const pendingSpools = async (
   ctx: HubContext,
+  onlySlug?: string,
 ): Promise<readonly SessionSpool[]> => {
-  const spools = await readAllSessionSpools(ctx.home, ctx.repoKey);
+  // Only this session's own spool when asked (07 §13.11), before anything is
+  // read of the others.
+  const spools = (await readAllSessionSpools(ctx.home, ctx.repoKey)).filter(
+    (spool) => onlySlug === undefined || spool.slug === onlySlug,
+  );
   const owing = await Promise.all(spools.map((spool) => (spool.lines.length > 0 ? true : owesAlone(ctx, spool))));
   return spools.filter((_, index) => owing[index] === true).sort(oldestFirst);
 };
@@ -596,10 +639,14 @@ const pendingSpools = async (
  * timeout, which on a fast hub meant refusing batches that would have taken
  * milliseconds. A clamped request that expires simply fails the flush, and a
  * failed flush costs nothing: the records are still on disk.
+ *
+ * A hook nobody waits for (`isAnswerless`) gives the request the whole room:
+ * the bound exists for a host that waits, and on the hook that answers
+ * nothing it only abandoned answers the hub was about to give.
  */
-const withinRoom = (ctx: HubContext, roomMs: number): HubContext => ({
+const withinRoom = (ctx: HubContext, roomMs: number, isAnswerless: boolean): HubContext => ({
   ...ctx,
-  timeoutMs: Math.min(ctx.timeoutMs, roomMs),
+  timeoutMs: isAnswerless ? roomMs : Math.min(ctx.timeoutMs, roomMs),
 });
 
 /**
@@ -646,6 +693,12 @@ const drain = async (
   // (review-2 round 7, M3): its debt waits for the next one, and every other
   // spool this flusher may send still goes.
   let pinned: ReadonlySet<string> = new Set();
+  // HALVED AFTER A TIMEOUT, for the rest of this drain (release gate,
+  // 2026-10-13): a batch the hub stored but answered past the bound was sent
+  // whole again by every hook and never came back in time. Half of what timed
+  // out goes next — the part the hub already stored answers `duplicate` —
+  // down to MIN_FLUSH_BATCH_LINES, where a timeout ends the drain.
+  let batchLines = BATCH_LINES;
   for (let batch = 0; batch < MAX_FLUSH_BATCHES_PER_HOOK; batch += 1) {
     // Checked BEFORE every batch, the first included: the budget belongs to the
     // hosting hook, and a round trip started without room left is exactly what
@@ -656,7 +709,7 @@ const drain = async (
     }
     // Re-read every round: the cursor moved, and appends land lock-free while
     // this loop runs, so the oldest backlog may not be the one it started with.
-    const spools = await pendingSpools(ctx);
+    const spools = await pendingSpools(ctx, input.onlySlug);
     if (spools.length === 0) {
       return batch === 0
         ? { outcome: "empty" }
@@ -669,9 +722,14 @@ const drain = async (
     if (target === null) {
       return { outcome: "flushed", sent, remaining: pendingTotal(spools) };
     }
-    const delivered = await flushOneBatch(withinRoom(ctx, roomMs), producer, target, deadlineMs, refusedLives);
-    if (delivered === null) {
+    const room = withinRoom(ctx, roomMs, input.isAnswerless === true);
+    const delivered = await flushOneBatch(room, producer, target, deadlineMs, refusedLives, batchLines);
+    if (delivered === null || ("timedOutLines" in delivered && delivered.timedOutLines <= MIN_FLUSH_BATCH_LINES)) {
       return { outcome: "failed", remaining: pendingTotal(spools) };
+    }
+    if ("timedOutLines" in delivered) {
+      batchLines = Math.max(MIN_FLUSH_BATCH_LINES, Math.floor(delivered.timedOutLines / 2));
+      continue;
     }
     pinned = delivered.isPinned ? new Set([...pinned, target.slug]) : pinned;
     sent += delivered.sent;
@@ -681,7 +739,7 @@ const drain = async (
   return {
     outcome: "flushed",
     sent,
-    remaining: pendingTotal(await pendingSpools(ctx)),
+    remaining: pendingTotal(await pendingSpools(ctx, input.onlySlug)),
   };
 };
 
@@ -695,7 +753,10 @@ const drain = async (
  * A budget of zero or less is honest and normal: nothing is sent, and the next
  * hook tries again.
  */
-export const flushSpool = async (
+export const flushSpool = async (ctx: HubContext, input: FlushInput, budgetMs: number): Promise<FlushOutcome> =>
+  traceSpan("flush", async () => flushSpoolUntimed(ctx, input, budgetMs));
+
+const flushSpoolUntimed = async (
   ctx: HubContext,
   input: FlushInput,
   budgetMs: number,

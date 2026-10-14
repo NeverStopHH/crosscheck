@@ -41,6 +41,7 @@ import {
   SUMMARIZER_FAILURE_MAX_CHARS,
   SUMMARIZER_MODEL,
   SUMMARIZER_OUTPUT_MAX_BYTES,
+  SUMMARIZER_TIMEOUT_MAX_MS,
   SUMMARIZER_TIMEOUT_MS,
 } from "../constants.ts";
 import type { Env } from "../config/paths.ts";
@@ -164,18 +165,24 @@ export const resolveSummarizerArgv = (env: Env): readonly string[] => {
   ];
 };
 
+/** A SAFE positive integer, or null: past 2^53 a number is no longer the one written. */
 const parsePositiveInt = (raw: string | undefined): number | null => {
   if (raw === undefined) {
     return null;
   }
   const parsed = Number.parseInt(raw, 10);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 };
 
-/** Hard timeout, env-overridable (tests, slow machines) but never unbounded. */
+/**
+ * Hard timeout, env-overridable (tests, slow machines) but never unbounded:
+ * clamped to SUMMARIZER_TIMEOUT_MAX_MS, because every fire books it.
+ */
 export const resolveSummarizerTimeoutMs = (env: Env): number =>
-  parsePositiveInt(env["CROSSCHECK_SUMMARIZER_TIMEOUT_MS"]) ??
-  SUMMARIZER_TIMEOUT_MS;
+  Math.min(
+    parsePositiveInt(env["CROSSCHECK_SUMMARIZER_TIMEOUT_MS"]) ?? SUMMARIZER_TIMEOUT_MS,
+    SUMMARIZER_TIMEOUT_MAX_MS,
+  );
 
 /**
  * What a bounded read produced, and WHY it stopped. The second half is not
@@ -571,6 +578,14 @@ export const bareSummarizerLine = (
 const LABEL_SEPARATOR = ": ";
 
 /**
+ * The booked prefix of a run whose binary could not even be started. Exported
+ * because it is a FACT doctor reads back (derive/sharing.ts cannot_start): a
+ * hook that cannot start `claude` while doctor's own PATH can is the editor's
+ * environment, and only this prefix tells the two apart.
+ */
+export const SPAWN_FAILURE_LABEL = "could not start";
+
+/**
  * One line for a failure, fit to be BOOKED in session state and printed by
  * status/doctor: the reason first, then what the binary said (through
  * bareSummarizerLine), the binary's share of the line being whatever
@@ -600,7 +615,7 @@ export const formatSummarizerFailure = (failure: SummarizerFailure): string => {
   }
   const label =
     failure.reason === "spawn"
-      ? "could not start"
+      ? SPAWN_FAILURE_LABEL
       : `exit ${String(failure.exitCode)}`;
   const said = bareSummarizerLine(
     failure.detail,

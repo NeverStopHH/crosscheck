@@ -67,6 +67,32 @@ export const FOREIGN_SESSION_DELIVERY: SeqRefusal = {
 export type SeqAllocation = SeqRange | SeqRefusal | null | undefined;
 
 /**
+ * The rest of a block once `used` of its positions went to earlier records —
+ * one event filing under several topics writes one group per topic, and the
+ * second group's records take the positions after the first's. Its bracket
+ * rides along: every record of the block followed the same tool start.
+ */
+export const seqAfter = (range: SeqRange | null | undefined, used: number): SeqRange | null =>
+  range === null || range === undefined
+    ? null
+    : { ...range, from: range.from + used, count: Math.max(0, range.count - used) };
+
+/**
+ * `width` positions of a block, starting `offset` positions in — one root's
+ * share of a Stop whose roots file different counts (flows/git-lane.ts). A
+ * block too small for it is a shorter window, or an empty one whose every
+ * record says `allocation_failed`.
+ */
+export const seqWindow = (range: SeqRange | null | undefined, offset: number, width: number): SeqRange | null => {
+  const rest = seqAfter(range, offset);
+  return rest === null ? null : { ...rest, count: Math.min(width, rest.count) };
+};
+
+/** The `index`-th slice of `width` positions of a block: equal shares. */
+export const seqSlice = (range: SeqRange | null | undefined, index: number, width: number): SeqRange | null =>
+  seqWindow(range, index * width, width);
+
+/**
  * The stamp for the offset-th record of a block, or the refusal when there is
  * no block — or when the caller has emitted more records than it reserved,
  * which is a bug in the caller and must not silently reuse a position.

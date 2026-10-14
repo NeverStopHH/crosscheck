@@ -32,6 +32,7 @@ fourth one that forgets it fails CI rather than losing edits quietly.
 | **Drop counters** — a touch that could not be captured | `foreign-repo` and `outside-root`, split and counted | same | same |
 | **Capture health** in `crosscheck status` / `doctor` | `N edit-tool fires → M targets`, last tool, last edited path + the root it resolved against, WARN at 3 fires with 0 targets on a session still being heard from | same, with the event name `afterFileEdit` as the tool | same, with the ACP tool-call `kind` (or `fs/write_text_file`) as the tool. One edit an agent signals BOTH ways reads `2 fires → 1 target`: both are honest edit signals, dropping either would leave some real agent permanently at `0 → 0` and unable to WARN, and the doubling can never cause a FALSE warn because the first signal captures the target (pinned in `connector-acp/test/worktree-capture.test.ts`) |
 | **Before-edit tripwire** — telling the model about an overlap *before* it edits | yes — `PreToolUse`, `permissionDecision: "ask"` plus the facts as `additionalContext` | **not possible on this host today** | **not possible on this host today** |
+| **Person-facing collision notice** — telling the PERSON, not only the agent | yes — one `systemMessage` line on `PreToolUse` and `SessionStart` (or the first prompt, for a briefing paid late), once per teammate's work per session; a subagent's hit handed to the main thread, and shown to you, when the subagent returns or at the next prompt; `⚠ overlap` on the statusline while the teammate is still present | **no channel on this host** — `user_message` shows only when an action is denied or a prompt blocked, so the agent is told and `doctor` prints the gap | **no channel in stable ACP v1** — the Session Notices RFD is an unstable Preview, so the agent is told and `doctor` prints the gap |
 
 The last row is a limitation we document rather than a gap we forgot, and each
 of those two connectors' module headers carries the same sentences with its
@@ -204,10 +205,11 @@ to check when `crosscheck status` shows `N runs (0 NONE, 0 drafts, N failed
   `summarizer transcript (cursor)` saying *this Cursor build provides no
   transcript*, nothing on this machine is broken: the build sent
   `transcript_path: null` (documented as "null if transcripts disabled") and
-  no model ran. Tier-0 capture, hints and the briefing are unaffected. The
-  same line counts turns where the transcript was there but its tail could
-  not be decoded — that one IS worth reporting, because it means Cursor's
-  transcript format moved.
+  no model ran. Tier-0 capture, hints and the briefing are unaffected. Turns
+  where the transcript was there but its tail could not be decoded are
+  counted on the `summarizer cost` line (`N turns with no slice: …`), and the
+  `sharing` line below WARNs once no draft came of them — that one IS worth
+  reporting, because it means Cursor's transcript format moved.
 - **Login environment.** The worker inherits the hook's whole environment
   minus the parent session's own markers (`CLAUDECODE`, `CLAUDE_PID`, the
   `CLAUDE_CODE_SESSION_*`/child-session/messaging/task-list/SSE-port/
@@ -266,6 +268,32 @@ to check when `crosscheck status` shows `N runs (0 NONE, 0 drafts, N failed
   model backend on the machine — `doctor` prints a `derive backend` line per
   connector saying whether one resolved — and `set_intent` works for any
   MCP-connected agent either way.
+- **Drafts are never pushed until you confirm them.** No summarizer draft is
+  injected into a teammate's session until `review_draft` confirms it; it
+  shows up, marked `provenance derived`, only to a teammate who opens your
+  notes (`get_diagnosis`) or whose search matches it. Once per session, on a
+  prompt after the first finished turn, the agent is asked to go through the
+  drafts that have waited a day and to ask YOU before it confirms, edits or
+  discards any of them. Confirming or editing publishes the draft as your
+  claim; discarding marks it rejected — it stays in the history, labelled
+  rejected, and is never offered to anyone as a finding. Nothing is published
+  or marked without your answer.
+- **`sharing` — "why does my agent share nothing?"** `crosscheck doctor`
+  prints one `sharing` line per cause it finds, each reading *your agent
+  shares nothing because …; fix: …*: an off switch in the environment
+  (`CROSSCHECK_DISABLED`, a leaked `CROSSCHECK_SUMMARIZER_CHILD`), no model
+  backend on this PATH, hooks that could not START the model although this
+  shell can (the editor's own environment — set `CROSSCHECK_SUMMARIZER_CMD`
+  to the absolute path), a runner whose every run failed, runs that never
+  reported back (only runs over two minutes old, or that old when their
+  session ended — younger ones are reported as in flight, never blamed), turns with no transcript, answers that were all refused,
+  twenty finished turns none of which read as a conclusion, sessions that
+  never opened with a substantive prompt, and drafts that wait for your
+  review. It reads the live sessions AND the last 20 ended ones: SessionEnd
+  folds each session's derive counters into
+  `~/.crosscheck/state/<repo>-derive-history.json` — the session's own
+  repo — before it deletes the session file, so the answer survives closing the editor. `crosscheck
+  status` prints the first cause as its `sharing:` line.
 
 ## Cursor IDE (≥ 1.7)
 

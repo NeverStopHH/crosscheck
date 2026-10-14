@@ -26,17 +26,22 @@
  * forbids and what prompt-injection defences trip on.
  */
 import {
+  LOCATION_WITHHELD,
   MAX_HINT_TEXT_LENGTH,
   MAX_QUESTION_BODY_LENGTH,
 } from "@crosscheck/schema";
 
 import {
+  HINT_CLOSING_LINE_RESERVE_CHARS,
+  HINT_SUBSTANCE_MAX_CHARS,
   LANDED_RECENT_WORKING_DAYS,
   MAX_LANDED_COMMITS_SHOWN,
   MAX_LANDED_WHY_SHOWN,
   MAX_WORK_CONTEXT_TITLE_CHARS,
+  SUBSTANCE_MATCH_KIND,
   UNSOLICITED_CLAIM_BODY_MAX_CHARS,
 } from "../constants.ts";
+import { shownSubstance } from "@crosscheck/schema";
 import type { LandedChanges, LandedCommit } from "../landed-changes/probe.ts";
 import { namedLandedCommits } from "../landed-changes/named-commits.ts";
 import { renderIntent } from "../briefing/intent.ts";
@@ -53,7 +58,6 @@ import { UNKNOWN_COVERAGE } from "../http/coverage.ts";
 import type { CoverageRecord } from "../http/coverage.ts";
 import {
   QUOTED_DATA_NOTICE,
-  SUBSTANCE_MATCH_KIND,
   UNKNOWN_AUTHOR,
   formatAge,
   formatSolvedAge,
@@ -64,11 +68,13 @@ import { claimValidityWord } from "../briefing/render.ts";
 import { quoted, quotedBody, safeId } from "../mcp/render.ts";
 import type { CommitDrift } from "../git/commit-drift.ts";
 import { formatLandedNoticeEntry } from "../briefing/landed-notices.ts";
+import { largeChangeClause, largeChangeOf } from "../briefing/ghost.ts";
 import type { RenderedLandedNotice } from "../briefing/landed-notices.ts";
 import type {
   AnsweredQuestion,
   HintClaimCandidate,
   HintContextCandidate,
+  HintMatchedOn,
   LandedContextMatch,
   LandedNotice,
   SolvedMatchEntry,
@@ -79,6 +85,27 @@ const CONFIDENCE_DECIMALS = 2;
 
 const CLAIM_HEADER = `crosscheck hint: a teammate's recorded finding may relate to this prompt. ${QUOTED_DATA_NOTICE}`;
 const POINTER_HEADER = `crosscheck pointer: a teammate has notes that may relate to this prompt. ${QUOTED_DATA_NOTICE}`;
+/**
+ * The same two headers when the hub matched the session's INTENT in place of
+ * a prompt that carried nothing task-bearing (DESIGN.md §4). "This prompt"
+ * would then be false — the reader typed "weiter" — so the sentence names
+ * what was actually matched, and labels it the way every intent surface does
+ * (briefing/intent.ts): "intent" only for one `set_intent` declared, "derived
+ * intent" otherwise — positive equality, so an unknown writer is never
+ * presented as vouched for.
+ */
+const sessionIntentWord = (provenance: string | null | undefined): string =>
+  provenance === "declared" ? "intent" : "derived intent";
+
+const claimHeader = (matchedOn: HintMatchedOn | undefined, provenance: string | null | undefined): string =>
+  matchedOn === "intent"
+    ? `crosscheck hint: a teammate's recorded finding may relate to this session's ${sessionIntentWord(provenance)}. ${QUOTED_DATA_NOTICE}`
+    : CLAIM_HEADER;
+
+const pointerHeader = (matchedOn: HintMatchedOn | undefined, provenance: string | null | undefined): string =>
+  matchedOn === "intent"
+    ? `crosscheck pointer: a teammate has notes that may relate to this session's ${sessionIntentWord(provenance)}. ${QUOTED_DATA_NOTICE}`
+    : POINTER_HEADER;
 /**
  * The ANSWER header, and the one word in it that matters is "asked": this is
  * the §4 solicited exception, so the sentence states out loud that the
@@ -186,14 +213,40 @@ const intentLines = (
  * trailing lines are the droppable context, not the substance. Empty when not
  * even the first two lines fit — silence beats a broken frame.
  */
-const fitHint = (lines: readonly string[]): string => {
+const fitHint = (lines: readonly string[], cap: number = MAX_HINT_TEXT_LENGTH): string => {
   const kept = lines.reduce<readonly string[]>((accumulated, line) => {
     const candidate = [...accumulated, line];
-    return candidate.join("\n").length <= MAX_HINT_TEXT_LENGTH
+    return candidate.join("\n").length <= cap
       ? candidate
       : accumulated;
   }, []);
   return kept.length < 2 ? "" : kept.join("\n");
+};
+
+/**
+ * What a teammate hint leaves free for the lines the flow appends after it
+ * (review 1006b): the coverage note at its actual length, on its own line,
+ * and one closing line. Long labels used to fill a hint to the wire cap, and
+ * `withCoverageNote` then dropped the note without a word.
+ */
+export const hintTrailerReserve = (coverage: CoverageRecord, now: Date): number => {
+  const note = coverageNote(coverage, now);
+  return (note === null ? 0 : note.length + 1) + HINT_CLOSING_LINE_RESERVE_CHARS;
+};
+
+/** The cap a hint's own lines fit under, beside the trailers reserved for. */
+const reservedCap = (reserveChars: number | undefined): number =>
+  MAX_HINT_TEXT_LENGTH - (reserveChars ?? 0);
+
+/**
+ * Room for what follows first (review 1006b) — but a hint whose own first two
+ * lines leave none still renders under the bare cap: the trailers never cost
+ * the hint (§5.1). The pointer's rule, and the answer's since L3, so a
+ * waited-for answer no longer fills the cap and loses its coverage note.
+ */
+const fitBesideTrailers = (lines: readonly string[], reserveChars: number | undefined): string => {
+  const reserved = fitHint(lines, reservedCap(reserveChars));
+  return reserved.length > 0 ? reserved : fitHint(lines);
 };
 
 /**
@@ -234,7 +287,41 @@ export interface ClaimHintInput {
   readonly context: HintContext;
   readonly drift: CommitDrift | null;
   readonly now: Date;
+  /** What the hub matched it on; absent is the prompt, as it always was. */
+  readonly matchedOn?: HintMatchedOn;
+  /** Who wrote the session intent it was matched on (declared / derived). */
+  readonly intentProvenance?: string | null;
+  /** The tree's other claims the substance leaves behind; absent counts none. */
+  readonly restCount?: number;
+  /** The hub's window left claims out, so the count is "at least". */
+  readonly isRestLowerBound?: boolean;
+  /** Characters the flow appends after the hint (`hintTrailerReserve`); absent reserves none. */
+  readonly reserveChars?: number;
 }
+
+/**
+ * " beside N more claims", or nothing — "at least N" when the count was read
+ * off a hub window that left claims out (review 1006b): a 50-claim tree must
+ * not read as a 30-claim one.
+ */
+const restFragment = (count: number, isLowerBound: boolean): string =>
+  count > 0
+    ? ` beside ${isLowerBound ? "at least " : ""}${String(count)} more claim${count === 1 ? "" : "s"}`
+    : "";
+
+/**
+ * The pointer to the rest (§4): how many claims stay behind, and the id the
+ * next call takes — a tool named without its argument sends an agent off to
+ * invent one (the answer hint learned that first). The title is the one part
+ * that can go when room is short; the id and the call never do.
+ */
+const restLine = (context: HintContext, rest: string, withTitle: boolean): string => {
+  const title = withTitle ? ` ${quoted(context.title, MAX_WORK_CONTEXT_TITLE_CHARS)}` : "";
+  return (
+    `Recorded on work context ${safeId(context.id)}${title}${rest} — ` +
+    `the full tree is readable with get_diagnosis ${safeId(context.id)}.`
+  );
+};
 
 const validityWordFact = (
   claim: HintClaimCandidate,
@@ -290,11 +377,30 @@ export const renderClaimHint = (input: ClaimHintInput): string => {
     // history nobody asked about. They are one get_diagnosis away.
     ...validityWordFact(claim),
   ];
-  const factsLine = `${facts.join(" · ")}${driftLabel(drift)}${solvedLabel(context, now)}: ${quotedBody(claim.body, UNSOLICITED_CLAIM_BODY_MAX_CHARS)}`;
-  const contextLine =
-    `Recorded on work context ${safeId(context.id)} ${quoted(context.title, MAX_WORK_CONTEXT_TITLE_CHARS)} — ` +
-    "the full tree is readable with get_diagnosis.";
-  return fitHint([CLAIM_HEADER, factsLine, contextLine, ...intentLines(context.intent)]);
+  // ONE SENTENCE OF IT, bounded (§4, revised): the hint says what the finding
+  // IS and points at the rest — the SHOWN TEXT, the one function the hub
+  // scores relevance on too (@crosscheck/schema shownSubstance: the cut, then
+  // the BODY class; review 1006b, M4). Framed through quotedBody, which runs
+  // the same class again and changes nothing in text it already produced. No
+  // sentence with content is no substance: "", never a frame around nothing.
+  const shown = shownSubstance(claim.body);
+  if (shown.length === 0) {
+    return "";
+  }
+  const factsLine = `${facts.join(" · ")}${driftLabel(drift)}${solvedLabel(context, now)}: ${quotedBody(shown, HINT_SUBSTANCE_MAX_CHARS)}`;
+  const header = claimHeader(input.matchedOn, input.intentProvenance);
+  // ROOM FOR WHAT FOLLOWS, and the finding is not what pays for it: the
+  // sentence shown is the one the hub scored, so it is never cut shorter.
+  // The intent line goes first (fitHint drops from the end), then the title
+  // on the pointer line; when even that cannot fit, "" — the flow points.
+  const cap = reservedCap(input.reserveChars);
+  const rest = restFragment(input.restCount ?? 0, input.isRestLowerBound === true);
+  const pointerLine = [true, false]
+    .map((withTitle) => restLine(context, rest, withTitle))
+    .find((line) => [header, factsLine, line].join("\n").length <= cap);
+  return pointerLine === undefined
+    ? ""
+    : fitHint([header, factsLine, pointerLine, ...intentLines(context.intent)], cap);
 };
 
 export interface PointerHintInput {
@@ -315,6 +421,12 @@ export interface PointerHintInput {
   };
   readonly drift: CommitDrift | null;
   readonly now: Date;
+  /** What the hub matched it on; absent is the prompt, as it always was. */
+  readonly matchedOn?: HintMatchedOn;
+  /** Who wrote the session intent it was matched on (declared / derived). */
+  readonly intentProvenance?: string | null;
+  /** Characters the flow appends after the hint (`hintTrailerReserve`); absent reserves none. */
+  readonly reserveChars?: number;
 }
 
 /**
@@ -356,21 +468,27 @@ export const renderPointerHint = (input: PointerHintInput): string => {
     `- ${authorLabel(context.developerName)}`,
     `work context ${safeId(context.id)}`,
     `status ${bare(context.status)}`,
-    ageLabel(context.updatedAt ?? context.createdAt, now),
+    // NO AGE FOR AN AUTHOR WHO OPTED OUT (batch-2 integration review, M5):
+    // the hub withholds her last touch and marks the row, and the creation
+    // the fallback read is when her session began the work — when she was
+    // there. The fact goes whole; the pointer keeps who, what and the status.
+    ...(context.locationWithheld === true ? [] : [ageLabel(context.updatedAt ?? context.createdAt, now)]),
   ];
   const factsLine = `${facts.join(" · ")}${driftLabel(drift)}${solvedLabel(context, now)}: ${quoted(context.title, MAX_WORK_CONTEXT_TITLE_CHARS)}`;
   const tailLine =
     matchedTarget !== undefined
       ? targetsPointerTail(context, matchedTarget, now)
       : claimCount === 0
-        ? "It carries no claims yet (substance is pushed only for evidence-backed findings); " +
+        ? "It carries no claims yet (substance is pushed only for a strongly matched, evidence-backed finding); " +
           `the tree is readable with get_diagnosis ${safeId(context.id)}.`
         : `It carries ${String(claimCount)} claim${claimCount === 1 ? "" : "s"} crosscheck does not ` +
-          "inject unasked (substance is pushed only for evidence-backed findings); the tree is " +
+          "inject unasked (substance is pushed only for a strongly matched, evidence-backed finding); the tree is " +
           `readable with get_diagnosis ${safeId(context.id)}.`;
   // The intent BEFORE the tail: fitHint drops from the end, and of the two
   // the tail is the droppable one — the intent is what says WHAT they do.
-  return fitHint([POINTER_HEADER, factsLine, ...intentLines(context.intent), tailLine]);
+  const header = pointerHeader(input.matchedOn, input.intentProvenance);
+  const lines = [header, factsLine, ...intentLines(context.intent), tailLine];
+  return fitBesideTrailers(lines, input.reserveChars);
 };
 
 /**
@@ -394,6 +512,8 @@ export const renderPointerHint = (input: PointerHintInput): string => {
 export const renderAnswerHint = (
   answer: AnsweredQuestion,
   now: Date,
+  /** Characters the flow appends after the hint (`hintTrailerReserve`); absent reserves none. */
+  reserveChars?: number,
 ): string => {
   const facts = [
     `- ${authorLabel(answer.answererDeveloperName)}`,
@@ -421,7 +541,7 @@ export const renderAnswerHint = (
   const tailLine =
     `It is recorded as claim ${safeId(answer.claimId)} — name that claim id as evidence ` +
     `when you record what it supports${tree}.`;
-  return fitHint([ANSWER_HEADER, answerLine, questionLine, tailLine]);
+  return fitBesideTrailers([ANSWER_HEADER, answerLine, questionLine, tailLine], reserveChars);
 };
 
 /**
@@ -484,6 +604,12 @@ export const renderSolvedHint = (
   return line === null ? "" : fitHint([SOLVED_HINT_HEADER, line]);
 };
 
+/** What the hub could not watch on the file, under a live answer's lines; nothing when it watched it all. */
+const coverageNoteLines = (coverage: CoverageRecord, now: Date): readonly string[] => {
+  const note = coverageNote(coverage, now);
+  return note === null ? [] : [note];
+};
+
 /** A live teammate session on the file: three factual lines, no imperative. */
 const liveTripwireLines = (
   session: TripwireSession,
@@ -492,19 +618,28 @@ const liveTripwireLines = (
   coverage: CoverageRecord,
 ): readonly string[] => {
   const who = authorLabel(session.developerName);
+  // A large change is named as one, beside the file it qualifies (the ghost
+  // line's own clause, briefing/ghost.ts largeChangeClause): a rename through
+  // this file is still in the reader's way, just weaker evidence of a plan.
+  const size = largeChangeOf(session.largeChangeFiles);
   const overlapLine =
     `crosscheck: ${who} has an active session on branch ${bare(session.branch)} ` +
     `(status ${bare(session.status)}, heartbeat ${ageLabel(session.lastHeartbeatAt, now)}) ` +
-    `whose work context targeted ${bare(repoRelativeFile, MAX_WORK_CONTEXT_TITLE_CHARS)}.`;
+    `whose work context targeted ${bare(repoRelativeFile, MAX_WORK_CONTEXT_TITLE_CHARS)}` +
+    `${size === null ? "" : `, ${largeChangeClause(size)}`}.`;
   const contextLine = `Their work context ${quoted(session.workContextTitle, MAX_WORK_CONTEXT_TITLE_CHARS)} is readable with get_diagnosis ${safeId(session.workContextId)}.`;
-  const note = coverageNote(coverage, now);
-  return [
-    overlapLine,
-    contextLine,
-    ...intentLines(session.workContextIntent),
-    ...(note === null ? [] : [note]),
-  ];
+  return [overlapLine, contextLine, ...intentLines(session.workContextIntent), ...coverageNoteLines(coverage, now)];
 };
+
+/**
+ * The live half for a teammate the hub would not name: the person's own
+ * sentence, and nothing to pull — no name, branch, status, heartbeat, title,
+ * intent or work-context id ever reached this connector to print.
+ */
+const anonymousTripwireLines = (repoRelativeFile: string, now: Date, coverage: CoverageRecord): readonly string[] => [
+  `crosscheck: A teammate is working on ${bare(repoRelativeFile, MAX_WORK_CONTEXT_TITLE_CHARS)} right now — talk to your team before you change it.`,
+  ...coverageNoteLines(coverage, now),
+];
 
 const branchList = (branches: readonly string[]): string =>
   branches.map((branch) => bare(branch)).join(" and ");
@@ -539,6 +674,11 @@ const commitBlock = (
 
 /** "started 3h ago", or "started at an unknown time" — never a guess. */
 const sessionStartLabel = (iso: string | undefined, now: Date): string => {
+  // The author opted out of presence: the hub withholds when they arrived
+  // (server services/live-location.ts), which is not the same as unknown.
+  if (iso === LOCATION_WITHHELD) {
+    return `start time ${LOCATION_WITHHELD}`;
+  }
   const ms = iso === undefined ? Number.NaN : Date.parse(iso);
   return Number.isNaN(ms) || ms > now.getTime()
     ? "started at an unknown time"
@@ -655,6 +795,13 @@ const toldLines = (told: readonly string[]): readonly string[] => {
 export interface EditWarningInput {
   /** An active teammate session that targeted the file, if any. */
   readonly live: TripwireSession | null;
+  /**
+   * A teammate the hub would not name — one who opted out of presence — is
+   * live on the file (the owner's decision on the batch-2 integration
+   * review's I1). Said only when no named teammate is: the named row ranks
+   * first, and the next edit of the file asks about the rest.
+   */
+  readonly anonymous?: boolean;
   /** Landed changes to the file, or null when unknown. */
   readonly landed: LandedChanges | null;
   readonly file: string;
@@ -683,10 +830,13 @@ export interface EditWarningInput {
  * there is nothing to say.
  */
 export const renderEditWarning = (input: EditWarningInput): string => {
+  const coverage = input.coverage ?? UNKNOWN_COVERAGE;
   const live =
-    input.live === null
-      ? []
-      : liveTripwireLines(input.live, input.file, input.now, input.coverage ?? UNKNOWN_COVERAGE);
+    input.live !== null
+      ? liveTripwireLines(input.live, input.file, input.now, coverage)
+      : input.anonymous === true
+        ? anonymousTripwireLines(input.file, input.now, coverage)
+        : [];
   const landed =
     input.landed === null
       ? []

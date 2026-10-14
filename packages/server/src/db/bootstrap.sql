@@ -10,6 +10,34 @@
 -- deployment via DATABASE_URL needs the extension installed (DESIGN.md §2).
 CREATE EXTENSION IF NOT EXISTS vector;
 
+-- WHERE THIS HUB LISTENS WHEN NOBODY SAID (CROSSCHECK_LISTEN unset,
+-- http/listen.ts). Recorded ONCE, by the first start of a release that knows
+-- the setting, and never changed after: ON CONFLICT DO NOTHING keeps the
+-- first answer on every later start.
+--
+-- THE ORDER IS THE MARKER. These two statements run before `developers` is
+-- created below, so `to_regclass('developers')` tells the two kinds of
+-- database apart deterministically:
+--   - no `developers` yet: this release is creating the database, so the
+--     hub listens on loopback only;
+--   - `developers` already there: a hub from before the setting, which
+--     listened on every interface. It keeps doing so, so that an upgrade
+--     cuts off no teammate, and the boot and `crosscheck doctor` warn.
+-- PGlite's exec runs this whole script as one implicit transaction, so a
+-- start that dies part-way leaves nothing behind, and the next start decides
+-- afresh. A dump/restore into a fresh data dir is recorded 'loopback' before
+-- its rows arrive; the boot warns about that case (services/hub-install.ts).
+CREATE TABLE IF NOT EXISTS hub_install (
+  singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+  listen_default text NOT NULL
+    CONSTRAINT hub_install_listen_default_check
+    CHECK (listen_default IN ('loopback', 'all_interfaces')),
+  recorded_at timestamptz NOT NULL DEFAULT now()
+);
+INSERT INTO hub_install (listen_default)
+SELECT CASE WHEN to_regclass('developers') IS NULL THEN 'loopback' ELSE 'all_interfaces' END
+ON CONFLICT (singleton) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS developers (
   id text PRIMARY KEY,
   name text NOT NULL,
@@ -29,6 +57,18 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   started_at timestamptz NOT NULL,
   last_heartbeat_at timestamptz NOT NULL,
   ended_at timestamptz
+);
+
+-- Every branch a developer's sessions ever reported (review round 5, H3):
+-- what the live-location projection judges an opted-out owner's unmarked
+-- titles against, without scanning the events table per read. Written as
+-- sessions register (services/developer-branches.ts); backfilled at boot
+-- below the events table.
+CREATE TABLE IF NOT EXISTS developer_branches (
+  developer_id text NOT NULL REFERENCES developers(id),
+  branch text NOT NULL,
+  first_seen timestamptz NOT NULL,
+  PRIMARY KEY (developer_id, branch)
 );
 
 -- Reap bookkeeping (review finding B2-01): tells a hub-inferred end from a
@@ -51,6 +91,17 @@ ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_newest_at timestamptz;
 -- an upper bound on its newest loss, so the read compares an instant instead
 -- of casting loss_kinds JSON to int4, which one large count made throw.
 ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS loss_ignored_at timestamptz;
+
+-- Whether the base commit was already on the default branch when the session
+-- registered, by the connector's own word (pilot finding, 2026-10-05). NULL
+-- means the connector did not say — every row from before the column — and a
+-- base that was already there is never read as this session's work landing
+-- (services/landed.ts).
+ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS base_on_default boolean;
+-- When the session took its base_commit (hub clock): set at register, moved
+-- by a re-register only when the base differs. A base's age is judged against
+-- it. NULL on older rows; readers fall back to started_at.
+ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS base_changed_at timestamptz;
 
 CREATE INDEX IF NOT EXISTS agent_sessions_repo_idx
   ON agent_sessions (repo);
@@ -80,6 +131,10 @@ CREATE TABLE IF NOT EXISTS work_context_targets (
 -- and set by ingestTarget, so a row that predates this column reads null and
 -- the pointer says "age unknown" rather than a fabricated now() age.
 ALTER TABLE work_context_targets ADD COLUMN IF NOT EXISTS created_at timestamptz;
+-- When the target was last touched again (pilot finding, 2026-10-05): every
+-- duplicate touch sets it, so a long-lived session's re-edit today reads as
+-- today. Null until the first re-touch; first-seen (created_at) never moves.
+ALTER TABLE work_context_targets ADD COLUMN IF NOT EXISTS last_seen_at timestamptz;
 
 -- The derived-contradictions join matches targets on (kind, value) with the
 -- PK's leading column unconstrained (services/contradictions.ts) — without
@@ -127,6 +182,30 @@ CREATE UNIQUE INDEX IF NOT EXISTS claim_edges_from_to_kind_idx
 CREATE INDEX IF NOT EXISTS claim_edges_to_kind_idx
   ON claim_edges (to_claim_id, kind);
 
+-- Who made the edge when it was not a person: 'similarity_gate' on every edge
+-- the ingest gate writes, null on one that came over the wire — structural,
+-- so no typed note passes for the gate's (services/draft-link-cleanup.ts;
+-- review round 4, H3). ALTER so one statement covers fresh and older hubs.
+ALTER TABLE claim_edges ADD COLUMN IF NOT EXISTS origin text;
+
+-- Every claim edge a start-up pass removed, as it was, with the pass that
+-- removed it: a removal is never a loss (docs/OPERATIONS.md restores one).
+-- No foreign keys — an archive keeps its rows whatever happens to the claims
+-- and sessions they name. Mirrored in db/schema.ts.
+CREATE TABLE IF NOT EXISTS claim_edges_removed (
+  id text NOT NULL,
+  from_claim_id text NOT NULL,
+  to_claim_id text NOT NULL,
+  kind text NOT NULL,
+  author_session_id text NOT NULL,
+  note text,
+  origin text,
+  created_at timestamptz NOT NULL,
+  removed_at timestamptz NOT NULL,
+  removed_by_pass text NOT NULL,
+  PRIMARY KEY (id, removed_by_pass)
+);
+
 CREATE TABLE IF NOT EXISTS artifacts (
   id text PRIMARY KEY,
   claim_id text NOT NULL REFERENCES claims(id),
@@ -144,6 +223,40 @@ CREATE TABLE IF NOT EXISTS events (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
+-- THE WIRE RECORD OF AN EDGE, by edge id (batch-2 integration review, H6):
+-- the start-up draft-link cleanup (services/draft-link-cleanup.ts) asks, of
+-- every legacy similarity edge, whether a claim_edge_added event names it.
+-- Without this it scanned all of `events` per edge — 86 s on a pilot-scale
+-- hub, every request held — and 58 ms with it. Partial: only that kind.
+CREATE INDEX IF NOT EXISTS events_claim_edge_added_edge_idx
+  ON events ((payload->>'edgeId')) WHERE kind = 'claim_edge_added';
+
+-- The session_started events, for the branch backfill below, which every
+-- boot runs: without it a scan of every event, 17–56 ms on a pilot-scale
+-- hub and growing with the outbox (batch-2 integration review, L13); 5 ms
+-- with it.
+CREATE INDEX IF NOT EXISTS events_session_started_idx
+  ON events (id) WHERE kind = 'session_started';
+
+-- THE BRANCHES A HUB KNEW BEFORE developer_branches EXISTED (review round 5,
+-- H3): every session's current branch, and the branch every session_started
+-- event recorded (a re-registration moves the session's branch, and only the
+-- event still names the old one). Here, at boot, before the hub serves a read:
+-- an opted-out developer's unmarked title on such a branch is withheld from
+-- the first answer on. Idempotent (ON CONFLICT), and a re-run at every boot
+-- also catches up anything a release without the table registered. Only
+-- developers the hub still has: an event may name one since removed.
+INSERT INTO developer_branches (developer_id, branch, first_seen)
+SELECT developer_id, branch, min(seen) FROM (
+  SELECT developer_id, branch, started_at AS seen FROM agent_sessions
+  UNION ALL
+  SELECT payload->>'developerId', payload->>'branch', created_at FROM events
+   WHERE kind = 'session_started' AND payload->>'branch' IS NOT NULL
+) AS reported
+WHERE developer_id IN (SELECT id FROM developers)
+GROUP BY developer_id, branch
+ON CONFLICT DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS hint_deliveries (
   id text PRIMARY KEY,
   session_id text NOT NULL REFERENCES agent_sessions(id),
@@ -154,8 +267,15 @@ CREATE TABLE IF NOT EXISTS hint_deliveries (
   -- cannot be attributed to either, so guessing would manufacture the
   -- measurement the pilot report exists to take.
   channel text NOT NULL DEFAULT 'unknown',
+  -- What the hint was matched on and whose intent the session held (review
+  -- 1006b, M7); NULL when the connector did not say.
+  matched_on text,
+  intent_provenance text,
   delivered_at timestamptz NOT NULL,
-  pulled_at timestamptz
+  pulled_at timestamptz,
+  -- WHEN THE HUB RECEIVED IT (07 13.11, review P5), by the hub's clock: a
+  -- closed month is read by it, so a late backlog never moves the month.
+  ingested_at timestamptz
 );
 
 -- ── Search block (DESIGN.md §6) ─────────────────────────────────────────────
@@ -172,6 +292,83 @@ ALTER TABLE claims ADD COLUMN IF NOT EXISTS tsv tsvector
   GENERATED ALWAYS AS (to_tsvector('english', body)) STORED;
 CREATE INDEX IF NOT EXISTS claims_tsv_idx
   ON claims USING gin (tsv);
+
+-- What the hint floor reads (hold-out review round 5, L2; services/hints.ts
+-- claimWords and documentWords): the words AND a dotted name's parts —
+-- "products.name" says products and name — as @crosscheck/schema
+-- textLexemes reads a text and every prompt reads it. One function spells
+-- them, with DOTTED_NAME_PARTS_SQL and its replacement verbatim
+-- (test/hint-dotted-names.test.ts pins both, and the function's words equal
+-- to the shared rule's).
+CREATE OR REPLACE FUNCTION crosscheck_words_tsv(body text) RETURNS tsvector
+  LANGUAGE sql IMMUTABLE PARALLEL SAFE
+  AS $$ SELECT to_tsvector('english', body) || to_tsvector('english', regexp_replace(body, '([^[:space:]]*[/@][^[:space:]]*)|([[:alnum:]_-])[.](?=[[:alnum:]_-])', '\1\2 ', 'g')) $$;
+
+-- A PLAIN COLUMN THE DATABASE FILLS ON WRITE, NOT A GENERATED ONE (batch-2
+-- integration review, M10). A STORED generated column is computed for every
+-- row when it is added: on a pilot-scale 0.10 hub that rewrote work_contexts
+-- (51 s) and claims (13.8 s) before the port opened, +325 MB of disk at the
+-- peak. Added plain it costs nothing; the trigger below fills every row
+-- written from now on, so it can no more drift from the text than a
+-- generated column could, and the rows an upgrade found are filled after
+-- serving, a chunk at a time (services/words-index.ts), found meanwhile by
+-- their plain words. A hub that ran the generated column keeps its values:
+-- DROP EXPRESSION turns it plain without a rewrite.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = current_schema() AND table_name = 'claims'
+      AND column_name = 'words_tsv' AND is_generated = 'ALWAYS'
+  ) THEN
+    ALTER TABLE claims ALTER COLUMN words_tsv DROP EXPRESSION;
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = current_schema() AND table_name = 'work_contexts'
+      AND column_name = 'words_tsv' AND is_generated = 'ALWAYS'
+  ) THEN
+    ALTER TABLE work_contexts ALTER COLUMN words_tsv DROP EXPRESSION;
+  END IF;
+END
+$$;
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS words_tsv tsvector;
+ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS words_tsv tsvector;
+
+CREATE OR REPLACE FUNCTION crosscheck_claims_words_tsv() RETURNS trigger
+  LANGUAGE plpgsql
+  AS $$
+BEGIN
+  NEW.words_tsv := crosscheck_words_tsv(NEW.body);
+  RETURN NEW;
+END
+$$;
+CREATE OR REPLACE TRIGGER claims_words_tsv_fill
+  BEFORE INSERT OR UPDATE OF body ON claims
+  FOR EACH ROW EXECUTE FUNCTION crosscheck_claims_words_tsv();
+
+CREATE OR REPLACE FUNCTION crosscheck_work_contexts_words_tsv() RETURNS trigger
+  LANGUAGE plpgsql
+  AS $$
+BEGIN
+  NEW.words_tsv := crosscheck_words_tsv(coalesce(NEW.normalized_doc, ''));
+  RETURN NEW;
+END
+$$;
+CREATE OR REPLACE TRIGGER work_contexts_words_tsv_fill
+  BEFORE INSERT OR UPDATE OF normalized_doc ON work_contexts
+  FOR EACH ROW EXECUTE FUNCTION crosscheck_work_contexts_words_tsv();
+
+CREATE INDEX IF NOT EXISTS claims_words_tsv_idx
+  ON claims USING gin (words_tsv);
+CREATE INDEX IF NOT EXISTS work_contexts_words_tsv_idx
+  ON work_contexts USING gin (words_tsv);
+-- The rows the backfill has yet to fill, so it, hub-status and the hint
+-- floor find them without reading every row; empty once it is done.
+CREATE INDEX IF NOT EXISTS claims_words_tsv_pending_idx
+  ON claims (id) WHERE words_tsv IS NULL;
+CREATE INDEX IF NOT EXISTS work_contexts_words_tsv_pending_idx
+  ON work_contexts (id) WHERE words_tsv IS NULL;
 
 -- Optional vector tier: null until an embedder is configured AND has embedded
 -- the row. embedding_model records WHICH embedder minted the vector, because
@@ -200,6 +397,14 @@ CREATE INDEX IF NOT EXISTS claims_embedding_hnsw_idx
 UPDATE work_contexts SET normalized_doc = title || ' ' || status
   WHERE normalized_doc IS NULL;
 
+-- The rule a doc was built by (services/normalized-doc.ts
+-- NORMALIZED_DOC_VERSION). Every existing row reads 0: it was built before
+-- the version existed, and the start-up pass (services/doc-upgrade.ts)
+-- rebuilds the ones holding a draft — docs that still fold in drafts' and
+-- discards' words — after the hub is serving. A constant default, so adding
+-- the column writes no row.
+ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS doc_version integer NOT NULL DEFAULT 0;
+
 -- ── Collective memory (VISION.md §1) ────────────────────────────────────────
 
 -- Merged-branch detection (DESIGN.md §5): stamped when landed_evidence maps
@@ -212,6 +417,42 @@ ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS landed_at timestamptz;
 -- coverage's path scope reads it beside the creating session. Null until the
 -- first update. ALTER so an existing hub gets it too.
 ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS updated_by_session_id text REFERENCES agent_sessions(id);
+
+-- How the title was written, by the connector's own word ('fallback' is the
+-- session's branch, withheld from colleagues of an opted-out developer;
+-- 'host', 'person'). Null for a row an older connector wrote, which the hub
+-- judges by the title's shape. ALTER so an existing hub gets it too.
+ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS title_source text;
+
+-- THE TOPIC a work context is (DESIGN.md "One session, many topics"): one
+-- session edits sibling worktrees on several branches and sends one context
+-- per (repo, branch), each naming its branch and the commit HEAD named at the
+-- session's first touch. Null for a context from a connector before topics,
+-- whose readers fall back to the session's own branch and base commit. ALTER
+-- so an existing hub gets both.
+ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS branch text;
+ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS base_commit text;
+-- ...and the topic's own word about that base (topic review C1): already on
+-- the default branch when the topic opened, or not. A topic lands by its own
+-- base and its own word only (services/landed.ts); null is "not said".
+ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS base_on_default boolean;
+
+-- THE BRANCHES OF TOPICS A HUB TOOK BEFORE IT REMEMBERED THEM (topic review
+-- H4): a topic's branch is where its owner is, and on a `local:` repo its
+-- title IS that bare branch — the projection withholds an opted-out owner's
+-- unmarked title when it names any branch developer_branches holds for her
+-- (services/live-location.ts). Ingest writes it as the topic lands
+-- (services/record-handlers.ts rememberTopicBranch); this catches up every
+-- topic stored before that, at boot, before the hub serves a read.
+-- Idempotent, like the backfill above.
+INSERT INTO developer_branches (developer_id, branch, first_seen)
+SELECT s.developer_id, wc.branch, min(wc.created_at)
+  FROM work_contexts wc
+  JOIN agent_sessions s ON s.id = wc.session_id
+ WHERE wc.branch IS NOT NULL
+   AND s.developer_id IN (SELECT id FROM developers)
+ GROUP BY s.developer_id, wc.branch
+ON CONFLICT DO NOTHING;
 
 -- Similarity-detected contradiction candidates (DESIGN.md §3 ingest gate).
 -- A TABLE for these, and only these: they exist only while an embedder is
@@ -311,6 +552,11 @@ INSERT INTO developer_emails (email, developer_id, is_primary, created_at)
 -- ALTER so one statement covers fresh databases and ones created before the
 -- column existed. Published knowledge is deliberately NOT touched by it.
 ALTER TABLE developers ADD COLUMN IF NOT EXISTS presence_opt_out boolean NOT NULL DEFAULT false;
+
+-- When the search index was rebuilt for the opt-out a developer has now
+-- (review round 5, M1); null while opted out = not yet, and the boot pass
+-- rebuilds it (services/developer-settings.ts).
+ALTER TABLE developers ADD COLUMN IF NOT EXISTS location_index_built_at timestamptz;
 
 -- Reader-side mutes: one row per (reader, muted) pair, filtering the READER's
 -- unasked surfaces only. Hub-side so a mute follows the reader across
@@ -587,6 +833,19 @@ ALTER TABLE pins
 ALTER TABLE work_context_targets
   ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'tool_edit';
 
+-- WHICH generated-target signal fired on a file target (release gate N2,
+-- @crosscheck/schema generated-target.ts): 'path', 'attribute' or 'header'
+-- for a file that is mechanically generated and non-authoritative, or NULL
+-- for an ordinary file and for an authoritative generated one. The connector
+-- sends it; for a target that carries none the hub applies the path signal
+-- itself at ingest, unless the target says it is authoritative. A labelled
+-- row is KEPT — suspect and coverage still read it — and every overlap read
+-- (ghost pairs, conference pairs, the tripwire, the hot count, a context's
+-- size) asks for `generated IS NULL`. Nullable with no default, so a row
+-- that predates the column reads as ordinary: the direction that can only
+-- warn, never silence.
+ALTER TABLE work_context_targets ADD COLUMN IF NOT EXISTS generated text;
+
 -- THE PER-SESSION CAUSAL ORDER (spec 01 §3.5): append-only, content-free, one
 -- row per canonical event. `ref_id` names the row that already holds the
 -- content — a claim id, a session id, or a HASH of a target's (context, kind,
@@ -722,6 +981,10 @@ CREATE TABLE IF NOT EXISTS team_settings (
   -- 07 12 (second review): when enrolment last turned on, so when a person
   -- could first label this repo's interventions. NULL until it is enrolled.
   pilot_labels_since timestamptz,
+  -- 07 13.9: when outcomes became recordable here — stamped like
+  -- pilot_labels_since, so a delivery from before it is outside every outcome
+  -- figure instead of reading "unmarked". NULL until it is enrolled.
+  pilot_outcomes_since timestamptz,
   updated_at timestamptz NOT NULL,
   updated_by text REFERENCES developers(id)
 );
@@ -1150,6 +1413,16 @@ ALTER TABLE pins ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1;
 -- attributed to either. Nothing is back-filled, and the report prints
 -- 'unknown' as its own bucket rather than folding it into a guess.
 ALTER TABLE hint_deliveries ADD COLUMN IF NOT EXISTS channel text NOT NULL DEFAULT 'unknown';
+-- 07 13.11 (review P5): rows from before the column stay NULL and are read by
+-- delivered_at; every new row is stamped by the hub at ingest.
+ALTER TABLE hint_deliveries ADD COLUMN IF NOT EXISTS ingested_at timestamptz;
+
+-- WHAT A DELIVERY WAS MATCHED ON, AND WHOSE INTENT THE SESSION HELD (review
+-- 1006b, M7), for the per-person followed/overrode measurement. NULL on every
+-- existing row and on every row from a connector older than the fields:
+-- nothing is back-filled, and NULL is the honest word for "not said".
+ALTER TABLE hint_deliveries ADD COLUMN IF NOT EXISTS matched_on text;
+ALTER TABLE hint_deliveries ADD COLUMN IF NOT EXISTS intent_provenance text;
 
 -- The same column for a hub that already has the table. 07 3.6 found this
 -- missing: the spec's migration list named four new tables and one pins
@@ -1170,6 +1443,70 @@ ALTER TABLE team_settings ADD COLUMN IF NOT EXISTS pilot_labels_since timestampt
 -- names does not apply).
 UPDATE team_settings SET pilot_labels_since = now()
   WHERE pilot_enrolled AND pilot_labels_since IS NULL;
+
+-- 07 13.9 (the H1 lesson again): WHEN OUTCOMES BECAME RECORDABLE on a repo.
+-- A repo enrolled before this column existed could record no outcome until
+-- this hub started, so it is stamped NOW, once — only rows still NULL match,
+-- so every later start writes nothing.
+ALTER TABLE team_settings ADD COLUMN IF NOT EXISTS pilot_outcomes_since timestamptz;
+UPDATE team_settings SET pilot_outcomes_since = now()
+  WHERE pilot_enrolled AND pilot_outcomes_since IS NULL;
+
+-- WHEN EACH REPO WAS IN THE PILOT (07 13.11, review M3): one row per enrolled
+-- interval, opened when enrolment turns on and closed when it turns off,
+-- never rewritten. An outcome is recordable and counted iff its delivery falls
+-- inside one, so a pause and a re-enrolment never erase the history before them.
+-- Keyed by its own id (review LOW): off and on again in one millisecond is a
+-- closed zero-length interval AND an open one at the same instant.
+CREATE TABLE IF NOT EXISTS pilot_enrolments (
+  id text PRIMARY KEY,
+  repo text NOT NULL,
+  started_at timestamptz NOT NULL,
+  ended_at timestamptz,
+  -- review M-3: bounds an upgrade inferred from what was recorded, not a toggle's instant
+  reconstructed boolean NOT NULL DEFAULT false
+);
+-- A hub that ran the round-3 bootstrap has this table keyed by (repo, started_at), with no id
+-- (review MEDIUM-1): give every row an id of its own and make it the key. Guarded, so a hub
+-- already on this shape skips it, and idempotent, so a second start changes nothing.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = current_schema() AND table_name = 'pilot_enrolments' AND column_name = 'id'
+  ) THEN
+    ALTER TABLE pilot_enrolments ADD COLUMN id text;
+    UPDATE pilot_enrolments SET id = 'pe_' || gen_random_uuid()::text WHERE id IS NULL;
+    ALTER TABLE pilot_enrolments DROP CONSTRAINT IF EXISTS pilot_enrolments_pkey;
+    ALTER TABLE pilot_enrolments ADD PRIMARY KEY (id);
+  END IF;
+END $$;
+ALTER TABLE pilot_enrolments ADD COLUMN IF NOT EXISTS reconstructed boolean NOT NULL DEFAULT false;
+-- An interval never ends before it starts (round-5 LOW-1), a database fact; added once to a
+-- table that predates it (ADD CONSTRAINT has no IF NOT EXISTS). Round-6 MEDIUM-1: an older hub
+-- can hold rows the old now-before-lock race closed before they opened, and the whole bootstrap
+-- is one statement, so one such row kept the hub from starting at all. Repair them first —
+-- closed at their own start, marked as rebuilt — then add the CHECK and validate it.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'pilot_enrolments_ends_after_start'
+                 AND conrelid = 'pilot_enrolments'::regclass) THEN
+    UPDATE pilot_enrolments SET ended_at = started_at, reconstructed = true WHERE ended_at < started_at;
+    ALTER TABLE pilot_enrolments ADD CONSTRAINT pilot_enrolments_ends_after_start
+      CHECK (ended_at IS NULL OR ended_at >= started_at) NOT VALID;
+    ALTER TABLE pilot_enrolments VALIDATE CONSTRAINT pilot_enrolments_ends_after_start;
+  END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS pilot_enrolments_repo_started_idx ON pilot_enrolments (repo, started_at);
+-- Round-6 MEDIUM-1: a round-3 race (two "on"s that both read not-enrolled) could leave two open
+-- intervals, and the index below would refuse to build. Keep the earliest open; close each later
+-- one at its own start, marked as rebuilt. With the index in place this matches nothing.
+UPDATE pilot_enrolments pe SET ended_at = pe.started_at, reconstructed = true
+  WHERE pe.ended_at IS NULL AND EXISTS (
+    SELECT 1 FROM pilot_enrolments o WHERE o.repo = pe.repo AND o.ended_at IS NULL AND o.started_at < pe.started_at);
+-- At most one open interval per repo: a second "on" fails loudly, never doubles.
+CREATE UNIQUE INDEX IF NOT EXISTS pilot_enrolments_one_open_idx ON pilot_enrolments (repo) WHERE ended_at IS NULL;
+-- (The upgrade backfill of this table runs below, once hint_outcomes exists: it reads the words.)
 
 -- ── The pilot instrumentation (1.0 spec 07) ─────────────────────────────────
 
@@ -1228,10 +1565,116 @@ BEGIN
 END
 $$;
 
-CREATE UNIQUE INDEX IF NOT EXISTS pilot_marks_ref_marker_idx
-  ON pilot_marks (ref_kind, ref_id, marked_by);
+-- HUMAN PROVENANCE (0.11 §4): who gave the label. From 0.11 a row here is
+-- written only by a passkey confirmation ('human_passkey_confirmed', with its
+-- confirmation); every row already here reads 'unknown_legacy' and is never
+-- upgraded. The CHECK and the foreign key are added once, at the end of this
+-- file, after human_confirmations exists.
+ALTER TABLE pilot_marks ADD COLUMN IF NOT EXISTS provenance text NOT NULL DEFAULT 'unknown_legacy';
+ALTER TABLE pilot_marks ADD COLUMN IF NOT EXISTS confirmation_id text;
+
+-- One label per person per delivery PER CONFIRMATION: a label whose
+-- confirmation was retracted (compromised) or never stood (its passkey revoked
+-- in the cool-off) must not hold the person's one place, so the "one label in
+-- effect" rule is the writer's (services/pilot.ts, under the pointer's lock),
+-- and the database keeps one row per confirmation (round-2 R2-M1). A
+-- confirmed label never collides with the legacy one a 0.10 hub holds. The
+-- older keys go once.
+CREATE UNIQUE INDEX IF NOT EXISTS pilot_marks_ref_marker_confirmation_idx
+  ON pilot_marks (ref_kind, ref_id, marked_by, provenance, confirmation_id);
+DROP INDEX IF EXISTS pilot_marks_ref_marker_provenance_idx;
+DROP INDEX IF EXISTS pilot_marks_ref_marker_idx;
 CREATE INDEX IF NOT EXISTS pilot_marks_repo_created_idx
   ON pilot_marks (repo, created_at DESC);
+
+-- WHAT A DELIVERED HINT LED TO (07 13): followed, overrode, not_relevant_now,
+-- said by the recipient's agent or the recipient. APPEND-ONLY: the newest row
+-- per delivery is the current outcome and nothing is updated or deleted, so a
+-- changed mind keeps its history. Not pilot_marks: a label is a person's
+-- verdict counted into precision and no agent path may write one (PIL-6);
+-- noise stays that label and is never a value here.
+CREATE TABLE IF NOT EXISTS hint_outcomes (
+  id text PRIMARY KEY,
+  repo text NOT NULL,
+  delivery_id text NOT NULL REFERENCES hint_deliveries(id),
+  outcome text NOT NULL,
+  -- keep in sync with MAX_HINT_OUTCOME_REASON_CHARS in @crosscheck/schema
+  reason text,
+  recorded_by text NOT NULL REFERENCES developers(id),
+  created_at timestamptz NOT NULL,
+  -- 07 13.12: which channel said it, stamped by the hub from the route, never
+  -- from a body ('person' = crosscheck followed/overrode, 'agent' = the MCP
+  -- tool). A person's word is never overturned by an agent's. NULL = older row.
+  recorded_via text,
+  CONSTRAINT hint_outcomes_reason_length_check
+    CHECK (reason IS NULL OR char_length(reason) <= 200),
+  CONSTRAINT hint_outcomes_recorded_via_check
+    CHECK (recorded_via IS NULL OR recorded_via IN ('agent', 'person'))
+);
+-- 07 13.12: a hub whose hint_outcomes predates the channel gains it, its rows
+-- left NULL (read as an agent's word: never outranking a person's).
+ALTER TABLE hint_outcomes ADD COLUMN IF NOT EXISTS recorded_via text;
+
+CREATE INDEX IF NOT EXISTS hint_outcomes_delivery_created_idx
+  ON hint_outcomes (delivery_id, created_at DESC);
+-- 07 13.9 (D-O6): outcomes age out with the pilot, past PILOT_RETENTION_DAYS,
+-- from the reaper's pass across every repo — an index range, never a scan.
+CREATE INDEX IF NOT EXISTS hint_outcomes_created_idx
+  ON hint_outcomes (created_at);
+
+-- THE PERSON SAYING NOISE AGAIN (07 13.11, review H-B). pilot_marks keeps one
+-- label per person and delivery, the first being what precision counts; a later
+-- "noise" over a word recorded since is a new row here, never a restamped label,
+-- so no closed month that read the label ever moves. Precision never reads it.
+CREATE TABLE IF NOT EXISTS noise_reassertions (
+  id text PRIMARY KEY,
+  repo text NOT NULL,
+  delivery_id text NOT NULL REFERENCES hint_deliveries(id),
+  marked_by text NOT NULL REFERENCES developers(id),
+  -- keep in sync with MAX_PILOT_LABEL_REASON_CHARS in @crosscheck/schema
+  reason text,
+  created_at timestamptz NOT NULL,
+  CONSTRAINT noise_reassertions_reason_length_check
+    CHECK (reason IS NULL OR char_length(reason) <= 200)
+);
+CREATE INDEX IF NOT EXISTS noise_reassertions_delivery_created_idx
+  ON noise_reassertions (delivery_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS noise_reassertions_created_idx
+  ON noise_reassertions (created_at);
+
+-- An upgraded hub keeps the enrolment it already had as the first interval,
+-- from its earliest PROVEN instant of outcomes being recordable (07 §13.12
+-- M-3, §13.13 HIGH-2) — open while the repo is enrolled; for one that left,
+-- closed at its last proven enrolled instant, its newest outcome or label —
+-- never its last settings write, which is when it left at the latest. A bound
+-- inferred from what was recorded, rather than the stamp itself, is marked
+-- reconstructed. Once per repo.
+INSERT INTO pilot_enrolments (id, repo, started_at, ended_at, reconstructed)
+  SELECT 'pe_' || gen_random_uuid()::text, b.repo, b.started_at,
+         CASE WHEN b.enrolled THEN NULL ELSE GREATEST(b.started_at, b.last_word) END,
+         (b.started_at < b.recordable OR NOT b.enrolled)
+  FROM (
+    SELECT ts.repo, ts.pilot_enrolled AS enrolled, ts.pilot_outcomes_since AS recordable,
+           LEAST(
+             -- the stamp: when this hub first let outcomes be recorded here (an older hub
+             -- restamped it at a re-enrolment, so it can be later than what it recorded)
+             ts.pilot_outcomes_since,
+             -- an outcome is proof: a hub accepted one only while outcomes were recordable here
+             (SELECT min(o.created_at) FROM hint_outcomes o WHERE o.repo = ts.repo),
+             -- and so is its delivery: a hub accepted an outcome only for a delivery from on or
+             -- after the stamp it had then, so that delivery was inside a recordable span (this
+             -- term is never later than the one above; both are kept as stated proof)
+             (SELECT min(d.delivered_at) FROM hint_outcomes o JOIN hint_deliveries d ON d.id = o.delivery_id
+              WHERE o.repo = ts.repo)
+             -- NEVER a pilot_marks label: a 0.10 hub took labels long before any outcome was
+             -- recordable, so the first label proves enrolment, not recordability (HIGH-2, P2)
+           ) AS started_at,
+           GREATEST((SELECT max(o.created_at) FROM hint_outcomes o WHERE o.repo = ts.repo),
+                    (SELECT max(m.created_at) FROM pilot_marks m WHERE m.repo = ts.repo)) AS last_word
+    FROM team_settings ts
+    WHERE ts.pilot_outcomes_since IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM pilot_enrolments pe WHERE pe.repo = ts.repo)
+  ) b;
 
 -- THE SUSPECT ANSWER, AS IT WAS GIVEN (07 3.3). services/suspect.ts persists
 -- nothing and its window ends NOW, so an answer cannot be reconstructed later
@@ -1423,6 +1866,22 @@ CREATE TABLE IF NOT EXISTS passkeys (
         OR (revoked_at IS NOT NULL AND revoked_by_kind IS NOT NULL))
 );
 
+-- WHY IT WAS CLOSED (round-2 R2-H3): `retired` keeps what the passkey
+-- confirmed while it stood; `compromised` retracts all of it. A passkey closed
+-- before this column existed reads as retired. keep in sync with
+-- PASSKEY_REVOKE_REASONS in @crosscheck/schema
+ALTER TABLE passkeys ADD COLUMN IF NOT EXISTS revoke_reason text;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'passkeys_revoke_reason_check' AND conrelid = 'passkeys'::regclass
+  ) THEN
+    ALTER TABLE passkeys ADD CONSTRAINT passkeys_revoke_reason_check CHECK (
+      revoke_reason IS NULL OR (revoked_at IS NOT NULL AND revoke_reason IN ('retired', 'compromised')));
+  END IF;
+END
+$$;
+
 CREATE UNIQUE INDEX IF NOT EXISTS passkeys_credential_id_idx ON passkeys (credential_id);
 CREATE INDEX IF NOT EXISTS passkeys_developer_idx ON passkeys (developer_id);
 
@@ -1499,3 +1958,224 @@ CREATE TABLE IF NOT EXISTS waiver_requests (
 );
 
 CREATE INDEX IF NOT EXISTS waiver_requests_repo_idx ON waiver_requests (repo, created_at DESC);
+
+-- ── HUMAN PROVENANCE (0.11) ──────────────────────────────────────────────────
+--
+-- A key only DRAFTS what a person must decide; a passkey ceremony over a frozen
+-- batch confirms it. Kept in sync with db/schema.ts and pinned by
+-- test/ddl-sync-provenance.test.ts. Every value below is spelled in
+-- @crosscheck/schema (provenance.ts): the three classes agent_asserted,
+-- interactive_terminal_asserted, human_passkey_confirmed, and the legacy
+-- marker unknown_legacy.
+
+-- What a key wrote that only a person may decide. APPEND-ONLY: a newer draft on
+-- a subject is its next version; nothing here is updated.
+CREATE TABLE IF NOT EXISTS human_drafts (
+  id text PRIMARY KEY,
+  developer_id text NOT NULL REFERENCES developers(id),
+  repo text,
+  kind text NOT NULL,
+  subject_key text NOT NULL,
+  version integer NOT NULL,
+  payload jsonb NOT NULL,
+  provenance text NOT NULL,
+  created_at timestamptz NOT NULL,
+  CONSTRAINT human_drafts_kind_check
+    CHECK (kind IN ('label', 'pin_ok', 'outcome', 'pin', 'pin_broke', 'mute', 'unmute', 'presence_on')),
+  CONSTRAINT human_drafts_provenance_check
+    CHECK (provenance IN ('agent_asserted', 'interactive_terminal_asserted')),
+  CONSTRAINT human_drafts_version_check CHECK (version >= 1)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS human_drafts_subject_version_idx
+  ON human_drafts (developer_id, subject_key, version);
+CREATE INDEX IF NOT EXISTS human_drafts_developer_created_idx
+  ON human_drafts (developer_id, created_at);
+
+-- One passkey confirmation of one frozen batch: the only writer of
+-- human_passkey_confirmed. The batch id is the key, so a batch is confirmed once.
+CREATE TABLE IF NOT EXISTS human_confirmations (
+  id text PRIMARY KEY,
+  developer_id text NOT NULL REFERENCES developers(id),
+  credential_id text NOT NULL REFERENCES passkeys(credential_id),
+  rp_id text NOT NULL,
+  digest text NOT NULL,
+  pending_fingerprint text NOT NULL,
+  item_count integer NOT NULL,
+  formed_at timestamptz NOT NULL,
+  confirmed_at timestamptz NOT NULL,
+  -- The WebAuthn assertion itself, base64url as sent, so a client can verify a
+  -- confirmation without trusting the hub (routes/confirm-status.ts serves it).
+  authenticator_data text NOT NULL,
+  client_data_json text NOT NULL,
+  signature text NOT NULL,
+  user_handle text
+);
+CREATE INDEX IF NOT EXISTS human_confirmations_developer_idx
+  ON human_confirmations (developer_id, confirmed_at);
+
+-- Every item of a confirmed batch, exactly as signed.
+CREATE TABLE IF NOT EXISTS human_confirmation_items (
+  confirmation_id text NOT NULL REFERENCES human_confirmations(id),
+  position integer NOT NULL,
+  draft_id text NOT NULL REFERENCES human_drafts(id),
+  draft_version integer NOT NULL,
+  draft_digest text NOT NULL,
+  decision text NOT NULL,
+  content jsonb NOT NULL,
+  PRIMARY KEY (confirmation_id, position),
+  CONSTRAINT human_confirmation_items_decision_check
+    CHECK (decision IN ('confirm', 'discard', 'keep'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS human_confirmation_items_draft_idx
+  ON human_confirmation_items (confirmation_id, draft_id);
+CREATE INDEX IF NOT EXISTS human_confirmation_items_by_draft_idx
+  ON human_confirmation_items (draft_id);
+
+-- The more-private changes a key makes at once (presence off), with their class.
+CREATE TABLE IF NOT EXISTS privacy_changes (
+  id text PRIMARY KEY,
+  developer_id text NOT NULL REFERENCES developers(id),
+  kind text NOT NULL,
+  provenance text NOT NULL,
+  created_at timestamptz NOT NULL,
+  CONSTRAINT privacy_changes_kind_check CHECK (kind IN ('presence_off', 'presence_on')),
+  CONSTRAINT privacy_changes_provenance_check
+    CHECK (provenance IN ('agent_asserted', 'interactive_terminal_asserted', 'human_passkey_confirmed'))
+);
+CREATE INDEX IF NOT EXISTS privacy_changes_developer_created_idx
+  ON privacy_changes (developer_id, created_at);
+
+-- The records that count. pilot_marks gained its columns beside its unique key
+-- (above); the others gain theirs here. Every row already there is a 0.10 row.
+ALTER TABLE noise_reassertions ADD COLUMN IF NOT EXISTS provenance text NOT NULL DEFAULT 'unknown_legacy';
+ALTER TABLE noise_reassertions ADD COLUMN IF NOT EXISTS confirmation_id text;
+ALTER TABLE hint_outcomes ADD COLUMN IF NOT EXISTS provenance text NOT NULL DEFAULT 'unknown_legacy';
+ALTER TABLE hint_outcomes ADD COLUMN IF NOT EXISTS confirmation_id text;
+ALTER TABLE developer_mutes ADD COLUMN IF NOT EXISTS provenance text NOT NULL DEFAULT 'unknown_legacy';
+ALTER TABLE developer_mutes ADD COLUMN IF NOT EXISTS confirmation_id text;
+ALTER TABLE pins ADD COLUMN IF NOT EXISTS provenance text NOT NULL DEFAULT 'unknown_legacy';
+ALTER TABLE pins ADD COLUMN IF NOT EXISTS confirmation_id text;
+ALTER TABLE pins ADD COLUMN IF NOT EXISTS broke_provenance text;
+ALTER TABLE pins ADD COLUMN IF NOT EXISTS broke_confirmation_id text;
+-- Review M5/P9: a confirmed row names the ITEM that signed it — the confirmation
+-- and the item's position in it — so a client checks each row against what was
+-- signed, and a row upgraded by naming a confirmation alone is refused.
+ALTER TABLE pilot_marks ADD COLUMN IF NOT EXISTS confirmation_position integer;
+ALTER TABLE noise_reassertions ADD COLUMN IF NOT EXISTS confirmation_position integer;
+ALTER TABLE hint_outcomes ADD COLUMN IF NOT EXISTS confirmation_position integer;
+ALTER TABLE developer_mutes ADD COLUMN IF NOT EXISTS confirmation_position integer;
+ALTER TABLE pins ADD COLUMN IF NOT EXISTS confirmation_position integer;
+ALTER TABLE pins ADD COLUMN IF NOT EXISTS broke_confirmation_position integer;
+-- A break from before 0.11 is a legacy break. Touches nothing once done: every
+-- later break is written with its provenance (the CHECK below holds it).
+UPDATE pins SET broke_provenance = 'unknown_legacy'
+  WHERE broke_at IS NOT NULL AND broke_provenance IS NULL;
+
+-- The CHECKs and foreign keys, once each: a confirmed row names its
+-- confirmation, a legacy row none, and no draft class ever reaches a record
+-- that counts. Guarded like the body-length constraints, so no restart takes
+-- ACCESS EXCLUSIVE to re-prove what already holds.
+DO $$
+DECLARE
+  target text;
+BEGIN
+  FOREACH target IN ARRAY ARRAY['pilot_marks', 'noise_reassertions', 'hint_outcomes', 'developer_mutes', 'pins'] LOOP
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conname = target || '_provenance_check' AND conrelid = target::regclass
+    ) THEN
+      EXECUTE format(
+        'ALTER TABLE %I ADD CONSTRAINT %I CHECK ('
+          || '(provenance = %L AND confirmation_id IS NULL AND confirmation_position IS NULL) '
+          || 'OR (provenance = %L AND confirmation_id IS NOT NULL AND confirmation_position IS NOT NULL))',
+        target, target || '_provenance_check', 'unknown_legacy', 'human_passkey_confirmed');
+    END IF;
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conname = target || '_confirmation_fk' AND conrelid = target::regclass
+    ) THEN
+      EXECUTE format(
+        'ALTER TABLE %I ADD CONSTRAINT %I FOREIGN KEY (confirmation_id, confirmation_position) '
+          || 'REFERENCES human_confirmation_items(confirmation_id, position)',
+        target, target || '_confirmation_fk');
+    END IF;
+  END LOOP;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'pins_broke_provenance_check' AND conrelid = 'pins'::regclass
+  ) THEN
+    -- COALESCE: a CHECK that evaluates to NULL passes, so a break with no
+    -- provenance must compare as '' and fail every clause, never as NULL.
+    ALTER TABLE pins ADD CONSTRAINT pins_broke_provenance_check CHECK (
+      (broke_at IS NULL AND broke_provenance IS NULL AND broke_confirmation_id IS NULL AND broke_confirmation_position IS NULL)
+      OR (broke_at IS NOT NULL AND COALESCE(broke_provenance, '') = 'unknown_legacy'
+          AND broke_confirmation_id IS NULL AND broke_confirmation_position IS NULL)
+      OR (broke_at IS NOT NULL AND COALESCE(broke_provenance, '') = 'human_passkey_confirmed'
+          AND broke_confirmation_id IS NOT NULL AND broke_confirmation_position IS NOT NULL));
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'pins_broke_confirmation_fk' AND conrelid = 'pins'::regclass
+  ) THEN
+    ALTER TABLE pins ADD CONSTRAINT pins_broke_confirmation_fk
+      FOREIGN KEY (broke_confirmation_id, broke_confirmation_position)
+      REFERENCES human_confirmation_items(confirmation_id, position);
+  END IF;
+END
+$$;
+
+-- Round-2 M5: a confirmed row is admitted only under a CONFIRMED item of its
+-- own kind. The foreign keys above bind the item, not what it signed, so a
+-- row moved under another kind's item (A-P9: a label under an outcome's item)
+-- or under a discarded one passed them. This is the check a reader of
+-- GET /api/confirm/confirmations would make by hand, made by the database on
+-- every write. It is not authenticity: whoever can write the database can
+-- write the item too (§11, R3) — it makes a forgery two coherent rows, not one.
+-- TG_ARGV[0] is the column prefix ('' or 'broke_'), the rest the kinds that
+-- write the table. keep in sync with DRAFT_KINDS in @crosscheck/schema
+CREATE OR REPLACE FUNCTION human_row_names_its_item() RETURNS trigger LANGUAGE plpgsql AS $fn$
+DECLARE
+  fields jsonb := to_jsonb(NEW);
+  signed_by text := fields ->> (TG_ARGV[0] || 'confirmation_id');
+  signed_kind text;
+  signed_decision text;
+BEGIN
+  IF signed_by IS NULL THEN
+    RETURN NEW;
+  END IF;
+  SELECT d.kind, i.decision INTO signed_kind, signed_decision
+    FROM human_confirmation_items i JOIN human_drafts d ON d.id = i.draft_id
+    WHERE i.confirmation_id = signed_by
+      AND i.position = (fields ->> (TG_ARGV[0] || 'confirmation_position'))::integer;
+  IF signed_decision IS DISTINCT FROM 'confirm' OR NOT COALESCE(signed_kind = ANY (TG_ARGV[1:]), false) THEN
+    RAISE EXCEPTION 'a % row names confirmation item %/% — not a confirmed % draft',
+      TG_TABLE_NAME, signed_by, fields ->> (TG_ARGV[0] || 'confirmation_position'), array_to_string(TG_ARGV[1:], ' or ')
+      USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END
+$fn$;
+-- Once each, like the constraints: a restart takes no lock to re-create them.
+DO $$
+DECLARE
+  target record;
+BEGIN
+  FOR target IN
+    SELECT * FROM (VALUES
+      ('pilot_marks', 'pilot_marks_names_its_item', '', 'confirmation_id, confirmation_position', ARRAY['label', 'pin_ok']),
+      ('noise_reassertions', 'noise_reassertions_names_its_item', '', 'confirmation_id, confirmation_position', ARRAY['label']),
+      ('hint_outcomes', 'hint_outcomes_names_its_item', '', 'confirmation_id, confirmation_position', ARRAY['outcome']),
+      ('developer_mutes', 'developer_mutes_names_its_item', '', 'confirmation_id, confirmation_position', ARRAY['mute']),
+      ('pins', 'pins_names_its_item', '', 'confirmation_id, confirmation_position', ARRAY['pin']),
+      ('pins', 'pins_break_names_its_item', 'broke_', 'broke_confirmation_id, broke_confirmation_position', ARRAY['pin_broke'])
+    ) AS t(tbl, trg, prefix, cols, kinds)
+  LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = target.trg AND tgrelid = target.tbl::regclass) THEN
+      EXECUTE format(
+        'CREATE TRIGGER %I BEFORE INSERT OR UPDATE OF %s ON %I FOR EACH ROW EXECUTE FUNCTION human_row_names_its_item(%L, %s)',
+        target.trg, target.cols, target.tbl, target.prefix,
+        (SELECT string_agg(quote_literal(kind), ', ') FROM unnest(target.kinds) AS kind));
+    END IF;
+  END LOOP;
+END
+$$;

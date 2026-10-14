@@ -16,12 +16,15 @@
  * No embedder is configured — the corpus pins the keyless default install's
  * lexical behavior (DESIGN.md §6).
  */
+import { serveLoopback } from "../loopback-serve.ts";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import { createDb, createServer } from "@crosscheck/server";
+import { createDb } from "@crosscheck/server";
+import { createServerConfirmingAtOnce } from "../../../../server/test/fixtures/immediate-confirmation.ts";
 
 import { MAX_HINTS_PER_SESSION } from "../../../src/constants.ts";
+import { substanceSentence } from "@crosscheck/schema";
 import { runHook } from "../../../../connector-claude/src/index.ts";
 import type { Env } from "../../../src/index.ts";
 import { writeSessionState } from "../../../src/state/session-state.ts";
@@ -120,13 +123,15 @@ const expectOk = async (
 
 const startHub = async (): Promise<Hub> => {
   const db = await createDb();
-  const app = createServer({
+  // The corpus seeds mutes as settings IN EFFECT: a hub that applies them at
+  // once, as every hub before human provenance (0.11) did.
+  const app = createServerConfirmingAtOnce({
     db,
     now: () => new Date(CORPUS_NOW_ISO),
     adminToken: ADMIN_TOKEN,
     embedder: null,
   });
-  const server = Bun.serve({ port: 0, fetch: app.fetch });
+  const server = serveLoopback({ port: 0, fetch: app.fetch });
   return {
     url: `http://127.0.0.1:${String(server.port)}`,
     stop: () => {
@@ -496,6 +501,7 @@ const probeSessionState = (
   summarizerUnreadableCount: 0,
   summarizerLastUnreadable: null,
   workContextTitle: null,
+  workContextTitleSource: null,
   workContextStatus: null,
   agentKind: null,
   workContextAcked: null,
@@ -504,6 +510,9 @@ const probeSessionState = (
   intentSetCount: 0,
   intentFailCount: 0,
   intentLastFailure: null,
+  intentRefusedCount: 0,
+  intentSkippedCount: 0,
+  intentLastDrop: null,
   workContextIntent: null,
   ghostPending: false,
   gitTouchCount: 0,
@@ -522,6 +531,13 @@ const probeSessionState = (
   toolWindows: [],
   toolWindowEvictions: 0,
   toolWindowMisses: 0,
+  draftNudge: null,
+  draftNudgeRetryAt: null,
+  deriveFires: [],
+  topicContexts: [],
+  startBranch: null,
+  sessionTouchedAt: null,
+  topicOverflowCount: 0,
   outsideRootDrops: 0,
   knownWorktreeRoots: [],
   editToolFires: 0,
@@ -531,6 +547,9 @@ const probeSessionState = (
   lastEditedPath: null,
   lastEditedPathResolvedAgainst: null,
   hintCandidatesSeen: 0,
+  flooredPromptCount: 0,
+  harnessTurnCount: 0,
+  quietCallCount: 0,
 });
 
 interface Observation {
@@ -580,7 +599,11 @@ const claimsById = (corpus: Corpus): ReadonlyMap<string, CorpusClaim> =>
     ),
   );
 
-/** The label checks beyond the outcome class — expected refs, framed body. */
+/**
+ * The label checks beyond the outcome class — expected refs, framed body.
+ * The body a substance hint frames is the claim's FIRST SENTENCE (DESIGN.md
+ * §4, @crosscheck/schema substance-sentence.ts), so that is what is looked for.
+ */
 const refIssues = (
   probe: CorpusProbe,
   observation: Observation,
@@ -594,7 +617,7 @@ const refIssues = (
     const claim = claims.get(probe.expectClaimId);
     if (claim === undefined) {
       issues.push(`probe names unknown claim ${probe.expectClaimId}`);
-    } else if (!observation.rendered.includes(`«${claim.body}»`)) {
+    } else if (!observation.rendered.includes(`«${substanceSentence(claim.body)}»`)) {
       issues.push(
         `expected the framed body of ${probe.expectClaimId}, got: ${observation.rendered}`,
       );

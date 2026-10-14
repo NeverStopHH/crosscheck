@@ -1,19 +1,31 @@
 /**
- * "Teammate work contexts" is ONE LINE PER TEAMMATE (audit row M15-rest).
+ * "Teammate work contexts" groups a teammate's work by TOPIC.
  *
- * A work context is created per SESSION, so a teammate with three worktrees —
- * or three restarts on one branch — owned three of them, and a section bounded
- * at MAX_CONTEXTS = 5 lines sorted by age was filled by one person while the
- * teammate working somewhere else never reached the briefing at all.
+ * A work context is created per SESSION. The first fix (audit row M15-rest)
+ * made the section one line per teammate with "N other pieces of work"; the
+ * pilot then showed what that line says at scale: one developer running
+ * subagent and worktree sessions owned 471 contexts, and his line read
+ * "469 other pieces of work" — a number nobody can act on. A topic is what a
+ * reader recognises — the branch a `<branch> @ <repo>` title carries — so many
+ * sessions on one branch are one topic with a count and the newest activity.
  */
 import { describe, expect, test } from "bun:test";
+import { SESSION_STATUSES } from "@crosscheck/schema";
 
-import { MAX_CONTEXTS } from "../src/constants.ts";
-import { groupContextsByDeveloper } from "../src/briefing/context-group.ts";
+import {
+  MAX_BRIEFING_CHARS,
+  MAX_CONTEXTS,
+  MAX_TOPICS_PER_TEAMMATE,
+} from "../src/constants.ts";
+import {
+  TOPIC_STATUS_PRECEDENCE,
+  groupTopicsByDeveloper,
+} from "../src/briefing/topic-group.ts";
 import { renderBriefing } from "../src/briefing/render.ts";
 import type { PresenceEntry, WorkContextEntry } from "../src/http/hub.ts";
 
 const NOW = new Date("2026-08-21T12:00:00.000Z");
+const REPO_ID = "github.com/acme/api";
 const minutesAgo = (minutes: number): string =>
   new Date(NOW.getTime() - minutes * 60_000).toISOString();
 
@@ -30,6 +42,23 @@ const context = (overrides: Partial<WorkContextEntry> = {}): WorkContextEntry =>
   ...overrides,
 });
 
+/** N sessions of one teammate on one branch, a minute apart from `first`. */
+const sessionsOn = (
+  branch: string,
+  count: number,
+  first: number,
+  overrides: Partial<WorkContextEntry> = {},
+): readonly WorkContextEntry[] =>
+  Array.from({ length: count }, (_unused, index) =>
+    context({
+      id: `wc_${branch}_${String(index)}`,
+      sessionId: `cc_${branch}_${String(index)}`,
+      title: `${branch} @ api`,
+      createdAt: minutesAgo(first + index),
+      ...overrides,
+    }),
+  );
+
 const presence = (overrides: Partial<PresenceEntry> = {}): PresenceEntry => ({
   sessionId: "cc_ken",
   developerId: "dev_ken",
@@ -41,92 +70,103 @@ const presence = (overrides: Partial<PresenceEntry> = {}): PresenceEntry => ({
   ...overrides,
 });
 
-const render = (contexts: readonly WorkContextEntry[]): string =>
+const render = (
+  contexts: readonly WorkContextEntry[],
+  livePresence: readonly PresenceEntry[] = [presence()],
+): string =>
   renderBriefing({
-    repoId: "github.com/acme/api",
+    repoId: REPO_ID,
     selfDeveloperId: "dev_self",
-    presence: [presence()],
+    presence: livePresence,
     workContexts: contexts,
     now: NOW,
   });
 
-const contextLines = (rendered: string): readonly string[] => {
+/** Every line of the section, indented ones included. */
+const sectionLines = (rendered: string): readonly string[] => {
   const start = rendered.indexOf("Teammate work contexts on this repo:");
   expect(start).toBeGreaterThanOrEqual(0);
-  return rendered
-    .slice(start)
-    .split("\n")
-    .slice(1)
-    .filter((line) => line.startsWith("- "));
+  const lines = rendered.slice(start).split("\n").slice(1);
+  const end = lines.findIndex(
+    (line) => !line.startsWith("- ") && !line.startsWith("  ") && !line.startsWith("(+"),
+  );
+  return end === -1 ? lines : lines.slice(0, end);
 };
 
-describe("one line per teammate, not per context", () => {
-  test("three contexts of one teammate are one line that says how many", () => {
-    // Arrange: Ken, three worktrees, three different pieces of work.
+/** The teammate lines only: one per person. */
+const contextLines = (rendered: string): readonly string[] =>
+  sectionLines(rendered).filter((line) => line.startsWith("- "));
+
+/** The topic lines under a multi-topic teammate. */
+const topicLines = (rendered: string): readonly string[] =>
+  sectionLines(rendered).filter((line) => line.startsWith("  - "));
+
+describe("a teammate's work is grouped by topic", () => {
+  test("sessions on one branch are one topic with a count and the newest activity", () => {
+    // Arrange: Ken, twelve sessions on one branch, a minute apart — the
+    // subagent-and-worktree shape the pilot showed.
+    const rendered = render(sessionsOn("feat/limiter", 12, 4));
+
+    // Assert: one line, one topic, the count, the FRESHEST age, the branch
+    // without the repo label every title in this listing repeats
+    expect(sectionLines(rendered)).toEqual([
+      "- Ken, 12 sessions, 4m ago, status analyzing: «feat/limiter»",
+    ]);
+  });
+
+  test("three branches are three topics under one name", () => {
     const rendered = render([
-      context({ id: "wc_1", title: "Login 500s on staging", createdAt: minutesAgo(5) }),
-      context({ id: "wc_2", title: "Cube rebuild is slow", createdAt: minutesAgo(20) }),
-      context({ id: "wc_3", title: "Importer retries forever", createdAt: minutesAgo(40) }),
+      ...sessionsOn("feat/a", 2, 5),
+      ...sessionsOn("feat/b", 1, 20),
+      ...sessionsOn("feat/c", 3, 40),
     ]);
 
-    // Assert: one line, the freshest title, and the two it stands for
-    const lines = contextLines(rendered);
-    expect(lines).toHaveLength(1);
-    expect(lines[0]).toContain("«Login 500s on staging»");
-    expect(lines[0]).toContain("2 other pieces of work");
-    expect(rendered).not.toContain("«Cube rebuild is slow»");
+    expect(sectionLines(rendered)).toEqual([
+      "- Ken, 3 topics, 6 sessions:",
+      "  - 2 sessions, 5m ago, status analyzing: «feat/a»",
+      "  - 1 session, 20m ago, status analyzing: «feat/b»",
+      "  - 3 sessions, 40m ago, status analyzing: «feat/c»",
+    ]);
   });
 
-  test("the same branch open twice is one piece of work, counted once", () => {
-    // Two worktrees on the same branch produce the identical title; counting
-    // it twice would tell the reader there is more work than there is.
-    const lines = contextLines(
-      render([
-        context({ id: "wc_1", title: "Login 500s on staging", createdAt: minutesAgo(5) }),
-        context({ id: "wc_2", title: "Login 500s on staging", createdAt: minutesAgo(9) }),
-        context({ id: "wc_3", title: "Cube rebuild is slow", createdAt: minutesAgo(40) }),
-      ]),
+  test("topics beyond the cap are counted, never silently cut", () => {
+    // Arrange: two more topics than a teammate's entry shows
+    const branches = Array.from(
+      { length: MAX_TOPICS_PER_TEAMMATE + 2 },
+      (_unused, index) => `feat/t${String(index)}`,
+    );
+    const rendered = render(
+      branches.flatMap((branch, index) => sessionsOn(branch, 1, 10 * (index + 1))),
     );
 
-    expect(lines).toHaveLength(1);
-    expect(lines[0]).toContain("1 other piece of work");
-    expect(lines[0]).not.toContain("2 other");
+    // Assert: the freshest ones shown, the rest said out loud
+    expect(topicLines(rendered)).toHaveLength(MAX_TOPICS_PER_TEAMMATE);
+    expect(topicLines(rendered)[0]).toContain("«feat/t0»");
+    expect(sectionLines(rendered)).toContain("  … and 2 more topics");
   });
 
-  test("the count says what it counts — pieces of work, not contexts", () => {
-    // Ken: FOUR eligible contexts under TWO titles, the exact case this
-    // module exists for ("three worktrees, or restarting their agent three
-    // times on the same branch"). Counting distinct work is the right choice
-    // and the doc comment says so; the noun on the line was the untruth. A
-    // reader deciding whether to interrupt Ken read "1 more context" and
-    // believed he had two sessions open when he had four.
-    const lines = contextLines(
-      render([
-        context({ id: "wc_1", title: "Importer retries forever", createdAt: minutesAgo(3) }),
-        context({ id: "wc_2", title: "Importer retries forever", createdAt: minutesAgo(9) }),
-        context({ id: "wc_3", title: "Importer retries forever", createdAt: minutesAgo(14) }),
-        context({ id: "wc_4", title: "Login 500s on staging", createdAt: minutesAgo(30) }),
-      ]),
-    );
+  test("identical titles minutes apart collapse even without the repo label", () => {
+    // A host-supplied title carries no ` @ <repo>`; the same title twice is
+    // still one piece of work seen twice.
+    const rendered = render([
+      context({ id: "wc_1", sessionId: "cc_1", title: "Importer retries forever", createdAt: minutesAgo(3) }),
+      context({ id: "wc_2", sessionId: "cc_2", title: "Importer retries forever", createdAt: minutesAgo(9) }),
+    ]);
 
-    expect(lines).toHaveLength(1);
-    expect(lines[0]).toContain("1 other piece of work");
-    // The number is right; it is the noun that was wrong. "context" is what
-    // the reader would have counted rows of, and there are three others.
-    expect(lines[0]).not.toContain("more context");
+    expect(sectionLines(rendered)).toEqual([
+      "- Ken, 2 sessions, 3m ago, status analyzing: «Importer retries forever»",
+    ]);
   });
 
   test("a teammate with one context reads exactly as it did before", () => {
     // The control on the wording: nothing is appended when nothing was folded.
     const lines = contextLines(render([context({ id: "wc_1" })]));
 
-    expect(lines).toHaveLength(1);
-    expect(lines[0]).toBe("- Ken, 30m ago, status analyzing: «Login 500s on staging»");
+    expect(lines).toEqual(["- Ken, 30m ago, status analyzing: «Login 500s on staging»"]);
   });
 
   test("a teammate no longer crowds the section out from under another", () => {
-    // THE SYMPTOM, in one test: Ken has five sessions open, Alice one. Before
-    // grouping, Ken's five filled MAX_CONTEXTS and Alice was never rendered.
+    // THE SYMPTOM, in one test: Ken has five topics open, Alice one.
     const kens = [1, 2, 3, 4, 5].map((n) =>
       context({
         id: `wc_ken_${String(n)}`,
@@ -145,66 +185,379 @@ describe("one line per teammate, not per context", () => {
       }),
     ]);
 
-    const lines = contextLines(rendered);
-    expect(lines).toHaveLength(2);
+    expect(contextLines(rendered)).toHaveLength(2);
     expect(rendered).toContain("«Importer retries forever»");
+  });
+
+  test("two contexts of one session are one session, not two", () => {
+    // A recovered session can own a second context; "N sessions" counts
+    // sessions, so the reader is not told about a session that never ran.
+    const rendered = render([
+      context({ id: "wc_1", sessionId: "cc_same", title: "feat/x @ api", createdAt: minutesAgo(2) }),
+      context({ id: "wc_2", sessionId: "cc_same", title: "feat/x @ api", createdAt: minutesAgo(8) }),
+    ]);
+
+    expect(sectionLines(rendered)).toEqual([
+      "- Ken, 2m ago, status analyzing: «feat/x»",
+    ]);
   });
 });
 
-describe("which context speaks for the teammate", () => {
-  test("a session that recorded something outranks a fresher empty shell", () => {
-    // A context is created by STARTING a session, so the freshest one is
-    // frequently the one that has done nothing yet.
-    const lines = contextLines(
-      render([
-        context({ id: "wc_new", title: "Just started", createdAt: minutesAgo(1) }),
-        context({
-          id: "wc_real",
-          title: "Login 500s on staging",
-          createdAt: minutesAgo(45),
-          claimCount: 3,
-        }),
-      ]),
-    );
+describe("the topic is the session's own branch when the hub sends it", () => {
+  test("distinct free-form titles on one branch fold into one topic", () => {
+    // Host-supplied session titles say what each session was asked to do;
+    // the branch is what the three of them are working on.
+    const rendered = render([
+      context({ id: "wc_1", sessionId: "cc_1", branch: "feat/auth", title: "Fix the login 500s", createdAt: minutesAgo(1) }),
+      context({ id: "wc_2", sessionId: "cc_2", branch: "feat/auth", title: "Investigate the refresh path", createdAt: minutesAgo(6) }),
+      context({ id: "wc_3", sessionId: "cc_3", branch: "feat/auth", title: "Review the token rotation", createdAt: minutesAgo(9) }),
+    ]);
 
-    expect(lines[0]).toContain("«Login 500s on staging»");
-    expect(lines[0]).toContain("45m ago");
+    expect(sectionLines(rendered)).toEqual([
+      "- Ken, 3 sessions, 1m ago, status analyzing: «feat/auth»",
+    ]);
+  });
+
+  test("a topic whose sessions all share one host title is called by that title", () => {
+    // The branch is the KEY; the line still says what the sessions say when
+    // they agree — "Login 500s on staging" tells a reader more than "main".
+    const rendered = render([
+      context({ id: "wc_1", sessionId: "cc_1", branch: "main", title: "Login 500s on staging", createdAt: minutesAgo(1) }),
+      context({ id: "wc_2", sessionId: "cc_2", branch: "main", title: "Login 500s on staging", createdAt: minutesAgo(7) }),
+    ]);
+
+    expect(sectionLines(rendered)).toEqual([
+      "- Ken, 2 sessions, 1m ago, status analyzing: «Login 500s on staging»",
+    ]);
+  });
+
+  test("sessions on a detached HEAD are one topic for the repo, never one per sha", () => {
+    // Worktree sessions sit on detached HEADs; grouping by sha would make
+    // every one of them its own topic. An older hub's row without a branch
+    // falls back to its title, and a detached title is never keyed by sha either.
+    const rendered = render([
+      context({ id: "wc_1", sessionId: "cc_1", branch: "detached@abc1234", title: "detached@abc1234 · Fix flaky test @ api", createdAt: minutesAgo(2) }),
+      context({ id: "wc_2", sessionId: "cc_2", branch: "detached@def5678", title: "detached@def5678 · Try the other fix @ api", createdAt: minutesAgo(4) }),
+      context({ id: "wc_3", sessionId: "cc_3", branch: "HEAD", title: "HEAD @ api", createdAt: minutesAgo(6) }),
+      context({ id: "wc_4", sessionId: "cc_4", title: "detached@0a1b2c3 · Older hub row @ api", createdAt: minutesAgo(8) }),
+    ]);
+
+    expect(sectionLines(rendered)).toEqual([
+      "- Ken, 4 sessions, 2m ago, status analyzing: «<detached HEAD>»",
+    ]);
+  });
+
+  test("a detached session whose title names the branch it sits on groups under that branch", () => {
+    // The session-start title builder resolves a detached worktree to the
+    // branch whose tip it sits on (flows/work-context-title.ts); that title
+    // is better than "detached" and is the fallback the session itself chose.
+    const rendered = render([
+      context({ id: "wc_1", sessionId: "cc_1", branch: "feat/x", title: "Some host title", createdAt: minutesAgo(2) }),
+      context({ id: "wc_2", sessionId: "cc_2", branch: "detached@abc1234", title: "feat/x @ api", createdAt: minutesAgo(5) }),
+    ]);
+
+    expect(sectionLines(rendered)).toEqual([
+      "- Ken, 2 sessions, 2m ago, status analyzing: «feat/x»",
+    ]);
+  });
+});
+
+describe("topics are keyed by the RAW branch, sanitized only for display", () => {
+  test("two branches whose names both redact stay two topics, each with its own status", () => {
+    // Both names trip the phrase filter and print as the same redaction —
+    // grouped on that label they were ONE topic, and the blocked one's status
+    // spoke for the other.
+    const rendered = render([
+      context({ id: "wc_1", sessionId: "cc_1", branch: "feat/config-override", title: "feat/config-override @ api", createdAt: minutesAgo(1) }),
+      context({ id: "wc_2", sessionId: "cc_2", branch: "fix/override-cache", title: "fix/override-cache @ api", status: "blocked", createdAt: minutesAgo(5) }),
+    ]);
+
+    const lines = sectionLines(rendered);
+    expect(lines[0]).toBe("- Ken, 2 topics, 2 sessions:");
+    expect(lines.filter((line) => line.startsWith("  - "))).toEqual([
+      "  - 1 session, 1m ago, status analyzing: «[redacted: title looked like an instruction]»",
+      "  - 1 session, 5m ago, status blocked: «[redacted: title looked like an instruction]»",
+    ]);
+  });
+
+  test("two long branches that differ only past the title cap stay two topics", () => {
+    const stem = `cursor/implement-the-briefing-topic-bundles-for-teammate-work-contexts-${"a".repeat(10)}`;
+    const rendered = render([
+      context({ id: "wc_1", sessionId: "cc_1", branch: `${stem}-1111`, title: "t1", createdAt: minutesAgo(1) }),
+      context({ id: "wc_2", sessionId: "cc_2", branch: `${stem}-2222`, title: "t2", status: "blocked", createdAt: minutesAgo(5) }),
+    ]);
+
+    expect(contextLines(rendered)).toEqual(["- Ken, 2 topics, 2 sessions:"]);
+    expect(topicLines(rendered)).toHaveLength(2);
+  });
+
+  test("two titles that redact alike do not agree: the topic is called by its branch", () => {
+    // Compared after sanitizing, both titles read as the same redaction and
+    // the topic printed it as if the sessions agreed on what they were doing.
+    const rendered = render([
+      context({ id: "wc_1", sessionId: "cc_1", branch: "feat/cache", title: "Fix the override path", createdAt: minutesAgo(1) }),
+      context({ id: "wc_2", sessionId: "cc_2", branch: "feat/cache", title: "Override the stale cache", createdAt: minutesAgo(4) }),
+    ]);
+
+    expect(sectionLines(rendered)).toEqual([
+      "- Ken, 2 sessions, 1m ago, status analyzing: «feat/cache»",
+    ]);
+  });
+
+  test("a branch literally named detached is not the detached-HEAD topic", () => {
+    const rendered = render([
+      context({ id: "wc_1", sessionId: "cc_1", branch: "detached", title: "a", createdAt: minutesAgo(1) }),
+      context({ id: "wc_2", sessionId: "cc_2", branch: "detached", title: "b", createdAt: minutesAgo(2) }),
+      context({ id: "wc_3", sessionId: "cc_3", branch: "detached@abc1234", title: "detached@abc1234 · Fix it @ api", createdAt: minutesAgo(3) }),
+      context({ id: "wc_4", sessionId: "cc_4", branch: "detached@def5678", title: "detached@def5678 · Try again @ api", createdAt: minutesAgo(4) }),
+    ]);
+
+    expect(sectionLines(rendered)).toEqual([
+      "- Ken, 2 topics, 4 sessions:",
+      "  - 2 sessions, 1m ago, status analyzing: «detached»",
+      "  - 2 sessions, 3m ago, status analyzing: «<detached HEAD>»",
+    ]);
+  });
+
+  test("a branch named detached@<word> is a branch, not the detached-HEAD topic", () => {
+    // `detached@release` is a legal git branch; only `detached@<hex sha>` is
+    // what resolveBranch writes for a detached HEAD (git/detached-branch.ts).
+    const rendered = render([
+      context({ id: "wc_1", sessionId: "cc_1", branch: "detached@release", title: "detached@release @ api", createdAt: minutesAgo(1) }),
+      context({ id: "wc_2", sessionId: "cc_2", branch: "detached@abc1234", title: "detached@abc1234 · Fix it @ api", createdAt: minutesAgo(3) }),
+      context({ id: "wc_3", sessionId: "cc_3", branch: "detached@def5678", title: "detached@def5678 · Try again @ api", createdAt: minutesAgo(4) }),
+    ]);
+
+    expect(sectionLines(rendered)).toEqual([
+      "- Ken, 2 topics, 3 sessions:",
+      "  - 1 session, 1m ago, status analyzing: «detached@release»",
+      "  - 2 sessions, 3m ago, status analyzing: «<detached HEAD>»",
+    ]);
+  });
+
+  test("a branch that calls itself the detached label cannot print it", () => {
+    // git forbids the space, but a branch arrives from a connector. The label
+    // carries `<` `>`, which the sanitizer strips from every branch and title,
+    // so neither spelling of the forgery can print what the renderer prints.
+    const rendered = render([
+      context({ id: "wc_1", sessionId: "cc_1", branch: "detached HEAD", title: "detached HEAD @ api", createdAt: minutesAgo(1) }),
+      context({ id: "wc_2", sessionId: "cc_2", branch: "<detached HEAD>", title: "<detached HEAD> @ api", createdAt: minutesAgo(2) }),
+      context({ id: "wc_3", sessionId: "cc_3", branch: "detached@abc1234", title: "detached@abc1234 · Fix it @ api", createdAt: minutesAgo(3) }),
+      context({ id: "wc_4", sessionId: "cc_4", branch: "detached@def5678", title: "detached@def5678 · Try again @ api", createdAt: minutesAgo(4) }),
+    ]);
+
+    const lines = sectionLines(rendered);
+    expect(lines.filter((line) => line.includes("<detached HEAD>"))).toEqual([
+      "  - 2 sessions, 3m ago, status analyzing: «<detached HEAD>»",
+    ]);
+  });
+
+  test("a branch literally named detached-head is not the detached-HEAD topic", () => {
+    // The detached topic's key IS `detached-head`; every branch key carries
+    // the `branch:` namespace, so not even a branch spelled like it can join.
+    const rendered = render([
+      context({ id: "wc_1", sessionId: "cc_1", branch: "detached-head", title: "detached-head @ api", createdAt: minutesAgo(1) }),
+      context({ id: "wc_2", sessionId: "cc_2", branch: "detached@abc1234", title: "detached@abc1234 · Fix it @ api", createdAt: minutesAgo(3) }),
+      context({ id: "wc_3", sessionId: "cc_3", branch: "detached@def5678", title: "detached@def5678 · Try again @ api", createdAt: minutesAgo(4) }),
+    ]);
+
+    expect(sectionLines(rendered)).toEqual([
+      "- Ken, 2 topics, 3 sessions:",
+      "  - 1 session, 1m ago, status analyzing: «detached-head»",
+      "  - 2 sessions, 3m ago, status analyzing: «<detached HEAD>»",
+    ]);
+  });
+});
+
+describe("topics alike in activity are ordered deterministically", () => {
+  test("by the label the reader sees before the raw key", () => {
+    // Same recency, same session count, neither has recorded work: the label
+    // decides, and here it disagrees with the key (`[` sorts before `a`, the
+    // key `branch:alpha` before `branch:fix/…`), so only the label tie-break
+    // puts the redacted topic first.
+    const rendered = render([
+      context({ id: "wc_1", sessionId: "cc_1", branch: "alpha", title: "alpha @ api", createdAt: minutesAgo(1) }),
+      context({ id: "wc_2", sessionId: "cc_2", branch: "fix/override-cache", title: "fix/override-cache @ api", createdAt: minutesAgo(1) }),
+    ]);
+
+    expect(sectionLines(rendered).filter((line) => line.startsWith("  - "))).toEqual([
+      "  - 1 session, 1m ago, status analyzing: «[redacted: title looked like an instruction]»",
+      "  - 1 session, 1m ago, status analyzing: «alpha»",
+    ]);
+  });
+
+  test("by the raw key when the labels are alike too, never by arrival order", () => {
+    // Both branches redact to one label, so only the key can order them;
+    // without it, the line order would be whatever order the hub sent.
+    const rendered = render([
+      context({ id: "wc_1", sessionId: "cc_1", branch: "fix/override-cache", title: "fix/override-cache @ api", status: "blocked", createdAt: minutesAgo(1) }),
+      context({ id: "wc_2", sessionId: "cc_2", branch: "feat/config-override", title: "feat/config-override @ api", createdAt: minutesAgo(1) }),
+    ]);
+
+    expect(sectionLines(rendered).filter((line) => line.startsWith("  - "))).toEqual([
+      "  - 1 session, 1m ago, status analyzing: «[redacted: title looked like an instruction]»",
+      "  - 1 session, 1m ago, status blocked: «[redacted: title looked like an instruction]»",
+    ]);
+  });
+});
+
+describe("the status a topic shows", () => {
+  test("the most advanced status in a topic is the one shown", () => {
+    // The freshest session on the branch is still analyzing; an older one on
+    // the same branch is implementing. The topic IS being implemented.
+    const rendered = render([
+      context({ id: "wc_new", sessionId: "cc_new", title: "feat/x @ api", createdAt: minutesAgo(2) }),
+      context({
+        id: "wc_old",
+        sessionId: "cc_old",
+        title: "feat/x @ api",
+        status: "implementing",
+        createdAt: minutesAgo(20),
+      }),
+    ]);
+
+    expect(contextLines(rendered)).toEqual([
+      "- Ken, 2 sessions, 2m ago, status implementing: «feat/x»",
+    ]);
+  });
+
+  test("live work outranks a session that finished on the same branch", () => {
+    // One subagent on the branch is done; another is still implementing it.
+    // The reader asking "what is live?" must read implementing.
+    const rendered = render([
+      context({ id: "wc_done", sessionId: "cc_done", title: "feat/x @ api", status: "done", createdAt: minutesAgo(2) }),
+      context({ id: "wc_live", sessionId: "cc_live", title: "feat/x @ api", status: "implementing", createdAt: minutesAgo(20) }),
+    ]);
+
+    expect(contextLines(rendered)[0]).toContain("status implementing");
+  });
+
+  test("a blocked session always surfaces, over live and finished work alike", () => {
+    const rendered = render([
+      context({ id: "wc_1", sessionId: "cc_1", title: "feat/x @ api", status: "implementing", createdAt: minutesAgo(1) }),
+      context({ id: "wc_2", sessionId: "cc_2", title: "feat/x @ api", status: "testing", createdAt: minutesAgo(3) }),
+      context({ id: "wc_3", sessionId: "cc_3", title: "feat/x @ api", status: "done", createdAt: minutesAgo(5) }),
+      context({ id: "wc_4", sessionId: "cc_4", title: "feat/x @ api", status: "blocked", createdAt: minutesAgo(40) }),
+    ]);
+
+    expect(contextLines(rendered)[0]).toContain("status blocked");
+  });
+
+  test("done shows only when nothing in the topic is live", () => {
+    const finished = render([
+      context({ id: "wc_1", sessionId: "cc_1", title: "feat/x @ api", status: "done", createdAt: minutesAgo(1) }),
+      context({ id: "wc_2", sessionId: "cc_2", title: "feat/x @ api", status: "done", createdAt: minutesAgo(5) }),
+    ]);
+    const stillAnalyzing = render([
+      context({ id: "wc_1", sessionId: "cc_1", title: "feat/x @ api", status: "done", createdAt: minutesAgo(1) }),
+      context({ id: "wc_2", sessionId: "cc_2", title: "feat/x @ api", status: "analyzing", createdAt: minutesAgo(5) }),
+    ]);
+
+    expect(contextLines(finished)[0]).toContain("status done");
+    expect(contextLines(stillAnalyzing)[0]).toContain("status analyzing");
+  });
+
+  test("the display order ranks every status the enum has, each exactly once", () => {
+    // A status added to SESSION_STATUSES and forgotten here would rank as
+    // unknown — below `done` — on every surface that lists a teammate.
+    expect([...TOPIC_STATUS_PRECEDENCE].sort()).toEqual([...SESSION_STATUSES].sort());
+  });
+
+  test("a status this client does not know is never promoted over one it does", () => {
+    const rendered = render([
+      context({ id: "wc_1", sessionId: "cc_1", title: "feat/x @ api", status: "reticulating", createdAt: minutesAgo(1) }),
+      context({ id: "wc_2", sessionId: "cc_2", title: "feat/x @ api", status: "planning", createdAt: minutesAgo(5) }),
+    ]);
+
+    expect(contextLines(rendered)[0]).toContain("status planning");
+  });
+
+  test("with no known status in the topic, the speaking row's own is shown, never one invented", () => {
+    const rendered = render([
+      context({ id: "wc_1", sessionId: "cc_1", title: "feat/x @ api", status: "reticulating", createdAt: minutesAgo(1) }),
+      context({ id: "wc_2", sessionId: "cc_2", title: "feat/x @ api", status: "splining", createdAt: minutesAgo(5) }),
+    ]);
+
+    expect(contextLines(rendered)[0]).toContain("status reticulating");
+  });
+});
+
+describe("which topic, and which session, speaks first", () => {
+  test("a topic with recorded work outranks a fresher empty shell", () => {
+    // A context is created by STARTING a session, so the freshest topic is
+    // frequently the one that has done nothing yet.
+    const rendered = render([
+      context({ id: "wc_new", title: "Just started", createdAt: minutesAgo(1) }),
+      context({
+        id: "wc_real",
+        title: "Login 500s on staging",
+        createdAt: minutesAgo(45),
+        claimCount: 3,
+      }),
+    ]);
+
+    expect(topicLines(rendered)[0]).toContain("«Login 500s on staging»");
+    expect(topicLines(rendered)[0]).toContain("45m ago");
   });
 
   test("captured files count as recorded work, not only claims", () => {
-    // Tier-0 capture logs the files a session touched long before anybody
-    // publishes a claim; that session is doing real work.
-    const lines = contextLines(
-      render([
-        context({ id: "wc_new", title: "Just started", createdAt: minutesAgo(1) }),
-        context({
-          id: "wc_real",
-          title: "Login 500s on staging",
-          createdAt: minutesAgo(45),
-          targetCount: 4,
-        }),
-      ]),
-    );
+    const rendered = render([
+      context({ id: "wc_new", title: "Just started", createdAt: minutesAgo(1) }),
+      context({
+        id: "wc_real",
+        title: "Login 500s on staging",
+        createdAt: minutesAgo(45),
+        targetCount: 4,
+      }),
+    ]);
 
-    expect(lines[0]).toContain("«Login 500s on staging»");
+    expect(topicLines(rendered)[0]).toContain("«Login 500s on staging»");
   });
 
-  test("with nothing recorded anywhere, the freshest still speaks", () => {
-    // The control the two tests above need: substance is a PREFERENCE, and
-    // when no row has any, the section behaves exactly as it always did.
-    const lines = contextLines(
-      render([
-        context({ id: "wc_new", title: "Just started", createdAt: minutesAgo(1) }),
-        context({ id: "wc_old", title: "Login 500s on staging", createdAt: minutesAgo(45) }),
-      ]),
-    );
+  test("with nothing recorded anywhere, the freshest topic still leads", () => {
+    const rendered = render([
+      context({ id: "wc_new", title: "Just started", createdAt: minutesAgo(1) }),
+      context({ id: "wc_old", title: "Login 500s on staging", createdAt: minutesAgo(45) }),
+    ]);
 
-    expect(lines[0]).toContain("«Just started»");
+    expect(topicLines(rendered)[0]).toContain("«Just started»");
+  });
+
+  test("inside one topic, the session that recorded something speaks for its intent", () => {
+    // Both sessions are on the same branch, so they are one topic; the intent
+    // printed under it belongs to the session that did the work, not to the
+    // fresher one that has only just started.
+    const intent = (summary: string) => ({
+      summary,
+      provenance: "declared",
+      confidence: 0.9,
+      capturedAt: minutesAgo(1),
+    });
+    const rendered = render([
+      context({
+        id: "wc_new",
+        sessionId: "cc_new",
+        title: "feat/x @ api",
+        createdAt: minutesAgo(1),
+        intent: intent("Just looking around"),
+      }),
+      context({
+        id: "wc_real",
+        sessionId: "cc_real",
+        title: "feat/x @ api",
+        createdAt: minutesAgo(30),
+        claimCount: 2,
+        intent: intent("Stop the importer retrying forever"),
+      }),
+    ]);
+
+    expect(sectionLines(rendered)).toEqual([
+      "- Ken, 2 sessions, 1m ago, status analyzing: «feat/x»",
+      "  intent: «Stop the importer retrying forever»",
+    ]);
   });
 
   test("a hub too old to send the counts is read as nothing recorded", () => {
-    // Both counts are optional on the wire. An older hub sends neither, and
-    // the section must degrade to the freshest rather than to an exception.
     const older = (id: string, title: string, minutes: number): WorkContextEntry => ({
       id,
       developerId: "dev_ken",
@@ -215,76 +568,123 @@ describe("which context speaks for the teammate", () => {
       updatedAt: null,
     });
 
-    const lines = contextLines(
-      render([older("wc_new", "Just started", 1), older("wc_old", "Older work", 45)]),
+    const rendered = render([older("wc_new", "Just started", 1), older("wc_old", "Older work", 45)]);
+
+    expect(contextLines(rendered)).toEqual(["- Ken, 2 topics, 2 sessions:"]);
+    expect(topicLines(rendered)[0]).toContain("«Just started»");
+  });
+});
+
+describe("a count the hub could not complete", () => {
+  test("is said as at least, everywhere it appears", () => {
+    // Arrange: the hub reports 900 contexts for Ken in the window, and its
+    // row bound let three of them through.
+    const rendered = render(
+      [
+        ...sessionsOn("feat/a", 2, 1),
+        ...sessionsOn("feat/b", 1, 10),
+      ].map((row) => ({ ...row, developerContextCount: 900 })),
     );
 
-    expect(lines).toHaveLength(1);
-    expect(lines[0]).toContain("«Just started»");
-    expect(lines[0]).toContain("1 other piece of work");
+    expect(sectionLines(rendered)).toEqual([
+      "- Ken, at least 2 topics, at least 3 sessions:",
+      "  - at least 2 sessions, 1m ago, status analyzing: «feat/a»",
+      "  - at least 1 session, 10m ago, status analyzing: «feat/b»",
+    ]);
+  });
+
+  test("a single topic the hub could not complete still says it may not be the only one", () => {
+    const rendered = render(
+      sessionsOn("feat/a", 2, 1).map((row) => ({ ...row, developerContextCount: 40 })),
+    );
+
+    expect(contextLines(rendered)).toEqual(["- Ken, at least 1 topic, at least 2 sessions:"]);
+  });
+
+  test("the more-topics tail is a lower bound too", () => {
+    const branches = Array.from(
+      { length: MAX_TOPICS_PER_TEAMMATE + 1 },
+      (_unused, index) => `feat/t${String(index)}`,
+    );
+    const rendered = render(
+      branches
+        .flatMap((branch, index) => sessionsOn(branch, 1, index + 1))
+        .map((row) => ({ ...row, developerContextCount: 50 })),
+    );
+
+    expect(sectionLines(rendered)).toContain("  … and at least 1 more topic");
+  });
+
+  test("a listing the hub completed never says at least", () => {
+    // The control: the hub's count equals what arrived.
+    const rows = [...sessionsOn("feat/a", 2, 1), ...sessionsOn("feat/b", 1, 10)];
+    const rendered = render(rows.map((row) => ({ ...row, developerContextCount: rows.length })));
+
+    expect(rendered).not.toContain("at least");
+    expect(contextLines(rendered)).toEqual(["- Ken, 2 topics, 3 sessions:"]);
   });
 });
 
 describe("the grouping rules themselves", () => {
   const row = (
     developerId: string,
-    title: string,
+    topic: string,
     ageMs: number,
     hasRecordedWork = false,
-  ): {
-    developerId: string;
-    title: string;
-    ageMs: number;
-    hasRecordedWork: boolean;
-  } => ({ developerId, title, ageMs, hasRecordedWork });
+    sessionKey = `${developerId}:${topic}:${String(ageMs)}`,
+    status = "analyzing",
+  ) => ({ developerId, topicKey: topic, label: topic, ageMs, hasRecordedWork, sessionKey, status });
+
+  test("rows that print alike but are keyed apart stay two topics", () => {
+    // The label is display only; the KEY decides what is one piece of work.
+    const groups = groupTopicsByDeveloper([
+      { ...row("dev_a", "x", 1_000), topicKey: "branch:feat/config-override", label: "[redacted]" },
+      { ...row("dev_a", "y", 2_000), topicKey: "branch:fix/override-cache", label: "[redacted]" },
+    ]);
+
+    expect(groups[0]?.topics.map((topic) => [topic.key, topic.label])).toEqual([
+      ["branch:feat/config-override", "[redacted]"],
+      ["branch:fix/override-cache", "[redacted]"],
+    ]);
+  });
 
   test("the answer does not depend on the order the rows arrived in", () => {
-    // The hub's ORDER BY is activity DESC, but a tolerant list drops rows and
-    // a future hub may order differently; grouping must be a function of the
-    // set, not of the sequence.
     const rows = [
       row("dev_a", "A newest", 1_000),
       row("dev_a", "A older", 9_000, true),
+      row("dev_a", "A older", 12_000),
       row("dev_b", "B only", 4_000),
     ];
-    const forwards = groupContextsByDeveloper(rows);
-    const backwards = groupContextsByDeveloper([...rows].reverse());
+    const forwards = groupTopicsByDeveloper(rows);
+    const backwards = groupTopicsByDeveloper([...rows].reverse());
 
-    expect(forwards.map((group) => group.shown.title)).toEqual([
-      "B only",
-      "A older",
-    ]);
-    expect(backwards.map((group) => group.shown.title)).toEqual(
-      forwards.map((group) => group.shown.title),
-    );
-    expect(backwards.map((group) => group.otherTitles)).toEqual(
-      forwards.map((group) => group.otherTitles),
-    );
+    const shape = (groups: typeof forwards) =>
+      groups.map((group) => ({
+        developerId: group.developerId,
+        sessions: group.sessions,
+        topics: group.topics.map((topic) => [topic.label, topic.sessions, topic.ageMs, topic.status]),
+      }));
+    expect(shape(backwards)).toEqual(shape(forwards));
+    expect(forwards[0]?.topics.map((topic) => topic.label)).toEqual(["A older", "A newest"]);
   });
 
-  test("teammates are ordered freshest first by the row that speaks for them", () => {
-    const groups = groupContextsByDeveloper([
+  test("teammates are ordered by their newest activity", () => {
+    const groups = groupTopicsByDeveloper([
       row("dev_a", "A", 5_000),
       row("dev_b", "B", 1_000),
       row("dev_c", "C", 9_000),
     ]);
 
-    expect(groups.map((group) => group.shown.developerId)).toEqual([
-      "dev_b",
-      "dev_a",
-      "dev_c",
-    ]);
+    expect(groups.map((group) => group.developerId)).toEqual(["dev_b", "dev_a", "dev_c"]);
   });
 
   test("an empty listing groups to nothing rather than to one empty group", () => {
-    expect(groupContextsByDeveloper([])).toEqual([]);
+    expect(groupTopicsByDeveloper([])).toEqual([]);
   });
 });
 
 describe("the section's own bound", () => {
   test("more teammates than fit are counted by the section, not folded into a line", () => {
-    // `total` counts TEAMMATES now. The footer says how many people did not
-    // fit; the fold counts on each line say what that person is not showing.
     const contexts = Array.from({ length: MAX_CONTEXTS + 2 }, (_, index) =>
       context({
         id: `wc_${String(index)}`,
@@ -299,5 +699,136 @@ describe("the section's own bound", () => {
 
     expect(contextLines(rendered)).toHaveLength(MAX_CONTEXTS);
     expect(rendered).toContain("(+2 more not shown)");
+  });
+});
+
+/**
+ * THE PILOT'S SHAPE. Nick: 471 contexts — twelve sessions on the branch he is
+ * implementing, two on another, 457 more spread over 47 branches, 470 of them
+ * analyzing. Ken: 24 over six branches. Mike: five on one. 500 rows, all
+ * inside the hub's 600-row bound, so every count is complete.
+ */
+const pilotRow = (
+  developer: string,
+  index: number,
+  branch: string,
+  minutes: number,
+  status: string,
+  total: number,
+): WorkContextEntry => ({
+  id: `wc_${developer}_${String(index)}`,
+  sessionId: `cc_${developer}_${String(index)}`,
+  developerId: `dev_${developer.toLowerCase()}`,
+  developerName: developer,
+  title: `${branch} @ monorepo`,
+  status,
+  createdAt: minutesAgo(minutes),
+  updatedAt: null,
+  claimCount: 0,
+  targetCount: 0,
+  developerContextCount: total,
+});
+
+const pilotContexts = (): readonly WorkContextEntry[] => [
+  ...Array.from({ length: 12 }, (_unused, index) =>
+    pilotRow("Nick", index, "feat/deferred-answer-integrity-flow", 5 + index, index === 4 ? "implementing" : "analyzing", 471),
+  ),
+  pilotRow("Nick", 100, "feat/gc-end-points-3238", 10, "analyzing", 471),
+  pilotRow("Nick", 101, "feat/gc-end-points-3238", 25, "analyzing", 471),
+  ...Array.from({ length: 457 }, (_unused, index) =>
+    pilotRow("Nick", 200 + index, `feat/pilot-topic-${String(index % 47)}`, 30 + 3 * index, "analyzing", 471),
+  ),
+  ...Array.from({ length: 24 }, (_unused, index) =>
+    pilotRow("Ken", index, `fix/ken-${String(index % 6)}`, 20 + 7 * index, index === 0 ? "implementing" : "analyzing", 24),
+  ),
+  ...Array.from({ length: 5 }, (_unused, index) =>
+    pilotRow("Mike", index, "feat/mike-importer", 120 + 10 * index, "implementing", 5),
+  ),
+];
+
+const WIDE = "w".repeat(60);
+const widePresence = (name: string): PresenceEntry =>
+  presence({
+    sessionId: `cc_live_${name}`,
+    developerId: `dev_${name.toLowerCase()}`,
+    developerName: name,
+    branch: `feat/${name.toLowerCase()}-${WIDE}`,
+    status: "implementing",
+    intent: {
+      summary: `Live work for ${name} ${WIDE}`,
+      provenance: "derived",
+      confidence: 0.4,
+      capturedAt: minutesAgo(1),
+    },
+  });
+
+describe("the briefing budget with the pilot's 500 contexts", () => {
+  const renderPilot = (): string =>
+    renderBriefing({
+      repoId: "github.com/gamecodeai/monorepo",
+      selfDeveloperId: "dev_self",
+      presence: ["Nick", "Ken", "Mike"].map(widePresence),
+      workContexts: pilotContexts(),
+      now: NOW,
+    });
+
+  test("stays inside MAX_BRIEFING_CHARS and names every teammate", () => {
+    const rendered = renderPilot();
+
+    expect(pilotContexts()).toHaveLength(500);
+    expect(rendered.length).toBeLessThanOrEqual(MAX_BRIEFING_CHARS);
+    expect(contextLines(rendered)).toEqual([
+      "- Nick, 49 topics, 471 sessions:",
+      "- Ken, 6 topics, 24 sessions:",
+      "- Mike, 5 sessions, 2h ago, status implementing: «feat/mike-importer»",
+    ]);
+  });
+
+  test("Nick's 471 contexts read as his topics, freshest first, and say how many more", () => {
+    const lines = sectionLines(renderPilot());
+    const nick = lines.slice(0, lines.indexOf("- Ken, 6 topics, 24 sessions:"));
+
+    expect(nick).toEqual([
+      "- Nick, 49 topics, 471 sessions:",
+      "  - 12 sessions, 5m ago, status implementing: «feat/deferred-answer-integrity-flow»",
+      "  - 2 sessions, 10m ago, status analyzing: «feat/gc-end-points-3238»",
+      "  - 10 sessions, 30m ago, status analyzing: «feat/pilot-topic-0»",
+      "  … and 46 more topics",
+    ]);
+  });
+
+  test("at the cap, a teammate who does not fit is counted whole, never cut mid-entry", () => {
+    // Arrange: the same 500 rows spread over seven teammates whose every
+    // field is at its width — more than the briefing can hold.
+    const wideName = (index: number): string => `Teammate ${String(index)} ${"n".repeat(60)}`;
+    const contexts = Array.from({ length: 500 }, (_unused, index) => {
+      const owner = index % 7;
+      return pilotRow(wideName(owner), index, `feat/${String(owner)}-${String(index % 40)}-${"t".repeat(70)}`, 1 + index, "analyzing", 72);
+    }).map((row, index) => ({
+      ...row,
+      developerId: `dev_${String(index % 7)}`,
+      developerContextCount: undefined,
+    }));
+
+    // Act
+    const rendered = renderBriefing({
+      repoId: "github.com/gamecodeai/monorepo",
+      selfDeveloperId: "dev_self",
+      presence: [],
+      workContexts: contexts,
+      now: NOW,
+    });
+
+    // Assert: within the cap, close enough that the cap is what put it there
+    expect(rendered.length).toBeLessThanOrEqual(MAX_BRIEFING_CHARS);
+    expect(rendered.length).toBeGreaterThan(MAX_BRIEFING_CHARS * 0.8);
+    // every teammate is either shown or counted
+    const shown = contextLines(rendered).length;
+    const hidden = Number(/^\(\+(\d+) more not shown\)$/m.exec(rendered)?.[1] ?? "0");
+    expect(shown).toBeGreaterThan(0);
+    expect(shown + hidden).toBe(7);
+    // and every entry that IS shown carries its own tail, so none was cut
+    const lines = sectionLines(rendered);
+    expect(lines.filter((line) => line.startsWith("  … and "))).toHaveLength(shown);
   });
 });

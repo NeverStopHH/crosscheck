@@ -1,27 +1,51 @@
 /**
- * /ui/approvals + POST /ui/artifacts/:id/(approve|revoke) — task item 6.
+ * /ui/approvals and the artifact release ceremony — task item 6, and review
+ * M2.
  *
  * DESIGN.md §5 semantics under test: artifacts default needs_approval =
  * owner-only until released. The owner is the developer behind the claim's
- * author session. Authorization is HUB-side (another developer with a valid
- * session and a valid CSRF token of their own still cannot approve), CSRF
- * is enforced on every state-changing POST, and approval flips visibility
- * on the work-context page for other developers.
+ * author session. Authorization is HUB-side (another developer with a usable
+ * passkey of their own still cannot name the artifact), and approval flips
+ * visibility on the work-context page for other developers.
+ *
+ * RELEASE IS A PASSKEY CEREMONY. Any API key opens a /ui session, so an agent
+ * holding the key could release its person's artifact with one form post.
+ * Approve and revoke now run through /ui/webauthn with the 24-hour cool-off,
+ * and POST /ui/artifacts/:id/(approve|revoke) only refuses.
  */
+import { createHash } from "node:crypto";
+
 import { describe, expect, test } from "bun:test";
+import { eq } from "drizzle-orm";
 
 import {
+  TEST_ADMIN_TOKEN,
   addTestDeveloperWithSession,
   createTestDeveloper,
   createTestHarness,
+  jsonRequest,
   postRecords,
   recordEnvelope,
   registerTestSession,
   validClaimBody,
   validWorkContextBody,
 } from "./helpers.ts";
-import type { TestDeveloper, TestHarness } from "./helpers.ts";
+import type { TestDeveloper, TestHarness, TestHarnessOptions } from "./helpers.ts";
 import { artifacts } from "../src/db/schema.ts";
+import { setArtifactApproval } from "../src/services/artifacts.ts";
+import { performOnArtifact } from "../src/routes/ui-ceremony-artifacts.ts";
+import type { ArtifactFields } from "../src/routes/ui-ceremony-artifacts.ts";
+import type { AppDeps } from "../src/types.ts";
+import {
+  assertViaUi,
+  ceremony,
+  dataOf,
+  enrolViaUi,
+  errorCodeOf,
+  pastCoolOff,
+  viewerOf,
+} from "./fixtures/ceremony-driver.ts";
+import { createSoftCredential } from "./fixtures/soft-authenticator.ts";
 import {
   fetchCsrfToken,
   loginUi,
@@ -44,8 +68,8 @@ interface ApprovalSetup {
 }
 
 /** Nick owns wc_01/clm_01 with one pending and one team-visible artifact. */
-const seedArtifacts = async (): Promise<ApprovalSetup> => {
-  const harness = await createTestHarness();
+const seedArtifacts = async (options: TestHarnessOptions = {}): Promise<ApprovalSetup> => {
+  const harness = await createTestHarness(options);
   const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");
   await registerTestSession(harness, nick.apiKey);
   const robin = await addTestDeveloperWithSession(
@@ -99,9 +123,11 @@ describe("ui approvals listing", () => {
     const html = await (await uiGet(harness, "/ui/approvals", cookie)).text();
 
     expect(html).toContain(PENDING_ARTIFACT_ID);
-    expect(html).toContain(`action="${approvePath}"`);
-    // Content preview is escaped — never raw markup.
-    expect(html).not.toContain("<script");
+    expect(html).toContain('data-ceremony="approve_artifact"');
+    expect(html).toContain(`name="subjectId" value="${PENDING_ARTIFACT_ID}"`);
+    // Content preview is escaped — never raw markup. (The page's one script
+    // tag is the hub's own passkey.js, a ceremony page since review M2.)
+    expect(html).not.toContain("<script>alert");
     expect(html).toContain("&lt;script&gt;");
     // team_visible artifacts need no approval and do not clutter the queue.
     expect(html).not.toContain(VISIBLE_ARTIFACT_ID);
@@ -144,103 +170,302 @@ describe("ui work-context artifact visibility", () => {
   });
 });
 
-describe("ui approve/revoke", () => {
-  test("approving without a CSRF token is refused and changes nothing", async () => {
-    const { harness, nick, robin } = await seedArtifacts();
-    const nickCookie = await loginUi(harness, nick.apiKey);
+/** Whether Robin, a teammate, can read the pending artifact's content on its tree page. */
+const robinCanRead = async (harness: TestHarness, robin: TestDeveloper): Promise<boolean> => {
+  const html = await (
+    await uiGet(harness, "/ui/work-contexts/wc_01", await loginUi(harness, robin.apiKey))
+  ).text();
+  // Escaped even when visible.
+  expect(html).not.toContain("<script");
+  return html.includes("SECRET LOG");
+};
 
-    const response = await uiPostForm(harness, approvePath, nickCookie, {});
+/** Nick, with a passkey enrolled and past its cool-off, signed in again a day later. */
+const nickWithUsablePasskey = async (setup: ApprovalSetup) => {
+  const credential = createSoftCredential();
+  await enrolViaUi(setup.harness, await viewerOf(setup.harness, setup.nick), credential);
+  return { credential, viewer: await pastCoolOff(setup.harness, setup.nick) };
+};
 
-    expect(response.status).toBe(403);
-    const robinHtml = await (
-      await uiGet(
-        harness,
-        "/ui/work-contexts/wc_01",
-        await loginUi(harness, robin.apiKey),
-      )
-    ).text();
-    expect(robinHtml).not.toContain("SECRET LOG");
+const releaseFields = { action: "approve_artifact", subjectId: PENDING_ARTIFACT_ID };
+const withdrawFields = { action: "revoke_artifact", subjectId: PENDING_ARTIFACT_ID };
+
+describe("releasing an artifact takes a passkey (review M2)", () => {
+  test("a session opened with the API key cannot release it with a form post, CSRF and all", async () => {
+    // Arrange — exactly what an agent holding the key can do: log in, read the token, post
+    const setup = await seedArtifacts();
+    const cookie = await loginUi(setup.harness, setup.nick.apiKey);
+    const csrf = await fetchCsrfToken(setup.harness, "/ui/feed", cookie);
+
+    // Act
+    const approve = await uiPostForm(setup.harness, approvePath, cookie, { _csrf: csrf });
+
+    // Assert
+    expect(approve.status).toBe(403);
+    expect(await approve.text()).toContain("takes your passkey now");
+    expect(await robinCanRead(setup.harness, setup.robin)).toBe(false);
   });
 
-  test("another developer cannot approve it, even with their own valid CSRF", async () => {
-    const { harness, robin } = await seedArtifacts();
-    const robinCookie = await loginUi(harness, robin.apiKey);
-    const robinCsrf = await fetchCsrfToken(harness, "/ui/feed", robinCookie);
+  test("the owner releases it with a usable passkey, and revoking with the passkey hides it again", async () => {
+    // Arrange
+    const setup = await seedArtifacts();
+    const nick = await nickWithUsablePasskey(setup);
 
-    const response = await uiPostForm(harness, approvePath, robinCookie, {
-      _csrf: robinCsrf,
-    });
+    // Act + Assert: release
+    const released = await assertViaUi(setup.harness, nick.viewer, nick.credential, releaseFields);
+    expect(released.status).toBe(200);
+    expect((await dataOf<{ message: string }>(released)).message).toContain("Released");
+    expect(await robinCanRead(setup.harness, setup.robin)).toBe(true);
 
-    // 404, not 403: a non-owner learns nothing about the artifact's existence.
-    expect(response.status).toBe(404);
-    const robinHtml = await (
-      await uiGet(harness, "/ui/work-contexts/wc_01", robinCookie)
-    ).text();
-    expect(robinHtml).not.toContain("SECRET LOG");
-  });
-
-  test("a stolen CSRF token from another session is refused", async () => {
-    const { harness, nick, robin } = await seedArtifacts();
-    const nickCookie = await loginUi(harness, nick.apiKey);
-    const robinCookie = await loginUi(harness, robin.apiKey);
-    const nickCsrf = await fetchCsrfToken(harness, "/ui/feed", nickCookie);
-
-    // Robin replays Nick's token with Robin's own session cookie.
-    const response = await uiPostForm(harness, approvePath, robinCookie, {
-      _csrf: nickCsrf,
-    });
-
-    expect(response.status).toBe(403);
-  });
-
-  test("the owner approves, everyone sees it; revoke hides it again", async () => {
-    const { harness, nick, robin } = await seedArtifacts();
-    const nickCookie = await loginUi(harness, nick.apiKey);
-    const robinCookie = await loginUi(harness, robin.apiKey);
-    const csrf = await fetchCsrfToken(harness, "/ui/approvals", nickCookie);
-
-    const approve = await uiPostForm(harness, approvePath, nickCookie, {
-      _csrf: csrf,
-    });
-    expect(approve.status).toBe(303);
-    expect(approve.headers.get("Location")).toBe("/ui/approvals");
-
-    const robinSees = await (
-      await uiGet(harness, "/ui/work-contexts/wc_01", robinCookie)
-    ).text();
-    expect(robinSees).toContain("SECRET LOG");
-    // Escaped even when visible.
-    expect(robinSees).not.toContain("<script");
-
-    // The queue now offers revoke instead of approve.
-    const queue = await (
-      await uiGet(harness, "/ui/approvals", nickCookie)
-    ).text();
+    // The queue now offers the plain revoke form instead of the release.
+    const queue = await (await uiGet(setup.harness, "/ui/approvals", nick.viewer.cookie)).text();
     expect(queue).toContain(`action="${revokePath}"`);
 
-    const revoke = await uiPostForm(harness, revokePath, nickCookie, {
-      _csrf: csrf,
-    });
-    expect(revoke.status).toBe(303);
-
-    const robinAfterRevoke = await (
-      await uiGet(harness, "/ui/work-contexts/wc_01", robinCookie)
-    ).text();
-    expect(robinAfterRevoke).not.toContain("SECRET LOG");
+    // Act + Assert: withdraw with the optional ceremony, still accepted
+    const withdrawn = await assertViaUi(setup.harness, nick.viewer, nick.credential, withdrawFields, { signCount: 2 });
+    expect(withdrawn.status).toBe(200);
+    expect(await robinCanRead(setup.harness, setup.robin)).toBe(false);
   });
 
-  test("approving a nonexistent artifact 404s", async () => {
-    const { harness, nick } = await seedArtifacts();
-    const cookie = await loginUi(harness, nick.apiKey);
-    const csrf = await fetchCsrfToken(harness, "/ui/feed", cookie);
+  test("a passkey still cooling off releases nothing", async () => {
+    // Arrange — enrolled a minute ago; the person's day has not passed
+    const setup = await seedArtifacts();
+    const viewer = await viewerOf(setup.harness, setup.nick);
+    const credential = createSoftCredential();
+    await enrolViaUi(setup.harness, viewer, credential);
 
-    const response = await uiPostForm(
-      harness,
-      "/ui/artifacts/art_missing/approve",
-      cookie,
-      { _csrf: csrf },
+    // Act
+    const response = await assertViaUi(setup.harness, viewer, credential, releaseFields);
+
+    // Assert
+    expect(response.status).toBe(422);
+    expect(await robinCanRead(setup.harness, setup.robin)).toBe(false);
+  });
+
+  test("another developer's ceremony cannot name the artifact, with a usable passkey of their own", async () => {
+    // Arrange
+    const setup = await seedArtifacts();
+    const robinsKey = createSoftCredential();
+    await enrolViaUi(setup.harness, await viewerOf(setup.harness, setup.robin), robinsKey);
+    const robin = await pastCoolOff(setup.harness, setup.robin);
+
+    // Act
+    const response = await ceremony(setup.harness, robin, "options", releaseFields);
+
+    // Assert — the same answer as an id that does not exist
+    expect(response.status).toBe(422);
+    expect(await errorCodeOf(response)).toBe("unknown_artifact");
+    expect(await robinCanRead(setup.harness, setup.robin)).toBe(false);
+  });
+
+  test("the signature covers the content shown: content changed before verify releases nothing", async () => {
+    // Arrange
+    const setup = await seedArtifacts();
+    const nick = await nickWithUsablePasskey(setup);
+    const swapContent = async (): Promise<void> => {
+      await setup.harness.db
+        .update(artifacts)
+        .set({ content: "SECRET LOG, a different one, written after the page was shown" })
+        .where(eq(artifacts.id, PENDING_ARTIFACT_ID));
+    };
+
+    // Act
+    const response = await assertViaUi(setup.harness, nick.viewer, nick.credential, releaseFields, {
+      between: swapContent,
+    });
+
+    // Assert
+    expect(response.status).toBe(422);
+    expect(await robinCanRead(setup.harness, setup.robin)).toBe(false);
+  });
+
+  test("the release UPDATE writes only the content that was signed (review L1)", async () => {
+    // Arrange — content with non-ASCII bytes, so the SQL digest must agree with
+    // the JS one byte for byte (UTF-8, hex)
+    const setup = await seedArtifacts();
+    const content = "SECRET LOG — naïve Ünïcode ✓";
+    await setup.harness.db.update(artifacts).set({ content }).where(eq(artifacts.id, PENDING_ARTIFACT_ID));
+    const signed = createHash("sha256").update(content).digest("hex");
+    const other = createHash("sha256").update("the content the page showed").digest("hex");
+    const { nick } = setup;
+
+    // Act
+    const mismatched = await setArtifactApproval(setup.harness.db, nick.developerId, PENDING_ARTIFACT_ID, true, other);
+    const visibleAfterMismatch = await robinCanRead(setup.harness, setup.robin);
+    const matched = await setArtifactApproval(setup.harness.db, nick.developerId, PENDING_ARTIFACT_ID, true, signed);
+
+    // Assert
+    expect(mismatched).toBe("not_found");
+    expect(visibleAfterMismatch).toBe(false);
+    expect(matched).toBe("updated");
+    expect(await robinCanRead(setup.harness, setup.robin)).toBe(true);
+  });
+
+  test("a verified release hands the signed digest to its write: other signed terms release nothing", async () => {
+    // Arrange — the ceremony's last step, as verify calls it once the signature held
+    const setup = await seedArtifacts();
+    const deps = { db: setup.harness.db } as unknown as AppDeps;
+    const signedOver = { contentDigest: createHash("sha256").update("what the page showed").digest("hex") };
+
+    // Act
+    const outcome = await performOnArtifact(deps, setup.nick.developerId, releaseFields as ArtifactFields, signedOver);
+
+    // Assert
+    expect(outcome).toEqual({ ceremonyRefusal: "unknown_artifact" });
+    expect(await robinCanRead(setup.harness, setup.robin)).toBe(false);
+  });
+
+  test("a nonexistent artifact is refused as unknown", async () => {
+    // Arrange
+    const setup = await seedArtifacts();
+    const nick = await nickWithUsablePasskey(setup);
+
+    // Act
+    const response = await ceremony(setup.harness, nick.viewer, "options", {
+      action: "approve_artifact",
+      subjectId: "art_missing",
+    });
+
+    // Assert
+    expect(response.status).toBe(422);
+    expect(await errorCodeOf(response)).toBe("unknown_artifact");
+  });
+
+  test("the approvals page is a ceremony page: the passkey CSP and its one script", async () => {
+    // Arrange
+    const setup = await seedArtifacts();
+    const cookie = await loginUi(setup.harness, setup.nick.apiKey);
+
+    // Act
+    const response = await uiGet(setup.harness, "/ui/approvals", cookie);
+    const html = await response.text();
+
+    // Assert
+    expect(response.headers.get("Content-Security-Policy")).toContain("script-src 'self'");
+    expect(html).toContain('src="/ui/passkey.js"');
+    expect(html).toContain('data-ceremony="approve_artifact"');
+  });
+
+  test("a hub with no passkey origin says so, offers no ceremony, and still refuses the form", async () => {
+    // Arrange — what the waiver page does on such a hub, mirrored
+    const setup = await seedArtifacts({ webauthnOrigins: [] });
+    const cookie = await loginUi(setup.harness, setup.nick.apiKey);
+    const csrf = await fetchCsrfToken(setup.harness, "/ui/feed", cookie);
+
+    // Act
+    const html = await (await uiGet(setup.harness, "/ui/approvals", cookie)).text();
+    const posted = await uiPostForm(setup.harness, approvePath, cookie, { _csrf: csrf });
+
+    // Assert
+    expect(html).toContain("CROSSCHECK_WEBAUTHN_ORIGINS");
+    expect(html).not.toContain('src="/ui/passkey.js"');
+    expect(posted.status).toBe(403);
+    expect(await robinCanRead(setup.harness, setup.robin)).toBe(false);
+  });
+});
+
+/** A release made outside the ceremony, as a 0.10 form post by an agent would have left it. */
+const releasedTheOldWay = async (setup: ApprovalSetup): Promise<void> => {
+  await setup.harness.db
+    .update(artifacts)
+    .set({ approvedBy: setup.nick.developerId })
+    .where(eq(artifacts.id, PENDING_ARTIFACT_ID));
+};
+
+describe("withdrawing a release takes no passkey (review of the hub hardening, M3)", () => {
+  test("the owner withdraws with a plain form post, holding no passkey at all", async () => {
+    // Arrange
+    const setup = await seedArtifacts();
+    await releasedTheOldWay(setup);
+    const cookie = await loginUi(setup.harness, setup.nick.apiKey);
+    const csrf = await fetchCsrfToken(setup.harness, "/ui/approvals", cookie);
+    expect(await robinCanRead(setup.harness, setup.robin)).toBe(true);
+
+    // Act
+    const response = await uiPostForm(setup.harness, revokePath, cookie, { _csrf: csrf });
+
+    // Assert
+    expect(response.status).toBe(303);
+    expect(response.headers.get("Location")).toBe("/ui/approvals");
+    expect(await robinCanRead(setup.harness, setup.robin)).toBe(false);
+  });
+
+  test("without the session's CSRF token the form withdraws nothing", async () => {
+    // Arrange
+    const setup = await seedArtifacts();
+    await releasedTheOldWay(setup);
+    const cookie = await loginUi(setup.harness, setup.nick.apiKey);
+
+    // Act
+    const response = await uiPostForm(setup.harness, revokePath, cookie, {});
+
+    // Assert
+    expect(response.status).toBe(403);
+    expect(await robinCanRead(setup.harness, setup.robin)).toBe(true);
+  });
+
+  test("a teammate's form cannot withdraw it, even with their own valid CSRF: the UPDATE checks the owner", async () => {
+    // Arrange
+    const setup = await seedArtifacts();
+    await releasedTheOldWay(setup);
+    const robinCookie = await loginUi(setup.harness, setup.robin.apiKey);
+    const robinCsrf = await fetchCsrfToken(setup.harness, "/ui/feed", robinCookie);
+
+    // Act
+    const response = await uiPostForm(setup.harness, revokePath, robinCookie, { _csrf: robinCsrf });
+
+    // Assert — 404, the same answer as an id that does not exist
+    expect(response.status).toBe(404);
+    expect(await robinCanRead(setup.harness, setup.robin)).toBe(true);
+  });
+
+  test("the release UPDATE itself refuses a non-owner, whatever the caller checked before it", async () => {
+    // Arrange
+    const setup = await seedArtifacts();
+
+    // Act
+    const outcome = await setArtifactApproval(setup.harness.db, setup.robin.developerId, PENDING_ARTIFACT_ID, true);
+
+    // Assert
+    expect(outcome).toBe("not_found");
+    expect(await robinCanRead(setup.harness, setup.robin)).toBe(false);
+  });
+
+  test("the operator re-hides any release with the admin token; a developer's key is refused", async () => {
+    // Arrange
+    const setup = await seedArtifacts();
+    await releasedTheOldWay(setup);
+    const path = `/api/artifacts/${PENDING_ARTIFACT_ID}/withdraw`;
+
+    // Act
+    const byKey = await setup.harness.app.request(path, jsonRequest("POST", setup.nick.apiKey, {}));
+    const stillVisible = await robinCanRead(setup.harness, setup.robin);
+    const byAdmin = await setup.harness.app.request(path, jsonRequest("POST", TEST_ADMIN_TOKEN, {}));
+    const missing = await setup.harness.app.request(
+      "/api/artifacts/art_missing/withdraw",
+      jsonRequest("POST", TEST_ADMIN_TOKEN, {}),
     );
 
-    expect(response.status).toBe(404);
+    // Assert
+    expect(byKey.status).toBe(401);
+    expect(stillVisible).toBe(true);
+    expect(byAdmin.status).toBe(200);
+    expect(await robinCanRead(setup.harness, setup.robin)).toBe(false);
+    expect(missing.status).toBe(404);
+  });
+
+  test("a hub with no passkey origin still lets the owner withdraw", async () => {
+    // Arrange
+    const setup = await seedArtifacts({ webauthnOrigins: [] });
+    await releasedTheOldWay(setup);
+    const cookie = await loginUi(setup.harness, setup.nick.apiKey);
+    const csrf = await fetchCsrfToken(setup.harness, "/ui/approvals", cookie);
+
+    // Act
+    const response = await uiPostForm(setup.harness, revokePath, cookie, { _csrf: csrf });
+
+    // Assert
+    expect(response.status).toBe(303);
+    expect(await robinCanRead(setup.harness, setup.robin)).toBe(false);
   });
 });

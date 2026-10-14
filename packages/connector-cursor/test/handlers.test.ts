@@ -5,13 +5,18 @@
  * payload shapes. Presence, targets and fingerprints must LAND; every
  * output must be directive-free JSON.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { extractFailureText } from "@crosscheck/connector-core/capture/failure-text.ts";
 import { fingerprint } from "@crosscheck/connector-core/capture/fingerprint.ts";
+import {
+  ABANDONED_TEMP_MAX_AGE_MS,
+  MS_PER_DAY,
+} from "@crosscheck/connector-core/constants.ts";
 import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { renderRepoConfig } from "@crosscheck/connector-core/config/repo-config.ts";
@@ -100,6 +105,7 @@ const fixture = async (
     hubCtx: {
       hubUrl,
       apiKey: hub.apiKey,
+      keyOrigin: hubUrl,
       timeoutMs: 4000,
       home,
       repoKey: key,
@@ -171,6 +177,32 @@ describe("sessionStart (§3.2 row 1)", () => {
       .sort();
     expect(producers).toEqual(["cursor-background", "cursor-ide"]);
   });
+
+  test("sweeps a writePrivateFile temp past ABANDONED_TEMP_MAX_AGE_MS and keeps a fresh one", async () => {
+    // Arrange: the pilot finding's two ages, in the home's state/ — a
+    // Cursor-only machine has no Claude SessionStart to sweep for it
+    const f = await fixture("start-temp-sweep");
+    const state = join(f.home, "state");
+    await mkdir(state, { recursive: true });
+    const abandoned = "0123456789abcdef-hooks.json.tmp-4242-k3j9x0qa";
+    const inFlight = "0123456789abcdef.json.tmp-4243-p0w8rt2z";
+    for (const [name, ageMs] of [
+      [abandoned, ABANDONED_TEMP_MAX_AGE_MS + MS_PER_DAY],
+      [inFlight, 60 * 60 * 1000],
+    ] as const) {
+      await writeFile(join(state, name), "", "utf8");
+      const when = new Date(Date.now() - ageMs);
+      await utimes(join(state, name), when, when);
+    }
+
+    // Act: the real handler
+    await run("sessionStart", inRepo(SESSION_START_INPUT, f.repo, "conv-temp-sweep"), f.env);
+
+    // Assert
+    const names = await readdir(state);
+    expect(names).not.toContain(abandoned);
+    expect(names).toContain(inFlight);
+  });
 });
 
 describe("a Cursor workspace rooted at the PARENT of the repo (trial finding #9)", () => {
@@ -196,8 +228,11 @@ describe("a Cursor workspace rooted at the PARENT of the repo (trial finding #9)
     await writeRepoFile(repo, "src/panel.ts", "export const p = 1;\n");
     const home = await makeHome("cursor-parent");
     cleanups.push(home);
+    // An operator pair: a CROSSCHECK_API_KEY with no CROSSCHECK_HUB_URL and
+    // no login is bound to no hub (core config/key-binding.ts).
     const env: Env = {
       CROSSCHECK_HOME: home,
+      CROSSCHECK_HUB_URL: hub.hubUrl,
       CROSSCHECK_API_KEY: hub.apiKey,
       CROSSCHECK_TIMEOUT_MS: TIMEOUT_MS,
     };
@@ -223,6 +258,7 @@ describe("a Cursor workspace rooted at the PARENT of the repo (trial finding #9)
     const hubCtx: HubContext = {
       hubUrl: hub.hubUrl,
       apiKey: hub.apiKey,
+      keyOrigin: hub.hubUrl,
       timeoutMs: 4000,
       home,
       repoKey: repoKey(hub.hubUrl, REPO_ID),
@@ -249,7 +285,7 @@ describe("a Cursor workspace rooted at the PARENT of the repo (trial finding #9)
     const conv = "conv-race-1";
     const hostKey = `cur-${conv}`;
     let raceHubUrl = "";
-    const raceServer = Bun.serve({
+    const raceServer = serveLoopback({
       port: 0,
       fetch: async (request) => {
         const { pathname } = new URL(request.url);
@@ -300,6 +336,7 @@ describe("a Cursor workspace rooted at the PARENT of the repo (trial finding #9)
       },
       {
         CROSSCHECK_HOME: home,
+        CROSSCHECK_HUB_URL: raceHubUrl,
         CROSSCHECK_API_KEY: hub.apiKey,
         CROSSCHECK_TIMEOUT_MS: TIMEOUT_MS,
       },

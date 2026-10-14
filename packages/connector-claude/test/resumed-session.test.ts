@@ -37,6 +37,7 @@ import { readSessionState, updateSessionState } from "@crosscheck/connector-core
 import { repoKey, runHook } from "../src/index.ts";
 import type { Env } from "../src/index.ts";
 import { makeHome, makeRepo, writeRepoFile } from "../../connector-core/test/helpers.ts";
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 
 const ADMIN_TOKEN = "resumed-admin-token";
 const REPO_ID = "github.com/acme/api";
@@ -191,11 +192,11 @@ const rejectedDrops = async (fx: Fixture): Promise<number> =>
 beforeAll(async () => {
   db = await createDb();
   const app = createServer({ db, adminToken: ADMIN_TOKEN });
-  server = Bun.serve({ port: 0, fetch: app.fetch });
+  server = serveLoopback({ port: 0, fetch: app.fetch });
   hubUrl = `http://127.0.0.1:${server.port}`;
   // The same hub behind a counter of register calls: what a resume COSTS is
   // the number of round trips SessionStart spends before its briefing.
-  proxy = Bun.serve({
+  proxy = serveLoopback({
     port: 0,
     fetch: async (request) => {
       const { pathname, search } = new URL(request.url);
@@ -531,7 +532,11 @@ describe("a session the hub ends while the conversation keeps going", () => {
     await edit(fx, sessionId, "src/mid/after.ts");
     await edit(fx, sessionId, "src/mid/before.ts");
 
-    // Assert: the next life holds the later edit, the ended one keeps its own
+    // Assert: the next life holds the later edits, the ended one keeps its
+    // own — and the refused edit too: the hook that healed swept the tree
+    // again under the new life (hooks/git-lane.ts sweepIfLifeMoved; batch-2
+    // review, L10), so the file the refusal withheld is filed there, as is
+    // the ended life's `before.ts`, before any later edit.
     const next = `cc_${sessionId}~r1`;
     expect((await readSessionState(fx.home, sessionId))?.crosscheckSessionId).toBe(next);
     expect(await sessionRows(sessionId)).toEqual([
@@ -545,6 +550,7 @@ describe("a session the hub ends while the conversation keeps going", () => {
       { work_context_id: `wc_${next}`, value: "src/mid/after.ts" },
       { work_context_id: `wc_${next}`, value: "src/mid/before.ts" },
       { work_context_id: `wc_cc_${sessionId}`, value: "src/mid/before.ts" },
+      { work_context_id: `wc_${next}`, value: "src/mid/refused.ts" },
     ]);
     // ...and the one edit between the end and the heal is counted, with its cause
     expect((await readDropDetail(fx.home, repoKey(fx.url, REPO_ID))).rejectedCauses).toEqual({

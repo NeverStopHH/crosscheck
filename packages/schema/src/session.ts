@@ -1,8 +1,10 @@
 import { z } from "zod";
 
 import { DERIVED_CONFIDENCE_CAP } from "./claim.ts";
+import { COMMIT_SHA_PATTERN } from "./commit-sha.ts";
 import { SeqStampSchema } from "./seq.ts";
 import { MAX_PIN_FILES, MAX_PIN_PATH_CHARS } from "./pin.ts";
+import { GeneratedSignalSchema } from "./generated-target.ts";
 import {
   ProvenanceSchema,
   SessionStatusSchema,
@@ -153,10 +155,63 @@ export const IntentSchema = z
     }
   });
 
+/**
+ * HOW A WORK CONTEXT'S TITLE WAS WRITTEN, said by the connector that wrote
+ * it. `fallback` is the connector's own `<branch> @ <label>` (or the bare
+ * branch, or a detached ref) — the session's live location, which the hub
+ * withholds from colleagues of a developer who opted out of presence;
+ * `host` came from the host's session title, `person` from a person. Without
+ * it the hub has to guess from the title's shape, and a host title that
+ * merely ends in ` @ api` read as a branch (fallback-title.ts).
+ */
+export const WORK_CONTEXT_TITLE_SOURCES = ["fallback", "host", "person"] as const;
+
+export const WorkContextTitleSourceSchema = z.enum(WORK_CONTEXT_TITLE_SOURCES);
+
+export type WorkContextTitleSource = z.infer<typeof WorkContextTitleSourceSchema>;
+
+/**
+ * The longest branch a TOPIC work context may name. Git itself bounds a ref
+ * only by the filesystem, so this is a wire bound, not git's: long enough for
+ * any branch a person types, short enough that a hostile body cannot use the
+ * field as a payload.
+ */
+export const MAX_TOPIC_BRANCH_CHARS = 255;
+
 export const WorkContextSchema = z.looseObject({
   id: nonEmptyId,
   sessionId: nonEmptyId,
   title: z.string().min(1),
+  /**
+   * Additive and optional: every connector shipped before it sends none, and
+   * the hub then judges the title by its shape. On an UPDATE, absent keeps
+   * the stored marker only while the title is unchanged.
+   */
+  titleSource: WorkContextTitleSourceSchema.optional(),
+  /**
+   * WHICH TOPIC THIS CONTEXT IS (DESIGN.md "One session, many topics"). A
+   * session that edits several sibling worktrees on several branches sends
+   * one work context per (repo, branch) it touched, and each names its
+   * branch and the commit HEAD named when the session first touched it — the
+   * session row's own branch and base commit are the START checkout's, which
+   * says nothing about a topic opened later somewhere else.
+   *
+   * OPTIONAL, AND ADDITIVE: a connector from before topics sends one context
+   * per session and neither field, and the hub then falls back to the
+   * session's own branch and base commit, exactly as it always has.
+   */
+  branch: z.string().min(1).max(MAX_TOPIC_BRANCH_CHARS).optional(),
+  baseCommit: z.string().regex(COMMIT_SHA_PATTERN).optional(),
+  /**
+   * A TOPIC'S OWN WORD ABOUT ITS BASE (topic review C1): was `baseCommit`
+   * already reachable from the default branch when the topic opened? A
+   * branch freshly cut from main says yes, and the hub then never stamps the
+   * topic landed by that base (server services/landed.ts) — the session's own
+   * word, `RegisterSessionBody.baseOnDefault`, is about the START checkout
+   * and says nothing about a topic. Optional and additive: absent is "did
+   * not say", and a word carried without `baseCommit` is about nothing.
+   */
+  baseOnDefault: z.boolean().optional(),
   description: z.string().optional(),
   /**
    * Optional and NOT nullable on the wire: a work_context record without the
@@ -183,6 +238,26 @@ export const TargetSchema = z.looseObject({
    * of relabelling its history as something it never claimed.
    */
   source: TargetSourceSchema.optional().default("tool_edit"),
+  /**
+   * WHICH generated-target signal fired on the connector (generated-target.ts):
+   * the file is mechanically generated and non-authoritative. Absent means
+   * ordinary, or that the classification could not run, or a connector too
+   * old to classify — the hub then applies the path signal itself. ADDITIVE
+   * AND OPTIONAL, so an older hub ignores it; and TOLERANT, so a value a newer
+   * connector invents reads as absent instead of refusing the touch: a target
+   * the hub drops is a touch `suspect` never sees, and an unreadable label
+   * must fail toward an ordinary target, never toward none.
+   */
+  generated: GeneratedSignalSchema.optional().catch(undefined),
+  /**
+   * TRUE when a generated-target signal fired but the file is AUTHORITATIVE —
+   * the repo's committed `authoritativeGenerated` names it, or it resembles a
+   * contract or a migration (isContractLike) — so it stays overlap evidence.
+   * The hub reads it as "do not apply the path signal either": without it the
+   * hub, which cannot read the repo's config, would re-label the very file the
+   * repo just said counts. Optional and tolerant like `generated`.
+   */
+  authoritative: z.boolean().optional().catch(undefined),
 });
 
 export type AgentSession = z.infer<typeof AgentSessionSchema>;

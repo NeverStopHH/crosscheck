@@ -5,6 +5,7 @@
  * reports what git proves, and the session state remembers the pointer so
  * the prompt path cannot repeat it.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -26,6 +27,8 @@ interface RecordedEnvelope {
 interface FakeHub {
   readonly url: string;
   readonly recordsSeen: RecordedEnvelope[];
+  /** Every POST /api/sessions body, in order. */
+  readonly registersSeen: Record<string, unknown>[];
   readonly stop: () => void;
 }
 
@@ -97,12 +100,17 @@ const startHub = (
   options: HubOptions = {},
 ): FakeHub => {
   const recordsSeen: RecordedEnvelope[] = [];
+  const registersSeen: Record<string, unknown>[] = [];
   const now = Date.now();
   const crowd = options.crowd === true;
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: async (request) => {
       const { pathname } = new URL(request.url);
+      if (pathname === "/api/sessions" && request.method === "POST") {
+        registersSeen.push((await request.json()) as Record<string, unknown>);
+        return Response.json({ ok: true, data: { session: { id: "cc_x", developerId: "dev_self" } } });
+      }
       if (pathname === "/api/records") {
         const body = (await request.json()) as {
           records: readonly RecordedEnvelope[];
@@ -180,6 +188,7 @@ const startHub = (
   return {
     url: `http://127.0.0.1:${server.port}`,
     recordsSeen,
+    registersSeen,
     stop: () => {
       server.stop(true);
     },
@@ -288,6 +297,8 @@ describe("isOnDefaultBranch", () => {
   test("a feature branch does not, and an unknown default ref does not guess", () => {
     // Arrange + Act + Assert
     expect(isOnDefaultBranch("feat/thing", "origin/main")).toBe(false);
+    // A legal branch name that only LOOKS like a detached ref is a branch.
+    expect(isOnDefaultBranch("detached@release", "origin/main")).toBe(false);
     // Null default ref: landed collection is skipped downstream anyway, so
     // claiming "on the default branch" here would be a second guess.
     expect(isOnDefaultBranch("feat/thing", null)).toBe(false);
@@ -375,6 +386,49 @@ describe("session-start solved-before integration", () => {
     expect(landed?.body["repo"]).toBe("github.com/acme/api");
     expect(landed?.body["defaultBranch"]).toBe("origin/main");
     expect(landed?.body["commits"]).toEqual([mainSha]);
+    // Dated, so a hub can judge the base of a session from an older connector.
+    const committedAt = await runGit(["log", "-1", "--format=%cI", mainSha], repo);
+    expect(landed?.body["commitDates"]).toEqual([
+      { sha: mainSha, committedAt: new Date(committedAt ?? "").toISOString() },
+    ]);
+  });
+
+  test("a session cut from main with nothing of its own registers its base as already on it", async () => {
+    // Arrange: the fixture's feature branch still sits on main's commit.
+    const { repo, env, hub, mainSha } = await fixture("register-cut");
+
+    // Act
+    await runHook("session-start", sessionStart(repo, "s-reg-cut"), env);
+
+    // Assert: the hub hears it from the session itself.
+    expect(hub.registersSeen[0]?.["baseCommit"]).toBe(mainSha);
+    expect(hub.registersSeen[0]?.["baseOnDefault"]).toBe(true);
+  });
+
+  test("a session detached at an ancestor of origin/main skips the probe and sends no flag", async () => {
+    // Arrange: the pilot owner's long-lived worktree shape. The hub never
+    // lands a detached session by its base, so the answer would buy nothing.
+    const { repo, env, hub, mainSha } = await fixture("register-detached");
+    await git(repo, ["checkout", "-q", "--detach", mainSha]);
+
+    // Act
+    await runHook("session-start", sessionStart(repo, "s-reg-detached"), env);
+
+    // Assert
+    expect(hub.registersSeen[0]?.["baseCommit"]).toBe(mainSha);
+    expect(hub.registersSeen[0] !== undefined && "baseOnDefault" in hub.registersSeen[0]).toBe(false);
+  });
+
+  test("a session on its own unmerged commit registers its base as not on it", async () => {
+    // Arrange: one commit of the branch's own, which origin/main lacks.
+    const { repo, env, hub } = await fixture("register-own-commit");
+    await git(repo, ["commit", "-q", "--allow-empty", "-m", "own work"]);
+
+    // Act
+    await runHook("session-start", sessionStart(repo, "s-reg-own"), env);
+
+    // Assert
+    expect(hub.registersSeen[0]?.["baseOnDefault"]).toBe(false);
   });
 
   test("a briefing too crowded to show the solved section records no deliveries", async () => {

@@ -7,6 +7,7 @@
  * quoting a question that was addressed to somebody else.
  */
 import { describe, expect, test } from "bun:test";
+import { LOCATION_WITHHELD } from "@crosscheck/schema";
 
 import {
   CONFERENCE_ACTIVE_WINDOW_DAYS,
@@ -67,6 +68,31 @@ const corpusWith = (overrides: Partial<ConferenceCorpus>): ConferenceCorpus => (
 });
 
 describe("the conference report", () => {
+  test("a teammate who opted out of presence reads as withheld, not as an unreadable time", () => {
+    // Arrange: the hub keeps the context and withholds when its author was
+    // last on it (server services/live-location.ts).
+    const robin: ConferenceContext = {
+      ...contextWith(CONTEXT_A, "Robin", "Token refresh rework", "The refresh path trusts a rotated kid"),
+      lastActiveAt: LOCATION_WITHHELD,
+    };
+    const ken = contextWith(CONTEXT_B, "Ken", "Session store migration", "The store hands back a stale session");
+
+    // Act
+    const report = renderConferenceReport({
+      repoId: "github.com/acme/api",
+      corpus: corpusWith({ contexts: [robin, ken], contextsInWindow: 2 }),
+      findings: [{ sentence: "Both sessions change the refresh path", contexts: [robin, ken] }],
+      modelOutcome: { kind: "answered" },
+      now: NOW,
+    });
+
+    // Assert
+    expect(report).toContain(
+      `Robin, last active ${LOCATION_WITHHELD}: «Token refresh rework» — get_diagnosis ${CONTEXT_A}`,
+    );
+    expect(report).not.toContain("at an unreadable time");
+  });
+
   test("a finding names both sides, their trees and the claims it rests on", () => {
     // Arrange
     const nick = contextWith(CONTEXT_A, "Nick", "Token refresh rework", "The refresh path trusts a rotated kid");
@@ -281,6 +307,71 @@ describe("the conference report", () => {
       "Nick and Ken hit the same failure, both changed src/auth/token.ts (+2 more)",
     );
     expect(report).not.toContain("sha256:");
+  });
+
+  test("a large change pairs like any other, and the line says which side is one", () => {
+    // Arrange: Ken's side of the pair is a 180-file change.
+    const nick = contextWith(CONTEXT_A, "Nick", "Token refresh rework", "A finding");
+    const ken = contextWith(CONTEXT_B, "Ken", "Orchestration worktree", "Another finding");
+    const overlap = {
+      workContextIdA: CONTEXT_A,
+      workContextIdB: CONTEXT_B,
+      sharedTargets: [
+        { kind: "file", value: "src/auth/session.ts" },
+        { kind: "file", value: "src/auth/token.ts" },
+      ],
+      sharedTargetCount: 2,
+    };
+    const reportWith = (largeChangeFilesB: number | null): string =>
+      renderConferenceReport({
+        repoId: "github.com/acme/api",
+        corpus: corpusWith({ contexts: [nick, ken], overlaps: [{ ...overlap, largeChangeFilesA: null, largeChangeFilesB }] }),
+        findings: [],
+        modelOutcome: { kind: "none" },
+        now: NOW,
+      });
+
+    // Act + Assert: the pair, qualified on Ken's side only; the control
+    // without a size prints the same pair bare.
+    expect(reportWith(180)).toContain(
+      "- Nick and Ken both changed src/auth/session.ts, src/auth/token.ts; Ken's side is part of a large change touching 180 files",
+    );
+    expect(reportWith(null)).toContain("- Nick and Ken both changed src/auth/session.ts, src/auth/token.ts\n");
+  });
+
+  test("a pair with real overlap says how many generated files it also shares", () => {
+    // Arrange
+    const nick = contextWith(CONTEXT_A, "Nick", "Token refresh rework", "A finding");
+    const ken = contextWith(CONTEXT_B, "Ken", "Session store", "Another finding");
+    const reportWith = (generatedSharedCount: number | undefined): string =>
+      renderConferenceReport({
+        repoId: "github.com/acme/api",
+        corpus: corpusWith({
+          contexts: [nick, ken],
+          overlaps: [
+            {
+              workContextIdA: CONTEXT_A,
+              workContextIdB: CONTEXT_B,
+              sharedTargets: [
+                { kind: "file", value: "src/auth/session.ts" },
+                { kind: "file", value: "src/auth/token.ts" },
+              ],
+              sharedTargetCount: 2,
+              ...(generatedSharedCount === undefined ? {} : { generatedSharedCount }),
+            },
+          ],
+        }),
+        findings: [],
+        modelOutcome: { kind: "none" },
+        now: NOW,
+      });
+
+    // Act + Assert: the qualifier beside the evidence; none without a count.
+    expect(reportWith(4)).toContain(
+      "- Nick and Ken both changed src/auth/session.ts, src/auth/token.ts; also both touched 4 generated files\n",
+    );
+    expect(reportWith(0)).toContain("- Nick and Ken both changed src/auth/session.ts, src/auth/token.ts\n");
+    expect(reportWith(undefined)).toContain("- Nick and Ken both changed src/auth/session.ts, src/auth/token.ts\n");
   });
 });
 

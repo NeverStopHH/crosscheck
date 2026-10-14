@@ -9,16 +9,56 @@
  * machine). Enforcement lives in services/visibility.ts; this module only
  * reads and writes the state.
  *
- * No outbox events are appended here on purpose: broadcasting "X just opted
- * out" would itself be a presence signal about X.
+ * No outbox event is appended for an opt-out, on purpose: broadcasting "X
+ * just opted out" would itself be a presence signal about X. Going more
+ * private stays frictionless.
+ *
+ * SWITCHING AN OPT-OUT BACK OFF IS NEVER SILENT (hub hardening, item 6). The
+ * presence route takes the API key, which every agent on the person's
+ * machine can read, so an agent can quietly undo a works-council opt-out.
+ * The hub cannot tell the person from an agent on a key yet, so the change
+ * is made loud instead: a `presence_reenabled` security event (constants.ts
+ * SECURITY_EVENT_KINDS, kept in the team feed through later opt-outs), and
+ * `presenceReenabledAt` on the person's own settings read, which their
+ * SessionStart briefing, `crosscheck status`, doctor and the person's own
+ * /ui/feed (the one surface an agent does not sit on) print, for
+ * the full window even after a later opt-out (presenceReenableNotice says
+ * why). There is no presence signal to protect at that moment: from then on
+ * the person is visible anyway.
  */
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, isNull, notInArray, or, sql } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
 
-import { developerEmails, developerMutes, developers } from "../db/schema.ts";
+import { randomUUID } from "node:crypto";
+
+import type { ProvenanceClass } from "@crosscheck/schema";
+
+import {
+  EVENT_KINDS,
+  LOCATION_INDEX_REBUILD_BATCH,
+  LOCATION_INDEX_REBUILD_TURN,
+  MS_PER_DAY,
+  PRESENCE_REENABLE_NOTICE_DAYS,
+} from "../constants.ts";
+import {
+  agentSessions,
+  developerEmails,
+  developerMutes,
+  developers,
+  events,
+  privacyChanges,
+  workContexts,
+} from "../db/schema.ts";
+import { yieldToRequests } from "../db/yield-to-requests.ts";
+import type { HumanStamp } from "./human-provenance.ts";
+import { appendEvent } from "./events.ts";
 import { resolvesToDeveloper } from "./cloud-agent-identity.ts";
+import { embedContextDocs } from "./embedding-backfill.ts";
+import { refreshNormalizedDoc } from "./normalized-doc.ts";
 import { listDeveloperEmails } from "./developers.ts";
 import type { DeveloperEmailView } from "./developers.ts";
-import type { Db } from "../db/client.ts";
+import type { Embedder } from "./embedder.ts";
+import type { Db, DbExecutor } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
 /**
@@ -42,6 +82,19 @@ export interface DeveloperSettingsView {
    * (routes/developers.ts).
    */
   readonly emails: readonly DeveloperEmailView[];
+  /**
+   * When the caller's presence opt-out was last switched back off, within
+   * PRESENCE_REENABLE_NOTICE_DAYS, whether presence is on now or off again;
+   * null otherwise. Self view only: the person is told, so a silent undo by
+   * an agent holding their key is not silent, nor a brief one.
+   */
+  readonly presenceReenabledAt: string | null;
+  /**
+   * The caller's presence was switched OFF by something holding their key,
+   * within PRESENCE_REENABLE_NOTICE_DAYS: immediate, because going more
+   * private never waits — and told to them, because they may not have done it.
+   */
+  readonly presenceOptOutChange: { readonly at: string; readonly provenance: ProvenanceClass } | null;
 }
 
 interface Deps {
@@ -49,15 +102,51 @@ interface Deps {
   readonly now: Clock;
 }
 
+/** What rebuilding her search index needs: the vector tier's embedder, null when keyless. */
+interface IndexDeps extends Deps {
+  readonly embedder: Embedder | null;
+}
+
+/** The newest re-enable of `developerId`'s presence since `since`, as ISO, or null. */
+const latestPresenceReenable = async (db: Db, developerId: string, since: Date): Promise<string | null> => {
+  const rows = await db
+    .select({ createdAt: events.createdAt })
+    .from(events)
+    .where(
+      and(
+        eq(events.kind, EVENT_KINDS.PRESENCE_REENABLED),
+        sql`${events.payload}->>'developerId' = ${developerId}`,
+        gte(events.createdAt, since),
+      ),
+    )
+    .orderBy(desc(events.id))
+    .limit(1);
+  return rows[0]?.createdAt.toISOString() ?? null;
+};
+
+/**
+ * The re-enable the person is still to be told about: the newest one within
+ * PRESENCE_REENABLE_NOTICE_DAYS, WHATEVER the setting is now (review of the
+ * hub hardening, M1). An agent holding the key can switch presence on, let the
+ * team watch, and switch it off again. Taking that second PUT as the person's
+ * answer would make the notice vanish exactly when the exposure was meant to
+ * go unseen. Every surface that tells it also says whether presence is still
+ * on, from `presenceOptOut` beside it.
+ */
+export const presenceReenableNotice = (db: Db, developerId: string, now: Date): Promise<string | null> =>
+  latestPresenceReenable(db, developerId, new Date(now.getTime() - PRESENCE_REENABLE_NOTICE_DAYS * MS_PER_DAY));
+
 export const getDeveloperSettings = async (
   db: Db,
   developerId: string,
+  now: Date,
 ): Promise<DeveloperSettingsView> => {
   const own = await db
     .select({ presenceOptOut: developers.presenceOptOut })
     .from(developers)
     .where(eq(developers.id, developerId))
     .limit(1);
+  const presenceOptOut = own[0]?.presenceOptOut ?? false;
   const mutes = await db
     .select({ id: developers.id, name: developers.name })
     .from(developerMutes)
@@ -66,21 +155,277 @@ export const getDeveloperSettings = async (
     .orderBy(asc(developers.name), asc(developers.id))
     .limit(MAX_MUTES_PER_READER);
   return {
-    presenceOptOut: own[0]?.presenceOptOut ?? false,
+    presenceOptOut,
     mutes,
     emails: await listDeveloperEmails(db, developerId),
+    // Told for its full window, opted out again or not (presenceReenableNotice).
+    presenceReenabledAt: await presenceReenableNotice(db, developerId, now),
+    presenceOptOutChange: await keyedOptOutNotice(db, developerId, now),
   };
 };
 
-export const setPresenceOptOut = async (
+/**
+ * THE NEWEST OPT-OUT NO PASSKEY MADE, within the notice window (§8). Every
+ * opt-out by key is one: the hub cannot tell the person's from an agent's.
+ */
+const keyedOptOutNotice = async (
   db: Db,
   developerId: string,
+  now: Date,
+): Promise<{ readonly at: string; readonly provenance: ProvenanceClass } | null> => {
+  const rows = await db
+    .select({ at: privacyChanges.createdAt, provenance: privacyChanges.provenance })
+    .from(privacyChanges)
+    .where(
+      and(
+        eq(privacyChanges.developerId, developerId),
+        eq(privacyChanges.kind, "presence_off"),
+        sql`${privacyChanges.provenance} <> 'human_passkey_confirmed'`,
+        gte(privacyChanges.createdAt, new Date(now.getTime() - PRESENCE_REENABLE_NOTICE_DAYS * MS_PER_DAY)),
+      ),
+    )
+    .orderBy(desc(privacyChanges.createdAt))
+    .limit(1);
+  const row = rows[0];
+  return row === undefined ? null : { at: row.at.toISOString(), provenance: row.provenance };
+};
+
+/**
+ * The setting, and the index after it. The mark is cleared first and set
+ * only once the rebuild is done, so a rebuild cut short leaves an opt-out
+ * the next boot finishes (rebuildOptedOutLocationIndexes).
+ */
+export const setPresenceOptOut = async (
+  deps: IndexDeps,
+  developerId: string,
   optOut: boolean,
+  provenance: ProvenanceClass,
 ): Promise<void> => {
-  await db
-    .update(developers)
-    .set({ presenceOptOut: optOut })
-    .where(eq(developers.id, developerId));
+  await applyPresenceOptOut(deps, developerId, optOut, provenance);
+  await rebuildLocationIndex(deps, developerId, optOut);
+};
+
+/**
+ * THE TOGGLE ITSELF, in the caller's transaction when it has one — a passkey
+ * confirmation switches presence back on inside the transaction that applies
+ * its batch, then runs `finishPresenceChange` after it commits.
+ *
+ * EVERY CHANGE IS RECORDED WITH ITS CLASS (human provenance §8) in
+ * `privacy_changes`: an opt-out made with the key is `agent_asserted`, shown
+ * to the person, because the hub cannot tell who made it; an opt-in can only
+ * be a confirmation. The re-enable event carries the class too.
+ */
+export const applyPresenceOptOut = (
+  deps: { readonly db: DbExecutor; readonly now: Clock },
+  developerId: string,
+  optOut: boolean,
+  provenance: ProvenanceClass,
+): Promise<boolean> =>
+  // Whether the setting changed: a confirmation that found it already so says it wrote nothing (round-2 R2-M2).
+  deps.db.transaction(async (tx): Promise<boolean> => {
+    // FOR UPDATE: two toggles at once must not both read "opted out" and
+    // record one re-enable, or neither.
+    const before = await tx
+      .select({ presenceOptOut: developers.presenceOptOut })
+      .from(developers)
+      .where(eq(developers.id, developerId))
+      .for("update")
+      .limit(1);
+    await tx
+      .update(developers)
+      .set({ presenceOptOut: optOut, locationIndexBuiltAt: null })
+      .where(eq(developers.id, developerId));
+    if (before[0] !== undefined && before[0].presenceOptOut !== optOut) {
+      await tx.insert(privacyChanges).values({
+        id: `pc_${randomUUID()}`,
+        developerId,
+        kind: optOut ? "presence_off" : "presence_on",
+        provenance,
+        createdAt: deps.now(),
+      });
+    }
+    if (before[0]?.presenceOptOut === true && !optOut) {
+      await appendEvent({ db: tx, now: deps.now }, EVENT_KINDS.PRESENCE_REENABLED, { developerId, provenance });
+    }
+    return before[0] !== undefined && before[0].presenceOptOut !== optOut;
+  });
+
+/** What a toggle leaves to do once its transaction committed: her index, for the setting she has. */
+export const finishPresenceChange = (deps: IndexDeps, developerId: string, optOut: boolean): Promise<void> =>
+  rebuildLocationIndex(deps, developerId, optOut);
+
+/**
+ * Her location-titled docs rebuilt for the setting she has, and their vectors
+ * with them (review round 5, M2): a rebuild clears a context's embedding
+ * (normalized-doc.ts), and with an embedder configured the vector tier would
+ * miss her work until each context's next ingest. An opt-out is marked built
+ * — only while she is still opted out, since the mark means "built for her
+ * opt-out".
+ *
+ * A PAGE AT A TIME (batch-2 integration review, M11): at 10 000 contexts the
+ * rebuild held every request for 17–26 s, and re-embedded one embedder call
+ * per context (88 s with a 5 ms embedder, 17–50 minutes at a real one's
+ * latency). Each page of LOCATION_INDEX_REBUILD_BATCH docs is rebuilt, then
+ * re-embedded in ONE call (embedContextDocs; a failure costs that page's
+ * vectors, which the next start's vector backfill re-mints, never the
+ * toggle), then the event loop takes a turn. For an opt-out her docs are
+ * EMPTIED first, in one statement (withholdLocationTitles): a request served
+ * between two pages then finds an emptied or a rebuilt doc, never her title.
+ */
+const rebuildLocationIndex = async (
+  deps: IndexDeps,
+  developerId: string,
+  isOptedOut: boolean,
+  batch: number = LOCATION_INDEX_REBUILD_BATCH,
+): Promise<void> => {
+  if (isOptedOut) {
+    await withholdLocationTitles(deps.db, sql`s.developer_id = ${developerId}`);
+  }
+  await reindexLocationTitlesFrom(deps, developerId, batch, BEFORE_EVERY_CONTEXT);
+  if (isOptedOut) {
+    await deps.db
+      .update(developers)
+      .set({ locationIndexBuiltAt: deps.now() })
+      .where(and(eq(developers.id, developerId), eq(developers.presenceOptOut, true)));
+  }
+};
+
+/**
+ * ONCE PER OPT-OUT, AT BOOT (review round 5, M1). A developer who opted out
+ * on a release whose index did not follow the setting never toggles again,
+ * so her docs kept her branch titles and a colleague's guess at her branch
+ * still found her work. Every opted-out developer whose index was not built
+ * for her opt-out has it built here, before the hub serves; the mark makes a
+ * second boot, and an opt-out the toggle already rebuilt for, a no-op.
+ * Returns how many developers' indexes it rebuilt.
+ *
+ * THE DRAFTS BRANCH'S DOC UPGRADE (merged in the batch): its `doc_version`
+ * stamp step marks a declared-only doc current WITHOUT rebuilding it, and
+ * her location-titled docs from before both releases are declared-only. So
+ * this pass runs before the doc upgrade (services/startup-upgrades.ts), and
+ * her docs are EMPTIED before the hub serves (withholdPendingLocationTitles,
+ * index.ts): nothing reads one of her old docs. Her rebuild is keyed on
+ * `location_index_built_at`, never on `doc_version`, so a stamp that somehow
+ * ran first still could not spare her docs it
+ * (test/location-index-rebuild.test.ts, both orders).
+ *
+ * AFTER SERVING, A PAGE AT A TIME (batch-2 integration review, M11): it held
+ * the port closed for 17–26 s at 10 000 contexts, and with an embedder for
+ * one embedder call per context. It runs now among the start-up passes,
+ * paged and re-embedding a page per call (rebuildLocationIndex).
+ */
+export const rebuildOptedOutLocationIndexes = async (
+  deps: IndexDeps,
+  options: { readonly batch?: number } = {},
+): Promise<number> => {
+  const pending = await pendingLocationIndexes(deps.db);
+  for (const row of pending) {
+    await rebuildLocationIndex(deps, row.id, true, options.batch);
+  }
+  return pending.length;
+};
+
+/** The opted-out developers whose index was not yet built for their opt-out. */
+const pendingLocationIndexes = (db: Db): Promise<readonly { readonly id: string }[]> =>
+  db
+    .select({ id: developers.id })
+    .from(developers)
+    .where(and(eq(developers.presenceOptOut, true), isNull(developers.locationIndexBuiltAt)));
+
+/**
+ * BEFORE THE HUB SERVES (batch-2 integration review, M11): every location-
+ * titled doc of every developer whose index is not yet built for her opt-out
+ * is emptied — in one statement, where the rebuild took 17–26 s per 10 000
+ * contexts — and its vector cleared with it. An empty doc matches no guess
+ * at her branch, so a colleague's first search after the start finds
+ * nothing by her title, exactly as when the rebuild ran here; the rebuild
+ * itself runs after serving (rebuildOptedOutLocationIndexes), and until it
+ * reaches a context, that context is found by its claims. Returns how many
+ * developers are pending: the mark is set only by the rebuild, so a start
+ * that dies first empties them again and the next pass rebuilds them all.
+ */
+export const withholdPendingLocationTitles = async (db: Db): Promise<number> => {
+  const pending = await pendingLocationIndexes(db);
+  if (pending.length > 0) {
+    await withholdLocationTitles(
+      db,
+      sql`s.developer_id IN (${sql.join(pending.map((row) => sql`${row.id}`), sql`, `)})`,
+    );
+  }
+  return pending.length;
+};
+
+/** Titles a person or a host wrote: never a location, so never re-indexed. */
+const AUTHORED_TITLE_SOURCES = ["host", "person"] as const;
+
+/** A doc of `owners` whose title CAN be a location: its source unmarked, or neither a host's nor a person's. */
+const locationTitled = sql`(w.title_source IS NULL OR w.title_source NOT IN (${sql.join(
+  AUTHORED_TITLE_SOURCES.map((source) => sql`${source}`),
+  sql`, `,
+)}))`;
+
+/**
+ * Empties `owners`' location-titled docs and their vectors, in one statement.
+ * A doc already empty is left alone, so a second run writes nothing.
+ */
+const withholdLocationTitles = async (db: Db, owners: SQL): Promise<void> => {
+  await db.execute(sql`
+    UPDATE work_contexts w
+    SET normalized_doc = '', embedding = NULL, embedding_model = NULL
+    FROM agent_sessions s
+    WHERE s.id = w.session_id AND ${owners} AND ${locationTitled}
+      AND w.normalized_doc IS DISTINCT FROM ''`);
+};
+
+/** No id sorts before this, so the first page starts at the beginning. */
+const BEFORE_EVERY_CONTEXT = "";
+
+/**
+ * THE SEARCH INDEX FOLLOWS THE SETTING, both ways (review round 4, H4): an
+ * opted-out owner's location title is kept out of the normalized doc
+ * (services/live-location.ts isTitleWithheldFromIndex), and her docs were
+ * built before she opted out. Only contexts whose title CAN be her location
+ * are rebuilt — a `host` or `person` title never is — once per toggle, which
+ * is rare by nature, and once after boot for an opt-out from before the
+ * index followed the setting (above). Page by page from `after`: each page
+ * rebuilt with a turn of the event loop every LOCATION_INDEX_REBUILD_TURN
+ * docs (a doc is a few queries and its words; a page of 100 held a request
+ * 2.6 s on a loaded machine), its vectors re-minted in one embedder call
+ * when the hub has one, then a turn again.
+ */
+const refreshPage = async (db: Db, ids: readonly string[]): Promise<void> => {
+  for (const [index, id] of ids.entries()) {
+    await refreshNormalizedDoc(db, id);
+    if ((index + 1) % LOCATION_INDEX_REBUILD_TURN === 0) {
+      await yieldToRequests();
+    }
+  }
+};
+
+const reindexLocationTitlesFrom = async (deps: IndexDeps, developerId: string, batch: number, after: string): Promise<void> => {
+  const rows = await deps.db
+    .select({ id: workContexts.id })
+    .from(workContexts)
+    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
+    .where(
+      and(
+        eq(agentSessions.developerId, developerId),
+        or(isNull(workContexts.titleSource), notInArray(workContexts.titleSource, [...AUTHORED_TITLE_SOURCES])),
+        gt(workContexts.id, after),
+      ),
+    )
+    .orderBy(asc(workContexts.id))
+    .limit(batch);
+  const last = rows.at(-1);
+  if (last === undefined) {
+    return;
+  }
+  await refreshPage(deps.db, rows.map((row) => row.id));
+  if (deps.embedder !== null) {
+    await embedContextDocs(deps.db, deps.embedder, rows.map((row) => row.id));
+  }
+  await yieldToRequests();
+  await reindexLocationTitlesFrom(deps, developerId, batch, last.id);
 };
 
 /**
@@ -155,7 +500,7 @@ const countByName = async (db: Db, loweredName: string): Promise<number> => {
  * query.
  */
 export const resolveDeveloperRef = async (
-  db: Db,
+  db: DbExecutor,
   ref: string,
 ): Promise<ResolveDeveloperResult> => {
   const trimmed = ref.trim();
@@ -262,10 +607,15 @@ export type AddMuteResult =
   | { readonly outcome: "self" }
   | { readonly outcome: "limit_reached" };
 
+/**
+ * A MUTE IS THE PERSON'S SETTING (human provenance §8): only a passkey
+ * confirmation writes one, with its stamp. A key's mute is a draft.
+ */
 export const addMute = async (
-  deps: Deps,
+  deps: { readonly db: DbExecutor; readonly now: Clock },
   readerDeveloperId: string,
   ref: string,
+  stamp: HumanStamp,
 ): Promise<AddMuteResult> => {
   const resolved = await resolveDeveloperRef(deps.db, ref);
   if (resolved.outcome === "ambiguous") {
@@ -294,6 +644,9 @@ export const addMute = async (
       readerDeveloperId,
       mutedDeveloperId: resolved.developer.id,
       createdAt: deps.now(),
+      provenance: stamp.provenance,
+      confirmationId: stamp.confirmationId,
+      confirmationPosition: stamp.confirmationPosition,
     })
     .onConflictDoNothing()
     .returning({ id: developerMutes.mutedDeveloperId });
@@ -314,7 +667,7 @@ export type RemoveMuteResult =
   | { readonly outcome: "ambiguous" };
 
 export const removeMute = async (
-  db: Db,
+  db: DbExecutor,
   readerDeveloperId: string,
   ref: string,
 ): Promise<RemoveMuteResult> => {

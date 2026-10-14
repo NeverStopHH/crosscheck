@@ -13,6 +13,7 @@
  * unknown flag there, so the install step of this test exits 64 and the
  * spawn never happens.
  */
+import { serveLoopback } from "../../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -44,7 +45,7 @@ const cleanups: string[] = [];
 beforeAll(async () => {
   db = await createDb();
   const app = createServer({ db, adminToken: ADMIN_TOKEN });
-  server = Bun.serve({ port: 0, fetch: app.fetch });
+  server = serveLoopback({ port: 0, fetch: app.fetch });
   hubUrl = `http://127.0.0.1:${server.port}`;
 
   const response = await fetch(`${hubUrl}/api/developers`, {

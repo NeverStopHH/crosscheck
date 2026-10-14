@@ -5,10 +5,13 @@ import {
   SESSION_END_BUDGET_RATIO,
   SESSION_START_BUDGET_RATIO,
   STOP_BUDGET_RATIO,
+  SUBAGENT_RETURN_BUDGET_RATIO,
+  SUBAGENT_STOP_BUDGET_RATIO,
+  TURN_END_BUDGET_RATIO,
   USER_PROMPT_SUBMIT_BUDGET_RATIO,
 } from "@crosscheck/connector-core/constants.ts";
 import {
-  hookBudget,
+  hookRace,
   raceHookBudget,
   resolveHookBudget,
 } from "@crosscheck/connector-core/config/hook-budget.ts";
@@ -16,23 +19,34 @@ import type { HookBudget } from "@crosscheck/connector-core/config/hook-budget.t
 import {
   isDisabled,
   isSummarizerChild,
-  loadReportableConfig,
+  resolveReportableConfig,
 } from "@crosscheck/connector-core/config/config.ts";
 import type { ResolvedConfig } from "@crosscheck/connector-core/config/config.ts";
+import { foreignHubAgentLine } from "@crosscheck/connector-core/config/key-binding.ts";
+import type { ForeignHub } from "@crosscheck/connector-core/config/key-binding.ts";
+import { recordForeignHubRefusal } from "@crosscheck/connector-core/state/foreign-hub.ts";
 import {
+  connectedRepoOwnership,
   findConnectedRepoRootForPaths,
   mayBeConnectedRepo,
 } from "@crosscheck/connector-core/config/connected-repo.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { crosscheckHome, repoKey } from "@crosscheck/connector-core/config/paths.ts";
-import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
+import { resolveRepoIdentityCached } from "@crosscheck/connector-core/git/repo-identity-cache.ts";
 import type { RepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
 import { recordHookFired } from "@crosscheck/connector-core/state/fired-markers.ts";
 import { recordHookTimeout } from "@crosscheck/connector-core/state/loss-ledger.ts";
 import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
-import { extractFilePaths, parseHookPayload } from "../capture/tool-events.ts";
+import { traceBegin, traceMark, traceSpan } from "@crosscheck/connector-core/trace/hook-trace.ts";
+import { briefingSkippedLine } from "@crosscheck/connector-core/briefing/omission.ts";
+import { recordBriefingOmission } from "@crosscheck/connector-core/state/briefing-omissions.ts";
+import { bookLandedProbeCut } from "@crosscheck/connector-core/state/landed-probe-cuts.ts";
+import { extractFilePaths, isEditTool, parseHookPayload } from "../capture/tool-events.ts";
 import type { HookPayload } from "../capture/tool-events.ts";
+import { sessionStartContext } from "./session-start-output.ts";
+import { hasNothingToRelay } from "./subagent-return.ts";
+import { hasNothingToRecheck } from "./turn-end.ts";
 
 export type HookName =
   | "session-start"
@@ -41,7 +55,10 @@ export type HookName =
   | "session-end"
   | "user-prompt-submit"
   | "pre-tool-use"
-  | "stop";
+  | "stop"
+  | "subagent-stop"
+  | "subagent-return"
+  | "turn-end";
 
 export interface HookContext {
   readonly payload: HookPayload;
@@ -86,12 +103,41 @@ const BUDGET_RATIOS: Readonly<Record<HookName, number>> = {
   "user-prompt-submit": USER_PROMPT_SUBMIT_BUDGET_RATIO,
   "pre-tool-use": PRE_TOOL_USE_BUDGET_RATIO,
   stop: STOP_BUDGET_RATIO,
+  "subagent-stop": SUBAGENT_STOP_BUDGET_RATIO,
+  "subagent-return": SUBAGENT_RETURN_BUDGET_RATIO,
+  "turn-end": TURN_END_BUDGET_RATIO,
 };
 
-interface ResolvedHookRepo {
-  readonly identity: RepoIdentity;
-  readonly config: ResolvedConfig;
-}
+/**
+ * What resolving a hook's repo came to: a repo it reports for, a repo
+ * connected to ANOTHER hub than the developer's key (config/key-binding.ts —
+ * nothing is sent, and the caller counts it), or silence.
+ */
+type RepoResolution =
+  | { readonly kind: "ready"; readonly identity: RepoIdentity; readonly config: ResolvedConfig }
+  | {
+      readonly kind: "foreign_hub";
+      readonly identity: RepoIdentity;
+      readonly home: string;
+      readonly foreignHub: ForeignHub;
+    }
+  | { readonly kind: "silent" };
+
+const SILENT: RepoResolution = { kind: "silent" };
+
+const resolveAt = async (identity: RepoIdentity, env: Env): Promise<RepoResolution> => {
+  const resolved = await resolveReportableConfig({ env, repoRoot: identity.root });
+  if (resolved.kind === "reportable") {
+    return { kind: "ready", identity, config: resolved.config };
+  }
+  return resolved.kind === "foreign_hub"
+    ? { kind: "foreign_hub", identity, home: resolved.home, foreignHub: resolved.foreignHub }
+    : SILENT;
+};
+
+/** No rung reports: the first foreign hub any rung met speaks, else silence. */
+const firstForeign = (rungs: readonly RepoResolution[]): RepoResolution =>
+  rungs.find((rung) => rung.kind === "foreign_hub") ?? SILENT;
 
 /**
  * The repo this hook reports for: cwd first, touched file second, the
@@ -120,32 +166,36 @@ interface ResolvedHookRepo {
 const resolveHookRepo = async (
   payload: HookPayload,
   env: Env,
-): Promise<ResolvedHookRepo | null> => {
-  const identity = await resolveRepoIdentity(payload.cwd);
-  if (identity !== null) {
-    const config = await loadReportableConfig({ env, repoRoot: identity.root });
-    if (config !== null) {
-      return { identity, config };
-    }
+): Promise<RepoResolution> => {
+  const identity = await resolveRepoIdentityCached(crosscheckHome(env), payload.cwd);
+  const cwdRung = identity === null ? SILENT : await resolveAt(identity, env);
+  if (cwdRung.kind === "ready") {
+    return cwdRung;
   }
+  const fileRung = await fileDerivedHookRepo(payload, env);
+  if (fileRung.kind === "ready") {
+    return fileRung;
+  }
+  const stateRung = await stateDerivedHookRepo(payload, env);
+  return stateRung.kind === "ready" ? stateRung : firstForeign([cwdRung, fileRung, stateRung]);
+};
+
+/**
+ * The SECOND rung: the touched file's own repo. The reportable gate, NOT
+ * bare loadConfig — this rung must also honour the finding-#11 gate AND the
+ * key-origin binding, or a planted .crosscheck.json at the touched file's
+ * repo redirects the key exactly where rung 1 refused it.
+ */
+const fileDerivedHookRepo = async (payload: HookPayload, env: Env): Promise<RepoResolution> => {
   const derivedRoot = await findConnectedRepoRootForPaths(
     payload.cwd,
     extractFilePaths(payload.tool_input),
   );
-  if (derivedRoot !== null) {
-    const derived = await resolveRepoIdentity(derivedRoot);
-    if (derived !== null) {
-      // loadReportableConfig, NOT bare loadConfig: this rung must also honour
-      // the finding-#11 gate AND its key-origin pin, or a planted
-      // .crosscheck.json at the touched file's repo redirects the stored key
-      // exactly where rung 1's pin refused it.
-      const config = await loadReportableConfig({ env, repoRoot: derived.root });
-      if (config !== null) {
-        return { identity: derived, config };
-      }
-    }
+  if (derivedRoot === null) {
+    return SILENT;
   }
-  return stateDerivedHookRepo(payload, env);
+  const derived = await resolveRepoIdentityCached(crosscheckHome(env), derivedRoot);
+  return derived === null ? SILENT : resolveAt(derived, env);
 };
 
 /**
@@ -170,57 +220,120 @@ const resolveHookRepo = async (
 const stateDerivedHookRepo = async (
   payload: HookPayload,
   env: Env,
-): Promise<ResolvedHookRepo | null> => {
+): Promise<RepoResolution> => {
   const state = await readSessionState(crosscheckHome(env), payload.session_id);
   if (state === null) {
-    return null;
+    return SILENT;
   }
-  const identity = await resolveRepoIdentity(state.repoRoot);
+  const identity = await resolveRepoIdentityCached(crosscheckHome(env), state.repoRoot);
   if (identity === null || identity.repoId !== state.repoId) {
-    return null;
+    return SILENT;
   }
-  const config = await loadReportableConfig({ env, repoRoot: identity.root });
-  return config === null ? null : { identity, config };
+  return resolveAt(identity, env);
 };
 
 /**
- * Resolves everything a hook needs, or null when the connector must stay
- * silent (disabled, not a git repo, no hub configured).
+ * What preparing a hook came to. `foreign_hub` carries no context on
+ * purpose: there is nothing a handler may send, so there is nothing to hand
+ * one — only what the runner needs to count it and the statusline to say so.
  */
-export const prepareHook = async (
+export type HookPreparation =
+  | { readonly kind: "ready"; readonly ctx: HookContext }
+  | {
+      readonly kind: "foreign_hub";
+      readonly home: string;
+      readonly repoId: string;
+      /** The host session, so a refused session is counted once, not per hook. */
+      readonly sessionId: string;
+      readonly foreignHub: ForeignHub;
+    }
+  | { readonly kind: "silent" };
+
+const SILENT_HOOK: HookPreparation = { kind: "silent" };
+
+/**
+ * Resolves everything a hook needs, or why it must stay out: disabled, not a
+ * git repo, no hub configured (silent), or a repo connected to another hub.
+ */
+export const prepareHookFor = async (
   stdin: string,
   env: Env,
-): Promise<HookContext | null> => {
+): Promise<HookPreparation> => {
   if (isDisabled(env)) {
-    return null;
+    return SILENT_HOOK;
   }
   const payload = parseHookPayload(stdin);
   if (payload === null) {
-    return null;
+    return SILENT_HOOK;
   }
   const resolved = await resolveHookRepo(payload, env);
-  if (resolved === null) {
-    return null;
+  if (resolved.kind === "foreign_hub") {
+    return {
+      kind: "foreign_hub",
+      home: resolved.home,
+      repoId: resolved.identity.repoId,
+      sessionId: payload.session_id,
+      foreignHub: resolved.foreignHub,
+    };
+  }
+  if (resolved.kind === "silent") {
+    return SILENT_HOOK;
   }
   const { identity, config } = resolved;
   const now = (): Date => new Date();
   const key = repoKey(config.hubUrl, identity.repoId);
   return {
-    payload,
-    identity,
-    config,
-    repoKey: key,
-    now,
-    env,
-    hub: {
-      hubUrl: config.hubUrl,
-      apiKey: config.apiKey,
-      timeoutMs: config.timeoutMs,
-      home: config.home,
+    kind: "ready",
+    ctx: {
+      payload,
+      identity,
+      config,
       repoKey: key,
       now,
+      env,
+      hub: {
+        hubUrl: config.hubUrl,
+        apiKey: config.apiKey,
+        keyOrigin: config.keyOrigin,
+        timeoutMs: config.timeoutMs,
+        home: config.home,
+        repoKey: key,
+        now,
+      },
     },
   };
+};
+
+/** `prepareHookFor` for callers that only need a ready context. */
+export const prepareHook = async (
+  stdin: string,
+  env: Env,
+): Promise<HookContext | null> => {
+  const prepared = await prepareHookFor(stdin, env);
+  return prepared.kind === "ready" ? prepared.ctx : null;
+};
+
+/**
+ * A HOOK IN A REPO CONNECTED TO ANOTHER HUB (config/key-binding.ts): nothing
+ * was captured and nothing sent, so the refusal is counted
+ * (state/foreign-hub.ts) — the count `doctor` and `status` print beside the
+ * WARN naming both origins — and SessionStart, the one hook whose answer
+ * reaches the session, says so in one line instead of leaving it looking
+ * quiet. Every other hook stays silent: a line on every tool call is noise.
+ */
+const refuseForeignHub = async (
+  name: HookName,
+  prepared: Extract<HookPreparation, { kind: "foreign_hub" }>,
+): Promise<string> => {
+  await recordForeignHubRefusal(prepared.home, {
+    repoId: prepared.repoId,
+    foreignHub: prepared.foreignHub,
+    surface: name,
+    sessionKey: prepared.sessionId,
+    now: new Date(),
+  });
+  const output = BRIEFING_OUTPUTS[name];
+  return output === undefined ? "" : output(foreignHubAgentLine(prepared.foreignHub));
 };
 
 /**
@@ -232,24 +345,29 @@ export const prepareHook = async (
  * stayed silent by design did not "fire" in any sense a doctor cares about.
  */
 const prepareAndRun = async (
+  name: HookName,
   handler: HookHandler,
   stdin: string,
   env: Env,
   budget: HookBudget,
   onResolved: (ctx: HookContext) => void,
 ): Promise<string> => {
-  const ctx = await prepareHook(stdin, env);
-  if (ctx === null) {
+  const prepared = await traceSpan("prepare", async () => prepareHookFor(stdin, env));
+  if (prepared.kind === "foreign_hub") {
+    return refuseForeignHub(name, prepared);
+  }
+  if (prepared.kind === "silent") {
     return "";
   }
-  onResolved(ctx);
-  return handler(ctx, budget);
+  onResolved(prepared.ctx);
+  return traceSpan("handler", async () => handler(prepared.ctx, budget));
 };
 
 /**
  * THE HOOKS WHOSE ABANDONMENT CAN LOSE CAPTURE (review M4). SessionStart
  * registers the session and spools its work context; PostToolUse spools the
- * targets; PostToolUseFailure the fingerprint; Stop the git lane. The rest
+ * targets; PostToolUseFailure the fingerprint; Stop and SubagentStop the git
+ * lane (SubagentStop over the subagent's own root). The rest
  * capture nothing a coverage question reads: PreToolUse spools the
  * tripwire's ask and UserPromptSubmit its hint deliveries (informational,
  * loss-accounting §3 row 25), and SessionEnd's end and drain leave the
@@ -261,7 +379,19 @@ const CAPTURE_HOOKS: ReadonlySet<HookName> = new Set([
   "post-tool-use",
   "post-tool-use-failure",
   "stop",
+  "subagent-stop",
 ]);
+
+/**
+ * THE HOOKS THAT ANSWER NOTHING — wired async, their response ignored
+ * (cli/settings-merge.ts), so the reserve every other hook holds back to
+ * carry its answer out protects nothing here and their spare is the whole
+ * remainder (core config/hook-budget.ts). Both run the git lane, which the
+ * reserve starved on a loaded machine (release gate, loaded lane,
+ * 2026-10-09). The async PostToolUse capture answers nothing either, but its
+ * envelope is twice theirs and it was never short.
+ */
+const ANSWERLESS_HOOKS: ReadonlySet<HookName> = new Set(["stop", "subagent-stop"]);
 
 interface LossOwner {
   readonly home: string;
@@ -292,10 +422,102 @@ const unresolvedOwner = async (stdin: string, env: Env): Promise<LossOwner | nul
 };
 
 /**
+ * THE HOOKS WHOSE ANSWER IS THE BRIEFING, and how each wraps one line of
+ * context. Only these speak when they lose their answer: a PostToolUse that
+ * printed something would land in the reader's context unasked.
+ */
+const BRIEFING_OUTPUTS: Partial<Readonly<Record<HookName, (text: string) => string>>> = {
+  "session-start": sessionStartContext,
+};
+
+/**
+ * A BRIEFING HOOK THAT LOST ITS BRIEFING SAYS SO (2026-10-08) — the budget
+ * won the race, or the handler threw — and books the omission for doctor
+ * (state/briefing-omissions.ts). Before, both answered "", so the person
+ * read an empty session as a quiet repo and nothing told them otherwise.
+ *
+ * Owned exactly like a capture loss (`unresolvedOwner`, review M4): a repo
+ * the hook resolved, a session state naming one, or a connected repo above
+ * the cwd. Anywhere else the hook would have been silent anyway — under a
+ * user-level install it fires in every directory, and a line there would be
+ * noise — so null, and the caller keeps its old answer.
+ */
+const skippedBriefing = async (
+  name: HookName,
+  reason: "budget" | "error",
+  resolvedOwner: LossOwner | null,
+  stdin: string,
+  env: Env,
+): Promise<string | null> => {
+  const output = BRIEFING_OUTPUTS[name];
+  if (output === undefined) {
+    return null;
+  }
+  const owner = resolvedOwner ?? (await unresolvedOwner(stdin, env));
+  if (owner === null) {
+    // A REPO OF ANOTHER HUB KEEPS ITS WARNING (review batch 2, M2): the cut
+    // hook never reached the refusal that says so, and "the hub or git did not
+    // answer" would send the person after the wrong cause. Nothing is booked:
+    // nothing is captured there, so nothing was lost. The refusal itself is
+    // counted by the session's first hook the budget does not cut — once per
+    // session (state/foreign-hub.ts) — since this one never learned the repo.
+    const foreign = resolvedOwner === null ? await unresolvedForeignHub(stdin, env) : null;
+    return foreign === null ? null : output(foreignHubAgentLine(foreign));
+  }
+  await recordBriefingOmission(owner.home, { key: owner.key, reason, now: new Date() });
+  return output(briefingSkippedLine(reason));
+};
+
+/** The hub a never-resolved hook's repo names when it is not the key's, read without git. */
+const unresolvedForeignHub = async (stdin: string, env: Env): Promise<ForeignHub | null> => {
+  const payload = parseHookPayload(stdin);
+  if (payload === null) {
+    return null;
+  }
+  const owned = await connectedRepoOwnership(env, payload.cwd, [payload.cwd], extractFilePaths(payload.tool_input));
+  return owned.kind === "foreign_hub" ? owned.foreignHub : null;
+};
+
+/**
+ * A PRE-EDIT HOOK THE BUDGET CUT TOOK ITS LANDED-CHANGE CHECK WITH IT
+ * (2026-10-08). Under load the steps before the probe — the state read, the
+ * tool window's lock, the edited file's root — can spend most of the race,
+ * and then the race abandons the handler before its probe comes back or
+ * before it books what came back: no stop, and, unbooked, no trace either.
+ * The edit tool's cut is booked here, after the race, with reason `budget`,
+ * through the once-per-call door the handler uses (state/landed-probe-cuts.ts
+ * bookLandedProbeCut), so a handler that booked just before the race
+ * resolved is not booked twice. Owned like a capture loss (`unresolvedOwner`);
+ * a tool that edits nothing had no check to lose. Fail open: the answer was
+ * already "" and stays it.
+ */
+const bookCutEditCheck = async (resolvedOwner: LossOwner | null, stdin: string, env: Env): Promise<void> => {
+  const payload = parseHookPayload(stdin);
+  if (payload === null || !isEditTool(payload.tool_name)) {
+    return;
+  }
+  const owner = resolvedOwner ?? (await unresolvedOwner(stdin, env));
+  if (owner === null) {
+    return;
+  }
+  await bookLandedProbeCut({
+    home: owner.home,
+    sessionId: payload.session_id,
+    toolUseId: payload.tool_use_id ?? null,
+    key: owner.key,
+    reason: "budget",
+    now: new Date(),
+  }).catch(() => undefined);
+};
+
+/**
  * The one place hooks are allowed to fail: everything is caught, nothing is
  * written to stderr, and the caller always exits 0 (spec §E). The budget covers
  * preparation too — resolving repo identity spawns several git processes, and a
- * slow git would otherwise blow the documented budget many times over.
+ * slow git would otherwise blow the documented budget many times over. Failing
+ * is allowed, failing SILENTLY is not, for the one hook whose answer is the
+ * briefing: a SessionStart the budget cut or a throw ended answers the line
+ * that says so (`skippedBriefing`, 2026-10-08), never an empty session.
  *
  * FIRST, before the budget, before any file or git is touched: a hook
  * running inside the Tier-1 summarizer's own nested `claude -p` (the
@@ -317,42 +539,81 @@ export const runHookWith = async (
   if (isSummarizerChild(env)) {
     return "";
   }
+  // The subagent-return hook fires on EVERY Agent/Task call in the main
+  // thread, and nearly every one has nothing to relay: answered from the
+  // payload and one state read, BEFORE the budget's config read and the repo
+  // identity's git spawns, and without a fired marker (round 2, M2;
+  // hooks/subagent-return.ts).
+  if (name === "subagent-return" && (await hasNothingToRelay(stdin, env))) {
+    return "";
+  }
+  // The turn-end hook fires at the end of EVERY turn, and nearly every turn
+  // has no file resting: answered the same way (round 3, F-M2;
+  // hooks/turn-end.ts).
+  if (name === "turn-end" && (await hasNothingToRecheck(stdin, env))) {
+    return "";
+  }
+  // A holder rather than a plain `let`, so the assignment inside the
+  // callback is visible to the narrowing below — and outside the `try`, so
+  // a hook that threw can still say which repo lost its briefing.
+  const resolved: { value: { home: string; key: string } | null } = {
+    value: null,
+  };
   try {
-    const { budgetMs, timeoutMs } = await resolveHookBudget(
+    const { budgetMs, timeoutMs } = await traceSpan("budget", async () => resolveHookBudget(
       BUDGET_RATIOS[name],
       env,
-    );
+    ));
     // The handler's deadline is taken a fraction BEFORE the race timer starts,
     // so what the handler believes it has left is never more than the truth.
     const deadlineMs = Date.now() + budgetMs;
-    // A holder rather than a plain `let`, so the assignment inside the
-    // callback is visible to the narrowing below.
-    const resolved: { value: { home: string; key: string } | null } = {
-      value: null,
-    };
-    const outcome = await raceHookBudget(
+    const race = hookRace(deadlineMs, timeoutMs, Date.now, !ANSWERLESS_HOOKS.has(name));
+    const outcome = await traceSpan("race", async () => raceHookBudget(
       prepareAndRun(
+        name,
         handler,
         stdin,
         env,
-        hookBudget(deadlineMs, timeoutMs),
+        race.budget,
         (ctx) => {
           resolved.value = { home: ctx.config.home, key: ctx.repoKey };
         },
       ),
       budgetMs,
-    );
+    ));
+    if (outcome.timedOut) {
+      traceMark("race:timed-out");
+    }
+    // Everything after the race, up to the answer: the cut's undo, the bookings and the fired marker.
+    const endPostRace = traceBegin("post-race");
+    // A CLAIM THE LOST OUTPUT WAS TO DELIVER IS GIVEN BACK (batch-2 review,
+    // H2): first, before anything else after the race, so a handler still
+    // running claims nothing more, and every claim it made is undone — the
+    // tripwire's ask re-asked, its person's line owed by the next hook — and
+    // booked (hooks/pre-tool-use.ts releaseCutStop).
+    if (outcome.timedOut) {
+      await race.cut();
+    }
     // THE BUDGET WON, SO THE CAPTURE MAY NOT HAVE HAPPENED
     // (docs/1.0/loss-accounting.md §3 row 14): the binary exits on the ""
     // the race answered, abandoning whatever the handler had not yet
     // written. Booked here, after the race, for the reason the fired marker
     // below is — and keyed to the repo when prepare got that far, unkeyed
-    // (charged to every repo) when the budget beat repo identity.
-    if (outcome.timedOut && CAPTURE_HOOKS.has(name)) {
+    // (charged to every repo) when the budget beat repo identity. UNLESS THE
+    // HANDLER SAID ITS CAPTURE WAS ON DISK before the race was lost
+    // (`budget.captured`; hooks/stop.ts, subagent-stop.ts): what the cut
+    // abandoned then was the drain, whose records stay in the spool for the
+    // next hook — a slow hub cutting that is no loss, as SessionEnd's drain
+    // already is, and booking it made the hub's coverage answer contradict
+    // the connector's own ledger (release gate, loaded lane, 2026-10-09).
+    if (outcome.timedOut && CAPTURE_HOOKS.has(name) && !race.isCaptured()) {
       const owner = resolved.value ?? (await unresolvedOwner(stdin, env));
       if (owner !== null) {
         await recordHookTimeout(owner.home, name, owner.key, new Date());
       }
+    }
+    if (outcome.timedOut && name === "pre-tool-use") {
+      await bookCutEditCheck(resolved.value, stdin, env);
     }
     // AFTER the race, on purpose (trial finding M2, and the one budget risk
     // this row carries). Inside the raced promise this write would compete
@@ -370,8 +631,13 @@ export const runHookWith = async (
         new Date(),
       );
     }
-    return outcome.output;
+    endPostRace();
+    return outcome.timedOut
+      ? ((await skippedBriefing(name, "budget", resolved.value, stdin, env)) ?? outcome.output)
+      : outcome.output;
   } catch {
-    return "";
+    // Still the one place a hook may fail — but a briefing hook that failed
+    // says so in the session instead of leaving it looking quiet.
+    return (await skippedBriefing(name, "error", resolved.value, stdin, env).catch(() => null)) ?? "";
   }
 };

@@ -49,7 +49,7 @@ import {
   deliverOwedBriefing,
   owedBriefingBefore,
 } from "../inject/deferred-briefing.ts";
-import { attemptFailureHint } from "../inject/hint.ts";
+import { attemptDraftNudge, attemptFailureHint } from "../inject/hint.ts";
 import { cursorInjectionOutput } from "../inject/output.ts";
 import { maybeSpawnCursorGhostWorker } from "../derive/triggers.ts";
 import { requireSessionState } from "./recover.ts";
@@ -179,5 +179,9 @@ export const handleCursorPostToolUse = async (
     }));
   }
   const text = briefingText.length === 0 ? hintText : briefingText;
-  return text.length === 0 ? "" : cursorInjectionOutput(text);
+  // Only on a response nothing else spoke on: the once-per-session draft
+  // review nudge. This is Cursor's ONE channel for it — beforeSubmitPrompt
+  // can only block, and stop's followup_message would speak as the user.
+  const spoken = text.length === 0 ? await attemptDraftNudge(ctx, budget) : text;
+  return spoken.length === 0 ? "" : cursorInjectionOutput(spoken);
 };

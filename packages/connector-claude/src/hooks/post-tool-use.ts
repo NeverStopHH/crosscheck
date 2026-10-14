@@ -1,6 +1,8 @@
 import { UNKNOWN_DEVELOPER_ID } from "@crosscheck/connector-core/capture/records.ts";
 import type { Producer } from "@crosscheck/connector-core/capture/records.ts";
+
 import {
+  extractBashCommand,
   extractFailureText,
   extractFilePaths,
   isBashTool,
@@ -9,6 +11,7 @@ import {
 } from "../capture/tool-events.ts";
 import { captureFailure } from "@crosscheck/connector-core/flows/capture-targets.ts";
 import { captureTouchedFiles } from "@crosscheck/connector-core/flows/capture-touched-files.ts";
+import { topicLifeOf, withTopicCapture } from "@crosscheck/connector-core/flows/topic-contexts.ts";
 import { heartbeatMaybe } from "@crosscheck/connector-core/flows/heartbeat.ts";
 import { registerSessionFlow } from "@crosscheck/connector-core/flows/register-session.ts";
 import { guaranteeDeclarationFor } from "@crosscheck/connector-core/guarantees/declarations.ts";
@@ -20,13 +23,17 @@ import {
 import {
   allocateToolSeq,
   closedToolWindow,
+  owesSweepToLife,
   readSessionState,
   updateSessionState,
   withSeenTargets,
+  withShellRun,
 } from "@crosscheck/connector-core/state/session-state.ts";
+import { commonDirOfRoot, rootsNamedByCommand } from "@crosscheck/connector-core/git/shell-roots.ts";
+import { realpathBestEffort, userHomeOf } from "@crosscheck/connector-core/config/paths.ts";
 import { toolWindowKey } from "@crosscheck/connector-core/state/tool-window-key.ts";
 import { seqAt } from "@crosscheck/connector-core/capture/seq.ts";
-import { MAX_TARGETS_PER_INVOCATION } from "@crosscheck/connector-core/constants.ts";
+import { GIT_TOUCHES_TIMEOUT_MS, MAX_TARGETS_PER_INVOCATION } from "@crosscheck/connector-core/constants.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { healerFor, onRefusedHeartbeat } from "./heal.ts";
 import { resolveSessionWorkContextTitle } from "./session-start.ts";
@@ -105,6 +112,9 @@ const recoverState = async (ctx: HookContext): Promise<SessionState | null> => {
     // the NEXT UserPromptSubmit through the same core flow SessionStart uses
     // (flows/briefing.ts `deliverDeferredBriefing`).
     briefingPending: true,
+    // Recovery has no host title (the payload carries none): always ours, so
+    // the hub withholds it from colleagues of a developer who opted out.
+    titleSource: "fallback",
     now: ctx.now(),
   });
   // Published, adopted from a sibling, or — repo_mismatch, a busy lock —
@@ -113,6 +123,22 @@ const recoverState = async (ctx: HookContext): Promise<SessionState | null> => {
 };
 
 /** Bash carries no status signal, so none is fabricated (spec §C). */
+/**
+ * The roots one Bash call worked in, as far as can be told without running
+ * anything (review H2): the cwd's, and every worktree of this repo its
+ * command's words name (core git/shell-roots.ts). Fs only, bounded.
+ */
+const shellRootsOf = async (ctx: HookContext): Promise<readonly string[]> => {
+  const cwdRoot = await realpathBestEffort(ctx.identity.root);
+  const command = extractBashCommand(ctx.payload.tool_input);
+  const commonDir = command === null ? null : await commonDirOfRoot(cwdRoot);
+  const named =
+    command === null || commonDir === null
+      ? []
+      : await rootsNamedByCommand(command, ctx.payload.cwd ?? cwdRoot, userHomeOf(ctx.env), commonDir);
+  return [...new Set([cwdRoot, ...named])];
+};
+
 const heartbeatStatusFor = (toolName: string | undefined): string | undefined =>
   isEditTool(toolName) ? IMPLEMENTING_STATUS : undefined;
 
@@ -244,7 +270,7 @@ export const handlePostToolUse = async (
   // The §1.3 flows: targets first, then the fingerprint — the same spool order
   // the combined batch used to produce. Claude-side stays exactly the payload
   // parsing: which fields carry paths, what counts as a failure response.
-  const { captured: files, resolution } = await captureTouchedFiles({
+  const { captured: files, resolution, generated, topics } = await captureTouchedFiles({
     seq,
     home: ctx.config.home,
     repoKey: ctx.repoKey,
@@ -261,6 +287,9 @@ export const handlePostToolUse = async (
     identityRoot: ctx.identity.root,
     identityRepoId: ctx.identity.repoId,
     knownWorktreeRoots: state.knownWorktreeRoots,
+    // ONE CONTEXT PER TOPIC (core flows/topic-contexts.ts): an edit in a
+    // sibling worktree on another branch files under that branch's context.
+    topics: topicLifeOf(state),
   });
   if (failed) {
     await captureFailure({
@@ -318,20 +347,46 @@ export const handlePostToolUse = async (
   // here: nothing was positioned at all, and the record says
   // `allocation_failed` for itself.
   const lostBracket = editFired && seq !== null && seq.after === undefined;
+  // A SHELL RAN HERE (DESIGN.md "One session, many topics"): the cwd's root
+  // is marked, and so is every worktree of this repo the command's words name
+  // — a `cd`, a `git -C`, an absolute path — because in the owner's shape a
+  // subagent's cwd is the START checkout and its shell works in a sibling
+  // (review H2). The next Stop or SubagentStop sweeps them first, and also
+  // the repo's worktrees that changed meanwhile, for what the words could not
+  // tell (core flows/git-lane.ts). Only roots of this session's repo: the
+  // foreign-repo exit above already returned.
+  const shellRoots = isBashTool(ctx.payload.tool_name) ? await shellRootsOf(ctx) : null;
+  const withShell = (fresh: SessionState): SessionState =>
+    shellRoots === null ? fresh : withShellRun(fresh, shellRoots, ctx.identity.repoId, now.toISOString());
+  // Whether the flush above healed the life away from the lane's last sweep
+  // (L10): read off the freshest state, inside the write that happens anyway.
+  let owesSweep = false;
   await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => ({
     // Files this call captured into a life the flush then healed away from
-    // were withheld with it: they stay unseen, so the next life captures them.
-    ...withCaptureBookkeeping(withSeenTargets(fresh, fresh.crosscheckSessionId === state.crosscheckSessionId ? files : []), {
+    // were withheld with it: they stay unseen, so the next life captures them
+    // — and so do the topics it opened (withTopicCapture registers none then).
+    ...withCaptureBookkeeping(withTopicCapture(withSeenTargets(withShell(fresh), fresh.crosscheckSessionId === state.crosscheckSessionId ? files : []), topics), {
       resolution,
       capturedCount: files.length,
       editFired,
       toolLabel: ctx.payload.tool_name ?? null,
       firstPath: paths[0] ?? null,
       now,
+      generated,
     }),
     ...(didHeartbeat ? { lastHeartbeatAt: now.toISOString() } : {}),
     ...(closesWindow ? closeOwnWindow(fresh) : {}),
     ...(lostBracket ? { toolWindowMisses: fresh.toolWindowMisses + 1 } : {}),
+    ...((owesSweep = owesSweepToLife(fresh)) ? {} : {}),
   }));
+  // A SWEEP OWED TO A HEALED LIFE, paid here when the spare budget covers
+  // the lane (hooks/git-lane.ts sweepIfLifeMoved): the refused life's files
+  // reach the hub under the new life inside this hook, not a turn later.
+  // Loaded only then — every PostToolUse would otherwise pay the lane's
+  // modules in its boot (batch-2 review, M6).
+  if (owesSweep && budget.spareMs() >= GIT_TOUCHES_TIMEOUT_MS) {
+    const { sweepIfLifeMoved } = await import("./git-lane.ts");
+    await sweepIfLifeMoved(ctx, budget);
+  }
   return "";
 };

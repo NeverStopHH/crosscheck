@@ -1,6 +1,6 @@
 /**
  * `assembleBriefing` (DESIGN-agent-agnostic.md §1.3) — the session-start
- * briefing recipe as an extracted function: eight parallel hub GETs → drift for
+ * briefing recipe as an extracted function: one block of parallel hub GETs → drift for
  * the teammates that will actually be shown → `renderBriefing` → the solved
  * pointers the EMITTED text really contains.
  *
@@ -31,7 +31,7 @@ import {
   MS_PER_DAY,
   WORK_CONTEXT_LIST_LIMIT,
 } from "../constants.ts";
-import { formatGhostLine } from "../briefing/ghost.ts";
+import { formatAnonymousGhostLine, formatGhostLine } from "../briefing/ghost.ts";
 import { formatLandedNoticeEntry } from "../briefing/landed-notices.ts";
 import { coverageNote } from "../coverage/render.ts";
 import { UNKNOWN_COVERAGE } from "../http/coverage.ts";
@@ -41,19 +41,26 @@ import {
   renderBriefing,
 } from "../briefing/render.ts";
 import { resolveDriftByBaseCommit } from "../git/commit-drift.ts";
+import { NOTHING_LANDED } from "../capture/landed.ts";
+import type { LandedReading } from "../capture/landed.ts";
 import { UNKNOWN_DEVELOPER_ID, hintDeliveryRecord, landedNoticeDeliveryRecord } from "../capture/records.ts";
 import type { Producer } from "../capture/records.ts";
 import {
   getAbsences,
   getContradictions,
-  getDrafts,
-  getGhostChecks,
+  getDraftListing,
+  getGhostChecksAnswer,
   getLandedNotices,
   getPresence,
+  getPrivacySettings,
   getQuestions,
-  getSolvedMatches,
+  getSolvedPointers,
   getWorkContexts,
 } from "../http/hub.ts";
+import { PRESENCE_ON_WAITING_BRIEFING_LINE, presenceReenabledBriefingLine } from "../briefing/presence-notice.ts";
+import { withBriefingOutcomeClause } from "../hints/outcome-clause.ts";
+import { unansweredReadsLine } from "../briefing/omission.ts";
+import { recordBriefingOmission } from "../state/briefing-omissions.ts";
 import type { HubResult } from "../http/client.ts";
 import type {
   GhostCheckEntry,
@@ -85,7 +92,7 @@ export interface AssembleBriefingInput {
    * wall clock of its own; its result is returned untouched.
    */
   readonly collectLanded?:
-    | ((workContexts: readonly WorkContextEntry[]) => Promise<readonly string[]>)
+    | ((workContexts: readonly WorkContextEntry[]) => Promise<LandedReading>)
     | undefined;
   /**
    * False when no person reads this session (landed changes, step 4): the
@@ -96,7 +103,10 @@ export interface AssembleBriefingInput {
 }
 
 export interface AssembledBriefing {
-  /** The rendered briefing — empty means nothing worth injecting (silence). */
+  /**
+   * The rendered briefing — empty means nothing worth injecting (silence),
+   * and only that: a briefing reads did not complete says so instead.
+   */
   readonly briefing: string;
   /**
    * Work-context ids of the solved pointers the emitted text really shows —
@@ -123,17 +133,58 @@ export interface AssembledBriefing {
    * "the hub answered".
    */
   readonly shownGhostCount: number;
+  /**
+   * The ghost ROWS behind those lines, the same "the text contains it" fact:
+   * what a host with a person-facing channel tells the person about
+   * (hints/collision-notice.ts), so a row the budget cut is told to nobody.
+   */
+  readonly shownGhosts: readonly GhostCheckEntry[];
+  /**
+   * The nameless ghost line's count when the emitted text really shows it —
+   * how many of the reader's files a teammate who opted out of presence has
+   * in unfinished work — else null; told to the person like the rows.
+   */
+  readonly shownAnonymousGhost: number | null;
   /** The `collectLanded` rider's result; empty when no rider was passed. */
-  readonly landedCommits: readonly string[];
+  readonly landed: LandedReading;
   /**
    * The hub rows of the author's notices the emitted text really names
    * (landed changes, step 4): told once, so only what the reader saw is
    * marked — a notice the character budget cut still waits.
    */
   readonly shownLandedNoticeIds: readonly string[];
+  /**
+   * Reads of the parallel block that did not ANSWER — timed out or
+   * unreachable (`kind: "network"`). When any did, the briefing says so in
+   * its last line (briefing/omission.ts) and the omission is booked for
+   * doctor; an empty briefing is then that line, never silence.
+   */
+  readonly unansweredReads: number;
 }
 
 const NO_NOTICES: HubResult<readonly LandedNotice[]> = { ok: true, data: [], dateHeader: null };
+
+/**
+ * A read that never answered, as opposed to one that answered unusably. Only
+ * the first is an omission: an older hub's missing route (404) or a payload
+ * this connector cannot use is fail-open BY DESIGN and stays silent, and
+ * counting it would print a warning on every session against every hub one
+ * release behind.
+ */
+const isUnanswered = (result: HubResult<unknown>): boolean => !result.ok && result.kind === "network";
+
+/**
+ * The briefing as delivered when reads did not answer: what arrived, then one
+ * line saying how much did not — or that line alone, when nothing arrived.
+ * Appended past the section budget on purpose: the line is ~100 characters,
+ * and an incomplete briefing that does not say so is the defect it closes.
+ */
+const withUnansweredReads = (briefing: string, unanswered: number, reads: number): string =>
+  unanswered === 0
+    ? briefing
+    : briefing.length === 0
+      ? unansweredReadsLine(unanswered, reads, true)
+      : `${briefing}\n${unansweredReadsLine(unanswered, reads, false)}`;
 
 export const assembleBriefing = async (
   input: AssembleBriefingInput,
@@ -150,6 +201,7 @@ export const assembleBriefing = async (
     questionsResult,
     ghostChecksResult,
     landedNoticesResult,
+    privacyResult,
   ] = await Promise.all([
     getPresence(hub, repoId),
     // The window, passed EXPLICITLY (trial finding M8): the hub's default is
@@ -164,8 +216,8 @@ export const assembleBriefing = async (
     }),
     getAbsences(hub, repoId),
     getContradictions(hub, repoId),
-    getSolvedMatches(hub, repoId),
-    getDrafts(hub, repoId),
+    getSolvedPointers(hub, repoId),
+    getDraftListing(hub, repoId),
     // Roadmap R2. In the SAME parallel block, so the questions block costs no
     // extra wall clock: the whole fetch is still one per-request hub timeout,
     // and a hub too old to serve it simply renders no section (fail open).
@@ -173,11 +225,31 @@ export const assembleBriefing = async (
     // VISION §3. Also in the parallel block, and for the same reason plus one
     // more: the SessionStart budget is 1000 ms and this GET must cost the
     // hook nothing but its share of the one timeout the block already spends.
-    getGhostChecks(hub, repoId),
+    // With it, the nameless count of the reader's files a teammate who opted
+    // out of presence has in unfinished work (the owner's decision on the
+    // batch-2 integration review's I1): the same request.
+    getGhostChecksAnswer(hub, repoId),
     // Landed changes, step 4: the author's notices, addressed to this reader.
     // Same block, same one timeout; an older hub renders no section.
     input.tellsNotices === false ? Promise.resolve(NO_NOTICES) : getLandedNotices(hub, repoId),
+    // Hub hardening, item 6: whether the reader's presence opt-out was
+    // switched back off through an API key. Same block, same one timeout; an
+    // older hub sends no such field, and the briefing says nothing.
+    getPrivacySettings(hub),
   ]);
+  // The reads actually sent: a headless run's notices were never asked.
+  const reads: readonly HubResult<unknown>[] = [
+    presenceResult,
+    contextsResult,
+    absencesResult,
+    contradictionsResult,
+    solvedMatchesResult,
+    draftsResult,
+    questionsResult,
+    ghostChecksResult,
+    ...(input.tellsNotices === false ? [] : [landedNoticesResult]),
+  ];
+  const unansweredReads = reads.filter(isUnanswered).length;
   const presence = presenceResult.ok ? presenceResult.data : [];
   const workContexts = contextsResult.ok ? contextsResult.data : [];
   const absences = absencesResult.ok ? absencesResult.data.absences : [];
@@ -193,11 +265,27 @@ export const assembleBriefing = async (
   const contradictions = contradictionsResult.ok
     ? contradictionsResult.data
     : [];
-  const solvedMatches = solvedMatchesResult.ok ? solvedMatchesResult.data : [];
-  const drafts = draftsResult.ok ? draftsResult.data : [];
+  const solvedMatches = solvedMatchesResult.ok ? solvedMatchesResult.data.matches : [];
+  const recordsOutcomes = solvedMatchesResult.ok && solvedMatchesResult.data.recordsOutcomes;
+  const drafts = draftsResult.ok ? draftsResult.data.drafts : [];
+  const draftTotals = draftsResult.ok
+    ? { total: draftsResult.data.total, oldestCreatedAt: draftsResult.data.oldestCreatedAt }
+    : undefined;
   const questions = questionsResult.ok ? questionsResult.data.inbox : [];
-  const ghostChecks = ghostChecksResult.ok ? ghostChecksResult.data : [];
+  const ghostChecks = ghostChecksResult.ok ? ghostChecksResult.data.entries : [];
+  const anonymousGhost = ghostChecksResult.ok ? ghostChecksResult.data.anonymousOverlap : null;
   const landedNotices = landedNoticesResult.ok ? landedNoticesResult.data : [];
+  const reenabledNotice =
+    privacyResult.ok && privacyResult.data.presenceReenabledAt !== null
+      ? presenceReenabledBriefingLine(privacyResult.data.presenceReenabledAt, privacyResult.data.presenceOptOut)
+      : null;
+  // §8: a request to show presence again that waits for the passkey is told
+  // beside the re-enable notice, in the same line the budget cannot cut.
+  const presenceSentences = [
+    ...(reenabledNotice === null ? [] : [reenabledNotice]),
+    ...(privacyResult.ok && privacyResult.data.presenceOnPending ? [PRESENCE_ON_WAITING_BRIEFING_LINE] : []),
+  ];
+  const presenceNotice = presenceSentences.length === 0 ? null : presenceSentences.join(" ");
 
   // Only the teammates that will actually be shown cost a git process; the
   // optional rider shares the fan-out window, so both together still cost one
@@ -205,9 +293,9 @@ export const assembleBriefing = async (
   const shownBaseCommits = groupTeammates(presence, now)
     .slice(0, MAX_TEAMMATES)
     .flatMap((group) => (group.baseCommit === null ? [] : [group.baseCommit]));
-  const [drift, landedCommits] = await Promise.all([
+  const [drift, landed] = await Promise.all([
     resolveDriftByBaseCommit(repoRoot, shownBaseCommits),
-    input.collectLanded?.(workContexts) ?? Promise.resolve([] as readonly string[]),
+    input.collectLanded?.(workContexts) ?? Promise.resolve(NOTHING_LANDED),
   ]);
 
   const briefing = renderBriefing({
@@ -221,10 +309,13 @@ export const assembleBriefing = async (
     contradictions,
     solvedMatches,
     drafts,
+    draftTotals,
     questions,
     ghostChecks,
+    anonymousGhost,
     landedNotices,
     ...(coverageLine === null ? {} : { coverageLine }),
+    ...(presenceNotice === null ? {} : { presenceNotice }),
   });
 
   const shownSolvedIds = solvedMatches
@@ -242,11 +333,20 @@ export const assembleBriefing = async (
   // contains it" is the fact — the section may have been dropped whole by
   // the character budget, and a counter that trusted the fetch would report
   // notices nobody saw.
-  const shownGhostCount = ghostChecks
-    .map((entry: GhostCheckEntry) => formatGhostLine(entry, now))
-    .filter((line): line is string => line !== null)
+  const shownGhosts = ghostChecks
+    .flatMap((entry: GhostCheckEntry) => {
+      const line = formatGhostLine(entry, now);
+      return line === null ? [] : [{ entry, line }];
+    })
     .slice(0, MAX_GHOST_POINTERS)
-    .filter((line) => briefing.includes(line)).length;
+    .filter((shown) => briefing.includes(shown.line))
+    .map((shown) => shown.entry);
+  const shownGhostCount = shownGhosts.length;
+  // The nameless line, the same "the text contains it" fact.
+  const shownAnonymousGhost =
+    anonymousGhost !== null && briefing.includes(formatAnonymousGhostLine(anonymousGhost.sharedFileCount))
+      ? anonymousGhost.sharedFileCount
+      : null;
 
   // The same rule once more: an entry's one spelling is in the text, or it
   // was not shown — and only the commits it names are marked told.
@@ -257,15 +357,36 @@ export const assembleBriefing = async (
       return entry !== null && briefing.includes(entry.text) ? entry.commitIds : [];
     });
 
+  // Booked HERE, once for every caller — the Claude and Cursor SessionStarts
+  // and the deferred briefings alike — before the line is shown.
+  if (unansweredReads > 0) {
+    await recordBriefingOmission(hub.home, {
+      key: hub.repoKey.length === 0 ? null : hub.repoKey,
+      reason: "hub",
+      now,
+    });
+  }
   return {
-    briefing,
+    // 07 §13 (D-O3): the solved pointers are briefing-channel deliveries, so
+    // where the repo records outcomes the briefing ends with the one clause
+    // that says how to record one — after the rendered text, never in it, and
+    // only while the whole still fits the briefing's cap. The unanswered-reads
+    // line goes after even that: it is about the briefing, not in it.
+    briefing: withUnansweredReads(
+      recordsOutcomes && shownSolvedIds.length > 0 ? withBriefingOutcomeClause(briefing) : briefing,
+      unansweredReads,
+      reads.length,
+    ),
     shownSolvedIds,
     shownGhostCount,
+    shownGhosts,
+    shownAnonymousGhost,
     shownLandedNoticeIds,
     presence,
     presenceFetched: presenceResult.ok,
     workContexts,
-    landedCommits,
+    landed,
+    unansweredReads,
   };
 };
 
@@ -400,16 +521,36 @@ export interface DeliverDeferredBriefingInput {
  */
 export const deliverDeferredBriefing = async (
   input: DeliverDeferredBriefingInput,
-): Promise<string> => {
+): Promise<string> => (await payDeferredBriefing(input)).briefing;
+
+/** A paid deferred briefing: its text, and the ghost rows — and the nameless count — that text really shows. */
+export interface PaidDeferredBriefing {
+  readonly briefing: string;
+  readonly shownGhosts: readonly GhostCheckEntry[];
+  readonly shownAnonymousGhost: number | null;
+}
+
+const NOTHING_PAID: PaidDeferredBriefing = { briefing: "", shownGhosts: [], shownAnonymousGhost: null };
+
+/**
+ * `deliverDeferredBriefing` for a caller that also tells the PERSON about the
+ * briefing's ghost rows (connector-claude's UserPromptSubmit; review L5): the
+ * late-registered session's briefing carries the same rows SessionStart's
+ * would, and a row only the agent is told about is the pilot's failure again.
+ * Same claim, same record-then-emit; nothing paid is "" and no rows.
+ */
+export const payDeferredBriefing = async (
+  input: DeliverDeferredBriefingInput,
+): Promise<PaidDeferredBriefing> => {
   const state = await readSessionState(input.home, input.hostSessionKey);
   if (state === null || !state.briefingPending) {
-    return "";
+    return NOTHING_PAID;
   }
   // First-wins guard (finding #9): a prompt resolved against ANOTHER repo
   // must not spend this session's debt — the briefing belongs to the repo
   // the session is bound to, and a prompt that resolves there pays it.
   if (state.repoId !== input.repoId) {
-    return "";
+    return NOTHING_PAID;
   }
   const claimed = await updateSessionState(
     input.home,
@@ -418,7 +559,7 @@ export const deliverDeferredBriefing = async (
       fresh.briefingPending ? { ...fresh, briefingPending: false } : null,
   );
   if (!claimed) {
-    return "";
+    return NOTHING_PAID;
   }
   const assembled = await assembleBriefing({
     hub: input.hub,
@@ -429,7 +570,7 @@ export const deliverDeferredBriefing = async (
     tellsNotices: input.tellsNotices,
   });
   if (assembled.briefing.length === 0) {
-    return "";
+    return NOTHING_PAID;
   }
   await recordBriefingDeliveries({
     home: input.home,
@@ -446,5 +587,5 @@ export const deliverDeferredBriefing = async (
     shownLandedNoticeIds: assembled.shownLandedNoticeIds,
     now: input.now,
   });
-  return assembled.briefing;
+  return { briefing: assembled.briefing, shownGhosts: assembled.shownGhosts, shownAnonymousGhost: assembled.shownAnonymousGhost };
 };

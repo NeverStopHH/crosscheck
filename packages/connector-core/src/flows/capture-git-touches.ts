@@ -19,10 +19,12 @@
  * already dirty AND was changed again during the session is this session's
  * touch, and a baseline would have excluded it.
  *
- * WHAT IT CANNOT SEE, stated rather than implied: changes already committed
- * during the session, and untracked new files (`git diff` reports neither).
- * `doctor` prints the same sentence, because a lane whose blind spots are
- * undocumented reads as coverage it does not have.
+ * WHAT `git diff` ALONE CANNOT SEE, stated rather than implied: changes
+ * already committed during the session, and untracked new files. The
+ * multi-root sweep (flows/git-lane.ts) closes both — `readGitCommits` for
+ * this developer's own commits (`git_commit`), `includeUntracked` for new
+ * files — and what stays out of reach is said there: a file committed and
+ * then reverted, and a commit made on a branch the root has since left.
  *
  * "NOTHING" AND "NO ANSWER" ARE DIFFERENT FACTS, which is why this returns an
  * outcome and not a bare list. `git diff` failing — a GIT_TOUCHES_TIMEOUT_MS
@@ -39,11 +41,23 @@
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 
-import { GIT_TOUCHES_TIMEOUT_MS, MAX_GIT_TOUCH_CANDIDATES } from "../constants.ts";
-import { runGitOutcome } from "../git/git.ts";
+import {
+  GIT_TOUCHES_TIMEOUT_MS,
+  MAX_GIT_LANE_COMMITS,
+  MAX_GIT_LANE_TARGETS_PER_ROOT,
+  MAX_GIT_TOUCH_CANDIDATES,
+  MAX_REFTABLE_REFLOG_ENTRIES,
+} from "../constants.ts";
+import { runGit, runGitOutcome } from "../git/git.ts";
+import { commitsMadeAmong, commitsMadeInHeadLog, movesOfReflogShow } from "../git/head-history.ts";
+import { isReftableGitDir } from "../git/repo-identity.ts";
 import { sessionSlug } from "../config/paths.ts";
 import { recordDrop } from "../spool/drops.ts";
 import { captureFileTargets } from "./capture-targets.ts";
+import type { CapturedFileTargets } from "./capture-targets.ts";
+import { NO_GENERATED } from "../capture/generated.ts";
+import type { GeneratedTally } from "../capture/generated.ts";
+import { resolveDenylist } from "../capture/denylist.ts";
 import type { DenylistConfig } from "../capture/denylist.ts";
 import type { Producer } from "../capture/records.ts";
 import type { SeqRange } from "../state/session-state.ts";
@@ -74,6 +88,19 @@ export interface CaptureGitTouchesInput {
    * "git did not answer".
    */
   readonly gitTimeoutMs?: number;
+  /**
+   * Also the NEW files git does not track (`ls-files --others
+   * --exclude-standard`). The multi-root sweep asks for them
+   * (flows/git-lane.ts); a `cp` into a worktree leaves nothing else.
+   */
+  readonly includeUntracked?: boolean;
+  /**
+   * This root's untracked listing was already cut once in this life, and the
+   * cut booked (review M8): a dump that stays is not one more loss per Stop.
+   */
+  readonly isUntrackedCutBooked?: boolean;
+  /** Targets this call may still write; absent = the per-call cap. */
+  readonly maxTargets?: number;
 }
 
 /** True when the file changed after the session began. Unreadable = no. */
@@ -102,10 +129,129 @@ export interface GitTouchesOutcome {
    * than a silence that reads as health.
    */
   readonly unavailable: boolean;
+  /**
+   * How the recorded paths were classified by the generated-target rule — the
+   * lane that sees `bun install` and a codegen run, which is where most
+   * generated files are written.
+   */
+  readonly generated: GeneratedTally;
 }
 
-const UNAVAILABLE: GitTouchesOutcome = { paths: [], unavailable: true };
-const NOTHING_FRESH: GitTouchesOutcome = { paths: [], unavailable: false };
+const UNAVAILABLE: GitTouchesOutcome = { paths: [], unavailable: true, generated: NO_GENERATED };
+const NOTHING_FRESH: GitTouchesOutcome = { paths: [], unavailable: false, generated: NO_GENERATED };
+
+/** Lines git printed, trimmed, the empty ones dropped. */
+const linesOf = (stdout: string): readonly string[] =>
+  stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+/** A denylist pattern that names a whole directory wherever it sits: `**\/<name>/**`. */
+const DIRECTORY_GLOB = /^\*\*\/([^*?[\]{}!]+)\/\*\*$/;
+
+/**
+ * THE DENYLIST'S DIRECTORIES AS GIT PATHSPECS (review M8): an untracked
+ * `node_modules/` nothing ignores is tens of thousands of lines the denylist
+ * would refuse one by one after the bound had already cut the real new files
+ * behind it. Git leaves them out instead, and never lists them at all.
+ */
+const untrackedExcludes = (denylist: DenylistConfig | null): readonly string[] =>
+  resolveDenylist(denylist ?? undefined).flatMap((pattern) => {
+    const name = DIRECTORY_GLOB.exec(pattern)?.[1];
+    return name === undefined ? [] : [`:(exclude,glob)**/${name}/**`];
+  });
+
+/**
+ * Untracked paths in a directory the repository already tracks come first
+ * (review M8): a dump nothing ignores — a cache, a download — is a new
+ * top-level directory of its own, and must not push the real new file in
+ * `src/` past the bound. A file at the root counts as tracked ground. Stable
+ * otherwise, in git's own order.
+ */
+const trackedGroundFirst = (paths: readonly string[], trackedDirs: ReadonlySet<string>): readonly string[] => {
+  const isTrackedGround = (path: string): boolean => !path.includes("/") || trackedDirs.has(path.slice(0, path.indexOf("/")));
+  return [...paths.filter(isTrackedGround), ...paths.filter((path) => !isTrackedGround(path))];
+};
+
+/** A working tree's changed paths: tracked ones, and the new ones git does not track yet in the order the bound reads them. */
+interface ChangedPaths {
+  readonly tracked: readonly string[];
+  readonly untracked: readonly string[];
+}
+
+/**
+ * The paths a working tree holds changed — `git diff --name-only HEAD`, and,
+ * when asked, the NEW files git does not track yet (`ls-files --others
+ * --exclude-standard`, ignored files and the denylist's directories left
+ * out), tracked ground first. Null when git did not answer either question:
+ * one answered half is not "nothing changed". The top-level listing that
+ * orders them is no answer git owes: without it, git's own order stands.
+ */
+const changedPaths = async (input: CaptureGitTouchesInput): Promise<ChangedPaths | null> => {
+  const timeoutMs = input.gitTimeoutMs ?? GIT_TOUCHES_TIMEOUT_MS;
+  const isUntrackedAsked = input.includeUntracked === true;
+  const [diff, untracked, tops] = await Promise.all([
+    // HEAD, so staged and unstaged changes both count: an agent that ran
+    // `git add` mid-turn has not made its work invisible.
+    runGitOutcome(["diff", "--name-only", "HEAD"], input.repoRoot, timeoutMs),
+    // A `cp` or a generator writes files git has never seen, and `git diff`
+    // names none of them (DESIGN.md "One session, many topics").
+    isUntrackedAsked
+      ? runGitOutcome(["ls-files", "--others", "--exclude-standard", "--", ".", ...untrackedExcludes(input.denylist)], input.repoRoot, timeoutMs)
+      : null,
+    isUntrackedAsked ? runGitOutcome(["ls-tree", "--name-only", "-d", "HEAD"], input.repoRoot, timeoutMs) : null,
+  ]);
+  if (!diff.ok || (untracked !== null && !untracked.ok)) {
+    return null;
+  }
+  const tracked = [...new Set(linesOf(diff.stdout))];
+  const known = new Set(tracked);
+  const fresh = untracked === null ? [] : linesOf(untracked.stdout).filter((path) => !known.has(path));
+  const trackedDirs = new Set(tops?.ok === true ? linesOf(tops.stdout) : []);
+  return { tracked, untracked: tops?.ok === true ? trackedGroundFirst(fresh, trackedDirs) : fresh };
+};
+
+/** Paths past the bound are never examined: whether this session touched THEM is unknown, so they are counted. */
+const recordUnexamined = (input: CaptureGitTouchesInput, unexamined: number): Promise<void> =>
+  recordDrop(input.home, input.repoKey, sessionSlug(input.hostSessionKey), unexamined, "capture-capped", input.now);
+
+/** The fresh half of the git lane's answer, read and not yet spooled. */
+export interface GitTouchesRead {
+  readonly fresh: readonly string[];
+  /** The untracked listing was cut at the bound this time (review M8): the caller remembers it for the root's life. */
+  readonly isUntrackedCut: boolean;
+}
+
+/** The fresh half of the git lane's answer, read and not yet spooled — null when git did not answer. */
+export const readGitTouches = async (input: CaptureGitTouchesInput): Promise<GitTouchesRead | null> => {
+  const changed = await changedPaths(input);
+  if (changed === null) {
+    return null;
+  }
+  // Bounded BEFORE the stat calls: thousands of dirty files must not cost
+  // thousands of filesystem round trips inside the Stop hook's budget
+  // (constants.ts says where the bound's number comes from). Tracked changes
+  // take the bound first; the untracked ones what is left of it.
+  const tracked = changed.tracked.slice(0, MAX_GIT_TOUCH_CANDIDATES);
+  const untracked = changed.untracked.slice(0, MAX_GIT_TOUCH_CANDIDATES - tracked.length);
+  // REVIEW M5, NARROWED BY §10 ITEM 8: only the paths past the bound are
+  // never examined, so only whether this session touched THEM is unknown —
+  // counted as `capture-capped`, the per-call cap's word. A path within the
+  // bound is examined below, and a stale one is no loss. An UNTRACKED cut is
+  // one loss per root per life (review M8): the same dump on every Stop is
+  // the same unknown, not tens of thousands more.
+  const isUntrackedCut = untracked.length < changed.untracked.length;
+  const untrackedBooked = isUntrackedCut && input.isUntrackedCutBooked !== true ? 1 : 0;
+  await recordUnexamined(input, changed.tracked.length - tracked.length + untrackedBooked);
+  const fresh: string[] = [];
+  for (const path of [...tracked, ...untracked]) {
+    if (await changedSince(input.repoRoot, path, input.since)) {
+      fresh.push(path);
+    }
+  }
+  return { fresh, isUntrackedCut };
+};
 
 /**
  * Spools the git-lane touches and returns them, exactly like
@@ -115,49 +261,32 @@ const NOTHING_FRESH: GitTouchesOutcome = { paths: [], unavailable: false };
 export const captureGitTouches = async (
   input: CaptureGitTouchesInput,
 ): Promise<GitTouchesOutcome> => {
-  const outcome = await runGitOutcome(
-    // HEAD, so staged and unstaged changes both count: an agent that ran
-    // `git add` mid-turn has not made its work invisible.
-    ["diff", "--name-only", "HEAD"],
-    input.repoRoot,
-    input.gitTimeoutMs ?? GIT_TOUCHES_TIMEOUT_MS,
-  );
-  if (!outcome.ok) {
+  const read = await readGitTouches(input);
+  if (read === null) {
     return UNAVAILABLE;
   }
-  const changed = outcome.stdout
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-  // Bounded BEFORE the stat calls: thousands of dirty files must not cost
-  // thousands of filesystem round trips inside the Stop hook's budget
-  // (constants.ts says where the bound's number comes from).
-  const candidates = changed.slice(0, MAX_GIT_TOUCH_CANDIDATES);
-  // REVIEW M5, NARROWED BY §10 ITEM 8: only the paths past the bound are
-  // never examined, so only whether this session touched THEM is unknown —
-  // counted as `capture-capped`, the per-call cap's word. A path within the
-  // bound is examined below, and a stale one is no loss.
-  await recordDrop(
-    input.home,
-    input.repoKey,
-    sessionSlug(input.hostSessionKey),
-    changed.length - candidates.length,
-    "capture-capped",
-    input.now,
-  );
-  const fresh: string[] = [];
-  for (const path of candidates) {
-    if (await changedSince(input.repoRoot, path, input.since)) {
-      fresh.push(path);
-    }
-  }
-  if (fresh.length === 0) {
+  if (read.fresh.length === 0) {
     return NOTHING_FRESH;
   }
-  // Through the SAME filter chain as the tool lane — repo-relative, denylist,
-  // seen-set, secret scan — because a second lane that skipped the hot-file
-  // denylist would be a way around it (capture/denylist.ts).
-  const paths = await captureFileTargets({
+  const { captured: paths, generated } = await spoolGitTouches(input, read.fresh, "git_diff");
+  return { paths, unavailable: false, generated };
+};
+
+/**
+ * THE ONE SPOOLING CALL OF BOTH GIT HALVES — the working tree's changes
+ * (`git_diff`) and this developer's commits (`git_commit`) — through the SAME
+ * filter chain as the tool lane: repo-relative, denylist, seen-set, secret
+ * scan, because a second lane that skipped the hot-file denylist would be a
+ * way around it (capture/denylist.ts). Returns what it spooled and how the
+ * generated-target rule classified it — the lane that sees `bun install` and
+ * a codegen run, where most generated files are written.
+ */
+export const spoolGitTouches = async (
+  input: CaptureGitTouchesInput,
+  fresh: readonly string[],
+  source: "git_diff" | "git_commit",
+): Promise<CapturedFileTargets> =>
+  captureFileTargets({
     home: input.home,
     repoKey: input.repoKey,
     hostSessionKey: input.hostSessionKey,
@@ -176,13 +305,127 @@ export const captureGitTouches = async (
     // audit in capture-touched-files.ts able to see this call site.
     resolveRoot: () => input.repoRoot,
     ...(input.seq === undefined ? {} : { seq: input.seq }),
+    // THE LANE'S OWN CAP, never the tool lane's per-call one: a root a long
+    // session left a hundred files dirty files them in one sweep, and a
+    // resumed life files again what its earlier life left (constants.ts
+    // MAX_GIT_LANE_TARGETS_PER_ROOT). A caller handing over what an earlier
+    // half of the same root left keeps its narrower number.
+    maxTargets: input.maxTargets ?? MAX_GIT_LANE_TARGETS_PER_ROOT,
     paths: fresh,
     denylist: input.denylist,
     seenTargets: input.seenTargets,
     workContextId: input.workContextId,
     producer: input.producer,
-    source: "git_diff",
+    source,
     now: input.now,
   });
-  return { paths, unavailable: false };
+
+/** What separates one commit's header from the paths below it, and its two fields — bytes no path or email carries. */
+const COMMIT_MARK = "\u0001";
+const FIELD_MARK = "\u0002";
+const MS_PER_SECOND = 1000;
+
+/**
+ * The paths of the commits `author` made since `since`, newest first, each
+ * once. Read off git's own author email and author date, compared exactly —
+ * never `--author`'s regular expression, which a dot in an address turns into
+ * a wildcard that matches a teammate.
+ */
+const authoredPaths = (stdout: string, author: string, since: Date): readonly string[] => {
+  const paths = new Set<string>();
+  for (const block of stdout.split(COMMIT_MARK).slice(1)) {
+    const [header = "", ...files] = block.split("\n");
+    const [email = "", at = ""] = header.split(FIELD_MARK);
+    const isOwn = email.trim().toLowerCase() === author;
+    // git keeps whole seconds: a commit in the very second the window opened
+    // reads as that second's start, so the window is compared in seconds too.
+    const isInWindow = Number(at) >= Math.floor(since.getTime() / MS_PER_SECOND);
+    if (isOwn && isInWindow) {
+      for (const file of linesOf(files.join("\n"))) {
+        paths.add(file);
+      }
+    }
+  }
+  return [...paths];
+};
+
+/**
+ * The commits this worktree made, from its HEAD log — read from the file, or,
+ * in a REFTABLE repository (review M3), where the log lives in the table
+ * files, from one bounded `git reflog show`. Null when that git did not answer
+ * in time; a reflog git refuses (an unborn HEAD) made nothing.
+ */
+const commitsMadeIn = async (input: CaptureGitTouchesInput, gitDir: string, timeoutMs: number): Promise<readonly string[] | null> => {
+  if (!(await isReftableGitDir(gitDir))) {
+    return commitsMadeInHeadLog(gitDir, input.since);
+  }
+  const reflog = await runGitOutcome(
+    ["reflog", "show", "--date=unix", "--format=%H%x09%gd%x09%gs", "-n", String(MAX_REFTABLE_REFLOG_ENTRIES), "HEAD", "--"],
+    input.repoRoot,
+    timeoutMs,
+  );
+  if (!reflog.ok) {
+    return reflog.timedOut ? null : [];
+  }
+  return commitsMadeAmong(movesOfReflogShow(reflog.stdout), input.since);
+};
+
+/**
+ * THE COMMIT HALF (DESIGN.md "One session, many topics"): the files of the
+ * commits THIS developer made IN THIS WORKTREE since `since` — a session that
+ * commits through a shell leaves a clean tree, and `git diff` cannot see work
+ * that was already committed.
+ *
+ * WHICH COMMITS: the ones the worktree's own HEAD log says it made
+ * (git/head-history.ts `commitsMadeInHeadLog`, review H1), never HEAD's
+ * history. Read from history, a merge of another topic's branch, a start
+ * checkout re-detached at a newer main, a worktree re-added at the same path
+ * or a second worktree on the same branch filed another topic's commits under
+ * this one. A teammate's commit keeps its own author and is dropped here too.
+ * Bounded at MAX_GIT_LANE_COMMITS commits and the lane's own path bound. Null
+ * when git did not answer; an empty list when the worktree made nothing in the
+ * window, its HEAD log is unreadable, or nobody is configured to attribute a
+ * commit to.
+ *
+ * NO CLOCK QUESTION TO GIT (CCB-2, test/staleness-axis.test.ts). Git is asked
+ * about named commits — `--no-walk`, no date filter — and the window is cut
+ * on the HEAD log's own instants and each commit's AUTHOR time and this
+ * developer's address. It is a question about this session's ACTIVITY, never
+ * about a claim's currency, and it feeds capture, not any claim's authority.
+ */
+export const readGitCommits = async (
+  input: CaptureGitTouchesInput & { readonly gitDir: string | null; readonly authorEmail?: string | null },
+): Promise<readonly string[] | null> => {
+  const timeoutMs = input.gitTimeoutMs ?? GIT_TOUCHES_TIMEOUT_MS;
+  const made = input.gitDir === null ? [] : await commitsMadeIn(input, input.gitDir, timeoutMs);
+  if (made === null) {
+    return null;
+  }
+  if (made.length === 0) {
+    return [];
+  }
+  const [log, configured] = await Promise.all([
+    runGitOutcome(
+      [
+        "log",
+        "--no-walk=unsorted",
+        "--no-merges",
+        `--format=${COMMIT_MARK}%ae${FIELD_MARK}%at`,
+        "--name-only",
+        ...made.slice(-MAX_GIT_LANE_COMMITS),
+        "--",
+      ],
+      input.repoRoot,
+      timeoutMs,
+    ),
+    input.authorEmail === undefined ? runGit(["config", "user.email"], input.repoRoot, timeoutMs) : input.authorEmail,
+  ]);
+  if (!log.ok) {
+    return null;
+  }
+  const author = configured?.trim().toLowerCase() ?? "";
+  const paths = author.length === 0 ? [] : authoredPaths(log.stdout, author, input.since);
+  const candidates = paths.slice(0, MAX_GIT_TOUCH_CANDIDATES);
+  await recordUnexamined(input, paths.length - candidates.length);
+  return candidates;
 };

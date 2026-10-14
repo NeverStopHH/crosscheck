@@ -6,6 +6,7 @@
  * counted in the `.drops` ledger. Never a fourth outcome, never two at once,
  * never silently neither.
  */
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { readdir, rm, utimes, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -93,6 +94,7 @@ const runWorker = async (
       String(PAD_BYTES),
       endSession ? "end" : "keep",
     ],
+    env: { ...process.env },
     stdout: "pipe",
     stderr: "pipe",
     stdin: "ignore",
@@ -215,7 +217,7 @@ const backdateFinishedSessions = async (home: string): Promise<number> => {
 };
 
 const acceptingHub = (received: string[]) =>
-  Bun.serve({
+  serveLoopback({
     port: 0,
     fetch: async (request) => {
       const body = (await request.json()) as {
@@ -305,6 +307,7 @@ describe("spool under real concurrent processes", () => {
         const ctx = {
           hubUrl: `http://127.0.0.1:${server.port}`,
           apiKey: "key",
+          keyOrigin: `http://127.0.0.1:${server.port}`,
           timeoutMs: 5000,
           home,
           repoKey: KEY,

@@ -8,6 +8,7 @@
  * The rendering rules live in test/briefing-contradictions.test.ts; this
  * file proves the real hook, through the real binary, carries them.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -50,7 +51,7 @@ const startHub = (contradictionsBody?: unknown): FakeHub => {
       ],
     },
   };
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: (request) => {
       const { pathname } = new URL(request.url);

@@ -48,7 +48,7 @@ const fixture = async (label: string): Promise<McpContext> => {
     startedAt: new Date().toISOString(),
     lastHeartbeatAt: null,
     seenTargets: [],
-    deliveredHintRefs: ["clm_rejected"],
+    deliveredHintRefs: ["clm_cause"],
     deliveredHintHashes: [hintBodyHash(CANDIDATE_BODY)],
     tripwireAskedFiles: [],
     landedAskedFiles: [],

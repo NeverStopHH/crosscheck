@@ -69,6 +69,18 @@ export const HookPayloadSchema = z.looseObject({
    */
   transcript_path: z.string().optional().catch(undefined),
   stop_hook_active: z.boolean().optional().catch(undefined),
+  /**
+   * Common input fields Claude Code adds when a hook fires INSIDE A SUBAGENT
+   * (hooks reference, "Common input fields": `agent_id` is "Present only when
+   * the hook fires inside a subagent call"). The session id is the PARENT's,
+   * so the state file is the parent's too; `agent_id` is what tells the
+   * collision lane that its agent-facing text reached a subagent's context
+   * and not the conversation the person reads (hooks/pre-tool-use.ts queues
+   * the notice for the main thread). Tolerant like every field: renamed
+   * upstream, a subagent's hit is told in place, as before.
+   */
+  agent_id: z.string().min(1).optional().catch(undefined),
+  agent_type: z.string().optional().catch(undefined),
 });
 
 export type HookPayload = z.infer<typeof HookPayloadSchema>;
@@ -103,6 +115,15 @@ export const extractFilePaths = (toolInput: unknown): readonly string[] => {
   return PATH_FIELDS.map((field) => record[field]).filter(
     (value): value is string => typeof value === "string" && value.length > 0,
   );
+};
+
+/** The Bash tool's command, a string or nothing — read only for the roots it names (core git/shell-roots.ts). */
+export const extractBashCommand = (toolInput: unknown): string | null => {
+  if (typeof toolInput !== "object" || toolInput === null) {
+    return null;
+  }
+  const command = (toolInput as Record<string, unknown>)["command"];
+  return typeof command === "string" && command.length > 0 ? command : null;
 };
 
 /**

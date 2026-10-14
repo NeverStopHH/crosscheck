@@ -15,15 +15,22 @@ const claim = (
 ): HintClaimCandidate => ({
   id: "clm_1",
   workContextId: "wc_1",
-  kind: "rejected_approach",
-  status: "rejected",
+  kind: "root_cause",
+  status: "likely_root_cause",
   confidence: 0.8,
   provenance: "declared",
   captureMode: "agent",
   evidenceRefCount: 1,
+  evidenceBacked: true,
   authorDeveloperId: TEAMMATE,
   authorDeveloperName: "Nick",
   body: "Retrying the refresh call does not help; the key is gone",
+  // A STRONG match by default — "refresh" and "key", as the canned prompt
+  // shares them — because every rule below is about trust, and relevance is
+  // pinned on its own in hint-substance-select.test.ts. Both words its own:
+  // no other candidate says them (round 4, C2).
+  matchedTerms: 2,
+  distinctTerms: 2,
   createdAt: "2026-08-10T08:00:00.000Z",
   ...overrides,
 });
@@ -43,10 +50,13 @@ const context = (
     baseCommit: "a1b2c3d4",
     createdAt: "2026-08-10T08:00:00.000Z",
     updatedAt: null,
+    // Its own title shares a word of the prompt: the tree is about it (C2).
+    matchedTerms: 1,
     ...overrides,
   },
   claims,
   matchedTargets,
+  matchedOn: "prompt",
 });
 
 const fileTarget = (
@@ -60,6 +70,7 @@ const fileTarget = (
 
 interface SelectOverrides {
   readonly seenRefIds?: readonly string[];
+  readonly hintedRefIds?: readonly string[];
   readonly deliveredCount?: number;
   readonly selfDeveloperId?: string | null;
 }
@@ -71,21 +82,29 @@ const select = (
   selectHint({
     candidates,
     seenRefIds: overrides.seenRefIds ?? [],
+    ...(overrides.hintedRefIds === undefined ? {} : { hintedRefIds: overrides.hintedRefIds }),
     deliveredCount: overrides.deliveredCount ?? 0,
     // Not `??` — an EXPLICIT null must reach the selector (unknown identity).
     selfDeveloperId:
       overrides.selfDeveloperId === undefined
         ? SELF_DEVELOPER
         : overrides.selfDeveloperId,
+    promptTerms: [],
+    promptTopicalTerms: [],
   });
 
 describe("anchoring asymmetry (DESIGN.md §4, structural)", () => {
-  test("injects an evidence-backed rejected_approach as substance", () => {
+  test("injects an evidence-backed settled root cause as substance", () => {
     const selection = select([context()]);
     expect(selection.kind).toBe("claim");
     if (selection.kind === "claim") {
       expect(selection.claim.id).toBe("clm_1");
     }
+  });
+
+  test("an evidence-backed rejected_approach is a pointer — the owner's decision (review 1006b, H4)", () => {
+    const negative = claim({ kind: "rejected_approach", status: "rejected" });
+    expect(select([context({}, [negative])]).kind).toBe("pointer");
   });
 
   test("injects an evidence-backed likely_root_cause", () => {
@@ -154,17 +173,20 @@ describe("anchoring asymmetry (DESIGN.md §4, structural)", () => {
       provenance: "derived",
       captureMode: "auto",
     });
-    expect(select([context({}, [derivedNegative])]).kind).toBe("pointer");
-    expect(select([context({}, [derivedSettled])]).kind).toBe("pointer");
+    // …and since the draft-nudge review not a pointer either: a draft is
+    // not one of the tree's claims on the push path until confirmed.
+    expect(select([context({}, [derivedNegative])]).kind).toBe("silence");
+    expect(select([context({}, [derivedSettled])]).kind).toBe("silence");
   });
 
   test("an unknown provenance value is never substance — fail closed", () => {
     // The boundary schema admits ANY non-empty provenance string (hub.ts
     // z.string().min(1)), so a value this connector has never heard of can
     // arrive here. Only the positive "declared" — someone vouched — may be
-    // injected; everything else degrades to a pointer, not substance.
+    // injected; everything else stays off the push path — no substance, no
+    // pointer (draft-nudge review).
     const unknownProvenance = claim({ id: "clm_weird", provenance: "weird" });
-    expect(select([context({}, [unknownProvenance])]).kind).toBe("pointer");
+    expect(select([context({}, [unknownProvenance])]).kind).toBe("silence");
   });
 
   test("a claim whose body the hub withheld is a pointer, never «»", () => {
@@ -183,14 +205,19 @@ describe("anchoring asymmetry (DESIGN.md §4, structural)", () => {
     );
   });
 
-  test("substance in a lower-ranked context beats a pointer in a higher one", () => {
-    const weak = context(
-      { id: "wc_weak" },
-      [claim({ id: "clm_weak", kind: "hypothesis", status: "proposed", evidenceRefCount: 0, workContextId: "wc_weak" })],
-    );
-    const strong = context({ id: "wc_strong" }, [
-      claim({ id: "clm_strong", workContextId: "wc_strong" }),
-    ]);
+  test("substance in a lower-ranked but stronger context beats a pointer in a higher one", () => {
+    // Round 4, C2: the two must differ in strength — a tie says nothing.
+    const weak = {
+      ...context(
+        { id: "wc_weak" },
+        [claim({ id: "clm_weak", kind: "hypothesis", status: "proposed", evidenceRefCount: 0, workContextId: "wc_weak" })],
+      ),
+      topicalTerms: 1,
+    };
+    const strong = {
+      ...context({ id: "wc_strong" }, [claim({ id: "clm_strong", workContextId: "wc_strong" })]),
+      topicalTerms: 2,
+    };
     const selection = select([weak, strong]);
     expect(selection.kind).toBe("claim");
     if (selection.kind === "claim") {
@@ -305,6 +332,25 @@ describe("seen-set dedup and session cap", () => {
     expect(selection.kind).toBe("silence");
   });
 
+  /**
+   * THE SAME TREE IS NEVER HINTED TWICE IN A SESSION (round 4, decision 11):
+   * the round-4 hold-out's scripted sessions hinted one tree twice in 24 of
+   * them — a pointer, and its finding on the next prompt.
+   */
+  test("a tree a hint pointed at this session shows no finding of it later", () => {
+    expect(select([context()], { seenRefIds: ["wc_1"], hintedRefIds: ["wc_1"] }).kind).toBe("silence");
+  });
+
+  test("a tree whose finding was shown shows no second finding", () => {
+    const second = claim({ id: "clm_2" });
+    expect(select([context({}, [claim(), second])], { seenRefIds: ["clm_1"], hintedRefIds: ["clm_1"], deliveredCount: 1 }).kind).toBe("silence");
+  });
+
+  test("a tree only the briefing pointed at still shows its finding — the briefing is no hint", () => {
+    const selection = select([context()], { seenRefIds: ["wc_1"], hintedRefIds: [] });
+    expect(selection.kind).toBe("claim");
+  });
+
   test("a pointered context is never pointered twice", () => {
     const proposed = claim({
       id: "clm_hypo",
@@ -327,13 +373,13 @@ describe("seen-set dedup and session cap", () => {
 
   test("one prompt yields at most one hint even with many candidates", () => {
     const many = [
-      context({ id: "wc_a" }, [claim({ id: "clm_a", workContextId: "wc_a" })]),
-      context({ id: "wc_b" }, [claim({ id: "clm_b", workContextId: "wc_b" })]),
-      context({ id: "wc_c" }, [claim({ id: "clm_c", workContextId: "wc_c" })]),
+      { ...context({ id: "wc_a" }, [claim({ id: "clm_a", workContextId: "wc_a" })]), topicalTerms: 3 },
+      { ...context({ id: "wc_b" }, [claim({ id: "clm_b", workContextId: "wc_b" })]), topicalTerms: 2 },
+      { ...context({ id: "wc_c" }, [claim({ id: "clm_c", workContextId: "wc_c" })]), topicalTerms: 1 },
     ];
     const selection = select(many);
     // Structural: selectHint returns ONE selection object, never a list — the
-    // first-ranked injectable wins and the rest wait for later prompts.
+    // strongest injectable wins and the rest wait for later prompts.
     expect(Array.isArray(selection)).toBe(false);
     expect(selection.kind).toBe("claim");
     if (selection.kind === "claim") {
@@ -426,9 +472,10 @@ describe("intent-only contexts pointer (trial finding #16: same topic, different
     // Control: alone, the intent-only context is a pointer
     expect(select([intentOnly]).kind).toBe("pointer");
 
+    // Round 4, C2: the claims context is the stronger one — a tie says nothing.
     const selection = select([
-      intentOnly,
-      context({ id: "wc_claims" }, [claim({ workContextId: "wc_claims" })]),
+      { ...intentOnly, topicalTerms: 1 },
+      { ...context({ id: "wc_claims" }, [claim({ workContextId: "wc_claims" })]), topicalTerms: 2 },
     ]);
 
     expect(selection.kind).toBe("claim");

@@ -17,6 +17,9 @@ import {
   recordBriefingDeliveries,
 } from "../src/flows/briefing.ts";
 import { QUOTED_DATA_NOTICE } from "../src/briefing/render.ts";
+import { unansweredReadsLine } from "../src/briefing/omission.ts";
+import { readBriefingOmissions } from "../src/state/briefing-omissions.ts";
+import { BRIEFING_OUTCOME_CLAUSE } from "../src/hints/outcome-clause.ts";
 import { hintDeliveryId } from "../src/capture/records.ts";
 import { repoKey, sessionSlug } from "../src/config/paths.ts";
 import type { HubContext } from "../src/http/client.ts";
@@ -30,6 +33,10 @@ import { assertUntrustedCharacters } from "./fixtures/untrusted-invariants.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
 
 const REPO_ID = "github.com/acme/api";
+/** The briefing's parallel reads, notices included (flows/briefing.ts). */
+const BRIEFING_READS = 9;
+/** Short enough to keep the test quick, long enough for localhost under load. */
+const HANGING_READ_TIMEOUT_MS = 300;
 const SELF = "dev_self";
 const HOST_KEY = "briefing-flow-uuid";
 const NOW = new Date("2026-08-19T12:00:00.000Z");
@@ -42,6 +49,8 @@ interface CannedData {
   ghostChecks: readonly unknown[];
   /** The coverage block on /api/absences; undefined = an un-upgraded hub. */
   coverage: unknown;
+  /** 07 §13's flag on /api/solved-matches; undefined = a hub from before it. */
+  recordsOutcomes: boolean | undefined;
 }
 
 /** Minimal canned hub for the six GETs — the hint-hub.ts philosophy. */
@@ -52,11 +61,20 @@ const startBriefingHub = () => {
     matches: [],
     ghostChecks: [],
     coverage: undefined,
+    recordsOutcomes: undefined,
   };
+  // Routes that never answer: the per-request timeout ends them, client side.
+  const hang = new Set<string>();
   const server = Bun.serve({
     port: 0,
+    // The address the URL below names, so no other process can answer it
+    // (connector-claude test/landed-notice-author-hook.test.ts measured why).
+    hostname: "127.0.0.1",
     fetch: (request) => {
       const { pathname } = new URL(request.url);
+      if (hang.has(pathname)) {
+        return new Promise<Response>(() => undefined);
+      }
       if (pathname === "/api/presence") {
         return Response.json({ ok: true, data: { sessions: data.sessions } });
       }
@@ -64,7 +82,13 @@ const startBriefingHub = () => {
         return Response.json({ ok: true, data: { workContexts: data.workContexts } });
       }
       if (pathname === "/api/solved-matches") {
-        return Response.json({ ok: true, data: { matches: data.matches } });
+        return Response.json({
+          ok: true,
+          data: {
+            matches: data.matches,
+            ...(data.recordsOutcomes === undefined ? {} : { recordsOutcomes: data.recordsOutcomes }),
+          },
+        });
       }
       if (pathname === "/api/ghost-checks") {
         return Response.json({ ok: true, data: { ghostChecks: data.ghostChecks } });
@@ -87,7 +111,7 @@ const startBriefingHub = () => {
       return Response.json({ ok: true, data: {} });
     },
   });
-  return { server, data, url: `http://127.0.0.1:${server.port}` };
+  return { server, data, hang, url: `http://127.0.0.1:${server.port}` };
 };
 
 const hub = startBriefingHub();
@@ -96,6 +120,9 @@ const paths: string[] = [];
 afterEach(async () => {
   await Promise.all(paths.map((path) => rm(path, { recursive: true, force: true })));
   paths.length = 0;
+  hub.data.recordsOutcomes = undefined;
+  hub.data.sessions = [];
+  hub.hang.clear();
 });
 afterAll(() => {
   hub.server.stop(true);
@@ -104,6 +131,7 @@ afterAll(() => {
 const hubContext = (home: string): HubContext => ({
   hubUrl: hub.url,
   apiKey: "test-key",
+  keyOrigin: hub.url,
   // 20 s, not the product's 2 s: this deadline is the TEST's patience with a
   // fake hub on localhost, never a bound the product ships (the real ones are
   // measured in connector-claude's hook-budget tests). At 2 s the whole-suite
@@ -160,7 +188,7 @@ describe("assembleBriefing (the extracted session-start recipe)", () => {
     expect(assembled.presenceFetched).toBe(true);
     expect(assembled.presence).toHaveLength(1);
     expect(assembled.shownSolvedIds).toEqual([]);
-    expect(assembled.landedCommits).toEqual([]);
+    expect(assembled.landed).toEqual({ commits: [], commitDates: [] });
   });
 
   test("shownSolvedIds names exactly the pointers the emitted text contains", async () => {
@@ -183,6 +211,54 @@ describe("assembleBriefing (the extracted session-start recipe)", () => {
     expect(assembled.briefing).toContain("wc_solved_1");
   });
 
+  test("solved pointers on a repo that records outcomes end the briefing with ONE clause (07 §13)", async () => {
+    // Arrange
+    const home = await makeHome("bf-outcome");
+    const repo = await makeRepo("bf-outcome");
+    paths.push(home, repo);
+    hub.data.sessions = [];
+    hub.data.workContexts = [];
+    hub.data.matches = [solvedMatch("wc_solved_1")];
+    hub.data.recordsOutcomes = true;
+
+    // Act
+    const assembled = await assembleBriefing({
+      hub: hubContext(home),
+      repoId: REPO_ID,
+      repoRoot: repo,
+      selfDeveloperId: SELF,
+      now: NOW,
+    });
+
+    // Assert — the pointer is still shown, and the clause is the last line
+    expect(assembled.shownSolvedIds).toEqual(["wc_solved_1"]);
+    expect(assembled.briefing.split("\n").at(-1)).toBe(BRIEFING_OUTCOME_CLAUSE);
+    expect(assembled.briefing.split("mark_hint_outcome").length).toBe(2);
+  });
+
+  test("no solved pointer shown, or a hub that does not say it records outcomes, means no clause", async () => {
+    // Arrange
+    const home = await makeHome("bf-outcome-none");
+    const repo = await makeRepo("bf-outcome-none");
+    paths.push(home, repo);
+    hub.data.sessions = [presenceWith("Nick", "feat/rotation", "implementing")];
+    hub.data.workContexts = [];
+    hub.data.matches = [];
+    hub.data.recordsOutcomes = true;
+    const input = { hub: hubContext(home), repoId: REPO_ID, repoRoot: repo, selfDeveloperId: SELF, now: NOW };
+
+    // Act
+    const noPointer = await assembleBriefing(input);
+    hub.data.matches = [solvedMatch("wc_solved_1")];
+    hub.data.recordsOutcomes = undefined;
+    const olderHub = await assembleBriefing(input);
+
+    // Assert
+    expect(noPointer.briefing).not.toContain("mark_hint_outcome");
+    expect(olderHub.shownSolvedIds).toEqual(["wc_solved_1"]);
+    expect(olderHub.briefing).not.toContain("mark_hint_outcome");
+  });
+
   test("the collectLanded rider sees the fetched contexts and its result rides back", async () => {
     const home = await makeHome("bf-rider");
     const repo = await makeRepo("bf-rider");
@@ -202,6 +278,10 @@ describe("assembleBriefing (the extracted session-start recipe)", () => {
     hub.data.matches = [];
 
     const riderSaw: number[] = [];
+    const reading = {
+      commits: ["landed_sha"],
+      commitDates: [{ sha: "landed_sha", committedAt: ISO }],
+    };
     const assembled = await assembleBriefing({
       hub: hubContext(home),
       repoId: REPO_ID,
@@ -210,31 +290,83 @@ describe("assembleBriefing (the extracted session-start recipe)", () => {
       now: NOW,
       collectLanded: (workContexts) => {
         riderSaw.push(workContexts.length);
-        return Promise.resolve(["landed_sha"]);
+        return Promise.resolve(reading);
       },
     });
 
     expect(riderSaw).toEqual([1]);
-    expect(assembled.landedCommits).toEqual(["landed_sha"]);
+    expect(assembled.landed).toEqual(reading);
   });
 
-  test("a dead hub costs the sections, never a throw — and presenceFetched says so", async () => {
+  test("a dead hub costs the sections, never a throw — and the briefing says so", async () => {
     const home = await makeHome("bf-dead");
     const repo = await makeRepo("bf-dead");
     paths.push(home, repo);
 
     const assembled = await assembleBriefing({
       // Port 1 refuses instantly: an unreachable hub without the wait.
-      hub: { ...hubContext(home), hubUrl: "http://127.0.0.1:1" },
+      hub: { ...hubContext(home), hubUrl: "http://127.0.0.1:1", keyOrigin: "http://127.0.0.1:1" },
       repoId: REPO_ID,
       repoRoot: repo,
       selfDeveloperId: SELF,
       now: NOW,
     });
 
-    expect(assembled.briefing).toBe("");
+    // Not silence (2026-10-08): the session is told it got no briefing and
+    // why, and the omission is booked for doctor — fail open, never mute.
+    expect(assembled.briefing).toBe(unansweredReadsLine(BRIEFING_READS, BRIEFING_READS, true));
+    expect(assembled.unansweredReads).toBe(BRIEFING_READS);
     expect(assembled.presenceFetched).toBe(false);
     expect(assembled.shownSolvedIds).toEqual([]);
+    const omissions = await readBriefingOmissions(home, repoKey(hub.url, REPO_ID), NOW);
+    expect(omissions.byReason.hub).toBe(1);
+  });
+
+  test("reads that time out make the briefing say it is incomplete, under what it did get", async () => {
+    // Arrange: two of the reads hang past the per-request timeout; the rest answer.
+    const home = await makeHome("bf-half");
+    const repo = await makeRepo("bf-half");
+    paths.push(home, repo);
+    hub.data.sessions = [presenceWith("Ken", "feat/session-store", "implementing")];
+    hub.hang.add("/api/ghost-checks");
+    hub.hang.add("/api/drafts");
+
+    // Act
+    const assembled = await assembleBriefing({
+      hub: { ...hubContext(home), timeoutMs: HANGING_READ_TIMEOUT_MS },
+      repoId: REPO_ID,
+      repoRoot: repo,
+      selfDeveloperId: SELF,
+      now: NOW,
+    });
+
+    // Assert: what arrived is shown, and the last line says two reads did not.
+    expect(assembled.briefing).toContain("Ken");
+    expect(assembled.unansweredReads).toBe(2);
+    expect(assembled.briefing.endsWith(`\n${unansweredReadsLine(2, BRIEFING_READS, false)}`)).toBe(true);
+    expect((await readBriefingOmissions(home, repoKey(hub.url, REPO_ID), NOW)).byReason.hub).toBe(1);
+  });
+
+  test("a hub too old to serve a read is no omission — it answered", async () => {
+    // Arrange: the canned hub answers every read; the unknown ones with an
+    // envelope this connector cannot use, as an older hub's 404 would be.
+    const home = await makeHome("bf-old");
+    const repo = await makeRepo("bf-old");
+    paths.push(home, repo);
+
+    // Act
+    const assembled = await assembleBriefing({
+      hub: hubContext(home),
+      repoId: REPO_ID,
+      repoRoot: repo,
+      selfDeveloperId: SELF,
+      now: NOW,
+    });
+
+    // Assert
+    expect(assembled.unansweredReads).toBe(0);
+    expect(assembled.briefing).not.toContain("crosscheck:");
+    expect((await readBriefingOmissions(home, repoKey(hub.url, REPO_ID), NOW)).total).toBe(0);
   });
 
   test("flow output holds the briefing invariants against every corpus payload", async () => {
@@ -412,6 +544,8 @@ describe("recordBriefingDeliveries (delivery telemetry, replay-idempotent)", () 
     expect(assembled.briefing).toContain("- Ken · titled «Session store migration»");
     expect(assembled.briefing).not.toContain("wc_reasonless");
     expect(assembled.shownGhostCount).toBe(1);
+    // ...and the ROW behind it, the one a person-facing notice is built from.
+    expect(assembled.shownGhosts.map((row) => row.workContextId)).toEqual(["wc_theirs"]);
     const state = await readSessionState(home, HOST_KEY);
     expect(state?.ghostNoticeCount).toBe(1);
     // The ghost line spends NO delivery row: it is not news that must not

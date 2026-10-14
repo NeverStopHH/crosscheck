@@ -10,12 +10,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { MAX_GIT_TOUCH_CANDIDATES, MAX_TARGETS_PER_INVOCATION } from "../src/constants.ts";
+import { MAX_GIT_LANE_TARGETS_PER_ROOT, MAX_GIT_TOUCH_CANDIDATES, MAX_TARGETS_PER_INVOCATION } from "../src/constants.ts";
 import { captureGitTouches } from "../src/flows/capture-git-touches.ts";
 import { repoKey } from "../src/config/paths.ts";
 import type { Producer } from "../src/capture/records.ts";
 import { captureFileTargets } from "../src/flows/capture-targets.ts";
 import { captureTouchedFiles } from "../src/flows/capture-touched-files.ts";
+import { NO_GENERATED } from "../src/capture/generated.ts";
 import { readDropDetail, readDropSummary } from "../src/spool/drops.ts";
 import { git, makeHome, makeRepo, writeRepoFile } from "./helpers.ts";
 
@@ -62,7 +63,7 @@ describe("LOSS-11: capture-side refusals are counted drops", () => {
     const paths = Array.from({ length: MAX_TARGETS_PER_INVOCATION + 5 }, (_, index) => `src/file-${String(index)}.ts`);
 
     // Act
-    const captured = await captureFileTargets(targetsInput(fx, paths));
+    const { captured } = await captureFileTargets(targetsInput(fx, paths));
 
     // Assert
     expect(captured).toHaveLength(MAX_TARGETS_PER_INVOCATION);
@@ -74,7 +75,7 @@ describe("LOSS-11: capture-side refusals are counted drops", () => {
     const fx = await fixture("secret");
 
     // Act
-    const captured = await captureFileTargets(targetsInput(fx, ["src/ok.ts", SECRET_PATH]));
+    const { captured } = await captureFileTargets(targetsInput(fx, ["src/ok.ts", SECRET_PATH]));
 
     // Assert
     expect(captured).toEqual(["src/ok.ts"]);
@@ -162,11 +163,11 @@ describe("LOSS-11: capture-side refusals are counted drops", () => {
       gitTimeoutMs: GIT_LANE_BOUND_TEST_TIMEOUT_MS,
     });
 
-    // Assert: the 5 cut before the freshness check, plus the ones the per-call
-    // cap (MAX_TARGETS_PER_INVOCATION) cut from the fresh paths it examined
+    // Assert: the 5 cut before the freshness check, plus the ones the lane's
+    // own cap (MAX_GIT_LANE_TARGETS_PER_ROOT) cut from the fresh paths it examined
     const detail = await readDropDetail(fx.home, KEY);
     expect(detail.byReason["capture-capped"]).toBe(
-      dirty - MAX_GIT_TOUCH_CANDIDATES + (MAX_GIT_TOUCH_CANDIDATES - MAX_TARGETS_PER_INVOCATION),
+      dirty - MAX_GIT_TOUCH_CANDIDATES + (MAX_GIT_TOUCH_CANDIDATES - MAX_GIT_LANE_TARGETS_PER_ROOT),
     );
   }, GIT_LANE_BOUND_TEST_TIMEOUT_MS);
 });
@@ -220,7 +221,7 @@ describe("loss-accounting §10 item 8: the git lane books only the dirty paths i
     const outcome = await laneAfterTheDirt(fx);
 
     // Assert: each path was examined and found stale, so nothing is unknown
-    expect(outcome).toEqual({ paths: [], unavailable: false });
+    expect(outcome).toEqual({ paths: [], unavailable: false, generated: NO_GENERATED });
     expect((await readDropDetail(fx.home, KEY)).byReason["capture-capped"]).toBeUndefined();
   });
 

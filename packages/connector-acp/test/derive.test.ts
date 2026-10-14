@@ -152,9 +152,10 @@ const makeStdinRecordingModel = async (
 const registered = async (
   label: string,
   modelCmd: string,
+  env: Record<string, string> = {},
 ): Promise<Harness> => {
   const h = await createHarness(hub, cleanups, label, {
-    env: { CROSSCHECK_SUMMARIZER_CMD: modelCmd },
+    env: { CROSSCHECK_SUMMARIZER_CMD: modelCmd, ...env },
   });
   handshake(h, SESSION, h.repo);
   await h.capture.settle();
@@ -255,14 +256,18 @@ const stdinContaining = async (
 describe("intent × acp: the prompt on the wire derives the session's plan", () => {
   test("the first substantive prompt fires once, and the draft is stamped acp", async () => {
     // Arrange
-    const h = await registered("acp-intent", await makeFakeModel(INTENT_SENTENCE));
+    const h = await registered("acp-intent", await makeFakeModel(INTENT_SENTENCE), {
+      CROSSCHECK_SUMMARIZER_TIMEOUT_MS: "45000",
+    });
 
     // Act
     h.capture.offer("c2a", promptLine(10));
     await h.capture.settle();
 
     // Assert
-    expect((await readSessionState(h.home, HOST_KEY))?.intentFireCount).toBe(1);
+    const fired = await readSessionState(h.home, HOST_KEY);
+    expect(fired?.intentFireCount).toBe(1);
+    expect(fired?.deriveFires.map((fire) => fire.deadlineMs)).toEqual([45_000]);
     expect(h.capture.counters().intentFires).toBe(1);
 
     const record = await recordOfKind(h, "work_context");
@@ -345,7 +350,9 @@ describe("ghost × acp: the debt is paid on the next prompt", () => {
 describe("summarizer × acp: the turn slice comes off the wire copy", () => {
   test("a conclusion beside a failure fires, and the draft is stamped acp", async () => {
     // Arrange
-    const h = await registered("acp-conclusion", await makeFakeModel(CONCLUSION_ANSWER));
+    const h = await registered("acp-conclusion", await makeFakeModel(CONCLUSION_ANSWER), {
+      CROSSCHECK_SUMMARIZER_TIMEOUT_MS: "45000",
+    });
 
     // Act
     h.capture.offer("c2a", promptLine(30));
@@ -355,7 +362,11 @@ describe("summarizer × acp: the turn slice comes off the wire copy", () => {
     await h.capture.settle();
 
     // Assert
-    expect((await readSessionState(h.home, HOST_KEY))?.summarizerFireCount).toBe(1);
+    const fired = await readSessionState(h.home, HOST_KEY);
+    expect(fired?.summarizerFireCount).toBe(1);
+    // The deadline its worker ran under, so doctor settles the run at twice
+    // it — on this prompt's intent fire and this turn's summarizer fire alike
+    expect(fired?.deriveFires.map((fire) => fire.deadlineMs)).toEqual([45_000, 45_000]);
     expect(h.capture.counters().summarizerFires).toBe(1);
 
     const record = await recordOfKind(h, "claim");

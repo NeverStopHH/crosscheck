@@ -86,7 +86,12 @@ import {
   findConnectedRepoRootForFile,
 } from "../config/connected-repo.ts";
 import { realpathBestEffort } from "../config/paths.ts";
-import { resolveRepoIdentity } from "../git/repo-identity.ts";
+import {
+  readHeadFile,
+  resolveHeadCommit,
+  resolveRepoIdentity,
+} from "../git/repo-identity.ts";
+import type { HeadFile } from "../git/repo-identity.ts";
 import { toRepoRelative } from "./target-paths.ts";
 
 export interface KnownWorktreeRoot {
@@ -123,6 +128,50 @@ export interface KnownWorktreeRoot {
    * never start paying git per touch because a stat is failing.
    */
   readonly stamp: string | null;
+  /**
+   * THE ROOT'S TOPIC (DESIGN.md "One session, many topics"): the branch it
+   * was on at its last touch, `detached@<sha>` for a detached HEAD, read from
+   * its HEAD file — null when that could not be read. Optional here, and
+   * defaulted to null by the state schema, so an entry written before topics
+   * existed and the ACP engine's in-memory cache both still type.
+   */
+  readonly branch?: string | null;
+  /**
+   * The HEAD file's bytes at that touch — the stamp a later touch compares,
+   * so a branch switch inside the worktree is seen without spawning git.
+   */
+  readonly headStamp?: string | null;
+  /** The commit HEAD named when this session first touched the root. */
+  readonly firstHead?: string | null;
+  /** When this session first touched the root, and when it last did (ISO). */
+  readonly firstTouchedAt?: string | null;
+  readonly lastTouchedAt?: string | null;
+  /**
+   * When a Bash call last ran with its cwd in this root (hooks/post-tool-use
+   * .ts): a shell can copy, move, generate or commit files no edit event ever
+   * names, so the next Stop's git lane sweeps a bash-touched root FIRST.
+   */
+  readonly bashTouchedAt?: string | null;
+  /** When the Stop-time git lane last swept the root (flows/git-lane.ts). */
+  readonly gitSweptAt?: string | null;
+}
+
+/**
+ * ONE TOUCHED ROOT'S HEAD, as this touch read it: what the capture flow files
+ * the root's paths under (its topic) and what the caller folds back into the
+ * cache (`withRootHead`). `root` is realpath'd, like every cache key.
+ */
+export interface RootHead {
+  readonly root: string;
+  readonly repoId: string;
+  /** Null when the HEAD file could not be read: the touch files under the session. */
+  readonly branch: string | null;
+  readonly headStamp: string | null;
+  /** The HEAD at the root's FIRST touch — carried from the cache, or read now. */
+  readonly firstHead: string | null;
+  /** This touch's own HEAD file, for a caller that needs its commit too. */
+  readonly head: HeadFile | null;
+  readonly touchedAt: string;
 }
 
 export interface ResolveTouchedRootsInput {
@@ -151,6 +200,10 @@ export interface ResolveTouchedRootsInput {
   readonly realpath?: (path: string) => Promise<string>;
   /** Reads a root's checkout stamp; see `KnownWorktreeRoot.stamp`. */
   readonly readRootStamp?: (root: string) => Promise<string | null>;
+  /** Reads a root's HEAD file (git/repo-identity.ts `readHeadFile`) — never git. */
+  readonly readHead?: (root: string) => Promise<HeadFile | null>;
+  /** When this touch happened; absent = now. Stamped on every `RootHead`. */
+  readonly now?: Date;
 }
 
 export interface TouchedRootsResolution {
@@ -170,6 +223,11 @@ export interface TouchedRootsResolution {
    * #18 diagnosis line's "last edited path resolved: yes|no (against <root>)".
    */
   readonly firstResolvedRoot: string | null;
+  /**
+   * The HEAD of every root a path resolved against, keyed by that root AS
+   * `rootByPath` spells it — path → root → topic, for the capture flow.
+   */
+  readonly headByRoot: ReadonlyMap<string, RootHead>;
 }
 
 interface CacheEntry {
@@ -213,6 +271,44 @@ const defaultReadRootStamp = async (root: string): Promise<string | null> => {
     : `${String(stats.dev)}:${String(stats.ino)}:${String(stats.birthtimeMs)}`;
 };
 
+/**
+ * WHICH TOPIC A ROOT IS ON NOW, read off its HEAD file and never off git.
+ *
+ * Bytes identical to the stamp the cache holds are the branch it already
+ * knows; different bytes are a checkout — `git switch` inside the worktree —
+ * and the new branch is read from them, so the topic flips on the very next
+ * touch without a spawn. A HEAD that cannot be read is an UNKNOWN, not a
+ * change: the cache's answer stands. The commit at the FIRST touch is read
+ * once, the same way (refs, then packed-refs), and carried from then on.
+ */
+const rootHeadOf = async (
+  root: string,
+  repoId: string,
+  known: KnownWorktreeRoot | undefined,
+  readHead: (root: string) => Promise<HeadFile | null>,
+  touchedAt: string,
+): Promise<RootHead> => {
+  const head = await readHead(root);
+  const isSameHead = head !== null && known?.headStamp === head.content;
+  const branch =
+    head === null
+      ? (known?.branch ?? null)
+      : isSameHead
+        ? (known?.branch ?? head.branch)
+        : head.branch;
+  const firstHead =
+    known?.firstHead ?? (head === null ? null : await resolveHeadCommit(head));
+  return {
+    root,
+    repoId,
+    branch,
+    headStamp: head?.content ?? known?.headStamp ?? null,
+    firstHead,
+    head,
+    touchedAt,
+  };
+};
+
 export const resolveTouchedRoots = async (
   input: ResolveTouchedRootsInput,
 ): Promise<TouchedRootsResolution> => {
@@ -222,6 +318,7 @@ export const resolveTouchedRoots = async (
     input.resolveRootRepoId ?? defaultResolveRootRepoId;
   const realpath = input.realpath ?? realpathBestEffort;
   const readRootStamp = input.readRootStamp ?? defaultReadRootStamp;
+  const readHead = input.readHead ?? readHeadFile;
 
   const sessionRootReal = await realpath(input.sessionRepoRoot);
   const identityRootReal = await realpath(input.identityRoot);
@@ -243,6 +340,9 @@ export const resolveTouchedRoots = async (
     input.identityRepoId === input.sessionRepoId;
 
   const rootByPath = new Map<string, string>();
+  // Each root a path resolved against, as spelled there → its realpath, the
+  // cache's key: what the HEAD pass below reads once per root, not per path.
+  const realOfRoot = new Map<string, string>();
   let foreignDrops = 0;
   let outsideDrops = 0;
   let firstResolvedRoot: string | null = null;
@@ -255,6 +355,7 @@ export const resolveTouchedRoots = async (
     const fast = await toRepoRelative(input.sessionRepoRoot, input.cwd, path);
     if (fast !== null) {
       rootByPath.set(path, input.sessionRepoRoot);
+      realOfRoot.set(input.sessionRepoRoot, sessionRootReal);
       if (isFirst) {
         firstResolvedRoot = input.sessionRepoRoot;
       }
@@ -327,9 +428,23 @@ export const resolveTouchedRoots = async (
       continue;
     }
     rootByPath.set(path, candidate);
+    realOfRoot.set(candidate, candidateReal);
     if (isFirst) {
       firstResolvedRoot = candidate;
     }
+  }
+
+  // THE TOPIC PASS: one HEAD-file read per root a path landed in, the session
+  // checkout included — every root that reaches here is THIS session's repo,
+  // which is what makes its repo id the session's.
+  const knownByRoot = new Map(input.knownWorktreeRoots.map((entry) => [entry.root, entry]));
+  const touchedAt = (input.now ?? new Date()).toISOString();
+  const headByRoot = new Map<string, RootHead>();
+  for (const [root, real] of realOfRoot) {
+    headByRoot.set(
+      root,
+      await rootHeadOf(real, input.sessionRepoId, knownByRoot.get(real), readHead, touchedAt),
+    );
   }
 
   return {
@@ -338,5 +453,6 @@ export const resolveTouchedRoots = async (
     outsideDrops,
     newlyResolved,
     firstResolvedRoot,
+    headByRoot,
   };
 };

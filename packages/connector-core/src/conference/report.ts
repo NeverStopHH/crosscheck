@@ -57,6 +57,13 @@ import {
 } from "../constants.ts";
 import { QUOTED_DATA_NOTICE, formatAge } from "../briefing/render.ts";
 import {
+  generatedSharedClause,
+  generatedSharedOf,
+  largeChangeClause,
+  largeChangeOf,
+} from "../briefing/ghost.ts";
+import {
+  LOCATION_WITHHELD,
   NO_AXES_FROM_HUB,
   NO_AXES_READABLE,
   axesLabel,
@@ -142,6 +149,19 @@ const ageOf = (iso: string, now: Date): string | null => {
   return ageMs === null ? null : formatAge(ageMs);
 };
 
+/**
+ * The hub withholds a teammate's last activity when they opted out of
+ * presence (server services/live-location.ts) and says so; that reads as
+ * the choice it is, not as a time the hub could not read.
+ */
+const lastActiveWhen = (iso: string, now: Date): string => {
+  if (iso === LOCATION_WITHHELD) {
+    return LOCATION_WITHHELD;
+  }
+  const age = ageOf(iso, now);
+  return age === null ? "at an unreadable time" : `${age} ago`;
+};
+
 const nameOf = (raw: string | undefined | null): string => {
   const name = raw === undefined || raw === null ? "" : bareUntrusted(raw);
   return name.length === 0 ? UNKNOWN_TEAMMATE : name;
@@ -178,8 +198,7 @@ const contextLine = (
     return null;
   }
   const title = titleFragment(context.title);
-  const age = ageOf(context.lastActiveAt, now);
-  const when = age === null ? "at an unreadable time" : `${age} ago`;
+  const when = lastActiveWhen(context.lastActiveAt, now);
   return `${indent}- ${nameOf(context.developerName)}, last active ${when}: ${
     title === null ? "an untitled piece of work" : title
   } — get_diagnosis ${id}`;
@@ -367,8 +386,21 @@ const overlapSection = (input: ConferenceReportInput): readonly string[] => {
       if (clauses.length === 0) {
         return [];
       }
+      // A large change pairs like any other context (the hub never drops
+      // one); the pair says WHICH side is one, and how large, beside the
+      // files it qualifies.
+      const qualifiers = [
+        { name: left.developerName, files: largeChangeOf(overlap.largeChangeFilesA) },
+        { name: right.developerName, files: largeChangeOf(overlap.largeChangeFilesB) },
+      ].flatMap((side) =>
+        side.files === null ? [] : [`${nameOf(side.name)}'s side is ${largeChangeClause(side.files)}`],
+      );
+      // The files the rule kept out of the pair as mechanically generated:
+      // never its reason (the clauses above are), stated beside it.
+      const generatedFiles = generatedSharedOf(overlap.generatedSharedCount);
+      const alsoGenerated = generatedFiles === null ? [] : [generatedSharedClause(generatedFiles)];
       return [
-        `- ${nameOf(left.developerName)} and ${nameOf(right.developerName)} ${clauses.join(", ")}`,
+        `- ${nameOf(left.developerName)} and ${nameOf(right.developerName)} ${[clauses.join(", "), ...qualifiers, ...alsoGenerated].join("; ")}`,
         leftLine,
         rightLine,
       ];

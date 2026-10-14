@@ -23,13 +23,14 @@
  * would go red at once rather than passing against something that shrugs at
  * unexpected argv. The second case proves the tripwire itself is live.
  *
- * PORTS: the one throwaway hub in this file binds 7630, inside the range this
- * task owns (7630-7639).
+ * PORTS: every throwaway server in this file binds an ephemeral loopback port
+ * (fixtures/loopback-serve.ts), so two runs of this file cannot share one.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { chmod, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { DERIVED_CONFIDENCE_CAP } from "@crosscheck/schema";
 
@@ -63,6 +64,7 @@ import {
   spooledClaims,
 } from "./fixtures/foreign-model-harness.ts";
 import type { ForeignFixture } from "./fixtures/foreign-model-harness.ts";
+import { FOREIGN_MODEL_SCRIPT } from "../../connector-core/test/fixtures/foreign-model/binary.ts";
 
 const cleanups: (() => Promise<void>)[] = [];
 
@@ -126,6 +128,37 @@ interface SpawnEvidence {
 
 const spawnEvidence = async (run: ForeignRun): Promise<SpawnEvidence> =>
   JSON.parse(await Bun.file(run.dump).text()) as SpawnEvidence;
+
+/** `pid ppid stat command`, as `ps -o pid=,ppid=,stat=,command=` prints it. */
+const PS_ROW_PATTERN = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/;
+
+/**
+ * Live (non-zombie) children of THIS test process that are this run's fake:
+ * still the `/bin/sh` wrapper in the run's own temp dir, or already exec'd
+ * into the fake script. The runner spawns in-process, so the fake's parent
+ * is this process whether or not the fake ever ran a line.
+ */
+const liveFakesOf = async (run: ForeignRun): Promise<readonly number[]> => {
+  const ps = Bun.spawn({
+    cmd: ["ps", "-A", "-o", "pid=,ppid=,stat=,command="],
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const [table] = await Promise.all([new Response(ps.stdout).text(), ps.exited]);
+  const markers = [dirname(run.dump), FOREIGN_MODEL_SCRIPT];
+  return table.split("\n").flatMap((line) => {
+    const row = PS_ROW_PATTERN.exec(line);
+    if (row === null) {
+      return [];
+    }
+    const [, pid = "", ppid = "", stat = "", command = ""] = row;
+    const isOurs =
+      Number(ppid) === process.pid &&
+      !stat.includes("Z") &&
+      markers.some((marker) => command.includes(marker));
+    return isOurs ? [Number(pid)] : [];
+  });
+};
 
 const costOf = (fixture: ForeignFixture) =>
   readSummarizerCost(fixture.home, FOREIGN_HUB_URL, FOREIGN_REPO_ID);
@@ -287,8 +320,8 @@ describe("a derived draft stays derived, whatever the model claims", () => {
       };
     }
     const received: HubRecord[] = [];
-    const server = Bun.serve({
-      port: 7630,
+    const server = serveLoopback({
+      port: 0,
       fetch: async (request) => {
         const body = (await request.json()) as { records: readonly HubRecord[] };
         received.push(...body.records);
@@ -314,6 +347,7 @@ describe("a derived draft stays derived, whatever the model claims", () => {
       {
         hubUrl: `http://127.0.0.1:${String(server.port)}`,
         apiKey: "test-key",
+        keyOrigin: `http://127.0.0.1:${String(server.port)}`,
         timeoutMs: 20_000,
         home: run.fixture.home,
         repoKey: run.fixture.key,
@@ -408,8 +442,14 @@ describe("a foreign model that fails, fails SAFELY and VISIBLY", () => {
   const SHORT_DEADLINE_MS = 400;
   /** Far past the deadline, so only the kill can end the process. */
   const HANG_MS = 30_000;
-  /** The deadline plus the runner's SIGKILL grace, plus room for a busy box. */
-  const REAPED_BY_MS = 8000;
+  /**
+   * The deadline plus the runner's 1 s SIGKILL grace, plus room for a busy
+   * box — and INSIDE bun's 5 s per-test default, so a process the runner
+   * leaks fails on the reap assertion below, not on the test runner's
+   * timeout (a timeout is not proof the leak was seen; the mutation anchor
+   * "a hung summarizer is left running past its deadline" must go red here).
+   */
+  const REAPED_BY_MS = 3000;
   const REAP_POLL_MS = 50;
 
   test("a hung wrapper is a booked timeout, and the process is reaped", async () => {
@@ -435,20 +475,19 @@ describe("a foreign model that fails, fails SAFELY and VISIBLY", () => {
     expect(await spooledClaims(run.fixture)).toHaveLength(0);
 
     // Assert 3: the escalation actually reaped the process rather than
-    // leaving it holding the pipe. The pid is the fake's own, written to the
-    // dump before it slept.
-    const { pid } = await spawnEvidence(run);
+    // leaving it holding the pipe. Read from the PROCESS TABLE, not from the
+    // fake's own dump: under CPU contention the 400 ms deadline can fire
+    // before the fake has run its first line, so the dump the pid used to
+    // come from was never written (ENOENT, the load-only flake). A child of
+    // this process running this run's wrapper or the fake is found whether
+    // or not it ever got to start.
     const deadline = Date.now() + REAPED_BY_MS;
-    let alive = true;
-    while (alive && Date.now() < deadline) {
-      try {
-        process.kill(pid, 0);
-        await Bun.sleep(REAP_POLL_MS);
-      } catch {
-        alive = false;
-      }
+    let live = await liveFakesOf(run);
+    while (live.length > 0 && Date.now() < deadline) {
+      await Bun.sleep(REAP_POLL_MS);
+      live = await liveFakesOf(run);
     }
-    expect(alive).toBe(false);
+    expect(live).toEqual([]);
   });
 
   test("a wrapper that exits non-zero says so on the cost line", async () => {
@@ -539,7 +578,7 @@ describe("a foreign model that fails, fails SAFELY and VISIBLY", () => {
 /**
  * The wrapper docs/FOREIGN-MODELS.md tells an operator to write, run through
  * the SAME real worker as everything above, against a local stand-in for a
- * provider's endpoint on 7632.
+ * provider's endpoint on an ephemeral loopback port.
  *
  * WHAT THIS PROVES: that the documented lane works — an argument-free shell
  * script that reads stdin, calls an HTTP endpoint, and prints one answer is
@@ -568,8 +607,8 @@ describe("the wrapper the docs tell an operator to write actually works", () => 
         readonly messages: readonly { readonly role: string; readonly content: string }[];
       }
       const seen: { auth: string | null; request: ChatRequest }[] = [];
-      const server = Bun.serve({
-        port: 7632,
+      const server = serveLoopback({
+        port: 0,
         fetch: async (request) => {
           const parsed = (await request.json()) as ChatRequest;
           seen.push({ auth: request.headers.get("authorization"), request: parsed });

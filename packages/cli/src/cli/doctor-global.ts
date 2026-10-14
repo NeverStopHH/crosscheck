@@ -23,7 +23,12 @@ import {
   claudeUserSettingsPath,
   isOwnedCommand,
 } from "@crosscheck/connector-claude";
-import { MCP_SERVER_KEY } from "@crosscheck/connector-core/constants.ts";
+import {
+  MCP_SERVER_KEY,
+  SUBAGENT_RETURN_HOOK,
+  SUBAGENT_RETURN_MATCHER,
+  TURN_END_HOOK,
+} from "@crosscheck/connector-core/constants.ts";
 import { isOwnedMcpEntry } from "@crosscheck/connector-core/config/mcp-config.ts";
 import { readTextOrNull } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
@@ -50,7 +55,7 @@ export interface GlobalWiring {
   readonly mcpRegistered: boolean;
   /** Why ~/.claude.json exists but could not be read; null = `mcpRegistered` is a fact. */
   readonly mcpUnreadable: ReadRefusal | null;
-  /** Hook events carrying an owned command in the user settings. */
+  /** Hook events carrying an owned command in the user settings (`hookKeyOf`). */
   readonly hookEvents: readonly string[];
   /** The first owned hook command — what a user-scope hook would run. */
   readonly launcherCommand: string | null;
@@ -66,25 +71,109 @@ const asRecord = (value: unknown): Record<string, unknown> =>
 export interface OwnedHookEntry {
   readonly event: string;
   readonly command: string;
+  /** The matcher of the group the command sits in; null when the group has none. */
+  readonly matcher: string | null;
+  /** The entry is registered `async: true`. */
+  readonly isAsync: boolean;
 }
 
 /**
  * Every owned hook command in a Claude settings object, keyed by the event
  * it fires on — the one extraction both scopes' checks read (finding #13
- * made the project check and this file disagree about what "wired" means).
+ * made the project check and this file disagree about what "wired" means) —
+ * with the matcher and the async flag it is registered under.
  */
 export const ownedHookEntries = (
   settings: Record<string, unknown>,
 ): readonly OwnedHookEntry[] =>
   Object.entries(asRecord(settings["hooks"])).flatMap(([event, groups]) =>
     (Array.isArray(groups) ? groups : []).flatMap((group) => {
+      const matcher = asRecord(group)["matcher"];
       const entries = asRecord(group)["hooks"];
       return (Array.isArray(entries) ? entries : [])
-        .map((entry) => asRecord(entry)["command"])
-        .filter(isOwnedCommand)
-        .map((command) => ({ event, command: String(command) }));
+        .map(asRecord)
+        .filter((entry) => isOwnedCommand(entry["command"]))
+        .map((entry) => ({
+          event,
+          command: String(entry["command"]),
+          matcher: typeof matcher === "string" ? matcher : null,
+          isAsync: entry["async"] === true,
+        }));
     }),
   );
+
+/**
+ * The SECOND crosscheck entry on PostToolUse (review H1b): the sync
+ * subagent-return hook. An event name alone cannot say whether it is there —
+ * the capture hook already makes PostToolUse "registered" — so doctor names
+ * it by event and subcommand together.
+ */
+export const SUBAGENT_RETURN_KEY = `PostToolUse (${SUBAGENT_RETURN_HOOK})`;
+
+const isSubagentReturnCommand = (entry: OwnedHookEntry): boolean =>
+  entry.event === "PostToolUse" && entry.command.trimEnd().endsWith(`hook ${SUBAGENT_RETURN_HOOK}`);
+
+/**
+ * How a registered subagent-return entry differs from what init writes, or
+ * null when it does not (round 2, L8): the NAME alone vouched for it, but an
+ * async registration shows its `systemMessage` to nobody and hands the agent
+ * its context a turn late, and a matcher without the subagent tools never
+ * fires when a subagent returns. Either is the hook in name only. The matcher
+ * is printed as a JSON string (round 3, F-L6): it comes from a settings file
+ * anyone with commit access writes, and ESC, BEL and CR in it reached the
+ * terminal raw — an OSC 52 clipboard write, a line erased and a FAIL forged.
+ */
+export const subagentReturnDrift = (entry: OwnedHookEntry): string | null => {
+  if (entry.isAsync) {
+    return "registered async";
+  }
+  if (entry.matcher === SUBAGENT_RETURN_MATCHER) {
+    return null;
+  }
+  return entry.matcher === null ? "matched on every tool" : `matched on ${JSON.stringify(entry.matcher)}`;
+};
+
+/**
+ * The SECOND crosscheck entry on Stop (round 3, F-M2): the sync turn-end
+ * hook, named by event and subcommand for the same reason — the async
+ * capture hook already makes Stop "registered".
+ */
+export const TURN_END_KEY = `Stop (${TURN_END_HOOK})`;
+
+const isTurnEndCommand = (entry: OwnedHookEntry): boolean =>
+  entry.event === "Stop" && entry.command.trimEnd().endsWith(`hook ${TURN_END_HOOK}`);
+
+/**
+ * How a registered turn-end entry differs from what init writes: only its
+ * async flag can — an async one tells the person nothing — since Claude Code
+ * matches no tool on Stop.
+ */
+export const turnEndDrift = (entry: OwnedHookEntry): string | null => (entry.isAsync ? "registered async" : null);
+
+/** `key`, or `key` and the drift that keeps it from counting. */
+const keyedWith = (key: string, drift: string | null): string => (drift === null ? key : `${key} ${drift}`);
+
+/**
+ * What doctor calls an owned entry: its event, or a sync companion hook's own
+ * key — and a companion that drifted from init's registration is keyed
+ * apart, with the drift, so it neither satisfies the requirement nor hides
+ * why.
+ */
+export const hookKeyOf = (entry: OwnedHookEntry): string => {
+  if (isSubagentReturnCommand(entry)) {
+    return keyedWith(SUBAGENT_RETURN_KEY, subagentReturnDrift(entry));
+  }
+  return isTurnEndCommand(entry) ? keyedWith(TURN_END_KEY, turnEndDrift(entry)) : entry.event;
+};
+
+/** The sync companions doctor requires by their own key. */
+const COMPANION_KEYS: readonly string[] = [SUBAGENT_RETURN_KEY, TURN_END_KEY];
+
+/** The drifted companion keys among these, as a clause for the hooks line ("" when none). */
+export const companionDriftClause = (keys: readonly string[]): string => {
+  const drifted = keys.filter((key) => COMPANION_KEYS.some((companion) => key.startsWith(companion) && key !== companion));
+  return drifted.length === 0 ? "" : ` (found ${drifted.join(", ")})`;
+};
 
 /**
  * Whether a PROJECT-scoped settings file registers crosscheck hooks — the
@@ -129,7 +218,7 @@ export const readGlobalWiring = async (env: Env): Promise<GlobalWiring> => {
     mcpRegistered:
       mcpRead.ok && isOwnedMcpEntry(asRecord(mcpRead.value["mcpServers"])[MCP_SERVER_KEY]),
     mcpUnreadable: mcpRead.ok ? null : mcpRead.reason,
-    hookEvents: hookEntries.map((entry) => entry.event),
+    hookEvents: hookEntries.map(hookKeyOf),
     launcherCommand: hookEntries[0]?.command ?? null,
     statuslineCommand: typeof statusline === "string" ? statusline : null,
   };

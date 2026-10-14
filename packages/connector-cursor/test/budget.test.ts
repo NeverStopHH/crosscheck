@@ -22,14 +22,20 @@
  * these bounds — the race backstop for non-HTTP wedges has its own
  * deterministic pin in connector-claude/test/hook-budget.test.ts.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { describe, expect, test } from "bun:test";
-import { rm, writeFile } from "node:fs/promises";
+import { readdir, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import {
+  ABANDONED_TEMP_MAX_AGE_MS,
+  ABANDONED_TEMP_SWEEP_MAX_PER_RUN,
   HTTP_TIMEOUT_MS,
+  MS_PER_DAY,
   POST_TOOL_USE_BUDGET_RATIO,
   SESSION_START_BUDGET_RATIO,
 } from "@crosscheck/connector-core/constants.ts";
+import { readCaptureLosses } from "@crosscheck/connector-core/state/loss-ledger.ts";
 import {
   ensureDir,
   repoKey,
@@ -45,22 +51,35 @@ import { runCursorHook } from "../src/index.ts";
 import { prepareCursorHook } from "../src/runner.ts";
 import { handleCursorPostToolUse } from "../src/handlers/post-tool-use.ts";
 import { deliveredAdditionalContext } from "../src/inject/output.ts";
+import { unansweredReadsLine } from "@crosscheck/connector-core/briefing/omission.ts";
 import {
   POST_TOOL_USE_FAILING_COMMAND,
   SESSION_START_INPUT,
 } from "./fixtures/cursor-contract/payloads.ts";
+
+/** A Cursor sessionStart's briefing reads: the shared block, notices included (connector-core flows/briefing.ts). */
+const BRIEFING_READS = 9;
 import {
   TEAMMATE_NAME,
   startSlowHub,
 } from "../../connector-claude/test/fixtures/slow-hub.ts";
 import {
   CANDIDATE_BODY,
-  rejectedApproachCandidate,
+  injectableCandidate,
   startHintHub,
 } from "../../connector-core/test/fixtures/hint-hub.ts";
-import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
+import {
+  makeHome,
+  makeRepo,
+  seedAbandonedTemps,
+} from "../../connector-core/test/helpers.ts";
 
 const REMOTE = "git@github.com:acme/api.git";
+const REPO_ID = "github.com/acme/api";
+/** The backlog a review measured taking the uncapped sweep past a budget. */
+const LARGE_TEMP_BACKLOG = 20_000;
+/** Seeding twenty thousand files is most of that test's time, not the hook. */
+const LARGE_TEMP_BACKLOG_TEST_TIMEOUT_MS = 60_000;
 const DEAD_HUB_URL = "http://127.0.0.1:1";
 
 /**
@@ -118,8 +137,9 @@ describe("fail-open within budget", () => {
     );
     const elapsedMs = performance.now() - startedAt;
 
-    // Assert
-    expect(out).toBe("{}");
+    // Assert: still bounded, and no longer silent — the session is told it
+    // has no briefing and why (2026-10-08), never an empty answer.
+    expect(deliveredAdditionalContext(out)).toBe(unansweredReadsLine(BRIEFING_READS, BRIEFING_READS, true));
     expect(elapsedMs).toBeLessThan(
       HTTP_TIMEOUT_MS * SESSION_START_BUDGET_RATIO + MARGIN_MS,
     );
@@ -127,12 +147,14 @@ describe("fail-open within budget", () => {
     await rm(home, { recursive: true, force: true });
   });
 
-  test("a hub slower than every budget: the race answers {} within budget + margin — the briefing degrades, never the hook", async () => {
+  test("a hub slower than every budget: the hook answers within budget + margin and says the briefing is missing — it degrades, never the hook", async () => {
     // Arrange: every endpoint slower than the whole hook budget. Since
-    // Block 7 this sessionStart also attempts the briefing (six parallel
+    // Block 7 this sessionStart also attempts the briefing (the parallel
     // GETs) — all of them die on the per-request timeout, the briefing
-    // collapses to silence, and the hook still answers inside its budget:
-    // the briefing prefetch/fallback discipline, measured.
+    // collapses to the one line that says so (2026-10-08; whether the reads'
+    // timeouts or the budget's race ends it first, the session is told), and
+    // the hook still answers inside its budget: the briefing
+    // prefetch/fallback discipline, measured.
     const hub = startSlowHub({ ingest: 5000, end: 5000, other: 5000 });
     const repo = await makeRepo("budget-slow", { remote: REMOTE });
     const home = await makeHome("budget-slow");
@@ -155,8 +177,8 @@ describe("fail-open within budget", () => {
 
       // Assert: inside the budget — the per-request timeouts carry it (the
       // race, pinned in hook-budget.test.ts, is the backstop if they could
-      // not) — never hung on the hub.
-      expect(out).toBe("{}");
+      // not) — never hung on the hub, and never silent about it.
+      expect(deliveredAdditionalContext(out)).toStartWith("crosscheck: no briefing this session — ");
       expect(elapsedMs).toBeLessThan(
         timeoutMs * SESSION_START_BUDGET_RATIO + MARGIN_MS,
       );
@@ -173,14 +195,14 @@ describe("fail-open within budget", () => {
     // state after a slow flush: nothing spare — exactly when an unclamped
     // heartbeat would eat the reserve that carries the hint out of the hook.
     let heartbeats = 0;
-    const server = Bun.serve({
+    const server = serveLoopback({
       port: 0,
       fetch: (request) => {
         const { pathname } = new URL(request.url);
         if (pathname === "/api/hints/candidates") {
           return Response.json({
             ok: true,
-            data: { candidates: [rejectedApproachCandidate()] },
+            data: { candidates: [injectableCandidate()] },
           });
         }
         if (pathname.endsWith("/heartbeat")) {
@@ -243,6 +265,9 @@ describe("fail-open within budget", () => {
         intentSetCount: 0,
         intentFailCount: 0,
         intentLastFailure: null,
+        intentRefusedCount: 0,
+        intentSkippedCount: 0,
+        intentLastDrop: null,
         workContextIntent: null,
         ghostPending: false,
         gitTouchCount: 0,
@@ -261,6 +286,13 @@ describe("fail-open within budget", () => {
   toolWindows: [],
   toolWindowEvictions: 0,
   toolWindowMisses: 0,
+  draftNudge: null,
+  draftNudgeRetryAt: null,
+  deriveFires: [],
+  topicContexts: [],
+  startBranch: null,
+  sessionTouchedAt: null,
+  topicOverflowCount: 0,
         outsideRootDrops: 0,
         knownWorktreeRoots: [],
         editToolFires: 0,
@@ -270,6 +302,9 @@ describe("fail-open within budget", () => {
         lastEditedPath: null,
         lastEditedPathResolvedAgainst: null,
         hintCandidatesSeen: 0,
+        flooredPromptCount: 0,
+        harnessTurnCount: 0,
+        quietCallCount: 0,
       } satisfies SessionState);
       const ctx = await prepareCursorHook(
         "postToolUse",
@@ -312,14 +347,14 @@ describe("fail-open within budget", () => {
     const PROMPT_EXIT_BOUND_MS = 1500;
     const REQUEST_TIMEOUT_MS = "3000";
     let heartbeats = 0;
-    const server = Bun.serve({
+    const server = serveLoopback({
       port: 0,
       fetch: async (request) => {
         const { pathname } = new URL(request.url);
         if (pathname === "/api/hints/candidates") {
           return Response.json({
             ok: true,
-            data: { candidates: [rejectedApproachCandidate()] },
+            data: { candidates: [injectableCandidate()] },
           });
         }
         if (pathname.endsWith("/heartbeat")) {
@@ -385,6 +420,9 @@ describe("fail-open within budget", () => {
         intentSetCount: 0,
         intentFailCount: 0,
         intentLastFailure: null,
+        intentRefusedCount: 0,
+        intentSkippedCount: 0,
+        intentLastDrop: null,
         workContextIntent: null,
         ghostPending: false,
         gitTouchCount: 0,
@@ -403,6 +441,13 @@ describe("fail-open within budget", () => {
   toolWindows: [],
   toolWindowEvictions: 0,
   toolWindowMisses: 0,
+  draftNudge: null,
+  draftNudgeRetryAt: null,
+  deriveFires: [],
+  topicContexts: [],
+  startBranch: null,
+  sessionTouchedAt: null,
+  topicOverflowCount: 0,
         outsideRootDrops: 0,
         knownWorktreeRoots: [],
         editToolFires: 0,
@@ -412,6 +457,9 @@ describe("fail-open within budget", () => {
         lastEditedPath: null,
         lastEditedPathResolvedAgainst: null,
         hintCandidatesSeen: 0,
+        flooredPromptCount: 0,
+        harnessTurnCount: 0,
+        quietCallCount: 0,
       } satisfies SessionState);
       const ctx = await prepareCursorHook(
         "postToolUse",
@@ -584,6 +632,9 @@ describe("fail-open within budget", () => {
         intentSetCount: 0,
         intentFailCount: 0,
         intentLastFailure: null,
+        intentRefusedCount: 0,
+        intentSkippedCount: 0,
+        intentLastDrop: null,
         workContextIntent: null,
         ghostPending: false,
         gitTouchCount: 0,
@@ -602,6 +653,13 @@ describe("fail-open within budget", () => {
   toolWindows: [],
   toolWindowEvictions: 0,
   toolWindowMisses: 0,
+  draftNudge: null,
+  draftNudgeRetryAt: null,
+  deriveFires: [],
+  topicContexts: [],
+  startBranch: null,
+  sessionTouchedAt: null,
+  topicOverflowCount: 0,
         outsideRootDrops: 0,
         knownWorktreeRoots: [],
         editToolFires: 0,
@@ -611,6 +669,9 @@ describe("fail-open within budget", () => {
         lastEditedPath: null,
         lastEditedPathResolvedAgainst: null,
         hintCandidatesSeen: 0,
+        flooredPromptCount: 0,
+        harnessTurnCount: 0,
+        quietCallCount: 0,
       } satisfies SessionState);
 
       // Act
@@ -645,4 +706,107 @@ describe("fail-open within budget", () => {
       await rm(home, { recursive: true, force: true });
     }
   });
+
+  test("a drain that spends the spare leaves the temp sweep nothing: abandoned temps wait for the next session", async () => {
+    // Arrange: an old session's 600-record backlog at 350 ms a batch, so the
+    // drain runs to its deadline by construction, and five sweepable temps
+    const hub = startSlowHub({ ingest: 350, end: 0, other: 0 });
+    const repo = await makeRepo("budget-temp-spent", { remote: REMOTE });
+    const home = await makeHome("budget-temp-spent");
+    const key = repoKey(hub.url, REPO_ID);
+    await appendRecords(
+      home,
+      key,
+      "old-session",
+      Array.from({ length: 600 }, (_unused, index) => ({
+        cx: "0.1",
+        id: `env_backlog_${index}`,
+        ts: new Date().toISOString(),
+        producer: {
+          developerId: "dev_self",
+          agentKind: "cursor-ide",
+          sessionId: "cc_old-session",
+        },
+        kind: "target",
+        body: { workContextId: "wc_1", kind: "file", value: `src/f${index}.ts` },
+      })),
+      new Date(),
+    );
+    const temps = await seedAbandonedTemps(
+      join(home, "state"),
+      5,
+      ABANDONED_TEMP_MAX_AGE_MS + MS_PER_DAY,
+    );
+
+    try {
+      // Act — the real runner, at the documented default timeout and budget
+      const out = await runCursorHook(
+        "sessionStart",
+        payloadIn(repo, "conv-budget-temp-spent"),
+        {
+          CROSSCHECK_HOME: home,
+          CROSSCHECK_HUB_URL: hub.url,
+          CROSSCHECK_API_KEY: "test-key",
+        },
+      );
+
+      // Assert: the briefing went out and the sweep read spareMs() = 0 — it
+      // took nothing from the reserve, so every temp is still there
+      expect(deliveredAdditionalContext(out)).toContain(TEAMMATE_NAME);
+      for (const temp of temps) {
+        expect(await Bun.file(temp).exists()).toBe(true);
+      }
+    } finally {
+      hub.stop();
+      await rm(repo, { recursive: true, force: true });
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  test(
+    "a 20 000-orphan temp backlog never costs the briefing or books a hook timeout",
+    async () => {
+      // Arrange: a fast hub with a teammate to brief about, the DEFAULT
+      // request timeout (the real budget and reserve), and the backlog that
+      // took the uncapped sweep past the Claude SessionStart's budget
+      const hub = startSlowHub({ ingest: 0, end: 0, other: 0 });
+      const repo = await makeRepo("budget-temp-backlog", { remote: REMOTE });
+      const home = await makeHome("budget-temp-backlog");
+      await seedAbandonedTemps(
+        join(home, "state"),
+        LARGE_TEMP_BACKLOG,
+        ABANDONED_TEMP_MAX_AGE_MS + MS_PER_DAY,
+      );
+
+      try {
+        // Act
+        const out = await runCursorHook(
+          "sessionStart",
+          payloadIn(repo, "conv-budget-temps"),
+          {
+            CROSSCHECK_HOME: home,
+            CROSSCHECK_HUB_URL: hub.url,
+            CROSSCHECK_API_KEY: "test-key",
+          },
+        );
+
+        // Assert: the briefing arrived, no timeout was booked, and this run
+        // took at most its cap
+        expect(deliveredAdditionalContext(out)).toContain(TEAMMATE_NAME);
+        const losses = await readCaptureLosses(home, repoKey(hub.url, REPO_ID));
+        expect(losses.byDetail["hook_timed_out:sessionStart"]).toBeUndefined();
+        const left = (await readdir(join(home, "state"))).filter((name) =>
+          name.startsWith("seeded-"),
+        );
+        expect(left.length).toBeGreaterThanOrEqual(
+          LARGE_TEMP_BACKLOG - ABANDONED_TEMP_SWEEP_MAX_PER_RUN,
+        );
+      } finally {
+        hub.stop();
+        await rm(repo, { recursive: true, force: true });
+        await rm(home, { recursive: true, force: true });
+      }
+    },
+    LARGE_TEMP_BACKLOG_TEST_TIMEOUT_MS,
+  );
 });

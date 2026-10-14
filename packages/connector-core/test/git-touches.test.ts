@@ -22,7 +22,8 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { rm, utimes } from "node:fs/promises";
 import { join } from "node:path";
 
-import { captureGitTouches } from "../src/flows/capture-git-touches.ts";
+import type { DenylistConfig } from "../src/capture/denylist.ts";
+import { captureGitTouches, readGitTouches } from "../src/flows/capture-git-touches.ts";
 import type { GitTouchesOutcome } from "../src/flows/capture-git-touches.ts";
 import { readSpoolLines } from "../src/spool/files.ts";
 import { git, makeHome, makeRepo, writeRepoFile } from "./helpers.ts";
@@ -185,5 +186,52 @@ describe("captureGitTouches", () => {
     // be hard-coded true and the test above would still pass.
     expect(outcome.paths).toEqual([]);
     expect(outcome.unavailable).toBe(false);
+  });
+});
+
+describe("the untracked listing (review M8)", () => {
+  /** The lane's read of `repo` with the new files asked for, before anything is spooled. */
+  const readUntracked = (repo: string, home: string, denylist: DenylistConfig | null = null) =>
+    readGitTouches({
+      home,
+      repoKey: REPO_KEY,
+      hostSessionKey: "cc_session",
+      repoRoot: repo,
+      workContextId: "wc_1",
+      producer: { developerId: "dev_1", agentKind: "claude-code", sessionId: "cc_session" },
+      seenTargets: [],
+      denylist,
+      since: SESSION_START,
+      now: NOW,
+      includeUntracked: true,
+    });
+
+  test("never lists a denylisted directory nothing ignores — the config's own included", async () => {
+    // Arrange: an unignored node_modules and a directory only the config denies
+    const { repo, home } = await fixture("git-touch-untracked-deny");
+    await writeRepoFile(repo, "node_modules/pkg/index.js", "module.exports = 1;\n");
+    await writeRepoFile(repo, "scratch-out/run.log", "x\n");
+    await writeRepoFile(repo, "src/workbench/New.tsx", "export const n = 1;\n");
+
+    // Act
+    const read = await readUntracked(repo, home, { mode: "extend", patterns: ["**/scratch-out/**"] });
+
+    // Assert
+    expect(read?.fresh).toEqual(["src/workbench/New.tsx"]);
+  });
+
+  test("lists new files in a directory the repo tracks before a new directory of its own", async () => {
+    // Arrange: `aaa-dump/` sorts before `src/` and the repo has never tracked it
+    const { repo, home } = await fixture("git-touch-untracked-order");
+    await writeRepoFile(repo, "aaa-dump/one.bin.txt", "x\n");
+    await writeRepoFile(repo, "src/workbench/New.tsx", "export const n = 1;\n");
+    await writeRepoFile(repo, "top-level.md", "x\n");
+
+    // Act
+    const read = await readUntracked(repo, home);
+
+    // Assert
+    expect(read?.fresh).toEqual(["src/workbench/New.tsx", "top-level.md", "aaa-dump/one.bin.txt"]);
+    expect(read?.isUntrackedCut).toBe(false);
   });
 });

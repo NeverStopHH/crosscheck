@@ -12,13 +12,15 @@ import { join } from "node:path";
 
 import {
   CONNECTED_ROOT_WALK_MAX_LEVELS,
+  connectedRepoOwnership,
   findConnectedRepoRootForFile,
   findConnectedRepoRootForPaths,
   mayBeConnectedRepo,
 } from "../src/config/connected-repo.ts";
 import { renderRepoConfig } from "../src/config/repo-config.ts";
 
-const HUB_URL = "http://127.0.0.1:7100";
+/** A config value only — nothing here connects, and port 1 has no hub behind it. */
+const HUB_URL = "http://127.0.0.1:1";
 
 const paths: string[] = [];
 
@@ -265,18 +267,37 @@ describe("findConnectedRepoRootForPaths", () => {
   });
 });
 
+/**
+ * A home of its own, logged in to HUB_URL: the walk now reads the stored
+ * login to tell a repo of another hub (review batch 2, M2), and a test must
+ * never read the developer's real `~/.crosscheck`.
+ */
+const loggedInHome = async (label: string): Promise<string> => {
+  const home = await makeDir(label);
+  await writeFile(
+    join(home, "config.json"),
+    `${JSON.stringify({ version: 1, hubUrl: HUB_URL, apiKey: "test-key", keyOrigin: HUB_URL })}\n`,
+    "utf8",
+  );
+  return home;
+};
+
+/** A repo whose committed config names a hub the key does not belong to. */
+const OTHER_HUB_URL = "http://127.0.0.1:2";
+
 describe("mayBeConnectedRepo (review M4): could a connected repo own a hook that never resolved one", () => {
   test("a repo that commits a config owns its cwd and its files; a bare repo does not", async () => {
     // Arrange
+    const env = { CROSSCHECK_HOME: await loggedInHome("own-home") };
     const connected = await makeDir("own-connected");
     await makeBoundary(connected, { connected: true });
     const bare = await makeDir("own-bare");
     await makeBoundary(bare, { connected: false });
 
     // Act
-    const byDir = await mayBeConnectedRepo({}, connected, [connected], []);
-    const byFile = await mayBeConnectedRepo({}, bare, [], [join(connected, "src", "a.ts")]);
-    const bareOnly = await mayBeConnectedRepo({}, bare, [bare], [join(bare, "a.ts")]);
+    const byDir = await mayBeConnectedRepo(env, connected, [connected], []);
+    const byFile = await mayBeConnectedRepo(env, bare, [], [join(connected, "src", "a.ts")]);
+    const bareOnly = await mayBeConnectedRepo(env, bare, [bare], [join(bare, "a.ts")]);
 
     // Assert
     expect(byDir).toBe(true);
@@ -286,12 +307,65 @@ describe("mayBeConnectedRepo (review M4): could a connected repo own a hook that
 
   test("CROSSCHECK_HUB_URL makes any repo reportable, and still no plain directory", async () => {
     // Arrange
+    const env = { CROSSCHECK_HOME: await loggedInHome("own-override-home"), CROSSCHECK_HUB_URL: HUB_URL };
     const bare = await makeDir("own-override");
     await makeBoundary(bare, { connected: false });
     const plain = await makeDir("own-plain");
 
     // Act + Assert
-    expect(await mayBeConnectedRepo({ CROSSCHECK_HUB_URL: HUB_URL }, bare, [bare], [])).toBe(true);
-    expect(await mayBeConnectedRepo({ CROSSCHECK_HUB_URL: HUB_URL }, plain, [plain], [])).toBe(false);
+    expect(await mayBeConnectedRepo(env, bare, [bare], [])).toBe(true);
+    expect(await mayBeConnectedRepo(env, plain, [plain], [])).toBe(false);
+  });
+});
+
+describe("a repo connected to another hub owns no cut hook (review batch 2, M2)", () => {
+  test("it is not a connected repo, and says which hub it names", async () => {
+    // Arrange: a bait repo whose config names a hub the developer's key does not belong to.
+    const home = await loggedInHome("foreign-home");
+    const bait = await makeDir("foreign-bait");
+    await mkdir(join(bait, ".git"), { recursive: true });
+    await writeFile(join(bait, ".crosscheck.json"), renderRepoConfig(OTHER_HUB_URL), "utf8");
+    const env = { CROSSCHECK_HOME: home };
+
+    // Act
+    const owned = await mayBeConnectedRepo(env, bait, [bait], []);
+    const ownership = await connectedRepoOwnership(env, bait, [bait], []);
+
+    // Assert
+    expect(owned).toBe(false);
+    expect(ownership).toEqual({
+      kind: "foreign_hub",
+      foreignHub: { hubOrigin: OTHER_HUB_URL, keyOrigin: HUB_URL, hubSource: "repo", keySource: "login" },
+    });
+  });
+
+  test("a candidate connected to the key's own hub wins over a foreign one", async () => {
+    // Arrange: the cwd is the bait repo, the touched file is in a repo of the developer's own hub.
+    const env = { CROSSCHECK_HOME: await loggedInHome("foreign-mixed-home") };
+    const bait = await makeDir("foreign-mixed-bait");
+    await mkdir(join(bait, ".git"), { recursive: true });
+    await writeFile(join(bait, ".crosscheck.json"), renderRepoConfig(OTHER_HUB_URL), "utf8");
+    const own = await makeDir("foreign-mixed-own");
+    await makeBoundary(own, { connected: true });
+
+    // Act + Assert
+    expect(await connectedRepoOwnership(env, bait, [bait], [join(own, "src", "a.ts")])).toEqual({ kind: "connected" });
+  });
+
+  test("deciding it writes nothing to the stored login, even one from before key bindings", async () => {
+    // Arrange: a legacy login — no keyOrigin — which loadConfig would bind and write back.
+    const home = await makeDir("foreign-legacy-home");
+    const legacy = `${JSON.stringify({ version: 1, hubUrl: HUB_URL, apiKey: "test-key" })}\n`;
+    await writeFile(join(home, "config.json"), legacy, "utf8");
+    const bait = await makeDir("foreign-legacy-bait");
+    await mkdir(join(bait, ".git"), { recursive: true });
+    await writeFile(join(bait, ".crosscheck.json"), renderRepoConfig(OTHER_HUB_URL), "utf8");
+
+    // Act
+    const ownership = await connectedRepoOwnership({ CROSSCHECK_HOME: home }, bait, [bait], []);
+
+    // Assert: still foreign by the legacy binding, and the file untouched.
+    expect(ownership.kind).toBe("foreign_hub");
+    expect(await Bun.file(join(home, "config.json")).text()).toBe(legacy);
   });
 });

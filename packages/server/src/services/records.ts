@@ -24,17 +24,17 @@ import { ingestHintDelivery } from "./hint-deliveries.ts";
 import { ingestLandedEvidence } from "./landed.ts";
 import { ingestLandedNoticeDelivery, ingestLandedStop } from "./landed-notices.ts";
 import { embedContextDoc } from "./normalized-doc.ts";
-import { heldReceipts, writeReceipt } from "./record-receipts.ts";
+import { heldReceipts, writeReceipts } from "./record-receipts.ts";
 import type { Held, Receipt } from "./record-receipts.ts";
 import { answerQuestion, askQuestionFromRecord } from "./questions.ts";
 import {
   ingestClaim,
   ingestClaimEdge,
-  ingestTarget,
   ingestWorkContext,
   rejectedOutcome,
 } from "./record-handlers.ts";
 import type { HandlerOutcome, RecordStatus } from "./record-handlers.ts";
+import { ingestTargetRun } from "./target-run.ts";
 import type { Db } from "../db/client.ts";
 import type { Embedder } from "./embedder.ts";
 import type { Clock } from "../types.ts";
@@ -109,6 +109,25 @@ const checkProducerSession = async (
     await reviveReapedSession(deps, session);
   }
   return null;
+};
+
+/**
+ * THE PRODUCER CHECK, ONCE PER SESSION PER FLUSH (release gate, 2026-10-13):
+ * a flush names one producer, two across a heal, and the check is one read —
+ * or the one revive a reaped producer gets — so every later record of the
+ * same producer takes the first answer instead of the same read again.
+ */
+const producerGate = (deps: Deps, developerId: string): ((sessionId: string) => Promise<string | null>) => {
+  const answers = new Map<string, Promise<string | null>>();
+  return (sessionId) => {
+    const known = answers.get(sessionId);
+    if (known !== undefined) {
+      return known;
+    }
+    const answer = checkProducerSession(deps, developerId, sessionId);
+    answers.set(sessionId, answer);
+    return answer;
+  };
 };
 
 /**
@@ -202,6 +221,17 @@ const touchProducerHeartbeats = async (
     );
 };
 
+/** A target on its own: a run of one (services/target-run.ts). A flush's targets go as one run (`ingestRecords`). */
+const ingestTargetAlone = async (
+  deps: Deps,
+  developerId: string,
+  body: Target,
+  seq: SeqField | undefined,
+): Promise<HandlerOutcome> => {
+  const [outcome] = await ingestTargetRun(deps, developerId, [{ body, seq }]);
+  return outcome ?? rejectedOutcome("target: the run answered nothing for it");
+};
+
 /**
  * THE POSITION TRAVELS WITH THE RECORD (spec 01 §3.5). The envelope is parsed
  * here and the handlers store the rows, so this is the one seam where the two
@@ -232,7 +262,7 @@ const dispatchRecord = (
     case "work_context":
       return ingestWorkContext(deps, developerId, body as WorkContext, seq, producerSessionId);
     case "target":
-      return ingestTarget(deps, developerId, body as Target, seq);
+      return ingestTargetAlone(deps, developerId, body as Target, seq);
     case "claim":
       return ingestClaim(deps, developerId, body as Claim, seq);
     case "claim_edge":
@@ -335,38 +365,49 @@ const heldOutcome = (holds: Held): HandlerOutcome => {
 const receiptIdsOf = (records: readonly ParseRecordResult[]): readonly string[] =>
   records.flatMap((record) => (record.ok && !record.unknownKind ? [record.envelope.id] : []));
 
-const ingestOne = async (
-  deps: Deps,
+/** A record past every gate, for its kind's handler: what the handler and its answer need. */
+interface Admitted {
+  readonly kind: IngestableKind;
+  readonly envelopeId: string;
+  readonly liveProducer: string;
+  readonly body: unknown;
+  readonly seq: SeqField | undefined;
+}
+
+/** A record answered before any handler ran, or one admitted to its handler. */
+type Screened = { readonly answered: IngestOneResult } | { readonly admitted: Admitted };
+
+const screen = async (
   developerId: string,
   parsed: ParseRecordResult,
   held: ReadonlyMap<string, Held>,
-): Promise<IngestOneResult> => {
+  gate: (sessionId: string) => Promise<string | null>,
+): Promise<Screened> => {
   if (!parsed.ok) {
-    return { outcome: { status: "rejected", issues: parsed.issues } };
+    return { answered: { outcome: { status: "rejected", issues: parsed.issues } } };
   }
   if (parsed.unknownKind) {
     // Forward compatibility (DESIGN.md §5): unknown kinds are never an error.
-    return { outcome: { status: "ignored" } };
+    return { answered: { outcome: { status: "ignored" } } };
   }
   const kind = parsed.envelope.kind as KnownRecordKind;
   const notIngestableNote = NOT_INGESTABLE_NOTES[kind];
   if (notIngestableNote !== undefined) {
-    return { outcome: { status: "ignored", issues: [notIngestableNote] } };
+    return { answered: { outcome: { status: "ignored", issues: [notIngestableNote] } } };
   }
   if (parsed.envelope.producer.developerId !== developerId) {
     return {
-      outcome: rejectedOutcome(
-        "producer.developerId: does not match authenticated developer",
-      ),
+      answered: {
+        outcome: rejectedOutcome(
+          "producer.developerId: does not match authenticated developer",
+        ),
+      },
     };
   }
   const envelopeId = parsed.envelope.id;
   const liveProducer = parsed.envelope.producer.sessionId;
-  const gateIssue = await checkProducerSession(
-    deps,
-    developerId,
-    liveProducer,
-  );
+  const gateIssue = await gate(liveProducer);
+  const holds = held.get(envelopeId);
   if (gateIssue !== null) {
     // AN ENVELOPE THE HUB ALREADY HOLDS is no refusal (review-2 round 8, M4):
     // a re-send of a batch whose answer never arrived, under a life the hub
@@ -376,31 +417,69 @@ const ingestOne = async (
     // when sent — and only that change, which the life's own later posts
     // carry, is not applied. While its producer can still write, the envelope
     // goes through every check as the update it is.
-    const holds = held.get(envelopeId);
     if (holds === undefined) {
-      return { outcome: rejectedOutcome(gateIssue) };
+      return { answered: { outcome: rejectedOutcome(gateIssue) } };
     }
-    return { outcome: heldOutcome(holds), receipt: { id: envelopeId, ...holds } };
+    return { answered: { outcome: heldOutcome(holds), receipt: { id: envelopeId, ...holds } } };
   }
-  const ingestableKind = kind as IngestableKind;
-  const outcome = await dispatchRecord(
-    deps,
-    developerId,
-    ingestableKind,
-    parsed.body,
-    parsed.envelope.seq,
-    liveProducer,
-  );
+  // A RE-SENT ENVELOPE THE HUB HOLDS IS NOT STORED AGAIN (release gate,
+  // 2026-10-13): the connector re-sends a batch whose answer did not come
+  // back in time, and the hub had stored it. Answered as it was the first
+  // time, `duplicate`, so the cursor moves and nothing is counted lost; not
+  // applied again, so a re-delivery is no re-touch and costs one read for the
+  // whole batch. A work context's body may be newer than the one held, and a
+  // record the hub kept without its change (`ignored`) may land this time:
+  // both still go through every check.
+  if (holds !== undefined && !holds.isIgnored && kind !== "work_context") {
+    return { answered: { outcome: heldOutcome(holds), liveProducer } };
+  }
+  return {
+    admitted: {
+      kind: kind as IngestableKind,
+      envelopeId,
+      liveProducer,
+      body: parsed.body,
+      seq: parsed.envelope.seq,
+    },
+  };
+};
+
+/** What the handler's answer means for the flush: a receipt when the hub holds the record, the doc it grew. */
+const resultOf = (admitted: Admitted, outcome: HandlerOutcome): IngestOneResult => {
+  const { envelopeId, liveProducer } = admitted;
   const kept = KEPT.has(outcome.status)
     ? { receipt: { id: envelopeId, resultId: outcome.id ?? null, isIgnored: outcome.status === "ignored" } }
     : {};
   if (outcome.status !== "accepted") {
     return { outcome, liveProducer, ...kept };
   }
-  const touched = touchedContextId(ingestableKind, parsed.body);
+  const touched = touchedContextId(admitted.kind, admitted.body);
   return touched === undefined
     ? { outcome, liveProducer, ...kept }
     : { outcome, touched, liveProducer, ...kept };
+};
+
+const applyOne = async (deps: Deps, developerId: string, admitted: Admitted): Promise<IngestOneResult> =>
+  resultOf(
+    admitted,
+    await dispatchRecord(deps, developerId, admitted.kind, admitted.body, admitted.seq, admitted.liveProducer),
+  );
+
+/** A flush's consecutive targets, stored as one run (services/target-run.ts) and answered one by one. */
+const applyRun = async (
+  deps: Deps,
+  developerId: string,
+  run: readonly (Admitted & { readonly index: number })[],
+): Promise<readonly (IngestOneResult & { readonly index: number })[]> => {
+  const outcomes = await ingestTargetRun(
+    deps,
+    developerId,
+    run.map((admitted) => ({ body: admitted.body as Target, seq: admitted.seq })),
+  );
+  return run.map((admitted, at) => ({
+    index: admitted.index,
+    ...resultOf(admitted, outcomes[at] ?? rejectedOutcome("target: the run answered nothing for it")),
+  }));
 };
 
 const countByStatus = (
@@ -412,6 +491,11 @@ const countByStatus = (
  * Processes a spool flush strictly in input order, so a batch that creates a
  * work context and then its targets/claims succeeds in a single request.
  * Failures are per-record (partial success) — spool semantics.
+ *
+ * CONSECUTIVE TARGETS ARE ONE RUN (services/target-run.ts), stored in a few
+ * statements and answered one by one, before the record after them is: a
+ * flush is mostly targets, and one at a time they cost a 99-record batch
+ * more than the connector's request bound (release gate, 2026-10-13).
  *
  * Context docs are EMBEDDED ONCE PER FLUSH, after the loop: only the final
  * doc state matters, so a 100-claim batch to one context costs one provider
@@ -429,24 +513,38 @@ export const ingestRecords = async (
   const liveProducers = new Set<string>();
   const parsed = inputs.map(parseRecord);
   const held = await heldReceipts(deps, developerId, receiptIdsOf(parsed));
+  const gate = producerGate(deps, developerId);
+  const settle = async (settled: readonly (IngestOneResult & { readonly index: number })[]): Promise<void> => {
+    for (const { index, outcome, touched, liveProducer } of settled) {
+      results.push({ index, ...outcome });
+      if (touched !== undefined) {
+        touchedContexts.add(touched);
+      }
+      if (liveProducer !== undefined) {
+        liveProducers.add(liveProducer);
+      }
+    }
+    await writeReceipts(deps, developerId, settled.flatMap((result) => (result.receipt === undefined ? [] : [result.receipt])));
+  };
+  let run: readonly (Admitted & { readonly index: number })[] = [];
+  const takeRun = async (): Promise<void> => {
+    const taken = run;
+    run = [];
+    if (taken.length > 0) {
+      await settle(await applyRun(deps, developerId, taken));
+    }
+  };
   for (const [index, record] of parsed.entries()) {
-    const { outcome, touched, liveProducer, receipt } = await ingestOne(
-      deps,
-      developerId,
-      record,
-      held,
-    );
-    results.push({ index, ...outcome });
-    if (touched !== undefined) {
-      touchedContexts.add(touched);
+    const screened = await screen(developerId, record, held, gate);
+    if ("admitted" in screened && screened.admitted.kind === "target") {
+      run = [...run, { ...screened.admitted, index }];
+      continue;
     }
-    if (liveProducer !== undefined) {
-      liveProducers.add(liveProducer);
-    }
-    if (receipt !== undefined) {
-      await writeReceipt(deps, developerId, receipt);
-    }
+    await takeRun();
+    const result = "answered" in screened ? screened.answered : await applyOne(deps, developerId, screened.admitted);
+    await settle([{ ...result, index }]);
   }
+  await takeRun();
   await touchProducerHeartbeats(deps, liveProducers);
   const embedder = deps.embedder ?? null;
   if (embedder !== null) {

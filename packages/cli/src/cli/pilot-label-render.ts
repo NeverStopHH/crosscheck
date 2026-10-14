@@ -26,6 +26,8 @@ import type { UnlabeledIntervention } from "@crosscheck/connector-core/http/pilo
 import { MAX_PILOT_LABEL_REASON_CHARS } from "@crosscheck/schema";
 import type { DeliveryChannel } from "@crosscheck/schema";
 
+import { ALREADY_DRAFTED } from "./draft-lines.ts";
+
 const INDENT = "  ";
 const MINUTES_PER_HOUR = 60;
 
@@ -41,12 +43,15 @@ export interface WalkTally {
   /** Refused by the hub, with its sentence printed at the item. */
   readonly refused: number;
   readonly notReached: number;
+  /** Of the labelled, how many the hub only DRAFTED (human provenance §5): they wait for the passkey. */
+  readonly drafted: number;
 }
 
 /** The channel as a person would name it; the hub's own word when this client has none. */
 const CHANNEL_WORD: Readonly<Record<DeliveryChannel, string>> = {
   briefing: "session briefing",
   prompt_hint: "mid-prompt hint",
+  prompt_substance: "mid-prompt finding",
   tripwire: "tripwire ask before an edit",
   suspect: "suspect answer",
   unknown: "channel not recorded",
@@ -117,10 +122,18 @@ export const labelRecordedLine = (
   label: "helpful" | "noise" | "unclear",
   withReason: boolean,
   repeated: boolean,
-): string =>
-  repeated
+  drafted = false,
+): string => {
+  if (drafted) {
+    // A HUB SINCE HUMAN PROVENANCE ONLY DRAFTS IT (0.11 §5): never "recorded".
+    return repeated
+      ? `${INDENT}already drafted — ${ALREADY_DRAFTED}\n`
+      : `${INDENT}drafted: ${label}${withReason ? ", with your reason" : ""} — it counts once you confirm it with your passkey\n`;
+  }
+  return repeated
     ? `${INDENT}already labelled — a label counts once, and a second one changes nothing\n`
     : `${INDENT}recorded: ${label}${withReason ? ", with your reason" : ""}\n`;
+};
 
 export const skippedLine = (): string => `${INDENT}skipped — it is offered again next time\n`;
 
@@ -142,8 +155,12 @@ export const walkSummaryLines = (tally: WalkTally, more: boolean): string => {
     ...(tally.refused > 0 ? [`not recorded ${String(tally.refused)}`] : []),
     ...(tally.notReached > 0 ? [`stopped with ${String(tally.notReached)} not reached`] : []),
   ].map((part) => ` · ${part}`);
+  const counts =
+    tally.drafted > 0
+      ? ` ${String(tally.drafted)} of them are drafts: they count only once you confirm them with your passkey — crosscheck confirm opens the page. Once confirmed, each counts once toward this repo's pilot figures and names nobody.`
+      : " Each label counts once toward this repo's pilot figures and names nobody.";
   return [
-    `labelled ${String(labelled)} of ${String(tally.total)} — helpful ${String(tally.helpful)} · noise ${String(tally.noise)} · unclear ${String(tally.unclear)} · skipped ${String(tally.skipped)}${extra.join("")}. Each label counts once toward this repo's pilot figures and names nobody.`,
+    `labelled ${String(labelled)} of ${String(tally.total)} — helpful ${String(tally.helpful)} · noise ${String(tally.noise)} · unclear ${String(tally.unclear)} · skipped ${String(tally.skipped)}${extra.join("")}.${counts}`,
     // No backticks: no renderer here emits one (the corpus's renderer-owned class).
     ...(more ? ["more are waiting past these — run crosscheck pilot label again"] : []),
     "",

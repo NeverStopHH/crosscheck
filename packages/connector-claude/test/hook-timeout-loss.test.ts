@@ -120,8 +120,17 @@ const editPayload = (repo: string): string =>
 
 const neverSettles = (): Promise<string> => new Promise<string>(() => {});
 
+/**
+ * A ledger the hook never wrote is no lines, not a thrown read: a booking
+ * that went missing fails the assertion that names it, rather than an ENOENT
+ * nobody can tell from a broken fixture.
+ */
 const ledgerLines = async (home: string): Promise<readonly Record<string, unknown>[]> => {
-  const raw = await Bun.file(lossLedgerPath(home)).text();
+  const file = Bun.file(lossLedgerPath(home));
+  if (!(await file.exists())) {
+    return [];
+  }
+  const raw = await file.text();
   return raw
     .split("\n")
     .filter((line) => line.length > 0)

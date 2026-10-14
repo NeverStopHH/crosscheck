@@ -5,12 +5,14 @@
  * draft; discard mints a REJECTED revision the same append-only way. The
  * draft row itself is never mutated — "reviewed" is a graph fact.
  */
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
 import { createDb, createServer } from "@crosscheck/server";
 import type { Db } from "@crosscheck/server";
 
+import { OWN_DRAFTS_QUOTED_DATA_NOTICE, QUOTED_DATA_NOTICE } from "../src/briefing/render.ts";
 import { prepareMcp } from "../src/mcp/context.ts";
 import type { McpContext } from "../src/mcp/context.ts";
 import { findTool } from "../src/mcp/tools/index.ts";
@@ -228,7 +230,7 @@ const fetchDiagnosis = async (): Promise<{
 beforeAll(async () => {
   db = await createDb();
   app = createServer({ db, adminToken: ADMIN_TOKEN });
-  server = Bun.serve({ port: 0, fetch: app.fetch });
+  server = serveLoopback({ port: 0, fetch: app.fetch });
   hubUrl = `http://127.0.0.1:${server.port}`;
   alice = await setUpDeveloper("review-alice", "Alice", "alice@example.com");
 });
@@ -326,6 +328,42 @@ describe("review_draft", () => {
         claim.body === "The cursor offset is computed against the pre-reap file",
     );
     expect(edited?.provenance).toBe("declared");
+  });
+
+  test("the confirmation frames the caller's own draft as their own, not a teammate's", async () => {
+    // Arrange: one draft to confirm, one to edit — both echo own text
+    const confirmed = await seedDraft("The spool cursor skips a line after a reap");
+    const edited = await seedDraft("The lock outlives its holder somehow");
+
+    // Act
+    const confirm = await review({ draft_claim_id: confirmed, action: "confirm" });
+    const edit = await review({
+      draft_claim_id: edited,
+      action: "edit",
+      body: "The lock file outlives a holder killed by SIGKILL",
+    });
+
+    // Assert: the own-sessions notice heads the echo; the teammate one never does
+    for (const text of [confirm.text, edit.text]) {
+      expect(text).toContain("«");
+      expect(text.split("\n")[0]).toBe(OWN_DRAFTS_QUOTED_DATA_NOTICE);
+      expect(text).not.toContain(QUOTED_DATA_NOTICE);
+    }
+  });
+
+  test("a draft behind the newest 20 is still reachable — the nudge names those", async () => {
+    // Arrange: the oldest draft, then 21 newer ones in front of it
+    const oldest = await seedDraft("The oldest draft, behind the newest-first page");
+    for (let i = 0; i < 21; i += 1) {
+      await seedDraft(`Newer draft number ${String(i)}`);
+    }
+
+    // Act
+    const { isError, text } = await review({ draft_claim_id: oldest, action: "discard" });
+
+    // Assert
+    expect(isError).toBe(false);
+    expect(text).toContain("Discarded draft");
   });
 
   test("edit without a body is refused with a usable sentence", async () => {

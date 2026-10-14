@@ -1,15 +1,37 @@
 import type { Context, Hono } from "hono";
 
 import { createApp } from "./app.ts";
+import {
+  IPV4_LOOPBACK,
+  IPV6_LOOPBACK,
+  LISTEN_ENV,
+  assertListenable,
+  canListenAt,
+  describeListening,
+  interfaceAddresses,
+  legacyListenWarning,
+  parseListenAddresses,
+  probeAddressesFor,
+  resolveListenPlan,
+  restoredOnLoopbackWarning,
+  serveOnPlan,
+} from "./http/listen.ts";
+import { REFUSE_PRE_011_DRAFTS_ENV, parseRefusePreDraftingClients } from "./http/client-release.ts";
+import { NO_TRUSTED_PROXIES, TRUSTED_PROXIES_ENV, parseTrustedProxies } from "./http/forwarded.ts";
+import type { TrustedProxies } from "./http/forwarded.ts";
+import type { ListenKind } from "./http/listen.ts";
 import { bunPeerAddress } from "./http/peer.ts";
+import { holdsMembersFromBeforeInstall, readListenDefault } from "./services/hub-install.ts";
 import { generateApiKey } from "./auth/keys.ts";
 import { DEFAULT_PORT, SESSION_REAP_INTERVAL_MS } from "./constants.ts";
 import { createDb } from "./db/client.ts";
 import { createEmbedderFromEnv } from "./services/embedder.ts";
 import { pruneRecordReceipts } from "./services/record-receipts.ts";
 import { reapStaleSessions } from "./services/sessions.ts";
-import { parseWebAuthnOrigins } from "./services/webauthn.ts";
+import { hasLocalhostBesideHttps, localhostBesideHttpsWarning, parseWebAuthnOrigins } from "./services/webauthn.ts";
 import { backfillSkeletonIdentity } from "./services/skeleton-identity.ts";
+import { runStartupUpgrades } from "./services/startup-upgrades.ts";
+import { withholdPendingLocationTitles } from "./services/developer-settings.ts";
 import type { Db } from "./db/client.ts";
 import type { Embedder } from "./services/embedder.ts";
 import type { AppEnv, Clock } from "./types.ts";
@@ -48,6 +70,9 @@ export { TARGET_EVENT_KINDS, seqKindFor } from "./services/record-handlers.ts";
 // Exported so connector-core can pin its substance gate to the same terms
 // (test/claim-validity-parity.test.ts).
 export { isAssertableCause } from "./services/claim-validity.ts";
+// The hub's content floor, exported so connector-core pins its recount of an
+// old hub's candidates to it, row for row (test/content-floor-parity.test.ts).
+export { contentFloorOf, hubFloorTermsOf } from "./services/hints.ts";
 export { createEmbedderFromEnv } from "./services/embedder.ts";
 export type { Embedder } from "./services/embedder.ts";
 // 03's ground, exported because 04's verdict layer and 07's instrumentation
@@ -138,6 +163,20 @@ export interface CreateServerOptions {
   readonly webauthnOrigins?: readonly string[];
   /** Omitted = Bun's own `requestIP` (http/peer.ts); the test harness injects one. */
   readonly peerAddress?: (c: Context<AppEnv>) => string | null;
+  /**
+   * Proxies besides loopback whose X-Forwarded-* headers count, already
+   * parsed (http/forwarded.ts). Omitted = none: `startServer` passes the
+   * parsed `CROSSCHECK_TRUSTED_PROXIES`.
+   */
+  readonly trustedProxies?: TrustedProxies;
+  /** How `startServer` decided where to listen; omitted = no socket of this app's own. */
+  readonly listen?: ListenKind;
+  /**
+   * Refuse drafts from clients older than 0.11 (http/client-release.ts).
+   * Omitted = accept every client: `startServer` passes the parsed
+   * `CROSSCHECK_REFUSE_PRE_011_DRAFTS`.
+   */
+  readonly refusePreDraftingClients?: boolean;
 }
 
 /**
@@ -173,6 +212,9 @@ export const createServer = (options: CreateServerOptions): Hono<AppEnv> =>
     uiSessionSecret: resolveUiSessionSecret(options.uiSessionSecret),
     webauthnOrigins: options.webauthnOrigins ?? [],
     peerAddress: options.peerAddress ?? bunPeerAddress,
+    trustedProxies: options.trustedProxies ?? NO_TRUSTED_PROXIES,
+    listen: options.listen ?? null,
+    refusePreDraftingClients: options.refusePreDraftingClients ?? false,
   });
 
 const MIN_PORT = 1;
@@ -195,6 +237,15 @@ const parsePort = (raw: string | undefined): number => {
 const PORT_PROBE_TIMEOUT_MS = 500;
 
 /**
+ * The loopbacks the hub listens at when nobody says otherwise, and the probe
+ * knocks at for a wildcard: both, where the machine has `::1`. A foreign
+ * listener on `[::1]:<port>` would otherwise answer every browser that tries
+ * IPv6 first (review of the hub hardening, X9).
+ */
+const loopbackAddresses = (): readonly string[] =>
+  canListenAt(IPV6_LOOPBACK) ? [IPV4_LOOPBACK, IPV6_LOOPBACK] : [IPV4_LOOPBACK];
+
+/**
  * "Address already in use" is the commonest first-run error, and Bun.serve on
  * macOS cannot report it against a FOREIGN listener: it binds over one with
  * reuse semantics, prints the healthy banner, and the kernel splits traffic
@@ -205,10 +256,10 @@ const PORT_PROBE_TIMEOUT_MS = 500;
  * best-effort — an unanswered connect (timeout) proceeds, and the tiny
  * check-to-bind race is accepted.
  */
-const assertPortFree = async (port: number): Promise<void> => {
-  const taken = await Promise.race([
+const isAnswering = (hostname: string, port: number): Promise<boolean> =>
+  Promise.race([
     Bun.connect({
-      hostname: "127.0.0.1",
+      hostname,
       port,
       socket: { data: () => {} },
     }).then(
@@ -222,6 +273,10 @@ const assertPortFree = async (port: number): Promise<void> => {
       setTimeout(() => resolveProbe(false), PORT_PROBE_TIMEOUT_MS);
     }),
   ]);
+
+const assertPortFree = async (port: number, hostnames: readonly string[]): Promise<void> => {
+  const answers = await Promise.all(hostnames.map((hostname) => isAnswering(hostname, port)));
+  const taken = answers.some((answered) => answered);
   if (taken) {
     throw new Error(
       `port ${port} is already in use — something is listening there ` +
@@ -237,57 +292,123 @@ const assertPortFree = async (port: number): Promise<void> => {
  * `npx crosscheck-hub serve`) is this same code path rather than a second copy.
  */
 export const startServer = async (): Promise<void> => {
-  // Port checks come FIRST: a taken port must refuse before PGlite writes a
-  // single byte, not after a full database boot.
+  // Port and address checks come FIRST: a taken port or an address this
+  // machine does not have must refuse before PGlite writes a single byte,
+  // not after a full database boot.
   const port = parsePort(process.env["PORT"]);
-  await assertPortFree(port);
+  const configuredListen = parseListenAddresses(process.env[LISTEN_ENV]);
+  const trustedProxies = parseTrustedProxies(process.env[TRUSTED_PROXIES_ENV]);
+  if (configuredListen !== null) {
+    assertListenable(configuredListen);
+  }
+  await assertPortFree(port, probeAddressesFor(configuredListen, loopbackAddresses(), interfaceAddresses()));
   const dataDir = process.env["CROSSCHECK_DATA_DIR"];
   const db = await createDb(dataDir === undefined ? {} : { dataDir });
+  const listenPlan = resolveListenPlan({
+    configured: configuredListen,
+    listenDefault: await readListenDefault(db),
+    hasIpv6Loopback: canListenAt(IPV6_LOOPBACK),
+  });
+  // Every interface, decided only now that the data dir has spoken: knock the
+  // machine's own addresses too, where a foreign listener would share the
+  // port with the hub (review of the hub hardening, L4).
+  if (listenPlan.kind === "legacy_all_interfaces") {
+    await assertPortFree(port, interfaceAddresses());
+  }
   // Throws on explicit misconfiguration (e.g. openai chosen, no key) — a hub
   // that silently dropped its vector tier would be DESIGN.md §10 "silent death".
   const embedder = createEmbedderFromEnv(process.env);
   const uiSessionSecret = process.env["CROSSCHECK_UI_SECRET"];
+  // Throws on an origin no browser would run a ceremony at — refused here
+  // rather than in front of a person at the approval page (04a §7).
+  const webauthnOrigins = parseWebAuthnOrigins(process.env["CROSSCHECK_WEBAUTHN_ORIGINS"], port);
+  if (hasLocalhostBesideHttps(webauthnOrigins)) {
+    console.warn(localhostBesideHttpsWarning(webauthnOrigins));
+  }
+  // Throws on a value that is neither on nor off, rather than guessing which was meant.
+  const refusePreDraftingClients = parseRefusePreDraftingClients(process.env[REFUSE_PRE_011_DRAFTS_ENV]);
   const app = createServer({
     db,
     adminToken: process.env["ADMIN_TOKEN"] ?? null,
     ciToken: process.env["CROSSCHECK_CI_TOKEN"] ?? null,
     embedder,
     ...(uiSessionSecret === undefined ? {} : { uiSessionSecret }),
-    // Throws on an origin no browser would run a ceremony at — refused here
-    // rather than in front of a person at the approval page (04a §7).
-    webauthnOrigins: parseWebAuthnOrigins(process.env["CROSSCHECK_WEBAUTHN_ORIGINS"], port),
+    webauthnOrigins,
+    trustedProxies,
+    listen: listenPlan.kind,
+    refusePreDraftingClients,
   });
-  Bun.serve({ port, fetch: app.fetch });
-  // THE SKELETON'S IDENTITY FOR ROWS THAT PREDATE ITS COLUMNS (01a §4.1).
-  // After serving, not before: until it has run, a missing identity reads as
-  // UNRESOLVED and the retention sweep keeps what it cannot resolve, so
-  // nothing depends on it finishing first — and a large hub is not held
-  // offline while it does. Idempotent; each start finishes what the last left.
-  void backfillSkeletonIdentity({ db, now: () => new Date() }).then(
-    (report) => {
-      console.log(
-        `[crosscheck] skeleton identity: ${String(report.pinPathsCanonicalised)} legacy pin path(s) respelled, ` +
-          `${String(report.pinsSeeded)} pin(s) seeded, ` +
-          `${String(report.fileRefs)} file identities filled, ` +
-          `${String(report.unresolvedFileRefs)} unresolved (kept)`,
-      );
-    },
-    (error: unknown) => {
-      console.error("[crosscheck] skeleton identity backfill failed; unresolved rows are kept", error);
-    },
-  );
-  // THE RECEIPTS PAST THEIR RETENTION, once at boot (review-2 round 9, M4):
-  // the timer's first pass comes SESSION_REAP_INTERVAL_MS from now, and a hub
-  // restarted after weeks off would carry the backlog until then. A chunk at
-  // a time, so the requests served meanwhile wait out one chunk at most.
-  void pruneRecordReceipts({ db, now: () => new Date() }).then(
-    (pruned) => {
-      console.log(`[crosscheck] record receipts: ${String(pruned)} past their retention pruned at boot`);
-    },
-    (error: unknown) => {
-      console.error("[crosscheck] record receipts prune at boot failed; the reaper pass retries", error);
-    },
-  );
+  // AN OPT-OUT FROM BEFORE THE INDEX FOLLOWED THE SETTING (review round 5,
+  // M1): her docs still hold her branch titles, so they are EMPTIED before
+  // serving — a colleague's first search must not find her by a guessed
+  // branch — in one statement; the rebuild itself is a start-up pass after
+  // serving, a page and one embedder call at a time. Rebuilding here kept a
+  // pilot-scale hub's port closed 17–26 s, and with an embedder for one
+  // call per doc (batch-2 integration review, M11). Once per opt-out
+  // (developers.location_index_built_at, set when the rebuild is done).
+  const indexesPending = await withholdPendingLocationTitles(db);
+  if (indexesPending > 0) {
+    console.log(
+      `[crosscheck] search index: location titles withheld for ${String(indexesPending)} opted-out developer(s); ` +
+        "their docs are rebuilt in the background",
+    );
+  }
+  const servers = serveOnPlan(listenPlan, port, app.fetch);
+  const listeningPort = servers[0]?.port ?? port;
+  if (listenPlan.kind === "legacy_all_interfaces") {
+    console.warn(legacyListenWarning(listeningPort));
+  }
+  if (listenPlan.kind === "loopback_default" && (await holdsMembersFromBeforeInstall(db))) {
+    console.warn(restoredOnLoopbackWarning(listeningPort));
+  }
+  // THE PASSES AFTER SERVING, ONE AFTER ANOTHER (batch-2 integration review).
+  // Each pass takes a turn of the event loop only between its own pages, so
+  // side by side their pages ran back to back, and the request that arrived
+  // as the port opened waited out all of them: 0.6–3 s on a loaded machine.
+  // The upgrades first, as what a teammate's searches and hints read; the
+  // skeleton identity and the receipts prune after, as nothing waits on them.
+  void (async (): Promise<void> => {
+    // DRAFTS OUT OF WHAT AN OLDER HUB BUILT: the auto links its gate made into
+    // teammates' trees on a draft's strength, the opted-out docs emptied above,
+    // the docs that still fold drafts in, the hint floor's words an upgrade
+    // left empty, and — with an embedder — every vector missing or from
+    // another model (services/startup-upgrades.ts runs them apart, each
+    // logging its own outcome, each a page at a time). After serving, for the
+    // same reason: until they have run the old rows behave as they did before
+    // the upgrade, and nothing waits on them. All idempotent; each start
+    // finishes what the last left.
+    await runStartupUpgrades({ db, embedder });
+    // THE SKELETON'S IDENTITY FOR ROWS THAT PREDATE ITS COLUMNS (01a §4.1).
+    // After serving, not before: until it has run, a missing identity reads as
+    // UNRESOLVED and the retention sweep keeps what it cannot resolve, so
+    // nothing depends on it finishing first — and a large hub is not held
+    // offline while it does. Idempotent; each start finishes what the last left.
+    await backfillSkeletonIdentity({ db, now: () => new Date() }).then(
+      (report) => {
+        console.log(
+          `[crosscheck] skeleton identity: ${String(report.pinPathsCanonicalised)} legacy pin path(s) respelled, ` +
+            `${String(report.pinsSeeded)} pin(s) seeded, ` +
+            `${String(report.fileRefs)} file identities filled, ` +
+            `${String(report.unresolvedFileRefs)} unresolved (kept)`,
+        );
+      },
+      (error: unknown) => {
+        console.error("[crosscheck] skeleton identity backfill failed; unresolved rows are kept", error);
+      },
+    );
+    // THE RECEIPTS PAST THEIR RETENTION, once at boot (review-2 round 9, M4):
+    // the timer's first pass comes SESSION_REAP_INTERVAL_MS from now, and a hub
+    // restarted after weeks off would carry the backlog until then. A chunk at
+    // a time, so the requests served meanwhile wait out one chunk at most.
+    await pruneRecordReceipts({ db, now: () => new Date() }).then(
+      (pruned) => {
+        console.log(`[crosscheck] record receipts: ${String(pruned)} past their retention pruned at boot`);
+      },
+      (error: unknown) => {
+        console.error("[crosscheck] record receipts prune at boot failed; the reaper pass retries", error);
+      },
+    );
+  })();
   // The hub's own reaper (trial finding M6). HERE and not in `createApp`:
   // every test that builds an app would otherwise leak a timer, and the
   // registration path already reaps the registering developer's own sessions
@@ -303,7 +424,9 @@ export const startServer = async (): Promise<void> => {
   }, SESSION_REAP_INTERVAL_MS).unref();
   const searchMode =
     embedder === null ? "exact+fts (keyless)" : `exact+fts+vector (${embedder.model})`;
-  console.log(`crosscheck server listening on :${port} · search: ${searchMode}`);
+  console.log(
+    `crosscheck server listening on :${String(listeningPort)} (${describeListening(listenPlan, servers)}) · search: ${searchMode}`,
+  );
 };
 
 if (import.meta.main) {

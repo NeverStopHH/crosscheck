@@ -173,6 +173,21 @@ describe("the validity clause on pulled surfaces", () => {
     expect(claimLineOf(rendered)).toContain("no commit");
   });
 
+  test("a bound claim whose commit the hub withheld says so, not that it had none", async () => {
+    // The hub withholds an opted-out author's HEAD from other readers
+    // (server services/live-location.ts): the claim WAS recorded against a
+    // commit, this reader just does not get it.
+    const rendered = renderDiagnosis(
+      diagnosisWith(validity({ commitBinding: "session_base", observedAtCommit: null })),
+      NOW,
+    );
+
+    expect(claimLineOf(rendered)).toContain(
+      "its commit is not shared with you, so it cannot be checked against the code",
+    );
+    expect(claimLineOf(rendered)).not.toContain("recorded against no commit");
+  });
+
   test("a hub that sends no validity gets no clause, not a guessed one", async () => {
     // Arrange: absence means "the hub did not answer", which is a different
     // statement from "unknown" — the targetsReported rule, one field over.
@@ -266,12 +281,15 @@ describe("the claim-hint corpus sees the state word, in every package", () => {
       (surface) => surface.kind === "corpus" && surface.name.includes("claim-hint"),
     );
 
-    // Assert: three of them, and each renders a state word under the corpus's
-    // own payload rather than skipping the line.
-    expect(hints.length).toBe(3);
+    // Assert: four of them — this package's twice (matched on the prompt, and
+    // on the session's intent in a content-free prompt's place), the Cursor
+    // mirror and the ACP mirror — and each renders a state word under the
+    // corpus's own payload rather than skipping the line.
+    expect(hints.length).toBe(4);
     for (const surface of hints) {
       expect(
-        surface.kind === "corpus" ? surface.render("rate limit fix") : "",
+        // Three topical words: "rate limit fix" is all machinery (round 3, M1)
+        surface.kind === "corpus" ? surface.render("the cache key drops on rotation") : "",
         `${surface.name} renders no validity state word`,
       ).toContain("validity ");
     }
@@ -302,7 +320,7 @@ describe("the briefing-solved corpus sees the state word", () => {
     // and the new label beside it.
     expect(solved.length).toBe(1);
     const rendered =
-      solved[0]?.kind === "corpus" ? solved[0].render("rate limit fix") : "";
+      solved[0]?.kind === "corpus" ? solved[0].render("the cache key drops on rotation") : "";
     expect(rendered).toContain("validity ");
     expect(rendered).toContain("root cause · ");
   });

@@ -493,7 +493,7 @@ describe("query bounds that keep the hub alive", () => {
     // Act
     const result = await searchWorkContexts(
       { db: harness.db, now: harness.clock.now, embedder: null },
-      { query: hugeQuery(5000), limit: 10 },
+      { query: hugeQuery(5000), limit: 10, viewerDeveloperId: developer.developerId },
     );
 
     // Assert: resolved (not crashed), and the database still answers

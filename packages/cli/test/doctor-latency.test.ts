@@ -9,6 +9,7 @@
  * hub (answering, denying, or hanging) or a refused port, doctor.test.ts's
  * own pattern.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -20,6 +21,15 @@ import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
 /** Refuses connections: the latency line must say "not measured", not a number. */
 const DEAD_HUB_URL = "http://127.0.0.1:9";
+
+/**
+ * The parallel-reads bound: doctor against a hanging hub at this timeout must
+ * finish inside this many timeouts. Its own reads cost about six; reading the
+ * parallel block one by one would add nine.
+ */
+const PARALLEL_BOUND_TIMEOUT_MS = 1500;
+const PARALLEL_BOUND_TIMEOUTS = 10;
+const PARALLEL_BOUND_TEST_TIMEOUT_MS = 120_000;
 
 const paths: string[] = [];
 
@@ -38,7 +48,7 @@ const fixture = async (): Promise<{ readonly repo: string; readonly home: string
 };
 
 const acceptingHub = (): ReturnType<typeof Bun.serve> =>
-  Bun.serve({
+  serveLoopback({
     port: 0,
     fetch: () => Response.json({ ok: true, data: { sessions: [] } }),
   });
@@ -50,14 +60,14 @@ const acceptingHub = (): ReturnType<typeof Bun.serve> =>
  * always fires.
  */
 const hangingHub = (): ReturnType<typeof Bun.serve> =>
-  Bun.serve({
+  serveLoopback({
     port: 0,
     fetch: () => new Promise<Response>(() => undefined),
   });
 
 /** Answers, but with a denial — the hub is there, the key is not welcome. */
 const denyingHub = (): ReturnType<typeof Bun.serve> =>
-  Bun.serve({
+  serveLoopback({
     port: 0,
     fetch: () =>
       Response.json(
@@ -205,6 +215,35 @@ describe("crosscheck doctor hub latency check", () => {
     expect(result.stdout).toContain("FAIL  hub reachable  invalid api key");
     expect(result.stdout).toContain("PASS  hub latency  not measured");
   });
+
+  test(
+    "a hub that answers nothing costs doctor's parallel reads one timeout, not one per read",
+    async () => {
+      // Arrange: every read of a hanging hub dies of the effective timeout.
+      // Doctor makes its independent hub reads in ONE parallel block, plus a
+      // handful that depend on an earlier answer: about six timeouts in all
+      // (measured 6.2 under load 150). Awaited one by one, the block alone
+      // would be nine more.
+      const { repo, home } = await fixture();
+      const server = hangingHub();
+      const started = Date.now();
+
+      // Act
+      await runDoctor(
+        doctorEnv(home, `http://127.0.0.1:${server.port}`, {
+          CROSSCHECK_TIMEOUT_MS: String(PARALLEL_BOUND_TIMEOUT_MS),
+        }),
+        repo,
+        () => Promise.resolve(null),
+      );
+      const elapsedMs = Date.now() - started;
+      server.stop(true);
+
+      // Assert
+      expect(elapsedMs).toBeLessThan(PARALLEL_BOUND_TIMEOUTS * PARALLEL_BOUND_TIMEOUT_MS);
+    },
+    PARALLEL_BOUND_TEST_TIMEOUT_MS,
+  );
 });
 
 describe("the WARN names a knob that actually moves THIS timeout", () => {

@@ -22,7 +22,7 @@ import { rm } from "node:fs/promises";
 
 import { createDb, createServer } from "@crosscheck/server";
 import type { Db } from "@crosscheck/server";
-import { SAFE_ID_PATTERN as HUB_SAFE_ID_PATTERN } from "@crosscheck/schema";
+import { QuestionSchema, SAFE_ID_PATTERN as HUB_SAFE_ID_PATTERN } from "@crosscheck/schema";
 
 import { safeId, SAFE_ID_PATTERN } from "../src/briefing/sanitize.ts";
 import { repoKey } from "../src/config/paths.ts";
@@ -33,15 +33,21 @@ import { prepareMcp } from "../src/mcp/context.ts";
 import type { McpContext } from "../src/mcp/context.ts";
 import { findTool } from "../src/mcp/tools/index.ts";
 import { idArg } from "../src/mcp/tools/shared.ts";
+import { mintTopicId, topicWorkContextIdFor } from "../src/flows/topic-contexts.ts";
 import { deriveSessionState, writeSessionState } from "../src/state/session-state.ts";
 import { INJECTION_CORPUS } from "./fixtures/injection-corpus.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 
 const ADMIN_TOKEN = "round-trip-admin";
 const REPO_ID = "github.com/acme/api";
 const UUID = "0f8e7d6c-5b4a-4392-8170-6a5b4c3d2e1f";
 
-/** Every id shape the connector mints, a healed or resumed life's included. */
+/** A topic's work context in a life, minted the way the topic rules mint it (flows/topic-rules.ts), under a test key. */
+const topicIdIn = (lifeWorkContextId: string, branch: string): string =>
+  topicWorkContextIdFor(lifeWorkContextId, mintTopicId("7c".repeat(32), `cc_${UUID}`, REPO_ID, "/repos/api-feature", branch));
+
+/** Every id shape the connector mints, a healed or resumed life's and a topic's included. */
 export const MINTED_IDS: readonly string[] = [
   `cc_${UUID}`,
   `wc_cc_${UUID}`,
@@ -50,6 +56,12 @@ export const MINTED_IDS: readonly string[] = [
   `wc_cc_${UUID}~r12`,
   `wc_cc_cur-${UUID}~r3`,
   "wc_cc_acp-gemini-cli--sess_abc123~r2",
+  // DESIGN.md "One session, many topics": a topic's context in a first life,
+  // a healed one, and on the longer Cursor and ACP host keys.
+  topicIdIn(`wc_cc_${UUID}`, "feat/importer"),
+  topicIdIn(`wc_cc_${UUID}~r1`, "detached@0123456789"),
+  topicIdIn(`wc_cc_cur-${UUID}~r3`, "fix/a-very-long-branch-name-from-a-ticket-title"),
+  topicIdIn("wc_cc_acp-gemini-cli--sess_abc123~r2", "main"),
 ];
 
 describe("the id grammar", () => {
@@ -62,7 +74,18 @@ describe("the id grammar", () => {
         connector: true,
         hub: true,
       });
-      expect(argument.safeParse(id).success).toBe(true);
+      expect({ id, argument: argument.safeParse(id).success }).toEqual({ id, argument: true });
+      // ...and the hub stores a question about it: the record-id bound fits it.
+      const question = QuestionSchema.safeParse({
+        id: "qn_round-trip",
+        repo: REPO_ID,
+        authorDeveloperId: "dev_a",
+        authorSessionId: `cc_${UUID}~r1`,
+        workContextId: id,
+        body: "Did this cover the TSV path?",
+        createdAt: new Date().toISOString(),
+      });
+      expect({ id, stored: question.success }).toEqual({ id, stored: true });
     }
   });
 
@@ -99,7 +122,7 @@ describe("a healed life's work context, pointed at and read back", () => {
 
   beforeAll(async () => {
     db = await createDb();
-    server = Bun.serve({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
+    server = serveLoopback({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
     hubUrl = `http://127.0.0.1:${String(server.port)}`;
   });
 
@@ -182,7 +205,7 @@ describe("a healed life's work context, pointed at and read back", () => {
       repo,
       hostSessionKey,
       workContextId,
-      hub: { hubUrl, apiKey: account.apiKey, timeoutMs: 4000, home, repoKey: key, now: () => new Date() },
+      hub: { hubUrl, keyOrigin: hubUrl, apiKey: account.apiKey, timeoutMs: 4000, home, repoKey: key, now: () => new Date() },
       mcp: setup.ctx,
     };
   };
@@ -248,6 +271,67 @@ describe("a healed life's work context, pointed at and read back", () => {
     }
     const pointed = [...new Set(Object.values(surfaces).flatMap(pointersIn))];
     for (const id of pointed) {
+      const read = await run(bob, "get_diagnosis", { workContextId: id });
+      const route = await fetch(`${hubUrl}/api/work-contexts/${encodeURIComponent(id)}/diagnosis`, {
+        headers: { Authorization: `Bearer ${bob.apiKey}` },
+      });
+      expect({ id, isError: read.isError, status: route.status }).toEqual({ id, isError: false, status: 200 });
+    }
+  });
+
+  test("a topic's context in a healed life is pointed at, and every pointer reads back (DESIGN.md \"One session, many topics\")", async () => {
+    // Arrange: Carol, on a healed life, has a topic in a sibling worktree; Bob asks her about it
+    const carol = await developerOn("rt-carol", "Carol", "~r1", "detached@0123456789 · start @ api");
+    const bob = await developerOn("rt-bob-topic", "Bob Topic", "", "Reviewing the ledger export");
+    const topicId = topicIdIn(carol.workContextId, "feat/ledger-rounding");
+    const now = new Date().toISOString();
+    await post("/api/records", carol.apiKey, {
+      cx: "0.1",
+      id: `env_${crypto.randomUUID()}`,
+      ts: now,
+      producer: { developerId: carol.developerId, agentKind: "claude-code", sessionId: carol.workContextId.slice("wc_".length) },
+      kind: "work_context",
+      body: {
+        id: topicId,
+        sessionId: carol.workContextId.slice("wc_".length),
+        title: "feat/ledger-rounding @ api",
+        status: "implementing",
+        branch: "feat/ledger-rounding",
+        baseCommit: "a".repeat(40),
+        intent: { summary: "Round ledger totals half-even before the export", provenance: "derived", confidence: 0.4, capturedAt: now },
+        createdAt: now,
+      },
+    });
+    const asked = await run(bob, "ask_teammate", { question: "Does the rounding change the CSV totals too?", workContextId: topicId });
+
+    // Act
+    const search = await run(bob, "search_related_work", { query: "ledger rounding half-even export" });
+    const hint = await selectAndRenderHint({
+      home: bob.home,
+      repoKey: bob.hub.repoKey,
+      hub: bob.hub,
+      hostSessionKey: bob.hostSessionKey,
+      repoId: REPO_ID,
+      repoRoot: bob.repo,
+      agentKind: "claude-code",
+      prompt: "round the ledger totals half-even before the export",
+      now: new Date(),
+    });
+    const briefing = await assembleBriefing({
+      hub: carol.hub,
+      repoId: REPO_ID,
+      repoRoot: carol.repo,
+      selfDeveloperId: carol.developerId,
+      now: new Date(),
+    });
+
+    // Assert
+    expect(asked).toMatchObject({ isError: false });
+    const surfaces = { search: search.text, hint, briefing: briefing.briefing };
+    for (const [surface, text] of Object.entries(surfaces)) {
+      expect({ surface, names: pointersIn(text).includes(topicId) }).toEqual({ surface, names: true });
+    }
+    for (const id of [...new Set(Object.values(surfaces).flatMap(pointersIn))]) {
       const read = await run(bob, "get_diagnosis", { workContextId: id });
       const route = await fetch(`${hubUrl}/api/work-contexts/${encodeURIComponent(id)}/diagnosis`, {
         headers: { Authorization: `Bearer ${bob.apiKey}` },

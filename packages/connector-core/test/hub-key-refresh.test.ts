@@ -8,6 +8,7 @@
  * `freshApiKey` source, one 401 re-reads the key and retries once; without
  * one, or when the stored key did not change, a 401 stays a single 401.
  */
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -26,7 +27,7 @@ let seen: string[] = [];
 
 beforeAll(async () => {
   home = await mkdtemp(join(tmpdir(), "cx-key-refresh-"));
-  hub = Bun.serve({
+  hub = serveLoopback({
     port: 0,
     fetch: (request) => {
       const presented = (request.headers.get("Authorization") ?? "").replace("Bearer ", "");
@@ -46,6 +47,7 @@ afterAll(async () => {
 const ctx = (overrides: Partial<HubContext> = {}): HubContext => ({
   hubUrl: `http://127.0.0.1:${String(hub.port)}`,
   apiKey: OLD_KEY,
+  keyOrigin: `http://127.0.0.1:${String(hub.port)}`,
   timeoutMs: 2000,
   home,
   repoKey: "hub-repo",

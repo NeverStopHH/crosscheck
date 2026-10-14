@@ -41,6 +41,7 @@ import {
 } from "./fixtures/capture-harness.ts";
 import type { CaptureHub, Harness } from "./fixtures/capture-harness.ts";
 import { writeRepoFile } from "../../connector-core/test/helpers.ts";
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 
 /** More lives than the old three-rung ladder could give one session. */
 const LIVES = 5;
@@ -162,16 +163,36 @@ describe("an ACP session the hub ends while its proxy keeps capturing", () => {
       await h.capture.settle();
     };
 
-    // Act: the edit the hub refuses, then the next one
+    // ...and a failing tool call, whose fingerprint the engine files under the
+    // work context IT holds, not the state's (the edit capture reads the
+    // state's life; the failure capture reads the engine's own session)
+    const failAs = async (callId: string): Promise<void> => {
+      h.capture.offer(
+        "a2c",
+        toolCallUpdate(sessionId, {
+          sessionUpdate: "tool_call_update",
+          toolCallId: callId,
+          status: "failed",
+          rawOutput: { stderr: "error TS2304: cannot find name 'midLife' at build step 3 of the pipeline" },
+        }),
+      );
+      await h.capture.settle();
+    };
+
+    // Act: the edit the hub refuses, then the next one and a failure after the heal
     await editAs("src/mid/refused.ts");
     await editAs("src/mid/after.ts");
+    await failAs("call_mid_failure");
 
-    // Assert: the later edit is in the next life's work context
+    // Assert: the later edit and the failure are in the next life's work context
     const rows = await hub.db
-      .select({ workContextId: workContextTargets.workContextId, value: workContextTargets.value })
+      .select({ workContextId: workContextTargets.workContextId, kind: workContextTargets.kind, value: workContextTargets.value })
       .from(workContextTargets);
     expect(rows.filter((row) => row.value.startsWith("src/mid/"))).toEqual([
-      { workContextId: `wc_cc_${hostKey}~r1`, value: "src/mid/after.ts" },
+      { workContextId: `wc_cc_${hostKey}~r1`, kind: "file", value: "src/mid/after.ts" },
+    ]);
+    expect(rows.filter((row) => row.kind === "error_fingerprint").map((row) => row.workContextId)).toEqual([
+      `wc_cc_${hostKey}~r1`,
     ]);
     expect((await readDropDetail(h.home, h.hub.repoKey)).rejectedCauses).toEqual({ session_ended: 1 });
   });
@@ -187,7 +208,7 @@ describe("an ACP session whose register the hub refused", () => {
   test("is registered by its first flush, work context and all, and its edits land", async () => {
     // Arrange: a front to the hub that refuses the proxy's first register
     let refuseNext = 1;
-    const front = Bun.serve({
+    const front = serveLoopback({
       port: 0,
       fetch: async (request) => {
         const { pathname, search } = new URL(request.url);
@@ -357,7 +378,7 @@ describe("an ACP session whose register the hub keeps refusing", () => {
   /** A front to the hub that refuses registers while asked to, and counts record deliveries. */
   const front = () => {
     const dials = { refuseRegisters: true, recordPosts: 0 };
-    const server = Bun.serve({
+    const server = serveLoopback({
       port: 0,
       fetch: async (request) => {
         const { pathname, search } = new URL(request.url);

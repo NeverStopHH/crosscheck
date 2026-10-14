@@ -10,6 +10,7 @@
  * `latency` is handed back mutable: a test that needs an `end` call to miss its
  * timeout and then land changes one number instead of restarting a server.
  */
+import { serveLoopback } from "../../../connector-core/test/fixtures/loopback-serve.ts";
 
 export interface HubCalls {
   records: number;
@@ -81,9 +82,15 @@ const sessionBody = (): Response =>
     data: { session: { id: "cc_x", developerId: SELF_DEVELOPER_ID } },
   });
 
-export const startSlowHub = (latency: HubLatency): MockHub => {
+/** What the hub answers besides presence; none by default. */
+export interface SlowHubRows {
+  /** GET /api/ghost-checks rows — a briefing's teammate groups. */
+  readonly ghostChecks?: readonly unknown[];
+}
+
+export const startSlowHub = (latency: HubLatency, rows: SlowHubRows = {}): MockHub => {
   const calls = noCalls();
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: async (request) => {
       const { pathname } = new URL(request.url);
@@ -119,6 +126,9 @@ export const startSlowHub = (latency: HubLatency): MockHub => {
       if (pathname === "/api/work-contexts") {
         calls.contexts += 1;
         return Response.json({ ok: true, data: { workContexts: [] } });
+      }
+      if (pathname === "/api/ghost-checks" && rows.ghostChecks !== undefined) {
+        return Response.json({ ok: true, data: { ghostChecks: rows.ghostChecks } });
       }
       if (pathname.endsWith("/heartbeat")) {
         calls.heartbeat += 1;

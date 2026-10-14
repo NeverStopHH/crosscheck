@@ -51,6 +51,7 @@ const setup = async (): Promise<{
     checkRecipe: null,
     captureMode: "human",
     createdAt: new Date(NOW.getTime() - HOUR),
+    provenance: "unknown_legacy",
   });
   const { credentialId } = await seedPasskey(harness.db, ken.developerId);
   return {

@@ -73,8 +73,14 @@ import {
 import { extractFailureText } from "@crosscheck/connector-core/capture/failure-text.ts";
 import type { Producer } from "@crosscheck/connector-core/capture/records.ts";
 import { UNKNOWN_DEVELOPER_ID } from "@crosscheck/connector-core/capture/records.ts";
-import { hubOrigin, isDisabled, loadReportableConfig } from "@crosscheck/connector-core/config/config.ts";
+import {
+  hubOrigin,
+  isDisabled,
+  loadReportableConfig,
+  resolveReportableConfig,
+} from "@crosscheck/connector-core/config/config.ts";
 import type { ResolvedConfig } from "@crosscheck/connector-core/config/config.ts";
+import { recordForeignHubRefusal } from "@crosscheck/connector-core/state/foreign-hub.ts";
 import { crosscheckHome, repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { recordCaptureLoss } from "@crosscheck/connector-core/state/loss-ledger.ts";
@@ -98,6 +104,7 @@ import { reapStaleSessionStates } from "@crosscheck/connector-core/state/session
 import type { SessionHealer } from "@crosscheck/connector-core/flows/heal-session.ts";
 import { heartbeatMaybe } from "@crosscheck/connector-core/flows/heartbeat.ts";
 import { registerSessionFlow } from "@crosscheck/connector-core/flows/register-session.ts";
+import { probeBaseOnDefault } from "@crosscheck/connector-core/capture/landed.ts";
 import {
   ACP_CONNECTOR,
   guaranteeDeclarationFor,
@@ -109,12 +116,16 @@ import { endSession } from "@crosscheck/connector-core/http/hub.ts";
 import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
 import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
 import { reapSpool } from "@crosscheck/connector-core/spool/reap.ts";
+import { sweepAbandonedTemps } from "@crosscheck/connector-core/state/temp-sweep.ts";
 import {
   acpAgentKind,
   acpHostSessionKey,
 } from "@crosscheck/connector-core/state/host-session-key.ts";
 import { withCaptureBookkeeping } from "@crosscheck/connector-core/state/capture-bookkeeping.ts";
+import { topicLifeOf, withTopicCapture } from "@crosscheck/connector-core/flows/topic-contexts.ts";
+import type { TopicLife } from "@crosscheck/connector-core/flows/topic-contexts.ts";
 import {
+  readSessionState,
   updateSessionState,
   withSeenTargets,
 } from "@crosscheck/connector-core/state/session-state.ts";
@@ -289,8 +300,8 @@ interface CaptureSession {
   readonly seenTargets: Set<string>;
   /**
    * The #17 per-session worktree-root cache, in memory beside `seenTargets`
-   * and for the same reason: the engine deliberately never reads its state
-   * file back. Newly resolved roots are ALSO persisted through the one
+   * and for the same reason: the engine deliberately reads nothing back from
+   * its state file but the topic registry (`topicLifeFor`). Newly resolved roots are ALSO persisted through the one
    * `updateSessionState` below, so `crosscheck doctor` can see them and a
    * Claude or Cursor hook on the same home is not affected — but a resumed
    * session (`session/load`) starts this twin empty and pays git once more
@@ -490,11 +501,26 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     // The finding-#11 gate (core config.ts `loadReportableConfig`): a stored
     // login must not stand in for the missing committed .crosscheck.json —
     // the proxy wraps agents anywhere, and only connected repos may report.
-    const config = await loadReportableConfig({
+    const resolved = await resolveReportableConfig({
       env: options.env,
       repoRoot: identity.root,
       defaultAgentKind: options.agentKindFlag ?? acpAgentKind(agentName ?? undefined),
     });
+    // Connected to ANOTHER hub than the key's (core config/key-binding.ts):
+    // capture off for the whole session, nothing sent, and counted once.
+    if (resolved.kind === "foreign_hub") {
+      await recordForeignHubRefusal(resolved.home, {
+        repoId: identity.repoId,
+        foreignHub: resolved.foreignHub,
+        surface: "acp",
+        sessionKey: acpHostSessionKey(agentName ?? "", acpSessionId),
+        now: now(),
+      });
+      sessions.set(acpSessionId, disabledSession(acpSessionId, cwd));
+      logger.line(`capture session=${acpSessionId} off (key bound to another hub)`);
+      return;
+    }
+    const config = resolved.kind === "reportable" ? resolved.config : null;
     if (config === null) {
       sessions.set(acpSessionId, disabledSession(acpSessionId, cwd));
       logger.line(`capture session=${acpSessionId} off (no config)`);
@@ -514,6 +540,9 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
       get apiKey() {
         return apiKey;
       },
+      // Fixed for the session: a rotation keeps the key's hub, and a fresh
+      // key bound anywhere else is refused below before it is ever kept.
+      keyOrigin: config.keyOrigin,
       timeoutMs: config.timeoutMs,
       home: config.home,
       repoKey: key,
@@ -538,6 +567,14 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
       },
     };
     const at = now();
+    // The base probe (was this base already on the default branch? — the hub
+    // never stamps such a context landed) runs beside the title: two git
+    // calls on a named branch, where the title asks git nothing; skipped on
+    // a detached HEAD, where the title asks twice. At most two either way.
+    const [title, baseOnDefault] = await Promise.all([
+      resolveFallbackWorkContextTitle(identity),
+      probeBaseOnDefault(identity),
+    ]);
     const registered = await registerSessionFlow({
       home: config.home,
       repoKey: key,
@@ -548,11 +585,15 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
       repoRoot: identity.root,
       branch: identity.branch,
       baseCommit: identity.baseCommit,
+      baseOnDefault,
       hubUrl: config.hubUrl,
       fallbackDeveloperId: config.developerId,
       // Detached-aware (trial finding #15): a worktree session is labelled by
       // its branch tip or commit subject — two bounded git calls at most, once.
-      title: await resolveFallbackWorkContextTitle(identity),
+      title,
+      // The proxy's only title is its own fallback — the branch, which the
+      // hub withholds from colleagues of a developer who opted out.
+      titleSource: "fallback",
       status: INITIAL_STATUS,
       now: at,
       guarantees: guaranteeDeclarationFor(ACP_CONNECTOR),
@@ -698,6 +739,24 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     readonly toolLabel: string | null;
   }
 
+  /**
+   * THE LIFE THE TOUCHES FILE UNDER, BY TOPIC (core flows/topic-contexts.ts) —
+   * the one thing this engine reads back from its state file. The topic
+   * registry has writers outside this process (set_intent in the MCP server
+   * moves a topic's status, a heal clears it), so the state is its single
+   * truth, and one small read per captured event is what parity with the
+   * Claude and Cursor hooks costs. The seen-set stays the in-memory one. A
+   * state that is gone, or names another life than this twin, files every
+   * touch under the session's own context, as before topics.
+   */
+  const topicLifeFor = async (session: CaptureSession, home: string): Promise<TopicLife | undefined> => {
+    const state = await readSessionState(home, session.hostSessionKey);
+    if (state === null || state.crosscheckSessionId !== session.crosscheckSessionId) {
+      return undefined;
+    }
+    return { ...topicLifeOf(state), seenTargets: [...session.seenTargets] };
+  };
+
   /** The in-memory root cache, dedup-by-root and FIFO-capped like seenTargets. */
   const rememberWorktreeRoots = (
     session: CaptureSession,
@@ -758,7 +817,8 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     // "cwd sits in a sibling worktree" candidate can never apply here and
     // every out-of-checkout path takes the bounded fs walk. The per-session
     // cache above is what keeps that once per root rather than once per edit.
-    const { captured, resolution } = await captureTouchedFiles({
+    const life = await topicLifeFor(session, session.config.home);
+    const { captured, resolution, generated, topics } = await captureTouchedFiles({
       seq,
       home: session.config.home,
       repoKey: session.repoKey ?? "",
@@ -775,6 +835,7 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
       identityRoot: session.identity.root,
       identityRepoId: session.identity.repoId,
       knownWorktreeRoots: session.knownWorktreeRoots,
+      ...(life === undefined ? {} : { topics: life }),
     });
     for (const path of captured) {
       session.seenTargets.add(path);
@@ -796,19 +857,21 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     const booksSomething =
       captured.length > 0 ||
       event.editFired ||
+      (topics !== null && (topics.opened.length > 0 || topics.relabeled.length > 0 || topics.overflowed > 0)) ||
       (resolution !== null &&
         (resolution.foreignDrops > 0 ||
           resolution.outsideDrops > 0 ||
           resolution.newlyResolved.length > 0));
     if (booksSomething) {
       await updateSessionState(session.config.home, session.hostSessionKey, (fresh) =>
-        withCaptureBookkeeping(withSeenTargets(fresh, captured), {
+        withCaptureBookkeeping(withTopicCapture(withSeenTargets(fresh, captured), topics), {
           resolution,
           capturedCount: captured.length,
           editFired: event.editFired,
           toolLabel: event.toolLabel,
           firstPath: paths[0] ?? null,
           now: at,
+          generated,
         }),
       );
     }
@@ -1382,6 +1445,13 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
         pendingClient.evictions() + pendingAgent.evictions(),
         now(),
       );
+      // Gathered BEFORE anything below can throw: the temp sweep at the end
+      // of this drain must not depend on the end-and-reap block finishing.
+      const sweptHomes = new Set(
+        [...sessions.values()].flatMap((session) =>
+          session.enabled && session.config !== null ? [session.config.home] : [],
+        ),
+      );
       try {
         // End every live session (§2.4 last row: child exit → endSessionFlow),
         // then reap once per (home, repoKey) with a DeferredEnder bounded by
@@ -1438,6 +1508,28 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
       } catch (error) {
         counters.errors += 1;
         logger.line(`capture-shutdown-error ${describeError(error)}`);
+      }
+      // Abandoned writePrivateFile temps, once per home a session captured
+      // into. ACP has no SessionStart hook: this child-exit drain is where
+      // its session-start maintenance runs, off the wire and after every
+      // request, so it is the one point that sweeps for an ACP-only machine
+      // (state/temp-sweep.ts). Its OWN try, after the block above, so a
+      // throw while ending or reaping cannot skip it; held to what is left
+      // of the exit budget.
+      //
+      // Only homes a session resolved a config for — not the env's home when
+      // every session was disabled. A proxy that captured nothing (an
+      // unconnected directory, no login, CROSSCHECK_DISABLED) has not been
+      // given that home to maintain, and a disabled connector deleting files
+      // there would be the opposite of disabled; the other connectors and
+      // the next connected ACP session sweep it.
+      try {
+        for (const home of sweptHomes) {
+          await sweepAbandonedTemps(home, now(), remaining);
+        }
+      } catch (error) {
+        counters.errors += 1;
+        logger.line(`capture-sweep-error ${describeError(error)}`);
       }
       logger.line(
         `capture sessions=${counters.sessions} targets=${counters.targets} ` +

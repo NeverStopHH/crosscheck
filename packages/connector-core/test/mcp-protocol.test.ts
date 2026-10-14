@@ -139,7 +139,7 @@ describe("the handshake", () => {
 });
 
 describe("tools/list", () => {
-  test("lists all ten tools with names, descriptions and schemas", async () => {
+  test("lists all eleven tools with names, descriptions and schemas", async () => {
     // Act
     const response = await parsedRoundTrip(request(2, "tools/list"));
 
@@ -157,6 +157,7 @@ describe("tools/list", () => {
       "ask_teammate",
       "answer_question",
       "list_open_questions",
+      "mark_hint_outcome",
     ]);
     for (const tool of result.tools) {
       expect(typeof tool["description"], String(tool["name"])).toBe("string");

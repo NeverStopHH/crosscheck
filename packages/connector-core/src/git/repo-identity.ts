@@ -1,9 +1,10 @@
 import { NO_COMMIT_SHA } from "@crosscheck/schema";
 
-import { basename, dirname, isAbsolute, resolve } from "node:path";
-import { realpath } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { readFile, realpath, stat } from "node:fs/promises";
 
-import { LOCAL_REPO_HASH_CHARS } from "../constants.ts";
+import { DETACHED_LABEL_SHA_CHARS, LOCAL_REPO_HASH_CHARS } from "../constants.ts";
+import { DETACHED_BRANCH_PREFIX, UNNAMED_HEAD_BRANCH } from "./detached-branch.ts";
 import { runGit } from "./git.ts";
 import { resolveSshHostname } from "./ssh-hostname.ts";
 import type { SshHostnameResolver } from "./ssh-hostname.ts";
@@ -243,20 +244,172 @@ export { NO_COMMIT_SHA };
  * small one). ONE spelling, exported, so the session-start title builder
  * (flows/work-context-title.ts) can recognize a detached session from the
  * identity alone and never re-runs git in the per-hook path that computes
- * this.
+ * this. Declared in git/detached-branch.ts, which has no imports, so the
+ * render layer can recognize a detached session without importing git.
  */
-export const DETACHED_BRANCH_PREFIX = "detached@";
+export { DETACHED_BRANCH_PREFIX };
+
+/**
+ * A ROOT'S HEAD, READ FROM THE FILE — the topic a touch belongs to, at the
+ * cost of two small reads and no git (capture/touched-root.ts).
+ *
+ * WHY NOT GIT. Every tool call of a session can land in a different sibling
+ * worktree, and each of those can switch branches between two calls. Asking
+ * git there is 5-10 ms of spawn per touch on the hook's hot path; the HEAD
+ * file says the same thing in microseconds. Git is still what answers a root
+ * this session has never seen (its repo id), once — a cache miss.
+ *
+ * `content` IS THE STAMP: a later touch that reads the same bytes knows the
+ * branch already, and one that reads different bytes has seen a checkout.
+ */
+export interface HeadFile {
+  /** The HEAD file's trimmed content: `ref: refs/heads/x`, or a commit id. */
+  readonly content: string;
+  /** `feat/x`, or `detached@<sha>` for a detached HEAD. */
+  readonly branch: string;
+  /** The per-worktree git dir the HEAD file lives in. */
+  readonly gitDir: string;
+}
+
+const SYMBOLIC_REF_PREFIX = "ref: ";
+const HEADS_PREFIX = "refs/heads/";
+const REFS_PREFIX = "refs/";
+const GITDIR_PREFIX = "gitdir: ";
+/** SHA-1 or SHA-256, as git writes a detached HEAD: lower-case hex, nothing else. */
+const COMMIT_ID_PATTERN = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
+/**
+ * What a REFTABLE repository's HEAD file always says (review M3): the real
+ * HEAD lives in the reftable, and the file is a placeholder older tools read
+ * as a broken branch. `.invalid` can never be a branch — git refuses a ref
+ * component that starts with a dot.
+ */
+const REFTABLE_HEAD_PLACEHOLDER = "refs/heads/.invalid";
+
+/**
+ * The branch a HEAD file names: the short name of a `refs/heads/` ref, the
+ * whole ref otherwise, and `detached@<sha>` for a bare commit id — never a
+ * branch that merely points at the same commit (flows/work-context-title.ts
+ * says why that guess was wrong). Null for content that is neither, and for a
+ * reftable repository's placeholder — the files cannot tell its branch, and
+ * reading it as one would make one `.invalid` topic of every branch.
+ */
+export const branchLabelOfHead = (content: string): string | null => {
+  if (content.startsWith(SYMBOLIC_REF_PREFIX)) {
+    const ref = content.slice(SYMBOLIC_REF_PREFIX.length).trim();
+    if (ref.length === 0 || ref === REFTABLE_HEAD_PLACEHOLDER) {
+      return null;
+    }
+    return ref.startsWith(HEADS_PREFIX) ? ref.slice(HEADS_PREFIX.length) : ref;
+  }
+  return COMMIT_ID_PATTERN.test(content)
+    ? `${DETACHED_BRANCH_PREFIX}${content.slice(0, DETACHED_LABEL_SHA_CHARS)}`
+    : null;
+};
+
+const readTrimmed = async (path: string): Promise<string | null> => {
+  try {
+    return (await readFile(path, "utf8")).trim();
+  } catch {
+    return null;
+  }
+};
+
+/** `.git` itself for a checkout; the `gitdir:` line of a linked worktree's `.git` file. */
+export const gitDirOf = async (root: string): Promise<string | null> => {
+  const entry = join(root, ".git");
+  const stats = await stat(entry).catch(() => null);
+  if (stats === null) {
+    return null;
+  }
+  if (stats.isDirectory()) {
+    return entry;
+  }
+  const pointer = await readTrimmed(entry);
+  if (pointer === null || !pointer.startsWith(GITDIR_PREFIX)) {
+    return null;
+  }
+  const dir = pointer.slice(GITDIR_PREFIX.length).trim();
+  return isAbsolute(dir) ? dir : resolve(root, dir);
+};
+
+/**
+ * The root's HEAD, or null when it cannot be read — no `.git`, a pointer to
+ * nowhere, a HEAD that names neither a ref nor a commit. Null is UNKNOWN:
+ * the caller files the touch under the session's own context.
+ */
+export const readHeadFile = async (root: string): Promise<HeadFile | null> => {
+  const gitDir = await gitDirOf(root);
+  if (gitDir === null) {
+    return null;
+  }
+  const content = await readTrimmed(join(gitDir, "HEAD"));
+  const branch = content === null ? null : branchLabelOfHead(content);
+  return content === null || branch === null ? null : { content, branch, gitDir };
+};
+
+/** A git dir whose refs and reflogs live in the reftable — its HEAD file is the placeholder (review M3). */
+export const isReftableGitDir = async (gitDir: string): Promise<boolean> =>
+  (await readTrimmed(join(gitDir, "HEAD"))) === `${SYMBOLIC_REF_PREFIX}${REFTABLE_HEAD_PLACEHOLDER}`;
+
+/** The shared git dir a linked worktree's refs live in — its `commondir` file, or the git dir itself. */
+export const commonDirOf = async (gitDir: string): Promise<string> => {
+  const pointer = await readTrimmed(join(gitDir, "commondir"));
+  if (pointer === null || pointer.length === 0) {
+    return gitDir;
+  }
+  return isAbsolute(pointer) ? pointer : resolve(gitDir, pointer);
+};
+
+/** A ref git itself could have written: under `refs/`, no `..` to walk out of the git dir. */
+const isPlainRef = (ref: string): boolean =>
+  ref.startsWith(REFS_PREFIX) && !ref.split("/").includes("..");
+
+/**
+ * THE COMMIT A HEAD NAMES, still without git: the id itself when detached,
+ * else the loose ref file, else its `packed-refs` line. Null for an unborn
+ * branch or a ref none of those hold — the caller then carries no base
+ * commit rather than a guessed one.
+ */
+export const resolveHeadCommit = async (head: HeadFile): Promise<string | null> => {
+  if (!head.content.startsWith(SYMBOLIC_REF_PREFIX)) {
+    return COMMIT_ID_PATTERN.test(head.content) ? head.content : null;
+  }
+  return resolveRefCommit(head.gitDir, head.content.slice(SYMBOLIC_REF_PREFIX.length).trim());
+};
+
+/**
+ * The commit a ref names, from git's files: the loose ref in the worktree's
+ * own git dir or the shared one, else its `packed-refs` line. Null for a ref
+ * that names nothing — which is how a RENAMED branch's old name reads
+ * (flows/topic-rules.ts, rule b).
+ */
+export const resolveRefCommit = async (gitDir: string, ref: string): Promise<string | null> => {
+  if (!isPlainRef(ref)) {
+    return null;
+  }
+  const commonDir = await commonDirOf(gitDir);
+  for (const dir of [gitDir, commonDir]) {
+    const loose = await readTrimmed(join(dir, ref));
+    if (loose !== null && COMMIT_ID_PATTERN.test(loose)) {
+      return loose;
+    }
+  }
+  const packed = (await readTrimmed(join(commonDir, "packed-refs"))) ?? "";
+  const line = packed.split("\n").find((entry) => entry.endsWith(` ${ref}`));
+  const id = line?.slice(0, line.indexOf(" ")) ?? "";
+  return COMMIT_ID_PATTERN.test(id) ? id : null;
+};
 
 const resolveBranch = async (cwd: string): Promise<string> => {
   const branch = await runGit(["rev-parse", "--abbrev-ref", "HEAD"], cwd);
   if (branch === null) {
-    return "HEAD";
+    return UNNAMED_HEAD_BRANCH;
   }
   if (branch !== "HEAD") {
     return branch;
   }
   const shortSha = await runGit(["rev-parse", "--short", "HEAD"], cwd);
-  return shortSha === null ? "HEAD" : `${DETACHED_BRANCH_PREFIX}${shortSha}`;
+  return shortSha === null ? UNNAMED_HEAD_BRANCH : `${DETACHED_BRANCH_PREFIX}${shortSha}`;
 };
 
 /**

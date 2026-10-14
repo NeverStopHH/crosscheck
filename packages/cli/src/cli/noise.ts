@@ -25,6 +25,12 @@
  *   · anything else — the work context or claim id the hint PRINTED, which is
  *     the only id a person ever saw: its newest delivery to the caller.
  *
+ * A HINT STILL ON THIS MACHINE (07 §13.11, review M2), as `crosscheck
+ * followed` handles it: the hub is asked first; only when it does not know a
+ * delivery the spool holds does the one live session of this checkout send
+ * its own held records and the label is asked for once more — and "nothing
+ * with that id reached you" is never said of a hint this machine still holds.
+ *
  * A PERSON AT A TERMINAL, never an agent (D3) — as a rule this command keeps,
  * not a fact the hub can check. The gate is the TTY evidence `crosscheck pin`
  * uses, with the same stated limit: a pty wrapper passes it, and the raw key
@@ -38,26 +44,38 @@ import {
   EXIT_UNREACHABLE,
   EXIT_USAGE,
   NOISE_MARK_WINDOW_MINUTES,
+  OUTCOME_FLUSH_BUDGET_MS,
 } from "@crosscheck/connector-core/constants.ts";
 import { loadConfig } from "@crosscheck/connector-core/config/config.ts";
 import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
+import type { RepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import {
   getMarkCandidates,
   postPilotMark,
 } from "@crosscheck/connector-core/http/pilot.ts";
+import type { MarkCandidates, MarkResult } from "@crosscheck/connector-core/http/pilot.ts";
 import type { HubContext, HubResult } from "@crosscheck/connector-core/http/client.ts";
+import {
+  answerAfterSendingHeld,
+  heldDeliveryIdOf,
+  withHeldCandidates,
+} from "@crosscheck/connector-core/spool/held-deliveries.ts";
+import type { HeldRetry } from "@crosscheck/connector-core/spool/held-deliveries.ts";
 import { readLiveSessionStates } from "@crosscheck/connector-core/state/session-state.ts";
 import { SAFE_ID_PATTERN } from "@crosscheck/schema";
 import type { PilotInterventionLabel } from "@crosscheck/schema";
 
+import { heldLine } from "./outcome-render.ts";
+import { agentHostRefusalLine, personGate } from "./agent-host.ts";
 import { defaultInteractiveProbe } from "./pin.ts";
 import type { InteractiveProbe } from "./pin.ts";
 import {
   candidateListLines,
+  labelStandsLine,
+  markAnswerLine,
   markFailureLine,
-  markRecordedLine,
   noLiveSessionLine,
   nothingRecentLine,
   refNeverReachedLine,
@@ -122,65 +140,110 @@ const failed = (result: Extract<HubResult<unknown>, { ok: false }>): CliResult =
   exitCode: result.kind === "network" ? EXIT_UNREACHABLE : EXIT_FAIL,
 });
 
-const mark = async (
-  ctx: HubContext,
-  repo: string,
-  deliveryId: string,
-  shortcut: LabelShortcut,
-): Promise<CliResult> => {
-  const result = await postPilotMark(ctx, {
-    repo,
-    refKind: HUB_KIND,
-    refId: deliveryId,
-    label: shortcut.label,
-  });
-  if (!result.ok) {
-    return failed(result);
+/** Where a label is recorded: the hub, and the checkout whose live session may send what is held. */
+interface Target {
+  readonly ctx: HubContext;
+  readonly identity: RepoIdentity;
+  /** The caller's developer key, whose held deliveries alone are theirs (LOW-9); null when the config predates it. */
+  readonly developerId: string | null;
+}
+
+const UNKNOWN_REF = "unknown_ref";
+
+const noCandidates = (result: HubResult<MarkCandidates>): boolean => result.ok && result.data.candidates.length === 0;
+
+/** The hub's answer — after sending what this machine holds, when the hub did not know the ref (review M2). */
+const askHub = async <T>(
+  target: Target,
+  ref: string,
+  call: (about: string) => Promise<HubResult<T>>,
+  isUnknown: HeldRetry<T>["isUnknown"],
+): Promise<{ readonly held: CliResult } | { readonly result: HubResult<T> }> => {
+  const { ctx, identity } = target;
+  const answer = await answerAfterSendingHeld(
+    { hub: ctx, identity, ref, budgetMs: OUTCOME_FLUSH_BUDGET_MS, call, isUnknown },
+    await call(ref),
+  );
+  return answer.kind === "held"
+    ? { held: { stdout: heldLine(answer.why), exitCode: EXIT_FAIL } }
+    : { result: answer.result };
+};
+
+const mark = async (target: Target, deliveryId: string, shortcut: LabelShortcut): Promise<CliResult> => {
+  // the delivery named, or — when it cannot be sent now — the same pointer's twin on the hub (round-5 LOW-3)
+  const call = (onDelivery: string): Promise<HubResult<MarkResult>> =>
+    postPilotMark(target.ctx, {
+      repo: target.identity.repoId,
+      refKind: HUB_KIND,
+      refId: onDelivery,
+      label: shortcut.label,
+    });
+  const asked = await askHub(target, deliveryId, call, (result) => !result.ok && result.code === UNKNOWN_REF);
+  if ("held" in asked) {
+    return asked.held;
+  }
+  if (!asked.result.ok) {
+    return failed(asked.result);
   }
   return {
-    stdout: markRecordedLine(HUB_KIND, deliveryId, result.data.repeated, shortcut.command),
+    stdout:
+      markAnswerLine(HUB_KIND, deliveryId, asked.result.data, shortcut.command) +
+      labelStandsLine(asked.result.data),
     exitCode: EXIT_OK,
   };
 };
 
-/** The ref a hint printed: its newest delivery to the caller, whenever it was. */
-const markByRef = async (
-  ctx: HubContext,
-  repo: string,
-  ref: string,
-  shortcut: LabelShortcut,
-): Promise<CliResult> => {
-  const found = await getMarkCandidates(ctx, { repo, ref });
-  if (!found.ok) {
-    return failed(found);
+/**
+ * The ref a hint printed: today's delivery of it still held in the sending session's own spool,
+ * first (07 §13.12, review H-A) — else its newest delivery the hub has, whenever it was.
+ */
+const markByRef = async (target: Target, ref: string, shortcut: LabelShortcut): Promise<CliResult> => {
+  const held = await heldDeliveryIdOf(target.ctx, target.identity, ref, target.developerId);
+  if (held !== null) {
+    return mark(target, held, shortcut);
   }
-  const [newest] = found.data.candidates;
+  const call = (about: string): Promise<HubResult<MarkCandidates>> =>
+    getMarkCandidates(target.ctx, { repo: target.identity.repoId, ref: about });
+  const asked = await askHub(target, ref, call, noCandidates);
+  if ("held" in asked) {
+    return asked.held;
+  }
+  if (!asked.result.ok) {
+    return failed(asked.result);
+  }
+  const [newest] = asked.result.data.candidates;
   return newest === undefined
     ? { stdout: refNeverReachedLine(ref), exitCode: EXIT_OK }
-    : mark(ctx, repo, newest.id, shortcut);
+    : mark(target, newest.id, shortcut);
 };
 
-/** No id: the one recent delivery to a session live on this machine. */
-const markRecent = async (
-  ctx: HubContext,
-  repo: string,
-  shortcut: LabelShortcut,
-): Promise<CliResult> => {
+/**
+ * No id: the one recent delivery to a session live on this machine — the hub's and those still
+ * held in those sessions' own spools, one per pointer (07 §13.12, review H-A).
+ */
+const markRecent = async (target: Target, shortcut: LabelShortcut): Promise<CliResult> => {
+  const { ctx, identity } = target;
   const now = ctx.now();
-  const scan = await readLiveSessionStates(ctx.home, ctx.hubUrl, repo, now);
+  const scan = await readLiveSessionStates(ctx.home, ctx.hubUrl, identity.repoId, now);
   const sessions = scan.states.map((state) => state.crosscheckSessionId);
   if (sessions.length === 0) {
     return { stdout: noLiveSessionLine(shortcut.command), exitCode: EXIT_OK };
   }
-  const found = await getMarkCandidates(ctx, {
-    repo,
+  const listed = await getMarkCandidates(ctx, {
+    repo: identity.repoId,
     sessions,
     withinMinutes: NOISE_MARK_WINDOW_MINUTES,
   });
-  if (!found.ok) {
-    return failed(found);
+  if (!listed.ok) {
+    return failed(listed);
   }
-  const { candidates, more } = found.data;
+  const { candidates, more } = await withHeldCandidates(
+    ctx,
+    scan.states,
+    listed.data,
+    NOISE_MARK_WINDOW_MINUTES,
+    target.developerId,
+  );
   const [only] = candidates;
   if (only === undefined) {
     return {
@@ -194,7 +257,7 @@ const markRecent = async (
       exitCode: EXIT_OK,
     };
   }
-  return mark(ctx, repo, only.id, shortcut);
+  return mark(target, only.id, shortcut);
 };
 
 const runShortcut = async (
@@ -208,8 +271,9 @@ const runShortcut = async (
   if (extra.length > 0 || (id !== undefined && !SAFE_ID_PATTERN.test(id))) {
     return { stdout: shortcut.usage, exitCode: EXIT_USAGE };
   }
-  if (!isInteractive()) {
-    return { stdout: agentRefusal(shortcut.command), exitCode: EXIT_USAGE };
+  const gate = personGate(env, isInteractive);
+  if (!gate.isPerson) {
+    return { stdout: `${agentHostRefusalLine(gate)}${agentRefusal(shortcut.command)}`, exitCode: EXIT_USAGE };
   }
   const identity = await resolveRepoIdentity(cwd);
   const config = await loadConfig({ env, repoRoot: identity?.root });
@@ -222,17 +286,17 @@ const runShortcut = async (
   const ctx: HubContext = {
     hubUrl: config.hubUrl,
     apiKey: config.apiKey,
+    keyOrigin: config.keyOrigin,
     timeoutMs: config.timeoutMs,
     home: config.home,
     repoKey: repoKey(config.hubUrl, identity.repoId),
     now: () => new Date(),
   };
+  const target: Target = { ctx, identity, developerId: config.developerId };
   if (id === undefined) {
-    return markRecent(ctx, identity.repoId, shortcut);
+    return markRecent(target, shortcut);
   }
-  return id.startsWith(DELIVERY_ID_PREFIX)
-    ? mark(ctx, identity.repoId, id, shortcut)
-    : markByRef(ctx, identity.repoId, id, shortcut);
+  return id.startsWith(DELIVERY_ID_PREFIX) ? mark(target, id, shortcut) : markByRef(target, id, shortcut);
 };
 
 export const runNoise = (

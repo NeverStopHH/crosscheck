@@ -46,7 +46,7 @@ export const claimRevalidationsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     if (repo === undefined || repo.length === 0) {
       return fail(c, 400, "validation_failed", "repo is required");
     }
-    return ok(c, await summariseClaimValidity(deps.db, deps.now(), repo));
+    return ok(c, await summariseClaimValidity(deps.db, deps.now(), repo, c.get("developer").id));
   });
 
   router.post("/", async (c) => {

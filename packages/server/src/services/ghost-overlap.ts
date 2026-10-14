@@ -21,22 +21,36 @@
  * never leave through it either — a ghost row is a POINTER (title, author,
  * intent, id) and the anchoring asymmetry is untouched (DESIGN.md §4).
  *
- * PRECISION IS TWO EXCLUSIONS, both borrowed from ConE (Maddila, Nagappan,
- * Bird, Gousios, van Deursen, "ConE: A Concurrent Edit Detection Tool for
- * Large-scale Software Development", TOSEM 31(2), 2021), the only deployed
- * system in this space with published numbers — 775 notifications over
- * 26 000 pull requests on 234 repositories, 554 of them (71.5 %) rated
- * useful:
+ * PRECISION IS ONE EXCLUSION AND ONE QUALIFIER, both borrowed from ConE
+ * (Maddila, Nagappan, Bird, Gousios, van Deursen, "ConE: A Concurrent Edit
+ * Detection Tool for Large-scale Software Development", TOSEM 31(2), 2021),
+ * the only deployed system in this space with published numbers — 775
+ * notifications over 26 000 pull requests on 234 repositories, 554 of them
+ * (71.5 %) rated useful:
  *
  *   - a HOT value is dropped (GHOST_HOT_TARGET_MAX_CONTEXTS): a lockfile or
  *     the config every session edits is not evidence of a plan. With the
- *     reader's own value list bounded by the sweep rule, the two together are
- *     also the fan-out bound — a PRODUCT, not a sentence about one value —
- *     so the N² crowding the solved surface had to measure at 1.2 s cannot
- *     arise here;
- *   - a SWEEP is dropped from both sides (GHOST_MAX_CONTEXT_TARGETS): a
- *     context touching fifty values is a rename or a formatter run, and it
- *     would otherwise collide with everybody.
+ *     reader's own value list bounded per context (GHOST_MAX_PROBE_VALUES),
+ *     the two together are also the fan-out bound — a PRODUCT, not a
+ *     sentence about one value — so the N² crowding the solved surface had
+ *     to measure at 1.2 s cannot arise here;
+ *   - a MECHANICALLY GENERATED, NON-AUTHORITATIVE file is no evidence either
+ *     (services/generated-targets.ts) — an authoritative one, a schema or a
+ *     migration or what the repo declares, stays evidence:
+ *     the hot rule needs twenty contexts to fire, so two people who had only
+ *     run `npm install` and a codegen were warned about each other. A
+ *     labelled row is kept, every read here asks for `generated IS NULL`, and
+ *     a row that qualified on ordinary files counts the generated ones it
+ *     also shares as `generatedSharedCount`;
+ *   - a LARGE CHANGE is QUALIFIED, never dropped (GHOST_MAX_CONTEXT_TARGETS).
+ *     ConE drops a pull request touching more than fifty files, and that
+ *     rule, applied here, hid the pilot owner's 180-file worktree context
+ *     from every collision check while a teammate edited two of its files.
+ *     "A large surface must never mean not collision-relevant" (owner's
+ *     reviewer, 2026-10-07): a file shared with a rename is weaker evidence
+ *     than one shared with a focused plan, so the row says how large the
+ *     change is and ranks after the focused rows — and every file it shares
+ *     with the reader still produces it.
  *
  * SELF-EXCLUSION, PRESENCE OPT-OUT AND MUTE are in the WHERE of all THREE
  * queries — the two tiers AND the rarity pre-filter that decides which values
@@ -64,12 +78,13 @@ import {
   gte,
   inArray,
   isNull,
+  lte,
   ne,
+  not,
   or,
   sql,
 } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
-import type { AnyPgColumn } from "drizzle-orm/pg-core";
 
 import {
   GHOST_ACTIVE_WINDOW_DAYS,
@@ -82,6 +97,7 @@ import {
   GHOST_MAX_INTENT_CANDIDATES,
   GHOST_MAX_OWN_CONTEXTS,
   GHOST_MAX_PAIR_ROWS,
+  GHOST_MAX_PROBE_VALUES,
   GHOST_MAX_SHARED_SHOWN,
   GHOST_MIN_SHARED_TARGETS,
 } from "../constants.ts";
@@ -91,6 +107,8 @@ import {
   workContexts,
   workContextTargets,
 } from "../db/schema.ts";
+import { listGeneratedSharedWithReader, ordinaryTargetCondition } from "./generated-targets.ts";
+import { targetInWindowSeenBy, targetTouchedAtSeenBy } from "./live-location.ts";
 import { ftsTokens } from "./search.ts";
 import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
 import type { Db } from "../db/client.ts";
@@ -124,6 +142,9 @@ export interface SharedValue {
 /** The one kind whose identity is CONTENT — see GHOST_FINGERPRINT_MIN_SHARED. */
 const FINGERPRINT_KIND = "error_fingerprint";
 
+/** The kind a large change is counted in: GHOST_MAX_CONTEXT_TARGETS counts files. */
+const FILE_KIND = "file";
+
 const MS_PER_DAY = 86_400_000;
 
 interface Deps {
@@ -148,6 +169,12 @@ export interface GhostOverlapView {
   /** coalesce(updated_at, created_at): the age every surface prints. */
   readonly lastActiveAt: string;
   /**
+   * Where their work lives (release gate, 1b): the context's own branch — a
+   * topic's — or its session's when it has none. Never an opted-out
+   * owner's: the route answers by presence, which keeps her rows off.
+   */
+  readonly branch: string;
+  /**
    * The values BOTH sides carry, bounded at GHOST_MAX_SHARED_SHOWN. A subset
    * of the CALLER'S OWN targets by construction, which is what makes naming
    * them a disclosure of nothing (see the header).
@@ -155,20 +182,143 @@ export interface GhostOverlapView {
   readonly sharedTargets: readonly GhostSharedTarget[];
   /** Distinct shared values in total — the line says "2 of your files". */
   readonly sharedTargetCount: number;
+  /**
+   * Files both sides carry that are labelled MECHANICALLY GENERATED AND
+   * NON-AUTHORITATIVE on at least one side
+   * (services/generated-targets.ts): never in the count above, never a
+   * reason for this row, and stated so "2 of your files" is not read as
+   * everything the two of you touched. 0 when there are none.
+   */
+  readonly generatedSharedCount: number;
   /** Distinct words of the READER'S own intent this context's doc matches. */
   readonly intentTokenHits: number;
+  /**
+   * The files THEIR change touched inside the window when that is more than
+   * GHOST_MAX_CONTEXT_TARGETS — the qualifier the line prints — or null for a
+   * focused one. Null on a row the intent tier alone found, too: that tier
+   * shares no file, so the size of the change says nothing about it.
+   */
+  readonly largeChangeFiles: number | null;
 }
 
 /**
- * A context carrying more than GHOST_MAX_CONTEXT_TARGETS values is a sweep,
- * not a plan (see the header). Correlated, and cheap because the count rides
- * the targets primary key, whose leading column is work_context_id.
+ * The files each of these contexts TOUCHED inside the window, for the ones
+ * over GHOST_MAX_CONTEXT_TARGETS only — the size a qualified row states. A
+ * QUALIFIER AND A RANK, NEVER A FILTER (see the header): nothing calls this to
+ * decide whether an overlap exists, only how it is worded and where it sits.
+ *
+ * IN THE WINDOW, NOT EVER (pilot finding, 2026-10-05): a long-lived worktree
+ * context touches hundreds of files over weeks, and counted over its life the
+ * pilot owner's 180-file context read as a formatter run. A file counts when
+ * it was first seen or touched again since `cutoff` (targetTouchedAt). For an
+ * owner hidden from the viewer every file counts, her times unread
+ * (targetInWindowSeenBy) — a count of her files, no more than the
+ * `targetCount` the contexts listing already publishes for her.
+ *
+ * One grouped read over contexts already chosen — candidates that qualified,
+ * or the page — riding the targets primary key, whose leading column is
+ * work_context_id. It reads each context's own rows once; it is never a
+ * factor of the pair computation, which never reads a context whole.
  */
-export const notASweepCondition = (contextId: SQL | AnyPgColumn): SQL =>
-  sql`(
-    SELECT count(*) FROM work_context_targets sweep_targets
-     WHERE sweep_targets.work_context_id = ${contextId}
-  ) <= ${GHOST_MAX_CONTEXT_TARGETS}`;
+export const listLargeChanges = async (
+  db: Db,
+  viewerDeveloperId: string,
+  ids: readonly string[],
+  cutoff: Date,
+): Promise<ReadonlyMap<string, number>> => {
+  if (ids.length === 0) {
+    return new Map();
+  }
+  const files = sql<number>`count(*)::int`;
+  const rows = await db
+    .select({ workContextId: workContextTargets.workContextId, files })
+    .from(workContextTargets)
+    .innerJoin(workContexts, eq(workContexts.id, workContextTargets.workContextId))
+    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
+    .where(
+      and(
+        inArray(workContextTargets.workContextId, [...ids]),
+        eq(workContextTargets.kind, FILE_KIND),
+        // A regenerated lockfile or client is not the size of anybody's
+        // change: a focused plan beside `bun install` stays focused.
+        ordinaryTargetCondition(),
+        targetInWindowSeenBy(viewerDeveloperId, agentSessions.developerId, workContextTargets, cutoff),
+      ),
+    )
+    .groupBy(workContextTargets.workContextId)
+    .having(sql`count(*) > ${GHOST_MAX_CONTEXT_TARGETS}`);
+  return new Map(rows.map((row) => [row.workContextId, Number(row.files)]));
+};
+
+/** One context's values, as a comparison reads them. */
+export interface ContextValues {
+  readonly workContextId: string;
+  readonly values: readonly SharedValue[];
+}
+
+/**
+ * THE PROBE: at most GHOST_MAX_PROBE_VALUES strong values of each context,
+ * NEWEST TOUCH FIRST — the side of a comparison that is READ; the other side
+ * is looked up by these values and never read whole (listPairRows, and the
+ * conference's membership read). That is what keeps a large change visible
+ * at a bounded price: its size decides neither whether it is compared nor
+ * what the comparison costs.
+ *
+ * RANKED WITHIN EACH CONTEXT, in the database. Ranked across the set, one
+ * renaming worktree of the reader's held more values than all of the probe,
+ * and the context beside it — the one carrying the real plan — arrived empty
+ * and the surface went silent. Newest first, so a long-lived context is read
+ * by what it is doing now, and what a cut drops is its oldest touches.
+ *
+ * Every value of a context, old touches included, the way the looked-up side
+ * has always been read: an old touch of a session still open is still in its
+ * worktree. An owner hidden from the viewer is ranked by kind and value, her
+ * touch times unread (targetTouchedAtSeenBy) — a probe ordered by them would
+ * say which of her files she touched last.
+ */
+export const listProbeValues = async (
+  db: Db,
+  viewerDeveloperId: string,
+  ids: readonly string[],
+): Promise<readonly ContextValues[]> => {
+  if (ids.length === 0) {
+    return [];
+  }
+  const touched = targetTouchedAtSeenBy(viewerDeveloperId, agentSessions.developerId, workContextTargets);
+  const ranked = db
+    .select({
+      workContextId: workContextTargets.workContextId,
+      kind: workContextTargets.kind,
+      value: workContextTargets.value,
+      probeRank: sql<number>`row_number() over (partition by ${workContextTargets.workContextId} order by ${touched} desc nulls last, ${workContextTargets.kind} asc, ${workContextTargets.value} asc)`.as("probe_rank"),
+    })
+    .from(workContextTargets)
+    .innerJoin(workContexts, eq(workContexts.id, workContextTargets.workContextId))
+    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
+    .where(
+      and(
+        inArray(workContextTargets.workContextId, [...ids]),
+        inArray(workContextTargets.kind, [...OVERLAP_TARGET_KINDS]),
+        // Before the rank, not after it: a regenerated client must not spend
+        // the probe's slots, and a file that is not evidence is never probed.
+        ordinaryTargetCondition(),
+      ),
+    )
+    .as("probe");
+  const rows = await db
+    .select({ workContextId: ranked.workContextId, kind: ranked.kind, value: ranked.value })
+    .from(ranked)
+    .where(lte(ranked.probeRank, GHOST_MAX_PROBE_VALUES))
+    .orderBy(asc(ranked.workContextId), asc(ranked.probeRank));
+  const byContext = new Map<string, SharedValue[]>();
+  for (const row of rows) {
+    byContext.set(row.workContextId, [
+      ...(byContext.get(row.workContextId) ?? []),
+      { kind: row.kind as OverlapKind, value: row.value },
+    ]);
+  }
+  return [...byContext.entries()].map(([workContextId, values]) => ({ workContextId, values }));
+};
 
 /**
  * STILL LIVE WORK, on either side of the comparison — the predicate the
@@ -260,56 +410,22 @@ const listOwnContexts = async (
 };
 
 /**
- * The reader's own strong target values, with the sweep rule applied IN THE
- * QUERY: a context over the cap contributes NOTHING rather than an arbitrary
- * prefix of itself. The table has no timestamp, so "the newest 50 targets" is
- * not a thing this schema can answer honestly — dropping the whole context is
- * the rule that can be stated.
- *
- * THE EXCLUSION HAS TO BE THE DATABASE'S, not a filter over the rows that
- * came back, and that is not tidiness. With the sweeps admitted, one renaming
- * worktree of mine holds more targets than the whole read window my contexts
- * share, and the window is spent in id order — so the sweep took the budget
- * and the context beside it, the one carrying my real plan, arrived empty and
- * this surface went silent for me. Excluded here, every surviving context
- * carries at most GHOST_MAX_CONTEXT_TARGETS rows, which makes the bound below
- * an arithmetic ceiling rather than a race between my own contexts. It is
- * also the SAME predicate the foreign side applies (listPairRows), so "a
- * sweep is dropped from both sides" is now one rule rather than two spellings
- * that counted different kinds.
+ * The reader's own strong target values: the probe of each of my live
+ * contexts (listProbeValues), deduplicated across them. A large change of
+ * mine is compared like any other context of mine — its newest
+ * GHOST_MAX_PROBE_VALUES values — and never spends the share of the context
+ * beside it, so the bound below is an arithmetic ceiling rather than a race
+ * between my own contexts: GHOST_MAX_OWN_CONTEXTS x GHOST_MAX_PROBE_VALUES.
  */
 const listOwnTargets = async (
   deps: Deps,
+  viewerDeveloperId: string,
   ownIds: readonly string[],
 ): Promise<readonly SharedValue[]> => {
-  if (ownIds.length === 0) {
-    return [];
-  }
-  const rows = await deps.db
-    .select({
-      workContextId: workContextTargets.workContextId,
-      kind: workContextTargets.kind,
-      value: workContextTargets.value,
-    })
-    .from(workContextTargets)
-    .where(
-      and(
-        inArray(workContextTargets.workContextId, [...ownIds]),
-        inArray(workContextTargets.kind, [...OVERLAP_TARGET_KINDS]),
-        notASweepCondition(workContextTargets.workContextId),
-      ),
-    )
-    .orderBy(
-      asc(workContextTargets.workContextId),
-      asc(workContextTargets.kind),
-      asc(workContextTargets.value),
-    )
-    // Every context left is under the cap, so this is what all of them
-    // together can hold — no context can spend another's share.
-    .limit(ownIds.length * GHOST_MAX_CONTEXT_TARGETS);
+  const probes = await listProbeValues(deps.db, viewerDeveloperId, ownIds);
   const seen = new Set<string>();
-  return rows
-    .map((row) => ({ kind: row.kind as OverlapKind, value: row.value }))
+  return probes
+    .flatMap((probe) => probe.values)
     .filter((target) => {
       const key = `${target.kind} ${target.value}`;
       if (seen.has(key)) {
@@ -367,6 +483,9 @@ const listCoolTargets = async (
         ne(agentSessions.developerId, viewerDeveloperId),
         visiblePresenceCondition(viewerDeveloperId, agentSessions.developerId),
         notMutedCondition(viewerDeveloperId, agentSessions.developerId),
+        // The hot count is a count of EVIDENCE: a context that carries this
+        // value only as a generated file adds nothing to its rarity.
+        ordinaryTargetCondition(),
       ),
     )
     .groupBy(workContextTargets.kind, workContextTargets.value);
@@ -386,13 +505,19 @@ interface PairRow {
  * on a live foreign context of this repo.
  *
  * BOUNDED BEFORE IT MULTIPLIES, the lesson services/solved-matches.ts paid
- * for: the value list is the reader's own and capped by the sweep rule, and
- * every value in it is shared by at most GHOST_HOT_TARGET_MAX_CONTEXTS
- * foreign contexts. GHOST_MAX_PAIR_ROWS is exactly that product, so the LIMIT
- * below is a safety valve the query cannot reach rather than a budget the
- * crowd competes for — and it has to be, because this window cutting does not
- * shorten the answer, it corrupts the count the floor is read off (the
- * constant records the measurement).
+ * for: the value list is the reader's own probe, and every value in it is
+ * shared by at most GHOST_HOT_TARGET_MAX_CONTEXTS foreign contexts.
+ * GHOST_MAX_PAIR_ROWS is exactly that product, so the LIMIT below is a safety
+ * valve the query cannot reach rather than a budget the crowd competes for —
+ * and it has to be, because this window cutting does not shorten the answer,
+ * it corrupts the count the floor is read off (the constant records the
+ * measurement).
+ *
+ * NO SIZE RULE IN THIS WHERE, and none may come back. A foreign context is
+ * found by the values it shares with the reader, one index range per value,
+ * so a 180-file change costs the two rows it shares and is never read whole;
+ * dropping it for its size here is exactly what hid the pilot owner's context
+ * (see the header). Its size is stated after the fact (listLargeChanges).
  */
 const listPairRows = async (
   deps: Deps,
@@ -427,12 +552,15 @@ const listPairRows = async (
         ne(agentSessions.developerId, viewerDeveloperId),
         gte(activityExpression, cutoff),
         ...liveWorkConditions(),
-        notASweepCondition(workContextTargets.workContextId),
         // A ghost line says a named teammate is working on this NOW, which is
         // presence-class information: opt-out hides it, exactly as it hides
         // the tripwire (services/hints.ts listTargetSessions).
         visiblePresenceCondition(viewerDeveloperId, agentSessions.developerId),
         notMutedCondition(viewerDeveloperId, agentSessions.developerId),
+        // THEIR side of a shared value must be ordinary too: a file their
+        // connector labelled generated is not evidence of their plan, whatever
+        // the reader's row says (services/generated-targets.ts).
+        ordinaryTargetCondition(),
       ),
     )
     // Kind first, and OVERLAP_TARGET_KINDS says why that is also
@@ -455,15 +583,15 @@ const listPairRows = async (
  * each other's sentences would put lines in this briefing about a topic
  * nobody here raised (the argument solved-matches.ts makes for the same tier).
  *
- * NO SWEEP RULE HERE, and that is the one place it does not belong. The sweep
- * exclusion is an argument about SHARING A FILE: a context touching fifty
- * values shares files with everybody, so sharing one with it says nothing.
- * This tier shares no value at all — it matches the reader's own intent words
- * against the foreign context's doc, which is built from its title, intent
- * and claims and knows nothing about its target count. A sixty-file
- * implementation session is ordinary work, not a rename, and excluding it
- * here silently deleted VISION §3's own flagship case: two plans that touch
- * no common file and still collide. The tier keeps its own bar instead —
+ * NO SIZE RULE HERE, not even the qualifier. The large-change rule is an
+ * argument about SHARING A FILE: a context touching fifty files shares files
+ * with everybody, so a file shared with it is weak evidence. This tier shares
+ * no value at all — it matches the reader's own intent words against the
+ * foreign context's doc, which is built from its title, intent and claims and
+ * knows nothing about its target count. A sixty-file implementation session
+ * is ordinary work, not a rename, and excluding it here once silently deleted
+ * VISION §3's own flagship case: two plans that touch no common file and
+ * still collide. The tier keeps its own bar instead —
  * GHOST_INTENT_MIN_TOKEN_HITS distinct words — and its own bound,
  * GHOST_MAX_INTENT_CANDIDATES.
  */
@@ -521,6 +649,7 @@ interface DisplayRow {
   readonly developerName: string;
   readonly intent: Record<string, unknown> | null;
   readonly lastActiveAt: Date;
+  readonly branch: string;
 }
 
 const hydrate = async (
@@ -538,6 +667,7 @@ const hydrate = async (
       developerId: agentSessions.developerId,
       developerName: developers.name,
       lastActiveAt: sql<string>`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt})`,
+      branch: sql<string>`coalesce(${workContexts.branch}, ${agentSessions.branch})`,
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
@@ -552,6 +682,7 @@ const hydrate = async (
         developerName: row.developerName,
         intent: row.intent ?? null,
         lastActiveAt: new Date(row.lastActiveAt),
+        branch: row.branch,
       },
     ]),
   );
@@ -600,11 +731,91 @@ const withinPerDeveloperCap = (): ((entry: {
   };
 };
 
+interface RankedCandidate {
+  readonly candidate: Candidate;
+  readonly row: DisplayRow;
+  readonly largeChangeFiles: number | null;
+}
+
+/**
+ * Strongest reason first: a shared FAILURE — the identity of a failure,
+ * whatever the size of the change it sits in — then FOCUSED rows before LARGE
+ * CHANGES, then the most shared values, the most shared intent words, the
+ * freshest. A large change ranks lower and never out: a file shared with a
+ * rename is weaker evidence than one shared with a plan, so with more rows
+ * than GHOST_MAX_FINDINGS it is the one that waits — and with room it is
+ * shown, qualified.
+ */
+const byStrength = (left: RankedCandidate, right: RankedCandidate): number =>
+  right.candidate.fingerprints - left.candidate.fingerprints ||
+  Number(left.largeChangeFiles !== null) - Number(right.largeChangeFiles !== null) ||
+  right.candidate.shared.length - left.candidate.shared.length ||
+  right.candidate.intentTokenHits - left.candidate.intentTokenHits ||
+  right.row.lastActiveAt.getTime() - left.row.lastActiveAt.getTime() ||
+  left.candidate.id.localeCompare(right.candidate.id);
+
+/** How many of the reader's own files a hidden teammate's unfinished work touches — and nothing else. */
+export interface AnonymousOverlapView {
+  readonly sharedFileCount: number;
+}
+
+/**
+ * AN OPTED-OUT TEAMMATE'S PLAN IS STILL IN THE READER'S WAY (the owner's
+ * decision on the batch-2 integration review's I1). Every query above keeps a
+ * hidden owner out, so a reader whose files an opted-out colleague is
+ * reworking heard nothing. This counts, over the reader's own live files
+ * (the same probe the tiers compare), the ones ANY unfinished work of a
+ * developer hidden from the reader also carries — one number for all of
+ * them, so it singles nobody out.
+ *
+ * TIME-FREE AND NAMELESS: her side has no activity window (her work's times
+ * are never read), and nothing of hers leaves — no context, title, branch,
+ * intent or age; only the count, of files the reader's own session already
+ * holds. Unfinished means what it means above (liveWorkConditions): her
+ * session open, so the count goes when she ends it or the reaper closes it
+ * after SESSION_REAP_STALE_HOURS of silence — THAT someone is still at work
+ * is the one thing «anonymous» says. Mutes, generated files and the reader's
+ * own sessions stay out, as everywhere.
+ */
+export const countAnonymousOverlap = async (
+  deps: Deps,
+  viewerDeveloperId: string,
+  repo: string,
+): Promise<AnonymousOverlapView | null> => {
+  const cutoff = new Date(deps.now().getTime() - GHOST_ACTIVE_WINDOW_DAYS * MS_PER_DAY);
+  const ownContexts = await listOwnContexts(deps, viewerDeveloperId, repo, cutoff);
+  const ownFiles = (await listOwnTargets(deps, viewerDeveloperId, ownContexts.map((context) => context.id))).filter(
+    (target) => target.kind === FILE_KIND,
+  );
+  const files = targetValueCondition(ownFiles);
+  if (files === undefined) {
+    return null;
+  }
+  const shared = await deps.db
+    .selectDistinct({ value: workContextTargets.value })
+    .from(workContextTargets)
+    .innerJoin(workContexts, eq(workContextTargets.workContextId, workContexts.id))
+    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
+    .where(
+      and(
+        eq(agentSessions.repo, repo),
+        files,
+        ordinaryTargetCondition(),
+        ne(agentSessions.developerId, viewerDeveloperId),
+        not(visiblePresenceCondition(viewerDeveloperId, agentSessions.developerId)),
+        notMutedCondition(viewerDeveloperId, agentSessions.developerId),
+        ...liveWorkConditions(),
+      ),
+    )
+    // Distinct values out of the reader's own files: never more than those.
+    .limit(ownFiles.length);
+  return shared.length === 0 ? null : { sharedFileCount: shared.length };
+};
+
 /**
  * Overlaps between the reader's live plan and their teammates' — strongest
- * reason first (a shared failure, then the most shared values, then the most
- * shared intent words), then the freshest. Bounded end to end: every query
- * above carries a named limit, and the finding cap is the last one.
+ * reason first (byStrength). Bounded end to end: every query above carries a
+ * named limit, and the finding cap is the last one.
  */
 export const listGhostOverlaps = async (
   deps: Deps,
@@ -622,6 +833,7 @@ export const listGhostOverlaps = async (
   }
   const ownTargets = await listOwnTargets(
     deps,
+    viewerDeveloperId,
     ownContexts.map((context) => context.id),
   );
   const coolTargets = await listCoolTargets(
@@ -664,35 +876,47 @@ export const listGhostOverlaps = async (
     return [];
   }
 
-  const display = await hydrate(
-    deps.db,
-    candidates.map((candidate) => candidate.id),
-  );
-  return candidates
+  const [display, large] = await Promise.all([
+    hydrate(
+      deps.db,
+      candidates.map((candidate) => candidate.id),
+    ),
+    // Only rows that SHARE a value can be qualified by size — the intent
+    // tier shares none (listIntentHits states why).
+    listLargeChanges(
+      deps.db,
+      viewerDeveloperId,
+      candidates.filter((candidate) => candidate.shared.length > 0).map((candidate) => candidate.id),
+      cutoff,
+    ),
+  ]);
+  const shown = candidates
     .flatMap((candidate) => {
       const row = display.get(candidate.id);
-      return row === undefined ? [] : [{ candidate, row }];
+      return row === undefined ? [] : [{ candidate, row, largeChangeFiles: large.get(candidate.id) ?? null }];
     })
-    .sort(
-      (left, right) =>
-        right.candidate.fingerprints - left.candidate.fingerprints ||
-        right.candidate.shared.length - left.candidate.shared.length ||
-        right.candidate.intentTokenHits - left.candidate.intentTokenHits ||
-        right.row.lastActiveAt.getTime() - left.row.lastActiveAt.getTime() ||
-        left.candidate.id.localeCompare(right.candidate.id),
-    )
+    .sort(byStrength)
     // Per DEVELOPER before per finding, and the order is the whole point:
     // the ranking has run, so what this drops is one person's WEAKER
     // contexts and never somebody else's only one.
     .filter(withinPerDeveloperCap())
-    .slice(0, GHOST_MAX_FINDINGS)
-    .map(({ candidate, row }) => ({
+    .slice(0, GHOST_MAX_FINDINGS);
+  // A QUALIFIER, read for the rows shown and after they were chosen — it can
+  // never make a row appear, only say what else the two sides share.
+  const generatedShared = await listGeneratedSharedWithReader(
+    deps.db,
+    ownContexts.map((context) => context.id),
+    shown.map(({ candidate }) => candidate.id),
+  );
+  return shown
+    .map(({ candidate, row, largeChangeFiles }) => ({
       workContextId: candidate.id,
       title: row.title,
       developerId: row.developerId,
       developerName: row.developerName,
       intent: row.intent,
       lastActiveAt: row.lastActiveAt.toISOString(),
+      branch: row.branch,
       // Strongest kind first on the line too, so a truncated list keeps the
       // values the reader would have wanted to see.
       sharedTargets: [...candidate.shared]
@@ -703,6 +927,8 @@ export const listGhostOverlaps = async (
         )
         .slice(0, GHOST_MAX_SHARED_SHOWN),
       sharedTargetCount: candidate.shared.length,
+      generatedSharedCount: generatedShared.get(candidate.id) ?? 0,
       intentTokenHits: candidate.intentTokenHits,
+      largeChangeFiles,
     }));
 };

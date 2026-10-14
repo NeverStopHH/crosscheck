@@ -23,6 +23,7 @@
  *      cannot leak, and a future handler that starts reading
  *      `payload.edits` turns this test red.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { readdir, readFile, rm } from "node:fs/promises";
 import { join, relative } from "node:path";
@@ -40,7 +41,7 @@ import {
   POST_TOOL_USE_INPUT,
   SESSION_START_INPUT,
 } from "./fixtures/cursor-contract/payloads.ts";
-import { rejectedApproachCandidate } from "../../connector-core/test/fixtures/hint-hub.ts";
+import { injectableCandidate } from "../../connector-core/test/fixtures/hint-hub.ts";
 import {
   makeHome,
   makeRepo,
@@ -193,7 +194,7 @@ describe("wire-level pin: the ephemeral hint query is secret-gated before it lea
   const startWireHub = (): WireHub => {
     const wireLog: string[] = [];
     const calls = { candidates: 0 };
-    const server = Bun.serve({
+    const server = serveLoopback({
       port: 0,
       fetch: async (request) => {
         const body = await request.text();
@@ -206,7 +207,7 @@ describe("wire-level pin: the ephemeral hint query is secret-gated before it lea
           calls.candidates += 1;
           return Response.json({
             ok: true,
-            data: { candidates: [rejectedApproachCandidate()] },
+            data: { candidates: [injectableCandidate()] },
           });
         }
         if (pathname === "/api/records") {
@@ -281,6 +282,9 @@ describe("wire-level pin: the ephemeral hint query is secret-gated before it lea
     intentSetCount: 0,
     intentFailCount: 0,
     intentLastFailure: null,
+    intentRefusedCount: 0,
+    intentSkippedCount: 0,
+    intentLastDrop: null,
     workContextIntent: null,
     ghostPending: false,
   gitTouchCount: 0,
@@ -299,6 +303,13 @@ describe("wire-level pin: the ephemeral hint query is secret-gated before it lea
   toolWindows: [],
   toolWindowEvictions: 0,
   toolWindowMisses: 0,
+  draftNudge: null,
+  draftNudgeRetryAt: null,
+  deriveFires: [],
+  topicContexts: [],
+  startBranch: null,
+  sessionTouchedAt: null,
+  topicOverflowCount: 0,
     outsideRootDrops: 0,
     knownWorktreeRoots: [],
     editToolFires: 0,
@@ -308,6 +319,9 @@ describe("wire-level pin: the ephemeral hint query is secret-gated before it lea
     lastEditedPath: null,
     lastEditedPathResolvedAgainst: null,
     hintCandidatesSeen: 0,
+    flooredPromptCount: 0,
+    harnessTurnCount: 0,
+    quietCallCount: 0,
   });
 
   test("a failing tool output carrying a credential produces NO request containing it — and no candidates query at all", async () => {

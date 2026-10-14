@@ -24,7 +24,11 @@ import { TEAM_PIN_POLICIES, TEAM_SUSPECT_ATTRIBUTIONS } from "@crosscheck/schema
 import { fail, ok } from "../http/envelope.ts";
 import { formatIssues, readJsonBody } from "../http/request.ts";
 import { developerAuth, requireAdmin } from "../middleware/auth.ts";
-import { readTeamSettings, writeTeamSettings } from "../services/team-settings.ts";
+import { ConcurrentEnrolmentError, readTeamSettings, writeTeamSettings } from "../services/team-settings.ts";
+
+/** Round-5 LOW-10: the race's loser is told what happened and what to do — never a 500. */
+const CONCURRENT_ENROLMENT_SENTENCE =
+  "another enrolment of this repo landed at the same moment, so this write changed nothing — the repo is enrolled; read the settings again";
 import type { AppDeps, AppEnv } from "../types.ts";
 
 const RepoQuerySchema = z.object({ repo: z.string().min(1) });
@@ -66,21 +70,28 @@ export const teamSettingsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     if (!parsed.success) {
       return fail(c, 400, "validation_failed", formatIssues(parsed.error));
     }
-    return ok(
-      c,
-      await writeTeamSettings(deps, {
-        repo: parsed.data.repo,
-        ...(parsed.data.pinPolicy === undefined
-          ? {}
-          : { pinPolicy: parsed.data.pinPolicy }),
-        ...(parsed.data.suspectAttribution === undefined
-          ? {}
-          : { suspectAttribution: parsed.data.suspectAttribution }),
-        ...(parsed.data.pilotEnrolled === undefined
-          ? {}
-          : { pilotEnrolled: parsed.data.pilotEnrolled }),
-      }),
-    );
+    try {
+      return ok(
+        c,
+        await writeTeamSettings(deps, {
+          repo: parsed.data.repo,
+          ...(parsed.data.pinPolicy === undefined
+            ? {}
+            : { pinPolicy: parsed.data.pinPolicy }),
+          ...(parsed.data.suspectAttribution === undefined
+            ? {}
+            : { suspectAttribution: parsed.data.suspectAttribution }),
+          ...(parsed.data.pilotEnrolled === undefined
+            ? {}
+            : { pilotEnrolled: parsed.data.pilotEnrolled }),
+        }),
+      );
+    } catch (error) {
+      if (error instanceof ConcurrentEnrolmentError) {
+        return fail(c, 409, "concurrent_enrolment", CONCURRENT_ENROLMENT_SENTENCE);
+      }
+      throw error;
+    }
   });
 
   return router;

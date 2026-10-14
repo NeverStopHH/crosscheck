@@ -10,7 +10,8 @@
  * connectors, so the precedence both suites pin is proven against identical
  * canned answers (the hint-hub/slow-hub fixture pattern, one more member).
  */
-import { rejectedApproachCandidate } from "./hint-hub.ts";
+import { serveLoopback } from "./loopback-serve.ts";
+import { injectableCandidate } from "./hint-hub.ts";
 
 export interface ParityHubCalls {
   candidates: number;
@@ -27,7 +28,7 @@ export interface ParityHub {
 
 export const startParityHub = (teammateName: string): ParityHub => {
   const calls: ParityHubCalls = { candidates: 0, presence: 0, records: 0, other: 0 };
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: async (request) => {
       const { pathname } = new URL(request.url);
@@ -35,7 +36,7 @@ export const startParityHub = (teammateName: string): ParityHub => {
         calls.candidates += 1;
         return Response.json({
           ok: true,
-          data: { candidates: [rejectedApproachCandidate()] },
+          data: { candidates: [injectableCandidate()] },
         });
       }
       if (pathname === "/api/presence") {

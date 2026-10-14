@@ -33,9 +33,10 @@
 import {
   SSH_CANONICALIZE_ENV,
   SSH_CANONICALIZE_OFF,
+  SSH_RESOLVE_DEADLINE_STRIKES,
   SSH_RESOLVE_TIMEOUT_MS,
 } from "../constants.ts";
-import { runBoundedCommand } from "./git.ts";
+import { runBoundedCommandOutcome } from "./git.ts";
 
 /** The `hostname <value>` line of an `ssh -G` dump; keys print lowercased. */
 const HOSTNAME_LINE_PATTERN = /^hostname\s+(\S+)\s*$/im;
@@ -47,49 +48,96 @@ export const parseSshHostname = (output: string): string | null => {
 
 export type SshHostnameResolver = (host: string) => Promise<string | null>;
 
+/** What one bounded `ssh -G` came back with — a deadline told apart. */
+export type SshCommandOutcome = Awaited<ReturnType<typeof runBoundedCommandOutcome>>;
+
+/** The spawn, injectable so the memo policy is testable without a clock. */
+export type SshCommandRunner = (
+  cmd: readonly string[],
+  cwd: string,
+  timeoutMs: number,
+) => Promise<SshCommandOutcome>;
+
+const answerOf = (outcome: SshCommandOutcome): string | null =>
+  outcome.ok && outcome.stdout.length > 0 ? parseSshHostname(outcome.stdout) : null;
+
 /**
  * One answer per host per PROCESS. `ssh -G` is pure config evaluation, so
  * within one process the answer cannot change, and re-spawning it billed the
  * long-lived surfaces per call — the MCP server resolves identity on every
  * tool call — at ~10 ms typical, SSH_RESOLVE_TIMEOUT_MS worst case under a
  * pathological config. Memoizing the PROMISE also collapses concurrent
- * callers onto one spawn. Failures (null) are cached too: a config that ran
- * out the deadline once would otherwise re-bill the full deadline on every
- * call for the rest of the process's life. Hook and statusline processes are
- * one-shot, so they pay at most one bounded spawn per run; a config edit is
- * picked up by the next process (for the MCP server: on restart). The first
- * caller's timeoutMs governs — later per-call overrides cannot re-run a
- * host that already answered.
+ * callers onto one spawn. Hook and statusline processes are one-shot, so
+ * they pay at most one bounded spawn per run; a config edit is picked up by
+ * the next process (for the MCP server: on restart). The first caller's
+ * timeoutMs governs — later per-call overrides cannot re-run a host that
+ * already answered.
+ *
+ * A DEADLINE IS NOT AN ANSWER, and is the one outcome not remembered at
+ * once. Everything else is: a hostname, an exit that refused, unparseable
+ * output — config evaluation said so, and will say so again. A deadline says
+ * only that this spawn was slow, and under CPU contention a process's FIRST
+ * spawn routinely is (measured: 28 of 36 probes under load). Memoized, that
+ * one slow moment cost a long-lived process its alias for the rest of its
+ * life — every MCP tool call resolving the repo under the literal alias host,
+ * an identity the hub treats as a different repo. So a timed-out host is
+ * asked again on the next call, until it has run out the deadline
+ * SSH_RESOLVE_DEADLINE_STRIKES times: then its null is remembered, and a
+ * config that genuinely never fits bills that many deadlines per process,
+ * not one per call.
+ *
+ * `env` is read per call, so flipping CROSSCHECK_SSH_CANONICALIZE mid-process
+ * wins; the default is the live process environment.
  */
-const hostnameByHost = new Map<string, Promise<string | null>>();
+export const createSshHostnameResolver = (
+  run: SshCommandRunner = runBoundedCommandOutcome,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+) => {
+  const hostnameByHost = new Map<string, Promise<string | null>>();
+  const deadlinesByHost = new Map<string, number>();
 
-/**
- * One bounded `ssh -G` per host per process. The leading-dash guard keeps
- * a hostile "host" from ever reaching ssh as an option; `--` is not used
- * because `ssh -G -- <host>` is fine but older ssh quirks are not worth the
- * bet when null is a safe answer. CROSSCHECK_SSH_CANONICALIZE=off answers
- * null before consulting the cache or spawning anything (src/constants.ts
- * names both audiences: pathological user configs, and the test suite's
- * preload) — checked per call, so flipping the variable mid-process wins.
- */
-export const resolveSshHostname = (
-  host: string,
-  cwd: string,
-  timeoutMs: number = SSH_RESOLVE_TIMEOUT_MS,
-): Promise<string | null> => {
-  if (host.length === 0 || host.startsWith("-")) {
-    return Promise.resolve(null);
-  }
-  if (process.env[SSH_CANONICALIZE_ENV] === SSH_CANONICALIZE_OFF) {
-    return Promise.resolve(null);
-  }
-  const cached = hostnameByHost.get(host);
-  if (cached !== undefined) {
-    return cached;
-  }
-  const resolved = runBoundedCommand(["ssh", "-G", host], cwd, timeoutMs).then(
-    (output) => (output === null ? null : parseSshHostname(output)),
-  );
-  hostnameByHost.set(host, resolved);
-  return resolved;
+  const remember = (host: string, outcome: SshCommandOutcome): string | null => {
+    if (!outcome.ok && outcome.timedOut) {
+      const strikes = (deadlinesByHost.get(host) ?? 0) + 1;
+      deadlinesByHost.set(host, strikes);
+      if (strikes < SSH_RESOLVE_DEADLINE_STRIKES) {
+        hostnameByHost.delete(host);
+      }
+    }
+    return answerOf(outcome);
+  };
+
+  /**
+   * One bounded `ssh -G` per host per process. The leading-dash guard keeps
+   * a hostile "host" from ever reaching ssh as an option; `--` is not used
+   * because `ssh -G -- <host>` is fine but older ssh quirks are not worth the
+   * bet when null is a safe answer. CROSSCHECK_SSH_CANONICALIZE=off answers
+   * null before consulting the cache or spawning anything (src/constants.ts
+   * names both audiences: pathological user configs, and the test suite's
+   * preload).
+   */
+  return (
+    host: string,
+    cwd: string,
+    timeoutMs: number = SSH_RESOLVE_TIMEOUT_MS,
+  ): Promise<string | null> => {
+    if (host.length === 0 || host.startsWith("-")) {
+      return Promise.resolve(null);
+    }
+    if (env[SSH_CANONICALIZE_ENV] === SSH_CANONICALIZE_OFF) {
+      return Promise.resolve(null);
+    }
+    const cached = hostnameByHost.get(host);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const resolved = run(["ssh", "-G", host], cwd, timeoutMs).then((outcome) =>
+      remember(host, outcome),
+    );
+    hostnameByHost.set(host, resolved);
+    return resolved;
+  };
 };
+
+/** The process's own resolver: the real bounded spawn, the live environment. */
+export const resolveSshHostname = createSshHostnameResolver();

@@ -98,6 +98,7 @@ const readState = async (
     harness.db,
     harness.clock.now(),
     [claimId],
+    null,
   );
   return validities.get(claimId)?.state;
 };
@@ -212,6 +213,7 @@ describe("claim revalidations", () => {
       harness.db,
       harness.clock.now(),
       ["clm_01"],
+      null,
     );
     expect(validities.get("clm_01")?.state).toBe("current");
     expect(validities.get("clm_01")?.selfReported).toBe(true);
@@ -233,6 +235,7 @@ describe("claim revalidations", () => {
       harness.db,
       harness.clock.now(),
       ["clm_01"],
+      null,
     );
     expect(validities.get("clm_01")?.state).toBe("current");
     expect(validities.get("clm_01")?.selfReported).toBe(false);
@@ -254,6 +257,7 @@ describe("claim revalidations", () => {
       harness.db,
       harness.clock.now(),
       REPO,
+      null,
     );
     expect(summary.refusedWalkBacks).toBe(2);
     expect(summary.claimsWithRefusedWalkBacks).toBe(1);
@@ -269,6 +273,7 @@ describe("claim revalidations", () => {
       harness.db,
       harness.clock.now(),
       REPO,
+      null,
     );
     expect(summary.refusedWalkBacks).toBe(0);
   });

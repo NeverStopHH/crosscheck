@@ -183,6 +183,40 @@ describe("ui work-context page", () => {
     expect(html).toContain('class="label landed"');
   });
 
+  test("an edge to a draft or a rejected claim says so on its line (review round 3, MEDIUM-4)", async () => {
+    // Arrange: a vouched claim linked to a draft in this tree and to a
+    // rejected discard copy in another, and one plain vouched link
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");
+    await registerTestSession(harness, nick.apiKey);
+    const derived = { captureMode: "auto", provenance: "derived", confidence: 0.4 } as const;
+    await postRecords(harness, nick, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody()),
+        recordEnvelope("work_context", validWorkContextBody({ id: "wc_02", title: "Another tree" })),
+        recordEnvelope("claim", validClaimBody()),
+        recordEnvelope("claim", validClaimBody({ id: "clm_vouched", kind: "evidence", body: "The audience field is empty" })),
+        recordEnvelope("claim", validClaimBody({ id: "clm_draft", kind: "hypothesis", body: "A machine guess", ...derived })),
+        recordEnvelope("claim", validClaimBody({ id: "clm_gone", workContextId: "wc_02", kind: "hypothesis", status: "rejected", body: "A discarded guess", ...derived })),
+        recordEnvelope("claim_edge", validClaimEdgeBody({ id: "edge_draft", fromClaimId: "clm_01", toClaimId: "clm_draft", kind: "relates_to" })),
+        recordEnvelope("claim_edge", validClaimEdgeBody({ id: "edge_gone", fromClaimId: "clm_01", toClaimId: "clm_gone", kind: "contradicts" })),
+        recordEnvelope("claim_edge", validClaimEdgeBody({ id: "edge_plain", fromClaimId: "clm_vouched", toClaimId: "clm_01", kind: "supports" })),
+      ],
+    });
+    const cookie = await loginUi(harness, nick.apiKey);
+
+    // Act
+    const html = await (await uiGet(harness, "/ui/work-contexts/wc_01", cookie)).text();
+
+    // Assert: one edge line per kind label
+    const edgeLine = (kind: string): string =>
+      html.split('<li class="entry">').find((line) => line.includes(`>${kind}</span>`) && !line.includes("confidence")) ?? "";
+    expect(edgeLine("relates_to")).toContain('class="label provenance-derived">derived</span>');
+    expect(edgeLine("contradicts")).toContain('class="label status-rejected">rejected</span>');
+    expect(edgeLine("supports")).not.toContain("provenance-");
+    expect(edgeLine("supports")).not.toContain("status-");
+  });
+
   test("an open tree shows neither the solved nor the landed label", async () => {
     const harness = await createTestHarness();
     const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");

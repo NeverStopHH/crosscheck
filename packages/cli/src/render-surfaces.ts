@@ -28,6 +28,7 @@ import type { PilotView } from "./cli/pilot-render.ts";
 import {
   candidateListLines,
   markFailureLine,
+  labelStandsLine,
   markRecordedLine,
   noLiveSessionLine,
   nothingRecentLine,
@@ -55,6 +56,7 @@ import {
   reasonPromptLine,
 } from "./cli/pilot-label-render.ts";
 import { quotingText } from "@crosscheck/connector-core/mcp/render.ts";
+import { HINT_OUTCOME_SURFACES, PROVENANCE_SURFACES } from "./render-surfaces-outcomes.ts";
 import type { VerdictView } from "@crosscheck/connector-core/http/verdict.ts";
 
 const NOW = new Date("2026-08-25T12:00:00.000Z");
@@ -358,6 +360,7 @@ const pilotWith = (payload: string): PilotView => {
         reasons: [{ label: payload, reason: payload }],
         reasonsBeyondList: 1,
       },
+      outcomes: { periodStartIso: payload, periodEndIso: payload, recordableSinceIso: ISO, countedFromIso: ISO, withheld: payload, figures: null },
       cohorts: [
         { cohort: payload, cap: 50, ...labels },
         {
@@ -507,7 +510,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     // command WRITES and false of the three it PASSES THROUGH. Taking either
     // side alone would have restored a claim the other branch had just proven
     // false.
-    note: "formatAge on renderer-built ages, the coverage clause from enum-derived states, and `hubSaid` (bareUntrusted at MAX_HUB_MESSAGE_CHARS) on the one thing this command does not write itself: the hub's own failure sentence, printed by the coverage, claim-currency, pilot and hub-reachable checks. The pilot lines' reason words are the shared vocabulary's own sentences (unavailableClause), never hub text. The capture check prints the developer's OWN local paths and host tool names, control-stripped and capped (DOCTOR_PATH_MAX_CHARS / DOCTOR_TOOL_NAME_MAX_CHARS), never teammate text. Coverage states and printed refusals are exercised in test/coverage-cli.test.ts. The loss lines (doctor-losses.ts, docs/1.0/loss-accounting.md §5: spool drops, hub ignored records, capture losses, coverage reporting) print counts, the drop ledger's own reason words (anything else as `other`), record kinds screened by /^[a-z][a-z0-9_]{0,40}$/, hook and host event names screened by the capture ledger's detail alphabet, and instants re-formatted from Date.parse — never a path; exercised in test/doctor-losses.test.ts, and the screening in connector-core's own loss-report suite. The two causal-guarantee lines (connector-core guarantees/doctor.ts, 01a §5) print this connector's own declaration table — kind, state and reason words from guarantees/declarations.ts — and one count of declaration_contradicted off the hub's order report, never a session id; exercised in test/seq-doctor-hub.test.ts. The cloud agent identity check prints formatCloudAgentLink: the schema table's own product name and address, or, for an id this client's table does not hold, that hub word through bareUntrusted; exercised in test/absence-cli.test.ts. The cloud agent mailmap check prints only that table's product name and address, never the .mailmap line it found; exercised in test/landed-authors-doctor.test.ts",
+    note: "formatAge on renderer-built ages, the coverage clause from enum-derived states, and `hubSaid` (bareUntrusted at MAX_HUB_MESSAGE_CHARS) on the one thing this command does not write itself: the hub's own failure sentence, printed by the coverage, claim-currency, pilot and hub-reachable checks. The pilot lines' reason words are the shared vocabulary's own sentences (unavailableClause), never hub text. The capture check prints the developer's OWN local paths and host tool names, control-stripped and capped (DOCTOR_PATH_MAX_CHARS / DOCTOR_TOOL_NAME_MAX_CHARS), never teammate text. Coverage states and printed refusals are exercised in test/coverage-cli.test.ts. The loss lines (doctor-losses.ts, docs/1.0/loss-accounting.md §5: spool drops, hub ignored records, capture losses, coverage reporting) print counts, the drop ledger's own reason words (anything else as `other`), record kinds screened by /^[a-z][a-z0-9_]{0,40}$/, hook and host event names screened by the capture ledger's detail alphabet, and instants re-formatted from Date.parse — never a path; exercised in test/doctor-losses.test.ts, and the screening in connector-core's own loss-report suite. The two causal-guarantee lines (connector-core guarantees/doctor.ts, 01a §5) print this connector's own declaration table — kind, state and reason words from guarantees/declarations.ts — and one count of declaration_contradicted off the hub's order report, never a session id; exercised in test/seq-doctor-hub.test.ts. The cloud agent identity check prints formatCloudAgentLink: the schema table's own product name and address, or, for an id this client's table does not hold, that hub word through bareUntrusted; exercised in test/absence-cli.test.ts. The cloud agent mailmap check prints only that table's product name and address, never the .mailmap line it found; exercised in test/landed-authors-doctor.test.ts. The hub separation lines (doctor-hub-separation.ts) print the developer's OWN local paths under their HOME and the hub URL's parsed host, control and format characters replaced and capped, plus process and user names from lsof/ps screened to a plain alphabet (anything else prints as `a process`); they stat and access() hub.env and never open it, so no file's contents and no token reach the line; exercised in test/doctor-hub-separation.test.ts",
   },
   {
     kind: "composite",
@@ -523,8 +526,11 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     module: "src/cli/status.ts",
     // COV-7, same shape as cli-doctor above: driven by named fixtures in
     // test/coverage-cli.test.ts rather than by a registry closure.
-    note: "formatAbsenceLine, formatAge and the coverage clause from the core render layer, the clause exercised in test/coverage-cli.test.ts; absence names sanitized inside the renderer; teammate name/branch/status through bareUntrusted and the session intent through renderIntent (the one framed fragment). NO QUOTED_DATA_NOTICE, deliberately: the notice tells a MODEL that « » is data rather than instruction, and this command's stdout reaches a human terminal only — no hook and no MCP tool reads it (VERIFY below). The frame, the sanitizing and the bounds still apply, because they protect the reader's terminal rather than a context window. The CI block (spec 05 §5) adds the one slot on this surface whose text comes from ANOTHER REPOSITORY rather than from a teammate: a fork pull request can name a test anything, so every `test_id` goes through bareUntrusted at MAX_CI_TEST_ID_CHARS and the list is capped at CI_STATUS_MAX_LINES with the cut printed. The `losses:` line is doctor's own loss fragments (connector-core spool/loss-report.ts formatLossLines): counts, screened record kinds and screened hook/host event names, never a path. The `cloud agent identity:` line is doctor's own formatCloudAgentLink sentence, verbatim",
-    corpusCoveredBy: ["test/ci-status-render.test.ts"],
+    note: "formatAbsenceLine, formatAge and the coverage clause from the core render layer, the clause exercised in test/coverage-cli.test.ts; absence names sanitized inside the renderer; teammate name/branch/status through bareUntrusted and the session intent through renderIntent (the one framed fragment), grouped per teammate by topic with the briefing's own grouping (core groupTeammates with bareUntrusted as the sanitizer, briefing/topic-group.ts) — a head line of counts, at most MAX_TOPICS_PER_TEAMMATE topic lines and the renderer-owned `… and N more topics` tail, exercised in test/status-topics.test.ts and test/status-intent.test.ts, and the whole block (`teammateLines`, both shapes) walked against the injection corpus in every teammate slot by test/status-teammates-corpus.test.ts. NO QUOTED_DATA_NOTICE, deliberately: the notice tells a MODEL that « » is data rather than instruction, and this command's stdout reaches a human terminal only — no hook and no MCP tool reads it (VERIFY below). The frame, the sanitizing and the bounds still apply, because they protect the reader's terminal rather than a context window. The CI block (spec 05 §5) adds the one slot on this surface whose text comes from ANOTHER REPOSITORY rather than from a teammate: a fork pull request can name a test anything, so every `test_id` goes through bareUntrusted at MAX_CI_TEST_ID_CHARS and the list is capped at CI_STATUS_MAX_LINES with the cut printed. The `losses:` line is doctor's own loss fragments (connector-core spool/loss-report.ts formatLossLines): counts, screened record kinds and screened hook/host event names, never a path. The `cloud agent identity:` line is doctor's own formatCloudAgentLink sentence, verbatim",
+    corpusCoveredBy: [
+      "test/ci-status-render.test.ts",
+      "test/status-teammates-corpus.test.ts",
+    ],
   },
   {
     kind: "corpus",
@@ -616,17 +622,12 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     // with the payload in every slot the wire fills.
     framing: "bare",
     render: (payload) => {
-      const candidate = {
-        id: payload,
-        sessionId: payload,
-        channel: payload,
-        refKind: payload,
-        refId: payload,
-        deliveredAt: payload,
-      };
+      const candidate = { id: payload, sessionId: payload, channel: payload, refKind: payload, refId: payload, deliveredAt: payload };
       return [
         markRecordedLine("hint_delivery", payload, false),
         markRecordedLine("hint_delivery", payload, true),
+        // 07 §13.11 (H2): the outcome a noise label now stands over is the hub's word.
+        labelStandsLine({ stands: "noise", replaced: payload }),
         // `crosscheck helpful` (second review, M6): the same lines, its word.
         markRecordedLine("hint_delivery", payload, false, "helpful"),
         candidateListLines([candidate], true, 60, NOW, "helpful"),
@@ -731,6 +732,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
         already: 1,
         refused: 1,
         notReached: 1,
+        drafted: 0,
       };
       return [
         walkHeaderLines(3, true, 1440),
@@ -777,6 +779,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
         ]),
       ].join("\n"),
   },
+  ...HINT_OUTCOME_SURFACES, ...PROVENANCE_SURFACES, // THE ARRAY TAIL: 07 §13's outcomes; 0.11's drafts and `confirm`
 ];
 
 /**

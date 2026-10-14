@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { CausalGuaranteeTriple, TelemetryLossReport } from "@crosscheck/schema";
-import { COMMIT_SHA_PATTERN, ClaimValiditySchema, SEQ_EPOCH_PATTERN } from "@crosscheck/schema";
+import { COMMIT_SHA_PATTERN, ClaimValiditySchema, LOCATION_WITHHELD, SEQ_EPOCH_PATTERN } from "@crosscheck/schema";
 import type { ClaimRevalidationEntry, LandedContextRequest } from "@crosscheck/schema";
 import type { ClaimValidity } from "@crosscheck/schema";
 import {
@@ -120,6 +120,13 @@ export const WorkContextEntrySchema = z.looseObject({
   createdAt: z.string().min(1),
   updatedAt: z.string().nullable().optional(),
   /**
+   * The hub's word that this row's owner opted out of presence, so its
+   * activity is withheld and `createdAt` is the only time left on it (batch-2
+   * integration review, M5): nothing that dates a teammate's activity — the
+   * statusline's "last seen" — may read it. Tolerant: an older hub sends none.
+   */
+  locationWithheld: z.literal(true).optional().catch(undefined),
+  /**
    * Cheap aggregates the briefing and `doctor` read (audit row M15-rest,
    * trial findings #20 + M1): how many claims and deterministic targets the
    * tree carries. Both OPTIONAL and both `.catch(undefined)` — an older hub
@@ -130,6 +137,28 @@ export const WorkContextEntrySchema = z.looseObject({
    */
   claimCount: z.number().int().min(0).optional().catch(undefined),
   targetCount: z.number().int().min(0).optional().catch(undefined),
+  /**
+   * The session that opened this context — what the briefing's "N sessions"
+   * counts, since a recovered session can own a second context. Tolerant: a
+   * row without it counts as its own session (briefing/render.ts).
+   */
+  sessionId: z.string().min(1).optional().catch(undefined),
+  /**
+   * How many contexts this row's developer has inside the window the hub
+   * answered, counted BEFORE its row bound (server services/diagnosis.ts). The
+   * briefing compares it with the rows that arrived, and a teammate the bound
+   * cut short has every count said as "at least". Tolerant like the two
+   * above: an older hub sends none, and its rows read as complete — the
+   * undercount that hub always had, never a fabricated one.
+   */
+  developerContextCount: z.number().int().min(0).optional().catch(undefined),
+  /**
+   * The owning session's own branch (server services/diagnosis.ts) — the key
+   * the briefing groups a teammate's work by, because a host-supplied title
+   * does not carry it. Tolerant: an older hub sends none, and the briefing
+   * falls back to the title (briefing/render.ts contextTopic).
+   */
+  branch: z.string().min(1).optional().catch(undefined),
 });
 
 export type WorkContextEntry = z.infer<typeof WorkContextEntrySchema>;
@@ -209,6 +238,12 @@ export interface RegisterSessionInput {
   readonly repo: string;
   readonly branch: string;
   readonly baseCommit: string;
+  /**
+   * Was `baseCommit` already reachable from the default branch when the
+   * session started? Additive and optional: the hub reads absent as "did not
+   * say" (server services/landed.ts).
+   */
+  readonly baseOnDefault?: boolean;
   readonly status: string;
   /**
    * `session.started`'s own position — `n = 0`, minted with the epoch rather
@@ -711,6 +746,41 @@ export const getSolvedMatches = (
     schema: tolerantList("matches", SolvedMatchEntrySchema),
   });
 
+/** The briefing's read of the same listing: its rows, and whether the repo records outcomes. */
+export interface SolvedPointers {
+  readonly matches: readonly SolvedMatchEntry[];
+  /** 07 §13 (D-O3): false from a hub too old to say. */
+  readonly recordsOutcomes: boolean;
+}
+
+const SolvedPointersSchema = z
+  .looseObject({
+    matches: z.array(z.unknown()),
+    recordsOutcomes: z.boolean().default(false),
+  })
+  .transform(
+    (value): SolvedPointers => ({
+      matches: parseRows(value.matches, SolvedMatchEntrySchema).rows,
+      recordsOutcomes: value.recordsOutcomes,
+    }),
+  );
+
+/**
+ * THE SAME CALL `getSolvedMatches` MAKES, read for the briefing (07 §13): the
+ * flag rides the listing SessionStart already fetches, so the outcome clause
+ * costs no round trip. A separate reader rather than a changed return type,
+ * so every other caller of the listing keeps the shape it has.
+ */
+export const getSolvedPointers = (
+  ctx: HubContext,
+  repo: string,
+): Promise<HubResult<SolvedPointers>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: `/api/solved-matches${encodeRepo(repo)}`,
+    schema: SolvedPointersSchema,
+  });
+
 /**
  * The precision counters for solved pointers (VISION.md §1): how many this
  * reader was shown on this repo inside the hub's window, and how many they
@@ -897,6 +967,12 @@ export const GhostCheckEntrySchema = z.looseObject({
   developerName: z.string().min(1).optional(),
   intent: tolerantIntent,
   lastActiveAt: z.string().min(1),
+  /**
+   * Where their work lives (release gate, 1b): the context's own branch — a
+   * topic's — or its session's. Optional and tolerant: an older hub sends
+   * none, and the person's line then names no branch, as it always did.
+   */
+  branch: z.string().nullable().optional().catch(undefined),
   sharedTargets: z.array(GhostSharedTargetSchema).catch([]),
   sharedTargetCount: z.number().int().min(0).catch(0),
   /**
@@ -905,6 +981,24 @@ export const GhostCheckEntrySchema = z.looseObject({
    * count below it — so the renderer needs no copy of that constant.
    */
   intentTokenHits: z.number().int().min(0).catch(0),
+  /**
+   * The files THEIR change touched when it is a LARGE CHANGE, else null: the
+   * qualifier the line prints ("part of a large change touching 180 files").
+   * The hub QUALIFIES a large change and never drops it (server
+   * services/ghost-overlap.ts), so this is wording, never a reason a row is
+   * missing. Optional and tolerant: an older hub sends none, and a value this
+   * build cannot read costs the qualifier, not the row.
+   */
+  largeChangeFiles: z.number().int().min(0).nullable().optional().catch(undefined),
+  /**
+   * Files both sides touched that the rule kept out of overlap as
+   * mechanically generated and non-authoritative (server
+   * services/generated-targets.ts) — never a reason for the row, printed as
+   * its qualifier ("also both touched 4 generated files"). Optional and
+   * tolerant: an older hub sends none, and the line simply carries no
+   * qualifier.
+   */
+  generatedSharedCount: z.number().int().min(0).optional().catch(undefined),
 });
 
 export type GhostCheckEntry = z.infer<typeof GhostCheckEntrySchema>;
@@ -924,6 +1018,52 @@ export const getGhostChecks = (
     schema: tolerantList("ghostChecks", GhostCheckEntrySchema),
   });
 
+/**
+ * How many of the reader's own files a teammate the hub will not name — one
+ * who opted out of presence — has in unfinished work (server services/
+ * ghost-overlap.ts countAnonymousOverlap; the owner's decision on the batch-2
+ * integration review's I1). The count and nothing else is read.
+ */
+export interface AnonymousOverlap {
+  readonly sharedFileCount: number;
+}
+
+export interface GhostChecksAnswer {
+  readonly entries: readonly GhostCheckEntry[];
+  /** Null from an older hub, and when no such teammate's work touches the reader's files. */
+  readonly anonymousOverlap: AnonymousOverlap | null;
+}
+
+const GhostChecksAnswerSchema = z
+  .looseObject({
+    ghostChecks: z.array(z.unknown()),
+    anonymousOverlap: z
+      .looseObject({ sharedFileCount: z.number().int().min(1) })
+      .nullable()
+      .optional()
+      .catch(null),
+  })
+  .transform(
+    (value): GhostChecksAnswer => ({
+      entries: value.ghostChecks.flatMap((item) => {
+        const parsed = GhostCheckEntrySchema.safeParse(item);
+        return parsed.success ? [parsed.data] : [];
+      }),
+      anonymousOverlap:
+        value.anonymousOverlap === null || value.anonymousOverlap === undefined
+          ? null
+          : { sharedFileCount: value.anonymousOverlap.sharedFileCount },
+    }),
+  );
+
+/** The briefing's ghost call: the named rows and the nameless count, from the one request. */
+export const getGhostChecksAnswer = (ctx: HubContext, repo: string): Promise<HubResult<GhostChecksAnswer>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: `/api/ghost-checks${encodeRepo(repo)}`,
+    schema: GhostChecksAnswerSchema,
+  });
+
 export const DraftEntrySchema = z.looseObject({
   id: z.string().min(1),
   workContextId: z.string().min(1),
@@ -938,16 +1078,65 @@ export const DraftEntrySchema = z.looseObject({
 
 export type DraftEntry = z.infer<typeof DraftEntrySchema>;
 
+/**
+ * The whole answer of `GET /api/drafts`: the capped, newest-first rows, plus —
+ * from a hub that sends them — the size of the backlog they are cut from and
+ * when its oldest draft was captured. Both null from an older hub, which is
+ * what keeps "at least N" on every surface that reads a listing at its cap.
+ * A malformed total or instant reads as absent, never as a number.
+ */
+export interface DraftListing {
+  readonly drafts: readonly DraftEntry[];
+  readonly total: number | null;
+  readonly oldestCreatedAt: string | null;
+  /**
+   * Which end the rows start from, as the HUB says — null from a hub too old
+   * to say, whose rows are newest-first whatever was asked for.
+   */
+  readonly order: "newest" | "oldest" | null;
+}
+
+/** The end of the backlog a listing should start from (`?order=`). */
+export type DraftListingOrder = "newest" | "oldest";
+
+const BacklogTotalsSchema = z.looseObject({
+  total: z.number().int().min(0).nullable().optional().catch(null),
+  oldestCreatedAt: z.string().min(1).nullable().optional().catch(null),
+  order: z.enum(["newest", "oldest"]).nullable().optional().catch(null),
+});
+
+const DraftListingAnswerSchema = z
+  .looseObject({ drafts: z.array(z.unknown()) })
+  .transform((value): DraftListing => {
+    const totals = BacklogTotalsSchema.parse(value);
+    return {
+      drafts: tolerantList("drafts", DraftEntrySchema).parse(value),
+      total: totals.total ?? null,
+      oldestCreatedAt: totals.oldestCreatedAt ?? null,
+      order: totals.order ?? null,
+    };
+  });
+
 /** One more parallel GET inside the SessionStart fetch block (fail open). */
-export const getDrafts = (
+export const getDraftListing = (
   ctx: HubContext,
   repo: string,
-): Promise<HubResult<readonly DraftEntry[]>> =>
+  order: DraftListingOrder = "newest",
+): Promise<HubResult<DraftListing>> =>
   hubRequest(ctx, {
     method: "GET",
-    path: `/api/drafts${encodeRepo(repo)}`,
-    schema: tolerantList("drafts", DraftEntrySchema),
+    path: `/api/drafts${encodeRepo(repo)}${order === "oldest" ? "&order=oldest" : ""}`,
+    schema: DraftListingAnswerSchema,
   });
+
+/** The rows alone, for a caller that needs no backlog totals (review_draft). */
+export const getDrafts = async (
+  ctx: HubContext,
+  repo: string,
+): Promise<HubResult<readonly DraftEntry[]>> => {
+  const listing = await getDraftListing(ctx, repo);
+  return listing.ok ? { ...listing, data: listing.data.drafts } : listing;
+};
 
 /**
  * One claim of a diagnosis tree.
@@ -1049,6 +1238,9 @@ export const ExternalClaimRefSchema = z.looseObject({
   id: z.string().min(1),
   kind: z.string().min(1),
   workContextId: z.string().min(1),
+  /** Optional: an older hub sends neither, and the line then says nothing more. */
+  provenance: z.string().min(1).optional().catch(undefined),
+  status: z.string().min(1).optional().catch(undefined),
 });
 
 export type ExternalClaimRef = z.infer<typeof ExternalClaimRefSchema>;
@@ -1319,11 +1511,18 @@ export const SearchResultEntrySchema = z.looseObject({
   intent: tolerantIntent,
   createdAt: z.string().min(1),
   updatedAt: z.string().nullable().optional(),
+  /** The owner opted out of presence (M5): no age is printed off this row. Tolerant: an older hub sends none. */
+  locationWithheld: z.literal(true).optional().catch(undefined),
   tier: z.string().min(1).optional(),
   score: z.number().optional(),
   /** Solved-tree marker (VISION.md §1); optional — older hubs send neither. */
   resultKind: z.string().min(1).optional(),
   solvedAt: z.string().nullable().optional(),
+  /**
+   * The tree matched ONLY through an unreviewed derived draft's words; the
+   * line says so. Absent from an older hub, which marks nothing.
+   */
+  derivedOnly: z.boolean().optional().catch(undefined),
 });
 
 export type SearchResultEntry = z.infer<typeof SearchResultEntrySchema>;
@@ -1455,6 +1654,11 @@ export const HintClaimCandidateSchema = z.looseObject({
   provenance: z.string().min(1),
   captureMode: z.string().min(1).optional(),
   evidenceRefCount: z.number().int().min(0).default(0),
+  // The hub's verdict that a cited ref RESOLVES — to another existing claim,
+  // not a proposed or rejected hypothesis (review 1006b, H4). Absent from an
+  // older hub, and then no claim is substance: an unresolved count is not
+  // evidence.
+  evidenceBacked: z.boolean().optional(),
   authorDeveloperId: z.string().min(1),
   authorDeveloperName: z.string().min(1).optional(),
   body: z.string(),
@@ -1486,6 +1690,23 @@ export const HintClaimCandidateSchema = z.looseObject({
    * unsolicited surface.
    */
   axes: EvidenceAxesSchema.optional(),
+  /**
+   * How many distinct TOPICAL words of the matched query THIS claim's SHOWN
+   * SENTENCE shares (the hub counts on the sentence a hint would show, never
+   * on the rest of the body, so a keyword-stuffed tail buys nothing; and
+   * closed-class words never, round 3 H3 + M6) — the relevance half of the
+   * substance gate (hints/select.ts isStrongMatch).
+   * OPTIONAL, and absent fails closed: an older hub never measured it, and a
+   * claim whose relevance nobody measured is a pointer, not substance.
+   */
+  matchedTerms: z.number().int().min(0).optional(),
+  /**
+   * Of those words, how many NO OTHER candidate of the response says (round
+   * 4, C2): a finding is shown only on a word that tells its tree from the
+   * runner-up. OPTIONAL, and absent fails closed like `matchedTerms`: a hub
+   * that never counted it buys no substance.
+   */
+  distinctTerms: z.number().int().min(0).optional(),
   createdAt: z.string().min(1),
 });
 
@@ -1514,6 +1735,19 @@ const HintContextSchema = z.looseObject({
   solvedAt: z.string().nullable().optional(),
   createdAt: z.string().min(1),
   updatedAt: z.string().nullable().optional(),
+  /**
+   * The hub's word that the owner opted out of presence (batch-2 integration
+   * review, M5): her last touch is withheld, and the pointer prints no age
+   * off the creation that is left. Tolerant: an older hub sends none.
+   */
+  locationWithheld: z.literal(true).optional().catch(undefined),
+  /**
+   * How many distinct TOPICAL words of the matched query the context's OWN
+   * statement (title, description, intent) shares — a tree clearly about the
+   * query lends its strength to a claim of it that shares one (hints/select.ts).
+   * Optional: absent from an older hub, and then it lends nothing.
+   */
+  matchedTerms: z.number().int().min(0).optional(),
 });
 
 /**
@@ -1533,22 +1767,54 @@ export const MatchedTargetSchema = z.looseObject({
 
 export type MatchedTarget = z.infer<typeof MatchedTargetSchema>;
 
+/**
+ * What a candidate was matched on (DESIGN.md §4): the prompt, or the
+ * session's intent standing in for a prompt that carried nothing
+ * task-bearing. The hint states which, so a teammate's finding never claims
+ * to relate to a prompt it was not matched on.
+ */
+export const HINT_MATCHED_ON = ["prompt", "intent"] as const;
+export type HintMatchedOn = (typeof HINT_MATCHED_ON)[number];
+
 export const HintContextCandidateSchema = z
   .looseObject({
     workContext: HintContextSchema,
     claims: z.array(z.unknown()).default([]),
     matchedTargets: z.array(z.unknown()).default([]),
+    // An older hub matches on the prompt alone and sends no field — so
+    // absent IS "prompt", the one honest reading. An unknown word from a
+    // newer hub drops the candidate rather than mislabelling it.
+    matchedOn: z.enum(HINT_MATCHED_ON).default("prompt"),
+    // The number the hub's per-candidate content floor was decided on: the
+    // most query words ONE statement of the tree shares. Optional — an older
+    // hub has no floor to report, and then the selector cannot look again.
+    sharedTerms: z.number().int().min(0).optional(),
+    // The tree's STRENGTH (round 3, H3 + M6): the most TOPICAL query words one
+    // of its statements shares. Optional — an older hub never measured it, and
+    // then every tree is equally strong and the hub's order decides.
+    topicalTerms: z.number().int().min(0).optional(),
+    // True when the hub's claim window left visible rows behind, so a count
+    // read off `claims` is a lower bound. Absent from an older hub: no claim.
+    claimsTruncated: z.boolean().optional(),
   })
   .transform((value) => ({
     workContext: value.workContext,
     // Tolerant rows, silent drop — candidates are advisory, like search rows.
     claims: parseRows(value.claims, HintClaimCandidateSchema).rows,
     matchedTargets: parseRows(value.matchedTargets, MatchedTargetSchema).rows,
+    matchedOn: value.matchedOn,
+    ...(value.sharedTerms === undefined ? {} : { sharedTerms: value.sharedTerms }),
+    ...(value.topicalTerms === undefined ? {} : { topicalTerms: value.topicalTerms }),
+    ...(value.claimsTruncated === undefined ? {} : { claimsTruncated: value.claimsTruncated }),
   }));
 
 export type HintContextCandidate = z.infer<typeof HintContextCandidateSchema>;
 
 export interface HintCandidatesRequest {
+  /**
+   * The EPHEMERAL prompt query — "" when the prompt has no searchable word,
+   * and then it is not sent at all.
+   */
   readonly query: string;
   /** Relevance filter, never a boundary (DESIGN.md §2.1). */
   readonly repo: string;
@@ -1649,6 +1915,18 @@ export interface HintCandidatesResult {
    * too old to send the field.
    */
   readonly notices: readonly LandedNotice[];
+  /**
+   * Whether this repo records what a hint led to (07 §13) — the one fact the
+   * outcome clause needs. False from any hub too old to send it, so no hint
+   * invites a call that hub would answer 404.
+   */
+  readonly recordsOutcomes: boolean;
+  /**
+   * The delivery channels this hub records. Empty from a hub too old to send
+   * the field — and such a hub rejects any channel it does not know, so the
+   * hint flow books a newer channel only when it is listed here.
+   */
+  readonly deliveryChannels: readonly string[];
 }
 
 const HintCandidatesResponseSchema = z
@@ -1657,6 +1935,8 @@ const HintCandidatesResponseSchema = z
     answers: z.array(z.unknown()).default([]),
     coverage: z.unknown().optional(),
     notices: z.array(z.unknown()).default([]),
+    recordsOutcomes: z.boolean().default(false),
+    deliveryChannels: z.array(z.string()).catch([]),
   })
   .transform(
     (value): HintCandidatesResult => ({
@@ -1665,6 +1945,8 @@ const HintCandidatesResponseSchema = z
       answers: parseRows(value.answers, AnsweredQuestionSchema).rows,
       coverage: parseCoverage(value.coverage),
       notices: parseRows(value.notices, LandedNoticeSchema).rows,
+      recordsOutcomes: value.recordsOutcomes,
+      deliveryChannels: value.deliveryChannels,
     }),
   );
 
@@ -1672,8 +1954,10 @@ export const getHintCandidates = (
   ctx: HubContext,
   request: HintCandidatesRequest,
 ): Promise<HubResult<HintCandidatesResult>> => {
+  // Only what carries something goes on the wire: an empty query is the
+  // prompt that had no searchable word, and it stays on this machine.
   const params = new URLSearchParams({
-    query: request.query,
+    ...(request.query.length === 0 ? {} : { query: request.query }),
     repo: request.repo,
   });
   return hubRequest(ctx, {
@@ -2084,8 +2368,17 @@ export const PrivacySettingsSchema = z
     presenceOptOut: z.boolean(),
     mutes: z.array(z.unknown()).default([]),
     emails: z.array(z.unknown()).default([]),
+    // When the opt-out was last switched back off (hub developer-settings.ts).
+    // An older hub sends nothing, and a value that is not an ISO instant
+    // reads as nothing: tolerant, so it never costs the settings read.
+    presenceReenabledAt: z.iso.datetime().nullable().optional().catch(null),
+    // A request to show presence again waits for the passkey (human
+    // provenance §8). An older hub sends nothing; anything else reads as no.
+    presenceOnPending: z.boolean().optional().catch(false),
   })
   .transform((value) => ({
+    presenceReenabledAt: value.presenceReenabledAt ?? null,
+    presenceOnPending: value.presenceOnPending ?? false,
     presenceOptOut: value.presenceOptOut,
     mutes: value.mutes
       .map((item) => MutedDeveloperSchema.safeParse(item))
@@ -2101,6 +2394,10 @@ export interface PrivacySettings {
   readonly presenceOptOut: boolean;
   readonly mutes: readonly MutedDeveloper[];
   readonly emails: readonly OwnEmail[];
+  /** ISO instant the opt-out was last switched back off while presence is on, or null. */
+  readonly presenceReenabledAt: string | null;
+  /** A request to show presence again waits for the person's passkey (§8). */
+  readonly presenceOnPending: boolean;
 }
 
 export const getPrivacySettings = (
@@ -2136,20 +2433,74 @@ export const getIntentPositions = (
     schema: IntentPositionsSchema,
   });
 
+/**
+ * What the hub is still doing on its own after an upgrade (server
+ * routes/hub-status.ts): how many search docs its start-up pass has yet to
+ * rebuild. An older hub has no such route — the result is then not ok, and
+ * a caller says nothing rather than a zero it was never told.
+ */
+/**
+ * How the hub is reachable, as two flags doctor turns into WARNs (server
+ * routes/hub-status.ts). An older hub sends no block, and a malformed one
+ * reads as absent: it must never cost the search line beside it.
+ */
+const HubTransportSchema = z.looseObject({
+  listensOnEveryInterface: z.boolean(),
+  localhostBesideHttps: z.boolean(),
+});
+
+export type HubTransport = z.infer<typeof HubTransportSchema>;
+
+/**
+ * The start-up backfills after an upgrade (batch-2 integration review, M10
+ * and M11): rows still waiting for their hint-floor words, and — null on a
+ * keyless hub — work contexts still waiting for a vector. Absent from an
+ * older hub, and a malformed one reads as absent: either must never cost the
+ * lines beside it.
+ */
+const PendingCountSchema = z.number().int().min(0);
+
+const HubStatusSchema = z.looseObject({
+  searchDocsPending: z.number().int().min(0),
+  wordsIndexPending: PendingCountSchema.optional().catch(undefined),
+  vectorsPending: PendingCountSchema.nullable().optional().catch(undefined),
+  transport: HubTransportSchema.optional().catch(undefined),
+});
+
+export type HubStatus = z.infer<typeof HubStatusSchema>;
+
+export const getHubStatus = (ctx: HubContext): Promise<HubResult<HubStatus>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: "/api/hub-status",
+    schema: HubStatusSchema,
+  });
+
+/**
+ * Going more private takes effect at once; presence back ON is, on a hub
+ * since human provenance (0.11 §8), a draft (`draft: true`) the person
+ * confirms with their passkey. Any other field is the hub's business.
+ */
+const PresenceAnswerSchema = z.looseObject({ draft: z.boolean().optional().catch(undefined) }).catch({});
+
+export type PresenceAnswer = z.infer<typeof PresenceAnswerSchema>;
+
 export const putPresenceOptOut = (
   ctx: HubContext,
   optOut: boolean,
-): Promise<HubResult<unknown>> =>
+): Promise<HubResult<PresenceAnswer>> =>
   hubRequest(ctx, {
     method: "PUT",
     path: "/api/settings/presence",
-    schema: z.unknown(),
+    schema: PresenceAnswerSchema,
     body: { optOut },
   });
 
+/** `draft: true` from a hub since human provenance (0.11 §8): the mute waits for the person's passkey. */
 const MuteResponseSchema = z.looseObject({
   muted: MutedDeveloperSchema,
   alreadyMuted: z.boolean().default(false),
+  draft: z.boolean().optional().catch(undefined),
 });
 
 export type MuteResponse = z.infer<typeof MuteResponseSchema>;
@@ -2168,6 +2519,7 @@ export const postMute = (
 const UnmuteResponseSchema = z.looseObject({
   unmuted: MutedDeveloperSchema,
   wasMuted: z.boolean().default(true),
+  draft: z.boolean().optional().catch(undefined),
 });
 
 export type UnmuteResponse = z.infer<typeof UnmuteResponseSchema>;
@@ -2193,25 +2545,56 @@ export const TripwireSessionSchema = z.looseObject({
   workContextTitle: z.string().min(1),
   /** The overlapping session's intent; the ask reason shows it. */
   workContextIntent: tolerantIntent,
+  /**
+   * The files their change touched when it is a LARGE CHANGE, else null —
+   * the ask's qualifier; the hub ranks such a row after the focused ones and
+   * never drops it (server services/hints.ts listTargetSessions). Tolerant
+   * like the ghost row's (GhostCheckEntrySchema.largeChangeFiles).
+   */
+  largeChangeFiles: z.number().int().min(0).nullable().optional().catch(undefined),
+  /**
+   * When the overlapping work context landed, or null while it is open; an
+   * older hub sends nothing, and anything unreadable counts as open — the
+   * person's line then says "is working on", as it always did.
+   */
+  landedAt: z.string().min(1).nullable().optional().catch(undefined),
 });
 
 export type TripwireSession = z.infer<typeof TripwireSessionSchema>;
 
 export interface TripwireOutcome {
   readonly sessions: readonly TripwireSession[];
+  /**
+   * A teammate the hub will not name — one who opted out of presence — is
+   * live on the file (server services/hints.ts listAnonymousTargetPresence;
+   * the owner's decision on the batch-2 integration review's I1). Only the
+   * row's kind is read: whatever else a row might carry is never kept.
+   * False from an older hub.
+   */
+  readonly anonymous: boolean;
   /** Never absent: a hub that reported none yields UNKNOWN_COVERAGE. */
   readonly coverage: CoverageRecord;
+  /** 07 §13 (D-O3): whether the ask may end with the outcome clause; false from an older hub. */
+  readonly recordsOutcomes: boolean;
 }
+
+/** A nameless row is exactly `{ anonymous: true }` as far as this connector reads it. */
+const isAnonymousRow = (row: unknown): boolean =>
+  typeof row === "object" && row !== null && (row as { readonly anonymous?: unknown }).anonymous === true;
 
 const TripwireResponseSchema = z
   .looseObject({
     sessions: z.array(z.unknown()).default([]),
+    anonymous: z.array(z.unknown()).optional().catch(undefined),
     coverage: z.unknown().optional(),
+    recordsOutcomes: z.boolean().default(false),
   })
   .transform(
     (value): TripwireOutcome => ({
       sessions: parseRows(value.sessions, TripwireSessionSchema).rows,
+      anonymous: (value.anonymous ?? []).some(isAnonymousRow),
       coverage: parseCoverage(value.coverage),
+      recordsOutcomes: value.recordsOutcomes,
     }),
   );
 
@@ -2220,8 +2603,14 @@ export const getTripwireSessions = (
   ctx: HubContext,
   repo: string,
   value: string,
+  /**
+   * The repo declared this generated file authoritative (capture/
+   * authoritative-generated.ts): the hub must not answer "nobody" from its own
+   * path signal, which cannot read the repo's config.
+   */
+  authoritative = false,
 ): Promise<HubResult<TripwireOutcome>> => {
-  const params = new URLSearchParams({ repo, value });
+  const params = new URLSearchParams({ repo, value, ...(authoritative ? { authoritative: "1" } : {}) });
   return hubRequest(ctx, {
     method: "GET",
     path: `/api/hints/tripwire?${params.toString()}`,
@@ -2240,8 +2629,15 @@ export const LandedContextMatchSchema = z.looseObject({
   title: z.string().min(1),
   developerName: z.string().min(1),
   intent: tolerantIntent,
-  /** When the session behind the work started; the stop prints its age. */
-  workStartedAt: z.iso.datetime({ offset: true }).optional().catch(undefined),
+  /**
+   * When the session behind the work started; the stop prints its age. Or
+   * the hub's LOCATION_WITHHELD for an author who opted out of presence
+   * (server services/live-location.ts), kept so the stop can say so.
+   */
+  workStartedAt: z
+    .union([z.literal(LOCATION_WITHHELD), z.iso.datetime({ offset: true })])
+    .optional()
+    .catch(undefined),
 });
 
 export type LandedContextMatch = z.infer<typeof LandedContextMatchSchema>;
@@ -2359,6 +2755,15 @@ export const ConferenceOverlapSchema = z.looseObject({
   workContextIdB: z.string().min(1),
   sharedTargets: z.array(GhostSharedTargetSchema).catch([]),
   sharedTargetCount: z.number().int().min(0).catch(0),
+  /**
+   * Each side's size when it is a LARGE CHANGE, else null — the pair's
+   * qualifier, as on the ghost line (GhostCheckEntrySchema.largeChangeFiles),
+   * and as tolerant.
+   */
+  largeChangeFilesA: z.number().int().min(0).nullable().optional().catch(undefined),
+  largeChangeFilesB: z.number().int().min(0).nullable().optional().catch(undefined),
+  /** The pair's generated qualifier, as on the ghost line (GhostCheckEntrySchema). */
+  generatedSharedCount: z.number().int().min(0).optional().catch(undefined),
 });
 
 export type ConferenceOverlap = z.infer<typeof ConferenceOverlapSchema>;
@@ -2480,6 +2885,12 @@ export const PinEntrySchema = z.looseObject({
   verifiedByName: z.string().min(1),
   verifiedAtCommit: z.string().min(1),
   verifiedAt: z.string().min(1),
+  /**
+   * Who made it a pin (human provenance §7, round-1 L3): the person, with a
+   * passkey, or `unknown_legacy` for a pin from before provenance. Absent from
+   * an older hub, and read as absent when it is not a string.
+   */
+  provenance: z.string().min(1).optional().catch(undefined),
   brokeAt: z.string().nullable().default(null),
   brokeByName: z.string().nullable().default(null),
   speaking: z.boolean().default(false),
@@ -2592,12 +3003,19 @@ export interface CreatePinRequest {
   readonly verifiedAtCommit: string;
 }
 
-const CreatedPinSchema = z.looseObject({ id: z.string().min(1) });
+/**
+ * A hub since human provenance (0.11 §7) answers 202 with `draft: true`: the
+ * pin, or its break, waits for the person's passkey and protects nothing yet.
+ * An older hub sends no `draft` — it took effect at once.
+ */
+const CreatedPinSchema = z.looseObject({ id: z.string().min(1), draft: z.boolean().optional().catch(undefined) });
+
+export type CreatedPin = z.infer<typeof CreatedPinSchema>;
 
 export const createPin = (
   ctx: HubContext,
   request: CreatePinRequest,
-): Promise<HubResult<{ readonly id: string }>> =>
+): Promise<HubResult<CreatedPin>> =>
   hubRequest(ctx, {
     method: "POST",
     path: "/api/pins",
@@ -2621,7 +3039,7 @@ export const breakPin = (
    * still recorded; proof 3 then counts it and never scores it.
    */
   brokeAtCommit?: string,
-): Promise<HubResult<{ readonly id: string }>> =>
+): Promise<HubResult<CreatedPin>> =>
   hubRequest(ctx, {
     method: "POST",
     path: `/api/pins/${encodeURIComponent(pinId)}/broke`,

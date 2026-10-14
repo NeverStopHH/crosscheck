@@ -12,8 +12,9 @@
  *      second server of the same name shadows somebody — skip, log which).
  *   2. `session/prompt`: append ONE trailing text ContentBlock — the cached
  *      briefing on the first prompt it is ready for, the hint flow
- *      afterwards, under the UserPromptSubmit budget constants. The user's
- *      own blocks are never edited or reordered (append-don't-edit).
+ *      afterwards, and on a prompt neither spoke on the once-per-session
+ *      draft review nudge, under the UserPromptSubmit budget constants. The
+ *      user's own blocks are never edited or reordered (append-don't-edit).
  *
  * EVERY skip forwards the original bytes. Every skip that SUPPRESSES an
  * intended injection says why in the proxy log; the one exception is the
@@ -41,6 +42,9 @@ import { isOwnedMcpEntry } from "@crosscheck/connector-core/config/mcp-config.ts
 import { loadReportableConfig, resolveTimeoutMs } from "@crosscheck/connector-core/config/config.ts";
 import { hookBudget } from "@crosscheck/connector-core/config/hook-budget.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
+import { aPersonReads } from "@crosscheck/connector-core/config/tripwire.ts";
+import { prepareDraftNudge } from "@crosscheck/connector-core/flows/draft-nudge.ts";
+import type { DeliverDraftNudgeInput, PreparedDraftNudge } from "@crosscheck/connector-core/flows/draft-nudge.ts";
 import { selectAndRenderHint } from "@crosscheck/connector-core/flows/hint.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 
@@ -86,12 +90,16 @@ export interface AcpInjectorOptions {
   readonly now?: () => number;
   /** Injectable stderr for the one version-mismatch notice. */
   readonly notify?: (line: string) => void;
+  /** The draft review nudge's preparation; the core flow unless a test swaps it. */
+  readonly prepareNudge?: (input: DeliverDraftNudgeInput) => Promise<PreparedDraftNudge | null>;
 }
 
 export interface AcpInjectorCounters {
   readonly mcpAppends: number;
   readonly briefings: number;
   readonly hints: number;
+  /** Draft review nudges appended — at most one per session. */
+  readonly nudges: number;
   readonly skips: number;
 }
 
@@ -148,6 +156,7 @@ const raceBudget = async <T>(
 export const createAcpInjector = (options: AcpInjectorOptions): AcpInjector => {
   const { env, logger, capture } = options;
   const now = options.now ?? ((): number => Date.now());
+  const prepareNudge = options.prepareNudge ?? prepareDraftNudge;
   const notify =
     options.notify ??
     ((line: string): void => {
@@ -159,7 +168,7 @@ export const createAcpInjector = (options: AcpInjectorOptions): AcpInjector => {
   const promptBudgetMs =
     USER_PROMPT_SUBMIT_BUDGET_RATIO * resolveTimeoutMs(env, null);
 
-  const counters = { mcpAppends: 0, briefings: 0, hints: 0, skips: 0 };
+  const counters = { mcpAppends: 0, briefings: 0, hints: 0, nudges: 0, skips: 0 };
 
   // The launcher, resolved once, kicked off at construction. A session/new
   // arriving before it settles AWAITS it under the setup budget rather than
@@ -381,15 +390,50 @@ export const createAcpInjector = (options: AcpInjectorOptions): AcpInjector => {
     if (text === null) {
       return skip("budget", sessionId);
     }
-    if (text.length === 0) {
+    if (text.length > 0) {
+      counters.hints += 1;
+      logger.line(`inject hint session=${sessionId} chars=${text.length}`);
+      return appendBlock(text);
+    }
+    // A prompt neither the briefing nor a hint spoke on may carry the
+    // once-per-session draft review nudge (core flows/draft-nudge.ts), within
+    // what is left of the same budget.
+    //
+    // PREPARED under the race, SPENT only after it: a preparation the budget
+    // abandons runs on in the background (this proxy is never killed), and
+    // spending the slot there would mark a nudge delivered that no prompt
+    // carried.
+    const nudgeBudget = hookBudget(deadline, resolveTimeoutMs(env, null), now);
+    const prepared = await raceBudget(
+      prepareNudge({
+        home: view.home,
+        hub: view.hub,
+        hostSessionKey: view.hostSessionKey,
+        repoId: view.repoId,
+        now: new Date(now()),
+        personReads: aPersonReads(env),
+        spareMs: nudgeBudget.spareMs,
+      }),
+      deadline - now(),
+    );
+    // THE COMMIT IS BOUNDED BY THE SAME BUDGET: a state lock another hook
+    // holds would otherwise keep this prompt waiting out the lock's whole
+    // patience after the race above was won. A commit that runs out of time
+    // spends nothing, and the nudge is not shown.
+    const shown = prepared === null || prepared.text.length === 0 ? null : prepared;
+    if (shown === null || !(await shown.commit(Math.max(0, deadline - now())))) {
+      // Nothing due shows nothing, so spending the slot on it cannot be lost.
+      if (prepared !== null && prepared.text.length === 0) {
+        await prepared.commit(Math.max(0, deadline - now()));
+      }
       // Silence is not a skip worth logging per prompt — it is the normal
       // no-candidates outcome; count it, no log noise.
       counters.skips += 1;
       return null;
     }
-    counters.hints += 1;
-    logger.line(`inject hint session=${sessionId} chars=${text.length}`);
-    return appendBlock(text);
+    counters.nudges += 1;
+    logger.line(`inject draft-nudge session=${sessionId} chars=${shown.text.length}`);
+    return appendBlock(shown.text);
   };
 
   return {
@@ -465,7 +509,7 @@ export const createAcpInjector = (options: AcpInjectorOptions): AcpInjector => {
     summarize() {
       logger.line(
         `inject mcp=${counters.mcpAppends} briefings=${counters.briefings} ` +
-          `hints=${counters.hints} skips=${counters.skips}`,
+          `hints=${counters.hints} nudges=${counters.nudges} skips=${counters.skips}`,
       );
     },
   };

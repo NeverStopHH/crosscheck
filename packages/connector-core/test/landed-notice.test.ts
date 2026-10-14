@@ -8,6 +8,7 @@
  * sessions, and only the hub can show it was kept. The one ordering question
  * — an answer before a notice — uses the fake hint hub, where both can be set.
  */
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -28,7 +29,7 @@ import { renderEditWarning } from "../src/hints/render.ts";
 import type { LandedChanges, LandedCommit } from "../src/landed-changes/probe.ts";
 import { flushSpool } from "../src/spool/flush.ts";
 import { readSessionState, writeSessionState } from "../src/state/session-state.ts";
-import { answeredQuestion, rejectedApproachCandidate, startHintHub } from "./fixtures/hint-hub.ts";
+import { answeredQuestion, injectableCandidate, startHintHub } from "./fixtures/hint-hub.ts";
 import type { HintHub } from "./fixtures/hint-hub.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
 
@@ -48,7 +49,7 @@ const cleanups: string[] = [];
 const fakeHubs: HintHub[] = [];
 
 beforeAll(async () => {
-  server = Bun.serve({ port: 0, fetch: createServer({ db: await createDb(), adminToken: ADMIN_TOKEN }).fetch });
+  server = serveLoopback({ port: 0, fetch: createServer({ db: await createDb(), adminToken: ADMIN_TOKEN }).fetch });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
 });
 
@@ -139,6 +140,7 @@ const world = async (label: string): Promise<World> => {
     hub: {
       hubUrl,
       apiKey: mike.apiKey,
+      keyOrigin: hubUrl,
       timeoutMs: TEST_TIMEOUT_MS,
       home,
       repoKey: repoKey(hubUrl, REPO_ID),
@@ -483,7 +485,7 @@ describe("on Mike's next prompt", () => {
         home,
         repo,
         hostSessionKey: "notice-answer-uuid",
-        hub: { hubUrl: fake.url, apiKey: "test-key", timeoutMs: TEST_TIMEOUT_MS, home, repoKey: repoKey(fake.url, REPO_ID), now: () => new Date() },
+        hub: { hubUrl: fake.url, apiKey: "test-key", keyOrigin: fake.url, timeoutMs: TEST_TIMEOUT_MS, home, repoKey: repoKey(fake.url, REPO_ID), now: () => new Date() },
       };
 
       const first = await promptIn(where);
@@ -508,7 +510,7 @@ const fakeSession = async (label: string, fake: HintHub) => {
     home,
     repo,
     hostSessionKey,
-    hub: { hubUrl: fake.url, apiKey: "test-key", timeoutMs: TEST_TIMEOUT_MS, home, repoKey: repoKey(fake.url, REPO_ID), now: () => new Date() },
+    hub: { hubUrl: fake.url, apiKey: "test-key", keyOrigin: fake.url, timeoutMs: TEST_TIMEOUT_MS, home, repoKey: repoKey(fake.url, REPO_ID), now: () => new Date() },
   };
 };
 
@@ -669,7 +671,7 @@ describe("told only while the budget spares room to show it", () => {
     async () => {
       const fake = startHintHub();
       fakeHubs.push(fake);
-      fake.setCandidates([rejectedApproachCandidate()]);
+      fake.setCandidates([injectableCandidate()]);
       fake.setNotices([notice({ stoppedAt: new Date().toISOString() })]);
       const where = await fakeSession("notice-no-room-pointer", fake);
 

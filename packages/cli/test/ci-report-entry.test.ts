@@ -7,10 +7,21 @@
  *
  * The input is the "no token" path every repository without a configured hub
  * takes: one line, exit 0, nothing sent — no network in this test.
+ *
+ * EACH CHILD IS A WHOLE BUN START, AND ITS CLOCK IS THE MACHINE'S (final
+ * review of batch 2, the flake): the no-token path parses argv, reads the
+ * environment, prints one line and exits — no spawn, no request, no lock —
+ * and takes 60 ms alone, 2.5× that under 4× CPU oversubscription, and once
+ * 20 s beside the release gate's 350-process fan-out on a shared machine.
+ * That is starvation, never a hang, so the test does not let the runner's
+ * timeout be the judge: each child has its own kill deadline, CHILD_KILL_AFTER_MS,
+ * past which the test fails NAMING the child, its wall time and the load,
+ * and the spawning tests' own timeout lies above that deadline. One spawn
+ * pair serves both the "not reported" assertion and the two-entries one.
  */
 import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { loadavg, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { EXIT_OK, EXIT_USAGE } from "@crosscheck/connector-core/constants.ts";
@@ -50,54 +61,90 @@ interface Outcome {
   readonly exitCode: number;
 }
 
+/** A bun start that has not exited by then is reported, not waited for: 60 ms alone, seconds under a fan-out. */
+const CHILD_KILL_AFTER_MS = 60_000;
+/** Above the kill deadline, so the child's own report is what a starved run prints. */
+const SPAWN_TEST_TIMEOUT_MS = CHILD_KILL_AFTER_MS + 30_000;
+
 const run = async (cmd: readonly string[], env: Record<string, string>): Promise<Outcome> => {
   const cwd = await mkdtemp(join(tmpdir(), "cx-ci-entry-"));
   dirs.push(cwd);
   await writeFile(join(cwd, "junit.xml"), ONE_GREEN_TEST);
+  const startedAt = performance.now();
   const child = Bun.spawn({
     cmd: [...cmd],
     cwd,
     env: { PATH: process.env["PATH"] ?? "", HOME: cwd, ...env },
+    stdin: "ignore",
     stdout: "pipe",
     stderr: "ignore",
   });
-  const [stdout, exitCode] = await Promise.all([new Response(child.stdout).text(), child.exited]);
-  return { stdout, exitCode };
+  const killed = { value: false };
+  const deadline = setTimeout(() => {
+    killed.value = true;
+    child.kill("SIGKILL");
+  }, CHILD_KILL_AFTER_MS);
+  try {
+    const [stdout, exitCode] = await Promise.all([new Response(child.stdout).text(), child.exited]);
+    if (killed.value) {
+      const elapsed = Math.round(performance.now() - startedAt);
+      const load = loadavg().map((value) => value.toFixed(1)).join(" ");
+      throw new Error(
+        `the ci-report child (pid ${String(child.pid)}, ${cmd.slice(1).join(" ")}) had not exited after ${String(elapsed)} ms ` +
+          `(load ${load}): a bun start starved past CHILD_KILL_AFTER_MS, or a real hang`,
+      );
+    }
+    return { stdout, exitCode };
+  } finally {
+    clearTimeout(deadline);
+  }
 };
 
 describe("the CI reporter's two entries", () => {
-  test("`crosscheck ci-report` says the run was not reported and exits 0 without a token", async () => {
-    const outcome = await run([process.execPath, BIN_PATH, "ci-report", ...ARGS], RUNNER_ENV);
-    expect(outcome.exitCode).toBe(EXIT_OK);
-    expect(outcome.stdout).toContain("not reported");
-  });
+  test(
+    "`crosscheck ci-report` says the run was not reported and exits 0 without a token, and the repository script prints the same and exits the same",
+    async () => {
+      const [command, script] = await Promise.all([
+        run([process.execPath, BIN_PATH, "ci-report", ...ARGS], RUNNER_ENV),
+        run([process.execPath, SCRIPT_PATH, ...ARGS], RUNNER_ENV),
+      ]);
+      expect(command.exitCode).toBe(EXIT_OK);
+      expect(command.stdout).toContain("not reported");
+      expect(command).toEqual(script);
+    },
+    SPAWN_TEST_TIMEOUT_MS,
+  );
 
-  test("the command and the repository script print the same and exit the same", async () => {
-    const [command, script] = await Promise.all([
-      run([process.execPath, BIN_PATH, "ci-report", ...ARGS], RUNNER_ENV),
-      run([process.execPath, SCRIPT_PATH, ...ARGS], RUNNER_ENV),
-    ]);
-    expect(command).toEqual(script);
-  });
+  test(
+    "off a CI runner the command refuses as a usage error, like the script",
+    async () => {
+      const [command, script] = await Promise.all([
+        run([process.execPath, BIN_PATH, "ci-report", ...ARGS], {}),
+        run([process.execPath, SCRIPT_PATH, ...ARGS], {}),
+      ]);
+      expect(command.exitCode).toBe(EXIT_USAGE);
+      expect(command).toEqual(script);
+    },
+    SPAWN_TEST_TIMEOUT_MS,
+  );
 
-  test("off a CI runner the command refuses as a usage error, like the script", async () => {
-    const [command, script] = await Promise.all([
-      run([process.execPath, BIN_PATH, "ci-report", ...ARGS], {}),
-      run([process.execPath, SCRIPT_PATH, ...ARGS], {}),
-    ]);
-    expect(command.exitCode).toBe(EXIT_USAGE);
-    expect(command).toEqual(script);
-  });
+  test(
+    "`crosscheck ci-report --help` answers with the reporter's usage, not the CLI's",
+    async () => {
+      const outcome = await run([process.execPath, BIN_PATH, "ci-report", "--help"], RUNNER_ENV);
+      expect(outcome).toEqual({ stdout: CI_REPORT_USAGE, exitCode: EXIT_OK });
+    },
+    SPAWN_TEST_TIMEOUT_MS,
+  );
 
-  test("`crosscheck ci-report --help` answers with the reporter's usage, not the CLI's", async () => {
-    const outcome = await run([process.execPath, BIN_PATH, "ci-report", "--help"], RUNNER_ENV);
-    expect(outcome).toEqual({ stdout: CI_REPORT_USAGE, exitCode: EXIT_OK });
-  });
-
-  test("the CLI's own usage names the command, so `crosscheck --help` shows where it went", async () => {
-    const outcome = await run([process.execPath, BIN_PATH, "--help"], RUNNER_ENV);
-    expect(outcome.stdout).toContain("  ci-report --junit <file>");
-  });
+  test(
+    "the CLI's own usage names the command, so `crosscheck --help` shows where it went",
+    async () => {
+      const outcome = await run([process.execPath, BIN_PATH, "--help"], RUNNER_ENV);
+      expect(outcome.stdout).toContain("  ci-report --junit <file>");
+    },
+    SPAWN_TEST_TIMEOUT_MS,
+  );
 });
 
 describe("the reporter never turns a CI job red for its own sake", () => {

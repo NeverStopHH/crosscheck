@@ -23,13 +23,15 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 import { and, desc, eq, gt, gte, isNull, lte, sql } from "drizzle-orm";
 import { isoBase64URL } from "@simplewebauthn/server/helpers";
-import type { EnrolmentSource, PasskeyRevoker } from "@crosscheck/schema";
+import { HUMAN_PROVENANCE } from "@crosscheck/schema";
+import type { EnrolmentSource, PasskeyRevokeReason, PasskeyRevoker, ProvenanceClass } from "@crosscheck/schema";
 
 import { ENROLMENT_CODE_TTL_HOURS, PASSKEY_COOLOFF_HOURS } from "../constants.ts";
 import { developers, passkeyEnrollments, passkeys } from "../db/schema.ts";
 import type { Db, DbExecutor } from "../db/client.ts";
 import type { StoredCredential } from "./webauthn.ts";
 import { terminateWaiversSignedBy } from "./waiver-terminations.ts";
+import { rollBackConfirmationsOf } from "./confirmation-rollback.ts";
 
 const HOUR_MS = 3_600_000;
 
@@ -237,6 +239,23 @@ export const usableCredentials = async (input: {
   return rows.map((row) => ({ passkeyId: row.id, credential: storedOf(row) }));
 };
 
+/**
+ * THE CREDENTIALS THAT MAY CONFIRM ONE'S OWN DRAFTS (human provenance §6, Q19):
+ * not revoked, cooling off or not. Confirming one's own labels, ratings, pins
+ * and privacy settings is not a privileged action, so a passkey enrolled a
+ * minute ago may do it at once; the enrolment is still announced.
+ */
+export const confirmingCredentials = async (input: {
+  readonly db: DbExecutor;
+  readonly developerId: string;
+}): Promise<readonly UsableCredential[]> => {
+  const rows = await input.db
+    .select()
+    .from(passkeys)
+    .where(and(eq(passkeys.developerId, input.developerId), isNull(passkeys.revokedAt)));
+  return rows.map((row) => ({ passkeyId: row.id, credential: storedOf(row) }));
+};
+
 /** Every unrevoked credential, cooling off or not — what a new registration must not duplicate. */
 export const enrolledCredentials = async (input: {
   readonly db: DbExecutor;
@@ -270,26 +289,91 @@ export type PasskeyRevocation =
   | { readonly kind: "passkey"; readonly developerId: string }
   | { readonly kind: "admin" };
 
-export type RevokePasskeyRefusal = "unknown_passkey" | "already_revoked" | "passkey_required";
+export type RevokePasskeyRefusal =
+  | "unknown_passkey"
+  | "already_revoked"
+  | "passkey_required"
+  | "compromised_needs_another_passkey";
+
+export interface PasskeyRevoked {
+  readonly revoked: true;
+  readonly terminated: number;
+  /** Its confirmations are void — it never stood, or it was declared compromised — and were rolled back. */
+  readonly voided: boolean;
+  /** The passkey's owner. */
+  readonly developerId: string;
+  /** Whose presence the roll-back switched off again; their location index needs rebuilding. */
+  readonly presenceRestoredFor: string | null;
+}
+
+/** The class a roll-back's restored opt-out is recorded as: a passkey's hand, or a key's (or the admin's). */
+const provenanceOfRevoker = (by: PasskeyRevocation): ProvenanceClass =>
+  by.kind === "passkey" ? HUMAN_PROVENANCE : "agent_asserted";
+
+type RevokeRow = {
+  readonly developerId: string;
+  readonly credentialId: string;
+  readonly revokedAt: Date | null;
+  readonly usableFrom: Date;
+  readonly revokeReason: PasskeyRevokeReason | null;
+};
+
+/** Why a revocation may not go ahead — the rules in the order they are checked (see revokePasskey). */
+const refusalOf = (
+  row: RevokeRow | undefined,
+  input: { readonly by: PasskeyRevocation; readonly now: Date; readonly reason: PasskeyRevokeReason; readonly signerCredentialId: string | null },
+): RevokePasskeyRefusal | null => {
+  const by = input.by;
+  if (row === undefined || (by.kind !== "admin" && row.developerId !== by.developerId)) {
+    return "unknown_passkey";
+  }
+  const isCompromise = input.reason === "compromised";
+  if (isCompromise && (by.kind !== "passkey" || input.signerCredentialId === row.credentialId)) {
+    return "compromised_needs_another_passkey";
+  }
+  const neverStood = row.revokedAt !== null && row.revokedAt.getTime() < row.usableFrom.getTime();
+  if (row.revokedAt !== null) {
+    // A retired passkey may still be declared compromised; nothing else reopens a revocation.
+    return isCompromise && row.revokeReason !== "compromised" && !neverStood ? null : "already_revoked";
+  }
+  if (by.kind === "owner" && row.usableFrom.getTime() <= input.now.getTime()) {
+    return "passkey_required";
+  }
+  return null;
+};
 
 /**
  * CLOSE A PASSKEY (04a §4.4). The rules, in the order they are checked:
- * another developer's passkey is `unknown` (existence is not disclosed);
- * a revoked one stays revoked; the api key alone may revoke only during the
- * cool-off — after it, an agent with the key could otherwise lock its human
- * out of the one authority the agent cannot use itself.
+ * another developer's passkey is `unknown` (existence is not disclosed); a
+ * `compromised` revocation is signed by ANOTHER of the person's passkeys,
+ * never by the key, the admin token or the passkey itself; a revoked one stays
+ * revoked — save that a retired one may later be declared compromised; the api
+ * key alone may revoke only during the cool-off — after it, an agent with the
+ * key could otherwise lock its human out of the one authority the agent cannot
+ * use itself.
  *
  * AND EVERY FENCE IT OPENED CLOSES WITH IT (04a D-PK-1, Nick 2026-10-02): the
  * live grants this credential signed get a hub-written closure row, in THIS
  * transaction, so the revocation and the closures land together or not at
  * all. Every revocation path comes through here; `terminated` says how many.
+ *
+ * AND WHAT IT CONFIRMED FOLLOWS ITS REASON (round-2 R2-H3, R2-M3): `retired`
+ * keeps everything the passkey confirmed while it stood; a passkey revoked in
+ * its cool-off never stood, and a `compromised` one is retracted — either way
+ * its confirmations are void, their effects are rolled back here, in this
+ * transaction (services/confirmation-rollback.ts), and their drafts return to
+ * the person's page.
  */
 export const revokePasskey = async (input: {
   readonly db: Db;
   readonly passkeyId: string;
   readonly by: PasskeyRevocation;
   readonly now: Date;
-}): Promise<{ revoked: true; terminated: number } | { refusal: RevokePasskeyRefusal }> =>
+  /** Retired unless a passkey ceremony said otherwise. */
+  readonly reason?: PasskeyRevokeReason;
+  /** The credential that signed a `passkey` revocation. */
+  readonly signerCredentialId?: string;
+}): Promise<PasskeyRevoked | { refusal: RevokePasskeyRefusal }> =>
   input.db.transaction(async (tx) => {
     const rows = await tx
       .select({
@@ -297,32 +381,41 @@ export const revokePasskey = async (input: {
         credentialId: passkeys.credentialId,
         revokedAt: passkeys.revokedAt,
         usableFrom: passkeys.usableFrom,
+        revokeReason: passkeys.revokeReason,
       })
       .from(passkeys)
       .where(eq(passkeys.id, input.passkeyId))
       .limit(1);
     const row = rows[0];
+    const reason = input.reason ?? "retired";
+    const refusal = refusalOf(row, { by: input.by, now: input.now, reason, signerCredentialId: input.signerCredentialId ?? null });
+    if (refusal !== null || row === undefined) {
+      return { refusal: refusal ?? ("unknown_passkey" as const) };
+    }
     const by = input.by;
-    if (row === undefined || (by.kind !== "admin" && row.developerId !== by.developerId)) {
-      return { refusal: "unknown_passkey" as const };
+    const revokedAt = row.revokedAt ?? input.now;
+    if (row.revokedAt === null) {
+      const revokedByKind: PasskeyRevoker = by.kind;
+      await tx
+        .update(passkeys)
+        .set({ revokedAt, revokedByKind, revokedBy: by.kind === "admin" ? null : by.developerId, revokeReason: reason })
+        .where(and(eq(passkeys.id, input.passkeyId), isNull(passkeys.revokedAt)));
+    } else {
+      await tx.update(passkeys).set({ revokeReason: reason }).where(eq(passkeys.id, input.passkeyId));
     }
-    if (row.revokedAt !== null) {
-      return { refusal: "already_revoked" as const };
-    }
-    if (by.kind === "owner" && row.usableFrom.getTime() <= input.now.getTime()) {
-      return { refusal: "passkey_required" as const };
-    }
-    const revokedByKind: PasskeyRevoker = by.kind;
-    await tx
-      .update(passkeys)
-      .set({
-        revokedAt: input.now,
-        revokedByKind,
-        revokedBy: by.kind === "admin" ? null : by.developerId,
-      })
-      .where(and(eq(passkeys.id, input.passkeyId), isNull(passkeys.revokedAt)));
-    const terminated = await terminateWaiversSignedBy({ db: tx, credentialId: row.credentialId, now: input.now });
-    return { revoked: true as const, terminated };
+    const terminated =
+      row.revokedAt === null ? await terminateWaiversSignedBy({ db: tx, credentialId: row.credentialId, now: input.now }) : 0;
+    const voided = reason === "compromised" || revokedAt.getTime() < row.usableFrom.getTime();
+    const rolledBack = voided
+      ? await rollBackConfirmationsOf(tx, { credentialId: row.credentialId, now: input.now, provenance: provenanceOfRevoker(by) })
+      : { presenceRestoredFor: null };
+    return {
+      revoked: true as const,
+      terminated,
+      voided,
+      developerId: row.developerId,
+      presenceRestoredFor: rolledBack.presenceRestoredFor,
+    };
   });
 
 /** One passkey as its owner sees it on /ui/passkeys. */

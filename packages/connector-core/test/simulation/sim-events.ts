@@ -30,3 +30,5 @@ export const recover = (c: number): SimEvent => ({ kind: "recover", c });
 export const beat = (c: number): SimEvent => ({ kind: "beat", c });
 export const straggle = (c: number): SimEvent => ({ kind: "straggle", c });
 export const ioFail = (at: number, count: number): SimEvent => ({ kind: "ioFail", at, count });
+/** An edit in one of the conversation's sibling worktrees, on one of its branches (DESIGN.md "One session, many topics"). */
+export const topicEdit = (c: number, worktree: number, branch: number): SimEvent => ({ kind: "topicEdit", c, worktree, branch });

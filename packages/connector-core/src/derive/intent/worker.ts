@@ -50,7 +50,15 @@ import {
   withRecordedIntent,
 } from "../../state/session-state.ts";
 import type { SessionState } from "../../state/session-state.ts";
-import { withIntentFailure, withIntentNone, withIntentSet } from "./gate.ts";
+import {
+  hasTopic,
+  intentPromptOf,
+  withIntentFailure,
+  withIntentNone,
+  withIntentRefusal,
+  withIntentSet,
+  withIntentSkip,
+} from "./gate.ts";
 import { resolveIntentArgv } from "./prompt.ts";
 import { readModelSentence } from "../../model/parse.ts";
 import {
@@ -84,6 +92,7 @@ export const parseIntentWorkerArgs = (
 /** Booked drops, named so status/doctor can say why a fire landed nothing. */
 const DROPPED_NO_TITLE = "dropped: session state predates intent support (no title)";
 const DROPPED_EMPTY_PROMPT = "dropped: empty prompt";
+const DROPPED_CONTENT_FREE = "dropped: the turn carries no task";
 const DROPPED_EMPTY_ANSWER = "dropped: empty answer";
 const DROPPED_NOT_SENTENCE = "dropped: the answer was not a sentence";
 // A cut answer is not a malformed one. See gate.ts UNREADABLE_TRUNCATED:
@@ -91,10 +100,20 @@ const DROPPED_NOT_SENTENCE = "dropped: the answer was not a sentence";
 const DROPPED_TRUNCATED = "dropped: the answer hit the output cap and was cut";
 const DROPPED_ECHO = "dropped: the sentence echoes a delivered hint";
 const DROPPED_SECRET = "dropped: secret-like text";
+const DROPPED_NO_TOPIC = "dropped: no topic";
 const DROPPED_CONTRACT = "dropped: the record failed the wire contract";
 
+/** A runner loss. */
 const bookFailure = (home: string, sessionId: string, detail: string): Promise<boolean> =>
   updateSessionState(home, sessionId, (fresh) => withIntentFailure(fresh, detail));
+
+/** The model answered; nothing it said was kept. */
+const bookRefusal = (home: string, sessionId: string, detail: string): Promise<boolean> =>
+  updateSessionState(home, sessionId, (fresh) => withIntentRefusal(fresh, detail));
+
+/** Dropped before the model was asked. */
+const bookSkip = (home: string, sessionId: string, detail: string): Promise<boolean> =>
+  updateSessionState(home, sessionId, (fresh) => withIntentSkip(fresh, detail));
 
 const deriveIntent = async (args: IntentWorkerArgs, env: Env): Promise<void> => {
   const home = crosscheckHome(env);
@@ -109,13 +128,22 @@ const deriveIntent = async (args: IntentWorkerArgs, env: Env): Promise<void> => 
     return;
   }
   if (prompt.trim().length === 0) {
-    await bookFailure(home, args.claudeSessionId, DROPPED_EMPTY_PROMPT);
+    await bookSkip(home, args.claudeSessionId, DROPPED_EMPTY_PROMPT);
+    return;
+  }
+  // A TURN THAT CARRIES NO TASK IS NEVER AN INTENT (hold-out review, H3). The
+  // hook gates the fire on the same rule; this re-reads what was parked, so a
+  // turn parked before the rule knew better — or by a connector that gated
+  // differently — dies here, before any model call, and the floors and
+  // intent-only pointers never meet a derived intent born of "mach weiter".
+  if (intentPromptOf(prompt) === null) {
+    await bookFailure(home, args.claudeSessionId, DROPPED_CONTENT_FREE);
     return;
   }
   if (state.workContextTitle === null || state.workContextStatus === null) {
     // A pre-upgrade state file: the update record needs title + status and
     // fabricating either would upload a title this session never chose.
-    await bookFailure(home, args.claudeSessionId, DROPPED_NO_TITLE);
+    await bookSkip(home, args.claudeSessionId, DROPPED_NO_TITLE);
     return;
   }
 
@@ -141,7 +169,7 @@ const deriveIntent = async (args: IntentWorkerArgs, env: Env): Promise<void> => 
     return;
   }
   if (answer.kind === "unreadable") {
-    await bookFailure(
+    await bookRefusal(
       home,
       args.claudeSessionId,
       result.truncated
@@ -154,7 +182,14 @@ const deriveIntent = async (args: IntentWorkerArgs, env: Env): Promise<void> => 
   }
   const sentence = cutWellFormed(answer.text, MAX_INTENT_SUMMARY_CHARS);
   if (sentence.length === 0) {
-    await bookFailure(home, args.claudeSessionId, DROPPED_EMPTY_ANSWER);
+    await bookRefusal(home, args.claudeSessionId, DROPPED_EMPTY_ANSWER);
+    return;
+  }
+  // AN INTENT OF MACHINERY IS NO INTENT (hold-out review round 3, H2):
+  // "Continue the session after the usage limit reset" names no topic, and an
+  // intent that said it became an intent-only tree every limit chatter found.
+  if (!hasTopic(sentence)) {
+    await bookFailure(home, args.claudeSessionId, DROPPED_NO_TOPIC);
     return;
   }
 
@@ -170,11 +205,11 @@ const deriveIntent = async (args: IntentWorkerArgs, env: Env): Promise<void> => 
     repoKey(fresh.hubUrl, fresh.repoId),
   );
   if (isEchoOfDeliveredHint(sentence, [...fresh.deliveredHintHashes, ...persistedHashes])) {
-    await bookFailure(home, args.claudeSessionId, DROPPED_ECHO);
+    await bookRefusal(home, args.claudeSessionId, DROPPED_ECHO);
     return;
   }
   if (containsSecret(sentence)) {
-    await bookFailure(home, args.claudeSessionId, DROPPED_SECRET);
+    await bookRefusal(home, args.claudeSessionId, DROPPED_SECRET);
     return;
   }
   await appendIntent(home, args.claudeSessionId, fresh, sentence, env);
@@ -197,7 +232,7 @@ const appendIntent = async (
     capturedAt: now.toISOString(),
   });
   if (!intent.success || fresh.workContextTitle === null || fresh.workContextStatus === null) {
-    await bookFailure(home, claudeSessionId, DROPPED_CONTRACT);
+    await bookRefusal(home, claudeSessionId, DROPPED_CONTRACT);
     return;
   }
   const envelope = workContextRecord(
@@ -205,6 +240,9 @@ const appendIntent = async (
       workContextId: fresh.workContextId,
       sessionId: fresh.crosscheckSessionId,
       title: fresh.workContextTitle,
+      // The marker the title registered with, so an intent update never
+      // drops it (the hub keeps a stored one only while the title holds).
+      titleSource: fresh.workContextTitleSource ?? undefined,
       status: fresh.workContextStatus,
       intent: intent.data,
     },
@@ -218,7 +256,7 @@ const appendIntent = async (
   // The shared wire contract, reused not duplicated: what the hub would
   // refuse never enters the spool.
   if (!parseRecord(envelope).ok) {
-    await bookFailure(home, claudeSessionId, DROPPED_CONTRACT);
+    await bookRefusal(home, claudeSessionId, DROPPED_CONTRACT);
     return;
   }
   // OFF THE HOOK PATH, so a new lock acquisition costs nobody's keystroke —
@@ -242,7 +280,7 @@ const appendIntent = async (
   // compares it against the team's — this worker deliberately does NOT run
   // that check itself, so one detached process stays one model call.
   await updateSessionState(home, claudeSessionId, (state) =>
-    withIntentSet(withRecordedIntent(state, sentence)),
+    withIntentSet(withRecordedIntent(state, sentence, "derived")),
   );
 };
 

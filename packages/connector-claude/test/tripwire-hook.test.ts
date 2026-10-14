@@ -4,7 +4,7 @@
  * and the word "deny" appearing as a decision is a failure of this suite.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { rm } from "node:fs/promises";
+import { chmod, rm } from "node:fs/promises";
 
 import { runHook } from "../src/index.ts";
 import type { Env } from "../src/index.ts";
@@ -13,9 +13,11 @@ import {
   writeSessionState,
 } from "@crosscheck/connector-core/state/session-state.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
-import { makeHome, makeRepo, writeRepoFile } from "../../connector-core/test/helpers.ts";
+import { git, makeHome, makeRepo, writeRepoFile } from "../../connector-core/test/helpers.ts";
 import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import { readSpoolLines } from "@crosscheck/connector-core/spool/files.ts";
+import { outcomeClause } from "@crosscheck/connector-core/hints/outcome-clause.ts";
+import { COLLISION_RELAY_SENTENCE } from "@crosscheck/connector-core/hints/collision-notice.ts";
 import {
   hintDeliveryId,
   tripwireDeliveryId,
@@ -91,6 +93,9 @@ const sessionState = (repo: string, hubUrl: string): SessionState => ({
   intentSetCount: 0,
   intentFailCount: 0,
   intentLastFailure: null,
+  intentRefusedCount: 0,
+  intentSkippedCount: 0,
+  intentLastDrop: null,
   workContextIntent: null,
   ghostPending: false,
   gitTouchCount: 0,
@@ -109,6 +114,13 @@ const sessionState = (repo: string, hubUrl: string): SessionState => ({
   toolWindows: [],
   toolWindowEvictions: 0,
   toolWindowMisses: 0,
+  draftNudge: null,
+  draftNudgeRetryAt: null,
+  deriveFires: [],
+  topicContexts: [],
+  startBranch: null,
+  sessionTouchedAt: null,
+  topicOverflowCount: 0,
   outsideRootDrops: 0,
   knownWorktreeRoots: [],
   editToolFires: 0,
@@ -118,6 +130,9 @@ const sessionState = (repo: string, hubUrl: string): SessionState => ({
   lastEditedPath: null,
   lastEditedPathResolvedAgainst: null,
   hintCandidatesSeen: 0,
+  flooredPromptCount: 0,
+  harnessTurnCount: 0,
+  quietCallCount: 0,
 });
 
 interface Fixture {
@@ -201,9 +216,11 @@ describe("the tripwire asks — once — on live teammate overlap", () => {
     const stdout = await runHook("pre-tool-use", editPayload(repo, OVERLAP_FILE), env);
 
     // Assert: the model-facing field carries the reason AND the get_diagnosis id
+    // — the reason verbatim, plus, on this first hit of the teammate's work,
+    // the one relay sentence (test/collision-notice-hook.test.ts)
     const decision = decisionOf(stdout);
     expect(decision?.permissionDecision).toBe("ask");
-    expect(decision?.additionalContext).toBe(decision?.permissionDecisionReason);
+    expect(decision?.additionalContext).toBe(`${decision?.permissionDecisionReason ?? ""}\n${COLLISION_RELAY_SENTENCE}`);
     expect(decision?.additionalContext).toContain("get_diagnosis");
     expect(decision?.additionalContext).toContain("Nick");
   });
@@ -233,7 +250,11 @@ describe("the tripwire asks — once — on live teammate overlap", () => {
     // Act
     const second = await runHook("pre-tool-use", editPayload(repo, OVERLAP_FILE), env);
 
-    // Assert — silence, and no second hub call for this file
+    // Assert — silence. The same teammate on the same file is never asked
+    // about twice, and within the re-check window (round 2, L1) the hub is
+    // not asked at all; once it passes, it is asked again, because a teammate
+    // who starts on the file later is new on it (review M4) —
+    // test/collision-tripwire-ttl.test.ts pins both halves.
     expect(second).toBe("");
     expect(hub.calls.tripwire).toBe(1);
   });
@@ -258,6 +279,54 @@ describe("the tripwire asks — once — on live teammate overlap", () => {
   });
 });
 
+describe("the ask ends with the outcome clause where the hub records outcomes (07 §13)", () => {
+  test("the ask and the model's context both end with ONE clause naming the teammate's context", async () => {
+    // Arrange — the "stop, Ken built it this way" moment
+    const { repo, hub, env } = await fixture("outcome-ask");
+    hub.setRecordsOutcomes(true);
+
+    // Act
+    const stdout = await runHook("pre-tool-use", editPayload(repo, OVERLAP_FILE), env);
+
+    // Assert
+    const decision = decisionOf(stdout);
+    expect(decision?.permissionDecision).toBe("ask");
+    expect(decision?.permissionDecisionReason?.split("\n").at(-1)).toBe(outcomeClause(CANDIDATE_CONTEXT_ID));
+    // The model's copy is the same text, then the relay sentence a first hit carries.
+    expect(decision?.additionalContext).toBe(`${decision?.permissionDecisionReason ?? ""}\n${COLLISION_RELAY_SENTENCE}`);
+    expect(decision?.additionalContext?.split("mark_hint_outcome").length).toBe(2);
+  });
+
+  test("notice mode carries the clause too — the model was told", async () => {
+    // Arrange
+    const { repo, hub, env } = await fixture("outcome-notice");
+    hub.setRecordsOutcomes(true);
+
+    // Act
+    const stdout = await runHook("pre-tool-use", editPayload(repo, OVERLAP_FILE), {
+      ...env,
+      CROSSCHECK_TRIPWIRE: "notice",
+    });
+
+    // Assert: the clause ends the ask's own text; the relay sentence follows it
+    const lines = decisionOf(stdout)?.additionalContext?.split("\n") ?? [];
+    expect(lines.at(-2)).toBe(outcomeClause(CANDIDATE_CONTEXT_ID));
+    expect(lines.at(-1)).toBe(COLLISION_RELAY_SENTENCE);
+  });
+
+  test("a hub that does not say it records outcomes gets the ask without the clause", async () => {
+    // Arrange — the fixture's default: the field absent, as every older hub sends it
+    const { repo, env } = await fixture("outcome-older");
+
+    // Act
+    const stdout = await runHook("pre-tool-use", editPayload(repo, OVERLAP_FILE), env);
+
+    // Assert
+    expect(decisionOf(stdout)?.permissionDecision).toBe("ask");
+    expect(stdout).not.toContain("mark_hint_outcome");
+  });
+});
+
 describe("the tripwire stays silent everywhere else", () => {
   test("a denylisted hot file costs neither an ask nor an HTTP call", async () => {
     // Arrange
@@ -274,6 +343,68 @@ describe("the tripwire stays silent everywhere else", () => {
     // Assert
     expect(stdout).toBe("");
     expect(hub.calls.tripwire).toBe(0);
+  });
+
+  test("a GENERATED file — by path, by attribute, by header — is skipped like a denied one", async () => {
+    // Arrange: an active teammate on every file the hub is asked about, and
+    // three files only the generated-target rule recognises.
+    const { repo, hub, env } = await fixture("generated");
+    await writeRepoFile(repo, ".gitattributes", "packages/proto/** linguist-generated=true\n");
+    await git(repo, ["add", ".gitattributes"]);
+    await git(repo, ["commit", "-m", "attributes"]);
+    await writeRepoFile(repo, "apps/practice/package-lock.json", "{}\n");
+    await writeRepoFile(repo, "packages/proto/src/messages.ts", "export {};\n");
+    await writeRepoFile(repo, "src/client.ts", "// Code generated by openapi. DO NOT EDIT.\nexport {};\n");
+
+    // Act
+    const outputs = [];
+    for (const file of ["apps/practice/package-lock.json", "packages/proto/src/messages.ts", "src/client.ts"]) {
+      outputs.push(await runHook("pre-tool-use", editPayload(repo, file), env));
+    }
+
+    // Assert: silent, and the hub was never asked.
+    expect(outputs).toEqual(["", "", ""]);
+    expect(hub.calls.tripwire).toBe(0);
+  });
+
+  test("a generated file the repo declares AUTHORITATIVE is asked about, and the hub is told so", async () => {
+    // Arrange: client bindings the repo's committed .crosscheck.json says count —
+    // one the denylist's *.generated.* entry would drop, one a header marks.
+    const { repo, hub, env } = await fixture("generated-authoritative");
+    await writeRepoFile(
+      repo,
+      ".crosscheck.json",
+      `${JSON.stringify({ hubUrl: hub.url, authoritativeGenerated: ["clients/**"] })}\n`,
+    );
+    await writeRepoFile(repo, "clients/api.generated.ts", "export {};\n");
+    await writeRepoFile(repo, "clients/sdk.ts", "// @generated\nexport {};\n");
+
+    // Act
+    const dropped = await runHook("pre-tool-use", editPayload(repo, "clients/api.generated.ts"), env);
+    const droppedQuery = hub.lastTripwireQuery();
+    const header = await runHook("pre-tool-use", editPayload(repo, "clients/sdk.ts"), env);
+
+    // Assert: both asked — the teammate is named — with the authoritative flag on the wire.
+    expect(hub.calls.tripwire).toBe(2);
+    expect(decisionOf(dropped)?.permissionDecision).toBe("ask");
+    expect(decisionOf(header)?.permissionDecision).toBe("ask");
+    expect(droppedQuery?.get("authoritative")).toBe("1");
+    expect(hub.lastTripwireQuery()?.get("authoritative")).toBe("1");
+  });
+
+  test("a file whose classification cannot run still asks — unknown fails toward the warning", async () => {
+    // Arrange: a header the rule cannot read, and no attribute that says generated.
+    const { repo, hub, env } = await fixture("generated-unknown");
+    const path = await writeRepoFile(repo, "src/locked.ts", "// @generated\n");
+    await chmod(path, 0o000);
+
+    // Act
+    const stdout = await runHook("pre-tool-use", editPayload(repo, "src/locked.ts"), env);
+    await chmod(path, 0o644);
+
+    // Assert: the wire was asked and the teammate named.
+    expect(hub.calls.tripwire).toBe(1);
+    expect(decisionOf(stdout)?.permissionDecision).toBe("ask");
   });
 
   test("a non-edit tool is ignored", async () => {

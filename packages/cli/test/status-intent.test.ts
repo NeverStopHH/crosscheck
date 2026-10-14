@@ -6,6 +6,7 @@
  * hub over PGlite, two developers, one registered session with a work
  * context that carries an intent.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -47,7 +48,7 @@ const post = async (path: string, apiKey: string, body: unknown): Promise<Respon
 
 beforeAll(async () => {
   const db = await createDb();
-  server = Bun.serve({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
+  server = serveLoopback({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
   home = await makeHome("status-intent");
   repo = await makeRepo("status-intent", { remote: "git@github.com:acme/api.git" });

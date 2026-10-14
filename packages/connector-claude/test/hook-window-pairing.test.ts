@@ -130,21 +130,30 @@ const post = async (fx: Fixture, call: Call): Promise<void> => {
   await runHook("post-tool-use", payload(fx, "PostToolUse", call), env(fx.home));
 };
 
-/** A PreToolUse that meets a BUSY state lock, the way a sibling emitter makes one. */
+/**
+ * A PreToolUse that meets a BUSY state lock, the way a sibling emitter makes
+ * one. The hook runs only once the holder's action has STARTED — the lock is
+ * provably held — rather than after a fixed 20 ms that assumed the holder had
+ * acquired it by then: under CPU contention it had not, the hook took the
+ * free lock and opened its window, and the "no bracket" case read a floor
+ * (`after: 2`, round 6 of the load run).
+ */
 const preUnderHeldLock = async (fx: Fixture, call: Call): Promise<void> => {
   let release: () => void = () => {};
   const held = new Promise<void>((resolve) => {
     release = resolve;
   });
+  const acquired = Promise.withResolvers<void>();
   const holder = withLock(
     sessionStateLockPath(fx.home, SESSION_ID),
     null,
     async () => {
+      acquired.resolve();
       await held;
       return null;
     },
   );
-  await Bun.sleep(20);
+  await acquired.promise;
   await pre(fx, call);
   release();
   await holder;

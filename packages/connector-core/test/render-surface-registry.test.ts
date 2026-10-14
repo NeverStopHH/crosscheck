@@ -3,8 +3,10 @@
  *
  * 1. THE CORPUS ON EVERY REGISTERED SURFACE. Each `corpus` registration
  *    renders every injection payload and is held to its framing class:
- *    framed output carries QUOTED_DATA_NOTICE, every line passes the
- *    character invariants (fixtures/untrusted-invariants.ts — the SAME
+ *    framed output carries ITS quoted-data notices (QUOTED_DATA_NOTICE, or
+ *    the ones a surface declares) and no other,
+ *    every line passes the character invariants
+ *    (fixtures/untrusted-invariants.ts — the SAME
  *    assertions the briefing and MCP corpora use), and at most one « » pair
  *    per line; `sanitized` output additionally carries no frame characters
  *    at all.
@@ -39,7 +41,7 @@ import { describe, expect, test } from "bun:test";
 import { readdir } from "node:fs/promises";
 import { join, relative } from "node:path";
 
-import { QUOTED_DATA_NOTICE } from "../src/briefing/render.ts";
+import { OWN_DRAFTS_QUOTED_DATA_NOTICE, QUOTED_DATA_NOTICE } from "../src/briefing/render.ts";
 import {
   RENDER_BARREL_MODULES,
   RENDER_LAYER_MODULES,
@@ -54,6 +56,12 @@ import {
   REGISTERED_PACKAGES,
 } from "./fixtures/registry-packages.ts";
 import { assertUntrustedCharacters } from "./fixtures/untrusted-invariants.ts";
+
+/** Every quoted-data notice the render layer owns — one constant per notice. */
+const QUOTED_DATA_NOTICES: readonly string[] = [QUOTED_DATA_NOTICE, OWN_DRAFTS_QUOTED_DATA_NOTICE];
+
+/** The notices a framed surface must carry: its declared ones, else the teammate notice. */
+const noticesOf = (surface: CorpusRenderSurface): readonly string[] => surface.notices ?? [QUOTED_DATA_NOTICE];
 
 const WORKSPACE_PACKAGES_ROOT = join(import.meta.dir, "..", "..");
 
@@ -263,6 +271,11 @@ interface PackageRegistration {
  */
 const KNOWN_EXEMPT: Readonly<Record<string, readonly string[]>> = {
   "connector-core": [...RENDER_LAYER_MODULES, ...RENDER_BARREL_MODULES],
+  // The untrusted-text primitives moved into the schema package so the hub
+  // scores a claim on exactly the text a reader is shown (review 1006b, M4):
+  // untrusted-text.ts IS the render layer's sanitizer core, and the barrel
+  // re-exports it. Both render nothing themselves.
+  schema: ["src/render-surfaces.ts", "src/untrusted-text.ts", "src/index.ts"],
 };
 const DEFAULT_EXEMPT: readonly string[] = ["src/render-surfaces.ts"];
 
@@ -294,13 +307,17 @@ describe("§4.4: the corpus runs on every registered surface", () => {
   test.each(CORPUS_SURFACES.map((surface) => [surface.name, surface] as const))(
     "%s renders substance for a benign payload — adapters cannot rot silently",
     (_name, surface) => {
-      // Arrange: ordinary teammate text, nothing for the sanitizer to strip.
-      const output = surface.render("rate limit fix");
+      // Arrange: ordinary teammate text, nothing for the sanitizer to strip —
+      // and three topical words, since "rate limit fix" is all machinery and
+      // no sentence worth showing (round 3, M1).
+      const output = surface.render("the cache key drops on rotation");
 
       // Assert
       expect(output.length, surface.name).toBeGreaterThan(0);
       if (surface.framing === "framed") {
-        expect(output, surface.name).toContain(QUOTED_DATA_NOTICE);
+        for (const notice of noticesOf(surface)) {
+          expect(output, surface.name).toContain(notice);
+        }
       }
     },
   );
@@ -324,7 +341,15 @@ describe("§4.4: the corpus runs on every registered surface", () => {
           // correct render). Non-emptiness is pinned on a benign payload in
           // the test below, where it cannot be excused.
           if (output.length > 0) {
-            expect(output, where).toContain(QUOTED_DATA_NOTICE);
+            for (const notice of noticesOf(surface)) {
+              expect(output, where).toContain(notice);
+            }
+            // ...and never a notice it does not declare: a surface of the
+            // reader's own drafts alone (the nudge, review_draft's echo) may
+            // not say its text was written by teammates, nor the reverse.
+            for (const other of QUOTED_DATA_NOTICES.filter((notice) => !noticesOf(surface).includes(notice))) {
+              expect(output.includes(other), `${where}: wrong notice`).toBe(false);
+            }
           }
         } else {
           // sanitized / bare / id: no frame characters at all — the frame

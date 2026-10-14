@@ -1,6 +1,6 @@
 {
   "id": "optout-author",
-  "summary": "Quinn opted out of presence. Published knowledge still hints (opt-out is not retraction), but the tripwire — a live-presence surface — must stay silent about Quinn's active session.",
+  "summary": "Quinn opted out of presence. Published knowledge still hints (opt-out is not retraction), and the tripwire — a live-presence surface — says only that a teammate is on the file: never who, where or when.",
   "sessions": [
     {
       "id": "s_quinn_flags",
@@ -16,8 +16,7 @@
       "sessionId": "s_quinn_flags",
       "title": "Feature flag cache keeps serving stale variants",
       "status": "analyzing",
-      "createdAt": "2026-08-01T00:00:00.000Z",
-      "updatedAt": "2026-08-01T05:00:00.000Z"
+      "createdAt": "2026-08-01T05:00:00.000Z"
     }
   ],
   "targets": [
@@ -35,14 +34,14 @@
       "captureMode": "agent",
       "provenance": "declared",
       "evidenceRefs": [],
-      "createdAt": "2026-08-01T00:05:00.000Z"
+      "createdAt": "2026-08-01T05:00:00.000Z"
     },
     {
       "id": "clm_fl_root",
       "workContextId": "wc_flags",
       "authorSessionId": "s_quinn_flags",
       "kind": "root_cause",
-      "body": "Variant cache entries are written without an expiry so updates never propagate",
+      "body": "Variant cache entries are written without an expiry, so stale flag variants keep serving after every update",
       "status": "likely_root_cause",
       "confidence": 0.75,
       "captureMode": "agent",
@@ -67,8 +66,8 @@
       "kind": "file-touch",
       "reader": "Riley",
       "file": "src/flags/cache.ts",
-      "expect": "silence",
-      "rationale": "The tripwire IS a live-presence surface: an opted-out developer's active session must never trigger asks about them (visiblePresenceCondition in the tripwire WHERE)."
+      "expect": "pointer",
+      "rationale": "The owner's decision on the batch-2 integration review's I1: an opted-out developer's live session on the file is still a collision, told anonymously (server services/hints.ts listAnonymousTargetPresence, visibility.ts «anonymous»). The ask is pointer-class with nothing to point at: 'A teammate is working on <file> right now', no name, branch, age or context id — so no expectContextId, and the namelessness itself is pinned by connector-claude test/collision-anonymous-hook.test.ts and the release gate's I1 case. Silence here was the pilot's failure recreated for every opted-out person."
     }
   ]
 }

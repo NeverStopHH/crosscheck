@@ -30,6 +30,7 @@ import { join } from "node:path";
 import { z } from "zod";
 
 import {
+  MAX_KNOWN_WORKTREE_ROOTS,
   MAX_SPOOL_AGE_DAYS,
   MS_PER_DAY,
   REGISTER_LADDER_MAX_ATTEMPTS,
@@ -37,11 +38,16 @@ import {
 } from "../constants.ts";
 import {
   readJsonOrNull,
+  repoKey,
   sessionLineagePathForSlug,
   sessionSlug,
+  sessionStatePathForSlug,
   writePrivateFile,
 } from "../config/paths.ts";
+import { recordCaptureLoss } from "./loss-ledger.ts";
 import { sessionStateDir } from "./session-scan.ts";
+import { KnownWorktreeRootSchema, SessionStateSchema } from "./session-state.ts";
+import type { KnownWorktreeRoot, SessionState } from "./session-state.ts";
 
 const LIFE_SUFFIX = "~r";
 const LINEAGE_SUFFIX = ".lineage";
@@ -49,15 +55,47 @@ const LINEAGE_SUFFIX = ".lineage";
 const HEAL_SUFFIX = ".heal";
 /** A register's reserved epoch (flows/register-session.ts), swept the same way. */
 const EPOCH_SUFFIX = ".epoch";
-const SIDE_FILE_SUFFIXES = [LINEAGE_SUFFIX, HEAL_SUFFIX, EPOCH_SUFFIX] as const;
+/** SessionEnd's "rests booked" marker (state/rests-booked.ts), swept the same way. */
+const RESTS_BOOKED_SUFFIX = ".rests-booked";
+const SIDE_FILE_SUFFIXES = [LINEAGE_SUFFIX, HEAL_SUFFIX, EPOCH_SUFFIX, RESTS_BOOKED_SUFFIX] as const;
 /** A rung as the ladder spells it: no sign, no leading zero, nine digits at most. */
 const RUNG_PATTERN = /^[1-9][0-9]{0,8}$/;
 
+/**
+ * WHAT THE NEXT LIFE'S GIT LANE NEEDS OF THIS ONE (review batch 2, H1): the
+ * binding it was captured under, the conversation's first start — the
+ * window — and the roots of its repo it touched, each with its own first
+ * touch and any shell mark no sweep had spent yet. A life's end takes its
+ * contexts off every collision surface (an ended life is no live work), so
+ * what it left dirty, committed or Bash-created reaches a teammate again only
+ * when the next life files it; with the state file gone, this is the only
+ * place that knows where to look.
+ */
+const CarriedCaptureSchema = z.looseObject({
+  repoId: z.string().min(1),
+  hubUrl: z.string().min(1),
+  since: z.string().min(1),
+  roots: z.array(KnownWorktreeRootSchema).max(MAX_KNOWN_WORKTREE_ROOTS),
+  shellSweepSince: z.string().min(1).nullable().default(null),
+});
+
+export type CarriedCapture = z.infer<typeof CarriedCaptureSchema>;
+
 const LineageSchema = z.looseObject({
-  crosscheckSessionId: z.string().min(1),
+  /**
+   * The life the last END closed. Absent on a note the state reaper wrote for
+   * a life that died without one (recordReapedCapture): that life is not
+   * ended here — its marker still restores it for a resume — the note only
+   * carries what it owed.
+   */
+  crosscheckSessionId: z.string().min(1).optional(),
   epoch: z.string().min(1).optional(),
   /** The position the end took under `epoch`, past everything the life's counter handed out. */
   n: z.number().int().min(0).optional(),
+  /** When the end was written down. */
+  at: z.string().min(1).optional(),
+  /** A capture that will not parse is no capture: the ladder's fields above must still read. */
+  capture: CarriedCaptureSchema.optional().catch(undefined),
 });
 
 /** The crosscheck session id of a host session's `rung`-th life. */
@@ -179,10 +217,84 @@ export const readEndedLifePosition = async (
 };
 
 /**
+ * What a life hands the next one: its binding, the window's start (the
+ * conversation's first, `captureSince`, else the life's own) and its own
+ * repo's roots — never a foreign one, which no lane sweeps — with what
+ * belonged to the life alone (when it swept a root, which untracked cut it
+ * booked) left behind.
+ */
+export const carriedCaptureOf = (state: SessionState): CarriedCapture => ({
+  repoId: state.repoId,
+  hubUrl: state.hubUrl,
+  since: state.captureSince ?? state.startedAt,
+  roots: state.knownWorktreeRoots
+    .filter((entry) => entry.repoId === state.repoId)
+    .slice(-MAX_KNOWN_WORKTREE_ROOTS)
+    .map(({ untrackedCutLife: _lifeOnly, ...entry }): KnownWorktreeRoot => ({ ...entry, gitSweptAt: null })),
+  shellSweepSince: state.shellSweepSince ?? null,
+});
+
+/**
+ * The sweeps a capture still owes: its roots a shell worked in that no lane
+ * swept since, or — a shell whose words named no root — one. A root swept
+ * clean owes nothing: its work was filed, under the life that ended.
+ */
+export const pendingSweepsOf = (capture: CarriedCapture): number => {
+  const marked = capture.roots.filter((root) => root.bashTouchedAt !== null).length;
+  return marked > 0 ? marked : capture.shellSweepSince === null ? 0 : 1;
+};
+
+/** The loss ledger's word for a sweep no life will make: the hook whose end left it owed. */
+const UNSWEPT_DETAIL = "session-end";
+
+/**
+ * A CAPTURE NO LIFE WILL SWEEP IS BOOKED, NEVER DROPPED (review batch 2, H1):
+ * the shell work it still owed was never filed under any life. Booked like a
+ * lane that did not run (flows/git-lane.ts, `hook_timed_out`), keyed to the
+ * capture's own repo and dated by the end that left it.
+ */
+export const bookUnsweptCapture = async (home: string, capture: CarriedCapture, endedAt: Date): Promise<void> => {
+  await recordCaptureLoss(home, {
+    kind: "hook_timed_out",
+    count: pendingSweepsOf(capture),
+    key: repoKey(capture.hubUrl, capture.repoId),
+    detail: UNSWEPT_DETAIL,
+    now: endedAt,
+  });
+};
+
+/** What a capture, or a state, is bound to: one repo, on one hub. */
+interface CaptureBinding {
+  readonly repoId: string;
+  readonly hubUrl: string;
+}
+
+const isSameCaptureBinding = (left: CaptureBinding, right: CaptureBinding): boolean =>
+  left.repoId === right.repoId && left.hubUrl === right.hubUrl;
+
+/** The capture the last end wrote down, if any (review batch 2, H1). */
+export const readCarriedCapture = async (home: string, hostSessionKey: string): Promise<CarriedCapture | null> => {
+  const parsed = LineageSchema.safeParse(await readJsonOrNull(lineagePath(home, hostSessionKey)));
+  return parsed.success ? (parsed.data.capture ?? null) : null;
+};
+
+const instantOr = (iso: string | undefined, fallback: Date): Date => {
+  const ms = iso === undefined ? Number.NaN : Date.parse(iso);
+  return Number.isNaN(ms) ? fallback : new Date(ms);
+};
+
+/**
  * Written at the END of a life, never at its start: a life that is still
  * running is named by its state file, and a lineage file exists only for host
  * sessions that ended and may come back. Fail-open — a lost write costs the
- * next resume a longer walk from the base id, never a refused record.
+ * next resume a longer walk from the base id, never a refused record — and
+ * said: false when nothing was written, so the caller can book what the
+ * capture would have carried.
+ *
+ * THE CAPTURE (review batch 2, H1): an end that carries one replaces the one
+ * on file; an end that carries none — a heal retiring an orphan life, whose
+ * state lives on — keeps it. A capture of ANOTHER binding replaced here is
+ * one no resume of this conversation can carry any more, and is booked.
  */
 export const recordEndedLife = async (
   home: string,
@@ -191,16 +303,116 @@ export const recordEndedLife = async (
   now: Date,
   epoch: string | null = null,
   n: number | null = null,
-): Promise<void> => {
+  capture: CarriedCapture | null = null,
+): Promise<boolean> => {
   try {
+    const path = lineagePath(home, hostSessionKey);
+    const prior = LineageSchema.safeParse(await readJsonOrNull(path));
+    const priorCapture = prior.success ? (prior.data.capture ?? null) : null;
+    const kept = capture ?? priorCapture;
     await writePrivateFile(
-      lineagePath(home, hostSessionKey),
-      `${JSON.stringify({ crosscheckSessionId, ...(epoch === null ? {} : { epoch, ...(n === null ? {} : { n }) }), at: now.toISOString() })}\n`,
+      path,
+      `${JSON.stringify({
+        crosscheckSessionId,
+        ...(epoch === null ? {} : { epoch, ...(n === null ? {} : { n }) }),
+        at: now.toISOString(),
+        ...(kept === null ? {} : { capture: kept }),
+      })}\n`,
     );
+    if (capture !== null && priorCapture !== null && !isSameCaptureBinding(priorCapture, capture)) {
+      await bookUnsweptCapture(home, priorCapture, instantOr(prior.success ? prior.data.at : undefined, now));
+    }
+    return true;
   } catch {
     // The ladder still finds the next life without it.
+    return false;
   }
 };
+
+/**
+ * A LIFE THAT DIED WITHOUT SESSIONEND STILL OWES ITS SWEEP (final review of
+ * batch 2, the gap behind N1): the state reaper removes its corpse a week on,
+ * and the Bash-marked roots no lane swept were then neither delivered nor
+ * counted — for a resumed life, N1's consume had taken that count off the
+ * note. The reaper writes the capture back here, the way SessionEnd's
+ * recordEndedLife does, so a resume still carries and sweeps it and a note
+ * nobody resumes is booked when it goes stale (reapStaleLineages, with no
+ * live state beside it). WITHOUT ENDING THE LIFE: the ladder's fields stay
+ * exactly as the last end wrote them (none, for a first life), because a
+ * reaped life is one its end marker still restores for a state-less resume
+ * (flows/register-session.ts readMarkedPosition; review-2 round 9, M1 + M2)
+ * — naming it ended here would send that resume one rung up, past the
+ * counter the hub still holds. A capture of another binding replaced here is
+ * booked, as recordEndedLife books it.
+ */
+export const recordReapedCapture = async (
+  home: string,
+  hostSessionKey: string,
+  capture: CarriedCapture,
+  now: Date,
+): Promise<boolean> => {
+  try {
+    const path = lineagePath(home, hostSessionKey);
+    const prior = LineageSchema.safeParse(await readJsonOrNull(path));
+    const priorCapture = prior.success ? (prior.data.capture ?? null) : null;
+    const { capture: _replaced, ...ladder } = prior.success ? prior.data : {};
+    await writePrivateFile(path, `${JSON.stringify({ ...ladder, at: now.toISOString(), capture })}\n`);
+    if (priorCapture !== null && !isSameCaptureBinding(priorCapture, capture)) {
+      await bookUnsweptCapture(home, priorCapture, instantOr(prior.success ? prior.data.at : undefined, now));
+    }
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/** Rewrites the note without its capture when `isStruck` says so; fail-open, and false when nothing was struck. */
+const strikeCapture = async (
+  home: string,
+  hostSessionKey: string,
+  isStruck: (carried: CarriedCapture) => boolean,
+): Promise<boolean> => {
+  try {
+    const path = lineagePath(home, hostSessionKey);
+    const prior = LineageSchema.safeParse(await readJsonOrNull(path));
+    if (!prior.success || prior.data.capture === undefined || !isStruck(prior.data.capture)) {
+      return false;
+    }
+    const { capture: _taken, ...note } = prior.data;
+    await writePrivateFile(path, `${JSON.stringify(note)}\n`);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * THE CAPTURE A RESUME TOOK IS STRUCK OFF THE NOTE (review batch 2, final
+ * review N1): once the next life's state holds the roots and their marks,
+ * that live state owns the debt — its first lane sweeps them, its SessionEnd
+ * writes the next capture — and a note that still carried them was booked by
+ * the reaper as sweeps never made, after the resumed life had made them: a
+ * `hook_timed_out` on the wire, so the hub read the repo's coverage as lost
+ * for a fortnight, for a loss that did not happen. The ladder's fields stay;
+ * only the capture goes. Fail-open, like every write here: a note that will
+ * not rewrite is still never booked beside a live state (reapStaleLineages).
+ */
+export const consumeCarriedCapture = async (home: string, hostSessionKey: string): Promise<boolean> =>
+  strikeCapture(home, hostSessionKey, () => true);
+
+/**
+ * THE CAPTURE A DEAD LIFE PAID IS STRUCK OFF THE NOTE (final review of batch
+ * 2, LOW-b): a resume whose consume could not rewrite the note (fail-open,
+ * above) left the capture on it, and the life that then swept every root it
+ * carried and died without SessionEnd was booked by the lineage reap for the
+ * sweep it had made. The state reaper, finding a corpse of the note's own
+ * binding that owes nothing (session-reap.ts), strikes the capture: the
+ * register carried it into that very state, so what the state no longer
+ * owes was paid under that life. One of another binding stays — that life
+ * carried nothing of it, and the lineage reap books it (LOW-a).
+ */
+export const strikePaidCapture = async (home: string, hostSessionKey: string, binding: CaptureBinding): Promise<boolean> =>
+  strikeCapture(home, hostSessionKey, (carried) => isSameCaptureBinding(carried, binding));
 
 const isLineageStale = async (path: string, nowMs: number): Promise<boolean> => {
   try {
@@ -208,6 +420,26 @@ const isLineageStale = async (path: string, nowMs: number): Promise<boolean> => 
   } catch {
     return false;
   }
+};
+
+/**
+ * Whether a live state OF THE CAPTURE'S OWN BINDING names the host session a
+ * lineage note belongs to: that life owns what the note carried (final
+ * review N1) — the resume took the capture into its state, and its next lane
+ * or SessionEnd is what delivers or books it. A note beside such a state is
+ * spent, never a loss.
+ *
+ * A LIVE STATE OF ANOTHER BINDING OWNS NOTHING OF IT (final review of batch
+ * 2, LOW-a): a resume that landed in another repo or on another hub carries
+ * only a capture of its own binding (flows/register-session.ts
+ * carriedFromLineage) and strikes nothing, so the sweep the note still owes
+ * will be made by no lane of that life — as lost as beside no state at all,
+ * and booked the same way. A state that will not parse names no binding.
+ */
+const isCaptureOwedByLiveState = async (home: string, lineageName: string, capture: CarriedCapture): Promise<boolean> => {
+  const slug = lineageName.slice(0, -LINEAGE_SUFFIX.length);
+  const state = SessionStateSchema.safeParse(await readJsonOrNull(sessionStatePathForSlug(home, slug)));
+  return state.success && isSameCaptureBinding(state.data, capture);
 };
 
 /**
@@ -236,11 +468,25 @@ export const reapStaleLineages = async (home: string, now: Date): Promise<number
     if (!(await isLineageStale(path, now.getTime()))) {
       continue;
     }
+    // A conversation that never came back leaves the sweeps its last life
+    // still owed unmade (review batch 2, H1): booked once the note is gone,
+    // so a note that will not go is not booked again on every run — and
+    // never beside a live state of the same host session AND the capture's
+    // binding (final review N1; LOW-a), whose life owns the debt and
+    // delivers or books it itself.
+    const isLineage = name.endsWith(LINEAGE_SUFFIX);
+    const lineage = isLineage ? LineageSchema.safeParse(await readJsonOrNull(path)) : null;
+    const capture = lineage?.success === true ? (lineage.data.capture ?? null) : null;
+    const isOwedElsewhere = capture !== null && (await isCaptureOwedByLiveState(home, name, capture));
     try {
       await rm(path, { force: true });
       reaped += 1;
     } catch {
       // A file that will not go stays; the next SessionStart tries again.
+      continue;
+    }
+    if (capture !== null && lineage?.success === true && !isOwedElsewhere) {
+      await bookUnsweptCapture(home, capture, instantOr(lineage.data.at, now));
     }
   }
   return reaped;

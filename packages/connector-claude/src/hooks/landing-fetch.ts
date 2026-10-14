@@ -14,6 +14,7 @@
  */
 import { resolve } from "node:path";
 
+import { selfSpawnCmd } from "@crosscheck/connector-core/config/runtime-isolation.ts";
 import {
   requestLandingFetch,
   startDetachedWorker,
@@ -37,7 +38,7 @@ export const requestLandingFetchFor = async (ctx: HookContext): Promise<void> =>
       now: ctx.now(),
       startWorker: (root) => {
         startDetachedWorker({
-          cmd: [process.execPath, LANDING_FETCH_WORKER_ENTRY_PATH, "--root", root],
+          cmd: [...selfSpawnCmd(LANDING_FETCH_WORKER_ENTRY_PATH), "--root", root],
           env: ctx.env,
           home: ctx.config.home,
         });

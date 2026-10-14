@@ -11,6 +11,7 @@
  */
 import { Hono } from "hono";
 import { z } from "zod";
+import { DELIVERY_CHANNELS } from "@crosscheck/schema";
 
 import { fail, ok } from "../http/envelope.ts";
 import { formatIssues } from "../http/request.ts";
@@ -23,10 +24,11 @@ import {
 import { COVERAGE_SESSION_WINDOW_DAYS } from "../constants.ts";
 import { readCoverage } from "../services/coverage.ts";
 import { countCoverageAnswer } from "../services/pilot.ts";
-import { listHintCandidates, listTargetSessions } from "../services/hints.ts";
+import { listAnonymousTargetPresence, listHintCandidates, listTargetSessions } from "../services/hints.ts";
 import { listLandedNotices } from "../services/landed-notices.ts";
 import { listUndeliveredAnswers } from "../services/questions.ts";
 import { SEARCH_MAX_QUERY_CHARS } from "../services/search.ts";
+import { readTeamSettings } from "../services/team-settings.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -45,6 +47,8 @@ const CandidatesQuerySchema = z.object({
 const TripwireQuerySchema = z.object({
   repo: z.string().min(1),
   value: z.string().min(1).max(SEARCH_MAX_QUERY_CHARS),
+  /** "1" = the repo declared this generated file authoritative (services/hints.ts). */
+  authoritative: z.literal("1").optional().catch(undefined),
 });
 
 /** `days` above the cap is clamped by the service, never honoured. */
@@ -78,7 +82,10 @@ export const hintsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     // FOUR, with the author's notices (docs/1.0/landed-changes.md, step 4):
     // told on the author's next prompt, so they ride the one call the prompt
     // already makes — the same list the briefing reads, the same repo scope.
-    const [candidates, answers, coverage, notices] = await Promise.all([
+    // FIVE, with whether this repo records hint outcomes (07 §13): the
+    // connector appends its outcome clause only when it does, so a repo
+    // nobody enrolled is never invited into a call the hub would refuse.
+    const [candidates, answers, coverage, notices, settings] = await Promise.all([
       listHintCandidates(deps, c.get("developer").id, parsed.data),
       // `repo` on BOTH: the answers are scoped exactly like the candidates
       // beside them, so solicited substance from another codebase cannot land
@@ -86,6 +93,7 @@ export const hintsRoutes = (deps: AppDeps): Hono<AppEnv> => {
       listUndeliveredAnswers(deps, c.get("developer").id, parsed.data.repo),
       readCoverage(deps, c.get("developer").id, parsed.data.repo),
       listLandedNotices(deps, c.get("developer").id, parsed.data.repo),
+      readTeamSettings(deps, parsed.data.repo),
     ]);
     // 07 §3.5, proof 5: this answer carried a coverage record, and
     // whether it did is what 03 made mandatory and nobody counted.
@@ -94,25 +102,36 @@ export const hintsRoutes = (deps: AppDeps): Hono<AppEnv> => {
       surface: "api-hints-candidates",
       coverage,
     });
-    return ok(c, { candidates, answers, coverage, notices });
+    // The delivery channels this hub records — the hint_delivery validator's
+    // own list — so a connector newer than the hub books a shown finding on
+    // a channel it can store (review 1006b): additive, one constant.
+    return ok(c, {
+      candidates,
+      answers,
+      coverage,
+      notices,
+      recordsOutcomes: settings.pilotEnrolled,
+      deliveryChannels: DELIVERY_CHANNELS,
+    });
   });
 
   router.get("/tripwire", async (c) => {
     const parsed = TripwireQuerySchema.safeParse({
       repo: c.req.query("repo"),
       value: c.req.query("value"),
+      authoritative: c.req.query("authoritative"),
     });
     if (!parsed.success) {
       return fail(c, 400, "validation_failed", formatIssues(parsed.error));
     }
     // In sequence, not in parallel: the coverage folds over the sessions
     // this answer names (review H3), so they come first.
-    const sessions = await listTargetSessions(
-      deps,
-      c.get("developer").id,
-      parsed.data.repo,
-      parsed.data.value,
-    );
+    const [sessions, anonymous] = await Promise.all([
+      listTargetSessions(deps, c.get("developer").id, parsed.data.repo, parsed.data.value, parsed.data.authoritative === "1"),
+      // A teammate the caller may not be told about, live on the file: one
+      // nameless row or none (services/hints.ts listAnonymousTargetPresence).
+      listAnonymousTargetPresence(deps, c.get("developer").id, parsed.data.repo, parsed.data.value, parsed.data.authoritative === "1"),
+    ]);
     // SCOPED TO THE FILE the tripwire is about (§3.2a): the question is
     // "was anybody watching THIS path", not "was anybody watching this
     // repo for a fortnight".
@@ -132,7 +151,10 @@ export const hintsRoutes = (deps: AppDeps): Hono<AppEnv> => {
       surface: "api-hints-tripwire",
       coverage,
     });
-    return ok(c, { sessions, coverage });
+    // 07 §13 (D-O3): the ask ends with the outcome clause only where the
+    // repo records outcomes — the "stop, Ken built it this way" moment.
+    const settings = await readTeamSettings(deps, parsed.data.repo);
+    return ok(c, { sessions, anonymous, coverage, recordsOutcomes: settings.pilotEnrolled });
   });
 
   /**

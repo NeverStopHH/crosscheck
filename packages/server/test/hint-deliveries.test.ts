@@ -277,6 +277,56 @@ describe("the delivery channel (07 §3.1)", () => {
     expect(result.data?.rejected).toBe(1);
     expect(await listDeliveryRows(harness)).toHaveLength(0);
   });
+
+  test("what a delivery was matched on, and whose intent the session held, are stored as sent (M7)", async () => {
+    // Arrange
+    const { harness, developer } = await seedContextWithClaim();
+
+    // Act
+    const result = await postRecords(
+      harness,
+      developer,
+      recordEnvelope("hint_delivery", deliveryBody({ channel: "prompt_hint", matchedOn: "prompt", intentProvenance: "derived" })),
+    );
+
+    // Assert
+    expect(result.data?.accepted).toBe(1);
+    const [row] = await listDeliveryRows(harness);
+    expect(row?.matchedOn).toBe("prompt");
+    expect(row?.intentProvenance).toBe("derived");
+  });
+
+  test("a connector older than those fields stores neither, and is not refused", async () => {
+    // Arrange
+    const { harness, developer } = await seedContextWithClaim();
+
+    // Act
+    const result = await postRecords(harness, developer, recordEnvelope("hint_delivery", deliveryBody()));
+
+    // Assert
+    expect(result.data?.accepted).toBe(1);
+    const [row] = await listDeliveryRows(harness);
+    expect(row?.matchedOn).toBeNull();
+    expect(row?.intentProvenance).toBeNull();
+  });
+
+  test.each([
+    [{ matchedOn: "vibes" }],
+    [{ intentProvenance: "guessed" }],
+    [{ matchedOn: "telepathy", intentProvenance: 42 }],
+  ])("a value this hub does not know is stored as NULL, and the delivery still counts: %p (hold-out review, L3)", async (fields) => {
+    // Arrange — a connector newer than this hub says something it cannot read
+    const { harness, developer } = await seedContextWithClaim();
+
+    // Act
+    const result = await postRecords(harness, developer, recordEnvelope("hint_delivery", deliveryBody(fields)));
+
+    // Assert — the row the measurement counts is kept; the word it cannot read is not
+    expect(result.data?.accepted).toBe(1);
+    const [row] = await listDeliveryRows(harness);
+    expect(row?.matchedOn).toBeNull();
+    expect(row?.intentProvenance).toBeNull();
+  });
 });
 
 describe("get_diagnosis marks deliveries pulled (the precision loop)", () => {

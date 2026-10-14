@@ -25,6 +25,7 @@
 import { sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import {
+  LEGACY_PROVENANCE,
   PILOT_COHORTS,
   PILOT_LEGACY_NOISE_MARK,
   PULLED_DELIVERY_CHANNEL,
@@ -37,11 +38,16 @@ import {
   PILOT_REPORT_MAX_LABEL_REASONS,
 } from "../constants.ts";
 import { PER_HUNDRED, measured, unavailable } from "./pilot-figure.ts";
+import { countingFromOf, isCoolingRow, isHumanRow, isRetractedRow } from "./human-provenance.ts";
+import { sessionActiveIn } from "./session-window.ts";
 import type { Figure } from "./pilot-figure.ts";
 import type { Db } from "../db/client.ts";
+import type { Clock } from "../types.ts";
 
 interface Deps {
   readonly db: Db;
+  /** The read instant: a label counts only if the passkey that confirmed it stands then (H1). */
+  readonly now: Clock;
 }
 
 export interface LabelFigures {
@@ -136,9 +142,10 @@ export const readLabelTally = async (deps: Deps, population: SQL): Promise<Label
       WHERE hd.channel <> ${PULLED_DELIVERY_CHANNEL}
     ),
     verdict AS (
+      -- human provenance §5: a label counts only when the person confirmed it with their passkey
       SELECT m.mark FROM pilot_marks m
       JOIN intervention i ON i.id = m.ref_id
-      WHERE m.ref_kind = 'hint_delivery'
+      WHERE m.ref_kind = 'hint_delivery' AND ${isHumanRow("m", deps.now())}
     )
     SELECT (SELECT count(*)::int FROM population) AS sessions,
            (SELECT count(*)::int FROM intervention) AS interventions,
@@ -156,11 +163,15 @@ export const readLabelTally = async (deps: Deps, population: SQL): Promise<Label
   };
 };
 
+/**
+ * The sessions a window holds: started in it, or did work in it — a target
+ * created or last seen there (services/session-window.ts), so one long-lived
+ * session's recent interventions are labelled with the week they happened in.
+ */
 export const windowPopulation = (repo: string, since: Date, until: Date): SQL =>
   sql`SELECT s.id FROM agent_sessions s
     WHERE s.repo = ${repo}
-      AND s.started_at >= ${since.toISOString()}::timestamptz
-      AND s.started_at < ${until.toISOString()}::timestamptz`;
+      AND ${sessionActiveIn(since, until)}`;
 
 const cohortPopulation = (repo: string, cohort: PilotCohort): SQL =>
   sql`SELECT ps.session_id AS id FROM pilot_sessions ps
@@ -206,7 +217,7 @@ export const readReasons = async (
     JOIN hint_deliveries hd ON hd.id = m.ref_id
     JOIN agent_sessions s ON s.id = hd.session_id
     JOIN population p ON p.id = s.id
-    WHERE m.ref_kind = 'hint_delivery' AND m.reason IS NOT NULL
+    WHERE m.ref_kind = 'hint_delivery' AND m.reason IS NOT NULL AND ${isHumanRow("m", deps.now())}
     ORDER BY m.created_at DESC, m.id ASC
     LIMIT ${PILOT_REPORT_MAX_LABEL_REASONS}`);
   const reasons = rows.rows.map((row) => ({
@@ -238,9 +249,78 @@ const readLegacyNoise = async (
     JOIN agent_sessions s ON s.id = hd.session_id
     WHERE m.ref_kind = 'hint_delivery' AND m.mark = ${PILOT_LEGACY_NOISE_MARK}
       AND s.repo = ${repo}
-      AND s.started_at >= ${since.toISOString()}::timestamptz
-      AND s.started_at < ${until.toISOString()}::timestamptz`);
+      AND ${sessionActiveIn(since, until)}`);
   return rows.rows[0]?.n ?? 0;
+};
+
+/**
+ * THE LABELS THAT ARE NO PERSON'S JUDGEMENT YET (human provenance §5), counted
+ * apart and never blended into a figure: drafts still waiting for a passkey,
+ * by the class of their door, and the 1.0-era words a hub holds from before
+ * provenance existed (the 0.10 `off_target` word is `legacyNoise`, apart again).
+ */
+export interface LabelsNotHuman {
+  /** Drafted at the terminal's door (`interactive_terminal_asserted`), not confirmed. */
+  readonly atTerminal: number;
+  /** Drafted by an agent (`agent_asserted`), not confirmed. No agent door drafts labels today. */
+  readonly byAgent: number;
+  /** helpful / noise / unclear written before 0.11 (`unknown_legacy`). */
+  readonly legacy: number;
+  /** Confirmed by a passkey still in its cool-off (review H1): counts from `countingFrom`. */
+  readonly coolingOff: number;
+  /** When the earliest of those starts counting, as ISO; null with none. */
+  readonly countingFrom: string | null;
+  /** Confirmed by a passkey since revoked: retracted, never counted. */
+  readonly retracted: number;
+}
+
+export const readLabelsNotHuman = async (deps: Deps, population: SQL): Promise<LabelsNotHuman> => {
+  const at = deps.now();
+  const uncounted = await deps.db.execute<{ cooling: number; counting_from: string | Date | null; retracted: number }>(sql`
+    WITH population AS (${population}),
+    labels AS (
+      SELECT m.* FROM pilot_marks m
+      JOIN hint_deliveries hd ON hd.id = m.ref_id
+      JOIN population p ON p.id = hd.session_id
+      WHERE m.ref_kind = 'hint_delivery' AND m.mark <> ${PILOT_LEGACY_NOISE_MARK}
+    )
+    SELECT
+      (SELECT count(*)::int FROM labels m WHERE ${isCoolingRow("m", at)}) AS cooling,
+      (SELECT min(${countingFromOf("m")}) FROM labels m WHERE ${isCoolingRow("m", at)}) AS counting_from,
+      (SELECT count(*)::int FROM labels m WHERE ${isRetractedRow("m")}) AS retracted`);
+  const waiting = uncounted.rows[0];
+  const rows = await deps.db.execute<{ at_terminal: number; by_agent: number; legacy: number }>(sql`
+    WITH population AS (${population}),
+    drafted AS (
+      SELECT DISTINCT ON (d.developer_id, d.subject_key) d.id, d.provenance, d.payload
+      FROM human_drafts d
+      WHERE d.kind = 'label'
+      ORDER BY d.developer_id, d.subject_key, d.version DESC
+    )
+    SELECT
+      (SELECT count(*)::int FROM drafted dr JOIN population p ON p.id = dr.payload->>'sessionId'
+        WHERE dr.provenance = 'interactive_terminal_asserted'
+          AND NOT EXISTS (SELECT 1 FROM human_confirmation_items i WHERE i.draft_id = dr.id
+                          AND i.decision IN ('confirm', 'discard'))) AS at_terminal,
+      (SELECT count(*)::int FROM drafted dr JOIN population p ON p.id = dr.payload->>'sessionId'
+        WHERE dr.provenance = 'agent_asserted'
+          AND NOT EXISTS (SELECT 1 FROM human_confirmation_items i WHERE i.draft_id = dr.id
+                          AND i.decision IN ('confirm', 'discard'))) AS by_agent,
+      (SELECT count(*)::int FROM pilot_marks m
+        JOIN hint_deliveries hd ON hd.id = m.ref_id
+        JOIN population p ON p.id = hd.session_id
+        WHERE m.ref_kind = 'hint_delivery' AND m.provenance = ${LEGACY_PROVENANCE}
+          AND m.mark <> ${PILOT_LEGACY_NOISE_MARK}) AS legacy`);
+  const row = rows.rows[0];
+  const countingFrom = waiting?.counting_from;
+  return {
+    atTerminal: row?.at_terminal ?? 0,
+    byAgent: row?.by_agent ?? 0,
+    legacy: row?.legacy ?? 0,
+    coolingOff: waiting?.cooling ?? 0,
+    countingFrom: countingFrom === null || countingFrom === undefined ? null : new Date(countingFrom).toISOString(),
+    retracted: waiting?.retracted ?? 0,
+  };
 };
 
 /** The window's labelled figures, from where labels existed, and what sits beside them. */
@@ -251,6 +331,7 @@ export interface LabelledWindow {
   readonly reasons: readonly LabelReason[];
   readonly reasonsBeyondList: number;
   readonly legacyNoise: number;
+  readonly notHuman: LabelsNotHuman;
 }
 
 /**
@@ -270,10 +351,11 @@ export const readLabelledWindow = async (
 ): Promise<LabelledWindow> => {
   const from = labelsSince.getTime() > window.since.getTime() ? labelsSince : window.since;
   const population = windowPopulation(repo, from, window.until);
-  const [tally, said, legacyNoise] = await Promise.all([
+  const [tally, said, legacyNoise, notHuman] = await Promise.all([
     readLabelTally(deps, population),
     readReasons(deps, population),
     readLegacyNoise(deps, repo, window.since, window.until),
+    readLabelsNotHuman(deps, population),
   ]);
   return {
     figures: labelFigures(tally),
@@ -281,6 +363,7 @@ export const readLabelledWindow = async (
     reasons: said.reasons,
     reasonsBeyondList: said.beyond,
     legacyNoise,
+    notHuman,
   };
 };
 

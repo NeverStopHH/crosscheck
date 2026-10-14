@@ -26,8 +26,10 @@
  * night the hub reaps through, a week away, a conversation woken, connector-
  * claude's state recovery and a heartbeat with its heal (`sleep`), and two
  * processes of one conversation around set_intent, SessionStart and SessionEnd
- * (`focus`). SIM_ADD picks the generator (`shipped`, `io`, `sleep`, `focus`,
- * `all`); its probes and failing seeds are fixed scenarios below.
+ * (`focus`). One session's edits in sibling worktrees on their branches came
+ * with topics (`topics`, DESIGN.md "One session, many topics"). SIM_ADD picks
+ * the generator (`shipped`, `io`, `sleep`, `focus`, `all`, `topics`); its
+ * probes and failing seeds are fixed scenarios below.
  *
  * SIM_SEEDS and SIM_SEED_BASE widen or move the sweep: `SIM_SEEDS=2000 bun test
  * test/spool-simulation.test.ts`. Every run prints the over-count: records the
@@ -47,6 +49,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import "./simulation/sim-hooks.ts";
+import { TOPIC_ID_SEPARATOR } from "../src/flows/topic-contexts.ts";
 import { accountingStats, checkInvariants } from "./simulation/sim-invariants.ts";
 import type { Verdict } from "./simulation/sim-invariants.ts";
 import { startSimHub } from "./simulation/sim-hub.ts";
@@ -69,6 +72,7 @@ import {
   recover,
   start,
   straggle,
+  topicEdit,
   VACATION,
   wake,
 } from "./simulation/sim-events.ts";
@@ -231,6 +235,18 @@ const writeSweepReport = async (summary: Record<string, unknown>): Promise<void>
   await writeFile(join(REPORT_DIR, `${GENERATOR_NAME}.json`), `${JSON.stringify(summary, null, 2)}\n`);
 };
 
+/** A life past its first: `cc_<key>~rN` (a resume or a heal). */
+const LATER_LIFE_MARK = "~r";
+
+/** The topic contexts (`wc_<life>~t<id>`, flows/topic-contexts.ts) the hub took in a run, each once. */
+const topicContextsTaken = (run: Run): readonly string[] => [
+  ...new Set(
+    run.deliveries
+      .filter((delivery) => delivery.kind === "work_context" && (delivery.status === "accepted" || delivery.status === "duplicate"))
+      .flatMap((delivery) => (delivery.workContextId?.includes(TOPIC_ID_SEPARATOR) === true ? [delivery.workContextId] : [])),
+  ),
+];
+
 describe("the spool, simulated", () => {
   test(
     `${String(SEEDS)} seeded scenarios (${GENERATOR_NAME}) keep I1–I6`,
@@ -239,7 +255,7 @@ describe("the spool, simulated", () => {
       const failing: string[] = [];
       const residual: string[] = [];
       const reports: Report[] = [];
-      const totals = { seeds: 0, overCountSeeds: 0, overCounted: 0, lost: 0, captured: 0, uncountable: 0 };
+      const totals = { seeds: 0, overCountSeeds: 0, overCounted: 0, lost: 0, captured: 0, uncountable: 0, topics: 0, laterLifeTopics: 0 };
       for (let seed = SEED_BASE; seed < SEED_BASE + SEEDS; seed += 1) {
         if (OPEN.has(`${GENERATOR_NAME}:${String(seed)}`)) {
           continue;
@@ -253,6 +269,9 @@ describe("the spool, simulated", () => {
         totals.overCounted += numbers.overCounted;
         totals.overCountSeeds += numbers.overCounted > 0 ? 1 : 0;
         totals.uncountable += run.uncountable.count;
+        const topics = topicContextsTaken(run);
+        totals.topics += topics.length;
+        totals.laterLifeTopics += topics.filter((id) => id.includes(LATER_LIFE_MARK)).length;
         const label = (classes: readonly string[]) => `${String(seed)}:${[...new Set(classes)].join("+")}`;
         const residualClasses = verdicts.flatMap((verdict) => residualOf(events, verdict) ?? []);
         if (residualClasses.length > 0) {
@@ -276,6 +295,9 @@ describe("the spool, simulated", () => {
         `[spool-simulation] residual ${String(residual.length)} (I1u: ${String(totals.uncountable)} records the disk let nothing count; L1: set_intent beside set_intent or SessionEnd; I1r: a reap killed between its cursor and data-file removals): ${residual.join(" ")}`,
       );
       console.log(`[spool-simulation] failing ${String(failing.length)}: ${failing.join(" ")}`);
+      console.log(
+        `[spool-simulation] topics: ${String(totals.topics)} topic contexts the hub took, ${String(totals.laterLifeTopics)} of them in a resumed or healed life`,
+      );
       await writeSweepReport({
         generator: GENERATOR_NAME,
         base: SEED_BASE,
@@ -288,8 +310,14 @@ describe("the spool, simulated", () => {
         captured: totals.captured,
         lost: totals.lost,
         uncountable: totals.uncountable,
+        topics: { contexts: totals.topics, laterLife: totals.laterLifeTopics },
       });
       expect(reports.map((report) => report.text).join("\n\n")).toBe("");
+      // The topics family is vacuous unless it opens topics, in later lives too.
+      if (GENERATOR_NAME === "topics") {
+        expect(totals.topics).toBeGreaterThan(0);
+        expect(totals.laterLifeTopics).toBeGreaterThan(0);
+      }
     },
     SWEEP_TIMEOUT_MS,
   );
@@ -393,6 +421,38 @@ const PROBES: readonly Probe[] = [
       { kind: "oldFlush", c: 1 },
     ],
     shows: (run) => run.drops.some((drop) => (drop.causes["author_unknown"] ?? 0) > 0),
+  },
+  {
+    // DESIGN.md "One session, many topics": three topics in two worktrees, a
+    // heal to the next life, and the topic touched again there.
+    name: "topics: each topic's context precedes its targets, and the next life owes it again",
+    events: [
+      start(0),
+      topicEdit(0, 0, 0),
+      topicEdit(0, 1, 0),
+      topicEdit(0, 1, 1),
+      edit(0),
+      hubEnd(0),
+      topicEdit(0, 0, 0),
+      topicEdit(0, 0, 0),
+      end(0),
+    ],
+    // Three topics in the first life — two worktrees, one of them on two
+    // branches — and the one touched after the heal opened again in the next:
+    // the edit that still named the ended life is refused and counted (I1), the
+    // one after it lands under the next life's topic. Each topic's context
+    // reached the hub before any target that names it.
+    shows: (run) => {
+      const topics = topicContextsTaken(run);
+      const indexOf = (kind: string, id: string): number =>
+        run.deliveries.findIndex((delivery) => delivery.kind === kind && delivery.workContextId === id);
+      const isAhead = topics.every((id) => indexOf("target", id) === -1 || indexOf("work_context", id) < indexOf("target", id));
+      const later = topics.filter((id) => id.includes(LATER_LIFE_MARK));
+      const landedLater = run.deliveries.filter(
+        (delivery) => delivery.kind === "target" && delivery.status === "accepted" && later.includes(delivery.workContextId ?? ""),
+      );
+      return topics.length === 4 && later.length === 1 && landedLater.length === 1 && isAhead;
+    },
   },
 ];
 

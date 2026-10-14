@@ -1,6 +1,8 @@
 import type { Context } from "hono";
 
 import type { Db } from "./db/client.ts";
+import type { TrustedProxies } from "./http/forwarded.ts";
+import type { ListenKind } from "./http/listen.ts";
 import type { Embedder } from "./services/embedder.ts";
 
 /** Injected time source — pure logic never reads the system clock directly. */
@@ -53,4 +55,22 @@ export interface AppDeps {
    * says otherwise, since `app.request` has no socket to read.
    */
   readonly peerAddress: (c: Context<AppEnv>) => string | null;
+  /**
+   * Peers besides loopback whose X-Forwarded-* headers are believed
+   * (http/forwarded.ts, CROSSCHECK_TRUSTED_PROXIES). From any other peer the
+   * headers are ignored.
+   */
+  readonly trustedProxies: TrustedProxies;
+  /**
+   * How the hub decided where to listen (http/listen.ts), for GET
+   * /api/hub-status: doctor warns on `legacy_all_interfaces`. Null = an app
+   * serving no socket of its own (an embedded app, a test).
+   */
+  readonly listen: ListenKind | null;
+  /**
+   * CROSSCHECK_REFUSE_PRE_011_DRAFTS (http/client-release.ts): the drafting
+   * doors refuse a client that names no release, or one older than 0.11. Not
+   * a security control — any program can send the header.
+   */
+  readonly refusePreDraftingClients: boolean;
 }

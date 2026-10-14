@@ -201,19 +201,22 @@ import {
   readSessionState,
   repoKey,
 } from "../src/index.ts";
+import { STOP_BUDGET_RATIO } from "@crosscheck/connector-core/constants.ts";
 import {
   sessionSlug,
   sessionStatePath,
   spoolPendingEndPath,
 } from "@crosscheck/connector-core/config/paths.ts";
+import { readCaptureLosses } from "@crosscheck/connector-core/state/loss-ledger.ts";
 import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
-import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
+import { makeHome, makeRepo, writeRepoFile } from "../../connector-core/test/helpers.ts";
 import {
   SELF_DEVELOPER_ID,
   TEAMMATE_NAME,
   startSlowHub,
 } from "./fixtures/slow-hub.ts";
-import type { MockHub } from "./fixtures/slow-hub.ts";
+import type { MockHub, SlowHubRows } from "./fixtures/slow-hub.ts";
+import { MIKE_FILES, MIKE_GHOST_NOTICE, mikeGhostRow } from "./fixtures/collision-fixture.ts";
 
 const BIN_PATH = resolve(import.meta.dir, "..", "..", "cli", "src", "bin", "crosscheck.ts");
 
@@ -280,6 +283,9 @@ const ceilingFor = (budgetRatio: number): number =>
 const SESSION_START_CEILING_MS = ceilingFor(SESSION_START_BUDGET_RATIO);
 const SESSION_END_CEILING_MS = ceilingFor(SESSION_END_BUDGET_RATIO);
 const POST_TOOL_USE_CEILING_MS = ceilingFor(POST_TOOL_USE_BUDGET_RATIO);
+const STOP_CEILING_MS = ceilingFor(STOP_BUDGET_RATIO);
+/** A file system's mtime may be as coarse as one second: the session began that long before the shell wrote. */
+const MTIME_GRANULARITY_MS = 2_000;
 /** Nothing to send means no round trip beyond one heartbeat. */
 const IDLE_CEILING_MS = HTTP_TIMEOUT_MS + PROCESS_ALLOWANCE_MS;
 
@@ -303,11 +309,11 @@ interface Fixture {
   readonly env: Record<string, string>;
 }
 
-const fixture = async (label: string): Promise<Fixture> => {
+const fixture = async (label: string, rows: SlowHubRows = {}): Promise<Fixture> => {
   const repo = await makeRepo(label, { remote: REPO_REMOTE });
   const home = await makeHome(label);
   paths.push(repo, home);
-  const hub = startSlowHub({ ingest: INGEST_LATENCY_MS, end: 0, other: 0 });
+  const hub = startSlowHub({ ingest: INGEST_LATENCY_MS, end: 0, other: 0 }, rows);
   hubs.push(hub);
   return {
     repo,
@@ -411,6 +417,14 @@ const briefingOf = (stdout: string): string => {
   }
 };
 
+const systemMessageOf = (stdout: string): string => {
+  try {
+    return (JSON.parse(stdout) as { systemMessage?: string }).systemMessage ?? "";
+  } catch {
+    return "";
+  }
+};
+
 const markerExists = (fixed: Fixture, sessionId: string): Promise<boolean> =>
   Bun.file(
     spoolPendingEndPath(fixed.home, fixed.key, sessionSlug(sessionId)),
@@ -436,6 +450,27 @@ describe("SessionStart against a slow hub with a backlog", () => {
     // Assert: the briefing is the whole point of the hook — it went MISSING
     // when the drain was allowed to spend the reserve.
     expect(briefingOf(run.stdout)).toContain(TEAMMATE_NAME);
+    expect(run.exitCode).toBe(0);
+    expect(run.elapsedMs).toBeLessThan(SESSION_START_CEILING_MS);
+  });
+
+  test("a ghost row with files still reaches the person, inside the budget (review L9)", async () => {
+    // Arrange: the same backlog, and a briefing with Mike's group of shared files
+    const fixed = await fixture("timebudget-start-ghost", { ghostChecks: [mikeGhostRow(MIKE_FILES, 3)] });
+    await seedBacklog(fixed, "old-session");
+
+    // Act
+    const run = await runHookBinary(fixed, "session-start", {
+      session_id: "start-ghost-uuid",
+      cwd: fixed.repo,
+      hook_event_name: "SessionStart",
+      source: "startup",
+    });
+
+    // Assert: the drain spends the spare; the person's line is claimed in the
+    // reserve it leaves, so it is neither dropped nor late.
+    expect(briefingOf(run.stdout)).toContain(TEAMMATE_NAME);
+    expect(systemMessageOf(run.stdout)).toBe(MIKE_GHOST_NOTICE);
     expect(run.exitCode).toBe(0);
     expect(run.elapsedMs).toBeLessThan(SESSION_START_CEILING_MS);
   });
@@ -547,5 +582,60 @@ describe("PostToolUse against a slow hub with a backlog", () => {
     expect(fixed.hub.calls.heartbeat).toBe(1);
     expect(run.stdout).toBe("");
     expect(run.elapsedMs).toBeLessThan(IDLE_CEILING_MS);
+  });
+});
+
+/**
+ * A DRAIN THE BUDGET CUT IS NO LOSS (release gate, loaded lane, 2026-10-09).
+ * Stop holds no reserve (config/hook-budget.ts), so its drain runs to the
+ * hook's deadline and the race cuts it there whenever the backlog is larger
+ * than the envelope pays for — which the runner booked as `hook_timed_out`,
+ * "the capture may not have happened". It had: the lane's records and the
+ * state write were on disk before the drain began, and what the cut leaves is
+ * exactly what SessionEnd's cut drain leaves — records in the spool, sent by
+ * the next hook. Booked, the false loss made the hub's coverage answer
+ * contradict the connector's own ledger (the gate's 6c) on every tripwire
+ * answer that followed.
+ */
+describe("Stop against a slow hub with a backlog", () => {
+  test("records what it saw, and the drain the budget cut books no loss: the records are still on disk", async () => {
+    // Arrange: a backlog no Stop envelope can drain at this latency, a live
+    // session that began two seconds ago, and a file a shell changed since
+    const fixed = await fixture("timebudget-stop");
+    const sessionId = "stop-uuid";
+    await seedBacklog(fixed, "old-session");
+    await writeSessionState(fixed.home, {
+      hostSessionKey: sessionId,
+      crosscheckSessionId: `cc_${sessionId}`,
+      workContextId: `wc_cc_${sessionId}`,
+      repoId: REPO_ID,
+      repoRoot: fixed.repo,
+      hubUrl: fixed.hub.url,
+      developerId: SELF_DEVELOPER_ID,
+      startedAt: new Date(Date.now() - MTIME_GRANULARITY_MS).toISOString(),
+      lastHeartbeatAt: null,
+      seenTargets: [],
+    });
+    await writeRepoFile(fixed.repo, "src/a.ts", "export const a = 2;\n");
+
+    // Act
+    const run = await runHookBinary(fixed, "stop", {
+      session_id: sessionId,
+      cwd: fixed.repo,
+      hook_event_name: "Stop",
+      stop_hook_active: false,
+    });
+
+    // Assert: the lane ran and its capture is on disk; the drain sent what it
+    // could and was cut, and nothing is booked lost — the backlog is still
+    // in the spool for the next hook
+    const state = await readSessionState(fixed.home, sessionId);
+    expect(state?.seenTargets).toContain("src/a.ts");
+    expect(state?.gitLaneSkipped).toBe(0);
+    expect(fixed.hub.calls.records).toBeGreaterThan(0);
+    expect((await readCaptureLosses(fixed.home, fixed.key)).byDetail["hook_timed_out:stop"]).toBeUndefined();
+    expect(run.stdout).toBe("");
+    expect(run.exitCode).toBe(0);
+    expect(run.elapsedMs).toBeLessThan(STOP_CEILING_MS);
   });
 });

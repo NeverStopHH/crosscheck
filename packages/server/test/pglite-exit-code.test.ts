@@ -58,6 +58,7 @@ const exitCodeOf = async (
 ): Promise<number | typeof STILL_RUNNING> => {
   const child = Bun.spawn({
     cmd: [process.execPath, "-e", script],
+    env: { ...process.env },
     cwd: SERVER_DIR,
     stdout: "ignore",
     stderr: "ignore",

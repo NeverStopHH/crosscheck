@@ -162,6 +162,16 @@ const INCOMPLETE_LABELS: Record<string, string> = {
 };
 
 /**
+ * A gap the hub withheld (review round 5, H4): counted, never named — whose
+ * session, and how it went quiet, is the opted-out teammate's to keep. The
+ * hub's flag replaces the reason's word, which is a fixed one for old clients.
+ */
+export const WITHHELD_GAP_LABEL = "withheld: presence opt-out";
+
+const incompleteLabel = (row: CoverageSourceRecord): string | null =>
+  row.withheld === true ? WITHHELD_GAP_LABEL : (INCOMPLETE_LABELS[row.reason] ?? null);
+
+/**
  * THE TWO LOSS REASONS (docs/1.0/loss-accounting.md §4.6) open the sentence
  * differently: a session that went QUIET and a session that LOST records are
  * two facts, and the second is the one the connector wrote down itself. The
@@ -211,7 +221,7 @@ const agentEventFragment = (
       // and only the age says the fact is ageing rather than recurring.
       return `${quiet}${parenthetical([
         age,
-        form.labels ? (INCOMPLETE_LABELS[row.reason] ?? null) : null,
+        form.labels ? incompleteLabel(row) : null,
       ])}`;
     }
     case "unknown": {
@@ -458,11 +468,19 @@ export const coverageClause = (record: CoverageRecord, now: Date): string => {
   return single === undefined ? twoLines(head, forms) : lineOf(head, single);
 };
 
+/**
+ * Whether some rung is POSITIVELY incomplete — the one condition every
+ * qualifier on a positive answer speaks on. An `unknown` or unreported rung
+ * is not a gap anybody observed, so it says nothing.
+ */
+export const hasIncompleteRung = (record: CoverageRecord): boolean =>
+  record.sources.some((row) => row.state === "incomplete");
+
 export const coverageNote = (
   record: CoverageRecord,
   now: Date,
 ): string | null =>
-  record.sources.some((row) => row.state === "incomplete")
+  hasIncompleteRung(record)
     ? coverageClause(record, now)
     : null;
 

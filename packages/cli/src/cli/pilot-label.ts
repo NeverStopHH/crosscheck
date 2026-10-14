@@ -47,6 +47,7 @@ import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
 import { MAX_PILOT_LABEL_REASON_CHARS, containsSecret, reasonLength } from "@crosscheck/schema";
 import type { PilotInterventionLabel } from "@crosscheck/schema";
 
+import { agentHostRefusalLine, personGate } from "./agent-host.ts";
 import { defaultInteractiveProbe } from "./pin.ts";
 import type { InteractiveProbe } from "./pin.ts";
 import { markFailureLine } from "./pilot-mark.ts";
@@ -117,7 +118,7 @@ type Decision =
   | { readonly kind: "stop" };
 
 type Outcome =
-  | { readonly kind: "labelled"; readonly label: PilotInterventionLabel }
+  | { readonly kind: "labelled"; readonly label: PilotInterventionLabel; readonly drafted: boolean }
   | { readonly kind: "already" | "skipped" | "refused" | "stopped" | "unreachable" };
 
 const STOP: Decision = { kind: "stop" };
@@ -197,8 +198,9 @@ const send = async (
     ...(reason === undefined ? {} : { reason }),
   });
   if (result.ok) {
-    terminal.write(labelRecordedLine(label, reason !== undefined, result.data.repeated));
-    return result.data.repeated ? { kind: "already" } : { kind: "labelled", label };
+    const drafted = result.data.draft === true;
+    terminal.write(labelRecordedLine(label, reason !== undefined, result.data.repeated, drafted));
+    return result.data.repeated ? { kind: "already" } : { kind: "labelled", label, drafted };
   }
   if (result.kind === "network") {
     terminal.write(walkUnreachableLine(result.message));
@@ -232,7 +234,7 @@ const labelOne = async (
 const counted = (tally: WalkTally, outcome: Outcome): WalkTally => {
   switch (outcome.kind) {
     case "labelled":
-      return { ...tally, [outcome.label]: tally[outcome.label] + 1 };
+      return { ...tally, [outcome.label]: tally[outcome.label] + 1, drafted: tally.drafted + (outcome.drafted ? 1 : 0) };
     case "already":
       return { ...tally, already: tally.already + 1 };
     case "skipped":
@@ -261,6 +263,7 @@ const walk = async (
     already: 0,
     refused: 0,
     notReached: 0,
+    drafted: 0,
   };
   for (const [index, candidate] of candidates.entries()) {
     terminal.write(interventionLine(candidate, index, candidates.length, now));
@@ -293,6 +296,7 @@ const resolveHub = async (
     ctx: {
       hubUrl: config.hubUrl,
       apiKey: config.apiKey,
+      keyOrigin: config.keyOrigin,
       timeoutMs: config.timeoutMs,
       home: config.home,
       repoKey: repoKey(config.hubUrl, identity.repoId),
@@ -311,8 +315,9 @@ export const runPilotLabel = async (
   if (argv.length > 0) {
     return { stdout: PILOT_LABEL_USAGE, exitCode: EXIT_USAGE };
   }
-  if (!isInteractive()) {
-    return { stdout: AGENT_REFUSAL, exitCode: EXIT_USAGE };
+  const gate = personGate(env, isInteractive);
+  if (!gate.isPerson) {
+    return { stdout: `${agentHostRefusalLine(gate)}${AGENT_REFUSAL}`, exitCode: EXIT_USAGE };
   }
   const hub = await resolveHub(env, cwd);
   if ("failure" in hub) {

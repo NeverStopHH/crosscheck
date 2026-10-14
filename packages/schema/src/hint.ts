@@ -40,6 +40,20 @@ export type Hint = z.infer<typeof HintSchema>;
 export const HINT_REF_KINDS = ["claim", "work_context"] as const;
 
 /**
+ * What a delivered hint was matched on (review 1006b, M7): the prompt, the
+ * session's intent (a hub that still reports one), or a question this
+ * developer asked — so the per-person followed/overrode measurement can tell
+ * an answer they waited for from a pointer they never asked for.
+ */
+export const HINT_MATCHED_ON_VALUES = ["prompt", "intent", "answer"] as const;
+
+export type DeliveryMatchedOn = (typeof HINT_MATCHED_ON_VALUES)[number];
+
+/** Who wrote the receiving session's intent: `set_intent`, or the intent worker. */
+export const INTENT_PROVENANCES = ["declared", "derived"] as const;
+export type IntentProvenance = (typeof INTENT_PROVENANCES)[number];
+
+/**
  * Delivery telemetry for one injected hint (DESIGN.md §4): refs only, never
  * the rendered text — the hub already holds the claim, and what the precision
  * loop needs is WHICH ref reached WHICH session, not a second copy of the
@@ -63,6 +77,16 @@ export const HintDeliverySchema = z.looseObject({
    * install nobody has upgraded yet — losing the very rows the pilot counts.
    */
   channel: DeliveryChannelSchema.default("unknown"),
+  /**
+   * What the hint was matched on (M7). OPTIONAL and never defaulted: a
+   * connector older than the field says nothing, and the hub stores nothing
+   * rather than a guess. A value this hub does not know is read as nothing
+   * too (hold-out review, L3) — never a refusal, which would drop the very
+   * delivery row the measurement counts over one word it cannot read.
+   */
+  matchedOn: z.enum(HINT_MATCHED_ON_VALUES).optional().catch(undefined),
+  /** Who wrote the receiving session's intent at delivery; null when it had none, or said something unknown. */
+  intentProvenance: z.enum(INTENT_PROVENANCES).nullable().optional().catch(null),
   deliveredAt: z.iso.datetime(),
 });
 

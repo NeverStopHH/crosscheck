@@ -97,7 +97,11 @@ export type DropReason =
    * upgrade for.
    */
   | "ignored"
-  /** Paths past MAX_TARGETS_PER_INVOCATION in one tool call — never written. */
+  /**
+   * Paths past the per-call cap — MAX_TARGETS_PER_INVOCATION in one tool
+   * call, MAX_GIT_LANE_TARGETS_PER_ROOT in one root's sweep, and the git
+   * lane's candidate bound before either — never written.
+   */
   | "capture-capped"
   /** A path the secret scan refused to spool — never written. */
   | "secret-path"

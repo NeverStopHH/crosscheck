@@ -46,6 +46,7 @@ import { reapSpool } from "../src/spool/reap.ts";
 import { readRefusedLives, recordRefusedLife } from "../src/spool/refused-lives.ts";
 import { reapStaleSessionStates } from "../src/state/session-reap.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 
 const ADMIN_TOKEN = "release-clock-admin";
 const REPO_ID = "github.com/acme/api";
@@ -99,7 +100,7 @@ const fixture = async (label: string): Promise<Fixture> => {
   const repo = await makeRepo(label, { remote: "git@github.com:acme/api.git" });
   cleanups.push(home, repo);
   const key = repoKey(hubUrl, REPO_ID);
-  return { home, repo, key, hub: { hubUrl, apiKey, timeoutMs: HTTP_TIMEOUT_MS, home, repoKey: key, now: () => new Date() } };
+  return { home, repo, key, hub: { hubUrl, keyOrigin: hubUrl, apiKey, timeoutMs: HTTP_TIMEOUT_MS, home, repoKey: key, now: () => new Date() } };
 };
 
 const register = (fx: Fixture, hostSessionKey: string) =>
@@ -116,6 +117,7 @@ const register = (fx: Fixture, hostSessionKey: string) =>
     hubUrl,
     fallbackDeveloperId: developerId,
     title: fallbackWorkContextTitle(BRANCH, REPO_ID),
+    titleSource: "fallback",
     status: "analyzing",
     now: new Date(),
     guarantees: guaranteeDeclarationFor(ACP_CONNECTOR),
@@ -146,7 +148,7 @@ const targetsOf = async (workContextId: string): Promise<number> =>
 
 beforeAll(async () => {
   db = await createDb();
-  server = Bun.serve({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
+  server = serveLoopback({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
   hubUrl = `http://127.0.0.1:${server.port}`;
   const response = await fetch(`${hubUrl}/api/developers`, {
     method: "POST",
@@ -255,7 +257,7 @@ describe("the expiry clock of a released spool (H2)", () => {
     await diedAgo(fx, host, ABANDONED_MS);
     const other = await register(fx, "acp-release--early-successor");
     const firstSend = Date.now();
-    const unreachable = { ...fx.hub, hubUrl: "http://127.0.0.1:1", now: () => new Date(firstSend) };
+    const unreachable = { ...fx.hub, hubUrl: "http://127.0.0.1:1", keyOrigin: "http://127.0.0.1:1", now: () => new Date(firstSend) };
 
     // Act: the release by that send; session-reap three days on; reap a full bound after the send
     await flushSpool(unreachable, { sessionId: other.crosscheckSessionId, developerId }, 3000);

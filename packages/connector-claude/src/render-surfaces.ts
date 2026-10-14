@@ -29,8 +29,40 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   },
   // The prompt-hint path is the core `selectAndRenderHint` flow since Block 5
   // (registered in core as hint-flow); user-prompt-submit.ts no longer touches
-  // the render layer itself, so a row here would be a decorative registration
-  // the registry test rejects.
+  // the render layer itself — the subagent collision relay it carries is
+  // composed in hooks/collision-relay.ts, registered below.
+  {
+    kind: "composite",
+    name: "claude-subagent-collision-relay",
+    delivery: "unsolicited",
+    module: "src/hooks/collision-relay.ts",
+    note: "returns renderSubagentCollisionRelay output verbatim as the main thread's copy (core's collision-subagent-relay surface) and renderCollisionNotices output verbatim as the person's systemMessage (core's collision-notice surface) — one render for the drained groups and any ghost groups the same prompt tells; the groups it renders are the session state's own records of rows the tripwire already projected, held to presence by core relayedCollisions (named, named in the past tense with no location, or unnamed)",
+    corpusCoveredBy: ["test/collision-notice-hook.test.ts"],
+  },
+  {
+    // Round 3, F-M2 as accepted: the recheck every rest owes, paid by any hook.
+    kind: "composite",
+    name: "claude-rest-recheck",
+    delivery: "unsolicited",
+    module: "src/hooks/rest-recheck.ts",
+    note: "builds the groups an owed rest's fresh tripwire answer names with core tripwireCollision, from rows the hub already projected, exactly as the PreToolUse tripwire builds them, and returns the ones new to the session; it renders nothing itself — turn-end, pre-tool-use, user-prompt-submit and subagent-return print them through renderCollisionNotices (core's collision-notice surface) and collision-relay's sweptAgentCopy",
+  },
+  {
+    // Round 3, F-M2: the sync Stop hook's re-check of resting files.
+    kind: "composite",
+    name: "claude-turn-end-recheck",
+    delivery: "unsolicited",
+    module: "src/hooks/turn-end.ts",
+    note: "returns renderCollisionNotices output verbatim as the person's systemMessage (core's collision-notice surface) for the groups a resting file's fresh tripwire answer names and the session has not told the person of — groups core tripwireCollision builds from rows the hub already projected, exactly as the PreToolUse tripwire builds them; it composes no text of its own",
+  },
+  {
+    kind: "composite",
+    name: "claude-briefing-ghost-notice",
+    delivery: "unsolicited",
+    module: "src/hooks/ghost-notice.ts",
+    note: "returns the groups to tell, which SessionStart renders through renderCollisionNotices verbatim (core's collision-notice surface) and the prompt that pays a deferred briefing renders in the relay's one person-facing render; the groups are ghostCollisions of the ghost rows the emitted briefing really shows, so only teammates the briefing itself names",
+    corpusCoveredBy: ["test/collision-notice-hook.test.ts"],
+  },
   // `claude-ghost-draft` is no longer registered here: the ghost worker moved
   // to connector-core (src/derive/ghost/worker.ts) so Cursor and ACP can pay
   // the same debt, and its registration moved with it (core's
@@ -51,14 +83,14 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     name: "claude-tripwire-ask",
     delivery: "unsolicited",
     module: "src/hooks/pre-tool-use.ts",
-    note: "emits renderTripwireReason output verbatim as both permissionDecisionReason and additionalContext (the same rendered string, #25); registered core surface, covered in test/tripwire-hook.test.ts",
+    note: "emits renderTripwireReason output verbatim as both permissionDecisionReason and additionalContext (the same rendered string, #25), plus appendOutcomeClause where the hub records outcomes; for the teammate groups new to the session, renderCollisionNotices output verbatim as systemMessage and the renderer-owned COLLISION_RELAY_SENTENCE after the model's copy only — or, on an edit with no ask left to state, the same notices and sentence as the model's copy; all registered core surfaces, covered in test/tripwire-hook.test.ts, test/collision-notice-hook.test.ts and test/collision-order-hook.test.ts",
   },
   {
     kind: "composite",
     name: "claude-statusline",
     delivery: "unsolicited",
     module: "src/statusline/statusline.ts",
-    note: "teammate names via groupTeammates (sanitize inside toGroup); a terminal line, capped and joined from sanitized fields",
+    note: "teammates grouped by groupTeammates and every field it prints — names, statuses, last-seen names — through core collision-notice's personName / personText, the person strip and phrase decision the collision surfaces share (round 3, F-L4); a terminal line, capped and joined from those fields, led by renderOverlapIndicator output verbatim (core's collision-overlap-indicator surface) in a bound of its own",
   },
   // doctor/status moved to packages/cli in Block 8; their composite
   // registrations (cli-doctor, cli-status) moved with them into that

@@ -20,6 +20,7 @@ import { formatIssues } from "../http/request.ts";
 import { SolvedMatchQuerySchema } from "../http/schemas.ts";
 import { developerAuth } from "../middleware/auth.ts";
 import { countSolvedDeliveries } from "../services/solved-counts.ts";
+import { readTeamSettings } from "../services/team-settings.ts";
 import {
   listSolvedByFingerprint,
   listSolvedMatches,
@@ -57,15 +58,16 @@ export const solvedMatchesRoutes = (deps: AppDeps): Hono<AppEnv> => {
     // it is what the caller's renderer compares each row's own repo against
     // to decide whether to say where the answer lives, and a caller that
     // cannot name its repo cannot render the answer honestly either.
-    const matches =
+    // 07 §13 (D-O3): whether this repo records outcomes rides the same answer,
+    // in parallel — the briefing ends its solved pointers with the outcome
+    // clause only where it does, at no extra round trip.
+    const [matches, settings] = await Promise.all([
       parsed.data.fingerprint === undefined
-        ? await listSolvedMatches(deps, developerId, parsed.data.repo)
-        : await listSolvedByFingerprint(
-            deps,
-            developerId,
-            parsed.data.fingerprint,
-          );
-    return ok(c, { matches });
+        ? listSolvedMatches(deps, developerId, parsed.data.repo)
+        : listSolvedByFingerprint(deps, developerId, parsed.data.fingerprint),
+      readTeamSettings(deps, parsed.data.repo),
+    ]);
+    return ok(c, { matches, recordsOutcomes: settings.pilotEnrolled });
   });
 
   return router;

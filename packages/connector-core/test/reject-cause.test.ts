@@ -22,6 +22,7 @@ import { archiveLedger, readDropDetail, recordDrop } from "../src/spool/drops.ts
 import { flushSpool } from "../src/spool/flush.ts";
 import { REJECT_CAUSE_SENTENCES, rejectCauseOf, screenCauses } from "../src/spool/reject-cause.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 
 const ADMIN_TOKEN = "reject-cause-admin";
 const REPO_ID = "github.com/acme/api";
@@ -35,7 +36,7 @@ const cleanups: string[] = [];
 
 beforeAll(async () => {
   const db = await createDb();
-  server = Bun.serve({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
+  server = serveLoopback({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
   hubUrl = `http://127.0.0.1:${server.port}`;
   const response = await fetch(`${hubUrl}/api/developers`, {
     method: "POST",
@@ -89,7 +90,7 @@ describe("a late write after a final end", () => {
     const repo = await makeRepo("reject-late", { remote: "git@github.com:acme/api.git" });
     cleanups.push(home, repo);
     const key = repoKey(hubUrl, REPO_ID);
-    const hub: HubContext = { hubUrl, apiKey, timeoutMs: 4000, home, repoKey: key, now: () => new Date() };
+    const hub: HubContext = { hubUrl, keyOrigin: hubUrl, apiKey, timeoutMs: 4000, home, repoKey: key, now: () => new Date() };
     const hostSessionKey = "acp-test--sess_late";
     const registered = await registerSessionFlow({
       home,
@@ -104,6 +105,7 @@ describe("a late write after a final end", () => {
       hubUrl,
       fallbackDeveloperId: null,
       title: fallbackWorkContextTitle("main", REPO_ID),
+      titleSource: "fallback",
       status: "analyzing",
       now: new Date(),
       guarantees: guaranteeDeclarationFor(ACP_CONNECTOR),

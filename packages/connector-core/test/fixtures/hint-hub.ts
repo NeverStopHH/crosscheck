@@ -4,6 +4,9 @@
  * (which predates the hints routes and stays untouched: its callers pin budget
  * incidents that never involved these endpoints).
  */
+import { serveLoopback } from "./loopback-serve.ts";
+
+import { DELIVERY_CHANNELS } from "@crosscheck/schema";
 
 export interface HintHubCalls {
   candidates: number;
@@ -11,6 +14,8 @@ export interface HintHubCalls {
   /** GET /api/solved-matches — the failure-time fingerprint probe. */
   solvedMatches: number;
   records: number;
+  /** GET /api/presence — the statusline's poll and the relay's one refresh. */
+  presence: number;
   other: number;
 }
 
@@ -23,6 +28,8 @@ export interface HintHubLatency {
   records?: number;
   /** GET /api/solved-matches — the failure-time probe's own latency dial. */
   solvedMatches?: number;
+  /** GET /api/presence — holds a presence answer past a caller's bound. */
+  presence?: number;
 }
 
 export interface HintHub {
@@ -30,15 +37,49 @@ export interface HintHub {
   readonly calls: HintHubCalls;
   readonly latency: HintHubLatency;
   readonly setCandidates: (candidates: readonly unknown[]) => void;
+  /** Whether the candidates, tripwire and solved-match answers say this repo records hint outcomes (07 §13); undefined omits it. */
+  readonly setRecordsOutcomes: (recordsOutcomes: boolean | undefined) => void;
   /** Answers to the CALLER's own questions, on the same bounded response. */
   readonly setAnswers: (answers: readonly unknown[]) => void;
   /** The author's notices (landed changes, step 4), on the same response. */
   readonly setNotices: (notices: readonly unknown[]) => void;
+  /** The coverage record on the same response; unset, the field is absent. */
+  readonly setCoverage: (coverage: unknown) => void;
+  /**
+   * The delivery channels the hub advertises — every channel a current hub
+   * records by default; undefined answers like a hub too old to send it.
+   */
+  readonly setDeliveryChannels: (channels: readonly string[] | undefined) => void;
   readonly setTripwireSessions: (sessions: readonly unknown[]) => void;
+  /** The sessions the tripwire answers for ONE file; other files keep `setTripwireSessions`'s answer. */
+  readonly setTripwireSessionsFor: (file: string, sessions: readonly unknown[]) => void;
+  /** A status the tripwire fails with (an error envelope), or null to answer again. */
+  readonly setTripwireFailure: (status: number | null) => void;
+  /**
+   * The tripwire's nameless rows (a teammate who opted out of presence, live
+   * on the file); undefined (the default) answers like a hub too old to send them.
+   */
+  readonly setTripwireAnonymous: (rows: readonly unknown[] | undefined) => void;
+  /**
+   * The rows GET /api/presence answers with; null (the default) answers with a
+   * body the client cannot read, which is what this hub always did.
+   */
+  readonly setPresence: (sessions: readonly unknown[] | null) => void;
+  /**
+   * Run while a GET /api/presence is in flight, before it is answered: what a
+   * test sees of the caller's own state at the moment it waits on presence.
+   */
+  readonly setPresenceProbe: (probe: (() => Promise<void>) | null) => void;
+  /** The same, for GET /api/hints/candidates: the caller's state at the moment it asks for a hint. */
+  readonly setCandidatesProbe: (probe: (() => Promise<void>) | null) => void;
   /** Rows GET /api/solved-matches answers with. */
   readonly setSolvedMatches: (matches: readonly unknown[]) => void;
   /** The `?fingerprint=` of the last solved-match probe, or null. */
   readonly lastSolvedFingerprint: () => string | null;
+  /** The query string of the last candidates call — what went on the wire. */
+  readonly lastCandidatesQuery: () => URLSearchParams | null;
+  /** The query string of the last tripwire call. */
+  readonly lastTripwireQuery: () => URLSearchParams | null;
   /** Every record body POSTed to /api/records, in order — the delivery pins. */
   readonly postedRecords: readonly Record<string, unknown>[];
   readonly stop: () => void;
@@ -46,13 +87,17 @@ export interface HintHub {
 
 export const TEAMMATE_DEVELOPER_ID = "dev_nick";
 export const SELF_DEVELOPER_ID = "dev_self";
-export const CANDIDATE_CLAIM_ID = "clm_rejected";
+export const CANDIDATE_CLAIM_ID = "clm_cause";
 export const CANDIDATE_CONTEXT_ID = "wc_nick";
 export const CANDIDATE_BODY =
   "Retrying the refresh call does not help; the key is gone";
 
-/** One injectable candidate: Nick's evidence-backed rejected approach. */
-export const rejectedApproachCandidate = (): Record<string, unknown> => ({
+/**
+ * One injectable candidate: Nick's settled, evidence-backed root cause — the
+ * hub resolved its evidence (review 1006b, H4: only a settled root cause or a
+ * stated decision is substance; a rejected approach is a pointer).
+ */
+export const injectableCandidate = (): Record<string, unknown> => ({
   workContext: {
     id: CANDIDATE_CONTEXT_ID,
     title: "Refresh 500s after key rotation",
@@ -63,28 +108,48 @@ export const rejectedApproachCandidate = (): Record<string, unknown> => ({
     baseCommit: "a1b2c3d4e5f6a7b8",
     createdAt: "2026-08-10T08:00:00.000Z",
     updatedAt: null,
+    // Its own title shares "key" and "rotation" with the canned prompt: the
+    // tree is about it (round 4, C2).
+    matchedTerms: 2,
   },
   claims: [
     {
       id: CANDIDATE_CLAIM_ID,
       workContextId: CANDIDATE_CONTEXT_ID,
-      kind: "rejected_approach",
-      status: "rejected",
+      kind: "root_cause",
+      status: "likely_root_cause",
       confidence: 0.8,
       provenance: "declared",
       captureMode: "agent",
       evidenceRefCount: 1,
+      evidenceBacked: true,
       authorDeveloperId: TEAMMATE_DEVELOPER_ID,
       authorDeveloperName: "Nick",
       body: CANDIDATE_BODY,
+      // What a current hub counts for the canned prompt ("why does
+      // src/auth/refresh.ts still 500 after the key rotation") against this
+      // body: "refresh" and "key" — a strong match, so this stays substance;
+      // the only candidate, so no other tree says either (round 4, C2).
+      matchedTerms: 2,
+      distinctTerms: 2,
       createdAt: "2026-08-10T08:00:00.000Z",
     },
   ],
 });
 
+/** The same tree carrying Nick's rejected approach instead: a pointer since H4. */
+export const rejectedApproachCandidate = (): Record<string, unknown> => {
+  const base = injectableCandidate();
+  const claims = base["claims"] as readonly Record<string, unknown>[];
+  return {
+    ...base,
+    claims: [{ ...claims[0], id: "clm_rejected", kind: "rejected_approach", status: "rejected" }],
+  };
+};
+
 /** The same context carrying only a bare proposed hypothesis. */
 export const proposedOnlyCandidate = (): Record<string, unknown> => {
-  const base = rejectedApproachCandidate();
+  const base = injectableCandidate();
   const claims = base["claims"] as readonly Record<string, unknown>[];
   return {
     ...base,
@@ -117,7 +182,7 @@ const derivedCandidateIntent = (): Record<string, unknown> => ({
  * invisible, and now earns a pointer.
  */
 export const intentOnlyCandidate = (): Record<string, unknown> => {
-  const base = rejectedApproachCandidate();
+  const base = injectableCandidate();
   return {
     ...base,
     workContext: {
@@ -125,6 +190,24 @@ export const intentOnlyCandidate = (): Record<string, unknown> => {
       intent: derivedCandidateIntent(),
     },
     claims: [],
+  };
+};
+
+/** Both rungs reaped since a week before `now`: the coverage note at its two-line length. */
+export const reapedCoverage = (repo: string, now: Date): Record<string, unknown> => {
+  const gapSince = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  return {
+    repo,
+    computedAt: now.toISOString(),
+    scope: { sinceIso: gapSince },
+    order: { state: "undeclared", reason: "hub_did_not_report" },
+    sources: [
+      { source: "agent_event", state: "incomplete", reason: "session_reaped", gapSince, observedAt: gapSince },
+      { source: "git", state: "incomplete", reason: "commits_reported", gapSince, observedAt: gapSince },
+      { source: "ci", state: "unavailable", reason: "no_emitter", gapSince: null, observedAt: null },
+      { source: "runtime", state: "unavailable", reason: "out_of_scope_1_0", gapSince: null, observedAt: null },
+      { source: "human_edit", state: "unavailable", reason: "no_platform_rung", gapSince: null, observedAt: null },
+    ],
   };
 };
 
@@ -183,7 +266,7 @@ export const solvedFingerprintMatch = (): Record<string, unknown> => ({
  * now yields a targets-only pointer.
  */
 export const targetsOnlyCandidate = (): Record<string, unknown> => {
-  const base = rejectedApproachCandidate();
+  const base = injectableCandidate();
   return {
     ...base,
     claims: [],
@@ -224,23 +307,48 @@ export const startHintHub = (
     tripwire: 0,
     solvedMatches: 0,
     records: 0,
+    presence: 0,
     other: 0,
   };
-  let candidates: readonly unknown[] = [rejectedApproachCandidate()];
+  let presence: readonly unknown[] | null = null;
+  let presenceProbe: (() => Promise<void>) | null = null;
+  let candidatesProbe: (() => Promise<void>) | null = null;
+  let candidates: readonly unknown[] = [injectableCandidate()];
+  /** Absent unless a test sets it — what every hub before 07 §13 sends. */
+  let recordsOutcomes: boolean | undefined;
   let answers: readonly unknown[] = [];
   let notices: readonly unknown[] = [];
+  let coverage: unknown = undefined;
+  let deliveryChannels: readonly string[] | undefined = [...DELIVERY_CHANNELS];
   let tripwireSessions: readonly unknown[] = [];
+  const tripwireByFile = new Map<string, readonly unknown[]>();
+  let tripwireFailure: number | null = null;
+  let tripwireAnonymous: readonly unknown[] | undefined;
   let solvedMatches: readonly unknown[] = [];
   let lastSolvedFingerprint: string | null = null;
+  let lastCandidatesQuery: URLSearchParams | null = null;
+  let lastTripwireQuery: URLSearchParams | null = null;
   const postedRecords: Record<string, unknown>[] = [];
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: async (request) => {
-      const { pathname } = new URL(request.url);
+      const { pathname, searchParams } = new URL(request.url);
       if (pathname === "/api/hints/candidates") {
         calls.candidates += 1;
+        lastCandidatesQuery = searchParams;
+        await candidatesProbe?.();
         await sleep(latency.candidates);
-        return Response.json({ ok: true, data: { candidates, answers, notices } });
+        return Response.json({
+          ok: true,
+          data: {
+            candidates,
+            answers,
+            notices,
+            coverage,
+            deliveryChannels,
+            ...(recordsOutcomes === undefined ? {} : { recordsOutcomes }),
+          },
+        });
       }
       if (pathname === "/api/solved-matches") {
         calls.solvedMatches += 1;
@@ -248,12 +356,27 @@ export const startHintHub = (
         lastSolvedFingerprint = new URL(request.url).searchParams.get(
           "fingerprint",
         );
-        return Response.json({ ok: true, data: { matches: solvedMatches } });
+        return Response.json({
+          ok: true,
+          data: { matches: solvedMatches, ...(recordsOutcomes === undefined ? {} : { recordsOutcomes }) },
+        });
       }
       if (pathname === "/api/hints/tripwire") {
         calls.tripwire += 1;
+        lastTripwireQuery = searchParams;
         await sleep(latency.tripwire);
-        return Response.json({ ok: true, data: { sessions: tripwireSessions } });
+        if (tripwireFailure !== null) {
+          return Response.json({ ok: false, error: { code: "unavailable", message: "tripwire down" } }, { status: tripwireFailure });
+        }
+        const sessions = tripwireByFile.get(searchParams.get("value") ?? "") ?? tripwireSessions;
+        return Response.json({
+          ok: true,
+          data: {
+            sessions,
+            ...(tripwireAnonymous === undefined ? {} : { anonymous: tripwireAnonymous }),
+            ...(recordsOutcomes === undefined ? {} : { recordsOutcomes }),
+          },
+        });
       }
       if (pathname === "/api/records") {
         const body = (await request.json()) as { records: readonly unknown[] };
@@ -270,7 +393,16 @@ export const startHintHub = (
           },
         });
       }
-      calls.other += 1;
+      if (pathname === "/api/presence") {
+        calls.presence += 1;
+        await presenceProbe?.();
+        await sleep(latency.presence ?? 0);
+        if (presence !== null) {
+          return Response.json({ ok: true, data: { sessions: presence } });
+        }
+      } else {
+        calls.other += 1;
+      }
       return Response.json({
         ok: true,
         data: { session: { id: "cc_x", developerId: SELF_DEVELOPER_ID } },
@@ -285,19 +417,48 @@ export const startHintHub = (
     setCandidates: (next) => {
       candidates = next;
     },
+    setRecordsOutcomes: (next) => {
+      recordsOutcomes = next;
+    },
     setAnswers: (next) => {
       answers = next;
     },
     setNotices: (next) => {
       notices = next;
     },
+    setCoverage: (next) => {
+      coverage = next;
+    },
+    setDeliveryChannels: (next) => {
+      deliveryChannels = next;
+    },
     setTripwireSessions: (next) => {
       tripwireSessions = next;
+    },
+    setTripwireSessionsFor: (file, next) => {
+      tripwireByFile.set(file, next);
+    },
+    setTripwireFailure: (status) => {
+      tripwireFailure = status;
+    },
+    setTripwireAnonymous: (rows) => {
+      tripwireAnonymous = rows;
+    },
+    setPresence: (next) => {
+      presence = next;
+    },
+    setPresenceProbe: (next) => {
+      presenceProbe = next;
+    },
+    setCandidatesProbe: (next) => {
+      candidatesProbe = next;
     },
     setSolvedMatches: (next) => {
       solvedMatches = next;
     },
     lastSolvedFingerprint: () => lastSolvedFingerprint,
+    lastCandidatesQuery: () => lastCandidatesQuery,
+    lastTripwireQuery: () => lastTripwireQuery,
     stop: () => {
       server.stop(true);
     },

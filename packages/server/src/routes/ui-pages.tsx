@@ -7,8 +7,9 @@
  * Reads reuse the API's services untouched: the feed rides the opt-out-
  * filtered events reader (services/events.ts), the tree page rides
  * getDiagnosis + listSolvedInfo, the case file rides getRefereeBrief.
- * Approve/revoke is the one write surface, CSRF-checked and owner-scoped
- * hub-side (services/artifacts.ts).
+ * Releasing an artifact is a passkey ceremony on /ui/approvals
+ * (routes/ui-ceremony-artifacts.ts), owner-scoped hub-side
+ * (services/artifacts.ts); the old form posts only refuse.
  */
 import { Hono } from "hono";
 import { eq, inArray } from "drizzle-orm";
@@ -25,25 +26,23 @@ import {
 } from "../services/artifacts.ts";
 import { getDiagnosis } from "../services/diagnosis.ts";
 import { listMembers } from "../services/members.ts";
+import { usableCredentials } from "../services/passkeys.ts";
 import { getRefereeBrief } from "../services/referee.ts";
 import { listSolvedInfo } from "../services/solved.ts";
-import { UI_FEED_LIMIT, UI_MAX_ARTIFACTS } from "../ui/constants.ts";
-import {
-  forbidden,
-  isPostedCsrfValid,
-  notFoundPage,
-  viewerChrome,
-} from "../ui/route-helpers.tsx";
+import { UI_FEED_LIMIT, UI_MAX_ARTIFACTS, UI_PASSKEY_CSP } from "../ui/constants.ts";
+import { forbidden, isPostedCsrfValid, notFoundPage, viewerChrome } from "../ui/route-helpers.tsx";
 import { ApprovalsPage } from "../ui/pages/approvals.tsx";
 import { FeedPage } from "../ui/pages/feed.tsx";
-import type { FeedEntry } from "../ui/pages/feed.tsx";
+import type { FeedEntry, PresenceReenableBanner, WaitingDrafts } from "../ui/pages/feed.tsx";
+import { countPendingForBanner } from "../services/human-drafts.ts";
+import { getDeveloperSettings, presenceReenableNotice } from "../services/developer-settings.ts";
 import { MembersPage } from "../ui/pages/members.tsx";
 import { RefereePage } from "../ui/pages/referee.tsx";
 import { WorkContextPage } from "../ui/pages/work-context.tsx";
 import type { AppDeps, AppEnv } from "../types.ts";
 
-const APPROVALS_PATH = "/ui/approvals";
 const FEED_PATH = "/ui/feed";
+const APPROVALS_PATH = "/ui/approvals";
 
 // ── Feed assembly ───────────────────────────────────────────────────────────
 
@@ -92,6 +91,22 @@ const changedLabel = (payload: Record<string, unknown>): string | null => {
   return Array.isArray(changed) && changed.includes(INTENT_FIELD) ? INTENT_FIELD : null;
 };
 
+/**
+ * Only a DERIVED claim is labelled: a vouched claim is the default reading of
+ * "added a claim", and the label is a renderer-owned literal, never the
+ * payload's text.
+ *
+ * EVENTS APPENDED BEFORE claim_added CARRIED PROVENANCE STAY UNLABELLED —
+ * accepted (review round 3, LOW-9). The outbox is append-only history, and
+ * filling `provenance` into old payloads would rewrite what the hub said at
+ * the time; a reader who needs to know opens the tree, whose claim cards
+ * label every draft. The gap closes on its own as the feed's window moves.
+ */
+const DERIVED_PROVENANCE = "derived";
+
+const provenanceLabel = (payload: Record<string, unknown>): string | null =>
+  payloadString(payload, "provenance") === DERIVED_PROVENANCE ? DERIVED_PROVENANCE : null;
+
 const toFeedEntry = (
   event: EventView,
   names: ReadonlyMap<string, string>,
@@ -107,8 +122,35 @@ const toFeedEntry = (
     branch: payloadString(event.payload, "branch"),
     kindLabel: payloadString(event.payload, "kind") ?? changedLabel(event.payload),
     statusLabel: payloadString(event.payload, "status"),
+    provenanceLabel: provenanceLabel(event.payload),
     by: payloadString(event.payload, "by"),
     ageMs: Math.max(0, nowMs - Date.parse(event.createdAt)),
+  };
+};
+
+/** The viewer's own presence re-enable, for the feed's banner: self only, never a teammate's. */
+const presenceReenableBannerFor = async (
+  deps: AppDeps,
+  developerId: string,
+): Promise<PresenceReenableBanner | null> => {
+  const at = await presenceReenableNotice(deps.db, developerId, deps.now());
+  if (at === null) {
+    return null;
+  }
+  const settings = await getDeveloperSettings(deps.db, developerId, deps.now());
+  return { at, isOptedOutNow: settings.presenceOptOut };
+};
+
+/**
+ * The viewer's own drafts waiting for their passkey, for the feed (review M7,
+ * spec §8). The feed refreshes itself, so its count reuses liveness while the
+ * pending set is unchanged (round-1 M8, round-2 R2-L4).
+ */
+const waitingDraftsFor = async (deps: AppDeps, developerId: string): Promise<WaitingDrafts> => {
+  const counts = await countPendingForBanner(deps, developerId);
+  return {
+    total: Object.values(counts).reduce((sum, n) => sum + n, 0),
+    presenceOn: (counts.presence_on ?? 0) > 0,
   };
 };
 
@@ -156,29 +198,36 @@ const contradictionIdsFor = async (
 
 // ── Approve / revoke ────────────────────────────────────────────────────────
 
-const handleApprovalAction = async (
-  c: Context<AppEnv>,
-  deps: AppDeps,
-  isApproving: boolean,
-): Promise<Response> => {
+/**
+ * WHAT A FORM POST TO RELEASE AN ARTIFACT HEARS NOW (review M2). A session
+ * opened with an API key, which any agent holding the key can open, used to
+ * release a needs_approval artifact with one form post. Releasing takes a
+ * passkey ceremony on /ui/approvals (routes/ui-ceremony-artifacts.ts). The
+ * route stays, refusing, for the reason fence-waivers.ts keeps its own: a 404
+ * would send an old recipe looking for another way in.
+ */
+const FORM_RELEASE_REFUSED =
+  "Releasing an artifact takes your passkey now: use the button on the Approvals page. " +
+  "A session opened with an API key cannot do it alone.";
+
+const refuseFormRelease = (c: Context<AppEnv>): Response | Promise<Response> =>
+  forbidden(c, FORM_RELEASE_REFUSED);
+
+/**
+ * WITHDRAWING A RELEASE STAYS A PLAIN FORM (review of the hub hardening, M3).
+ * It makes content more private, like switching presence off, so the owner
+ * withdraws from the session with its CSRF token, no passkey and no cool-off.
+ * An agent that withdraws its person's release harms availability, never
+ * disclosure. Ownership is checked inside the UPDATE (services/artifacts.ts),
+ * and a non-owner hears the same 404 as a missing id.
+ */
+const withdrawFromForm = async (c: Context<AppEnv>, deps: AppDeps): Promise<Response> => {
   if (!(await isPostedCsrfValid(c, deps))) {
     return forbidden(c, "Invalid or missing CSRF token.");
   }
-  // Plain Context here does not carry the route's param typing.
-  const artifactId = c.req.param("id");
-  if (artifactId === undefined || artifactId.length === 0) {
-    return notFoundPage(c);
-  }
-  const outcome = await setArtifactApproval(
-    deps.db,
-    c.get("developer").id,
-    artifactId,
-    isApproving,
-  );
-  if (outcome === "not_found") {
-    return notFoundPage(c);
-  }
-  return c.redirect(APPROVALS_PATH, 303);
+  const artifactId = c.req.param("id") ?? "";
+  const outcome = await setArtifactApproval(deps.db, c.get("developer").id, artifactId, false);
+  return outcome === "not_found" ? notFoundPage(c) : c.redirect(APPROVALS_PATH, 303);
 };
 
 // ── Router ──────────────────────────────────────────────────────────────────
@@ -197,7 +246,14 @@ export const uiPagesRoutes = (deps: AppDeps): Hono<AppEnv> => {
     const names = await actorNamesFor(deps, eventPage);
     const nowMs = deps.now().getTime();
     const entries = eventPage.map((event) => toFeedEntry(event, names, nowMs));
-    return c.html(<FeedPage viewer={viewerChrome(c, deps)} entries={entries} />);
+    return c.html(
+      <FeedPage
+        viewer={viewerChrome(c, deps)}
+        entries={entries}
+        presenceReenable={await presenceReenableBannerFor(deps, c.get("developer").id)}
+        waiting={await waitingDraftsFor(deps, c.get("developer").id)}
+      />,
+    );
   });
 
   router.get("/members", async (c) => {
@@ -212,23 +268,32 @@ export const uiPagesRoutes = (deps: AppDeps): Hono<AppEnv> => {
   });
 
   router.get("/approvals", async (c) => {
-    const owned = await listOwnedNeedsApproval(
-      deps.db,
-      c.get("developer").id,
-      UI_MAX_ARTIFACTS,
-    );
+    // A ceremony page now (review M2): the passkey CSP and its one script.
+    c.header("Content-Security-Policy", UI_PASSKEY_CSP);
+    const developerId = c.get("developer").id;
+    const [owned, usable] = await Promise.all([
+      listOwnedNeedsApproval(deps.db, developerId, UI_MAX_ARTIFACTS),
+      usableCredentials({ db: deps.db, developerId, now: deps.now() }),
+    ]);
     return c.html(
       <ApprovalsPage
         viewer={viewerChrome(c, deps)}
         artifacts={owned}
         nowMs={deps.now().getTime()}
+        hasOrigin={deps.webauthnOrigins.length > 0}
+        hasUsablePasskey={usable.length > 0}
       />,
     );
   });
 
   router.get("/work-contexts/:id", async (c) => {
     const workContextId = c.req.param("id");
-    const diagnosis = await getDiagnosis(deps.db, deps.now(), workContextId);
+    const diagnosis = await getDiagnosis(
+      deps.db,
+      deps.now(),
+      workContextId,
+      c.get("developer").id,
+    );
     if (diagnosis === undefined) {
       return notFoundPage(c);
     }
@@ -258,19 +323,20 @@ export const uiPagesRoutes = (deps: AppDeps): Hono<AppEnv> => {
   });
 
   router.get("/contradictions/:id", async (c) => {
-    const brief = await getRefereeBrief(deps.db, deps.now(), c.req.param("id"));
+    const brief = await getRefereeBrief(
+      deps.db,
+      deps.now(),
+      c.req.param("id"),
+      c.get("developer").id,
+    );
     if (brief === undefined) {
       return notFoundPage(c);
     }
     return c.html(<RefereePage viewer={viewerChrome(c, deps)} brief={brief} />);
   });
 
-  router.post("/artifacts/:id/approve", (c) =>
-    handleApprovalAction(c, deps, true),
-  );
-  router.post("/artifacts/:id/revoke", (c) =>
-    handleApprovalAction(c, deps, false),
-  );
+  router.post("/artifacts/:id/approve", (c) => refuseFormRelease(c));
+  router.post("/artifacts/:id/revoke", (c) => withdrawFromForm(c, deps));
 
   return router;
 };

@@ -16,6 +16,7 @@ import type { Env } from "../src/index.ts";
 import { sessionEpochPathForSlug, sessionSlug } from "@crosscheck/connector-core/config/paths.ts";
 import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { makeHome, makeRepo, writeRepoFile } from "../../connector-core/test/helpers.ts";
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 
 const HOST_KEY = "recover-uuid";
 const TIMEOUT_MS = "4000";
@@ -34,7 +35,7 @@ afterEach(async () => {
 
 /** A hub that takes every register and answers everything else with nothing. */
 const startHub = (): string => {
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: (request) => {
       const { pathname } = new URL(request.url);

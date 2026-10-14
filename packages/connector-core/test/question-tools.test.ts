@@ -8,6 +8,7 @@
  * words that never quote the question, and a name nobody answers to comes
  * back naming the closest spelling instead of silence.
  */
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -227,7 +228,7 @@ const askedId = (text: string): string =>
 
 beforeAll(async () => {
   db = await createDb();
-  server = Bun.serve({
+  server = serveLoopback({
     port: 0,
     fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch,
   });

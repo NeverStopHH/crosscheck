@@ -42,12 +42,14 @@
  * test` CI lane beside the existing per-connector e2e files; no separate
  * lane is warranted.
  */
+import { serveLoopback } from "../../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { readdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { sql } from "drizzle-orm";
 
 import { createDb, createServer } from "@crosscheck/server";
+import { createServerConfirmingAtOnce } from "../../../server/test/fixtures/immediate-confirmation.ts";
 import type { Db } from "@crosscheck/server";
 
 import { extractFailureText } from "@crosscheck/connector-core/capture/failure-text.ts";
@@ -459,8 +461,10 @@ const setUp = async (label: string, name: string, email: string): Promise<Develo
 
 beforeAll(async () => {
   db = await createDb();
-  app = createServer({ db, adminToken: ADMIN_TOKEN });
-  server = Bun.serve({ port: 0, fetch: app.fetch });
+  // A mute applied at once, as every hub before 0.11 did: this pins what a
+  // mute in effect silences across connectors (drafts: drafted-gestures-cli.test.ts).
+  app = createServerConfirmingAtOnce({ db, adminToken: ADMIN_TOKEN });
+  server = serveLoopback({ port: 0, fetch: app.fetch });
   hubUrl = `http://127.0.0.1:${server.port}`;
   ada = await setUp("xc-ada", "Ada", "ada-xc@example.com");
   ben = await setUp("xc-ben", "Ben", "ben-xc@example.com");

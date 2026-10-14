@@ -36,6 +36,7 @@
  * way: fleets on ≤ 1.3.x runtimes are exactly where `verbose: false` keeps
  * the hooks clean.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -90,7 +91,7 @@ const spawnInRepo = async (
 
 /** Answers every endpoint with a healthy envelope; the leak is request-side. */
 const acceptingHub = (): ReturnType<typeof Bun.serve> =>
-  Bun.serve({
+  serveLoopback({
     port: 0,
     fetch: () =>
       Response.json({

@@ -33,7 +33,9 @@ const asArray = (value: unknown): readonly unknown[] =>
 /** " hook session-start", " statusline", … — the plan's commands with no launcher. */
 const claudePlan = buildSettingsPlan("", false);
 const CLAUDE_SUBCOMMANDS: readonly string[] = [
-  ...Object.values(claudePlan.hooks).flatMap((group) => group.hooks.map((hook) => hook.command)),
+  ...Object.values(claudePlan.hooks)
+    .flat()
+    .flatMap((group) => group.hooks.map((hook) => hook.command)),
   claudePlan.statusLine.command,
 ];
 

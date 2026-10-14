@@ -4,6 +4,7 @@
  * register a current connector makes. An absent block is read by the hub as
  * `undeclared` — safe, but a sentence about a different, older connector.
  */
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -22,7 +23,7 @@ const cleanups: string[] = [];
 /** What the fake hub's order route answers with, per test. */
 let orderReport: Record<string, unknown> = { sessions: [] };
 
-const server = Bun.serve({
+const server = serveLoopback({
   port: 0,
   fetch: async (request) => {
     const url = new URL(request.url);
@@ -41,6 +42,7 @@ const HUB_URL = `http://127.0.0.1:${String(server.port)}`;
 const hubCtx = (home: string): HubContext => ({
   hubUrl: HUB_URL,
   apiKey: "test-key",
+  keyOrigin: HUB_URL,
   timeoutMs: 2000,
   home,
   repoKey: repoKey(HUB_URL, REPO_ID),
@@ -64,7 +66,7 @@ describe("registerSessionFlow sends the connector's declaration", () => {
     // Act
     await registerSessionFlow({
       home,
-      hub: { hubUrl: HUB_URL, apiKey: "test-key", timeoutMs: 2000, home, repoKey: key, now: () => new Date() },
+      hub: { hubUrl: HUB_URL, apiKey: "test-key", keyOrigin: HUB_URL, timeoutMs: 2000, home, repoKey: key, now: () => new Date() },
       repoKey: key,
       hostSessionKey: "register-guarantees-uuid",
       repoId: REPO_ID,
@@ -75,7 +77,7 @@ describe("registerSessionFlow sends the connector's declaration", () => {
       baseCommit: "abc1234",
       status: "implementing",
       fallbackDeveloperId: "dev_self",
-      title: "register guarantees",
+      title: "register guarantees", titleSource: "host",
       now: new Date(),
       guarantees: declaration,
     });

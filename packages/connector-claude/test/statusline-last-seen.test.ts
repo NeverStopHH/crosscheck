@@ -9,6 +9,7 @@
  * costs one pure derivation and rides in the cache the statusline already
  * reads: no extra hub call, no extra hook budget.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -40,7 +41,7 @@ afterEach(async () => {
 
 /** Answers presence with an EMPTY list — the `cx 0` state. */
 const emptyPresenceHub = (): string => {
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: () => Response.json({ ok: true, data: { sessions: [] } }),
   });
@@ -100,6 +101,22 @@ describe("deriveLastSeen", () => {
     expect(Date.now() - Date.parse(lastSeen[0]?.at ?? "")).toBeLessThan(
       2 * HOUR_MS,
     );
+  });
+
+  test("a teammate whose location the hub withholds is never 'last seen' (integration review M5)", () => {
+    // Arrange: an opted-out teammate's rows carry no update time, so the date
+    // was their newest CREATION — and a topic context is created the moment
+    // they first edit a sibling worktree. The hub marks such rows.
+    const contexts = [
+      contextRow("dev_robin", "Robin", 2 * 60 * 1000, { locationWithheld: true }),
+      contextRow("dev_ken", "Ken", HOUR_MS),
+    ];
+
+    // Act
+    const lastSeen = deriveLastSeen(contexts, "dev_self");
+
+    // Assert: presence has no row of hers, and neither has its stand-in
+    expect(lastSeen.map((entry) => entry.name)).toEqual(["Ken"]);
   });
 
   test("rows with no name or no usable date are dropped, not guessed at", () => {

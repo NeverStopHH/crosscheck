@@ -271,17 +271,16 @@ describe("what the developer's own setup cannot widen or break", () => {
     async () => {
       // origin answers ls-remote, then refuses the fetch itself: main was
       // already current, staging is behind — and NOTHING was brought.
+      //
+      // The drop is origin failing to send the objects. ls-remote reads refs
+      // only, so only the fetch meets it. It used to be a
+      // `remote.origin.uploadpack` wrapper in the clone's config, which
+      // crosscheck's git no longer obeys (git/git.ts GIT_SAFETY_CONFIG); here
+      // origin has lost staging's new tip, so its pack cannot be built.
       const made = await repos("lf-dropped");
       await mikeSquashesOnto(made, "staging", "export const offset = 13;\n");
-      const count = join(made.base, "upload-pack.count");
-      const wrapper = join(made.base, "flaky-upload-pack");
-      await writeFile(
-        wrapper,
-        `#!/bin/sh\necho x >> '${count}'\nif [ "$(wc -l < '${count}')" -gt 1 ]; then exit 1; fi\nexec git upload-pack "$@"\n`,
-        "utf8",
-      );
-      await chmod(wrapper, 0o755);
-      await gitIn(made.reader, ["config", "remote.origin.uploadpack", wrapper]);
+      const tip = await gitIn(made.origin, ["rev-parse", "refs/heads/staging"]);
+      await rm(join(made.origin, "objects", tip.slice(0, 2), tip.slice(2)));
 
       const outcome = await fetchLandingBranches({ root: made.reader, env: ENV });
 

@@ -14,8 +14,9 @@
  * already-resolved values.
  */
 import { isSeqStamp, SeqFieldSchema, SessionStatusSchema } from "@crosscheck/schema";
-import type { CausalGuaranteeTriple, SeqField, SeqStamp } from "@crosscheck/schema";
+import type { CausalGuaranteeTriple, SeqField, SeqStamp, WorkContextTitleSource } from "@crosscheck/schema";
 
+import { repoLabel } from "../git/repo-label.ts";
 import { z } from "zod";
 
 import {
@@ -27,6 +28,7 @@ import {
   spoolPendingEndPath,
   writePrivateFile,
 } from "../config/paths.ts";
+import { readHeadFile, resolveHeadCommit } from "../git/repo-identity.ts";
 import { registerSession } from "../http/hub.ts";
 import type { HubContext } from "../http/client.ts";
 import { appendRecords } from "../spool/append.ts";
@@ -37,10 +39,12 @@ import {
   workContextRecord,
 } from "../capture/records.ts";
 import {
+  consumeCarriedCapture,
   ladderRungs,
   ladderStart,
   lifeRungOf,
   lifeSessionId,
+  readCarriedCapture,
   readEndedLifeEpoch,
   readEndedLifePosition,
   readEndedLifeRung,
@@ -54,7 +58,8 @@ import {
   underSessionStateLock,
   workContextIdFor,
 } from "../state/session-state.ts";
-import type { SeqStart, SessionState } from "../state/session-state.ts";
+import type { SeqStart, SessionState, SessionStateInput } from "../state/session-state.ts";
+import { readNudgeSpent } from "../state/draft-nudge-spent.ts";
 
 const HTTP_CONFLICT = 409;
 
@@ -66,21 +71,6 @@ const HTTP_CONFLICT = 409;
  * ended session being reopened) keeps walking the suffixes.
  */
 const REPO_MISMATCH_CODE = "repo_mismatch";
-
-const LOCAL_REPO_PREFIX = "local:";
-
-/**
- * Last segment of the shared repo id (`github.com/acme/api` → `api`), never a
- * local directory name: this title is uploaded and read by teammates. A
- * `local:` id has no shareable segment, so the branch alone has to carry it.
- */
-const repoLabel = (repoId: string): string | null => {
-  if (repoId.startsWith(LOCAL_REPO_PREFIX)) {
-    return null;
-  }
-  const last = repoId.split("/").at(-1)?.trim();
-  return last === undefined || last.length === 0 ? null : last;
-};
 
 /**
  * The honest work-context title when the host supplied none: branch @ repo,
@@ -107,10 +97,27 @@ export interface RegisterSessionFlowInput {
   readonly repoRoot: string;
   readonly branch: string;
   readonly baseCommit: string;
+  /**
+   * Was `baseCommit` already reachable from the default branch? The caller's
+   * own probe (capture/landed.ts probeBaseOnDefault), run beside its title
+   * resolution: two git calls on a named branch, none on a detached HEAD.
+   * Undefined — a detached HEAD, a git that could not answer, or a recovery
+   * path that does not probe — sends nothing, and the hub then keeps what it
+   * had for this base (server services/sessions.ts).
+   */
+  readonly baseOnDefault?: boolean | undefined;
   readonly hubUrl: string;
   /** Used when the hub does not answer (stored config identity). */
   readonly fallbackDeveloperId: string | null;
   readonly title: string;
+  /**
+   * How `title` was written — `host` for the host's own session title,
+   * `fallback` for this package's `<branch> @ <repo>` (or a detached ref):
+   * the hub withholds a fallback, which IS the branch, from colleagues of a
+   * developer who opted out of presence. Required, so no session-start path
+   * can register a title without saying which it is.
+   */
+  readonly titleSource: WorkContextTitleSource;
   readonly status: string;
   readonly now: Date;
   /**
@@ -161,6 +168,14 @@ export interface RegisterLadderInput {
   readonly repoId: string;
   readonly branch: string;
   readonly baseCommit: string;
+  /**
+   * The register's base probe (RegisterSessionFlowInput.baseOnDefault), sent
+   * on every rung. A heal's walk has none — it probes no git — and sends
+   * nothing, so the hub keeps a stored answer for an unchanged base and
+   * knows none for a new life's row (server services/sessions.ts
+   * carriedBaseOnDefault).
+   */
+  readonly baseOnDefault?: boolean | undefined;
   readonly status: string;
   readonly guarantees: readonly CausalGuaranteeTriple[];
   /** `session.started`'s own position, or the refusal that travels instead. */
@@ -273,6 +288,7 @@ export const registerSessionLadder = async (
       repo: input.repoId,
       branch: input.branch,
       baseCommit: input.baseCommit,
+      ...(input.baseOnDefault === undefined ? {} : { baseOnDefault: input.baseOnDefault }),
       status: input.status,
       losses,
       guarantees: input.guarantees,
@@ -390,6 +406,27 @@ const readUnnamedEpoch = async (input: RegisterSessionFlowInput): Promise<string
   (await readMarkedPosition(input, await firstRungLife(input)))?.epoch ??
   (await readEndedLifeEpoch(input.home, input.hostSessionKey));
 
+/**
+ * WHAT THE CONVERSATION'S LAST END LEFT FOR THIS LIFE'S GIT LANE (review
+ * batch 2, H1): its first start, which becomes this life's window, its roots
+ * — with any shell mark no sweep spent, so the first lane, a subagent's too,
+ * sweeps those — and a shell's pending discovery. Only for the SAME binding:
+ * another repo's roots are not this session's to sweep. A publish that finds
+ * a state to carry keeps that state's instead (withCarriedCapture).
+ *
+ * Without it a resume after SessionEnd started its window at the resume:
+ * the ended life's contexts had left every collision surface, and its dirty,
+ * committed and Bash-created files reached a teammate again only when
+ * touched again — 0 of 6 in the review's run, 4 of 6 for good.
+ */
+const carriedFromLineage = async (input: RegisterSessionFlowInput): Promise<Partial<SessionStateInput>> => {
+  const capture = await readCarriedCapture(input.home, input.hostSessionKey);
+  if (capture === null || capture.repoId !== input.repoId || capture.hubUrl !== input.hubUrl) {
+    return {};
+  }
+  return { captureSince: capture.since, knownWorktreeRoots: capture.roots, shellSweepSince: capture.shellSweepSince };
+};
+
 /** The epoch a fire's register sends, the state it was read from, and the fire's own fresh one. */
 interface WireEpoch {
   readonly previous: SessionState | null;
@@ -505,6 +542,7 @@ export const registerSessionFlow = async (
   // the state, or SessionEnd's end has not landed, and the hub still holds
   // the life under that epoch with those positions handed out.
   const restored = previous === null ? await readMarkedPosition(input, crosscheckSessionId) : null;
+  const startHeadFile = await readHeadFile(input.repoRoot);
   // ...AND ONE THIS MACHINE KEPT NOTHING OF TAKES THE HUB'S (seeds 31214,
   // 4286): every trace of the life here aged out — state, marker, lineage —
   // and the register minted, onto a session the hub still held. A newer hub
@@ -516,6 +554,7 @@ export const registerSessionFlow = async (
   const adopted = isMinted && restored === null ? (registration?.held ?? null) : null;
   const isUnconfirmed =
     isMinted && restored === null && registration !== null && registration.held === undefined && registration.preexisted;
+  const carried = await carriedFromLineage(input);
 
   // BEFORE the first append, always: `reap` decides that a spool file has no
   // writer left by finding no session state file for it, and that inference
@@ -531,6 +570,9 @@ export const registerSessionFlow = async (
     startedAt: input.now.toISOString(),
     lastHeartbeatAt: input.now.toISOString(),
     seenTargets: [],
+    // A fresh life owes no sweep (L10): the lane records the life it swept
+    // under, and a heal moves the life away from it.
+    gitLaneSweptLife: crosscheckSessionId,
     deliveredHintRefs: [],
     deliveredHintHashes: [],
     tripwireAskedFiles: [],
@@ -540,9 +582,19 @@ export const registerSessionFlow = async (
     // title and status on their update record — kept here so they never
     // fabricate one (trial finding #16).
     workContextTitle: input.title,
+    workContextTitleSource: input.titleSource,
     workContextStatus: status,
     // The producer of the work context SessionEnd may send for this life (L7).
     agentKind: input.agentKind,
+    // THE START TOPIC (flows/topic-contexts.ts): the branch this checkout is
+    // on, read from its HEAD file exactly as every touched root's is, so the
+    // session's own touches are recognised as its own and every sibling
+    // worktree's branch opens a topic of its own. A re-fire of the same life
+    // keeps the first one (withCarriedCapture). Its commit is what the topic
+    // rules ask a later branch or detached HEAD there to descend from
+    // (flows/topic-rules.ts).
+    startBranch: startHeadFile?.branch ?? input.branch,
+    startHead: startHeadFile === null ? null : await resolveHeadCommit(startHeadFile),
     // THE EPOCH IS MINTED ON THE INPUT, not inside publishSessionState (spec
     // 01 §3.4). publishSessionState's busy-lock FALLBACK writes this object
     // verbatim, with no carry at all — "the counters lose rather than the
@@ -563,7 +615,15 @@ export const registerSessionFlow = async (
     // costing comparability, and never correctness.
     seqEpoch: restored?.epoch ?? fresh,
     eventSeq: restored?.n ?? 0,
+    // A conversation that spent its draft nudge in an earlier session (it
+    // ended, then was resumed) starts with the slot spent — the record
+    // SessionEnd left (state/draft-nudge-spent.ts). A re-fire inside a live
+    // session carries its own slot instead (withCarriedCapture).
+    draftNudge: await readNudgeSpent(input.home, input.hostSessionKey),
     ...(input.briefingPending === true ? { briefingPending: true } : {}),
+    // Where the next lane sweeps, when an earlier life of this conversation
+    // ended (review batch 2, H1).
+    ...carried,
   };
   const startsAt = {
     ...stateInput,
@@ -612,6 +672,12 @@ export const registerSessionFlow = async (
     };
     await publishSessionState(input.home, startsAt, startOf);
   }
+  // THE STATE OWNS THE CARRIED CAPTURE NOW (final review N1): the note that
+  // handed it over is rewritten without it, so a reap of that note after
+  // this life has swept the roots — or while it still can — books nothing.
+  if (Object.keys(carried).length > 0) {
+    await consumeCarriedCapture(input.home, input.hostSessionKey);
+  }
   // The state names the epoch now; the reservation has done its job.
   await removeFile(sessionEpochPathForSlug(input.home, sessionSlug(input.hostSessionKey)));
   await appendRecords(
@@ -624,6 +690,7 @@ export const registerSessionFlow = async (
           workContextId,
           sessionId: crosscheckSessionId,
           title: input.title,
+          titleSource: input.titleSource,
           status,
         },
         {

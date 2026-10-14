@@ -37,6 +37,7 @@
 import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
 
+import { repoTestRunCmd } from "@crosscheck/connector-core/config/runtime-isolation.ts";
 import { EXIT_OK, EXIT_USAGE } from "@crosscheck/connector-core/constants.ts";
 
 import type { CliResult } from "../cli/login.ts";
@@ -77,19 +78,21 @@ export interface CiReportDeps {
 const HTTP_SCHEMES: ReadonlySet<string> = new Set(["http:", "https:"]);
 
 /**
- * `process.execPath` is the bun that is running this script, so the re-run
+ * `repoTestRunCmd` starts the bun that is running this script, so the re-run
  * uses the same runtime the primary did — never whichever `bun` is first on
- * PATH. Output is inherited: the re-run's console text belongs in the CI
- * log exactly as the primary's does.
+ * PATH — and, on purpose, with the repo's own bunfig. Output is inherited:
+ * the re-run's console text belongs in the CI log exactly as the primary's
+ * does.
  */
 const spawnBunTest: RunTests = async (cwd, files, outfile) => {
   const child = Bun.spawn({
     cmd: [
-      process.execPath,
-      "test",
-      "--reporter=junit",
-      `--reporter-outfile=${outfile}`,
-      ...files,
+      ...repoTestRunCmd([
+        "test",
+        "--reporter=junit",
+        `--reporter-outfile=${outfile}`,
+        ...files,
+      ]),
     ],
     cwd,
     stdout: "inherit",

@@ -27,6 +27,7 @@
  * ever sent over the status it set.
  */
 import { z } from "zod";
+import { WorkContextTitleSourceSchema } from "@crosscheck/schema";
 
 import { MAX_SPOOL_AGE_DAYS, MS_PER_DAY, OWED_WORK_CONTEXT_MAX_REFUSALS } from "../constants.ts";
 import {
@@ -39,12 +40,14 @@ import {
   writePrivateFile,
 } from "../config/paths.ts";
 import { withProducer, workContextRecord } from "../capture/records.ts";
+import { TOPIC_TITLE_SOURCE } from "../flows/topic-contexts.ts";
 import type { Producer } from "../capture/records.ts";
+import { isTimedOut } from "../http/client.ts";
 import type { HubContext } from "../http/client.ts";
 import { postRecords } from "../http/hub.ts";
 import type { IngestSummary, RecordResult } from "../http/hub.ts";
 import { lifeRungOf } from "../state/session-lineage.ts";
-import { crosscheckSessionIdFor, underSessionStateLock } from "../state/session-state.ts";
+import { crosscheckSessionIdFor, underSessionStateLock, workContextIdFor } from "../state/session-state.ts";
 import { recordDrop } from "./drops.ts";
 import { rejectCauseOf } from "./reject-cause.ts";
 
@@ -239,7 +242,18 @@ export const answerOwed = async (
 export interface LifeState {
   readonly crosscheckSessionId?: unknown;
   readonly workContextTitle?: unknown;
+  /** How that title was written: the hub's marker, which travels with the title. */
+  readonly workContextTitleSource?: unknown;
   readonly workContextStatus?: unknown;
+  /** The topics the life opened (state/session-state.ts), each with its own title and status. */
+  readonly topicContexts?: unknown;
+}
+
+/** What the life's state says of one of its work contexts: the title, how it was written, the status. */
+interface Said {
+  readonly title: unknown;
+  readonly titleSource: unknown;
+  readonly status: unknown;
 }
 
 /**
@@ -282,16 +296,43 @@ export const withLifeState = (record: Record<string, unknown>, state: LifeState 
   if (record["kind"] !== "work_context" || body === undefined || state === null) {
     return record;
   }
-  return body["sessionId"] !== state.crosscheckSessionId
-    ? record
-    : {
-        ...record,
-        body: {
-          ...body,
-          title: textOr(state.workContextTitle, body["title"]),
-          status: textOr(state.workContextStatus, body["status"]),
-        },
-      };
+  if (body["sessionId"] !== state.crosscheckSessionId) {
+    return record;
+  }
+  // ONE LIFE, SEVERAL CONTEXTS (DESIGN.md "One session, many topics"): the
+  // life's own context goes with the life's title and status, a TOPIC's with
+  // its own — never the session's title over a topic's `<branch> @ <repo>`.
+  const said: Said | null = body["id"] === workContextIdFor(String(state.crosscheckSessionId))
+    ? { title: state.workContextTitle, titleSource: state.workContextTitleSource, status: state.workContextStatus }
+    : topicSaid(state, body["id"]);
+  if (said === null) {
+    return record;
+  }
+  const title = textOr(said.title, body["title"]);
+  return { ...record, body: { ...withMarker(body, title, said.titleSource), title, status: textOr(said.status, body["status"]) } };
+};
+
+/**
+ * THE MARKER GOES WITH THE TITLE IT DESCRIBES (topic review H4): the state's
+ * marker for the state's title; without one, the spooled copy's own only
+ * while the title is still the one it described — a new title nobody vouched
+ * for goes unmarked, and the hub judges it by its shape.
+ */
+const withMarker = (body: Record<string, unknown>, title: string, marker: unknown): Record<string, unknown> => {
+  const { titleSource: spooled, ...rest } = body;
+  const kept = typeof marker === "string" ? marker : title === body["title"] ? spooled : undefined;
+  return kept === undefined ? rest : { ...rest, titleSource: kept };
+};
+
+/**
+ * What the life's state says of one of its topics' contexts, or null when it
+ * names no such topic. A topic's title is always the connector's own, so its
+ * marker is too — never the session's (topic review H4).
+ */
+const topicSaid = (state: LifeState, workContextId: unknown): Said | null => {
+  const topics = Array.isArray(state.topicContexts) ? (state.topicContexts as readonly Record<string, unknown>[]) : [];
+  const topic = topics.find((entry) => entry["workContextId"] === workContextId);
+  return topic === undefined ? null : { title: topic["title"], titleSource: TOPIC_TITLE_SOURCE, status: topic["status"] };
 };
 
 /**
@@ -312,11 +353,15 @@ export const owedRecordNow = async (
 ): Promise<Record<string, unknown>> => {
   const named = await readLifeState(home, key, slug, owed.sessionId);
   const body = (owed.record["body"] ?? {}) as Record<string, unknown>;
+  const title = textOr(named?.workContextTitle, body["title"]);
+  const marker = WorkContextTitleSourceSchema.safeParse(withMarker(body, title, named?.workContextTitleSource)["titleSource"]);
   return workContextRecord(
     {
       workContextId: textOr(body["id"], ""),
       sessionId: textOr(body["sessionId"], owed.sessionId),
-      title: textOr(named?.workContextTitle, body["title"]),
+      title,
+      // The marker of the title it now carries (withMarker, topic review H4).
+      ...(marker.success ? { titleSource: marker.data } : {}),
       status: textOr(named?.workContextStatus, body["status"]),
     },
     owed.record["producer"] as Producer,
@@ -363,10 +408,14 @@ export interface OwedDelivery {
   readonly owedSent: Record<string, unknown>;
 }
 
+/** A send the hub did not answer inside its bound — the failure a smaller batch can cure (spool/flush.ts). */
+export const TIMED_OUT = "timed-out";
+export type TimedOut = typeof TIMED_OUT;
+
 /**
  * Sends the batch with the owed work context at its head, built now
- * (`owedRecordNow`). Null when the hub did not take the request at all; the
- * debt and the batch both wait.
+ * (`owedRecordNow`). Null when the hub did not take the request at all, and
+ * TIMED_OUT when it did not answer in time; the debt and the batch both wait.
  */
 export const deliverOwed = async (
   ctx: HubContext,
@@ -375,7 +424,7 @@ export const deliverOwed = async (
   developerId: string | null,
   flusherSessionId: string,
   records: readonly Record<string, unknown>[],
-): Promise<OwedDelivery | null> => {
+): Promise<OwedDelivery | TimedOut | null> => {
   const ahead = withProducer(
     await owedRecordNow(ctx.home, ctx.repoKey, slug, owed, ctx.now()),
     developerId,
@@ -383,7 +432,7 @@ export const deliverOwed = async (
   );
   const result = await postRecords(ctx, [ahead, ...records]);
   if (!result.ok) {
-    return null;
+    return isTimedOut(result) ? TIMED_OUT : null;
   }
   return {
     summary: withoutAhead(result.data),

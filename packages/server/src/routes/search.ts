@@ -170,6 +170,7 @@ export const searchRoutes = (deps: AppDeps): Hono<AppEnv> => {
       ...query,
       ...(developerId === undefined ? {} : { developerId }),
       ...(since === undefined ? {} : { since }),
+      viewerDeveloperId: c.get("developer").id,
     });
     // AT-1. An empty result is a claim about the archive, so the archive's
     // own reach travels with it. SCOPED TO THE SEARCH'S OWN WINDOW (§3.2a):

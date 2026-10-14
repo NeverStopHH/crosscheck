@@ -10,6 +10,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { sql } from "drizzle-orm";
+import { WITHHELD_TITLE } from "@crosscheck/schema";
 
 import { WORK_CONTEXT_LIST_MAX } from "../src/constants.ts";
 import {
@@ -18,6 +19,7 @@ import {
   jsonRequest,
   postRecords,
   recordEnvelope,
+  registerTestSession,
   validClaimBody,
   validWorkContextBody,
   WORK_CONTEXT_ID,
@@ -33,6 +35,11 @@ interface ListEntry {
   readonly updatedAt: string | null;
   readonly claimCount: number;
   readonly targetCount: number;
+  readonly sessionId: string;
+  readonly developerContextCount: number;
+  readonly title: string;
+  readonly branch: string;
+  readonly baseCommit?: string;
 }
 
 const list = async (
@@ -353,5 +360,259 @@ describe("GET /api/work-contexts is bounded", () => {
     expect(
       WORK_CONTEXT_LIST_MAX - inWindow(unwindowed),
     ).toBeGreaterThanOrEqual(WORK_CONTEXT_LIST_MAX / 4);
+  });
+});
+
+describe("GET /api/work-contexts says when its bound cut a teammate short", () => {
+  test("each row carries its developer's count in the window, counted before the bound", async () => {
+    // The connector groups a teammate's work by topic from the rows that
+    // arrive. When the bound let only some of them through, every count it
+    // prints is a floor — and only the hub knows there were more.
+    const setup = await createHarnessWithSession();
+    await postRecords(
+      setup.harness,
+      setup.developer,
+      recordEnvelope("work_context", validWorkContextBody()),
+    );
+    const quiet = await addTestDeveloperWithSession(
+      setup.harness,
+      "Mike",
+      "mike@example.com",
+      { id: "cc_22222222-3333-4444-8555-666666666666" },
+    );
+    await postRecords(
+      setup.harness,
+      quiet,
+      recordEnvelope(
+        "work_context",
+        validWorkContextBody({
+          id: "wc_mike_only",
+          sessionId: "cc_22222222-3333-4444-8555-666666666666",
+          title: "Mike is halfway through the importer retry",
+        }),
+        { sessionId: "cc_22222222-3333-4444-8555-666666666666" },
+      ),
+    );
+    const extra = WORK_CONTEXT_LIST_MAX + 5;
+    await setup.harness.db.execute(sql`
+      INSERT INTO work_contexts (id, session_id, title, status, created_at, updated_at)
+      SELECT 'wc_busy_' || lpad(g::text, 4, '0'),
+             (SELECT session_id FROM work_contexts WHERE id = ${WORK_CONTEXT_ID}),
+             'Worktree ' || g,
+             'analyzing',
+             now() - make_interval(mins => g::int),
+             now() - make_interval(mins => g::int)
+      FROM generate_series(1, ${extra}) g
+    `);
+
+    // Act: exactly what the connector sends.
+    const rows = await list(setup, `${REPO_QUERY}&since=14d`);
+
+    // Assert: still bounded, and each person's TRUE count rides on their rows
+    expect(rows).toHaveLength(WORK_CONTEXT_LIST_MAX);
+    const nick = rows.filter((row) => row.developerId === setup.developer.developerId);
+    const mike = rows.filter((row) => row.developerId === quiet.developerId);
+    expect(nick.length).toBeLessThan(extra + 1);
+    expect(new Set(nick.map((row) => row.developerContextCount))).toEqual(
+      new Set([extra + 1]),
+    );
+    expect(mike.map((row) => row.developerContextCount)).toEqual([1]);
+    // …and the session each context belongs to, which is what "N sessions" counts
+    expect(mike.map((row) => row.sessionId)).toEqual([
+      "cc_22222222-3333-4444-8555-666666666666",
+    ]);
+  });
+
+  test("the count is of the window the reader asked for, not of all time", async () => {
+    const setup = await createHarnessWithSession();
+    await postRecords(
+      setup.harness,
+      setup.developer,
+      recordEnvelope("work_context", validWorkContextBody()),
+    );
+    await setup.harness.db.execute(sql`
+      INSERT INTO work_contexts (id, session_id, title, status, created_at, updated_at)
+      SELECT 'wc_ancient', session_id, 'Ancient investigation', 'analyzing',
+             created_at - interval '90 days', NULL
+      FROM work_contexts WHERE id = ${WORK_CONTEXT_ID}
+    `);
+
+    const windowed = await list(setup, `${REPO_QUERY}&since=14d`);
+    const everything = await list(setup);
+
+    // The reader drops the ancient row too, so counting it would announce a
+    // context the reader was never going to see as missing.
+    expect(windowed.map((row) => row.developerContextCount)).toEqual([1]);
+    expect(everything.map((row) => row.developerContextCount)).toEqual([2, 2]);
+  });
+});
+
+describe("GET /api/work-contexts names each context's branch", () => {
+  test("every row carries its session's own branch, whatever its title says", async () => {
+    // The connector groups a teammate's work by branch. A host-supplied title
+    // ("Fix the login 500s") does not carry it, so the session row has to.
+    const setup = await createHarnessWithSession({ branch: "feat/auth" });
+    await postRecords(
+      setup.harness,
+      setup.developer,
+      recordEnvelope(
+        "work_context",
+        validWorkContextBody({ title: "Fix the login 500s on staging" }),
+      ),
+    );
+
+    const rows = await list(setup, `${REPO_QUERY}&since=14d`);
+
+    expect(rows.map((row) => [row.title, row.branch])).toEqual([
+      ["Fix the login 500s on staging", "feat/auth"],
+    ]);
+  });
+
+  test("an opted-out teammate's LIVE branch is withheld; the context stays, by its title", async () => {
+    // The branch on the row is the session's CURRENT one — re-registering
+    // moves it — so it is presence-class: where the developer is right now.
+    // Presence hides an opted-out developer; this listing must not say the
+    // same thing by another door.
+    const robinSession = "cc_44444444-5555-4666-8777-888888888888";
+    const setup = await createHarnessWithSession();
+    const robin = await addTestDeveloperWithSession(
+      setup.harness,
+      "Robin",
+      "robin@example.com",
+      { id: robinSession, branch: "feat/old" },
+    );
+    await postRecords(
+      setup.harness,
+      robin,
+      recordEnvelope(
+        "work_context",
+        validWorkContextBody({ id: "wc_robin", sessionId: robinSession, title: "Login 500s" }),
+        { sessionId: robinSession },
+      ),
+    );
+    const optOut = await setup.harness.app.request(
+      "/api/settings/presence",
+      jsonRequest("PUT", robin.apiKey, { optOut: true }),
+    );
+    expect(optOut.status).toBe(200);
+    await registerTestSession(setup.harness, robin.apiKey, {
+      id: robinSession,
+      branch: "feat/acquisition-talks",
+    });
+
+    // Act: Nick's listing, and Robin's own
+    const asNick = await list(setup, `${REPO_QUERY}&since=14d`);
+    const asRobin = await list({ harness: setup.harness, developer: robin }, `${REPO_QUERY}&since=14d`);
+
+    // Assert: the context is published knowledge and stays; the live branch
+    // does not reach anyone but Robin
+    const seenByNick = asNick.find((row) => row.id === "wc_robin");
+    expect(seenByNick?.title).toBe("Login 500s");
+    expect(seenByNick?.branch).toBeUndefined();
+    expect(JSON.stringify(asNick)).not.toContain("feat/acquisition-talks");
+    expect(asRobin.find((row) => row.id === "wc_robin")?.branch).toBe("feat/acquisition-talks");
+  });
+
+  test("an opted-out teammate's FALLBACK title is withheld too — it is the branch", async () => {
+    // A session whose host supplied no title is named `<branch> @ <repo>` by
+    // the connector, so that title says where its author is. A title a
+    // person or host wrote is published knowledge and stays.
+    const robinSession = "cc_44444444-5555-4666-8777-888888888888";
+    const setup = await createHarnessWithSession();
+    const robin = await addTestDeveloperWithSession(
+      setup.harness,
+      "Robin",
+      "robin@example.com",
+      { id: robinSession, branch: "feat/acquisition-talks" },
+    );
+    await postRecords(setup.harness, robin, {
+      records: [
+        recordEnvelope(
+          "work_context",
+          validWorkContextBody({
+            id: "wc_robin_fallback",
+            sessionId: robinSession,
+            title: "feat/acquisition-talks @ api",
+          }),
+          { sessionId: robinSession },
+        ),
+        recordEnvelope(
+          "work_context",
+          validWorkContextBody({
+            id: "wc_robin_named",
+            sessionId: robinSession,
+            title: "Login 500s after key rotation",
+          }),
+          { sessionId: robinSession },
+        ),
+      ],
+    });
+    await setup.harness.app.request(
+      "/api/settings/presence",
+      jsonRequest("PUT", robin.apiKey, { optOut: true }),
+    );
+
+    const asNick = await list(setup, `${REPO_QUERY}&since=14d`);
+    const asRobin = await list({ harness: setup.harness, developer: robin }, `${REPO_QUERY}&since=14d`);
+    const titleOf = (rows: readonly ListEntry[], id: string) =>
+      rows.find((row) => row.id === id)?.title;
+
+    expect(titleOf(asNick, "wc_robin_fallback")).toBe(WITHHELD_TITLE);
+    expect(titleOf(asNick, "wc_robin_named")).toBe("Login 500s after key rotation");
+    expect(JSON.stringify(asNick)).not.toContain("acquisition-talks");
+    expect(titleOf(asRobin, "wc_robin_fallback")).toBe("feat/acquisition-talks @ api");
+  });
+
+  test("an opted-out teammate's HEAD reaches no other viewer — not as base commit, not as a claim's commit", async () => {
+    // `baseCommit` is `rev-parse HEAD` of the live branch, and a claim filed
+    // without its own commit is bound to that same base. Both are location.
+    const robinSession = "cc_44444444-5555-4666-8777-888888888888";
+    const head = "c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00";
+    const setup = await createHarnessWithSession();
+    const robin = await addTestDeveloperWithSession(
+      setup.harness,
+      "Robin",
+      "robin@example.com",
+      { id: robinSession, baseCommit: head },
+    );
+    await postRecords(setup.harness, robin, {
+      records: [
+        recordEnvelope(
+          "work_context",
+          validWorkContextBody({ id: "wc_robin_head", sessionId: robinSession, title: "Key rotation audit" }),
+          { sessionId: robinSession },
+        ),
+        recordEnvelope(
+          "claim",
+          validClaimBody({ id: "clm_robin_head", workContextId: "wc_robin_head", authorSessionId: robinSession }),
+          { sessionId: robinSession },
+        ),
+      ],
+    });
+    await setup.harness.app.request(
+      "/api/settings/presence",
+      jsonRequest("PUT", robin.apiKey, { optOut: true }),
+    );
+    const diagnosisAs = async (apiKey: string) =>
+      (await (
+        await setup.harness.app.request("/api/work-contexts/wc_robin_head", jsonRequest("GET", apiKey))
+      ).json()) as {
+        data: { workContext: { baseCommit?: string }; claims: { validity: { observedAtCommit: string | null } }[] };
+      };
+
+    // Act
+    const listedForNick = (await list(setup, `${REPO_QUERY}&since=14d`)).find((row) => row.id === "wc_robin_head");
+    const treeForNick = await diagnosisAs(setup.developer.apiKey);
+    const treeForRobin = await diagnosisAs(robin.apiKey);
+
+    // Assert: the row and the tree stay; the commit does not reach Nick
+    expect(listedForNick?.title).toBe("Key rotation audit");
+    expect(listedForNick?.baseCommit).toBeUndefined();
+    expect(treeForNick.data.workContext.baseCommit).toBeUndefined();
+    expect(treeForNick.data.claims[0]?.validity.observedAtCommit).toBeNull();
+    expect(JSON.stringify(treeForNick)).not.toContain(head.slice(0, 7));
+    // …and Robin's own reads keep it
+    expect(treeForRobin.data.workContext.baseCommit).toBe(head);
+    expect(treeForRobin.data.claims[0]?.validity.observedAtCommit).toBe(head);
   });
 });

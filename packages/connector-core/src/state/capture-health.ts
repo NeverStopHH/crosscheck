@@ -47,6 +47,7 @@ import {
 import { readTextOrNull } from "../config/paths.ts";
 import { listSessionStateFiles, sessionSilentForMs } from "./session-scan.ts";
 import { SessionStateSchema } from "./session-state.ts";
+import type { GeneratedTally } from "../capture/generated.ts";
 
 const hoursToMs = (hours: number): number => (hours / HOURS_PER_DAY) * MS_PER_DAY;
 
@@ -96,8 +97,19 @@ export interface SessionCaptureHealth {
   readonly outsideRootDrops: number;
   /** Hint candidates the prompt path saw from the hub (flows/hint.ts). */
   readonly hintCandidatesSeen: number;
+  /** Content-free prompts the floor stood down on before any call (M7). */
+  readonly flooredPromptCount: number;
+  /** Turns the harness wrote, stood down on before any call (M7). */
+  readonly harnessTurnCount: number;
+  /** Calls the hub answered that ended in no hint (round 3, L5). */
+  readonly quietCallCount: number;
   /** Hints delivered to this session (the seen-set's length). */
   readonly hintsDelivered: number;
+  /**
+   * The generated-target rule's counters for this session, or ABSENT for a
+   * state file written before they existed — never a zero it did not measure.
+   */
+  readonly generatedTargets?: GeneratedTally;
 }
 
 export interface CaptureHealth {
@@ -127,6 +139,14 @@ export interface CaptureHealth {
   readonly lastTargetAt: string | null;
   readonly hintsDelivered: number;
   readonly hintCandidatesSeen: number;
+  /**
+   * The turns the prompt path stood down on, summed apart (review 1006b, M7):
+   * counts only, so "nothing was asked" reads apart from "nothing matched".
+   */
+  readonly flooredPrompts: number;
+  readonly harnessTurns: number;
+  /** The calls that did reach the hub and came back with nothing (round 3, L5). */
+  readonly quietCalls: number;
 }
 
 const NO_HEALTH: CaptureHealth = {
@@ -142,6 +162,9 @@ const NO_HEALTH: CaptureHealth = {
   lastTargetAt: null,
   hintsDelivered: 0,
   hintCandidatesSeen: 0,
+  flooredPrompts: 0,
+  harnessTurns: 0,
+  quietCalls: 0,
 };
 
 const newerIso = (a: string | null, b: string | null): string | null => {
@@ -267,7 +290,11 @@ export const readCaptureHealth = async (
         foreignRepoDrops: state.foreignRepoDrops,
         outsideRootDrops: state.outsideRootDrops,
         hintCandidatesSeen: state.hintCandidatesSeen,
+        flooredPromptCount: state.flooredPromptCount,
+        harnessTurnCount: state.harnessTurnCount,
+        quietCallCount: state.quietCallCount,
         hintsDelivered: state.deliveredHintRefs.length,
+        ...(state.generatedTargets === undefined ? {} : { generatedTargets: state.generatedTargets }),
       };
     })
     .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
@@ -282,6 +309,9 @@ export const readCaptureHealth = async (
       lastTargetAt: newerIso(total.lastTargetAt, session.lastTargetAt),
       hintsDelivered: total.hintsDelivered + session.hintsDelivered,
       hintCandidatesSeen: total.hintCandidatesSeen + session.hintCandidatesSeen,
+      flooredPrompts: total.flooredPrompts + session.flooredPromptCount,
+      harnessTurns: total.harnessTurns + session.harnessTurnCount,
+      quietCalls: total.quietCalls + session.quietCallCount,
     }),
     {
       ...NO_HEALTH,

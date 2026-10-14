@@ -81,6 +81,9 @@ const sessionState = (repoRoot: string): SessionState => ({
   lastEditedPath: null,
   lastEditedPathResolvedAgainst: null,
   hintCandidatesSeen: 0,
+  flooredPromptCount: 0,
+  harnessTurnCount: 0,
+  quietCallCount: 0,
   briefingPending: false,
   stopTurnCount: 0,
   summarizerFireCount: 0,
@@ -107,6 +110,9 @@ const sessionState = (repoRoot: string): SessionState => ({
   intentSetCount: 0,
   intentFailCount: 0,
   intentLastFailure: null,
+  intentRefusedCount: 0,
+  intentSkippedCount: 0,
+  intentLastDrop: null,
   workContextIntent: null,
   ghostPending: false,
   gitTouchCount: 0,
@@ -125,6 +131,13 @@ const sessionState = (repoRoot: string): SessionState => ({
   toolWindows: [],
   toolWindowEvictions: 0,
   toolWindowMisses: 0,
+  draftNudge: null,
+  draftNudgeRetryAt: null,
+  deriveFires: [],
+  topicContexts: [],
+  startBranch: null,
+  sessionTouchedAt: null,
+  topicOverflowCount: 0,
   probedFingerprints: [],
 });
 
@@ -196,11 +209,14 @@ describe("a session at checkout A editing a file in worktree B", () => {
       env(home),
     );
 
-    // Assert: the worktree file was captured under its repo-relative id
+    // Assert: the worktree file was captured under its repo-relative id — as
+    // a TOPIC of its own, since worktree B is detached elsewhere than the
+    // session's checkout, so its seen-set entry carries that topic's key
     expect(stdout).toBe("");
     expect(await targetsIn(home)).toEqual([EDITED_FILE]);
     const state = await readSessionState(home, SESSION_ID);
-    expect(state?.seenTargets).toEqual([EDITED_FILE]);
+    expect(state?.seenTargets).toHaveLength(1);
+    expect(state?.seenTargets[0]?.endsWith(`/${EDITED_FILE}`)).toBe(true);
     expect(state?.editToolFires).toBe(1);
     expect(state?.targetsCapturedCount).toBe(1);
     expect(state?.lastEditedPathResolvedAgainst).not.toBeNull();
@@ -533,5 +549,113 @@ describe("the tripwire trips on a worktree file (#17 pre-tool-use)", () => {
       }
     ).hookSpecificOutput;
     expect(decision?.permissionDecision).toBe("ask");
+  });
+});
+
+interface SpooledRecord {
+  readonly kind: string;
+  readonly body: {
+    readonly id?: string;
+    readonly title?: string;
+    readonly branch?: string;
+    readonly baseCommit?: string;
+    readonly workContextId?: string;
+    readonly value?: string;
+  };
+}
+
+const spooled = async (home: string): Promise<readonly SpooledRecord[]> =>
+  (await readSpoolLines(home, repoKey(DEAD_HUB_URL, REPO_ID))).map((line) => JSON.parse(line) as SpooledRecord);
+
+describe("one session, many topics (DESIGN.md)", () => {
+  const BRANCHES = ["feat/topic-a", "feat/topic-b", "feat/topic-c"] as const;
+
+  /** The owner's shape: a start checkout DETACHED at its commit, three siblings each on a branch. */
+  const ownerShape = async (label: string): Promise<{ main: string; home: string; siblings: readonly string[] }> => {
+    const { main, worktree, home } = await repoWithWorktree(label);
+    await git(worktree, ["switch", "-c", BRANCHES[0]]);
+    const siblings = [worktree];
+    for (const branch of BRANCHES.slice(1)) {
+      const sibling = await addWorktree(main, label);
+      await git(sibling, ["switch", "-c", branch]);
+      siblings.push(sibling);
+    }
+    // A stale branch points at the start checkout's commit too: the title
+    // must never borrow it.
+    await git(main, ["branch", "stale/old-work"]);
+    await git(main, ["checkout", "--detach"]);
+    return { main, home, siblings };
+  };
+
+  const sessionStart = (cwd: string): string =>
+    JSON.stringify({ session_id: SESSION_ID, cwd, hook_event_name: "SessionStart", source: "startup" });
+
+  test("a detached start checkout editing three sibling worktrees opens three topic contexts", async () => {
+    // Arrange
+    const { main, home, siblings } = await ownerShape("topics");
+    await runHook("session-start", sessionStart(main), env(home));
+
+    // Act: one edit in each sibling, every hook fired from the start checkout
+    for (const sibling of siblings) {
+      await writeRepoFile(sibling, EDITED_FILE, "export const a = 1;\n");
+      await runHook("post-tool-use", editPayload(main, join(sibling, EDITED_FILE)), env(home));
+    }
+
+    // Assert: the session's own context plus one per branch, each titled by
+    // its branch and carrying it, and each spooled AHEAD of its target
+    const records = await spooled(home);
+    const contexts = records.filter((record) => record.kind === "work_context");
+    expect(contexts[0]?.body.title?.startsWith("detached@")).toBe(true);
+    expect(contexts[0]?.body.title?.includes("stale/old-work")).toBe(false);
+    const topics = contexts.slice(1);
+    expect(topics.map((record) => record.body.title)).toEqual(BRANCHES.map((branch) => `${branch} @ api`));
+    expect(topics.map((record) => record.body.branch)).toEqual([...BRANCHES]);
+    expect(new Set(topics.map((record) => record.body.id)).size).toBe(BRANCHES.length);
+    for (const topic of topics) {
+      expect(topic.body.id?.startsWith(`wc_cc_${SESSION_ID}~t`)).toBe(true);
+      expect(topic.body.baseCommit).toMatch(/^[0-9a-f]{40}$/);
+      const contextAt = records.indexOf(topic);
+      const targetAt = records.findIndex(
+        (record) => record.kind === "target" && record.body.workContextId === topic.body.id,
+      );
+      expect(targetAt).toBeGreaterThan(contextAt);
+      expect(records[targetAt]?.body.value).toBe(EDITED_FILE);
+    }
+    const state = await readSessionState(home, SESSION_ID);
+    expect(state?.topicContexts.map((topic) => topic.branch)).toEqual([...BRANCHES]);
+  });
+
+  test("an edit in the start checkout files under the session's own context", async () => {
+    // Arrange
+    const { main, home } = await ownerShape("topics-own");
+    await runHook("session-start", sessionStart(main), env(home));
+    await writeRepoFile(main, EDITED_FILE, "export const a = 1;\n");
+
+    // Act
+    await runHook("post-tool-use", editPayload(main, join(main, EDITED_FILE)), env(home));
+
+    // Assert: no topic opened, the target names the session's own context
+    const records = await spooled(home);
+    expect(records.filter((record) => record.kind === "work_context")).toHaveLength(1);
+    expect(records.find((record) => record.kind === "target")?.body.workContextId).toBe(`wc_cc_${SESSION_ID}`);
+  });
+
+  test("a second edit in a topic reuses its context — one context per topic, not per edit", async () => {
+    // Arrange
+    const { main, home, siblings } = await ownerShape("topics-reuse");
+    const sibling = siblings[0] ?? "";
+    await runHook("session-start", sessionStart(main), env(home));
+    await writeRepoFile(sibling, EDITED_FILE, "export const a = 1;\n");
+    await writeRepoFile(sibling, "src/other.ts", "export const b = 1;\n");
+
+    // Act
+    await runHook("post-tool-use", editPayload(main, join(sibling, EDITED_FILE)), env(home));
+    await runHook("post-tool-use", editPayload(main, join(sibling, "src/other.ts")), env(home));
+
+    // Assert
+    const records = await spooled(home);
+    expect(records.filter((record) => record.kind === "work_context")).toHaveLength(2);
+    const ids = new Set(records.filter((record) => record.kind === "target").map((record) => record.body.workContextId));
+    expect(ids.size).toBe(1);
   });
 });

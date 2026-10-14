@@ -12,11 +12,8 @@ import type {
   Intent,
   SeqField,
   SeqKind,
-  Target,
   WorkContext,
 } from "@crosscheck/schema";
-
-import { canonicalRepoPath } from "@crosscheck/schema";
 
 import { EVENT_KINDS } from "../constants.ts";
 import {
@@ -25,15 +22,13 @@ import {
   claimSurfaces,
   claims,
   workContexts,
-  workContextTargets,
 } from "../db/schema.ts";
 import { appendEvent } from "./events.ts";
 import { appendIntentVersion } from "./intent-ledger.ts";
 import { refreshNormalizedDoc } from "./normalized-doc.ts";
-import { touchFileRef } from "./skeleton-identity.ts";
+import { recordDeveloperBranch } from "./developer-branches.ts";
 import {
   recordSessionEvent,
-  targetDigest,
   windowFloorOf,
 } from "./session-events.ts";
 import {
@@ -167,34 +162,6 @@ const resolveSessionOwner = async (
   return rows[0]?.developerId;
 };
 
-/**
- * The owner AND the session of a work context in one lookup.
- *
- * The session half is what keeps a position out of the wrong sequence: a
- * `target` body carries only a workContextId, and `producer.sessionId` is
- * rewritten to the FLUSHING session by every spool drain, so the context's own
- * session is the only honest answer to "whose order does this edit belong to".
- */
-const resolveWorkContextOwner = async (
-  db: DbExecutor,
-  workContextId: string,
-): Promise<
-  | { readonly developerId: string; readonly sessionId: string; readonly repo: string }
-  | undefined
-> => {
-  const rows = await db
-    .select({
-      developerId: agentSessions.developerId,
-      sessionId: workContexts.sessionId,
-      repo: agentSessions.repo,
-    })
-    .from(workContexts)
-    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
-    .where(eq(workContexts.id, workContextId))
-    .limit(1);
-  return rows[0];
-};
-
 // Deliberately does not check endedAt: author sessions MAY already be ended —
 // a spool flush from a successor session is legitimate. Only the producer
 // session must be live (enforced by checkProducerSession in records.ts).
@@ -313,24 +280,82 @@ const mergeIntent = (
   return next;
 };
 
+/**
+ * A TOPIC'S BRANCH AND BASE COMMIT ARE WRITTEN ONCE (DESIGN.md "One session,
+ * many topics"): what the session's first touch of the topic saw. A record
+ * without them — a connector from before topics, or a copy that does not
+ * carry them — says nothing about the topic and keeps what is stored; one that
+ * carries them fills a context that had none, and never moves one that had.
+ */
+const topicFieldsOf = (
+  current: Pick<WorkContextRow, "branch" | "baseCommit" | "baseOnDefault">,
+  body: WorkContext,
+): Pick<WorkContextRow, "branch" | "baseCommit" | "baseOnDefault"> => {
+  const baseCommit = current.baseCommit ?? body.baseCommit ?? null;
+  return {
+    branch: current.branch ?? body.branch ?? null,
+    baseCommit,
+    // ...AND THE TOPIC'S WORD ABOUT THAT BASE, once, from a copy that names
+    // the base it is about (topic review C1): a word about another commit
+    // says nothing about this one, and a later copy never moves a stored word.
+    baseOnDefault: current.baseOnDefault ?? (body.baseCommit === baseCommit ? baseWordOf(body) : null),
+  };
+};
+
+/**
+ * A TOPIC'S BRANCH IS WHERE ITS OWNER IS, as much as her session's own is
+ * (topic review H4). The live-location projection withholds an opted-out
+ * owner's UNMARKED title when it equals any branch of hers it knows
+ * (services/live-location.ts, developer_branches) — and on a `local:` repo a
+ * topic's title is its bare branch, which no session of hers registered on.
+ * So the branch joins hers as the topic's record lands, before the context's
+ * search doc is refreshed: the index reads the same list (isTitleWithheldFromIndex).
+ */
+const rememberTopicBranch = async (
+  db: DbExecutor,
+  developerId: string,
+  branch: string | null | undefined,
+  at: Date,
+): Promise<void> => {
+  if (branch !== null && branch !== undefined) {
+    await recordDeveloperBranch(db, developerId, branch, at);
+  }
+};
+
+/** A record's word about its own base: none without the base it is about. */
+const baseWordOf = (body: WorkContext): boolean | null =>
+  body.baseCommit === undefined ? null : (body.baseOnDefault ?? null);
+
 const workContextChanges = (
   current: WorkContextRow,
   body: WorkContext,
 ): Partial<WorkContextRow> | null => {
   const next = {
     title: body.title,
+    // THE MARKER FOLLOWS ITS TITLE. A record that says how it wrote the
+    // title replaces the marker; one that says nothing (an older connector,
+    // or a writer that re-sends the title it was given) keeps it only while
+    // the title is the one it described — a new title nobody vouched for is
+    // judged by its shape (services/live-location.ts).
+    titleSource:
+      body.titleSource ?? (body.title === current.title ? current.titleSource : null),
     description: body.description ?? null,
     intent: mergeIntent(current.intent ?? null, body.intent),
     status: body.status,
+    ...topicFieldsOf(current, body),
   };
   // Accepted v0 limitation: JSON.stringify intent comparison is key-order
   // sensitive, so a semantically equal intent with reordered keys counts as
   // a change and triggers a harmless no-op-ish update.
   const hasChange =
     next.title !== current.title ||
+    next.titleSource !== current.titleSource ||
     next.description !== current.description ||
     JSON.stringify(next.intent) !== JSON.stringify(current.intent) ||
-    next.status !== current.status;
+    next.status !== current.status ||
+    next.branch !== current.branch ||
+    next.baseCommit !== current.baseCommit ||
+    next.baseOnDefault !== current.baseOnDefault;
   return hasChange ? next : null;
 };
 
@@ -424,6 +449,7 @@ const updateExistingWorkContext = async (
       ...(producerSessionId === undefined ? {} : { updatedBySessionId: producerSessionId }),
     })
     .where(eq(workContexts.id, body.id));
+  await rememberTopicBranch(deps.db, developerId, changes.branch, deps.now());
   await refreshNormalizedDoc(deps.db, body.id);
   // Outbox discipline: ids and metadata only — WHICH fields changed, never
   // their text (the feed phrases "intent" from the list, no summary crosses).
@@ -481,9 +507,15 @@ export const ingestWorkContext = async (
         id: body.id,
         sessionId: body.sessionId,
         title: body.title,
+        titleSource: body.titleSource ?? null,
         description: body.description ?? null,
         intent: body.intent ?? null,
         status: body.status,
+        // A topic's branch and base commit (DESIGN.md "One session, many
+        // topics"); null from a connector before topics.
+        branch: body.branch ?? null,
+        baseCommit: body.baseCommit ?? null,
+        baseOnDefault: baseWordOf(body),
         createdAt: new Date(body.createdAt),
         updatedAt:
           body.updatedAt === undefined ? null : new Date(body.updatedAt),
@@ -521,6 +553,7 @@ export const ingestWorkContext = async (
         .set({ intent: appended.headWire })
         .where(eq(workContexts.id, body.id));
     }
+    await rememberTopicBranch(tx, developerId, body.branch, deps.now());
     await refreshNormalizedDoc(tx, body.id);
     await appendEvent(txDeps, EVENT_KINDS.WORK_CONTEXT_CREATED, {
       workContextId: body.id,
@@ -573,10 +606,14 @@ export const TARGET_EVENT_KINDS = {
  * a file the tool lane already reported, the row becomes "both" while that
  * second event is still an upper bound, and stamping it emitted would let a
  * happens-before question answer from a position that cannot support one.
+ * `git_commit` is OBSERVED for the same reason: the Stop-time lane reads a
+ * commit after the turn that made it, and the commit's own date is the
+ * developer's clock, never a position in this session's order.
  */
 const SEQ_KIND_BY_SOURCE = {
   tool_edit: "emitted",
   git_diff: "observed",
+  git_commit: "observed",
   both: "emitted",
 } as const;
 
@@ -600,108 +637,8 @@ export const seqKindFor = (
     ? "emitted"
     : "observed";
 
-/** A file target's value in its one spelling, or as sent when it has none (01a §3.3d). */
-const canonicalFileValue = (raw: string): string => {
-  const canonical = canonicalRepoPath(raw);
-  return canonical.ok ? canonical.path : raw;
-};
-
-export const ingestTarget = async (
-  deps: Deps,
-  developerId: string,
-  body: Target,
-  seq?: SeqField,
-): Promise<HandlerOutcome> => {
-  const owner = await resolveWorkContextOwner(deps.db, body.workContextId);
-  if (owner === undefined) {
-    return rejectedOutcome(
-      `workContextId: work context "${body.workContextId}" not found`,
-    );
-  }
-  if (owner.developerId !== developerId) {
-    return rejectedOutcome(
-      "workContextId: work context belongs to another developer",
-    );
-  }
-  const source = body.source;
-  // ONE SPELLING PER FILE (01a §3.3d). `suspect` and the retention graph join
-  // a pin to a touch by exact string, so a connector that sent `./src/x.ts`
-  // would otherwise be a touch no pin ever meets — an exoneration produced by
-  // a spelling. A value that cannot be made canonical is KEPT as sent: a
-  // touch is evidence, and dropping it would be deciding the question it
-  // exists to answer.
-  const value = body.kind === "file" ? canonicalFileValue(body.value) : body.value;
-  const eventKind = TARGET_EVENT_KINDS[body.kind as keyof typeof TARGET_EVENT_KINDS];
-  /**
-   * PROJECTED ON BOTH BRANCHES, accepted AND duplicate. The git lane's
-   * `file.modified` for a file the tool lane already saw arrives on the
-   * duplicate branch below — the primary key collapses the two observations
-   * into one target row — and that second observation is exactly the one a
-   * happens-before question cares about. Writing the event only on `accepted`
-   * would leave `seq_kind = observed` a value no real row ever carries.
-   */
-  const project = async (): Promise<void> => {
-    if (eventKind === undefined) {
-      return;
-    }
-    await recordSessionEvent(deps, {
-      sessionId: owner.sessionId,
-      kind: eventKind,
-      seq,
-      seqKind: seqKindFor(source, seq),
-      refKind: "target_digest",
-      refId: targetDigest(body.workContextId, body.kind, value),
-      workContextId: body.workContextId,
-      // THE FILE, in the identity a pin's history is written in (01a §3.3d):
-      // the SESSION's repo and the canonical path, computed here on the hub
-      // so two developers' connectors cannot disagree about it.
-      ...(body.kind === "file" ? { fileRef: touchFileRef(owner.repo, value) } : {}),
-    });
-  };
-  const inserted = await deps.db
-    .insert(workContextTargets)
-    .values({
-      workContextId: body.workContextId,
-      kind: body.kind,
-      value,
-      source,
-      // First-seen age for the targets-only pointer (#19). onConflictDoNothing
-      // below means a duplicate touch never bumps it — the honest age.
-      createdAt: deps.now(),
-    })
-    .onConflictDoNothing()
-    .returning({ workContextId: workContextTargets.workContextId });
-  if (inserted[0] === undefined) {
-    // The row exists. If the OTHER lane saw this file too, the label is
-    // upgraded to "both" — the primary key collapses the two observations
-    // into one row, and without this the lane that arrived first would
-    // silently own the label and `suspect` would report a second source as
-    // dead. Still a DUPLICATE record either way: nothing new was learned
-    // about the file, only about who saw it.
-    await deps.db
-      .update(workContextTargets)
-      .set({ source: "both" })
-      .where(
-        and(
-          eq(workContextTargets.workContextId, body.workContextId),
-          eq(workContextTargets.kind, body.kind),
-          eq(workContextTargets.value, value),
-          sql`${workContextTargets.source} NOT IN (${source}, 'both')`,
-        ),
-      );
-    await project();
-    return duplicate();
-  }
-  // The doc regenerates so the new target value is searchable. Not wrapped in
-  // a transaction with the insert: a crash between the two leaves a doc one
-  // target short until the next ingest touches the context — self-healing,
-  // and the record itself is already durable.
-  await refreshNormalizedDoc(deps.db, body.workContextId);
-  await project();
-  // No per-target event: a busy session emits dozens of targets and would
-  // flood the outbox, drowning the signals SSE consumers care about.
-  return accepted();
-};
+// A `target` record is stored by services/target-run.ts, a flush's consecutive
+// targets as one run in a few statements, each answered as it was alone.
 
 // Accepted v0 limitation: homoglyph lookalikes (e.g. Cyrillic "а" for "a")
 // bypass this normalization; the similarity block's embedding dedup covers
@@ -986,6 +923,9 @@ export const ingestClaimWithin = async (
     developerId,
     kind: body.kind,
     status: body.status,
+    // So a feed reader can tell a machine draft from a vouched claim without
+    // the body: "derived" is a guess nobody has reviewed yet.
+    provenance: body.provenance,
   });
   // IN THE SAME TRANSACTION as the row it projects — one pipeline, not two.
   // The session is the claim's OWN author, never the producer: a spool drained

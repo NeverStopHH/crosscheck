@@ -1,5 +1,8 @@
 import { createDb, createServer } from "../src/index.ts";
 import type { Db, Embedder } from "../src/index.ts";
+import { parseTrustedProxies } from "../src/http/forwarded.ts";
+import type { ListenKind } from "../src/http/listen.ts";
+import { confirmingAtOnce } from "./fixtures/immediate-confirmation.ts";
 
 export const TEST_ADMIN_TOKEN = "test-admin-token";
 export const TEST_START_ISO = "2026-07-24T09:00:00.000Z";
@@ -49,6 +52,21 @@ export interface TestHarnessOptions {
    * browser on the hub's own machine; `app.request` has no socket to read.
    */
   readonly peerAddress?: string | null;
+  /** CROSSCHECK_TRUSTED_PROXIES as the hub would read it. Omitted = none beyond loopback. */
+  readonly trustedProxies?: string;
+  /** How a booted hub would have decided where to listen. Omitted = no socket (null). */
+  readonly listen?: ListenKind;
+  /**
+   * What happens to a word a key drafts (human provenance, 0.11). `pending`
+   * is the hub as it is: a draft waits for the person's passkey — what every
+   * human-provenance suite uses. Omitted = `confirmed_at_once`, the emulation
+   * the suites from before 0.11 run under (fixtures/immediate-confirmation.ts):
+   * each draft confirmed the moment it is written, so they keep testing what
+   * the writers do with a person's word.
+   */
+  readonly drafts?: "pending" | "confirmed_at_once";
+  /** CROSSCHECK_REFUSE_PRE_011_DRAFTS as the hub would read it. Omitted = off, the default. */
+  readonly refusePreDraftingClients?: boolean;
 }
 
 /** The origin the harness accepts passkeys at unless a test says otherwise. */
@@ -75,8 +93,15 @@ export const createTestHarness = async (
       : { embedDeadlineMs: options.embedDeadlineMs }),
     webauthnOrigins: options.webauthnOrigins ?? [TEST_WEBAUTHN_ORIGIN],
     peerAddress: () => (options.peerAddress === undefined ? TEST_LOOPBACK_PEER : options.peerAddress),
+    trustedProxies: parseTrustedProxies(options.trustedProxies),
+    ...(options.listen === undefined ? {} : { listen: options.listen }),
+    ...(options.refusePreDraftingClients === undefined ? {} : { refusePreDraftingClients: options.refusePreDraftingClients }),
   });
-  return { app, clock, db };
+  return {
+    app: options.drafts === "pending" ? app : confirmingAtOnce(app, { db, now: clock.now, embedder: options.embedder ?? null }),
+    clock,
+    db,
+  };
 };
 
 export const jsonRequest = (

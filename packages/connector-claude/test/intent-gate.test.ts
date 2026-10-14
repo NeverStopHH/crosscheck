@@ -6,12 +6,16 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  INTENT_MAX_NONE_REFUNDS,
   INTENT_MIN_PROMPT_CHARS,
+  INTENT_MIN_TOPICAL_WORDS,
   SUMMARIZER_FAILURE_MAX_CHARS,
 } from "@crosscheck/connector-core/constants.ts";
 import { deriveSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import {
+  intentPromptOf,
+  isIntentFireSpent,
   isSubstantivePrompt,
   withIntentFailure,
   withIntentFire,
@@ -30,6 +34,11 @@ const baseState = (): SessionState =>
   });
 
 const TASK = "why does the refresh call 500 after the key rotation on staging";
+
+/** One fire at a fixed instant, under the default summarizer deadline. */
+const FIRED_AT = new Date("2026-10-05T12:00:00.000Z");
+const FIRE_DEADLINE_MS = 90_000;
+const fire = (state: SessionState): SessionState => withIntentFire(state, FIRED_AT, FIRE_DEADLINE_MS);
 
 describe("isSubstantivePrompt", () => {
   test(`a task of at least ${String(INTENT_MIN_PROMPT_CHARS)} characters fires; one character short does not`, () => {
@@ -61,10 +70,60 @@ describe("isSubstantivePrompt", () => {
   });
 });
 
+describe("intentPromptOf: what the one intent fire is spent on, and what is parked (review 1006b, H2)", () => {
+  test("a real task is parked as typed", () => {
+    expect(intentPromptOf(TASK)).toBe(TASK);
+  });
+
+  test.each([
+    ["a task notification", '<task-notification><summary>Monitor event: "PR #74 CI checks for 493ffb4f"</summary></task-notification>'],
+    ["the notification marker", "[SYSTEM NOTIFICATION - NOT USER INPUT]\nMonitor event: PR #74 CI checks pass on the branch"],
+    ["another agent's report", '<agent-message from="a7">[Subagent hand-back] Report: CI checks pass on PR 74</agent-message>'],
+    ["a long content-free prompt", "mache weiter, limit zuruckgesetzt. bitte alles wiederuafnhemen"],
+    ["an English one", "please continue, the usage limit was reset, keep going"],
+  ])("%s never spends the fire", (_, turn) => {
+    expect(intentPromptOf(turn)).toBeNull();
+  });
+
+  test.each([
+    ["one topical word among meta words", "fix the session limit reset handling once more please"],
+    ["no topical word at all", "why does the usage limit reset again after the session window"],
+  ])("a task with %s never spends the fire (round 3, H2)", (_, prompt) => {
+    expect(prompt.length).toBeGreaterThanOrEqual(INTENT_MIN_PROMPT_CHARS);
+    expect(intentPromptOf(prompt)).toBeNull();
+  });
+
+  test(`the control: ${String(INTENT_MIN_TOPICAL_WORDS)} topical words beside the meta ones spend it`, () => {
+    const prompt = "fix the session limit reset in the checkout handler please";
+    expect(intentPromptOf(prompt)).toBe(prompt);
+  });
+
+  test.each([
+    ["continue, and then fix why the refresh call 500s after the key rotation on staging"],
+    ["the checkout tests pass on staging now, carry on with the refund flow"],
+    ["cool, the cache fix for the checkout service is merged, next"],
+  ])("a prompt that carries the session on never spends the fire (round 4, H2): %p", (prompt) => {
+    expect(prompt.length).toBeGreaterThanOrEqual(INTENT_MIN_PROMPT_CHARS);
+    expect(intentPromptOf(prompt)).toBeNull();
+  });
+
+  test("around a wrapper, only the human text is parked", () => {
+    const turn = `<ide_opened_file>The user opened the file /repo/src/auth/refresh.ts in the IDE.</ide_opened_file>\n${TASK}`;
+    expect(intentPromptOf(turn)).toBe(TASK);
+  });
+
+  test("a wrapper does not lend its length to a short human remark", () => {
+    const turn = `<ide_opened_file>The user opened the file /repo/src/auth/refresh.ts in the IDE, a long path.</ide_opened_file>\nfix it`;
+    expect(intentPromptOf(turn)).toBeNull();
+  });
+});
+
 describe("intent transforms", () => {
   test("a fire, a NONE, a set and a failure each book their own counter", () => {
-    const fired = withIntentFire(baseState());
+    const firedAt = new Date("2026-10-05T12:00:00.000Z");
+    const fired = withIntentFire(baseState(), firedAt, 90_000);
     expect(fired.intentFireCount).toBe(1);
+    expect(fired.deriveFires).toEqual([{ at: firedAt.toISOString(), deadlineMs: 90_000 }]);
     expect(withIntentNone(fired).intentNoneCount).toBe(1);
     expect(withIntentSet(fired).intentSetCount).toBe(1);
     const failed = withIntentFailure(fired, "exit 1: Not logged in");
@@ -72,6 +131,42 @@ describe("intent transforms", () => {
     expect(failed.intentLastFailure).toBe("exit 1: Not logged in");
     // Each outcome is exactly one counter — the remainder arithmetic holds
     expect(failed.intentNoneCount + failed.intentSetCount).toBe(0);
+  });
+
+  test("a NONE refunds the fire: the session may spend it again (round 4, H2)", () => {
+    // Arrange
+    const fired = fire(baseState());
+    expect(isIntentFireSpent(fired)).toBe(true);
+
+    // Act
+    const refunded = withIntentNone(fired);
+
+    // Assert — booked as a NONE, and the fire is free again
+    expect(refunded.intentNoneCount).toBe(1);
+    expect(refunded.intentFireCount).toBe(1);
+    expect(isIntentFireSpent(refunded)).toBe(false);
+  });
+
+  test(`at most ${String(INTENT_MAX_NONE_REFUNDS)} refunds a session: the NONE after them spends the fire for good`, () => {
+    // Arrange — fire and NONE, as often as refunds are owed
+    const exhausted = Array.from({ length: INTENT_MAX_NONE_REFUNDS }).reduce<SessionState>(
+      (state) => withIntentNone(fire(state)),
+      baseState(),
+    );
+    expect(isIntentFireSpent(exhausted)).toBe(false);
+
+    // Act — one more fire answered NONE
+    const last = withIntentNone(fire(exhausted));
+
+    // Assert — one fire and as many refunds: the next prompt fires no more
+    expect(last.intentFireCount).toBe(INTENT_MAX_NONE_REFUNDS + 1);
+    expect(last.intentNoneCount).toBe(INTENT_MAX_NONE_REFUNDS + 1);
+    expect(isIntentFireSpent(last)).toBe(true);
+  });
+
+  test("a set or a failure refunds nothing", () => {
+    expect(isIntentFireSpent(withIntentSet(fire(baseState())))).toBe(true);
+    expect(isIntentFireSpent(withIntentFailure(fire(baseState()), "exit 1"))).toBe(true);
   });
 
   test(`the failure reason is cut by the writer to ${String(SUMMARIZER_FAILURE_MAX_CHARS)} chars, never split mid-character`, () => {

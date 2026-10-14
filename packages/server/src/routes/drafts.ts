@@ -6,29 +6,42 @@
  * WHERE — there is no parameter that widens it.
  */
 import { Hono } from "hono";
+import { z } from "zod";
 
 import { fail, ok } from "../http/envelope.ts";
 import { formatIssues } from "../http/request.ts";
 import { RepoQuerySchema } from "../http/schemas.ts";
 import { developerAuth } from "../middleware/auth.ts";
-import { listOwnDrafts } from "../services/drafts.ts";
+import { DRAFT_ORDERS, listOwnDrafts, summarizeOwnDrafts } from "../services/drafts.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
+
+/** The repo, plus which end of the backlog the capped page starts from. */
+const DraftsQuerySchema = RepoQuerySchema.extend({
+  order: z.enum(DRAFT_ORDERS).default("newest"),
+});
 
 export const draftsRoutes = (deps: AppDeps): Hono<AppEnv> => {
   const router = new Hono<AppEnv>();
   router.use("*", developerAuth(deps));
 
   router.get("/", async (c) => {
-    const parsed = RepoQuerySchema.safeParse({ repo: c.req.query("repo") });
+    const parsed = DraftsQuerySchema.safeParse({
+      repo: c.req.query("repo"),
+      order: c.req.query("order"),
+    });
     if (!parsed.success) {
       return fail(c, 400, "validation_failed", formatIssues(parsed.error));
     }
-    const drafts = await listOwnDrafts(
-      deps.db,
-      c.get("developer").id,
-      parsed.data.repo,
-    );
-    return ok(c, { drafts });
+    const developerId = c.get("developer").id;
+    const [drafts, backlog] = await Promise.all([
+      listOwnDrafts(deps.db, developerId, parsed.data.repo, parsed.data.order),
+      summarizeOwnDrafts(deps.db, developerId, parsed.data.repo),
+    ]);
+    // Additive: `total` and `oldestCreatedAt` describe the whole backlog the
+    // capped, newest-first rows are cut from; an older client ignores them.
+    // `order` is echoed so a client can tell a hub that honoured `oldest`
+    // from an older one that ignored it and answered newest-first.
+    return ok(c, { drafts, ...backlog, order: parsed.data.order });
   });
 
   return router;

@@ -47,6 +47,8 @@ import type {
 } from "@simplewebauthn/server";
 import { isoBase64URL } from "@simplewebauthn/server/helpers";
 
+import { isLoopbackAddress } from "../http/peer.ts";
+
 /** How long a person has between "show me" and "I signed" — 04a §5. */
 export const CEREMONY_TTL_MS = 5 * 60_000;
 
@@ -69,7 +71,12 @@ export type CeremonyPurpose =
   | "approve"
   | "amend"
   | "revoke_waiver"
-  | "revoke_passkey";
+  | "revoke_passkey"
+  // Releasing or withdrawing a needs_approval artifact (routes/ui-ceremony-artifacts.ts).
+  | "approve_artifact"
+  | "revoke_artifact"
+  // Confirming one frozen batch of one's own drafts (services/confirmation-batch.ts).
+  | "confirm_batch";
 
 /** What a ceremony signs. Flat, so canonicalisation is a key sort. */
 export type CeremonyTerms = Readonly<Record<string, string | number>>;
@@ -144,6 +151,42 @@ const challengeOf = (
  */
 export const isLocalhostName = (hostname: string): boolean =>
   hostname === "localhost" || hostname.endsWith(".localhost");
+
+/**
+ * An origin that names "this machine" rather than one host: `localhost`,
+ * `*.localhost`, or a loopback IP (`127.0.0.1`, `[::1]`). Every browser that
+ * types one reaches a different machine, its own. Not a URL: false, because
+ * no configured origin matches it either.
+ */
+export const isLocalOrigin = (origin: string): boolean => {
+  let hostname: string;
+  try {
+    hostname = new URL(origin).hostname;
+  } catch {
+    return false;
+  }
+  const unbracketed = hostname.startsWith("[") ? hostname.slice(1, -1) : hostname;
+  return isLocalhostName(hostname) || isLoopbackAddress(unbracketed);
+};
+
+/** Whether people are meant to reach this hub over https: any configured https origin says so. */
+export const hasHttpsOrigin = (origins: readonly string[]): boolean =>
+  origins.some((origin) => origin.startsWith("https:"));
+
+/**
+ * A localhost origin configured beside an https one: dead weight, because
+ * routes/ui-ceremony.ts refuses localhost ceremonies on such a hub. The boot
+ * and doctor say to drop it (review H6).
+ */
+export const hasLocalhostBesideHttps = (origins: readonly string[]): boolean =>
+  hasHttpsOrigin(origins) && origins.some(isLocalOrigin);
+
+/** The boot's WARN for it, with the exact list to set instead. */
+export const localhostBesideHttpsWarning = (origins: readonly string[]): string =>
+  "[crosscheck] WARN CROSSCHECK_WEBAUTHN_ORIGINS lists a localhost origin beside an https one. This hub " +
+  "refuses passkeys at localhost, because behind a proxy a localhost prompt cannot say which machine asked. " +
+  `Drop it: CROSSCHECK_WEBAUTHN_ORIGINS=${origins.filter((origin) => !isLocalOrigin(origin)).join(",")}, ` +
+  "and enrol each person's passkey at the https address.";
 
 /** `127.0.0.1`, `[::1]`, `100.64.0.7` — `URL` has already normalised the spelling. */
 const isIpLiteral = (hostname: string): boolean =>

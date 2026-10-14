@@ -27,6 +27,7 @@ import type { Context, MiddlewareHandler } from "hono";
 
 import { hashApiKey } from "../auth/keys.ts";
 import { developers } from "../db/schema.ts";
+import { trustedForwardedProto } from "../http/forwarded.ts";
 import {
   UI_CSP,
   UI_MAX_API_KEY_FORM_CHARS,
@@ -95,26 +96,24 @@ const redirectToLogin = (c: Context<AppEnv>): Response =>
  * Https either at the hub itself or at a TLS-terminating proxy in front of it
  * (Caddy/nginx/Tailscale serve), signalled by the standard `X-Forwarded-Proto`
  * — chained proxies append, so the first (client-facing) value decides.
- * Trusting the header is safe here because it can only ADD the cookie's
- * `Secure` flag: a client spoofing it over direct plain http gets a cookie
- * its own browser refuses to send back, stranding nobody but the spoofer.
- * Absent header over plain http (the proxyless LAN install) stays non-Secure
- * so that login keeps working.
+ *
+ * THE HEADER COUNTS ONLY FROM A TRUSTED PEER (http/forwarded.ts): loopback,
+ * or CROSSCHECK_TRUSTED_PROXIES. Its only use here is ADDING the cookie's
+ * `Secure` flag, which a spoofer could only strand themselves with. But the
+ * answer is called `isSecureTransport`, and a predicate with that name gets
+ * reused as a gate; one that believed any LAN peer's header would then let it
+ * pass as https. Absent or untrusted header over plain http (the proxyless
+ * LAN install) stays non-Secure, so that login keeps working.
  */
-const FORWARDED_PROTO_HEADER = "x-forwarded-proto";
 const HTTPS_URL_PROTOCOL = "https:";
 const HTTPS_FORWARDED_PROTO = "https";
 
-const isSecureTransport = (c: Context<AppEnv>): boolean => {
+const isSecureTransport = (c: Context<AppEnv>, deps: AppDeps): boolean => {
   if (new URL(c.req.url).protocol === HTTPS_URL_PROTOCOL) {
     return true;
   }
-  const forwardedProto = c.req.header(FORWARDED_PROTO_HEADER);
-  if (forwardedProto === undefined) {
-    return false;
-  }
-  const clientFacingProto = forwardedProto.split(",")[0]?.trim().toLowerCase();
-  return clientFacingProto === HTTPS_FORWARDED_PROTO;
+  const forwardedProto = trustedForwardedProto(c, deps);
+  return forwardedProto === HTTPS_FORWARDED_PROTO;
 };
 
 /**
@@ -200,7 +199,7 @@ export const uiRoutes = (deps: AppDeps): Hono<AppEnv> => {
       expiresAtMs,
       developer.apiKeyHash,
     );
-    c.header("Set-Cookie", sessionCookieHeader(token, isSecureTransport(c)));
+    c.header("Set-Cookie", sessionCookieHeader(token, isSecureTransport(c, deps)));
     return c.redirect(FEED_PATH, 303);
   });
 

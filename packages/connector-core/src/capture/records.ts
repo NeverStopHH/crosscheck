@@ -1,8 +1,8 @@
 import { PROTOCOL_VERSION } from "@crosscheck/schema";
-import type { Envelope, Intent, LandedStop } from "@crosscheck/schema";
+import type { Envelope, GeneratedSignal, Intent, LandedStop, WorkContextTitleSource } from "@crosscheck/schema";
 
 import { FOREIGN_SESSION_DELIVERY } from "./seq.ts";
-import type { DeliveryChannel } from "@crosscheck/schema";
+import type { DeliveryChannel, DeliveryMatchedOn, IntentProvenance } from "@crosscheck/schema";
 
 export interface Producer {
   readonly developerId: string;
@@ -34,6 +34,14 @@ export interface WorkContextRecordInput {
   readonly workContextId: string;
   readonly sessionId: string;
   readonly title: string;
+  /**
+   * How `title` was written (@crosscheck/schema WORK_CONTEXT_TITLE_SOURCES):
+   * `fallback` is the session's branch, which the hub withholds from
+   * colleagues of a developer who opted out of presence. Omitted only by a
+   * writer that does not know (a state file from before the marker) — the
+   * hub then keeps the stored marker while the title is unchanged.
+   */
+  readonly titleSource?: WorkContextTitleSource | undefined;
   readonly status: string;
   /**
    * Present only on an intent UPDATE (the derived-intent worker, `set_intent`):
@@ -41,7 +49,26 @@ export interface WorkContextRecordInput {
    * has — so a registration or recovery re-send can never wipe one.
    */
   readonly intent?: Intent | undefined;
+  /**
+   * A TOPIC's branch and the commit HEAD named at the session's first touch
+   * of it (flows/topic-contexts.ts). Absent on the session's own context, and
+   * on a topic whose commit could not be read — never a guess.
+   */
+  readonly branch?: string | undefined;
+  readonly baseCommit?: string | null | undefined;
+  /**
+   * The topic's own word about that commit (flows/topic-base-word.ts): was it
+   * already on the default branch when the topic opened? Sent only beside
+   * the commit it is about; null or absent says nothing.
+   */
+  readonly baseOnDefault?: boolean | null | undefined;
 }
+
+/** A topic's word about its base, as the body carries it: only beside that base. */
+const baseWordOf = (input: WorkContextRecordInput): { readonly baseOnDefault?: boolean } =>
+  input.baseCommit === undefined || input.baseCommit === null || typeof input.baseOnDefault !== "boolean"
+    ? {}
+    : { baseOnDefault: input.baseOnDefault };
 
 export const workContextRecord = (
   input: WorkContextRecordInput,
@@ -54,8 +81,12 @@ export const workContextRecord = (
       id: input.workContextId,
       sessionId: input.sessionId,
       title: input.title,
+      ...(input.titleSource === undefined ? {} : { titleSource: input.titleSource }),
       status: input.status,
       ...(input.intent === undefined ? {} : { intent: input.intent }),
+      ...(input.branch === undefined ? {} : { branch: input.branch }),
+      ...(input.baseCommit === undefined || input.baseCommit === null ? {} : { baseCommit: input.baseCommit }),
+      ...baseWordOf(input),
       createdAt: now.toISOString(),
     },
     producer,
@@ -84,7 +115,19 @@ import { deliveryIdFor } from "@crosscheck/schema";
  * its deliveries into the bucket that means "nobody can tell", silently, on
  * the one surface whose whole purpose is being counted. Required makes the
  * compiler ask.
+ *
+ * `matching` is the opposite case, and optional on purpose (review 1006b,
+ * M7): what a PROMPT-TIME delivery was matched on — the prompt, or a question
+ * this developer asked — and whose intent the session held. A briefing
+ * pointer, a failure-time solved hint or a pre-edit notice was matched on
+ * none of those, and its channel already says what it answered; inventing a
+ * value for it would be the guess the field exists to avoid.
  */
+export interface DeliveryMatching {
+  readonly matchedOn: DeliveryMatchedOn;
+  readonly intentProvenance: IntentProvenance | null;
+}
+
 export const hintDeliveryRecord = (
   receiverSessionId: string,
   refKind: HintRefKind,
@@ -92,6 +135,7 @@ export const hintDeliveryRecord = (
   channel: DeliveryChannel,
   producer: Producer,
   now: Date,
+  matching?: DeliveryMatching,
 ): Envelope =>
   buildEnvelope(
     "hint_delivery",
@@ -101,6 +145,9 @@ export const hintDeliveryRecord = (
       refKind,
       refId,
       channel,
+      ...(matching === undefined
+        ? {}
+        : { matchedOn: matching.matchedOn, intentProvenance: matching.intentProvenance }),
       deliveredAt: now.toISOString(),
     },
     producer,
@@ -137,7 +184,7 @@ export const landedNoticeDeliveryRecord = (
  * lane, which is what every target minted before Stage 1 was — so an old
  * spool replays as itself instead of as an unlabelled unknown.
  */
-export type TargetSource = "tool_edit" | "git_diff";
+export type TargetSource = "tool_edit" | "git_diff" | "git_commit";
 
 export const targetRecord = (
   workContextId: string,
@@ -146,8 +193,32 @@ export const targetRecord = (
   producer: Producer,
   now: Date,
   source: TargetSource = "tool_edit",
+  /**
+   * The generated-target signal that fired (capture/generated.ts) on a file
+   * that is mechanically generated and non-authoritative, or absent for an
+   * ordinary target AND for one whose classification could not run — the
+   * wire carries only positive evidence, so an unknown stays ordinary.
+   */
+  generated?: GeneratedSignal,
+  /**
+   * True for a generated file that is AUTHORITATIVE (declared, or a contract
+   * or migration): it stays evidence, and the hub must not label it either.
+   */
+  authoritative = false,
 ): Envelope =>
-  buildEnvelope("target", { workContextId, kind, value, source }, producer, now);
+  buildEnvelope(
+    "target",
+    {
+      workContextId,
+      kind,
+      value,
+      source,
+      ...(generated === undefined ? {} : { generated }),
+      ...(authoritative ? { authoritative: true } : {}),
+    },
+    producer,
+    now,
+  );
 
 /**
  * KINDS WHOSE BODY NAMES THE SESSION THAT AUTHORED THEM — directly

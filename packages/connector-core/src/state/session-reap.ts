@@ -33,8 +33,17 @@ import { appendRecords } from "../spool/append.ts";
 import { writeEndMarker } from "../spool/end-marker.ts";
 import { stampReleased } from "../spool/release.ts";
 import { lastWorkContextRecords } from "../spool/work-context-ack.ts";
+import { recordCaptureLoss } from "./loss-ledger.ts";
+import { recordRestOmission } from "./rest-omissions.ts";
+import { removeOwedRestsBooked, wereOwedRestsBooked } from "./rests-booked.ts";
 import { listSessionStateFiles, sessionSilentForMs } from "./session-scan.ts";
-import { lifeRungOf } from "./session-lineage.ts";
+import {
+  carriedCaptureOf,
+  lifeRungOf,
+  pendingSweepsOf,
+  recordReapedCapture,
+  strikePaidCapture,
+} from "./session-lineage.ts";
 import { crosscheckSessionIdFor, SessionStateSchema, updateSessionState } from "./session-state.ts";
 import type { SessionState } from "./session-state.ts";
 
@@ -138,6 +147,37 @@ const clampDatedAhead = async (home: string, state: SessionState, now: Date): Pr
   }));
 };
 
+/** The loss-ledger detail for a dead session's owed rechecks. */
+const REAPED_REST_DETAIL = "reap";
+
+/**
+ * A DEAD SESSION'S OWED RECHECKS ARE LOSSES (round 3, F-M2): a session that
+ * was killed mid-turn never ran the turn-end recheck its rests were owed, and
+ * no hook of it will ever run again. Booked under its own repo, dated at its
+ * newest rest — when the debt arose, not a week later when the corpse goes.
+ */
+const bookOwedRests = async (home: string, state: SessionState, now: Date): Promise<void> => {
+  const owed = state.tripwireCheckedFiles ?? [];
+  const count = owed.length + (state.tripwireRestsDropped ?? 0);
+  if (count === 0) {
+    return;
+  }
+  // ...unless the life's own SessionEnd booked them from an unlocked read and
+  // was cut before its delete (final review of batch 2, N10): counted once.
+  if (await wereOwedRestsBooked(home, state.hostSessionKey, state.crosscheckSessionId)) {
+    return;
+  }
+  const newest = Math.max(...owed.map((check) => Date.parse(check.at)).filter((ms) => !Number.isNaN(ms)));
+  const at = Number.isFinite(newest) && newest <= now.getTime() ? new Date(newest) : now;
+  const key = repoKey(state.hubUrl, state.repoId);
+  await recordCaptureLoss(home, { kind: "rest_unchecked", count, key, detail: REAPED_REST_DETAIL, now: at });
+  // ...and in the local "the person was not told" ledger, as every hook that
+  // books one does (review batch 2, L2): the two ledgers agree by construction.
+  // Dated when it is booked, like a hook's: a corpse is reaped only once older
+  // than that ledger's whole window, so its rest's own date would never count.
+  await recordRestOmission(home, { key, reason: "rest_unchecked", now });
+};
+
 export interface StateReapOptions {
   /** Never reaped, whatever its age: the caller is mid-session inside it. */
   readonly keepHostSessionKey?: string;
@@ -197,12 +237,37 @@ export const reapStaleSessionStates = async (
     // is as old as this state, and would expire it at the next SessionStart.
     await stampReleased(home, key, slug, now);
     await writeDownReapedLife(home, key, slug, parsed.data, now);
+    // THE SWEEP THE DEAD LIFE STILL OWED GOES TO ITS LINEAGE NOTE (final
+    // review of batch 2, the gap behind N1): a Bash-marked root no lane
+    // swept is carried for a resume, and booked by the lineage reap when
+    // nobody resumes — before the unlink, so a state that will not go leaves
+    // a note the live-state guard keeps quiet, never an uncounted debt.
+    const capture = carriedCaptureOf(parsed.data);
+    if (pendingSweepsOf(capture) > 0) {
+      await recordReapedCapture(home, parsed.data.hostSessionKey, capture, now);
+    }
+    // ...AND A CORPSE THAT OWES NOTHING PAYS THE NOTE (final review of batch
+    // 2, LOW-b): the resume carried the note's capture into this state, and
+    // a consume that could not rewrite the note left it there; this life
+    // then swept every root it carried and died — and the lineage reap would
+    // book, as never made, the sweep it had made. Struck when the note's
+    // capture is of this life's own binding; another binding's stays, since
+    // this life carried nothing of it.
+    if (pendingSweepsOf(capture) === 0) {
+      await strikePaidCapture(home, parsed.data.hostSessionKey, capture);
+    }
     try {
       await rm(file.path, { force: true });
       reaped += 1;
     } catch {
       // A file that will not go stays; the next SessionStart tries again.
+      continue;
     }
+    // Booked once the state is gone, never before (review batch 2, L3): a
+    // state that would not go was booked again on every run — three bookings
+    // for one rest — and the run that finally removes it books it once.
+    await bookOwedRests(home, parsed.data, now);
+    await removeOwedRestsBooked(home, parsed.data.hostSessionKey);
   }
   return reaped;
 };

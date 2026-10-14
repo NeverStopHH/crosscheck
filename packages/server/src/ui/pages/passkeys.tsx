@@ -43,10 +43,18 @@ const PasskeyRow: FC<{ readonly passkey: PasskeyView; readonly csrfToken: string
         <button type="submit" class="revoke">Revoke — I did not enrol this</button>
       </form>
     ) : (
+      // Why it is closed is signed with the revocation (round-2 R2-H3): retiring keeps
+      // what it confirmed; declaring it compromised retracts that and undoes it.
       <form class="inline" data-ceremony="revoke_passkey">
         <input type="hidden" name="action" value="revoke_passkey" />
         <input type="hidden" name="subjectId" value={passkey.id} />
-        <button type="submit" class="revoke">Revoke with a passkey</button>
+        <select name="reason">
+          <option value="retired" selected>
+            retire it — lost or replaced; keeps what it confirmed
+          </option>
+          <option value="compromised">it is compromised — retract and undo what it confirmed</option>
+        </select>
+        <button type="submit" class="revoke">Revoke with another passkey</button>
       </form>
     )}
   </li>

@@ -29,7 +29,8 @@
  * the old key is already dead. Those cases never say "nothing was rotated".
  */
 import { EXIT_FAIL, EXIT_OK, EXIT_UNREACHABLE, EXIT_USAGE } from "@crosscheck/connector-core/constants.ts";
-import { hubOrigin, readStoredConfig, saveConfig } from "@crosscheck/connector-core/config/config.ts";
+import { hubOrigin, readBoundStoredConfig, saveConfig } from "@crosscheck/connector-core/config/config.ts";
+import { resolveKeyBinding, storedKeyOrigin } from "@crosscheck/connector-core/config/key-binding.ts";
 import type { Config } from "@crosscheck/connector-core/config/config.ts";
 import { configPath, crosscheckHome } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
@@ -37,6 +38,7 @@ import { rotateOwnKey } from "@crosscheck/connector-core/http/keys.ts";
 import { getPrivacySettings } from "@crosscheck/connector-core/http/hub.ts";
 import type { HubContext, HubResult } from "@crosscheck/connector-core/http/client.ts";
 
+import { agentHostRefusalLine, personGate } from "./agent-host.ts";
 import { defaultInteractiveProbe } from "./pin.ts";
 import type { InteractiveProbe } from "./pin.ts";
 import type { CliResult } from "./login.ts";
@@ -85,6 +87,8 @@ interface KeySource {
   readonly stored: Config | null;
   readonly fromEnv: string | undefined;
   readonly currentKey: string;
+  /** The one origin `currentKey` may travel to (core config/key-binding.ts). */
+  readonly keyOrigin: string | null;
   readonly hubUrl: string;
 }
 
@@ -97,9 +101,10 @@ const refused = (stdout: string): ResolvedSource => ({ ok: false, refusal: resul
 /** The key to rotate — or why this machine must not rotate it from here. */
 const resolveKeySource = async (env: Env, printKey: boolean): Promise<ResolvedSource> => {
   const home = crosscheckHome(env);
-  const stored = await readStoredConfig(home);
+  const stored = await readBoundStoredConfig(home);
   const fromEnv = env["CROSSCHECK_API_KEY"];
-  const currentKey = fromEnv ?? stored?.apiKey;
+  const binding = resolveKeyBinding(env, stored);
+  const currentKey = binding?.apiKey;
   const hubUrl = env["CROSSCHECK_HUB_URL"] ?? stored?.hubUrl;
   if (currentKey === undefined || hubUrl === undefined) {
     return refused(
@@ -110,7 +115,7 @@ const resolveKeySource = async (env: Env, printKey: boolean): Promise<ResolvedSo
   const isStoredKeyForOtherHub =
     fromEnv === undefined &&
     stored !== null &&
-    hubOrigin(hubUrl) !== hubOrigin(stored.hubUrl);
+    hubOrigin(hubUrl) !== storedKeyOrigin(stored);
   if (isStoredKeyForOtherHub) {
     return refused(
       `CROSSCHECK_HUB_URL points at ${hubUrl}, but your stored key belongs to ${stored.hubUrl}.\n` +
@@ -125,7 +130,10 @@ const resolveKeySource = async (env: Env, printKey: boolean): Promise<ResolvedSo
         `Run \`crosscheck key rotate ${KEY_FLAG_PRINT}\`, then put the printed key into CROSSCHECK_API_KEY yourself.`,
     );
   }
-  return { ok: true, source: { home, stored, fromEnv, currentKey, hubUrl } };
+  return {
+    ok: true,
+    source: { home, stored, fromEnv, currentKey, keyOrigin: binding?.keyOrigin ?? null, hubUrl },
+  };
 };
 
 /** A rotation that did not come back as a new key. Only a 401 or a 409 is certain. */
@@ -209,8 +217,9 @@ export const runKey = async (
   if (subcommand !== "rotate" || unknown.length > 0) {
     return result(KEY_USAGE, EXIT_USAGE);
   }
-  if (!isInteractive()) {
-    return result(AGENT_REFUSAL, EXIT_USAGE);
+  const gate = personGate(env, isInteractive);
+  if (!gate.isPerson) {
+    return result(`${agentHostRefusalLine(gate)}${AGENT_REFUSAL}`, EXIT_USAGE);
   }
   const resolved = await resolveKeySource(env, printKey);
   if (!resolved.ok) {
@@ -220,6 +229,7 @@ export const runKey = async (
   const ctx: HubContext = {
     hubUrl: source.hubUrl,
     apiKey: source.currentKey,
+    keyOrigin: source.keyOrigin,
     timeoutMs: REQUEST_TIMEOUT_MS,
     home: source.home,
     repoKey: "key-rotate",

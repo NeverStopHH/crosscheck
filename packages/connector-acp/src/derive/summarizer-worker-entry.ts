@@ -5,6 +5,7 @@
  * one runs a worker from THIS package, because acquiring the slice is the
  * host's job and this host's slice arrives on stdin.
  */
+import "@crosscheck/connector-core/config/clean-runtime.ts";
 import { runAcpSummarizeWorker } from "./summarizer-worker.ts";
 
 process.exit(await runAcpSummarizeWorker(process.argv.slice(2), process.env));

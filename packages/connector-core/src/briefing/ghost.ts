@@ -78,11 +78,43 @@ export const formatGhostAge = (ageMs: number): string => {
 };
 
 /**
+ * THE QUALIFIER a large change's row carries, in the one spelling both the
+ * ghost line and the conference page print. The hub never drops a large
+ * change (server services/ghost-overlap.ts): a file shared with a rename is
+ * weaker evidence than one shared with a plan, so the reader is told the
+ * size and decides — the number is the hub's count of files the change
+ * touched, never a score.
+ */
+export const largeChangeClause = (files: number): string =>
+  `part of a large change touching ${String(files)} files`;
+
+/** The hub's size of a large change, or null when the row is focused or carries none. */
+export const largeChangeOf = (files: number | null | undefined): number | null =>
+  files === null || files === undefined || files <= 0 ? null : files;
+
+/**
+ * THE GENERATED QUALIFIER, in the one spelling the ghost line and the
+ * conference page print: files both sides touched that the rule kept out of
+ * overlap as mechanically generated and non-authoritative. A qualifier, never
+ * a reason — printed only beside overlap that already stands on its own, so
+ * "2 of your files" is never read as all the two of you touched, and a pair
+ * whose ONLY common ground is generated stays exactly as silent as before.
+ */
+export const generatedSharedClause = (files: number): string =>
+  `also both touched ${String(files)} generated file${files === 1 ? "" : "s"}`;
+
+/** The hub's generated shared count, or null when there are none or the hub sent none. */
+export const generatedSharedOf = (files: number | undefined): number | null =>
+  files === undefined || files <= 0 ? null : files;
+
+/**
  * The overlap clauses, strongest first — a shared failure, then the shared
- * values by name, then how many words of the reader's own intent matched. Empty means this row has no reason
- * a reader could check, and the caller drops it rather than printing a name
- * with no "why": a warning nobody can evaluate is the prediction theatre
- * this feature was built to avoid.
+ * values by name and, beside them, how large a change they sit in, then how
+ * many words of the reader's own intent matched. Empty means this row has no
+ * reason a reader could check, and the caller drops it rather than printing a
+ * name with no "why": a warning nobody can evaluate is the prediction theatre
+ * this feature was built to avoid. The size alone is no reason — it only
+ * qualifies one.
  */
 const overlapClauses = (entry: GhostCheckEntry): readonly string[] => {
   const sample = entry.sharedTargets;
@@ -112,7 +144,19 @@ const overlapClauses = (entry: GhostCheckEntry): readonly string[] => {
   const hits = entry.intentTokenHits;
   const words =
     hits > 0 ? [`${String(hits)} word${hits === 1 ? "" : "s"} of your intent`] : [];
-  return [...failure, ...values, ...words];
+  // Right after what it qualifies: the shared failure and files are the
+  // evidence, and this says how much weight a rename's share of them carries.
+  const size = largeChangeOf(entry.largeChangeFiles);
+  const large =
+    size === null || failure.length + values.length === 0 ? [] : [largeChangeClause(size)];
+  // Beside the evidence it qualifies, and only beside evidence: a row with no
+  // other clause is dropped, generated files or not.
+  const generatedFiles = generatedSharedOf(entry.generatedSharedCount);
+  const generated =
+    generatedFiles === null || failure.length + values.length + words.length === 0
+      ? []
+      : [generatedSharedClause(generatedFiles)];
+  return [...failure, ...values, ...large, ...generated, ...words];
 };
 
 /**
@@ -232,6 +276,20 @@ export const ghostDraftBody = (
   const id = safeId(entry.workContextId);
   const collision = `${ghostAttribution(entry)} collides: ${sentence}`;
   return id.length === 0 ? collision : `${collision} — get_diagnosis ${id}`;
+};
+
+/**
+ * The block's NAMELESS line (the owner's decision on the batch-2 integration
+ * review's I1): how many of the reader's own files the unfinished work of a
+ * teammate who opted out of presence touches. One count for all of them, no
+ * name, no age, no id — nothing to pull, so nothing to point at but the team.
+ */
+export const formatAnonymousGhostLine = (sharedFileCount: number): string => {
+  const count = Math.max(1, Math.trunc(sharedFileCount));
+  return (
+    `- A teammate's work in progress also touches ${String(count)} of your files · ` +
+    `not named: they opted out of presence, so talk to your team before you change ${count === 1 ? "it" : "them"}`
+  );
 };
 
 /**

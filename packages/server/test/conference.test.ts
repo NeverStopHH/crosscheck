@@ -14,9 +14,12 @@ import { describe, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 
 import {
+  CONFERENCE_ENDED_GRACE_HOURS,
   CONFERENCE_MAX_CLAIMS_PER_CONTEXT,
   CONFERENCE_MAX_CONTEXTS,
   GHOST_HOT_TARGET_MAX_CONTEXTS,
+  GHOST_MAX_CONTEXT_TARGETS,
+  GHOST_MAX_PROBE_VALUES,
 } from "../src/constants.ts";
 import {
   agentSessions,
@@ -36,8 +39,21 @@ import {
   VALID_SESSION_BODY,
 } from "./helpers.ts";
 import type { TestDeveloper, TestHarness } from "./helpers.ts";
+import { setPresenceOptOutViaApi } from "./ui-helpers.ts";
 
 const REPO = VALID_SESSION_BODY.repo;
+/** An old main commit a long-lived worktree stays detached at. */
+const STALE_DETACHED_BASE = "51eae4d8f0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5";
+/** When it was committed: six weeks before the contexts open. */
+const STALE_DETACHED_AT = "2026-06-12T09:00:00.000Z";
+/** Past CONFERENCE_ACTIVE_WINDOW_DAYS, as a clock advance and as the instant it reaches. */
+const TWENTY_DAYS_S = 20 * 86_400;
+const TWENTY_DAYS_AFTER_START = "2026-08-13T09:00:00.000Z";
+/** The incident's context held 180 files; all but the two shared ones are old here. */
+const LONG_LIVED_OLD_TOUCHES = 178;
+/** Records per POST /api/records — the route refuses more (MAX_INGEST_BATCH). */
+const INGEST_CHUNK = 100;
+const TWO_DAYS_BEFORE_START = "2026-07-22T09:00:00.000Z";
 const MY_SESSION = "ses_mine";
 const THEIR_SESSION = "ses_theirs";
 const MY_CONTEXT = "wc_mine";
@@ -68,14 +84,28 @@ interface ConferenceQuestionView {
   readonly body?: unknown;
 }
 
+interface OverlapView {
+  readonly workContextIdA: string;
+  readonly workContextIdB: string;
+  readonly sharedTargetCount: number;
+  readonly sharedTargets: readonly { kind: string; value: string }[];
+  readonly largeChangeFilesA?: number | null;
+  readonly largeChangeFilesB?: number | null;
+}
+
+/** The pair of two contexts, in either order, or undefined. */
+const pairOf = (view: ConferenceView, one: string, other: string): OverlapView | undefined =>
+  view.overlaps.find((pair) =>
+    [pair.workContextIdA, pair.workContextIdB].sort().join(" ") === [one, other].sort().join(" "),
+  );
+
+/** The large-change qualifier a pair carries for one of its contexts. */
+const largeChangeIn = (pair: OverlapView | undefined, contextId: string): number | null =>
+  (pair?.workContextIdA === contextId ? pair.largeChangeFilesA : pair?.largeChangeFilesB) ?? null;
+
 interface ConferenceView {
   readonly contexts: readonly ConferenceContextView[];
-  readonly overlaps: readonly {
-    readonly workContextIdA: string;
-    readonly workContextIdB: string;
-    readonly sharedTargetCount: number;
-    readonly sharedTargets: readonly { kind: string; value: string }[];
-  }[];
+  readonly overlaps: readonly OverlapView[];
   readonly questions: readonly ConferenceQuestionView[];
   readonly contradictions: readonly { readonly id: string }[];
   readonly contextsInWindow: number;
@@ -119,6 +149,7 @@ const contextRecords = (
   title: string,
   targets: readonly { kind: string; value: string }[] = [],
   intent?: Record<string, unknown>,
+  overrides: Record<string, unknown> = {},
 ): readonly Record<string, unknown>[] => [
   recordEnvelope(
     "work_context",
@@ -129,6 +160,7 @@ const contextRecords = (
       description: undefined,
       createdAt: TEST_START_ISO,
       ...(intent === undefined ? {} : { intent }),
+      ...overrides,
     }),
     { sessionId },
   ),
@@ -274,6 +306,202 @@ describe("the conference corpus", () => {
 
     // Assert: merged work is not work anybody is still doing.
     expect((await fetchConference(harness, me.apiKey)).contexts).toEqual([]);
+  });
+
+  test("a stale detached base a teammate reported landed stays in the report", async () => {
+    // Arrange: Ken's long-lived worktree session is detached at a six-week-
+    // old main commit (an older connector: it said nothing about it), and my
+    // feature-branch SessionStart reports that commit as an ancestor of main.
+    const { harness, me, them } = await setup();
+    await registerTestSession(harness, them.apiKey, {
+      id: THEIR_SESSION,
+      branch: `detached@${STALE_DETACHED_BASE.slice(0, 9)}`,
+      baseCommit: STALE_DETACHED_BASE,
+    });
+    await seed(harness, them, [
+      ...contextRecords(THEIR_CONTEXT, THEIR_SESSION, "Session store migration"),
+    ]);
+
+    // Act: a current connector's report, dating the base as git does.
+    await seed(harness, me, [
+      recordEnvelope(
+        "landed_evidence",
+        {
+          repo: REPO,
+          defaultBranch: "origin/main",
+          checkedAt: TEST_START_ISO,
+          commits: [STALE_DETACHED_BASE],
+          commitDates: [{ sha: STALE_DETACHED_BASE, committedAt: STALE_DETACHED_AT }],
+        },
+        { sessionId: MY_SESSION },
+      ),
+    ]);
+
+    // Assert: still unfinished work the conference reads.
+    expect(
+      (await fetchConference(harness, me.apiKey)).contexts.map((c) => c.id),
+    ).toEqual([THEIR_CONTEXT]);
+  });
+
+  test("a long-lived context's old touches do not make it a large change; an opted-out owner's is judged by count alone", async () => {
+    // Arrange: Ken's long-lived context touched 178 files twenty days ago and
+    // the two I touch today. Twenty days is past the conference's window.
+    const { harness, me, them } = await setup();
+    const shared = ["src/auth/token.ts", "src/auth/session.ts"];
+    const files = (values: readonly string[]) => values.map((value) => ({ kind: "file", value }));
+    const opened = { createdAt: TWENTY_DAYS_AFTER_START };
+    const kensOldTouches = contextRecords(
+      THEIR_CONTEXT,
+      THEIR_SESSION,
+      "Orchestration worktree",
+      files(Array.from({ length: LONG_LIVED_OLD_TOUCHES }, (_unused, i) => `src/old/file-${String(i)}.ts`)),
+      undefined,
+      opened,
+    );
+    for (let start = 0; start < kensOldTouches.length; start += INGEST_CHUNK) {
+      await seed(harness, them, kensOldTouches.slice(start, start + INGEST_CHUNK));
+    }
+    harness.clock.advanceSeconds(TWENTY_DAYS_S);
+    await seed(harness, them, shared.map((value) =>
+      recordEnvelope("target", { workContextId: THEIR_CONTEXT, kind: "file", value }, { sessionId: THEIR_SESSION }),
+    ));
+    await seed(harness, me, contextRecords(MY_CONTEXT, MY_SESSION, "Token refresh rework", files(shared), undefined, opened));
+
+    // Act
+    const visible = await fetchConference(harness, me.apiKey);
+    await setPresenceOptOutViaApi(harness, them.apiKey, true);
+    const hidden = await fetchConference(harness, me.apiKey);
+
+    // Assert: duplicated work either way. While Ken's times may be read, his
+    // context is the two files he touched this fortnight; once he opts out
+    // they are not read, so all 180 count and the pair says so — qualified,
+    // never dropped.
+    const total = LONG_LIVED_OLD_TOUCHES + shared.length;
+    expect(total).toBeGreaterThan(GHOST_MAX_CONTEXT_TARGETS);
+    expect(largeChangeIn(pairOf(visible, MY_CONTEXT, THEIR_CONTEXT), THEIR_CONTEXT)).toBeNull();
+    expect(pairOf(visible, MY_CONTEXT, THEIR_CONTEXT)?.sharedTargetCount).toBe(shared.length);
+    expect(largeChangeIn(pairOf(hidden, MY_CONTEXT, THEIR_CONTEXT), THEIR_CONTEXT)).toBe(total);
+    expect(pairOf(hidden, MY_CONTEXT, THEIR_CONTEXT)?.sharedTargetCount).toBe(shared.length);
+  });
+
+  test("a large change is never dropped from duplicated work: it pairs, qualified, after the focused pairs", async () => {
+    // Arrange: Ken's rename holds three of my files, Mike's focused plan two
+    // of them.
+    const { harness, me, them } = await setup();
+    const shared = ["src/auth/token.ts", "src/auth/session.ts", "src/auth/store.ts"];
+    const files = (values: readonly string[]) => values.map((value) => ({ kind: "file", value }));
+    await seed(harness, me, contextRecords(MY_CONTEXT, MY_SESSION, "Token refresh rework", files(shared)));
+    const renamed = [
+      ...shared,
+      ...Array.from({ length: GHOST_MAX_CONTEXT_TARGETS }, (_unused, index) => `src/renamed/file-${String(index)}.ts`),
+    ];
+    await seed(harness, them, contextRecords(THEIR_CONTEXT, THEIR_SESSION, "Rename the whole module", files(renamed)));
+    const mike = await addTestDeveloperWithSession(harness, "Mike", "mike@example.com", { id: "ses_mike" });
+    await seed(harness, mike, contextRecords("wc_mike", "ses_mike", "Session store migration", files(shared.slice(0, 2))));
+
+    // Act
+    const view = await fetchConference(harness, me.apiKey);
+
+    // Assert: all three pairs; the focused one first although Ken shares more
+    // with me, and each of Ken's pairs says how large his side is.
+    const ids = (pair: OverlapView): string => [pair.workContextIdA, pair.workContextIdB].sort().join(" ");
+    expect(view.overlaps.map(ids)).toEqual([
+      [MY_CONTEXT, "wc_mike"].sort().join(" "),
+      [MY_CONTEXT, THEIR_CONTEXT].sort().join(" "),
+      [THEIR_CONTEXT, "wc_mike"].sort().join(" "),
+    ]);
+    expect(largeChangeIn(pairOf(view, MY_CONTEXT, THEIR_CONTEXT), THEIR_CONTEXT)).toBe(renamed.length);
+    expect(largeChangeIn(pairOf(view, MY_CONTEXT, THEIR_CONTEXT), MY_CONTEXT)).toBeNull();
+    expect(largeChangeIn(pairOf(view, THEIR_CONTEXT, "wc_mike"), THEIR_CONTEXT)).toBe(renamed.length);
+    expect(largeChangeIn(pairOf(view, MY_CONTEXT, "wc_mike"), "wc_mike")).toBeNull();
+  });
+
+  test("a file a large change touched first still pairs it — its size never decides what is compared", async () => {
+    // Arrange: Ken touched my two files FIRST, then more files than one
+    // context's probe holds; I am in those two now.
+    const { harness, me, them } = await setup();
+    const shared = ["src/auth/token.ts", "src/auth/session.ts"];
+    const files = (values: readonly string[]) => values.map((value) => ({ kind: "file", value }));
+    await seed(harness, them, contextRecords(THEIR_CONTEXT, THEIR_SESSION, "Orchestration worktree", files(shared)));
+    harness.clock.advanceSeconds(60);
+    const later = Array.from({ length: GHOST_MAX_PROBE_VALUES + 10 }, (_unused, i) =>
+      recordEnvelope("target", { workContextId: THEIR_CONTEXT, kind: "file", value: `src/aaa-later/f${String(i)}.ts` }, { sessionId: THEIR_SESSION }),
+    );
+    for (let start = 0; start < later.length; start += INGEST_CHUNK) {
+      await seed(harness, them, later.slice(start, start + INGEST_CHUNK));
+    }
+    await seed(harness, me, contextRecords(MY_CONTEXT, MY_SESSION, "Token refresh rework", files(shared)));
+
+    // Act
+    const pair = pairOf(await fetchConference(harness, me.apiKey), MY_CONTEXT, THEIR_CONTEXT);
+
+    // Assert: Ken's probe holds only his newest values, and the pair is found
+    // anyway — through MY values, looked up in his.
+    expect(pair?.sharedTargetCount).toBe(shared.length);
+    expect(largeChangeIn(pair, THEIR_CONTEXT)).toBe(shared.length + later.length);
+  });
+
+  test("open sessions fill the page first, and work ended more than the grace ago is out", async () => {
+    // Arrange: Ken ended twelve fresh contexts an hour ago — a full page by
+    // activity — and one four days ago; Nick's one OPEN context is older by
+    // activity than all of them. With landed rarely firing, the window holds
+    // ended work for a fortnight, and ranked by activity alone the live
+    // collision is the one that falls off the page.
+    const { harness, me, them } = await setup();
+    await seed(harness, me, contextRecords(MY_CONTEXT, MY_SESSION, "Live work", [], undefined, { createdAt: TWO_DAYS_BEFORE_START }));
+    const nowMs = harness.clock.now().getTime();
+    const endedAgo = async (sessionId: string, hours: number): Promise<void> => {
+      await harness.db
+        .update(agentSessions)
+        .set({ endedAt: new Date(nowMs - hours * 3_600_000) })
+        .where(eq(agentSessions.id, sessionId));
+    };
+    for (let i = 0; i < CONFERENCE_MAX_CONTEXTS; i += 1) {
+      const sessionId = `ses_ended_${String(i)}`;
+      await registerTestSession(harness, them.apiKey, { id: sessionId });
+      await seed(harness, them, contextRecords(`wc_ended_${String(i)}`, sessionId, `Ended ${String(i)}`));
+      await endedAgo(sessionId, 1);
+    }
+    await registerTestSession(harness, them.apiKey, { id: "ses_long_ended" });
+    await seed(harness, them, contextRecords("wc_long_ended", "ses_long_ended", "Ended four days ago"));
+    await endedAgo("ses_long_ended", CONFERENCE_ENDED_GRACE_HOURS + 24);
+
+    // Act
+    const view = await fetchConference(harness, me.apiKey);
+    const ids = view.contexts.map((context) => context.id);
+
+    // Assert: the open context leads; the long-ended one is neither read nor counted.
+    expect(ids[0]).toBe(MY_CONTEXT);
+    expect(ids).toHaveLength(CONFERENCE_MAX_CONTEXTS);
+    expect(ids).not.toContain("wc_long_ended");
+    expect(view.contextsInWindow).toBe(CONFERENCE_MAX_CONTEXTS + 1);
+  });
+
+  test("an opted-out teammate's session end neither drops nor ranks her work", async () => {
+    // Arrange: Ken opted out. One of his sessions ended four days ago (its
+    // context is fresh), another is OPEN with an older context. When his
+    // sessions ended is his; by creation alone, the open one ranks last.
+    const { harness, me, them } = await setup();
+    await seed(harness, me, contextRecords(MY_CONTEXT, MY_SESSION, "My work"));
+    await registerTestSession(harness, them.apiKey, { id: "ses_ken_ended" });
+    await seed(harness, them, contextRecords("wc_ken_ended", "ses_ken_ended", "Ended long ago"));
+    await seed(harness, them, contextRecords(THEIR_CONTEXT, THEIR_SESSION, "Open, older", [], undefined, { createdAt: TWO_DAYS_BEFORE_START }));
+    await harness.db
+      .update(agentSessions)
+      .set({ endedAt: new Date(harness.clock.now().getTime() - (CONFERENCE_ENDED_GRACE_HOURS + 24) * 3_600_000) })
+      .where(eq(agentSessions.id, "ses_ken_ended"));
+    await harness.db
+      .update(agentSessions)
+      .set({ endedAt: harness.clock.now() })
+      .where(eq(agentSessions.id, MY_SESSION));
+    await setPresenceOptOutViaApi(harness, them.apiKey, true);
+
+    // Act
+    const ids = (await fetchConference(harness, me.apiKey)).contexts.map((context) => context.id);
+
+    // Assert
+    expect(ids).toContain("wc_ken_ended");
+    expect(ids.at(-1)).toBe(THEIR_CONTEXT);
   });
 
   test("two developers on the same files are duplicated work; two worktrees of one are not", async () => {

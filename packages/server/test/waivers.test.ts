@@ -49,6 +49,7 @@ const seedPin = async (
     checkRecipe: "bun test packages/server/test/auth.test.ts",
     captureMode: "human",
     createdAt: hourBefore,
+    provenance: "unknown_legacy",
   });
 };
 

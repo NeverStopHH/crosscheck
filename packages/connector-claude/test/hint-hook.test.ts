@@ -20,7 +20,7 @@ import {
   CANDIDATE_INTENT,
   intentOnlyCandidate,
   proposedOnlyCandidate,
-  rejectedApproachCandidate,
+  injectableCandidate,
   startHintHub,
   targetsOnlyCandidate,
 } from "../../connector-core/test/fixtures/hint-hub.ts";
@@ -100,6 +100,9 @@ const sessionState = (
   intentSetCount: 0,
   intentFailCount: 0,
   intentLastFailure: null,
+  intentRefusedCount: 0,
+  intentSkippedCount: 0,
+  intentLastDrop: null,
   workContextIntent: null,
   ghostPending: false,
   gitTouchCount: 0,
@@ -118,6 +121,13 @@ const sessionState = (
   toolWindows: [],
   toolWindowEvictions: 0,
   toolWindowMisses: 0,
+  draftNudge: null,
+  draftNudgeRetryAt: null,
+  deriveFires: [],
+  topicContexts: [],
+  startBranch: null,
+  sessionTouchedAt: null,
+  topicOverflowCount: 0,
   outsideRootDrops: 0,
   knownWorktreeRoots: [],
   editToolFires: 0,
@@ -127,6 +137,9 @@ const sessionState = (
   lastEditedPath: null,
   lastEditedPathResolvedAgainst: null,
   hintCandidatesSeen: 0,
+  flooredPromptCount: 0,
+  harnessTurnCount: 0,
+  quietCallCount: 0,
   ...overrides,
 });
 
@@ -368,7 +381,7 @@ describe("silence is the default", () => {
     // Arrange — a hostile or buggy hub labels a claim `confidence 1e+30`;
     // every other hub field is validated tightly and this one must be too
     const { repo, hub, env } = await fixture("confidence");
-    const base = rejectedApproachCandidate();
+    const base = injectableCandidate();
     const claims = base["claims"] as readonly Record<string, unknown>[];
     hub.setCandidates([
       { ...base, claims: [{ ...claims[0], confidence: 1e30 }] },

@@ -31,12 +31,16 @@
  * of a shared row cap.
  *
  * AN UNASKED SURFACE: the answer is printed in a stop nobody asked for, so a
- * developer the caller muted is left out. A presence opt-out hides the work
- * only while its session is LIVE — that is presence; an ended session's work
- * is published (services/visibility.ts). Never the caller's own work. Never
- * an address in the answer.
+ * developer the caller muted is left out. For a developer who opted out of
+ * presence the match reads NO time of hers and no state of her sessions: her
+ * work on the file is named whether its session is live, quiet or ended,
+ * because "live" is presence and "ended" is her SessionEnd's instant
+ * (services/visibility.ts, integration review H4). It is blind to the
+ * CALLER's commit time too, which could otherwise be swept to read her
+ * session start and heartbeat back (matchFor). Never the caller's own work.
+ * Never an address in the answer.
  */
-import { and, desc, eq, inArray, isNotNull, lte, ne, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lte, ne, not, or, sql } from "drizzle-orm";
 
 import type { Intent, LandedContextCommit, LandedContextRequest } from "@crosscheck/schema";
 import { IntentSchema, canonicalRepoPath } from "@crosscheck/schema";
@@ -56,8 +60,9 @@ import {
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 import { resolvesToDeveloper } from "./cloud-agent-identity.ts";
-import { presenceCutoff } from "./presence.ts";
 import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
+import { locationHiddenFrom, projectRow } from "./live-location.ts";
+import type { HiddenLocations } from "./live-location.ts";
 
 interface Deps {
   readonly db: Db;
@@ -98,18 +103,31 @@ const matchFor = async (
   callerDeveloperId: string,
   request: LandedContextRequest,
   commit: LandedContextCommit,
+  hidden: HiddenLocations,
 ): Promise<LandedContextMatch | null> => {
   const committedMs = Date.parse(commit.committedAt);
   const activeSince = new Date(committedMs - LANDED_WHY_WINDOW_DAYS * MS_PER_DAY);
   const startedBy = new Date(committedMs + LANDED_WHY_CLOCK_SLACK_MS);
   const editedBy = startedBy;
   const recordedBy = new Date(committedMs + LANDED_WHY_FLUSH_SLACK_MS);
-  const live = presenceCutoff(deps.now());
+  // THE COMMIT TIME IS THE CALLER'S WORD (review round 4, C1). Compared with
+  // a hidden owner's session start and last heartbeat — or her target times —
+  // "matched / not matched" let a colleague binary-search those instants to
+  // the second. So for a developer whose location the caller may not be told,
+  // no condition and no ordering reads the caller's time OR the hub's: her
+  // work matches on the path and the address alone, and her rows are ordered
+  // by id. The hub's clock was the round-4 answer, and it was the same oracle
+  // one step removed — her liveness against now (integration review H4). A
+  // visible owner keeps the full time match.
+  const visible = visiblePresenceCondition(callerDeveloperId, agentSessions.developerId);
   const rows = await deps.db
     .select({
       startedAt: agentSessions.startedAt,
       workContextId: workContexts.id,
       title: workContexts.title,
+      titleSource: workContexts.titleSource,
+      branch: agentSessions.branch,
+      developerId: agentSessions.developerId,
       developerName: developers.name,
       intent: workContexts.intent,
     })
@@ -126,37 +144,56 @@ const matchFor = async (
         eq(developerEmails.email, lowered(commit.authorEmail)),
         resolvesToDeveloper(developerEmails.email),
         ne(agentSessions.developerId, callerDeveloperId),
-        lte(agentSessions.startedAt, startedBy),
-        sql`${agentSessions.lastHeartbeatAt} >= ${activeSince.toISOString()}::timestamptz`,
         notMutedCondition(callerDeveloperId, agentSessions.developerId),
-        // Presence opt-out hides a LIVE session's work only.
         or(
-          isNotNull(agentSessions.endedAt),
-          lte(agentSessions.lastHeartbeatAt, live),
-          visiblePresenceCondition(callerDeveloperId, agentSessions.developerId),
+          // A visible owner: the session started by the commit and was still
+          // active within the window before it.
+          and(
+            visible,
+            lte(agentSessions.startedAt, startedBy),
+            sql`${agentSessions.lastHeartbeatAt} >= ${activeSince.toISOString()}::timestamptz`,
+          ),
+          // A hidden owner: her work on the file, live or not. Whether her
+          // session is live is presence, and so is when it ended — a
+          // colleague polling "matched or not" read her last heartbeat plus
+          // the presence TTL to the second, and her SessionEnd's instant
+          // (integration review H4) — so neither decides. Her work is
+          // published (the listing names it); only its times are withheld.
+          not(visible),
         ),
       ),
     )
     .orderBy(
       // A target with no recorded time (older rows) is not "recorded in time":
-      // unguarded, NULL would sort FIRST under DESC and win.
-      sql`coalesce(${workContextTargets.createdAt} <= ${editedBy.toISOString()}::timestamptz, false) DESC`,
-      sql`coalesce(${workContextTargets.createdAt} <= ${recordedBy.toISOString()}::timestamptz, false) DESC`,
-      desc(agentSessions.startedAt),
-      desc(workContexts.createdAt),
+      // unguarded, NULL would sort FIRST under DESC and win. For a hidden owner
+      // every one of these reads as false, so her rows fall to the id.
+      sql`(${visible} AND coalesce(${workContextTargets.createdAt} <= ${editedBy.toISOString()}::timestamptz, false)) DESC`,
+      sql`(${visible} AND coalesce(${workContextTargets.createdAt} <= ${recordedBy.toISOString()}::timestamptz, false)) DESC`,
+      sql`(case when ${visible} then ${agentSessions.startedAt} end) DESC NULLS LAST`,
+      sql`(case when ${visible} then ${workContexts.createdAt} end) DESC NULLS LAST`,
       sql`${workContexts.id} DESC`,
     )
     .limit(1);
   const found = rows[0];
+  // A hidden owner's work is published and the stop names it — under a title
+  // and a start time that say nothing of where its author is
+  // (services/live-location.ts), the same whether her session is live.
+  // The sha is the CALLER's commit, echoed back to key the answer — outside
+  // the projection, which would withhold it as hers.
   return found === undefined
     ? null
     : {
         sha: commit.sha,
-        workContextId: found.workContextId,
-        title: found.title,
-        developerName: found.developerName,
-        intent: intentOf(found.intent),
-        workStartedAt: found.startedAt.toISOString(),
+        ...projectRow(hidden, {
+          developerId: found.developerId,
+          titleFacts: { repo: request.repo, branch: found.branch, titleSource: found.titleSource },
+        }, {
+          workContextId: found.workContextId,
+          title: found.title,
+          developerName: found.developerName,
+          intent: intentOf(found.intent),
+          workStartedAt: found.startedAt.toISOString(),
+        }),
       };
 };
 
@@ -167,8 +204,9 @@ export const findLandedContexts = async (
   request: LandedContextRequest,
 ): Promise<readonly LandedContextMatch[]> => {
   const matches: LandedContextMatch[] = [];
+  const hidden = await locationHiddenFrom(deps.db, callerDeveloperId);
   for (const commit of request.commits) {
-    const match = await matchFor(deps, callerDeveloperId, request, commit);
+    const match = await matchFor(deps, callerDeveloperId, request, commit, hidden);
     if (match !== null) {
       matches.push(match);
     }

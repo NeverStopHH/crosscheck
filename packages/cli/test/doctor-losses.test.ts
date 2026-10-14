@@ -5,6 +5,7 @@
  * recent local losses beside an `agent_event` rung that still reads
  * complete. Nothing else is a contradiction, and nothing else gets a line.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -121,7 +122,7 @@ afterEach(async () => {
 /** A hub that answers /api/absences with a COMPLETE agent rung and nothing else of note. */
 const startCompleteHub = (): string => {
   const record = coverageWith("complete", "sessions_reported");
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: (request) => {
       const { pathname } = new URL(request.url);
@@ -191,6 +192,22 @@ describe("§5.1: doctor and status print every loss, in one spelling", () => {
     expect(result.stdout).toContain("PASS  coverage reporting  no recent losses to reflect");
   });
 
+  test("a collision rest whose recheck never ran is printed by doctor and status, per file and hook (round 3, F-M2)", async () => {
+    // Arrange: two files' rests booked by the next prompt, which could not reach the hub
+    const { repo, home, env, key } = await fixture("rest-unchecked");
+    await recordCaptureLoss(home, { kind: "rest_unchecked", count: 2, key, detail: "user-prompt-submit", now: new Date() });
+
+    // Act
+    const doctor = await runCli(["doctor"], env, repo);
+    const status = await runCli(["status"], env, repo);
+
+    // Assert
+    const line =
+      "2 collision files rested without the recheck that follows — a teammate who started on one meanwhile may not have been told (user-prompt-submit 2)";
+    expect(doctor.stdout).toContain(`WARN  capture losses  ${line}`);
+    expect(status.stdout).toContain(`\nlosses: ${line}`);
+  });
+
   test("status prints one losses line above zero only", async () => {
     // Arrange
     const lossy = await fixture("status-losses");
@@ -223,7 +240,7 @@ describe("doctor and status say why the hub rejected records", () => {
     await recordDrop(home, key, sessionSlug("rejected-cli-old"), 3, "rejected", now);
   };
 
-  test("doctor names each cause with its count, and the uncaused ones as such", async () => {
+  test("doctor names each cause with its count, and the uncaused ones once, on the legacy line (integration review L5)", async () => {
     // Arrange
     const { repo, home, env, key } = await fixture("doctor-rejected");
     await seedRejections(home, key);
@@ -233,9 +250,10 @@ describe("doctor and status say why the hub rejected records", () => {
 
     // Assert
     expect(result.stdout).toContain(
-      "WARN  hub rejected records  5 records rejected by the hub: 2 because the session delivering them was one the hub held as ended",
+      "WARN  hub rejected records  2 records rejected by the hub: 2 because the session delivering them was one the hub held as ended",
     );
-    expect(result.stdout).toContain(" · 3 with no cause recorded — written by a connector before 1.0");
+    expect(result.stdout).toContain("WARN  legacy losses  3 records lost by a connector before 1.0, whose ledgers kept only counts: 3 rejected by the hub with no cause recorded");
+    expect(result.stdout.match(/no cause/g) ?? []).toHaveLength(1);
   });
 
   test("a clean machine passes the line", async () => {
@@ -259,8 +277,12 @@ describe("doctor and status say why the hub rejected records", () => {
 
     // Assert
     expect(result.stdout).toContain(
-      "\nlosses: 5 records rejected by the hub: 2 because the session delivering them was one the hub held as ended",
+      "\nlosses: 2 records rejected by the hub: 2 because the session delivering them was one the hub held as ended",
     );
+    // ...and the three cause-less ones once, on the legacy fragment of the same line (integration review L5).
+    const lossesLine = result.stdout.split("\n").find((line) => line.startsWith("losses: ")) ?? "";
+    expect(lossesLine).toContain("3 rejected by the hub with no cause recorded");
+    expect(lossesLine.match(/no cause/g) ?? []).toHaveLength(1);
   });
 });
 

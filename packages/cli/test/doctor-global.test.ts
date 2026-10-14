@@ -301,6 +301,83 @@ describe("doctor scope-aware project checks (finding #13)", () => {
     expect(hooksLine).toContain("rerun crosscheck init");
   });
 
+  test("an install from before SubagentStop is told to rerun init, and init's rerun passes", async () => {
+    // Arrange: the same upgrade shape for the git lane over a subagent's own
+    // root (DESIGN.md "One session, many topics")
+    const home = await makeHome("doctor-subagent");
+    const repo = await makeRepo("doctor-subagent", { remote: "git@github.com:acme/api.git" });
+    paths.push(home, repo);
+    const env = doctorEnv(home);
+    expect((await runCli(["init", "--command-prefix", "crosscheck"], env, repo)).exitCode).toBe(0);
+    const settingsPath = join(repo, ".claude", "settings.json");
+    const settings = JSON.parse(await readFile(settingsPath, "utf8")) as { hooks: Record<string, unknown> };
+    delete settings.hooks["SubagentStop"];
+    await writeFile(settingsPath, JSON.stringify(settings, null, 2), "utf8");
+    const hooksLineOf = (stdout: string): string =>
+      stdout.split("\n").find((line) => /\b(?:PASS|WARN|FAIL) +hooks registered /.test(line)) ?? "";
+
+    // Act
+    const before = await runCli(["doctor"], env, repo);
+    expect((await runCli(["init", "--command-prefix", "crosscheck"], env, repo)).exitCode).toBe(0);
+    const after = await runCli(["doctor"], env, repo);
+
+    // Assert
+    expect(hooksLineOf(before.stdout)).toContain("missing: SubagentStop");
+    expect(hooksLineOf(before.stdout)).toContain("rerun crosscheck init");
+    expect(hooksLineOf(after.stdout)).toContain("PASS");
+  });
+
+  test("an install from before the subagent-return hook is WARNED to re-run init, not failed (review H1b, round 2 L9)", async () => {
+    // Arrange: init today, then drop the second PostToolUse group — what an
+    // install made before the sync subagent hook existed looks like
+    const home = await makeHome("doctor-subagent-return");
+    const repo = await makeRepo("doctor-subagent-return", {
+      remote: "git@github.com:acme/api.git",
+    });
+    paths.push(home, repo);
+    const env = doctorEnv(home);
+    expect((await runCli(["init", "--command-prefix", "crosscheck"], env, repo)).exitCode).toBe(0);
+    const settingsPath = join(repo, ".claude", "settings.json");
+    const settings = JSON.parse(await readFile(settingsPath, "utf8")) as {
+      hooks: Record<string, { matcher?: string }[]>;
+    };
+    settings.hooks["PostToolUse"] = (settings.hooks["PostToolUse"] ?? []).filter(
+      (group) => group.matcher !== "Agent|Task",
+    );
+    await writeFile(settingsPath, JSON.stringify(settings, null, 2), "utf8");
+
+    // Act
+    const result = await runCli(["doctor"], env, repo);
+
+    // Assert
+    const hooksLine =
+      result.stdout
+        .split("\n")
+        .find((line) => /\b(?:PASS|WARN|FAIL) +hooks registered /.test(line)) ?? "";
+    expect(hooksLine).toContain("WARN");
+    expect(hooksLine).not.toContain("FAIL");
+    expect(hooksLine).toContain("missing: PostToolUse (subagent-return)");
+    expect(hooksLine).toContain("rerun crosscheck init");
+  });
+
+  test("a fresh install names the subagent-return hook among the hooks it registered", async () => {
+    // Arrange
+    const home = await makeHome("doctor-subagent-pass");
+    const repo = await makeRepo("doctor-subagent-pass", {
+      remote: "git@github.com:acme/api.git",
+    });
+    paths.push(home, repo);
+    const env = doctorEnv(home);
+    expect((await runCli(["init", "--command-prefix", "crosscheck"], env, repo)).exitCode).toBe(0);
+
+    // Act
+    const result = await runCli(["doctor"], env, repo);
+
+    // Assert
+    expect(result.stdout).toContain("PASS  hooks registered");
+    expect(result.stdout).toContain("PostToolUse (subagent-return)");
+  });
+
   test("double wiring keeps its WARN and hooks pass via the project scope", async () => {
     // Arrange: both scopes register hooks — the WARN must survive the
     // scope-aware checks, and the hooks PASS must credit the project scope

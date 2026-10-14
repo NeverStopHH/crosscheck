@@ -7,6 +7,7 @@
  * a session without a registration or with a pre-intent state file gets the
  * remedy, and a hint echo is refused like publish_claim refuses it.
  */
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -148,7 +149,7 @@ const gatewayAnswering = (
   respond: () => number | Response | null,
   onRecords: () => Promise<void> = async () => undefined,
 ) =>
-  Bun.serve({
+  serveLoopback({
     port: 0,
     fetch: async (request) => {
       const { pathname, search } = new URL(request.url);
@@ -220,7 +221,7 @@ const storedChain = async (
 
 beforeAll(async () => {
   db = await createDb();
-  server = Bun.serve({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
+  server = serveLoopback({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
   alice = await setUpDeveloper("si-alice", "Alice", "alice-intent@example.com");
   bob = await setUpDeveloper("si-bob", "Bob", "bob-intent@example.com");
@@ -229,6 +230,37 @@ beforeAll(async () => {
 afterAll(async () => {
   server.stop(true);
   await Promise.all(cleanups.map((path) => rm(path, { recursive: true, force: true })));
+});
+
+describe("set_intent and the title marker (review round 3)", () => {
+  test("re-sends how the title was written, so the hub keeps a host title whole for colleagues", async () => {
+    // Arrange: TITLE is fallback-SHAPED (a detached ref, ending ` @ api`) but
+    // SessionStart recorded that the host wrote it. Mara opts out of
+    // presence, so a colleague sees it whole only if the hub was told.
+    const mara = await setUpDeveloper("si-marker", "Mara", "mara-intent@example.com");
+    const state = await readSessionState(mara.home, mara.hostSessionKey);
+    if (state === null) {
+      throw new Error("no state for Mara");
+    }
+    await writeSessionState(mara.home, { ...state, workContextTitleSource: "host" });
+    await fetch(`${hubUrl}/api/settings/presence`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${mara.apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ optOut: true }),
+    });
+
+    // Act
+    const result = await call(mara, { summary: "Make the refresh path survive a rotated key id" });
+
+    // Assert
+    expect(result.isError).toBe(false);
+    const listing = await fetch(`${hubUrl}/api/work-contexts?repo=${encodeURIComponent(REPO_ID)}`, {
+      headers: { Authorization: `Bearer ${bob.apiKey}` },
+    });
+    const rows = ((await listing.json()) as { data: { workContexts: readonly { id: string; title: string }[] } })
+      .data.workContexts;
+    expect(rows.find((row) => row.id === mara.workContextId)?.title).toBe(TITLE);
+  });
 });
 
 describe("set_intent", () => {
@@ -518,7 +550,7 @@ describe("set_intent", () => {
       {
         home: hana.home,
         repoKey: key,
-        hub: { hubUrl: url, apiKey: hana.apiKey, timeoutMs: SHORT_TIMEOUT_MS, home: hana.home, repoKey: key, now },
+        hub: { hubUrl: url, keyOrigin: url, apiKey: hana.apiKey, timeoutMs: SHORT_TIMEOUT_MS, home: hana.home, repoKey: key, now },
         now,
         envelope: (producer, body, seq) => ({
           cx: PROTOCOL_VERSION,
@@ -530,7 +562,13 @@ describe("set_intent", () => {
           seq,
         }),
       },
-      { ...state, workContextTitle: TITLE, workContextStatus: "analyzing", sessionAmbiguous: false },
+      {
+        ...state,
+        workContextTitle: TITLE,
+        workContextTitleSource: state.workContextTitleSource ?? null,
+        workContextStatus: "analyzing",
+        sessionAmbiguous: false,
+      },
       {
         summary: "Taken after the timeout",
         status: "blocked",

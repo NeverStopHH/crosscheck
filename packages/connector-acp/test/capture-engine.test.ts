@@ -6,12 +6,16 @@
  * the pipe above this layer is Block 3's untouched proof.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { sessionEvents } from "@crosscheck/server";
 
 import { extractFailureText } from "@crosscheck/connector-core/capture/failure-text.ts";
+import {
+  ABANDONED_TEMP_MAX_AGE_MS,
+  MS_PER_DAY,
+} from "@crosscheck/connector-core/constants.ts";
 import { fingerprint } from "@crosscheck/connector-core/capture/fingerprint.ts";
 import { spoolPendingEndPath } from "@crosscheck/connector-core/config/paths.ts";
 import { getDiagnosis, getPresence, registerSession } from "@crosscheck/connector-core/http/hub.ts";
@@ -36,6 +40,7 @@ import type { CaptureHub, Harness, HarnessOptions } from "./fixtures/capture-har
 import {
   makeHome,
   makeRepo,
+  seedAbandonedTemps,
   writeRepoFile,
 } from "../../connector-core/test/helpers.ts";
 
@@ -404,6 +409,81 @@ describe("the §2.4 mapping against a live hub", () => {
       presence.data.some((entry) => entry.sessionId === "cc_acp-fake-agent--sess_close_b"),
     ).toBe(false);
     expect(await readSessionState(h.home, "acp-fake-agent--sess_close_b")).toBeNull();
+  });
+
+  test("shutdown sweeps a writePrivateFile temp past ABANDONED_TEMP_MAX_AGE_MS and keeps a fresh one", async () => {
+    // Arrange: a live session gives the shutdown its home; the two ages are
+    // set against the engine's injected clock, which is what the sweep reads
+    const h = await harness("temp-sweep");
+    handshake(h, "sess_temp_sweep", h.repo);
+    await h.capture.settle();
+    const state = join(h.home, "state");
+    await mkdir(state, { recursive: true });
+    const abandoned = "0123456789abcdef-hooks.json.tmp-4242-k3j9x0qa";
+    const inFlight = "0123456789abcdef.json.tmp-4243-p0w8rt2z";
+    for (const [name, ageMs] of [
+      [abandoned, ABANDONED_TEMP_MAX_AGE_MS + MS_PER_DAY],
+      [inFlight, 60 * 60 * 1000],
+    ] as const) {
+      await writeFile(join(state, name), "", "utf8");
+      const when = new Date(h.clock.value.getTime() - ageMs);
+      await utimes(join(state, name), when, when);
+    }
+
+    // Act: the real child-exit drain
+    await h.capture.shutdown(SHUTDOWN_BUDGET_MS);
+
+    // Assert
+    const names = await readdir(state);
+    expect(names).not.toContain(abandoned);
+    expect(names).toContain(inFlight);
+  });
+
+  test("shutdown still sweeps when ending a session throws", async () => {
+    // Arrange: the repo's spool directory replaced by a FILE, so the end
+    // flow's marker write throws inside the end-and-reap block
+    const h = await harness("temp-sweep-throw");
+    handshake(h, "sess_temp_throw", h.repo);
+    await h.capture.settle();
+    const spool = join(h.home, "spool", h.hub.repoKey);
+    await rm(spool, { recursive: true, force: true });
+    await writeFile(spool, "not a directory", "utf8");
+    const temps = await seedAbandonedTemps(
+      join(h.home, "state"),
+      3,
+      ABANDONED_TEMP_MAX_AGE_MS + MS_PER_DAY,
+      h.clock.value,
+    );
+
+    // Act
+    await h.capture.shutdown(SHUTDOWN_BUDGET_MS);
+
+    // Assert: the drain did fail, and the sweep ran anyway
+    expect(h.logger.lines.some((line) => line.startsWith("capture-shutdown-error"))).toBe(true);
+    for (const temp of temps) {
+      expect(await Bun.file(temp).exists()).toBe(false);
+    }
+  });
+
+  test("a shutdown with no exit budget left sweeps nothing: the temps wait for a later drain", async () => {
+    // Arrange: a live session gives the shutdown its home
+    const h = await harness("temp-sweep-spent");
+    handshake(h, "sess_temp_spent", h.repo);
+    await h.capture.settle();
+    const temps = await seedAbandonedTemps(
+      join(h.home, "state"),
+      3,
+      ABANDONED_TEMP_MAX_AGE_MS + MS_PER_DAY,
+      h.clock.value,
+    );
+
+    // Act: a drain whose ACP_CAPTURE_EXIT_BUDGET_MS is already spent
+    await h.capture.shutdown(0);
+
+    // Assert
+    for (const temp of temps) {
+      expect(await Bun.file(temp).exists()).toBe(true);
+    }
   });
 
   test("a deferred end the shutdown reap spends carries the position its marker holds", async () => {

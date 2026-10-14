@@ -112,10 +112,6 @@ export const WITHHELD_SENTENCE =
   "withheld unsent — the life that wrote them had already been ended on the hub, and " +
   "delivering them under another life would have filed them after that end";
 
-/** The `rejected` records no line said a cause for: ledgers from before the field. */
-export const UNRECORDED_CAUSE_SENTENCE =
-  "with no cause recorded — written by a connector before 1.0, whose ledger kept only the count";
-
 /**
  * Losses a connector before 1.0 left (spool/loss-report.ts legacyLine): reads
  * after a count, then the parts, then the remedy. It claims no cause the

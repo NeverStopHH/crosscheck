@@ -5,6 +5,7 @@ export {
   CLAIM_CAPTURE_MODES,
   DELIVERY_CHANNELS,
   DeliveryChannelSchema,
+  HINT_OUTCOMES,
   PILOT_COHORTS,
   PILOT_LEGACY_COHORT,
   PILOT_SESSION_COHORTS,
@@ -18,6 +19,7 @@ export {
   PILOT_UNAVAILABLE_REASONS,
   TRIPWIRE_ASKING_HOSTS,
   PULLED_DELIVERY_CHANNEL,
+  SUBSTANCE_DELIVERY_CHANNEL,
   SUSPECT_FALSIFIER_KINDS,
   SUSPECT_OUTCOMES,
   CLAIM_COMMIT_BINDINGS,
@@ -50,6 +52,7 @@ export type {
   ArtifactSensitivity,
   CaptureMode,
   DeliveryChannel,
+  HintOutcome,
   PilotCohort,
   PilotEndReason,
   PilotInterventionLabel,
@@ -93,6 +96,17 @@ export {
   repoRelativePath,
 } from "./repo-path.ts";
 export type { Claim, ClaimEdge } from "./claim.ts";
+export {
+  GENERATED_DIRECTORY_NAMES,
+  GENERATED_LOCKFILE_NAMES,
+  GENERATED_SIGNALS,
+  GeneratedSignalSchema,
+  isContractLike,
+  isGeneratedPath,
+  matchesGeneratedName,
+  protobufSourceOf,
+} from "./generated-target.ts";
+export type { GeneratedSignal } from "./generated-target.ts";
 
 export {
   AgentSessionSchema,
@@ -106,8 +120,11 @@ export {
   MAX_INTENT_CHAIN_VERSIONS,
   MAX_INTENT_SCOPE_ENTRIES,
   MAX_INTENT_SUMMARY_CHARS,
+  MAX_TOPIC_BRANCH_CHARS,
   TargetSchema,
+  WORK_CONTEXT_TITLE_SOURCES,
   WorkContextSchema,
+  WorkContextTitleSourceSchema,
 } from "./session.ts";
 export type {
   AgentSession,
@@ -117,6 +134,7 @@ export type {
   IntentScopeRole,
   Target,
   WorkContext,
+  WorkContextTitleSource,
 } from "./session.ts";
 
 export {
@@ -158,9 +176,33 @@ export type {
 export {
   ENROLMENT_SOURCES,
   MAX_PASSKEY_LABEL_CHARS,
+  PASSKEY_REVOKE_REASONS,
   PASSKEY_REVOKERS,
 } from "./passkey.ts";
-export type { EnrolmentSource, PasskeyRevoker } from "./passkey.ts";
+export type { EnrolmentSource, PasskeyRevokeReason, PasskeyRevoker } from "./passkey.ts";
+export {
+  CLIENT_RELEASE,
+  CLIENT_RELEASE_HEADER,
+  FIRST_DRAFTING_CLIENT_RELEASE,
+  isReleaseAtLeast,
+} from "./client-release.ts";
+export {
+  DRAFT_DECISIONS,
+  DRAFT_KINDS,
+  DRAFT_PROVENANCES,
+  HUMAN_PROVENANCE,
+  LEGACY_PROVENANCE,
+  PROVENANCE_CLASSES,
+  STORED_JUDGEMENT_PROVENANCES,
+  isHumanProvenance,
+} from "./provenance.ts";
+export type {
+  DraftDecision,
+  DraftKind,
+  DraftProvenance,
+  ProvenanceClass,
+  StoredProvenance,
+} from "./provenance.ts";
 export {
   MAX_PILOT_LABEL_REASON_CHARS,
   MAX_PILOT_LABEL_REASON_UTF16_UNITS,
@@ -168,6 +210,14 @@ export {
   reasonLength,
 } from "./pilot-mark.ts";
 export type { PilotMarkInput } from "./pilot-mark.ts";
+export {
+  HINT_OUTCOME_CHANNELS,
+  HINT_OUTCOME_DISCLOSURE_MINIMUMS,
+  HINT_OUTCOME_WITHHOLDINGS,
+  HintOutcomeSchema,
+  MAX_HINT_OUTCOME_REASON_CHARS,
+} from "./hint-outcome.ts";
+export type { HintOutcomeChannel, HintOutcomeInput, HintOutcomeWithholding } from "./hint-outcome.ts";
 
 export {
   MAX_QUESTION_BODY_LENGTH,
@@ -181,13 +231,15 @@ export {
 export type { Question, QuestionAnswer, QuestionStatus } from "./question.ts";
 
 export {
+  HINT_MATCHED_ON_VALUES,
   HINT_REF_KINDS,
+  INTENT_PROVENANCES,
   HintDeliverySchema,
   HintSchema,
   HintTrustSchema,
   MAX_HINT_TEXT_LENGTH,
 } from "./hint.ts";
-export type { Hint, HintDelivery, HintTrust } from "./hint.ts";
+export type { DeliveryMatchedOn, Hint, HintDelivery, HintTrust, IntentProvenance } from "./hint.ts";
 
 export {
   CLOUD_AGENT_IDENTITIES,
@@ -220,10 +272,19 @@ export type {
 } from "./claim-revalidation.ts";
 
 export {
+  LandedCommitDateSchema,
   LandedEvidenceSchema,
   MAX_LANDED_COMMITS,
 } from "./landed-evidence.ts";
-export type { LandedEvidence } from "./landed-evidence.ts";
+export type { LandedCommitDate, LandedEvidence } from "./landed-evidence.ts";
+
+export {
+  DETACHED_BRANCH_PREFIX,
+  UNNAMED_HEAD_BRANCH,
+  isDetachedBranch,
+} from "./detached-branch.ts";
+
+export { isDefaultBranch } from "./default-branch.ts";
 export {
   LANDED_AUTHORS_MAX_EMAILS,
   LANDED_CONTEXT_MAX_COMMITS,
@@ -298,6 +359,124 @@ export {
 } from "./storable-text.ts";
 
 export { containsSecret } from "./secret-scan.ts";
+export {
+  LOCATION_WITHHELD,
+  WITHHELD_TITLE,
+  isFallbackTitle,
+  isLocationTitle,
+  repoLabel,
+} from "./fallback-title.ts";
+export type { TitleFacts } from "./fallback-title.ts";
+export {
+  SUBSTANCE_MAX_CHARS,
+  SUBSTANCE_MIN_WORDS,
+  shownSubstance,
+  substanceSentence,
+} from "./substance-sentence.ts";
+export {
+  HARNESS_SCAN_MAX_CHARS,
+  HARNESS_SHAPES,
+  SYSTEM_NOTIFICATION_MARKER,
+  humanPromptText,
+  isHarnessTurn,
+} from "./harness-turn.ts";
+export type { HarnessShape } from "./harness-turn.ts";
+export { SLASH_COMMAND_SHAPES, commandArguments } from "./slash-command.ts";
+export type { SlashCommandShape } from "./slash-command.ts";
+export {
+  CLOSED_CLASS_WORDS,
+  exactClassOf,
+  foldWord,
+  isContinuationTrigger,
+  isSteeringWord,
+  slipTargetOf,
+  wordClassOf,
+} from "./session-control.ts";
+export type { WordClass } from "./session-control.ts";
+export {
+  AGENT_OPERATION,
+  CONTINUATION_TRIGGERS,
+  CONVERSATION_CONTROL,
+  META_WORDS,
+  NEAR_MISS_WORDS,
+  OTHER_STEERING,
+} from "./prompt-vocabulary.ts";
+export { isSwapSlipOf, isTypingSlipOf, slipBudget } from "./typing-slip.ts";
+export {
+  EVIDENCE_KINDS,
+  EVIDENCE_MIN_CONTENT_WORDS,
+  REVISION_MAX_DEPTH,
+  isEvidenceFor,
+  revisionHeads,
+} from "./evidence-resolution.ts";
+export type { CitedHead, CitingClaim } from "./evidence-resolution.ts";
+export {
+  SUBSTANCE_MIN_EVIDENCE_REFS,
+  SUBSTANCE_ROOT_CAUSE_STATUSES,
+  SUBSTANCE_MIN_DISTINCT_TERMS,
+  SUBSTANCE_MIN_MATCHED_TERMS,
+  SUBSTANCE_MIN_TREE_TERMS,
+  compareTreeStrength,
+  isAtLeastAsStrongTree,
+  isStrongSubstanceMatch,
+  isSubstanceShape,
+  qualifiesAsSubstance,
+  strongestTreeIndex,
+} from "./substance-trust.ts";
+export type { SubstanceCandidate, SubstanceMatch, TreeStrength } from "./substance-trust.ts";
+export {
+  ENGLISH_FUNCTION_WORDS,
+  ENGLISH_STOP_SUPPLEMENT,
+  ENGLISH_STOP_WORDS,
+  GERMAN_FUNCTION_WORDS,
+  GERMAN_STOP_SUPPLEMENT,
+  GERMAN_STOP_WORDS,
+} from "./stop-words.ts";
+export {
+  ELLIPSIS,
+  INJECTION_BRANCHES,
+  INJECTION_SPAN_PATTERN,
+  REDACTED_SPAN,
+  cleanUntrusted,
+  cutWellFormed,
+  spanRedacted,
+} from "./untrusted-text.ts";
+export {
+  PROMPT_CLASSIFY_HEAD_CHARS,
+  PROMPT_CLASSIFY_TAIL_CHARS,
+  PROMPT_MIN_TOKEN_CHARS,
+  classifyPrompt,
+  isContentFreePrompt,
+  isGermanPrompt,
+  isWeakWord,
+  promptTerms,
+  promptTokens,
+} from "./prompt-terms.ts";
+export type { ClassifiedPrompt, PromptTerms } from "./prompt-terms.ts";
+export { SHELL_COMMAND_BINARIES, isBareShellCommand } from "./shell-command.ts";
+export { CONVENTIONAL_FILE_NAMES, exactTargetToken, isConventionalFileName } from "./exact-token.ts";
+export { englishStem } from "./english-stem.ts";
+export { hasContinuationSignal } from "./continuation.ts";
+export { promptTaskOf } from "./prompt-task.ts";
+export { DOTTED_NAME_PARTS_SQL, DOTTED_NAME_PARTS_SQL_REPLACEMENT, dottedNamePartsText } from "./content-floor.ts";
+export type { PromptTask } from "./prompt-task.ts";
+export {
+  HINT_LONG_PROMPT_KNOWN_TERMS,
+  HINT_LONG_PROMPT_MIN_TOPICAL,
+  HINT_MAX_COUNTED_TERMS,
+  HINT_MAX_EXAMINED_TERMS,
+  HINT_MIN_SHARED_TERMS,
+  clearsFloorOn,
+  floorTermsOf,
+  isClosedInflection,
+  knownTermsIn,
+  sharedLexemes,
+  sharedTermCount,
+  statementMatch,
+  termLexeme,
+  textLexemes,
+} from "./content-floor.ts";
+export type { FloorTerms, StatementMatch } from "./content-floor.ts";
 export {
   CI_MAX_TEST_ROWS,
   CI_KNOWN_PROVIDERS,

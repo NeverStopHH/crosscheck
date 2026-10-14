@@ -11,6 +11,7 @@
  * only honest if somebody can read the refusal; one nobody sees is the silent
  * absence AT-10 forbids.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -56,7 +57,7 @@ const coverageBlock = (
 const startHub = (
   body: unknown,
 ): { readonly url: string; readonly stop: () => void } => {
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: (request) => {
       const { pathname } = new URL(request.url);
@@ -224,6 +225,22 @@ describe("crosscheck doctor: the coverage check and COV-5's refusals", () => {
     expect(result.stdout).toContain("WARN  coverage");
     expect(result.stdout).toContain(GAP_SHOWN);
     expect(result.stdout).toContain("agent_event incomplete");
+  });
+
+  test("a gap the hub withheld says so beside the wire's fixed word (review round 5, H4)", async () => {
+    // Arrange: an opted-out teammate's gap — the reason is the word old
+    // clients read as a gap, the flag says whose it is not to tell.
+    const block = coverageBlock("incomplete", "session_silent");
+    const sources = (block["sources"] as readonly Record<string, unknown>[]).map((row) =>
+      row["source"] === "agent_event" ? { ...row, gapSince: null, withheld: true } : row,
+    );
+    const { repo, env } = await fixture("doctor-coverage-withheld", { ok: true, data: { absences: [], coverage: { ...block, sources } } });
+
+    // Act
+    const result = await runCli(["doctor"], env, repo);
+
+    // Assert
+    expect(result.stdout).toContain("agent_event incomplete (session_silent, withheld: presence opt-out)");
   });
 
   test("passes and still names every readable rung when nothing is missing", async () => {

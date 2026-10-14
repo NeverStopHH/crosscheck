@@ -7,6 +7,7 @@
  * The hub here records what it was SENT and answers what the flows need;
  * whether a real hub stores it is packages/server/test/coverage-losses.test.ts.
  */
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -34,7 +35,7 @@ let hubUrl: string;
 const cleanups: string[] = [];
 
 beforeAll(() => {
-  server = Bun.serve({
+  server = serveLoopback({
     port: 0,
     fetch: async (request) => {
       const { pathname } = new URL(request.url);
@@ -64,6 +65,7 @@ afterAll(async () => {
 const hubFor = (home: string, key: string): HubContext => ({
   hubUrl,
   apiKey: "key",
+  keyOrigin: hubUrl,
   timeoutMs: 4000,
   home,
   repoKey: key,
@@ -98,6 +100,7 @@ const runAllThree = async (fx: { home: string; repo: string; key: string }, host
     hubUrl,
     fallbackDeveloperId: null,
     title: "main @ api",
+    titleSource: "fallback",
     status: "analyzing",
     now: NOW,
     guarantees: [],

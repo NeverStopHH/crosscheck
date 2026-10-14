@@ -9,9 +9,10 @@
  * into sentences; the spool simulation calls the same function, so what it
  * exercises is this code and not a model of it.
  */
-import type { SeqField } from "@crosscheck/schema";
+import type { SeqField, WorkContextTitleSource } from "@crosscheck/schema";
 
 import { AMBIGUOUS_SESSION, seqAt } from "../../capture/seq.ts";
+import { TOPIC_TITLE_SOURCE } from "../../flows/topic-contexts.ts";
 import type { HubContext } from "../../http/client.ts";
 import { postRecords } from "../../http/hub.ts";
 import type { RecordResult } from "../../http/hub.ts";
@@ -41,7 +42,66 @@ export interface IntentWriteDeps {
 export interface TitledWorkContext extends OwnWorkContext {
   readonly workContextTitle: string;
   readonly workContextStatus: string;
+  /**
+   * Set when the target is one of the life's TOPICS (flows/topic-contexts.ts
+   * `intentTargetOf`): its status then lives in that topic's registry entry,
+   * not in the session's, and the post carries the topic's branch and base
+   * commit so a hub that has not seen the topic yet creates it whole.
+   */
+  readonly topicKey?: string;
+  readonly branch?: string;
+  readonly baseCommit?: string | null;
+  /** The topic's own word about that base (flows/topic-base-word.ts), sent beside it. */
+  readonly baseOnDefault?: boolean | null;
 }
+
+/** The status field this write moves: the session's own, or one topic's entry. */
+const withStatus = (fresh: SessionState, own: TitledWorkContext, status: string): SessionState =>
+  own.topicKey === undefined
+    ? { ...fresh, workContextStatus: status }
+    : {
+        ...fresh,
+        topicContexts: fresh.topicContexts.map((topic) =>
+          topic.key === own.topicKey && topic.sessionId === own.crosscheckSessionId ? { ...topic, status } : topic,
+        ),
+      };
+
+/** What the hub accepted, written where SessionEnd's last word reads it: the session's ack, or the topic's. */
+const withAcked = (fresh: SessionState, own: TitledWorkContext, status: string): SessionState =>
+  own.topicKey === undefined
+    ? { ...fresh, workContextAcked: { id: own.workContextId, status } }
+    : {
+        ...fresh,
+        topicContexts: fresh.topicContexts.map((topic) =>
+          topic.key === own.topicKey && topic.sessionId === own.crosscheckSessionId
+            ? { ...topic, ackedStatus: status, ackUncertain: false }
+            : topic,
+        ),
+      };
+
+/**
+ * A post that may have landed went unanswered: the acknowledgement no longer
+ * says what the hub holds, so SessionEnd — or session-reap, for a host that
+ * died — sends the work context whatever the state's status is then
+ * (spool/work-context-ack.ts; topics seed 416, sleep seed 10478). Only an
+ * existing acknowledgement is marked — one never acknowledged at all is sent
+ * by its own copies already.
+ */
+const withUncertainAck = (fresh: SessionState, own: TitledWorkContext): SessionState => {
+  if (own.topicKey === undefined) {
+    return fresh.workContextAcked?.id === own.workContextId
+      ? { ...fresh, workContextAcked: { ...fresh.workContextAcked, uncertain: true } }
+      : fresh;
+  }
+  return {
+    ...fresh,
+    topicContexts: fresh.topicContexts.map((topic) =>
+      topic.key === own.topicKey && topic.sessionId === own.crosscheckSessionId && topic.ackedStatus !== null
+        ? { ...topic, ackUncertain: true }
+        : topic,
+    ),
+  };
+};
 
 export interface IntentWrite {
   readonly summary: string;
@@ -68,20 +128,16 @@ const mayHaveLanded = (failure: HubFailure): boolean =>
     : failure.kind === "malformed" || failure.status >= HTTP_SERVER_ERROR;
 
 /** The work context's status as the session's state records it — what every other sender reads. */
-const writeStatus = (deps: IntentWriteDeps, own: OwnWorkContext, status: string): Promise<boolean> =>
-  updateSessionState(deps.home, own.hostSessionKey, (fresh) => ({ ...fresh, workContextStatus: status }));
+const writeStatus = (deps: IntentWriteDeps, own: TitledWorkContext, status: string): Promise<boolean> =>
+  updateSessionState(deps.home, own.hostSessionKey, (fresh) => withStatus(fresh, own, status));
 
-/**
- * A post that may have landed went unanswered: the acknowledgement no longer
- * says what the hub holds, so SessionEnd sends the work context whatever the
- * state's status is then (spool/work-context-ack.ts). Only an existing
- * acknowledgement is marked — one never acknowledged at all is sent by its
- * own copies already.
- */
-const withUncertainAck = (fresh: SessionState, own: OwnWorkContext): SessionState =>
-  fresh.workContextAcked?.id === own.workContextId
-    ? { ...fresh, workContextAcked: { ...fresh.workContextAcked, uncertain: true } }
-    : fresh;
+/** The title marker a set_intent post carries: a topic's is always `fallback`, the session's its own. */
+const titleSourceOf = (own: TitledWorkContext): { readonly titleSource?: WorkContextTitleSource } => {
+  if (own.topicKey !== undefined) {
+    return { titleSource: TOPIC_TITLE_SOURCE };
+  }
+  return own.workContextTitleSource === null ? {} : { titleSource: own.workContextTitleSource };
+};
 
 export const writeIntent = async (
   deps: IntentWriteDeps,
@@ -93,8 +149,22 @@ export const writeIntent = async (
     id: own.workContextId,
     sessionId: own.crosscheckSessionId,
     title: own.workContextTitle,
+    // The marker the title registered with: an update without it would leave
+    // the hub keeping a stored one only by luck (record-handlers.ts). A TOPIC's
+    // title is always the connector's own `<branch> @ <label>`
+    // (flows/topic-contexts.ts), so it is `fallback` — never the session's
+    // marker, whose `host` would keep an opted-out developer's branch from
+    // being withheld on the hub.
+    ...titleSourceOf(own),
     status,
     intent: write.intent,
+    ...(own.branch === undefined ? {} : { branch: own.branch }),
+    ...(own.baseCommit === undefined || own.baseCommit === null ? {} : { baseCommit: own.baseCommit }),
+    // ...with the topic's word about it, so a set_intent that reaches the hub
+    // before the spool's copy creates the topic whole (topic review C1).
+    ...(own.baseCommit === undefined || own.baseCommit === null || typeof own.baseOnDefault !== "boolean"
+      ? {}
+      : { baseOnDefault: own.baseOnDefault }),
     createdAt: own.startedAt,
   };
   const producer = { sessionId: own.crosscheckSessionId, developerId: own.developerId };
@@ -125,7 +195,7 @@ export const writeIntent = async (
     // hub may now hold, and the next sender of this work context makes the two
     // agree, rather than putting the old status back over it. SessionEnd is
     // that sender when nothing else comes, so the acknowledgement is marked as
-    // no longer telling.
+    // no longer telling (topics seed 416, sleep seed 10478).
     if (mayHaveLanded(posted)) {
       await updateSessionState(deps.home, own.hostSessionKey, (fresh) => withUncertainAck(fresh, own));
     } else {
@@ -158,13 +228,16 @@ export const writeIntent = async (
   // ghost worker will compare (`workContextIntent`), the debt that makes it
   // run (`ghostPending`), and the acknowledgement below. Best-effort like
   // every state update on this path.
-  await updateSessionState(deps.home, own.hostSessionKey, (fresh) => ({
-    ...withRecordedIntent(fresh, write.summary),
-    workContextStatus: write.status === undefined ? fresh.workContextStatus : status,
+  await updateSessionState(deps.home, own.hostSessionKey, (fresh) => {
+    // A set_intent sentence is DECLARED (hint-substance: the provenance the
+    // ghost and hint readers weigh), never a derived guess.
+    const recorded = withRecordedIntent(fresh, write.summary, "declared");
+    const moved = write.status === undefined ? recorded : withStatus(recorded, own, status);
     // ...and the status the hub acknowledged, which SessionEnd compares the
-    // state's with (spool/work-context-ack.ts, review-2 round 8, L7).
-    workContextAcked: result?.status === "accepted" ? { id: own.workContextId, status } : fresh.workContextAcked,
-  }));
+    // state's with (spool/work-context-ack.ts, review-2 round 8, L7) — for a
+    // topic, on that topic's own entry.
+    return result?.status === "accepted" ? withAcked(moved, own, status) : moved;
+  });
   // The hub holds this work context now, as set_intent just wrote it: a debt a
   // heal left for it is paid (spool/owed-work-context.ts), and no later flush
   // sends a copy over this status (review-2 round 7, M1).

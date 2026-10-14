@@ -46,6 +46,7 @@ afterEach(async () => {
 const hub = (home: string) => ({
   hubUrl: DEAD_HUB_URL,
   apiKey: "k",
+  keyOrigin: DEAD_HUB_URL,
   timeoutMs: 400,
   home,
   repoKey: KEY,

@@ -2,11 +2,16 @@
  * Signed UI session tokens (task item 2) and the CSRF tokens derived from
  * them (task item 6).
  *
- * TOKEN SHAPE: `<developerId>.<expiresAtMs>.<hmacHex>` where the HMAC-SHA256
- * signature covers `<developerId>.<expiresAtMs>`. Parsing splits from the
- * RIGHT, so a developer id containing dots cannot shift the fields. The
- * cookie never carries the API key — the exchange happens once at login and
- * the key is never echoed or stored afterwards.
+ * TOKEN SHAPE: `<developerId>.<expiresAtMs>.<nonce>.<hmacHex>` where the
+ * HMAC-SHA256 signature covers `<developerId>.<expiresAtMs>.<nonce>`. Parsing
+ * splits from the RIGHT, so a developer id containing dots cannot shift the
+ * fields. The cookie never carries the API key — the exchange happens once at
+ * login and the key is never echoed or stored afterwards.
+ *
+ * ONE SESSION PER LOGIN (review L1, probe P7). The nonce is 16 bytes from the
+ * CSPRNG, never the clock: without it two logins in one millisecond were the
+ * same session, and an agent logging in with the person's key at that instant
+ * shared — and could evict — the person's confirmation batches.
  *
  * SIGNING SECRET AND ROTATION: the secret lives in process memory only,
  * generated fresh at hub start unless CROSSCHECK_UI_SECRET is set (index.ts).
@@ -28,13 +33,15 @@
  * carry it as a hidden `_csrf` input; every state-changing POST checks it
  * on top of SameSite=Strict.
  */
-import { createHmac } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 
 import { isTokenEqual } from "../auth/keys.ts";
 import { UI_SESSION_COOKIE_NAME, UI_SESSION_TTL_SECONDS } from "./constants.ts";
 
 const TOKEN_SEPARATOR = ".";
 const CSRF_CONTEXT_PREFIX = "csrf.";
+/** The session nonce's size: 128 bits from the CSPRNG (review L1). */
+const SESSION_NONCE_BYTES = 16;
 
 const hmacHex = (secret: string, payload: string): string =>
   createHmac("sha256", secret).update(payload).digest("hex");
@@ -49,8 +56,28 @@ export const signSessionToken = (
   expiresAtMs: number,
   apiKeyHash: string,
 ): string => {
-  const payload = `${developerId}${TOKEN_SEPARATOR}${String(expiresAtMs)}`;
+  const nonce = randomBytes(SESSION_NONCE_BYTES).toString("hex");
+  const payload = [developerId, String(expiresAtMs), nonce].join(TOKEN_SEPARATOR);
   return `${payload}${TOKEN_SEPARATOR}${hmacHex(secret, signedPayload(payload, apiKeyHash))}`;
+};
+
+interface SessionPayload {
+  readonly developerId: string;
+  readonly expiresAtMs: number;
+}
+
+/** `<developerId>.<expiresAtMs>.<nonce>`, split from the right; null for any other shape. */
+const splitPayload = (payload: string): SessionPayload | null => {
+  const nonceDot = payload.lastIndexOf(TOKEN_SEPARATOR);
+  if (nonceDot <= 0 || nonceDot === payload.length - 1) {
+    return null;
+  }
+  const head = payload.slice(0, nonceDot);
+  const expiresDot = head.lastIndexOf(TOKEN_SEPARATOR);
+  if (expiresDot <= 0) {
+    return null;
+  }
+  return { developerId: head.slice(0, expiresDot), expiresAtMs: Number.parseInt(head.slice(expiresDot + 1), 10) };
 };
 
 /**
@@ -60,10 +87,8 @@ export const signSessionToken = (
  */
 export const claimedSessionDeveloper = (token: string): string | null => {
   const lastDot = token.lastIndexOf(TOKEN_SEPARATOR);
-  const payload = lastDot <= 0 ? "" : token.slice(0, lastDot);
-  const expiresDot = payload.lastIndexOf(TOKEN_SEPARATOR);
-  const developerId = expiresDot <= 0 ? "" : payload.slice(0, expiresDot);
-  return developerId.length === 0 ? null : developerId;
+  const parts = lastDot <= 0 ? null : splitPayload(token.slice(0, lastDot));
+  return parts === null || parts.developerId.length === 0 ? null : parts.developerId;
 };
 
 /**
@@ -85,16 +110,11 @@ export const verifySessionToken = (
   if (!isTokenEqual(presentedSignature, hmacHex(secret, signedPayload(payload, apiKeyHash)))) {
     return null;
   }
-  const expiresDot = payload.lastIndexOf(TOKEN_SEPARATOR);
-  if (expiresDot <= 0) {
+  const parts = splitPayload(payload);
+  if (parts === null || !Number.isFinite(parts.expiresAtMs) || now.getTime() >= parts.expiresAtMs) {
     return null;
   }
-  const developerId = payload.slice(0, expiresDot);
-  const expiresAtMs = Number.parseInt(payload.slice(expiresDot + 1), 10);
-  if (!Number.isFinite(expiresAtMs) || now.getTime() >= expiresAtMs) {
-    return null;
-  }
-  return developerId.length === 0 ? null : developerId;
+  return parts.developerId.length === 0 ? null : parts.developerId;
 };
 
 export const csrfTokenFor = (secret: string, sessionToken: string): string =>

@@ -23,24 +23,40 @@
  */
 import {
   and,
+  asc,
   cosineDistance,
   eq,
   inArray,
   isNotNull,
   ne,
+  not,
+  notExists,
   or,
   sql,
 } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
+import { exactTargetToken } from "@crosscheck/schema";
 
 import {
   agentSessions,
+  claimEdges,
   claims,
   developers,
   workContextTargets,
   workContexts,
 } from "../db/schema.ts";
+import { DECLARED_PROVENANCE } from "./similarity-gate.ts";
 import { isAssertableCause, loadClaimValidities } from "./claim-validity.ts";
+import { ordinaryTargetCondition } from "./generated-targets.ts";
+import {
+  activitySeenBy,
+  locationHiddenFrom,
+  projectRow,
+  updatedAtSeenBy,
+} from "./live-location.ts";
+import type { HiddenLocations } from "./live-location.ts";
 import { listSolvedInfo, listSolvedRootCauses } from "./solved.ts";
+import { staleDraftDoc } from "./stale-docs.ts";
 import { notMutedCondition } from "./visibility.ts";
 import type { Db } from "../db/client.ts";
 import type { Embedder } from "./embedder.ts";
@@ -206,6 +222,18 @@ export interface SearchResultView {
   readonly resultKind: SearchResultKind;
   /** When the solving claim was recorded; null for open results. */
   readonly solvedAt: string | null;
+  /**
+   * The context matched ONLY through an unreviewed draft's words — a pull
+   * the searcher asked for, which every surface rendering it must label.
+   */
+  readonly derivedOnly: boolean;
+  /**
+   * The owner opted out of presence, so her last touch is withheld from
+   * this reader (batch-2 integration review, M5) — the listing's word
+   * (services/diagnosis.ts), on the search row too, so a connector prints
+   * no age off the creation that is left.
+   */
+  readonly locationWithheld?: true;
 }
 
 export interface SearchResponse {
@@ -232,6 +260,23 @@ export interface SearchDeps {
 
 export interface SearchQuery {
   readonly query: string;
+  /**
+   * The words the FTS tier ranks on, when the caller has already decided
+   * them — the hints endpoint passes a prompt's CONTENT terms, so function
+   * words never rank its pool (services/hints.ts). Absent: the query's own
+   * tokens. The exact tier always reads `query`, where a path is one word.
+   */
+  readonly ftsTokens?: readonly string[] | undefined;
+  /**
+   * Ranks the FTS tier with the CALLER's query instead of the normalized
+   * document and every claim body (hold-out review, M3). The hints endpoint
+   * passes one that reads only what a hint may show — a context's own
+   * statement and its pushable claims (services/hints.ts) — so a flood of
+   * drafts or refuted claims cannot rank trees into its pool, whatever the
+   * document holds. Absent: the pull search's tier, which reads everything a
+   * reader may pull. The exact tier is unchanged either way.
+   */
+  readonly rankFtsTier?: FtsTierRanker | undefined;
   readonly repo?: string | undefined;
   /**
    * Excludes contexts owned by this developer INSIDE every tier query — see
@@ -283,6 +328,43 @@ export interface SearchQuery {
    * the claims filed into it" in test/search-filters.test.ts.
    */
   readonly since?: Date | undefined;
+  /**
+   * FOR A PUSHED SURFACE (the hints endpoint): drops every claim that is not
+   * DECLARED — an unreviewed draft and the rejected copy a discard appends —
+   * from the fts tier's claim pass, inside its own WHERE, so a tree is never
+   * found by a guess nobody vouched for and the bound is never spent on one.
+   * The normalized doc already folds declared claims only, so this closes the
+   * last lexical door. Omitted on the search route: a teammate who searches
+   * asked, and the result says when a draft was the only match
+   * (`derivedOnly`). services/hints.ts passes it on every hint search
+   * (review round 4, M3), pinned by "a teammate's prompt hint never rides a
+   * draft's words" in test/draft-visibility.test.ts.
+   */
+  readonly excludeDerivedClaims?: boolean | undefined;
+  /**
+   * Rank the exact tier on ORDINARY targets only, inside its own WHERE
+   * (services/generated-targets.ts `ordinaryTargetCondition`): a pushed
+   * surface never finds a tree by a lockfile or a generated client the
+   * prompt named — the exact tier clears the hint floor on the name alone,
+   * and an exact tree is the strongest. Omitted on the search route: a
+   * teammate who searches for a generated file asked, and finds who touched
+   * it. services/hints.ts passes it on every hint search.
+   */
+  readonly excludeGeneratedTargets?: boolean | undefined;
+  /**
+   * Who is reading. Required, never defaulted: an opted-out developer's
+   * fallback title — their branch — is withheld from every viewer but them
+   * (services/live-location.ts), and a search that did not know its reader
+   * could only fail open.
+   */
+  readonly viewerDeveloperId: string;
+  /**
+   * The hidden owners for `viewerDeveloperId`, when the caller already holds
+   * them (services/live-location.ts locationHiddenFrom): computed ONCE per
+   * request, so a caller that projects rows of its own does not pay for the
+   * lookup twice (review round 5, H3 — hint candidates did).
+   */
+  readonly hidden?: HiddenLocations | undefined;
   readonly limit: number;
 }
 
@@ -311,12 +393,18 @@ export const ftsTokens = (query: string): readonly string[] =>
  * hints service can gather the SAME targets the exact tier matched on
  * (services/hints.ts, the #19 targets-only pointer), without a second copy of
  * the tokenizer drifting from this one.
+ *
+ * EACH WORD AS IT NAMES A FILE (hold-out review round 5, M1): a stack trace's
+ * "(packages/api/src/auth/permissions.ts:27:13)" and a link's
+ * "file:///…#L12" lose their wrapping, their position and their scheme by the
+ * one rule the connector applies too (`@crosscheck/schema` exactTargetToken).
  */
 export const exactTokens = (query: string): readonly string[] =>
   boundTokens(
     query
       .toLowerCase()
       .split(/\s+/u)
+      .map(exactTargetToken)
       .filter((token) => token.length >= SEARCH_MIN_TOKEN_CHARS),
   );
 
@@ -337,10 +425,25 @@ export const exactTargetTokenConditions = (tokens: readonly string[]) =>
     sql`lower(${workContextTargets.value}) LIKE ${`%/${escapeLike(token)}`} ESCAPE '\\'`,
   ]);
 
-interface TierRow {
+/**
+ * The same predicate over a target already read: the value verbatim, or a
+ * path whose basename — or trailing path — the token is. For a caller that
+ * must know WHICH word matched (services/hints.ts, round 5 M4).
+ */
+export const targetMatchesToken = (value: string, token: string): boolean => {
+  const lower = value.toLowerCase();
+  return lower === token || lower.endsWith(`/${token}`);
+};
+
+export interface TierRow {
   readonly id: string;
   readonly createdAt: Date;
   readonly updatedAt: Date | null;
+  /**
+   * The row matched ONLY through unreviewed derived claim bodies (the fts
+   * tier's claim pass). Every other tier and pass leaves it unset.
+   */
+  readonly derivedOnly?: boolean;
 }
 
 /**
@@ -360,7 +463,19 @@ interface SearchScope {
   readonly developerId: string | undefined;
   /** R1's WHEN — see SearchQuery.since for why it is activity, not creation. */
   readonly since: Date | undefined;
+  /**
+   * Who asks. Every tier windows, ranks and ages by activity AS THIS VIEWER
+   * MAY SEE IT (services/live-location.ts activitySeenBy): a teammate who
+   * opted out counts from creation alone, or a `since=` window, a
+   * freshest-first order and the decay would each say when she last touched
+   * her work, which the withheld `updatedAt` no longer does.
+   */
+  readonly viewerDeveloperId: string;
 }
+
+/** `updated_at` as the scope's viewer may see it — the tiers' `updatedAt`. */
+const updatedAtFor = (scope: SearchScope): SQL<Date | null> =>
+  updatedAtSeenBy(scope.viewerDeveloperId, agentSessions.developerId, workContexts.updatedAt);
 
 const scopeCondition = (scope: SearchScope) =>
   and(
@@ -378,7 +493,10 @@ const scopeCondition = (scope: SearchScope) =>
       : eq(agentSessions.developerId, scope.developerId),
     scope.since === undefined
       ? undefined
-      : sql`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt}) >= ${scope.since.toISOString()}::timestamptz`,
+      : and(
+          sql`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt}) >= ${scope.since.toISOString()}::timestamptz`,
+          sql`${activityFor(scope)} >= ${scope.since.toISOString()}::timestamptz`,
+        ),
     scope.excludeMutedForDeveloperId === undefined
       ? undefined
       : notMutedCondition(
@@ -387,12 +505,18 @@ const scopeCondition = (scope: SearchScope) =>
         ),
   );
 
-const activityDesc = sql`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt}) DESC`;
+const activityFor = (scope: SearchScope): SQL<Date> =>
+  activitySeenBy(scope.viewerDeveloperId, agentSessions.developerId, workContexts.updatedAt, workContexts.createdAt);
+
+/** Freshest first, ties to the id — never to the order the scan met the rows in. */
+const activityDesc = (scope: SearchScope): SQL =>
+  sql`${activityFor(scope)} DESC, ${workContexts.id} ASC`;
 
 const listExactTier = async (
   db: Db,
   tokens: readonly string[],
   scope: SearchScope,
+  excludeGenerated: boolean,
 ): Promise<readonly TierRow[]> => {
   if (tokens.length === 0) {
     return [];
@@ -405,7 +529,7 @@ const listExactTier = async (
     .select({
       id: workContexts.id,
       createdAt: workContexts.createdAt,
-      updatedAt: workContexts.updatedAt,
+      updatedAt: updatedAtFor(scope),
     })
     .from(workContextTargets)
     .innerJoin(
@@ -413,20 +537,48 @@ const listExactTier = async (
       eq(workContextTargets.workContextId, workContexts.id),
     )
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
-    .where(and(scopeCondition(scope), or(...tokenConditions)))
-    .groupBy(workContexts.id, workContexts.createdAt, workContexts.updatedAt)
-    .orderBy(sql`count(*) DESC`, activityDesc)
+    .where(and(scopeCondition(scope), or(...tokenConditions), excludeGenerated ? ordinaryTargetCondition() : undefined))
+    .groupBy(workContexts.id, workContexts.createdAt, workContexts.updatedAt, agentSessions.developerId)
+    .orderBy(sql`count(*) DESC`, activityDesc(scope))
     .limit(TIER_CANDIDATES);
 };
 
-interface RankedRow extends TierRow {
+export interface RankedRow extends TierRow {
   readonly rank: number;
 }
+
+/** A claim retired by a revision carries an edge of this kind pointing at it. */
+const SUPERSEDES_KIND = "supersedes";
+/** A discard's status, and a refuted theory's. */
+const REJECTED_STATUS = "rejected";
+
+/**
+ * An FTS tier a caller ranks itself, over the same scope condition every tier
+ * puts in its own WHERE (`scope`) — see SearchQuery.rankFtsTier.
+ */
+export type FtsTierRanker = (tokens: readonly string[], scope: SQL | undefined) => Promise<readonly RankedRow[]>;
+
+/**
+ * A caller's ranker, held to the tier's own contract: no tokens, no rows; best
+ * first; bounded. The sort is stable, so equal ranks keep the ranker's order —
+ * which is why a ranker never leaves a tie to the order its scan met the rows
+ * in (hints.ts rankOnPushableText; integration review L7): an RRF
+ * contribution is a row's POSITION.
+ */
+const listRankedFtsTier = async (
+  ranker: FtsTierRanker,
+  tokens: readonly string[],
+  scope: SearchScope,
+): Promise<readonly TierRow[]> =>
+  tokens.length === 0
+    ? []
+    : [...(await ranker(tokens, scopeCondition(scope)))].sort((left, right) => right.rank - left.rank).slice(0, TIER_CANDIDATES);
 
 const listFtsTier = async (
   db: Db,
   tokens: readonly string[],
   scope: SearchScope,
+  excludeDerivedClaims: boolean,
 ): Promise<readonly TierRow[]> => {
   if (tokens.length === 0) {
     return [];
@@ -441,42 +593,78 @@ const listFtsTier = async (
     .select({
       id: workContexts.id,
       createdAt: workContexts.createdAt,
-      updatedAt: workContexts.updatedAt,
+      updatedAt: updatedAtFor(scope),
       rank: sql<number>`ts_rank(${workContexts.tsv}, ${tsquery})`,
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
-    .where(and(scopeCondition(scope), sql`${workContexts.tsv} @@ ${tsquery}`))
-    .orderBy(sql`ts_rank(${workContexts.tsv}, ${tsquery}) DESC`, activityDesc)
+    .where(
+      and(
+        scopeCondition(scope),
+        sql`${workContexts.tsv} @@ ${tsquery}`,
+        // A DOC THE UPGRADE HAS NOT REACHED YET still folds drafts' and
+        // discards' words in (services/stale-docs.ts), and a match in it says
+        // nothing about which claim matched: it does not answer here until it
+        // is rebuilt — the claim pass below still finds the context, each
+        // claim marked as it is (review round 4, M2).
+        not(staleDraftDoc(db)),
+      ),
+    )
+    .orderBy(sql`ts_rank(${workContexts.tsv}, ${tsquery}) DESC`, activityDesc(scope))
     .limit(TIER_CANDIDATES);
 
   // Claim bodies get their own pass: the doc caps out at
   // NORMALIZED_DOC_MAX_CLAIMS summaries, and a match in claim 51 still counts.
-  const claimRows: readonly RankedRow[] = await db
+  //
+  // RETIRED CLAIMS NEVER MATCH: a rejected row (a discard, or a theory its
+  // author refuted) and any row a revision superseded (the draft a discard
+  // or a confirmation retired) are history, not something a searcher should
+  // be led to. An unreviewed DERIVED draft still matches — the searcher
+  // asked — but the row says so (`derivedOnly`) when no vouched claim did.
+  const claimRows: readonly (RankedRow & { readonly declared: boolean })[] = await db
     .select({
       id: claims.workContextId,
       createdAt: workContexts.createdAt,
-      updatedAt: workContexts.updatedAt,
+      updatedAt: updatedAtFor(scope),
       rank: sql<number>`max(ts_rank(${claims.tsv}, ${tsquery}))`,
+      declared: sql<boolean>`bool_or(${claims.provenance} = ${DECLARED_PROVENANCE})`,
     })
     .from(claims)
     .innerJoin(workContexts, eq(claims.workContextId, workContexts.id))
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
-    .where(and(scopeCondition(scope), sql`${claims.tsv} @@ ${tsquery}`))
+    .where(
+      and(
+        scopeCondition(scope),
+        sql`${claims.tsv} @@ ${tsquery}`,
+        ne(claims.status, REJECTED_STATUS),
+        excludeDerivedClaims ? eq(claims.provenance, DECLARED_PROVENANCE) : undefined,
+        notExists(
+          db
+            .select({ one: sql`1` })
+            .from(claimEdges)
+            .where(and(eq(claimEdges.toClaimId, claims.id), eq(claimEdges.kind, SUPERSEDES_KIND))),
+        ),
+      ),
+    )
     .groupBy(
       claims.workContextId,
       workContexts.createdAt,
       workContexts.updatedAt,
+      agentSessions.developerId,
     )
-    .orderBy(sql`max(ts_rank(${claims.tsv}, ${tsquery})) DESC`)
+    // Equal ranks to the context id (integration review L7): the aggregate's
+    // own order is the hash table's, and the LIMIT cut a tie by it.
+    .orderBy(sql`max(ts_rank(${claims.tsv}, ${tsquery})) DESC`, asc(claims.workContextId))
     .limit(TIER_CANDIDATES);
 
+  const claimMatches = claimRows.map((row) => ({ ...row, derivedOnly: !row.declared }));
   const bestRank = new Map<string, RankedRow>();
-  for (const row of [...contextRows, ...claimRows]) {
+  for (const row of [...contextRows, ...claimMatches]) {
     const known = bestRank.get(row.id);
-    if (known === undefined || row.rank > known.rank) {
-      bestRank.set(row.id, row);
-    }
+    // Draft-only survives only if EVERY match of this context was a draft's.
+    const derivedOnly = (known?.derivedOnly ?? true) && row.derivedOnly === true;
+    const best = known === undefined || row.rank > known.rank ? row : known;
+    bestRank.set(row.id, { ...best, derivedOnly });
   }
   return [...bestRank.values()]
     .sort((left, right) => right.rank - left.rank)
@@ -532,7 +720,7 @@ const listVectorTier = async (
     .select({
       id: workContexts.id,
       createdAt: workContexts.createdAt,
-      updatedAt: workContexts.updatedAt,
+      updatedAt: updatedAtFor(scope),
       similarity: sql<number>`1 - (${distance})`,
     })
     .from(workContexts)
@@ -542,6 +730,9 @@ const listVectorTier = async (
         scopeCondition(scope),
         isNotNull(workContexts.embedding),
         eq(workContexts.embeddingModel, embedder.model),
+        // Minted from a doc that still folds drafts in: not until the
+        // upgrade rebuilds it (the doc pass's rule above; round 4, M2).
+        not(staleDraftDoc(db)),
       ),
     )
     .orderBy(distance)
@@ -557,19 +748,42 @@ const listRecencyTier = async (
     .select({
       id: workContexts.id,
       createdAt: workContexts.createdAt,
-      updatedAt: workContexts.updatedAt,
+      updatedAt: updatedAtFor(scope),
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
     .where(scopeCondition(scope))
-    .orderBy(activityDesc)
+    .orderBy(activityDesc(scope))
     .limit(TIER_CANDIDATES);
 
 interface FusedEntry {
   readonly row: TierRow;
   readonly score: number;
   readonly tiers: ReadonlySet<SearchTier>;
+  /**
+   * Every LEXICAL row that brought this context in was a draft-only match;
+   * null while no lexical tier matched it. The vector tier embeds the doc,
+   * never a claim, so its row says nothing about whose words matched — it
+   * neither sets nor clears this (review round 3: fused in, it cleared the
+   * mark on every hub with an embedder).
+   */
+  readonly lexicalDerivedOnly: boolean | null;
 }
+
+/** The tiers that know which words matched: the only ones the draft mark reads. */
+const DRAFT_MARK_TIERS: ReadonlySet<SearchTier> = SOLVED_FLOOR_TIERS;
+
+const lexicalDerivedOnlyAfter = (
+  known: FusedEntry | undefined,
+  tier: SearchTier,
+  row: TierRow,
+): boolean | null => {
+  const before = known?.lexicalDerivedOnly ?? null;
+  if (!DRAFT_MARK_TIERS.has(tier)) {
+    return before;
+  }
+  return (before ?? true) && row.derivedOnly === true;
+};
 
 interface TierList {
   readonly tier: SearchTier;
@@ -602,6 +816,7 @@ const fuseTiers = (
         row: known?.row ?? row,
         score: (known?.score ?? 0) + contribution,
         tiers: new Set([...(known?.tiers ?? []), tier]),
+        lexicalDerivedOnly: lexicalDerivedOnlyAfter(known, tier, row),
       });
     });
   }
@@ -629,10 +844,13 @@ const hydrate = async (
   db: Db,
   entries: readonly FusedEntry[],
   solvedInfo: ReadonlyMap<string, Date>,
+  viewerDeveloperId: string,
+  known: HiddenLocations | undefined,
 ): Promise<readonly SearchResultView[]> => {
   if (entries.length === 0) {
     return [];
   }
+  const hidden = known ?? (await locationHiddenFrom(db, viewerDeveloperId));
   const ids = entries.map((entry) => entry.row.id);
   const rows = await db
     .select({
@@ -644,6 +862,9 @@ const hydrate = async (
       updatedAt: workContexts.updatedAt,
       developerId: agentSessions.developerId,
       developerName: developers.name,
+      repo: agentSessions.repo,
+      branch: agentSessions.branch,
+      titleSource: workContexts.titleSource,
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
@@ -658,6 +879,11 @@ const hydrate = async (
     const solvedAt = solvedInfo.get(row.id);
     return [
       {
+      ...projectRow(hidden, {
+        developerId: row.developerId,
+        titleFacts: { repo: row.repo, branch: row.branch, titleSource: row.titleSource },
+        kind: "work_context",
+      }, {
         id: row.id,
         developerId: row.developerId,
         developerName: row.developerName,
@@ -672,6 +898,9 @@ const hydrate = async (
           ? "open"
           : "solved") as SearchResultKind,
         solvedAt: solvedAt === undefined ? null : solvedAt.toISOString(),
+        derivedOnly: entry.lexicalDerivedOnly === true,
+      }),
+      ...(hidden.has(row.developerId) ? { locationWithheld: true as const } : {}),
       },
     ];
   });
@@ -725,6 +954,8 @@ const floorEligibleIds = async (
     db,
     now,
     [...causes.values()].map((cause) => cause.claimId),
+    // State only: the floor reads `state`, and none of these readings ship.
+    null,
   );
   return new Set(
     [...causes]
@@ -746,7 +977,7 @@ export const searchWorkContexts = async (
   // Clamped even though the route already rejects: this service is the layer
   // whose queries can fault the embedded database, so the bound lives here too.
   const query = input.query.slice(0, SEARCH_MAX_QUERY_CHARS);
-  const wordTokens = ftsTokens(query);
+  const wordTokens = input.ftsTokens ?? ftsTokens(query);
   const pathTokens = exactTokens(query);
   const scope: SearchScope = {
     repo: input.repo,
@@ -754,6 +985,7 @@ export const searchWorkContexts = async (
     excludeMutedForDeveloperId: input.excludeMutedForDeveloperId,
     developerId: input.developerId,
     since: input.since,
+    viewerDeveloperId: input.viewerDeveloperId,
   };
 
   // A blank query asks "what is happening" — answered by recency alone. The
@@ -771,14 +1003,26 @@ export const searchWorkContexts = async (
       new Set(solvedInfo.keys()),
     );
     return {
-      results: await hydrate(deps.db, fused.slice(0, limit), solvedInfo),
+      results: await hydrate(
+        deps.db,
+        fused.slice(0, limit),
+        solvedInfo,
+        input.viewerDeveloperId,
+        input.hidden,
+      ),
       vectorTierActive: false,
     };
   }
 
   const [exactRows, ftsRows, vector] = await Promise.all([
-    listExactTier(deps.db, pathTokens, scope),
-    listFtsTier(deps.db, wordTokens, scope),
+    listExactTier(deps.db, pathTokens, scope, input.excludeGeneratedTargets === true),
+    // A caller that ranks its own tier (hints, rankFtsTier) owns its claim
+    // filter too: the hints ranker reads pushable claims only, declared by
+    // definition (services/hints.ts rankOnPushableText), so
+    // `excludeDerivedClaims` governs this default tier alone.
+    input.rankFtsTier === undefined
+      ? listFtsTier(deps.db, wordTokens, scope, input.excludeDerivedClaims === true)
+      : listRankedFtsTier(input.rankFtsTier, wordTokens, scope),
     tryVectorTier(deps, query, scope),
   ]);
 
@@ -803,7 +1047,13 @@ export const searchWorkContexts = async (
     floorIds,
   );
   return {
-    results: await hydrate(deps.db, fused.slice(0, limit), solvedInfo),
+    results: await hydrate(
+      deps.db,
+      fused.slice(0, limit),
+      solvedInfo,
+      input.viewerDeveloperId,
+      input.hidden,
+    ),
     vectorTierActive: vector.active,
   };
 };

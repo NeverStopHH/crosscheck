@@ -39,6 +39,7 @@ const seedPin = async (harness: TestHarness, id: string, developerId: string): P
     checkRecipe: "bun test",
     captureMode: "human",
     createdAt: ENROLLED,
+    provenance: "unknown_legacy",
   });
 };
 
@@ -91,7 +92,7 @@ describe("revoking a passkey terminates the live waivers it authorised (04a D-PK
     const outcome = await revokePasskey({ db: harness.db, passkeyId: laptop.id, by: { kind: "admin" }, now: NOW });
 
     // Assert
-    expect(outcome).toEqual({ revoked: true, terminated: 1 });
+    expect(outcome).toMatchObject({ revoked: true, terminated: 1 });
     expect(await live(harness, "pin_a")).toBeNull();
     const closures = await closuresOf(harness, grantId);
     expect(closures).toHaveLength(1);
@@ -147,7 +148,7 @@ describe("revoking a passkey terminates the live waivers it authorised (04a D-PK
     const outcome = await revokePasskey({ db: harness.db, passkeyId: laptop.id, by: { kind: "admin" }, now: NOW });
 
     // Assert
-    expect(outcome).toEqual({ revoked: true, terminated: 0 });
+    expect(outcome).toMatchObject({ revoked: true, terminated: 0 });
     expect(await closuresOf(harness, expired)).toHaveLength(0);
     expect(await closuresOf(harness, closed)).toHaveLength(1);
   });
@@ -176,7 +177,7 @@ describe("revoking a passkey terminates the live waivers it authorised (04a D-PK
     }
 
     // Assert
-    expect(outcomes).toEqual(paths.map(() => ({ revoked: true, terminated: 1 })));
+    expect(outcomes).toEqual(paths.map(() => expect.objectContaining({ revoked: true, terminated: 1 })));
     for (const index of paths.keys()) {
       expect(await live(harness, `pin_path_${String(index)}`)).toBeNull();
     }

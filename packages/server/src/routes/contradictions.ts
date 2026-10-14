@@ -48,7 +48,12 @@ export const contradictionsRoutes = (deps: AppDeps): Hono<AppEnv> => {
   // a retired pair still answers, with its retirement stated, because "the
   // deadlock is already over" is the single most useful fact a brief can hold.
   router.get("/:id/brief", async (c) => {
-    const brief = await getRefereeBrief(deps.db, deps.now(), c.req.param("id"));
+    const brief = await getRefereeBrief(
+      deps.db,
+      deps.now(),
+      c.req.param("id"),
+      c.get("developer").id,
+    );
     if (brief === undefined) {
       return fail(c, 404, "not_found", "contradiction not found");
     }

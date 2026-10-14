@@ -27,6 +27,7 @@ import {
   MAX_GHOST_POINTERS,
   MAX_TITLE_CHARS,
 } from "../src/constants.ts";
+import { GhostCheckEntrySchema } from "../src/http/hub.ts";
 import type { GhostCheckEntry } from "../src/http/hub.ts";
 
 const NOW = new Date("2026-08-18T12:00:00.000Z");
@@ -39,7 +40,7 @@ const FINGERPRINT = "sha256:0f1e2d3c4b5a69788796a5b4c3d2e1f0";
  * instead of quietly invalidating the budget: one row with every field at its
  * cap, and the pair of ordinary monorepo rows that must both survive.
  */
-const MAXIMAL_GHOST_LINE_CHARS = 491;
+const MAXIMAL_GHOST_LINE_CHARS = 536;
 const REALISTIC_GHOST_PAIR_CHARS = 705;
 const GHOST_HEADER_CHARS = 114;
 
@@ -176,6 +177,68 @@ describe("the ghost-check line", () => {
     expect(blank).not.toBeNull();
     expect(framePairs(blank ?? "")).toBe(0);
     expect(blank).toContain("get_diagnosis wc_theirs");
+  });
+
+  test("a large change is qualified beside what it shares, never dropped", () => {
+    // The hub never drops a large change; the line says how large it is,
+    // right after the files it qualifies, so the reader weighs a rename's
+    // share of their files for what it is.
+    const line = formatGhostLine(ghostCheck({ largeChangeFiles: 180 }), NOW);
+    expect(line).toBe(
+      "- Ken · intent: «Move the session store behind an interface» · " +
+        "last active 5m ago · shares src/auth/session.ts, src/auth/token.ts · " +
+        "part of a large change touching 180 files · get_diagnosis wc_theirs",
+    );
+    // The control: the same row from a focused change carries no qualifier.
+    expect(formatGhostLine(ghostCheck({ largeChangeFiles: null }), NOW)).not.toContain("large change");
+  });
+
+  test("files the rule kept out are a qualifier beside real overlap — never nothing, never a reason", () => {
+    // Act: the same focused row, with four mechanically generated files also shared.
+    const line = formatGhostLine(ghostCheck({ generatedSharedCount: 4 }), NOW);
+
+    // Assert: stated right after the evidence it qualifies.
+    expect(line).toBe(
+      "- Ken · intent: «Move the session store behind an interface» · " +
+        "last active 5m ago · shares src/auth/session.ts, src/auth/token.ts · " +
+        "also both touched 4 generated files · get_diagnosis wc_theirs",
+    );
+    expect(formatGhostLine(ghostCheck({ generatedSharedCount: 1 }), NOW)).toContain("also both touched 1 generated file ·");
+    // The controls: none shared, or a hub too old to send the count, prints no qualifier.
+    expect(formatGhostLine(ghostCheck({ generatedSharedCount: 0 }), NOW)).not.toContain("generated");
+    expect(formatGhostLine(ghostCheck(), NOW)).not.toContain("generated");
+  });
+
+  test("generated files alone make no row: with nothing else shared the line is dropped", () => {
+    // Arrange: a row with only the generated count — which a hub never sends, and a renderer must not trust.
+    const generatedOnly = ghostCheck({ sharedTargets: [], sharedTargetCount: 0, intentTokenHits: 0, generatedSharedCount: 9 });
+
+    // Act + Assert
+    expect(formatGhostLine(generatedOnly, NOW)).toBeNull();
+  });
+
+  test("a change's size alone is no reason, and qualifies no intent match", () => {
+    // Arrange: no shared value, and then only intent words.
+    const sizeOnly = ghostCheck({ sharedTargets: [], sharedTargetCount: 0, intentTokenHits: 0, largeChangeFiles: 180 });
+    const intentOnly = ghostCheck({ sharedTargets: [], sharedTargetCount: 0, intentTokenHits: 3, largeChangeFiles: 180 });
+
+    // Act + Assert: a size is never a "why" on its own, and the intent tier
+    // shares no file for it to qualify.
+    expect(formatGhostLine(sizeOnly, NOW)).toBeNull();
+    expect(formatGhostLine(intentOnly, NOW)).not.toContain("large change");
+  });
+
+  test("a size this build cannot read costs the qualifier, never the row", () => {
+    // Arrange: a hub row whose size is not a count.
+    const wire = { ...ghostCheck(), largeChangeFiles: "lots" };
+
+    // Act
+    const parsed = GhostCheckEntrySchema.safeParse(wire);
+
+    // Assert
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.largeChangeFiles).toBeUndefined();
+    expect(formatGhostLine(parsed.data ?? ghostCheck(), NOW)).toContain("get_diagnosis wc_theirs");
   });
 
   test("an unparseable timestamp or a bad id drops the row", () => {
@@ -356,6 +419,7 @@ describe("the ghost-check briefing block", () => {
       ],
       sharedTargetCount: 99,
       intentTokenHits: 12,
+      largeChangeFiles: 9999,
     });
 
   /** An ordinary monorepo collision: the case the feature exists for. */
@@ -388,7 +452,7 @@ describe("the ghost-check briefing block", () => {
   test("bounded in CHARACTERS too, and drops a row whole rather than cutting it", () => {
     // Arrange: two rows with every bounded field at its cap. MAX_GHOST_POINTERS
     // admits both, and admitting both is what the item bound cannot see — the
-    // pair composes 983 characters under a 114-character header, half of
+    // pair composes 1073 characters under a 114-character header, half of
     // MAX_BRIEFING_CHARS spent on two pointer lines, and the five sections
     // below (contexts, contradictions, solved-before, drafts, absences) give
     // way whole to it.
@@ -432,6 +496,30 @@ describe("the ghost-check briefing block", () => {
       MAX_BRIEFING_GHOST_CHARS,
     );
     expect(briefing).not.toContain("more not shown");
+  });
+
+  test("a large change's qualifier still lets two ordinary rows through", () => {
+    // A large change is ranked after a focused one, never dropped — and the
+    // words that say so must not be what pushes the second row out.
+    const realistic = [
+      realisticGhostCheck("wc_cc_0f1e2d3c4b5a6978-8796a5b4c3d2e1f0"),
+      { ...realisticGhostCheck("wc_cc_1a2b3c4d5e6f7890-0987f6e5d4c3b2a1"), largeChangeFiles: 180 },
+    ];
+    const lines = ghostLinesOf(briefingWith(realistic));
+    expect(lines.length).toBe(2);
+    expect(lines[1]).toContain("part of a large change touching 180 files");
+    expect(lines.join("\n").length).toBeLessThanOrEqual(MAX_BRIEFING_GHOST_CHARS);
+  });
+
+  test("the generated qualifier still lets two ordinary rows through", () => {
+    const realistic = [
+      { ...realisticGhostCheck("wc_cc_0f1e2d3c4b5a6978-8796a5b4c3d2e1f0"), generatedSharedCount: 12 },
+      { ...realisticGhostCheck("wc_cc_1a2b3c4d5e6f7890-0987f6e5d4c3b2a1"), generatedSharedCount: 3 },
+    ];
+    const lines = ghostLinesOf(briefingWith(realistic));
+    expect(lines.length).toBe(2);
+    expect(lines[0]).toContain("also both touched 12 generated files");
+    expect(lines.join("\n").length).toBeLessThanOrEqual(MAX_BRIEFING_GHOST_CHARS);
   });
 
   test("no overlap renders no section at all", () => {

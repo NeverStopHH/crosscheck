@@ -304,7 +304,10 @@ export const run = async (
           : Date.parse(entry.solvedAt);
       return {
         entry,
-        ageMs: Math.max(0, nowMs - timestampOf(entry)),
+        // No age for an owner who opted out (batch-2 integration review,
+        // M5): the hub marked the row and withheld her last touch, and the
+        // creation left on it says when she was there.
+        ageMs: entry.locationWithheld === true ? null : Math.max(0, nowMs - timestampOf(entry)),
         // The solved marker's age (VISION.md §1) — undefined when the hub
         // sent none or an unparseable one; the renderer then says "solved"
         // without a wrong number.

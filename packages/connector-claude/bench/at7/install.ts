@@ -73,6 +73,10 @@ export const assertHomeUnderRun = (home: string, runTempDir: string): void => {
       `CROSSCHECK_HOME ${resolvedHome} is not under the run temp dir ${resolvedRun} — refusing`,
     );
   }
+  // `homedir()`, not config/paths.ts `crosscheckHome`, on purpose: this bench
+  // tool is not shipped, and the real ~/.crosscheck is the path it compares
+  // against to refuse — resolving through the test home guard would throw on
+  // the very comparison.
   const realHome = resolve(homedir(), ".crosscheck");
   if (resolvedHome === realHome) {
     throw new Error(

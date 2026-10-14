@@ -1,4 +1,6 @@
 import { sql } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
+import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import type { FoldedLossKinds } from "@crosscheck/schema";
 
 import {
@@ -8,6 +10,7 @@ import {
   check,
   customType,
   doublePrecision,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -43,6 +46,11 @@ import {
   MAX_QUESTION_BODY_LENGTH,
   MAX_VERIFICATION_REF_CHARS,
   DELIVERY_CHANNELS,
+  HINT_MATCHED_ON_VALUES,
+  HINT_OUTCOME_CHANNELS,
+  HINT_OUTCOMES,
+  INTENT_PROVENANCES,
+  MAX_HINT_OUTCOME_REASON_CHARS,
   MAX_PILOT_LABEL_REASON_CHARS,
   PILOT_LEGACY_COHORT,
   PILOT_SESSION_COHORTS,
@@ -59,10 +67,12 @@ import {
   SEQ_REASONS,
   SESSION_EVENT_KINDS,
   SESSION_STATUSES,
+  WORK_CONTEXT_TITLE_SOURCES,
   CAUSAL_GUARANTEES,
   GUARANTEE_KINDS,
   STORED_GUARANTEE_REASONS,
   STORED_TARGET_SOURCES,
+  GENERATED_SIGNALS,
   TARGET_KINDS,
   TEAM_PIN_POLICIES,
   MAX_WAIVER_REASON_CHARS,
@@ -73,11 +83,43 @@ import {
   SYSTEM_WAIVER_AUTHORITY,
   ENROLMENT_SOURCES,
   MAX_PASSKEY_LABEL_CHARS,
+  PASSKEY_REVOKE_REASONS,
   PASSKEY_REVOKERS,
+  DRAFT_DECISIONS,
+  DRAFT_KINDS,
+  DRAFT_PROVENANCES,
+  HUMAN_PROVENANCE,
+  LEGACY_PROVENANCE,
+  PROVENANCE_CLASSES,
+  STORED_JUDGEMENT_PROVENANCES,
 } from "@crosscheck/schema";
 
 const timestamptz = (name: string) =>
   timestamp(name, { withTimezone: true, mode: "date" });
+
+/** `'a', 'b'` — a closed vocabulary as the SQL list a CHECK spells. */
+const sqlList = (values: readonly string[]): SQL => sql.raw(values.map((value) => `'${value}'`).join(", "));
+
+/**
+ * A RECORD THAT COUNTS holds a passkey confirmation or a row from before 0.11,
+ * nothing else (human provenance §4): a draft class never reaches it, a human
+ * row always names the confirmation that wrote it, and a legacy row none.
+ */
+const storedProvenanceCheck = (provenance: AnyPgColumn, confirmationId: AnyPgColumn, position: AnyPgColumn): SQL =>
+  sql`(${provenance} = '${sql.raw(LEGACY_PROVENANCE)}' AND ${confirmationId} IS NULL AND ${position} IS NULL)
+   OR (${provenance} = '${sql.raw(HUMAN_PROVENANCE)}' AND ${confirmationId} IS NOT NULL AND ${position} IS NOT NULL)`;
+
+/**
+ * THE ITEM THAT SIGNED A ROW (review M5/P9): the confirmation and the item's
+ * position in it, so a client checks each row against what was signed and a
+ * row cannot be made human by naming a confirmation alone.
+ */
+const signedByItem = (name: string, confirmationId: AnyPgColumn, position: AnyPgColumn) =>
+  foreignKey({
+    name,
+    columns: [confirmationId, position],
+    foreignColumns: [humanConfirmationItems.confirmationId, humanConfirmationItems.position],
+  });
 
 /**
  * Vectors from different models are not comparable, so every embedding carries
@@ -103,6 +145,15 @@ export const developers = pgTable("developers", {
    * already read on every authenticated request.
    */
   presenceOptOut: boolean("presence_opt_out").notNull().default(false),
+  /**
+   * When the search index was last rebuilt for the opt-out this developer
+   * has now (review round 5, M1): set when her location-titled docs were
+   * rebuilt without their location titles, cleared when she opts back in.
+   * Null while opted out means nothing rebuilt them yet — an opt-out from
+   * before the index followed the setting — and the boot pass does
+   * (services/developer-settings.ts rebuildOptedOutLocationIndexes).
+   */
+  locationIndexBuiltAt: timestamptz("location_index_built_at"),
   createdAt: timestamptz("created_at").notNull().defaultNow(),
 }, (table) => [
   // The unknown-developer refusal reads a bounded, name-ordered page of this
@@ -161,9 +212,22 @@ export const developerMutes = pgTable(
       .notNull()
       .references(() => developers.id),
     createdAt: timestamptz("created_at").notNull(),
+    /**
+     * A mute is the person's setting (human provenance §8): written only by a
+     * passkey confirmation of a draft. `unknown_legacy` labels the mutes from
+     * before 0.11, which keep working. No drizzle default: see `pilotMarks`.
+     */
+    provenance: text("provenance", { enum: STORED_JUDGEMENT_PROVENANCES }).notNull(),
+    confirmationId: text("confirmation_id"),
+    confirmationPosition: integer("confirmation_position"),
   },
   (table) => [
     primaryKey({ columns: [table.readerDeveloperId, table.mutedDeveloperId] }),
+    check(
+      "developer_mutes_provenance_check",
+      storedProvenanceCheck(table.provenance, table.confirmationId, table.confirmationPosition),
+    ),
+    signedByItem("developer_mutes_confirmation_fk", table.confirmationId, table.confirmationPosition),
   ],
 );
 
@@ -178,6 +242,24 @@ export const agentSessions = pgTable(
     repo: text("repo").notNull(),
     branch: text("branch").notNull(),
     baseCommit: text("base_commit").notNull(),
+    /**
+     * Whether `base_commit` was ALREADY reachable from the default branch
+     * when the session registered — the connector's own ancestry probe
+     * (connector-core capture/landed.ts baseReachableFromDefault). NULL means
+     * the connector did not say: one from before the field, or a git that
+     * could not answer. A base that was on the default branch at register is
+     * never evidence that this session's work landed (services/landed.ts).
+     */
+    baseOnDefault: boolean("base_on_default"),
+    /**
+     * When the session took `base_commit` (the hub's clock): set at register
+     * and moved by a re-register only when the base differs. A base's age is
+     * judged against THIS — how old the commit was when the session checked
+     * it out — never against when a work context opened, which a pull onto
+     * an older commit days later would make look young (services/landed.ts).
+     * NULL on a row from before the column; readers fall back to started_at.
+     */
+    baseChangedAt: timestamptz("base_changed_at"),
     status: text("status", { enum: SESSION_STATUSES }).notNull(),
     startedAt: timestamptz("started_at").notNull(),
     lastHeartbeatAt: timestamptz("last_heartbeat_at").notNull(),
@@ -237,6 +319,32 @@ export const agentSessions = pgTable(
   ],
 );
 
+/**
+ * EVERY BRANCH A DEVELOPER'S SESSIONS EVER REPORTED (review round 5, H3).
+ *
+ * The live-location projection withholds an unmarked title that equals ANY
+ * branch of an opted-out owner's (review round 4, L2), and it learned those
+ * branches by scanning the events table — unindexed and unpruned — on every
+ * read, every record of her ingest and every context of a toggle. Written
+ * here as sessions register (and re-register on another branch)
+ * (services/developer-branches.ts), backfilled at every boot from the
+ * sessions and events a hub already holds (db/bootstrap.sql, idempotent),
+ * read by developer. The memory outlives
+ * the events table's retention, which is the point. Mirrored in
+ * db/bootstrap.sql.
+ */
+export const developerBranches = pgTable(
+  "developer_branches",
+  {
+    developerId: text("developer_id")
+      .notNull()
+      .references(() => developers.id),
+    branch: text("branch").notNull(),
+    firstSeen: timestamptz("first_seen").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.developerId, table.branch] })],
+);
+
 export const workContexts = pgTable("work_contexts", {
   id: text("id").primaryKey(),
   sessionId: text("session_id")
@@ -247,18 +355,38 @@ export const workContexts = pgTable("work_contexts", {
   intent: jsonb("intent").$type<Record<string, unknown>>(),
   status: text("status", { enum: SESSION_STATUSES }).notNull(),
   normalizedDoc: text("normalized_doc"),
+  /**
+   * The rule `normalized_doc` was built by (services/normalized-doc.ts
+   * NORMALIZED_DOC_VERSION), stamped with every doc written. 0 on a doc an
+   * older hub built — which the start-up pass (services/doc-upgrade.ts)
+   * rebuilds when it holds a draft — so this column is that pass's progress.
+   */
+  docVersion: integer("doc_version").notNull().default(0),
   tsv: tsvector("tsv").generatedAlwaysAs(
     sql`to_tsvector('english', coalesce(normalized_doc, ''))`,
   ),
+  /**
+   * The document's words AND its dotted names' parts, for the hint floor's
+   * known words (round 5, L2). Filled by the database on every write of
+   * normalized_doc (bootstrap.sql trigger work_contexts_words_tsv_fill), and
+   * null only on a row an upgrade found until the background backfill
+   * reaches it (services/words-index.ts; batch-2 integration review, M10).
+   * Never written by a service.
+   */
+  wordsTsv: tsvector("words_tsv"),
   /** Null until an embedder is configured and has embedded the current doc. */
   embedding: vector("embedding", { dimensions: EMBEDDING_DIMENSIONS }),
   embeddingModel: text("embedding_model"),
   /**
-   * When the hub first learned the owning session's base commit is an
-   * ancestor of the default branch (DESIGN.md §5 merged-branch detection) —
-   * null while unobserved. A COLUMN, not a status transition, and monotonic:
-   * git ancestry never un-happens, and the status enum keeps recording what
-   * the session was doing (services/landed.ts states the full reasoning).
+   * When the hub first learned the owning session's base commit REACHED the
+   * default branch after that session registered (DESIGN.md §5 merged-branch
+   * detection) — null while unobserved, and never set for a base that was
+   * already there (a detached checkout, a branch cut from main, a stale
+   * worktree). A COLUMN, not a status transition, and monotonic: git
+   * ancestry never un-happens, and the status enum keeps recording what the
+   * session was doing (services/landed.ts states the full reasoning). The
+   * one writer that clears it is the operator's repair
+   * (scripts/unland-false-landed.ts).
    */
   landedAt: timestamptz("landed_at"),
   createdAt: timestamptz("created_at").notNull(),
@@ -271,6 +399,31 @@ export const workContexts = pgTable("work_contexts", {
    * reads it beside `session_id` (services/coverage.ts touchedScope).
    */
   updatedBySessionId: text("updated_by_session_id").references(() => agentSessions.id),
+  /**
+   * How the title was written, by the connector's own word (@crosscheck/schema
+   * WORK_CONTEXT_TITLE_SOURCES): `fallback` is the session's branch, which the
+   * hub withholds from colleagues of a developer who opted out of presence.
+   * Null for a row an older connector wrote — judged by the title's shape
+   * (services/live-location.ts).
+   */
+  titleSource: text("title_source", { enum: WORK_CONTEXT_TITLE_SOURCES }),
+  /**
+   * THE TOPIC this context is (DESIGN.md "One session, many topics"): the
+   * branch its files were edited on and the commit HEAD named at the
+   * session's first touch of it. Null for a context from a connector before
+   * topics — one context per session — and every reader then falls back to
+   * the owning session's own branch and base commit, as it always did.
+   */
+  branch: text("branch"),
+  baseCommit: text("base_commit"),
+  /**
+   * The TOPIC's own word about `base_commit` (topic review C1): already on the
+   * default branch when the topic opened — true for a branch freshly cut from
+   * main — or not. Written once, with the base it is about, and read by the
+   * landed rule for this context alone (services/landed.ts). Null: not said,
+   * and always on a session's own context, whose word is its session's.
+   */
+  baseOnDefault: boolean("base_on_default"),
 }, (table) => [
   // `session_id` is a foreign key, which Postgres does NOT index on its own.
   // services/presence.ts reads the newest context of every live session to
@@ -292,6 +445,10 @@ export const workContexts = pgTable("work_contexts", {
   index("work_contexts_activity_idx").on(
     sql`coalesce(${table.updatedAt}, ${table.createdAt}) DESC`,
   ),
+  // The hint floor's known-word prefilter, and the rows the words backfill
+  // has yet to fill (M10). Mirrored in db/bootstrap.sql.
+  index("work_contexts_words_tsv_idx").using("gin", table.wordsTsv),
+  index("work_contexts_words_tsv_pending_idx").on(table.id).where(sql`${table.wordsTsv} IS NULL`),
 ]);
 
 export const workContextTargets = pgTable(
@@ -324,6 +481,30 @@ export const workContextTargets = pgTable(
      * age.
      */
     createdAt: timestamptz("created_at"),
+    /**
+     * When this target was last touched AGAIN — set by every duplicate touch,
+     * null until the first one (pilot finding, 2026-10-05). First-seen stays
+     * the honest AGE; this is the honest RECENCY: a long-lived session that
+     * re-edits the same files for weeks touched them today, not the day it
+     * first did. Windows that ask "what was touched lately" read
+     * greatest(created_at, last_seen_at) — for an owner whose location the
+     * reader may see only, since both are her instants. The topic branch's
+     * session windows read the same column as coalesce(last_seen_at,
+     * created_at), which is the same instant.
+     */
+    lastSeenAt: timestamptz("last_seen_at"),
+    /**
+     * WHICH generated-target signal fired on this file (release gate N2,
+     * @crosscheck/schema generated-target.ts) — it is mechanically generated
+     * and non-authoritative — or null for an ordinary or authoritative one.
+     * Sent by the connector; applied by ingest itself (the path signal) to a
+     * target that carries none. The row is KEPT — `suspect` and coverage read
+     * it — and every overlap read asks for null (services/generated-targets.ts
+     * ordinaryTargetCondition). Nullable with no default: a row that predates
+     * the column is ordinary, the direction that can only warn. Mirrored in
+     * db/bootstrap.sql.
+     */
+    generated: text("generated", { enum: GENERATED_SIGNALS }),
   },
   (table) => [
     primaryKey({ columns: [table.workContextId, table.kind, table.value] }),
@@ -389,6 +570,13 @@ export const claims = pgTable(
       .notNull()
       .default(sql`'[]'::jsonb`),
     tsv: tsvector("tsv").generatedAlwaysAs(sql`to_tsvector('english', body)`),
+    /**
+     * The body's words AND its dotted names' parts, for the hint floor (round
+     * 5, L2). Filled by the database on every write of body (bootstrap.sql
+     * trigger claims_words_tsv_fill); null only on a row an upgrade found
+     * until the background backfill reaches it (services/words-index.ts, M10).
+     */
+    wordsTsv: tsvector("words_tsv"),
     /** Null until an embedder is configured; written once at ingest (append-only). */
     embedding: vector("embedding", { dimensions: EMBEDDING_DIMENSIONS }),
     embeddingModel: text("embedding_model"),
@@ -452,6 +640,10 @@ export const claims = pgTable(
       "hnsw",
       table.embedding.op("vector_cosine_ops"),
     ),
+    // The hint floor's claim words, and the rows the words backfill has yet
+    // to fill (M10). Mirrored in db/bootstrap.sql.
+    index("claims_words_tsv_idx").using("gin", table.wordsTsv),
+    index("claims_words_tsv_pending_idx").on(table.id).where(sql`${table.wordsTsv} IS NULL`),
   ],
 );
 
@@ -471,6 +663,11 @@ export const claimEdges = pgTable(
       .references(() => agentSessions.id),
     note: text("note"),
     createdAt: timestamptz("created_at").notNull(),
+    // Who made the edge when it was not a person: 'similarity_gate' on every
+    // edge the ingest gate writes (similarity-gate.ts), null on an edge that
+    // came over the wire. Structural, so no note a person types can pass for
+    // the gate's (services/draft-link-cleanup.ts; review round 4, H3).
+    origin: text("origin"),
   },
   (table) => [
     uniqueIndex("claim_edges_from_to_kind_idx").on(
@@ -486,6 +683,30 @@ export const claimEdges = pgTable(
   ],
 );
 
+/**
+ * Every claim edge a start-up pass removed, as it was, with the pass that
+ * removed it (services/draft-link-cleanup.ts; review round 4, H3) — so a
+ * removal is never a loss: docs/OPERATIONS.md restores a pass with one
+ * INSERT … SELECT. No foreign keys: an archive must keep its rows whatever
+ * happens to the claims and sessions they name.
+ */
+export const claimEdgesRemoved = pgTable(
+  "claim_edges_removed",
+  {
+    id: text("id").notNull(),
+    fromClaimId: text("from_claim_id").notNull(),
+    toClaimId: text("to_claim_id").notNull(),
+    kind: text("kind").notNull(),
+    authorSessionId: text("author_session_id").notNull(),
+    note: text("note"),
+    origin: text("origin"),
+    createdAt: timestamptz("created_at").notNull(),
+    removedAt: timestamptz("removed_at").notNull(),
+    removedByPass: text("removed_by_pass").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.id, table.removedByPass] })],
+);
+
 export const artifacts = pgTable("artifacts", {
   id: text("id").primaryKey(),
   claimId: text("claim_id")
@@ -499,12 +720,24 @@ export const artifacts = pgTable("artifacts", {
 });
 
 /** Outbox table — the bigserial id is the SSE replay cursor (DESIGN.md §2). */
-export const events = pgTable("events", {
-  id: bigserial("id", { mode: "number" }).primaryKey(),
-  kind: text("kind").notNull(),
-  payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
-  createdAt: timestamptz("created_at").notNull().defaultNow(),
-});
+export const events = pgTable(
+  "events",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    kind: text("kind").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+  },
+  // The start-up draft-link cleanup's wire-record lookup (H6), and the
+  // session_started events every boot's branch backfill reads (L13)
+  // (bootstrap.sql; batch-2 integration review).
+  (table) => [
+    index("events_claim_edge_added_edge_idx")
+      .on(sql`(${table.payload}->>'edgeId')`)
+      .where(sql`${table.kind} = 'claim_edge_added'`),
+    index("events_session_started_idx").on(table.id).where(sql`${table.kind} = 'session_started'`),
+  ],
+);
 
 /**
  * Similarity-detected contradiction candidates only (ingest gate, DESIGN.md
@@ -584,8 +817,22 @@ export const hintDeliveries = pgTable("hint_deliveries", {
   channel: text("channel", { enum: DELIVERY_CHANNELS })
     .notNull()
     .default("unknown"),
+  /**
+   * What the hint was matched on, and who wrote the receiving session's
+   * intent (review 1006b, M7) — NULL when the connector did not say, never a
+   * guess. Mirrored in db/bootstrap.sql.
+   */
+  matchedOn: text("matched_on", { enum: HINT_MATCHED_ON_VALUES }),
+  intentProvenance: text("intent_provenance", { enum: INTENT_PROVENANCES }),
   deliveredAt: timestamptz("delivered_at").notNull(),
   pulledAt: timestamptz("pulled_at"),
+  /**
+   * WHEN THE HUB RECEIVED IT (07 §13.11, review P5), by the hub's own clock.
+   * `delivered_at` is the connector's word and may arrive weeks late; a closed
+   * month that read it would move whenever a backlog drained. Null on rows
+   * from before the column, which are read by `delivered_at`.
+   */
+  ingestedAt: timestamptz("ingested_at"),
 }, (table) => [
   // "Delivered exactly once" for a question ANSWER is a cross-SESSION promise
   // (services/questions.ts): the asker's seen-set dies with their session, so
@@ -897,8 +1144,34 @@ export const pins = pgTable(
     repairsPinId: text("repairs_pin_id"),
     repairsPinVersion: integer("repairs_pin_version"),
     createdAt: timestamptz("created_at").notNull(),
+    /**
+     * WHO MADE THIS A PIN (human provenance §7). A key only DRAFTS a pin
+     * (`human_drafts`), and a draft has no protection effect because it is
+     * not a row here: suspect, the fence, waiver requests and the registry all
+     * read this table. A row is written by a passkey confirmation, or is a pin
+     * from before 0.11 (`unknown_legacy`, which keeps its effect and is never
+     * scored as a human's). No drizzle default: see `pilotMarks`.
+     */
+    provenance: text("provenance", { enum: STORED_JUDGEMENT_PROVENANCES }).notNull(),
+    confirmationId: text("confirmation_id"),
+    confirmationPosition: integer("confirmation_position"),
+    /** The same for the retraction: null while unbroken; legacy for a break from before 0.11. */
+    brokeProvenance: text("broke_provenance", { enum: STORED_JUDGEMENT_PROVENANCES }),
+    brokeConfirmationId: text("broke_confirmation_id"),
+    brokeConfirmationPosition: integer("broke_confirmation_position"),
   },
   (table) => [
+    check("pins_provenance_check", storedProvenanceCheck(table.provenance, table.confirmationId, table.confirmationPosition)),
+    signedByItem("pins_confirmation_fk", table.confirmationId, table.confirmationPosition),
+    check(
+      "pins_broke_provenance_check",
+      // COALESCE: a CHECK that evaluates to NULL passes, so a break with no
+      // provenance compares as '' and fails every clause.
+      sql`(${table.brokeAt} IS NULL AND ${table.brokeProvenance} IS NULL AND ${table.brokeConfirmationId} IS NULL AND ${table.brokeConfirmationPosition} IS NULL)
+   OR (${table.brokeAt} IS NOT NULL AND COALESCE(${table.brokeProvenance}, '') = '${sql.raw(LEGACY_PROVENANCE)}' AND ${table.brokeConfirmationId} IS NULL AND ${table.brokeConfirmationPosition} IS NULL)
+   OR (${table.brokeAt} IS NOT NULL AND COALESCE(${table.brokeProvenance}, '') = '${sql.raw(HUMAN_PROVENANCE)}' AND ${table.brokeConfirmationId} IS NOT NULL AND ${table.brokeConfirmationPosition} IS NOT NULL)`,
+    ),
+    signedByItem("pins_broke_confirmation_fk", table.brokeConfirmationId, table.brokeConfirmationPosition),
     check(
       "pins_surface_length_check",
       sql`char_length(${table.surface}) <= ${sql.raw(String(MAX_PIN_SURFACE_CHARS))}`,
@@ -1141,9 +1414,53 @@ export const teamSettings = pgTable("team_settings", {
    * started at or after it. Null while the repo has never been enrolled.
    */
   pilotLabelsSince: timestamptz("pilot_labels_since"),
+  /**
+   * WHEN OUTCOMES FIRST BECAME RECORDABLE ON THIS REPO (07 §13.9, §13.11):
+   * stamped at the first enrolment — and backfilled for a repo already
+   * enrolled on the first start of a hub that records outcomes — and never
+   * restamped (review M3): a re-enrolment is a new interval in
+   * `pilot_enrolments`, not a new beginning that erases the old one.
+   */
+  pilotOutcomesSince: timestamptz("pilot_outcomes_since"),
   updatedAt: timestamptz("updated_at").notNull(),
   updatedBy: text("updated_by").references(() => developers.id),
 });
+
+/**
+ * WHEN EACH REPO WAS IN THE PILOT (07 §13.11, review M3): one row per
+ * enrolled interval, opened when enrolment turns on and closed when it turns
+ * off — additive, never rewritten. An outcome is recordable, and counted, iff
+ * its delivery falls inside one of them, so a pause and a re-enrolment keep
+ * the history before them instead of restamping it away.
+ */
+export const pilotEnrolments = pgTable(
+  "pilot_enrolments",
+  {
+    /**
+     * A row's own id (review LOW): off and on again in one millisecond is a
+     * closed zero-length interval AND a new open one at the same instant —
+     * keyed by (repo, started_at), the second was silently dropped and the
+     * repo read as paused.
+     */
+    id: text("id").primaryKey(),
+    repo: text("repo").notNull(),
+    startedAt: timestamptz("started_at").notNull(),
+    /** Null while the interval is open — the repo is enrolled now. */
+    endedAt: timestamptz("ended_at"),
+    /**
+     * Bounds an upgrade inferred from what was recorded (review M-3), not a
+     * toggle's instant — every line that counts over it says so.
+     */
+    reconstructed: boolean("reconstructed").notNull().default(false),
+  },
+  (table) => [
+    index("pilot_enrolments_repo_started_idx").on(table.repo, table.startedAt),
+    // AT MOST ONE OPEN INTERVAL PER REPO, a database fact: a second "on" fails loudly.
+    uniqueIndex("pilot_enrolments_one_open_idx").on(table.repo).where(sql`${table.endedAt} IS NULL`),
+    // An interval never ends before it starts (round-5 LOW-1).
+    check("pilot_enrolments_ends_after_start", sql`${table.endedAt} IS NULL OR ${table.endedAt} >= ${table.startedAt}`),
+  ],
+);
 
 /**
  * WHO LIFTED A FENCE, WHEN, WHY, AND UNTIL WHEN (1.0 spec 04 §3.6).
@@ -1209,19 +1526,140 @@ export const pilotMarks = pgTable(
     createdAt: timestamptz("created_at").notNull(),
     /** Null is the ordinary case: a label needs no sentence. */
     reason: text("reason"),
+    /**
+     * WHO GAVE THIS LABEL (human provenance §4): a passkey confirmation, or a
+     * row from before 0.11. A key only drafts a label (`human_drafts`), so no
+     * agent's and no terminal's word is ever a row here. NO DRIZZLE DEFAULT, on
+     * purpose: every insert must say which (04a's `authority` precedent); the
+     * database DEFAULT 'unknown_legacy' only labels the rows already there.
+     */
+    provenance: text("provenance", { enum: STORED_JUDGEMENT_PROVENANCES }).notNull(),
+    confirmationId: text("confirmation_id"),
+    confirmationPosition: integer("confirmation_position"),
   },
   (table) => [
     check(
       "pilot_marks_reason_length_check",
       sql`${table.reason} IS NULL OR char_length(${table.reason}) <= ${sql.raw(String(MAX_PILOT_LABEL_REASON_CHARS))}`,
     ),
-    uniqueIndex("pilot_marks_ref_marker_idx").on(
+    check("pilot_marks_provenance_check", storedProvenanceCheck(table.provenance, table.confirmationId, table.confirmationPosition)),
+    signedByItem("pilot_marks_confirmation_fk", table.confirmationId, table.confirmationPosition),
+    // One label per person per delivery PER CONFIRMATION (round-2 R2-M1): a
+    // retracted or voided label must not hold the person's one place, so "one
+    // label in effect" is the writer's rule (services/pilot.ts), and a
+    // confirmed label never collides with the legacy one a 0.10 hub holds.
+    uniqueIndex("pilot_marks_ref_marker_confirmation_idx").on(
       table.refKind,
       table.refId,
       table.markedBy,
+      table.provenance,
+      table.confirmationId,
     ),
     // The report asks "this repo's marks in this window", newest first.
     index("pilot_marks_repo_created_idx").on(table.repo, table.createdAt.desc()),
+  ],
+);
+
+/**
+ * WHAT A DELIVERED HINT LED TO (07 §13) — followed, overrode, not relevant
+ * now — said by the recipient's agent or by the recipient.
+ *
+ * APPEND-ONLY. A later word supersedes an earlier one by being newer, and
+ * nothing is updated or deleted: the newest row per (delivery, recorder) is
+ * the current outcome, and the history of a changed mind stays readable.
+ *
+ * NOT `pilot_marks`, by construction. A label is a person's verdict counted
+ * into precision, and no agent path may write one (PIL-6); this is the record
+ * an agent may write, so it lives where the precision figures never read.
+ * Noise is not a value here — it is the label, read from `pilot_marks`.
+ */
+export const hintOutcomes = pgTable(
+  "hint_outcomes",
+  {
+    id: text("id").primaryKey(),
+    repo: text("repo").notNull(),
+    deliveryId: text("delivery_id")
+      .notNull()
+      .references(() => hintDeliveries.id),
+    outcome: text("outcome", { enum: HINT_OUTCOMES }).notNull(),
+    /** Required on an override by the wire schema; otherwise null is the ordinary case. */
+    reason: text("reason"),
+    recordedBy: text("recorded_by")
+      .notNull()
+      .references(() => developers.id),
+    createdAt: timestamptz("created_at").notNull(),
+    /**
+     * WHICH CHANNEL SAID IT (07 §13.12), stamped by the hub from the route —
+     * never taken from a body: `person` from `crosscheck followed / overrode`,
+     * `agent` from `mark_hint_outcome`. A person's word is never overturned by
+     * an agent's. Null on rows from before the column, read as an agent's.
+     */
+    recordedVia: text("recorded_via", { enum: HINT_OUTCOME_CHANNELS }),
+    /**
+     * WHO SAID IT, PROVEN OR NOT (human provenance §4). From 0.11 a row here is
+     * written only by a passkey confirmation; the agent's and the terminal's
+     * words are drafts. Rows from before read `unknown_legacy`. No drizzle
+     * default: see `pilotMarks`.
+     */
+    provenance: text("provenance", { enum: STORED_JUDGEMENT_PROVENANCES }).notNull(),
+    confirmationId: text("confirmation_id"),
+    confirmationPosition: integer("confirmation_position"),
+  },
+  (table) => [
+    check("hint_outcomes_recorded_via_check", sql`${table.recordedVia} IS NULL OR ${table.recordedVia} IN ('agent', 'person')`),
+    check("hint_outcomes_provenance_check", storedProvenanceCheck(table.provenance, table.confirmationId, table.confirmationPosition)),
+    signedByItem("hint_outcomes_confirmation_fk", table.confirmationId, table.confirmationPosition),
+    check(
+      "hint_outcomes_reason_length_check",
+      sql`${table.reason} IS NULL OR char_length(${table.reason}) <= ${sql.raw(String(MAX_HINT_OUTCOME_REASON_CHARS))}`,
+    ),
+    // "The current outcome of this delivery" is the newest row for it.
+    index("hint_outcomes_delivery_created_idx").on(table.deliveryId, table.createdAt.desc()),
+    // 07 §13.9 (D-O6): the reaper's age prune, across every repo.
+    index("hint_outcomes_created_idx").on(table.createdAt),
+  ],
+);
+
+/**
+ * THE PERSON SAYING NOISE AGAIN (07 §13.11, review H-B). `pilot_marks` keeps
+ * one label per person and delivery, and the first one is what precision
+ * counts; a later "noise" over a word recorded since is a NEW ROW here, never
+ * a restamped label — an instant that moves would move every closed month
+ * that read it. Precision never reads this table; the outcome figures read
+ * the newest of the label and these rows, before each month's end.
+ */
+export const noiseReassertions = pgTable(
+  "noise_reassertions",
+  {
+    id: text("id").primaryKey(),
+    repo: text("repo").notNull(),
+    deliveryId: text("delivery_id")
+      .notNull()
+      .references(() => hintDeliveries.id),
+    markedBy: text("marked_by")
+      .notNull()
+      .references(() => developers.id),
+    /** The sentence said with it, kept; null is the ordinary case. */
+    reason: text("reason"),
+    createdAt: timestamptz("created_at").notNull(),
+    /** As on `pilot_marks`: confirmed, or from before 0.11. */
+    provenance: text("provenance", { enum: STORED_JUDGEMENT_PROVENANCES }).notNull(),
+    confirmationId: text("confirmation_id"),
+    confirmationPosition: integer("confirmation_position"),
+  },
+  (table) => [
+    check(
+      "noise_reassertions_provenance_check",
+      storedProvenanceCheck(table.provenance, table.confirmationId, table.confirmationPosition),
+    ),
+    signedByItem("noise_reassertions_confirmation_fk", table.confirmationId, table.confirmationPosition),
+    check(
+      "noise_reassertions_reason_length_check",
+      sql`${table.reason} IS NULL OR char_length(${table.reason}) <= ${sql.raw(String(MAX_PILOT_LABEL_REASON_CHARS))}`,
+    ),
+    index("noise_reassertions_delivery_created_idx").on(table.deliveryId, table.createdAt.desc()),
+    // Aged out with the outcomes it stands beside (D-O6), an index range.
+    index("noise_reassertions_created_idx").on(table.createdAt),
   ],
 );
 
@@ -1513,6 +1951,8 @@ export const passkeys = pgTable(
     revokedByKind: text("revoked_by_kind", { enum: PASSKEY_REVOKERS }),
     /** The developer who revoked it; null when the admin token did. */
     revokedBy: text("revoked_by"),
+    /** Why it was closed (round-2 R2-H3); null on a passkey closed before reasons, read as retired. */
+    revokeReason: text("revoke_reason", { enum: PASSKEY_REVOKE_REASONS }),
   },
   (table) => [
     uniqueIndex("passkeys_credential_id_idx").on(table.credentialId),
@@ -1527,6 +1967,10 @@ export const passkeys = pgTable(
       sql`(${table.revokedAt} IS NULL AND ${table.revokedByKind} IS NULL) OR (${table.revokedAt} IS NOT NULL AND ${table.revokedByKind} IS NOT NULL)`,
     ),
     check("passkeys_cooloff_check", sql`${table.usableFrom} >= ${table.createdAt}`),
+    check(
+      "passkeys_revoke_reason_check",
+      sql`${table.revokeReason} IS NULL OR (${table.revokedAt} IS NOT NULL AND ${table.revokeReason} IN (${sql.raw(PASSKEY_REVOKE_REASONS.map((value) => `'${value}'`).join(", "))}))`,
+    ),
     check(
       "passkeys_enrolled_via_check",
       sql`${table.enrolledVia} IN (${sql.raw(ENROLMENT_SOURCES.map((value) => `'${value}'`).join(", "))})`,
@@ -1936,6 +2380,32 @@ export const ciRuns = pgTable(
 );
 
 /**
+ * Where a hub listens when CROSSCHECK_LISTEN is unset (http/listen.ts):
+ * `loopback` for a database this release created, `all_interfaces` for one
+ * that predates the setting. bootstrap.sql decides which, once.
+ */
+export const HUB_LISTEN_DEFAULTS = ["loopback", "all_interfaces"] as const;
+
+export type HubListenDefault = (typeof HUB_LISTEN_DEFAULTS)[number];
+
+/** One row, written by the bootstrap and never by the app (bootstrap.sql says why). */
+export const hubInstall = pgTable(
+  "hub_install",
+  {
+    singleton: boolean("singleton").primaryKey().default(true),
+    listenDefault: text("listen_default", { enum: HUB_LISTEN_DEFAULTS }).notNull(),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check("hub_install_singleton_check", sql`${table.singleton}`),
+    check(
+      "hub_install_listen_default_check",
+      sql`${table.listenDefault} IN ('loopback', 'all_interfaces')`,
+    ),
+  ],
+);
+
+/**
  * NON-GREEN ROWS ONLY (spec 05 §3.3), and that is a contract rather than an
  * optimisation: a run row ASSERTS that these are all the non-green tests it
  * ran, which is what lets a later reader conclude anything about a test that
@@ -1958,5 +2428,135 @@ export const ciTestResults = pgTable(
   (table) => [
     primaryKey({ columns: [table.ciRunId, table.testId] }),
     index("ci_test_results_repo_test_idx").on(table.repo, table.testId),
+  ],
+);
+
+/**
+ * WHAT A KEY WROTE THAT ONLY A PERSON MAY DECIDE (human provenance §4): a
+ * label, `pin --ok`, an outcome, a pin, its retraction, a mute, an unmute, or
+ * switching presence back on. A draft has NO effect and NO human standing; a
+ * passkey confirmation of a frozen batch applies it through the ordinary
+ * writer, as a new row in the record that counts.
+ *
+ * APPEND-ONLY. A newer draft on the same SUBJECT (what one decision is about,
+ * e.g. `outcome:<session>:<ref>`) is its next VERSION; the older one stays,
+ * superseded. Nothing here is ever updated, and a confirmation never rewrites
+ * the row it confirms.
+ */
+export const humanDrafts = pgTable(
+  "human_drafts",
+  {
+    id: text("id").primaryKey(),
+    developerId: text("developer_id")
+      .notNull()
+      .references(() => developers.id),
+    /** Null for a setting, which belongs to no repo. */
+    repo: text("repo"),
+    kind: text("kind", { enum: DRAFT_KINDS }).notNull(),
+    subjectKey: text("subject_key").notNull(),
+    version: integer("version").notNull(),
+    /** The validated body, in the shape the kind's writer takes. */
+    payload: jsonb("payload").$type<Readonly<Record<string, unknown>>>().notNull(),
+    provenance: text("provenance", { enum: DRAFT_PROVENANCES }).notNull(),
+    createdAt: timestamptz("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("human_drafts_subject_version_idx").on(table.developerId, table.subjectKey, table.version),
+    index("human_drafts_developer_created_idx").on(table.developerId, table.createdAt),
+    check("human_drafts_kind_check", sql`${table.kind} IN (${sqlList(DRAFT_KINDS)})`),
+    check("human_drafts_provenance_check", sql`${table.provenance} IN (${sqlList(DRAFT_PROVENANCES)})`),
+    check("human_drafts_version_check", sql`${table.version} >= 1`),
+  ],
+);
+
+/**
+ * ONE PASSKEY CONFIRMATION OF ONE FROZEN BATCH (human provenance §6) — the
+ * only writer of `human_passkey_confirmed`. Written in the transaction that
+ * applies the batch, after the signature over `digest` verified; the batch id
+ * is the primary key, so a batch is confirmed at most once.
+ */
+export const humanConfirmations = pgTable(
+  "human_confirmations",
+  {
+    /** The batch id the ceremony was bound to. */
+    id: text("id").primaryKey(),
+    developerId: text("developer_id")
+      .notNull()
+      .references(() => developers.id),
+    /** Which device said yes — answerable after it is revoked (04a). */
+    credentialId: text("credential_id")
+      .notNull()
+      .references(() => passkeys.credentialId),
+    rpId: text("rp_id").notNull(),
+    /** SHA-256 over every item's (draft id, version, draft digest, decision, final content). */
+    digest: text("digest").notNull(),
+    /** The pending set the person reviewed: any change before the tap refused the batch. */
+    pendingFingerprint: text("pending_fingerprint").notNull(),
+    itemCount: integer("item_count").notNull(),
+    formedAt: timestamptz("formed_at").notNull(),
+    confirmedAt: timestamptz("confirmed_at").notNull(),
+    /**
+     * THE ASSERTION ITSELF, base64url as the browser sent it, so a client can
+     * verify a confirmation without trusting the hub: the signature over
+     * `authenticatorData ‖ SHA-256(clientDataJSON)` under the credential's
+     * public key, and the challenge inside `clientDataJSON` ending in
+     * SHA-256(purpose, batch id, { batchDigest }) — routes/confirm-status.ts
+     * serves it with everything needed to recompute that digest.
+     */
+    authenticatorData: text("authenticator_data").notNull(),
+    clientDataJson: text("client_data_json").notNull(),
+    signature: text("signature").notNull(),
+    userHandle: text("user_handle"),
+  },
+  (table) => [index("human_confirmations_developer_idx").on(table.developerId, table.confirmedAt)],
+);
+
+/** Every item of a confirmed batch, exactly as signed: its decision and its final content. */
+export const humanConfirmationItems = pgTable(
+  "human_confirmation_items",
+  {
+    confirmationId: text("confirmation_id")
+      .notNull()
+      .references(() => humanConfirmations.id),
+    position: integer("position").notNull(),
+    draftId: text("draft_id")
+      .notNull()
+      .references(() => humanDrafts.id),
+    draftVersion: integer("draft_version").notNull(),
+    draftDigest: text("draft_digest").notNull(),
+    decision: text("decision", { enum: DRAFT_DECISIONS }).notNull(),
+    /** What the person confirmed, edited or not; the draft's own payload is never changed. */
+    content: jsonb("content").$type<Readonly<Record<string, unknown>>>().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.confirmationId, table.position] }),
+    uniqueIndex("human_confirmation_items_draft_idx").on(table.confirmationId, table.draftId),
+    // "Is this draft resolved?" is the one read: by draft.
+    index("human_confirmation_items_by_draft_idx").on(table.draftId),
+    check("human_confirmation_items_decision_check", sql`${table.decision} IN (${sqlList(DRAFT_DECISIONS)})`),
+  ],
+);
+
+/**
+ * THE MORE-PRIVATE CHANGES A KEY MAKES AT ONCE (human provenance §8): a
+ * works-council opt-out never waits for a passkey, so presence off takes
+ * effect immediately — and is recorded here with its class, and shown to the
+ * person, who did not necessarily make it. Presence back on is a draft.
+ */
+export const privacyChanges = pgTable(
+  "privacy_changes",
+  {
+    id: text("id").primaryKey(),
+    developerId: text("developer_id")
+      .notNull()
+      .references(() => developers.id),
+    kind: text("kind", { enum: ["presence_off", "presence_on"] }).notNull(),
+    provenance: text("provenance", { enum: PROVENANCE_CLASSES }).notNull(),
+    createdAt: timestamptz("created_at").notNull(),
+  },
+  (table) => [
+    index("privacy_changes_developer_created_idx").on(table.developerId, table.createdAt),
+    check("privacy_changes_kind_check", sql`${table.kind} IN ('presence_off', 'presence_on')`),
+    check("privacy_changes_provenance_check", sql`${table.provenance} IN (${sqlList(PROVENANCE_CLASSES)})`),
   ],
 );

@@ -5,6 +5,7 @@
  * that register sent no `losses`, so the recovered row read "never reported"
  * until its first heartbeat. LOSS-8's rule is every call, zeros included.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -30,7 +31,7 @@ afterEach(async () => {
 /** A hub that answers every call and keeps the bodies of POST /api/sessions. */
 const startRegisterCapture = (): { readonly url: string; readonly bodies: Record<string, unknown>[] } => {
   const bodies: Record<string, unknown>[] = [];
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: async (request) => {
       const { pathname } = new URL(request.url);

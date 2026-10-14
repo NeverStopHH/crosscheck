@@ -306,6 +306,22 @@ describe("mute: briefing pointer feeds", () => {
         evidenceRefs: ["clm_evidence"],
       },
     );
+    // The observation it cites — evidence that resolves (hold-out review, H5 + M2).
+    const evidence = await postRecords(harness, robin.developer, {
+      records: [
+        recordEnvelope(
+          "claim",
+          validClaimBody({
+            id: "clm_evidence",
+            workContextId: robin.workContextId,
+            authorSessionId: robin.sessionId,
+            body: "The token cache keeps the rotated key for an hour",
+          }),
+          { sessionId: robin.sessionId },
+        ),
+      ],
+    });
+    expect(evidence.data?.accepted).toBe(1);
     const nick = await seedAuthor(harness, "Nick", "nick@example.com", "nick");
     const clara = await createTestDeveloper(
       harness,

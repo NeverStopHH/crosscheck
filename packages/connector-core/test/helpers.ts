@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -22,6 +22,8 @@ export const git = async (
 
 export interface MakeRepoOptions {
   readonly remote?: string;
+  /** `reftable` keeps refs and reflogs in git's table files: HEAD reads `ref: refs/heads/.invalid`, no `logs/HEAD` (review M3). */
+  readonly refFormat?: "files" | "reftable";
 }
 
 /** A real git repo with one commit — repo identity is git-derived, not mocked. */
@@ -30,7 +32,7 @@ export const makeRepo = async (
   options: MakeRepoOptions = {},
 ): Promise<string> => {
   const root = await mkdtemp(join(tmpdir(), `cx-${label}-`));
-  await git(root, ["init", "--initial-branch=main"]);
+  await git(root, ["init", "--initial-branch=main", ...(options.refFormat === undefined ? [] : [`--ref-format=${options.refFormat}`])]);
   await git(root, ["config", "user.email", "dev@example.com"]);
   await git(root, ["config", "user.name", "Dev"]);
   await writeFile(join(root, "README.md"), "# fixture\n", "utf8");
@@ -55,6 +57,82 @@ export const writeRepoFile = async (
 
 export const makeHome = async (label: string): Promise<string> =>
   mkdtemp(join(tmpdir(), `cx-home-${label}-`));
+
+/** Files created at once while seeding: enough to be quick, few enough fds. */
+const SEED_CHUNK = 500;
+
+/**
+ * `count` empty files in `dir`, each named exactly like a writePrivateFile
+ * temp sibling and each `ageMs` older than `now` — the abandoned-temp
+ * backlog the sweep tests need (state/temp-sweep.ts). Returns their paths.
+ */
+export const seedAbandonedTemps = async (
+  dir: string,
+  count: number,
+  ageMs: number,
+  now: Date = new Date(),
+): Promise<readonly string[]> => {
+  await mkdir(dir, { recursive: true });
+  const when = new Date(now.getTime() - ageMs);
+  const paths = Array.from({ length: count }, (_, index) =>
+    join(dir, `seeded-${String(index)}.json.tmp-${String(index)}-abcdefgh`),
+  );
+  for (let start = 0; start < paths.length; start += SEED_CHUNK) {
+    await Promise.all(
+      paths.slice(start, start + SEED_CHUNK).map(async (path) => {
+        await writeFile(path, "", "utf8");
+        await utimes(path, when, when);
+      }),
+    );
+  }
+  return paths;
+};
+
+/** Far past any deadline a test hands a stalled git. */
+const STALLED_GIT_LIFETIME_S = 30;
+
+/**
+ * A directory whose `git` never answers in time: it sleeps, as the git it
+ * replaces would under a cold cache or a lock. A tiny deadline is no stand-in
+ * for one: in a Linux container a real `git check-attr` answered in about
+ * 0.6 ms and beat a 0 ms deadline 19 times in 20 (bun 1.4.3; 10 in 20 on
+ * 1.3.13), and GitHub's Ubuntu runner failed both tests that relied on it.
+ * `exec`, so the deadline's kill ends the sleep too and nothing outlives the
+ * test.
+ */
+export const makeStalledGitDir = async (): Promise<string> => {
+  const dir = await mkdtemp(join(tmpdir(), "cx-stalled-git-"));
+  const wrapper = join(dir, "git");
+  await writeFile(wrapper, `#!/bin/sh\nexec /bin/sleep ${String(STALLED_GIT_LIFETIME_S)}\n`, "utf8");
+  await chmod(wrapper, 0o755);
+  return dir;
+};
+
+/**
+ * Runs a test/fixtures probe in a child bun whose PATH finds `gitDir`'s `git`
+ * first, hands it `input` as JSON (its first argument) and returns what it
+ * printed, parsed. A child, because executable lookup is fixed at process
+ * start: changing process.env.PATH inside a test does not redirect
+ * Bun.spawn's `git` (fixtures/rungit-timeout-probe.ts).
+ */
+export const runProbeWithGit = async <T>(probe: string, gitDir: string, input: unknown): Promise<T> => {
+  const proc = Bun.spawn({
+    cmd: [process.execPath, probe, JSON.stringify(input)],
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...process.env, PATH: `${gitDir}:${process.env["PATH"] ?? ""}` },
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  if (exitCode !== 0) {
+    throw new Error(`probe ${probe} exited ${String(exitCode)}: ${stderr.trim()}`);
+  }
+  return JSON.parse(stdout) as T;
+};
 
 /** What the kernel is given to move an exited child into the zombie state. */
 const ZOMBIE_SETTLE_MS = 300;

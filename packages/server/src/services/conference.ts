@@ -36,25 +36,32 @@
  * circling, and VISION §2's own scenario runs it overnight, when nobody's
  * session is live. Excluding ended sessions would make the overnight
  * conference read an empty repo. Landed work is still excluded on both — work
- * that merged is not work anybody is still doing.
+ * that merged is not work anybody is still doing. But ended work is BOUNDED
+ * (pilot finding, 2026-10-07): it stays for CONFERENCE_ENDED_GRACE_HOURS after
+ * its end and ranks after every open session's, because with landed rarely
+ * firing, a fortnight of finished work filled the page (19 to 246 contexts on
+ * a copy of the pilot hub) and pushed the live collision off it.
  *
  * BOUNDED END TO END, and the bounds are arithmetic rather than hope:
  * CONFERENCE_MAX_CONTEXTS contexts, each contributing at most
  * CONFERENCE_MAX_CLAIMS_PER_CONTEXT claims through ONE indexed lookup of its
- * own, at most GHOST_MAX_CONTEXT_TARGETS target values, and pairwise
- * comparison over that same slice (66 pairs at the cap) rather than a join
- * that could fan out. The duplicated-work RULE is the ghost check's own —
- * one shared error fingerprint, or GHOST_MIN_SHARED_TARGETS shared files or
- * symbols, with hot values and sweeps dropped (services/ghost-overlap.ts
- * states the ConE reasoning and this imports its predicates rather than
- * re-typing them) — applied between two DEVELOPERS' contexts instead of from
- * one reader's side.
+ * own, a probe of at most GHOST_MAX_PROBE_VALUES target values that the other
+ * contexts of the page are looked up by, and pairwise comparison over that
+ * same slice (66 pairs at the cap) rather than a join that could fan out. The
+ * duplicated-work RULE is the ghost check's own — one shared error
+ * fingerprint, or GHOST_MIN_SHARED_TARGETS shared files or symbols, with hot
+ * values dropped and LARGE CHANGES QUALIFIED, never dropped
+ * (services/ghost-overlap.ts states the ConE reasoning and this imports its
+ * predicates rather than re-typing them) — applied between two DEVELOPERS'
+ * contexts instead of from one reader's side.
  */
 import { and, asc, count, desc, eq, gt, gte, inArray, isNull, ne, sql } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 
 import {
   CONFERENCE_ACTIVE_WINDOW_DAYS,
+  CONFERENCE_ENDED_GRACE_HOURS,
   CONFERENCE_CLAIM_BODY_MAX_CHARS,
   CONFERENCE_MAX_CLAIMS_PER_CONTEXT,
   CONFERENCE_MAX_CONTEXTS,
@@ -64,7 +71,6 @@ import {
   CONFERENCE_MAX_QUESTIONS,
   GHOST_FINGERPRINT_MIN_SHARED,
   GHOST_HOT_TARGET_MAX_CONTEXTS,
-  GHOST_MAX_CONTEXT_TARGETS,
   GHOST_MAX_SHARED_SHOWN,
   GHOST_MIN_SHARED_TARGETS,
 } from "../constants.ts";
@@ -79,18 +85,23 @@ import {
 import { listContradictions } from "./contradictions.ts";
 import type { ContradictionView } from "./contradictions.ts";
 import {
-  OVERLAP_TARGET_KINDS,
   activityExpression,
-  notASweepCondition,
+  listLargeChanges,
+  listProbeValues,
   targetValueCondition,
 } from "./ghost-overlap.ts";
-import type { OverlapKind, SharedValue } from "./ghost-overlap.ts";
+import type { ContextValues, OverlapKind, SharedValue } from "./ghost-overlap.ts";
+import { listGeneratedSharedPairs, ordinaryTargetCondition, pairKey } from "./generated-targets.ts";
 import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
+import { activitySeenBy, locationHiddenFrom, projectRow } from "./live-location.ts";
+import type { HiddenLocations } from "./live-location.ts";
+import { visiblePresenceCondition } from "./visibility.ts";
 import type { EvidenceAxes } from "@crosscheck/schema";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
 const MS_PER_DAY = 86_400_000;
+const MS_PER_HOUR = 3_600_000;
 
 /** Only what a person or their agent stated — never a machine draft. */
 const DECLARED_PROVENANCE = "declared";
@@ -141,6 +152,20 @@ export interface ConferenceOverlapView {
   readonly workContextIdB: string;
   readonly sharedTargets: readonly { readonly kind: string; readonly value: string }[];
   readonly sharedTargetCount: number;
+  /**
+   * Files both contexts carry that at least one side labelled MECHANICALLY
+   * GENERATED AND NON-AUTHORITATIVE
+   * (services/generated-targets.ts) — never in the count above, never a
+   * reason for the pair, stated beside it. 0 when there are none.
+   */
+  readonly generatedSharedCount: number;
+  /**
+   * The files each side's change touched in the window when that side is a
+   * LARGE CHANGE (over GHOST_MAX_CONTEXT_TARGETS), else null — the qualifier
+   * the report prints beside the pair. Never a reason the pair is missing.
+   */
+  readonly largeChangeFilesA: number | null;
+  readonly largeChangeFilesB: number | null;
 }
 
 /**
@@ -170,18 +195,61 @@ export interface ConferenceView {
   readonly windowDays: number;
 }
 
-/** Unfinished work of this repo inside the window, whether or not attended. */
-const recentWorkCondition = (repo: string, cutoff: Date) =>
+/**
+ * A context's activity as THIS reader may window and rank by it: a teammate
+ * who opted out of presence counts from creation alone (services/live-
+ * location.ts activitySeenBy), or "in the window" and "first in the report"
+ * would say when she last touched her work.
+ */
+const activitySeenByReader = (viewerDeveloperId: string) =>
+  activitySeenBy(viewerDeveloperId, agentSessions.developerId, workContexts.updatedAt, workContexts.createdAt);
+
+/**
+ * Whether a context's session is OPEN, as this reader may rank by it: a
+ * session's end is its owner's instant, so for an owner hidden from the
+ * reader it is not read — her work ranks with the ended, by creation.
+ */
+const openSeenByReader = (viewerDeveloperId: string): SQL =>
+  sql`(case when ${visiblePresenceCondition(viewerDeveloperId, agentSessions.developerId)} then ${agentSessions.endedAt} is null else false end)`;
+
+/**
+ * Ended no longer ago than CONFERENCE_ENDED_GRACE_HOURS — or open — as this
+ * reader may judge it: an owner hidden from the reader is judged by
+ * creation alone, as the window already judges her.
+ */
+const withinEndedGrace = (viewerDeveloperId: string, endedSince: Date): SQL =>
+  sql`(case when ${visiblePresenceCondition(viewerDeveloperId, agentSessions.developerId)} then (${agentSessions.endedAt} is null or ${agentSessions.endedAt} >= ${endedSince.toISOString()}::timestamptz) else true end)`;
+
+/**
+ * Unfinished work of this repo inside the window, attended or not — work
+ * whose session ended counts only within CONFERENCE_ENDED_GRACE_HOURS.
+ */
+const recentWorkCondition = (repo: string, window: ConferenceWindow, viewerDeveloperId: string) =>
   and(
     eq(agentSessions.repo, repo),
-    gte(activityExpression, cutoff),
+    gte(activityExpression, window.cutoff),
+    gte(activitySeenByReader(viewerDeveloperId), window.cutoff),
+    withinEndedGrace(viewerDeveloperId, window.endedSince),
     isNull(workContexts.landedAt),
   );
 
+/** The two instants a conference reads by: activity since, and ended since. */
+interface ConferenceWindow {
+  readonly cutoff: Date;
+  readonly endedSince: Date;
+}
+
+/**
+ * The page: OPEN sessions' work first, then the ended work within the grace,
+ * each freshest first — so a live collision is never the context a page of
+ * yesterday's finished work pushes out.
+ */
 const listRecentContexts = async (
   deps: Deps,
   repo: string,
-  cutoff: Date,
+  window: ConferenceWindow,
+  viewerDeveloperId: string,
+  hidden: HiddenLocations,
 ): Promise<readonly Omit<ConferenceContextView, "claims">[]> => {
   const rows = await deps.db
     .select({
@@ -192,22 +260,30 @@ const listRecentContexts = async (
       developerId: agentSessions.developerId,
       developerName: developers.name,
       lastActiveAt: sql<string>`${activityExpression}`,
+      branch: agentSessions.branch,
+      titleSource: workContexts.titleSource,
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
     .innerJoin(developers, eq(agentSessions.developerId, developers.id))
-    .where(recentWorkCondition(repo, cutoff))
-    .orderBy(desc(activityExpression), asc(workContexts.id))
+    .where(recentWorkCondition(repo, window, viewerDeveloperId))
+    .orderBy(
+      desc(openSeenByReader(viewerDeveloperId)),
+      desc(activitySeenByReader(viewerDeveloperId)),
+      asc(workContexts.id),
+    )
     .limit(CONFERENCE_MAX_CONTEXTS);
-  return rows.map((row) => ({
-    id: row.id,
-    title: row.title,
-    status: row.status,
-    intent: row.intent ?? null,
-    developerId: row.developerId,
-    developerName: row.developerName,
-    lastActiveAt: new Date(row.lastActiveAt).toISOString(),
-  }));
+  return rows.map((row) =>
+    projectRow(hidden, { developerId: row.developerId, titleFacts: { repo, branch: row.branch, titleSource: row.titleSource } }, {
+      id: row.id,
+      title: row.title,
+      status: row.status,
+      intent: row.intent ?? null,
+      developerId: row.developerId,
+      developerName: row.developerName,
+      lastActiveAt: new Date(row.lastActiveAt).toISOString(),
+    }),
+  );
 };
 
 /**
@@ -219,13 +295,14 @@ const listRecentContexts = async (
 const countContextsInWindow = async (
   deps: Deps,
   repo: string,
-  cutoff: Date,
+  window: ConferenceWindow,
+  viewerDeveloperId: string,
 ): Promise<{ readonly total: number; readonly capped: boolean }> => {
   const rows = await deps.db
     .select({ id: workContexts.id })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
-    .where(recentWorkCondition(repo, cutoff))
+    .where(recentWorkCondition(repo, window, viewerDeveloperId))
     .limit(CONFERENCE_MAX_COUNTED_CONTEXTS);
   return {
     total: rows.length,
@@ -254,6 +331,7 @@ const cutBody = (body: string): string => {
 const listContextClaims = async (
   deps: Deps,
   workContextId: string,
+  hidden: HiddenLocations,
 ): Promise<readonly ConferenceClaimView[]> => {
   const rows = await deps.db
     .select({
@@ -263,6 +341,7 @@ const listContextClaims = async (
       confidence: claims.confidence,
       provenance: claims.provenance,
       body: claims.body,
+      authorDeveloperId: agentSessions.developerId,
       authorDeveloperName: developers.name,
       createdAt: claims.createdAt,
       // What the evidence ladder needs, off the same row. A conference report
@@ -301,35 +380,43 @@ const listContextClaims = async (
       axes.set(id, value);
     }
   }
-  return rows.map((row) => ({
-    id: row.id,
-    kind: row.kind,
-    status: row.status,
-    confidence: row.confidence,
-    provenance: row.provenance,
-    body: cutBody(row.body),
-    authorDeveloperName: row.authorDeveloperName,
-    axes: axes.get(row.id) ?? UNRESOLVED_AXES,
-    createdAt: row.createdAt.toISOString(),
-  }));
+  // Each claim by its AUTHOR (services/live-location.ts): the evidence rung's
+  // age is when her session observed the failure it cites.
+  return rows.map((row) =>
+    projectRow(hidden, { developerId: row.authorDeveloperId, kind: "claim" }, {
+      id: row.id,
+      kind: row.kind,
+      status: row.status,
+      confidence: row.confidence,
+      provenance: row.provenance,
+      body: cutBody(row.body),
+      authorDeveloperName: row.authorDeveloperName,
+      axes: axes.get(row.id) ?? UNRESOLVED_AXES,
+      createdAt: row.createdAt.toISOString(),
+    }),
+  );
 };
 
-interface ContextTargets {
-  readonly workContextId: string;
-  readonly targets: readonly SharedValue[];
-}
-
 /**
- * The strong target values of the slice, with the SWEEP rule applied in the
- * query: a context carrying more than GHOST_MAX_CONTEXT_TARGETS values is a
- * rename or a formatter run and contributes nothing, on this side exactly as
- * on the ghost check's.
+ * Which contexts of the page HOLD each probed value — the half of the
+ * comparison that is looked up, never read whole. Every context's probe
+ * (listProbeValues) is looked up in every other context of the page, so a
+ * pair is found when EITHER side's probe holds what they share: a large
+ * change's file that is not among its own newest touches is found through
+ * the focused side's probe, which is what "every file it shares still
+ * produces the overlap" costs — and the cost is the probes, never the size
+ * of the change.
+ *
+ * Arithmetic: a context holds a value at most once (the targets primary
+ * key), so the page holds at most ids x values rows of these.
  */
-const listSliceTargets = async (
+const listMembers = async (
   deps: Deps,
   ids: readonly string[],
-): Promise<readonly ContextTargets[]> => {
-  if (ids.length === 0) {
+  values: readonly SharedValue[],
+): Promise<readonly ContextValues[]> => {
+  const condition = targetValueCondition(values);
+  if (ids.length === 0 || condition === undefined) {
     return [];
   }
   const rows = await deps.db
@@ -339,21 +426,15 @@ const listSliceTargets = async (
       value: workContextTargets.value,
     })
     .from(workContextTargets)
-    .where(
-      and(
-        inArray(workContextTargets.workContextId, [...ids]),
-        inArray(workContextTargets.kind, [...OVERLAP_TARGET_KINDS]),
-        notASweepCondition(workContextTargets.workContextId),
-      ),
-    )
+    // A member holds a value only as EVIDENCE: a generated row of it is no
+    // reason for a pair (services/generated-targets.ts).
+    .where(and(inArray(workContextTargets.workContextId, [...ids]), condition, ordinaryTargetCondition()))
     .orderBy(
       asc(workContextTargets.workContextId),
       asc(workContextTargets.kind),
       asc(workContextTargets.value),
     )
-    // Every surviving context is under the cap, so this is what all of them
-    // together can hold — no context can spend another's share.
-    .limit(ids.length * GHOST_MAX_CONTEXT_TARGETS);
+    .limit(ids.length * values.length);
   const byContext = new Map<string, SharedValue[]>();
   for (const row of rows) {
     byContext.set(row.workContextId, [
@@ -361,9 +442,9 @@ const listSliceTargets = async (
       { kind: row.kind as OverlapKind, value: row.value },
     ]);
   }
-  return [...byContext.entries()].map(([workContextId, targets]) => ({
+  return [...byContext.entries()].map(([workContextId, held]) => ({
     workContextId,
-    targets,
+    values: held,
   }));
 };
 
@@ -394,7 +475,8 @@ const listHotValues = async (
       eq(workContexts.id, workContextTargets.workContextId),
     )
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
-    .where(and(condition, eq(agentSessions.repo, repo)))
+    // Rarity counts evidence only, exactly as the ghost check's hot count.
+    .where(and(condition, eq(agentSessions.repo, repo), ordinaryTargetCondition()))
     .groupBy(workContextTargets.kind, workContextTargets.value);
   return new Set(
     rows
@@ -405,6 +487,11 @@ const listHotValues = async (
 
 const valueKey = (target: SharedValue): string => `${target.kind} ${target.value}`;
 
+/** Each value once: the page's probes overlap wherever two contexts share. */
+const uniqueValues = (values: readonly SharedValue[]): readonly SharedValue[] => [
+  ...new Map(values.map((target) => [valueKey(target), target])).values(),
+];
+
 /**
  * Duplicated work: pairs of contexts belonging to DIFFERENT developers that
  * share an error fingerprint, or GHOST_MIN_SHARED_TARGETS files or symbols.
@@ -413,23 +500,25 @@ const valueKey = (target: SharedValue): string => `${target.kind} ${target.value
  * same files is how a person works, not duplicated work — the same argument
  * self-exclusion makes on every unasked surface, made here about the pair
  * rather than about the reader.
+ *
+ * A LARGE CHANGE PAIRS LIKE ANY OTHER CONTEXT (services/ghost-overlap.ts
+ * states why): its size is the pair's qualifier and puts it after the
+ * focused pairs, and nothing else. `members` holds only values that are not
+ * hot (listHotValues ran over the probes first).
  */
 const pairOverlaps = (
   contexts: readonly Omit<ConferenceContextView, "claims">[],
-  sliceTargets: readonly ContextTargets[],
-  hotValues: ReadonlySet<string>,
+  members: readonly ContextValues[],
+  large: ReadonlyMap<string, number>,
+  generatedShared: ReadonlyMap<string, number>,
 ): readonly ConferenceOverlapView[] => {
   const owner = new Map(contexts.map((context) => [context.id, context.developerId]));
-  const cool = new Map(
-    sliceTargets.map((entry) => [
-      entry.workContextId,
-      entry.targets.filter((target) => !hotValues.has(valueKey(target))),
-    ]),
-  );
+  const held = new Map(members.map((entry) => [entry.workContextId, entry.values]));
   const ids = contexts.map((context) => context.id);
   const found: {
     readonly view: ConferenceOverlapView;
     readonly fingerprints: number;
+    readonly isLarge: boolean;
   }[] = [];
   for (let left = 0; left < ids.length; left += 1) {
     for (let right = left + 1; right < ids.length; right += 1) {
@@ -438,8 +527,8 @@ const pairOverlaps = (
       if (owner.get(idA) === owner.get(idB)) {
         continue;
       }
-      const theirs = new Set((cool.get(idB) ?? []).map(valueKey));
-      const shared = (cool.get(idA) ?? []).filter((target) =>
+      const theirs = new Set((held.get(idB) ?? []).map(valueKey));
+      const shared = (held.get(idA) ?? []).filter((target) =>
         theirs.has(valueKey(target)),
       );
       const fingerprints = shared.filter(
@@ -453,6 +542,7 @@ const pairOverlaps = (
       }
       found.push({
         fingerprints,
+        isLarge: large.has(idA) || large.has(idB),
         view: {
           workContextIdA: idA,
           workContextIdB: idB,
@@ -467,14 +557,20 @@ const pairOverlaps = (
             )
             .slice(0, GHOST_MAX_SHARED_SHOWN),
           sharedTargetCount: shared.length,
+          generatedSharedCount: generatedShared.get(pairKey(idA, idB)) ?? 0,
+          largeChangeFilesA: large.get(idA) ?? null,
+          largeChangeFilesB: large.get(idB) ?? null,
         },
       });
     }
   }
+  // The ghost check's order (ghost-overlap.ts byStrength): a shared failure
+  // first whatever its size, then focused pairs before large changes.
   return found
     .sort(
       (one, other) =>
         other.fingerprints - one.fingerprints ||
+        Number(one.isLarge) - Number(other.isLarge) ||
         other.view.sharedTargetCount - one.view.sharedTargetCount ||
         one.view.workContextIdA.localeCompare(other.view.workContextIdA),
     )
@@ -494,6 +590,7 @@ const listOpenQuestions = async (
   deps: Deps,
   viewerDeveloperId: string,
   repo: string,
+  hidden: HiddenLocations,
 ): Promise<readonly ConferenceQuestionView[]> => {
   const authors = alias(developers, "conference_question_authors");
   const targets = alias(developers, "conference_question_targets");
@@ -501,12 +598,15 @@ const listOpenQuestions = async (
   const rows = await deps.db
     .select({
       id: questions.id,
+      authorDeveloperId: questions.authorDeveloperId,
       authorDeveloperName: authors.name,
       targetDeveloperId: questions.targetDeveloperId,
       targetDeveloperName: targets.name,
       workContextId: questions.workContextId,
       workContextTitle: workContexts.title,
       contextOwnerId: contextSessions.developerId,
+      contextBranch: contextSessions.branch,
+      contextTitleSource: workContexts.titleSource,
       createdAt: questions.createdAt,
     })
     .from(questions)
@@ -523,17 +623,31 @@ const listOpenQuestions = async (
     )
     .orderBy(asc(questions.createdAt), asc(questions.id))
     .limit(CONFERENCE_MAX_QUESTIONS);
-  return rows.map((row) => ({
-    id: row.id,
-    authorDeveloperName: row.authorDeveloperName,
-    targetDeveloperName: row.targetDeveloperName,
-    workContextId: row.workContextId,
-    workContextTitle: row.workContextTitle,
-    createdAt: row.createdAt.toISOString(),
-    isForReader:
-      row.targetDeveloperId === viewerDeveloperId ||
-      row.contextOwnerId === viewerDeveloperId,
-  }));
+  return rows.map((row) => {
+    const view = {
+      id: row.id,
+      authorDeveloperName: row.authorDeveloperName,
+      targetDeveloperName: row.targetDeveloperName,
+      workContextId: row.workContextId,
+      workContextTitle: row.workContextTitle,
+      createdAt: row.createdAt.toISOString(),
+      isForReader:
+        row.targetDeveloperId === viewerDeveloperId ||
+        row.contextOwnerId === viewerDeveloperId,
+    };
+    // Two owners: the question is its asker's; the title names where the
+    // CONTEXT's owner is, so it alone is judged by them.
+    const asked = projectRow(hidden, { developerId: row.authorDeveloperId, kind: "question" }, view);
+    return row.contextOwnerId === null
+      ? asked
+      : {
+          ...asked,
+          ...projectRow(hidden, {
+            developerId: row.contextOwnerId,
+            titleFacts: { repo, branch: row.contextBranch, titleSource: row.contextTitleSource },
+          }, { workContextTitle: view.workContextTitle }),
+        };
+  });
 };
 
 /**
@@ -549,15 +663,21 @@ export const readConference = async (
   const cutoff = new Date(
     deps.now().getTime() - CONFERENCE_ACTIVE_WINDOW_DAYS * MS_PER_DAY,
   );
+  const reads: ConferenceWindow = {
+    cutoff,
+    endedSince: new Date(deps.now().getTime() - CONFERENCE_ENDED_GRACE_HOURS * MS_PER_HOUR),
+  };
+  const hidden = await locationHiddenFrom(deps.db, viewerDeveloperId);
   const [contexts, window, questionRows] = await Promise.all([
-    listRecentContexts(deps, repo, cutoff),
-    countContextsInWindow(deps, repo, cutoff),
-    listOpenQuestions(deps, viewerDeveloperId, repo),
+    listRecentContexts(deps, repo, reads, viewerDeveloperId, hidden),
+    countContextsInWindow(deps, repo, reads, viewerDeveloperId),
+    listOpenQuestions(deps, viewerDeveloperId, repo, hidden),
   ]);
   const ids = contexts.map((context) => context.id);
-  const [claimLists, sliceTargets, contradictions] = await Promise.all([
-    Promise.all(ids.map((id) => listContextClaims(deps, id))),
-    listSliceTargets(deps, ids),
+  const [claimLists, probes, large, contradictions] = await Promise.all([
+    Promise.all(ids.map((id) => listContextClaims(deps, id, hidden))),
+    listProbeValues(deps.db, viewerDeveloperId, ids),
+    listLargeChanges(deps.db, viewerDeveloperId, ids, cutoff),
     // SECOND, because it needs the slice. The deliberate-pull posture again:
     // no `excludeMutedForDeveloperId`, the same call findContradictionById
     // makes, for the same reason. But bounded to the contexts this report
@@ -570,17 +690,25 @@ export const readConference = async (
       liveSideWorkContextIds: ids,
     }),
   ]);
-  const hotValues = await listHotValues(
-    deps,
-    repo,
-    sliceTargets.flatMap((entry) => entry.targets),
-  );
+  // Rarity over the probes, then who on the page holds the cool ones: each
+  // read bounded by the probes, none by the size of any context's change.
+  const probed = uniqueValues(probes.flatMap((probe) => probe.values));
+  const hotValues = await listHotValues(deps, repo, probed);
+  const [members, generatedShared] = await Promise.all([
+    listMembers(
+      deps,
+      ids,
+      probed.filter((target) => !hotValues.has(valueKey(target))),
+    ),
+    // The pair's qualifier, never its reason: bounded by the page.
+    listGeneratedSharedPairs(deps.db, ids),
+  ]);
   return {
     contexts: contexts.map((context, index) => ({
       ...context,
       claims: claimLists[index] ?? [],
     })),
-    overlaps: pairOverlaps(contexts, sliceTargets, hotValues),
+    overlaps: pairOverlaps(contexts, members, large, generatedShared),
     questions: questionRows,
     contradictions,
     contextsInWindow: window.total,

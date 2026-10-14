@@ -1,3 +1,4 @@
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { appendFile, rm, utimes, writeFile } from "node:fs/promises";
 
@@ -64,6 +65,7 @@ const envelope = (index: number): Record<string, unknown> => ({
 const hubContext = (path: string, hubUrl = HUB_URL) => ({
   hubUrl,
   apiKey: "key",
+  keyOrigin: hubUrl,
   // 20 s, not the product's 2 s: this deadline is the TEST's patience with a
   // fake hub on localhost, never a bound the product ships (the real ones are
   // measured in connector-claude's hook-budget tests). At 2 s the whole-suite
@@ -77,7 +79,7 @@ const hubContext = (path: string, hubUrl = HUB_URL) => ({
 });
 
 const acceptingHub = (received: unknown[] = []) =>
-  Bun.serve({
+  serveLoopback({
     port: 0,
     fetch: async (request) => {
       const body = (await request.json()) as { records: readonly unknown[] };
@@ -335,7 +337,7 @@ describe("spool flush", () => {
     // Arrange
     const path = await home();
     await appendRecords(path, KEY, SESSION, [envelope(1)], NOW);
-    const server = Bun.serve({
+    const server = serveLoopback({
       port: 0,
       fetch: () =>
         Response.json({

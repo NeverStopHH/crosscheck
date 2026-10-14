@@ -1,0 +1,8 @@
+# crosscheck's own bunfig, passed as `bun --config=<this file>` to every
+# crosscheck process (config/runtime-isolation.ts, packaging/bin/crosscheck.cjs).
+#
+# Deliberately empty. Bun otherwise reads bunfig.toml from its working
+# directory — for a hook, the statusline or the MCP server that is the repo a
+# session runs in — and a repo's `preload` would run its own code inside the
+# process that holds the developer's api key. Naming this file instead means
+# no repo's bunfig is ever read.

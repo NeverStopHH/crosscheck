@@ -13,8 +13,10 @@
  * launch would keep saying so for the rest of the session.
  */
 import { MCP_TIMEOUT_MS } from "../constants.ts";
-import { isDisabled, loadConfig, loadReportableConfig } from "../config/config.ts";
+import { isDisabled, loadConfig, resolveReportableConfig } from "../config/config.ts";
 import type { ResolvedConfig } from "../config/config.ts";
+import { foreignHubAgentLine } from "../config/key-binding.ts";
+import { recordForeignHubRefusal } from "../state/foreign-hub.ts";
 import { repoKey } from "../config/paths.ts";
 import type { Env } from "../config/paths.ts";
 import { resolveRepoIdentity } from "../git/repo-identity.ts";
@@ -57,7 +59,22 @@ export const prepareMcp = async (env: Env, cwd: string): Promise<McpSetup> => {
   // crash, never a report to a hub this repo never opted into (§2.1). The
   // two states are told apart so the remedy is the right one: no
   // credentials at all vs. credentials without the committed repo config.
-  const config = await loadReportableConfig({ env, repoRoot: identity.root });
+  const resolved = await resolveReportableConfig({ env, repoRoot: identity.root });
+  // A repo connected to ANOTHER hub than the key's (config/key-binding.ts):
+  // the tools do nothing, the refusal is counted, and the sentence names the
+  // key's own hub but not the repo's — that origin is text the repo chose.
+  if (resolved.kind === "foreign_hub") {
+    await recordForeignHubRefusal(resolved.home, {
+      repoId: identity.repoId,
+      foreignHub: resolved.foreignHub,
+      surface: "mcp",
+      // One MCP server process serves one agent session: count it once.
+      sessionKey: `mcp-${String(process.pid)}`,
+      now: new Date(),
+    });
+    return { ok: false, message: foreignHubAgentLine(resolved.foreignHub) };
+  }
+  const config = resolved.kind === "reportable" ? resolved.config : null;
   if (config === null) {
     const hasCredentials =
       (await loadConfig({ env, repoRoot: identity.root })) !== null;
@@ -85,6 +102,7 @@ export const prepareMcp = async (env: Env, cwd: string): Promise<McpSetup> => {
       hub: {
         hubUrl: config.hubUrl,
         apiKey: config.apiKey,
+        keyOrigin: config.keyOrigin,
         timeoutMs: MCP_TIMEOUT_MS,
         home: config.home,
         repoKey: key,

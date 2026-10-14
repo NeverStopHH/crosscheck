@@ -97,7 +97,19 @@ export type CoverageState = (typeof COVERAGE_STATES)[number];
  * kinds the hub answered 200 to and ignored — that one's remedy is specific,
  * upgrade the hub, which is why it is its own word.
  *
- * The last four are RESERVED FOR 05 AND DORMANT until CI ingestion lands.
+ * A WITHHELD GAP (review round 4, H1; round 5, H4) is the gap of a session
+ * whose owner opted out of presence, as a viewer she is hidden from reads
+ * it: the rung stays honestly `incomplete` — SOME session went quiet — and
+ * says nothing of whose or how (silent, reaped, lossy), because naming that
+ * would describe her session. A told session's gap is named as before. On
+ * the wire its reason is the FIXED word `session_silent`, which every
+ * released connector reads as a gap (0.10.0 read round 4's new word as
+ * unknown, and its caveat disappeared), and the record carries the additive
+ * `withheld: true`, which a current connector renders as «went quiet
+ * (withheld: presence opt-out)» and an older one ignores. The word is chosen
+ * by nothing of hers: the same for silence, reap and loss.
+ *
+ * The four `ci_*` words are RESERVED FOR 05 AND DORMANT until CI ingestion lands.
  * They are minted here rather than there because 05 §9.1 requests them, and a
  * second coverage enum living in a second package is exactly the drift
  * 00 §9.6 forbids.
@@ -133,6 +145,12 @@ export interface CoverageSourceRecord {
   readonly gapSince: string | null;
   /** ISO; the newest thing this rung saw that this viewer may be told, null when none. */
   readonly observedAt: string | null;
+  /**
+   * Present, and true, only on an `agent_event` gap made of sessions this
+   * viewer may not be told about (a withheld gap, above). Additive: a client
+   * that does not know it reads the reason beside it, which is a gap.
+   */
+  readonly withheld?: true;
 }
 
 /**
@@ -459,6 +477,26 @@ const earliestIso = (left: string | null, right: string | null): string | null =
       : right;
 
 /**
+ * Whether this repo has EVER had a session of a developer this viewer may not
+ * be told about (review round 5, M3): any session, in the window or not, gapped
+ * or live, so nothing that session does changes the answer.
+ */
+const hasHiddenSessionOnRepo = async (deps: Deps, repo: string, isTold: SQL): Promise<boolean> => {
+  const rows = await deps.db
+    .select({ id: agentSessions.id })
+    .from(agentSessions)
+    .where(and(eq(agentSessions.repo, repo), sql`not ${isTold}`))
+    .limit(1);
+  return rows.length > 0;
+};
+
+/**
+ * The wire's reason for a withheld gap (review round 5, H4): fixed whatever
+ * her session did, and a word every released connector reads as a gap.
+ */
+const WITHHELD_GAP_REASON: CoverageReason = "session_silent";
+
+/**
  * The reason word, in precedence order (loss-accounting §4.5): the ignored
  * kind first because its remedy is specific, any other loss next because it
  * is a fact nobody can revoke, then 03's reap-over-silence rule unchanged.
@@ -559,11 +597,19 @@ const inScope = (scope: SessionScope): SQL =>
  * instant, so a hidden gap or loss withholds it whole rather than leave a
  * told, later one standing. `observedAt` is the newest heartbeat the viewer
  * may be told about: older than the truth is the staler, safe direction.
+ *
+ * AND NEVER MOVED BY HER (review round 5, M3). Withheld only while her gap
+ * was in scope, the start flipped between a told instant and null as she
+ * heartbeat, ended or lost records: whether she was quiet, read off the one
+ * field nobody named. It is withheld for as long as the repo has ANY session
+ * of a developer this viewer may not be told about, whatever that session
+ * does, so the start a viewer reads depends on nothing she does on it.
  */
 const readAgentEventCoverage = async (
   deps: Deps,
   now: Date,
   viewerDeveloperId: string,
+  repo: string,
   since: Date,
   scope: SessionScope,
 ): Promise<CoverageSourceRecord> => {
@@ -574,15 +620,17 @@ const readAgentEventCoverage = async (
     .select({
       // The window alone can say somebody was reporting (sessionScope).
       reporting: sql`count(*) filter (where ${scope.window})`,
-      reaped: sql`count(*) filter (where ${agentSessions.reapedAt} is not null)`,
       gaps: sql`count(*) filter (where ${isGap})`,
       gapSince: sql`min(${agentSessions.lastHeartbeatAt}) filter (where ${isGap})`,
-      hiddenGaps: sql`count(*) filter (where ${isGap} and not ${isTold})`,
       lost: sql`count(*) filter (where ${isLost})`,
-      ignored: sql`count(*) filter (where ${isLost} and ${ignoredKindCondition(agentSessions, since)})`,
       lossSince: sql`min(${agentSessions.lossOldestAt}) filter (where ${isLost})`,
-      hiddenLosses: sql`count(*) filter (where ${isLost} and not ${isTold})`,
       observedAt: sql`max(${agentSessions.lastHeartbeatAt}) filter (where ${isTold})`,
+      // The REASON is the told sessions' alone (review round 4, H1): her
+      // gap counts towards the state and is never named.
+      toldGaps: sql`count(*) filter (where ${isGap} and ${isTold})`,
+      toldReaped: sql`count(*) filter (where ${agentSessions.reapedAt} is not null and ${isTold})`,
+      toldLost: sql`count(*) filter (where ${isLost} and ${isTold})`,
+      toldIgnored: sql`count(*) filter (where ${isLost} and ${isTold} and ${ignoredKindCondition(agentSessions, since)})`,
     })
     .from(agentSessions)
     .where(inScope(scope));
@@ -590,7 +638,7 @@ const readAgentEventCoverage = async (
   const observedAt = toIso(row?.observedAt);
   const gaps = toCount(row?.gaps);
   const lost = toCount(row?.lost);
-  const isGapSinceWithheld = toCount(row?.hiddenGaps) > 0 || toCount(row?.hiddenLosses) > 0;
+  const toldLost = toCount(row?.toldLost);
   if (gaps === 0 && lost === 0) {
     return toCount(row?.reporting) === 0
       ? sourceRecord("agent_event", "unknown", "no_session_in_window")
@@ -602,16 +650,20 @@ const readAgentEventCoverage = async (
           observedAt,
         );
   }
+  const gapSince = (await hasHiddenSessionOnRepo(deps, repo, isTold))
+    ? null
+    : earliestIso(
+        lost > 0 ? toIso(row?.lossSince) : null,
+        gaps > 0 ? toIso(row?.gapSince) : null,
+      );
+  if (toCount(row?.toldGaps) === 0 && toldLost === 0) {
+    return { ...sourceRecord("agent_event", "incomplete", WITHHELD_GAP_REASON, gapSince, observedAt), withheld: true };
+  }
   return sourceRecord(
     "agent_event",
     "incomplete",
-    agentGapReason(lost, toCount(row?.ignored), toCount(row?.reaped)),
-    isGapSinceWithheld
-      ? null
-      : earliestIso(
-          lost > 0 ? toIso(row?.lossSince) : null,
-          gaps > 0 ? toIso(row?.gapSince) : null,
-        ),
+    agentGapReason(toldLost, toCount(row?.toldIgnored), toCount(row?.toldReaped)),
+    gapSince,
     observedAt,
   );
 };
@@ -680,10 +732,20 @@ const readGitCoverage = async (
   viewerDeveloperId: string,
   repo: string,
 ): Promise<CoverageSourceRecord> => {
+  // EVERY ROW COUNTS; ONLY A TOLD COLLECTOR'S INSTANT PRINTS (review round
+  // 5, C1). A row's collected_at is its collector's SessionStart — when they
+  // were at their machine — so an opted-out collector's is hers to keep. But
+  // her ROW is evidence like anyone's: the state below is decided over all of
+  // them, because evidence withheld from the count would make the rung read
+  // better than it is. The printed instant is the newest a viewer may be told
+  // (older than the truth at worst: the staler, safe direction), null when
+  // none. reported_by is the collector on every row (NOT NULL).
+  const isToldCollector = visiblePresenceCondition(viewerDeveloperId, commitEvidence.reportedBy);
   const rows = await deps.db
     .select({
       total: sql`count(*)`,
       newest: sql`max(${commitEvidence.collectedAt})`,
+      toldNewest: sql`max(${commitEvidence.collectedAt}) filter (where ${isToldCollector})`,
     })
     .from(commitEvidence)
     .where(eq(commitEvidence.repo, repo));
@@ -692,20 +754,21 @@ const readGitCoverage = async (
     return sourceRecord("git", "unknown", "no_commit_evidence");
   }
   const newest = toIso(row?.newest);
+  const printable = toIso(row?.toldNewest);
   const staleBefore = now.getTime() - ABSENCE_EVIDENCE_MAX_AGE_DAYS * MS_PER_DAY;
   if (newest === null || Date.parse(newest) < staleBefore) {
-    return sourceRecord("git", "incomplete", "evidence_stale", newest, newest);
+    return sourceRecord("git", "incomplete", "evidence_stale", printable, printable);
   }
   const census = await readAbsenceCensus(deps, viewerDeveloperId, repo);
   if (census.unreportedAuthors === 0) {
-    return sourceRecord("git", "complete", "commits_reported", null, newest);
+    return sourceRecord("git", "complete", "commits_reported", null, printable);
   }
   return sourceRecord(
     "git",
     "incomplete",
     "commit_authors_unreported",
     censusGap(census),
-    newest,
+    printable,
   );
 };
 
@@ -762,7 +825,7 @@ export const readCoverage = async (
   const paths = scopePaths(options.scope);
   const scope = sessionScope(deps, now, repo, since, paths, options.answerSessionIds ?? []);
   const [agentEvent, git, order] = await Promise.all([
-    readAgentEventCoverage(deps, now, viewerDeveloperId, since, scope),
+    readAgentEventCoverage(deps, now, viewerDeveloperId, repo, since, scope),
     readGitCoverage(deps, now, viewerDeveloperId, repo),
     readCoverageOrder(
       deps.db,

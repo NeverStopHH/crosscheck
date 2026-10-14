@@ -14,17 +14,19 @@ import { crosscheckHome, ensureDir } from "@crosscheck/connector-core/config/pat
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import {
   readRepoConfig,
-  renderRepoConfig,
   repoConfigPath,
 } from "@crosscheck/connector-core/config/repo-config.ts";
+import type { RepoConfig } from "@crosscheck/connector-core/config/repo-config.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import { mergeMcpConfig } from "@crosscheck/connector-core/config/mcp-config.ts";
 import {
+  INIT_IDENTITY_PROBE,
   isVersionManagerPath,
   realpathOrSelf,
   resolveCommandPrefix,
   resolveLauncher as resolveLauncherWithEntry,
   resolveMcpLauncher,
+  silentBareNote,
 } from "@crosscheck/connector-core/config/launcher.ts";
 import type { Launcher } from "@crosscheck/connector-core/config/launcher.ts";
 import { buildSettingsPlan, mergeClaudeSettings } from "@crosscheck/connector-claude";
@@ -38,6 +40,7 @@ import {
   renderJsonFile,
   saveProjectOriginals,
 } from "./init-io.ts";
+import { plannedRepoConfig } from "./init-repo-config.ts";
 import type { CliResult } from "./login.ts";
 import { doubleWiringRemedy, readProjectCopy } from "./project-copy.ts";
 import { wiringPaths } from "./wiring-removal.ts";
@@ -133,11 +136,18 @@ export {
 } from "@crosscheck/connector-core/config/launcher.ts";
 export type { Launcher } from "@crosscheck/connector-core/config/launcher.ts";
 
+/** Both inits: a person is waiting, so the PATH bin gets init's longer probe and one retry. */
 export const resolveLauncher = async (
   override: string | undefined,
   env: Env,
   entryPath: string = BIN_ENTRY_PATH,
-): Promise<Launcher> => resolveLauncherWithEntry(override, env, entryPath);
+): Promise<Launcher> => resolveLauncherWithEntry(override, env, entryPath, INIT_IDENTITY_PROBE);
+
+/** The fallback line `silentBareNote` gives, as an output-line list for both inits. */
+export const silentBareLines = (launcher: Exclude<Launcher, { kind: "refused" }>): readonly string[] => {
+  const note = silentBareNote(launcher);
+  return note === null ? [] : [note];
+};
 
 // The read-and-refuse / backup / render discipline MOVED to init-io.ts when
 // finding #11 added the user-level install: both inits obey the identical
@@ -172,12 +182,29 @@ const resolveInputs = async (
   }
   const apiKey = env["CROSSCHECK_API_KEY"] ?? stored?.apiKey;
   if (apiKey === undefined) {
-    return {
-      error: `no api key for ${hubUrl} — run \`crosscheck login ${hubUrl}\` first`,
-    };
+    return { error: noApiKeyError(hubUrl, isRepoNamed(options, env, repoConfig)) };
   }
   return { hubUrl };
 };
+
+/** The hub came from the repo's committed file, not from the person who ran init. */
+const isRepoNamed = (options: InitOptions, env: Env, repoConfig: RepoConfig | null): boolean =>
+  options.hubUrl === undefined && env["CROSSCHECK_HUB_URL"] === undefined && repoConfig !== null;
+
+/**
+ * A REPO-NAMED HUB IS NOT A LOGIN TARGET (key-binding review, H2). The url in
+ * a cloned repo's .crosscheck.json is shared content; printing
+ * `crosscheck login <it>` hands whoever reads this — an agent included — the
+ * one command that sends a key there. The person confirms the address out of
+ * band and logs in themselves. A hub the person named (--hub, the env) is
+ * their own word and keeps the direct command.
+ */
+const noApiKeyError = (hubUrl: string, isFromRepo: boolean): string =>
+  isFromRepo
+    ? `no api key — log in to your team's hub yourself first (crosscheck login <your hub's url>). ` +
+      `This repo's .crosscheck.json names ${hubUrl}: confirm with whoever runs your hub that it is ` +
+      "its address before you log in there, because logging in sends your key to it — never let an agent do it"
+    : `no api key for ${hubUrl} — run \`crosscheck login ${hubUrl}\` first`;
 
 export const runInit = async (
   args: readonly string[],
@@ -250,6 +277,18 @@ export const runInit = async (
       exitCode: EXIT_ABORTED,
     };
   }
+  // The team's committed file is merged onto, never written over
+  // (init-repo-config.ts), so a file init cannot merge onto is refused here,
+  // before anything is written.
+  const repoConfigFile = repoConfigPath(identity.root);
+  const repoConfigRead = await readJsonConfig(repoConfigFile);
+  if (!repoConfigRead.ok) {
+    return {
+      stdout: `${refusalMessage(repoConfigFile, repoConfigRead.reason)}\n`,
+      exitCode: EXIT_ABORTED,
+    };
+  }
+  const repoConfigNext = plannedRepoConfig(repoConfigRead.value, repoConfigRead.raw, hubUrl);
   const prefix = resolveCommandPrefix(launcher);
   const mcpEntry = resolveMcpLauncher(launcher);
   // DYNAMIC import like the bin's cursor-hook branch: hooks and the
@@ -298,11 +337,9 @@ export const runInit = async (
   await ensureDir(settingsDir);
   await writeFile(settingsPath, settingsNext, "utf8");
   await writeFile(mcpPath, mcpNext, "utf8");
-  await writeFile(
-    repoConfigPath(identity.root),
-    renderRepoConfig(hubUrl),
-    "utf8",
-  );
+  if (repoConfigNext !== null) {
+    await writeFile(repoConfigFile, repoConfigNext, "utf8");
+  }
   if (cursorPlan !== null && cursorPlan.ok) {
     await cursorPlan.apply();
   }
@@ -340,6 +377,8 @@ export const runInit = async (
           `note: ${launcher.path} resolves through a node version manager — the hooks' bare \`crosscheck\` disappears on \`nvm use\` or a runtime upgrade; pin it with ${INIT_COMMAND_PREFIX_FLAG} "<bun> <entry>" if you switch versions`,
         ]
       : []),
+    // Never a silent fallback: a PATH bin that stayed silent is said so.
+    ...silentBareLines(launcher),
     ...(launcher.kind === "entry"
       ? [
           "launcher is an absolute path on this machine — teammates must run crosscheck init once too (or npm install -g crosscheck-hub)",
@@ -360,7 +399,9 @@ export const runInit = async (
   ];
   return {
     stdout: [
-      `wrote ${repoConfigPath(identity.root)}`,
+      repoConfigNext === null
+        ? `kept ${repoConfigFile} (it already connects this repo to ${hubUrl})`
+        : `wrote ${repoConfigFile}`,
       `wrote ${settingsPath}${savedSuffix(settingsPath)}`,
       `wrote ${mcpPath}${savedSuffix(mcpPath)}`,
       ...cursorFiles.map((file) => `wrote ${file.path}${savedSuffix(file.path)}`),

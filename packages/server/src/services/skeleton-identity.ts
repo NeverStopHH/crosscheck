@@ -26,6 +26,7 @@ import type { SQL } from "drizzle-orm";
 import { SKELETON_BACKFILL_BATCH } from "../constants.ts";
 import type { DbExecutor } from "../db/client.ts";
 import { pinFileRefs, pinFiles } from "../db/schema.ts";
+import { vacuumTable } from "../db/vacuum.ts";
 import { yieldToRequests } from "../db/yield-to-requests.ts";
 import type { Clock } from "../types.ts";
 
@@ -398,8 +399,9 @@ export const backfillSkeletonIdentity = async (
   // EVERY UPDATE LEFT A DEAD ROW VERSION BEHIND, and PGlite runs no
   // autovacuum: without this the backfill would double the table for good.
   // Once, only when something was written — so every later start skips it.
+  // Without parallel workers, as every VACUUM of the hub (db/vacuum.ts).
   if (providers + claimContexts + targets.workContexts + targets.fileRefs > 0) {
-    await deps.db.execute(sql`VACUUM session_events`);
+    await vacuumTable(deps.db, "session_events");
   }
   return {
     pinPathsCanonicalised,

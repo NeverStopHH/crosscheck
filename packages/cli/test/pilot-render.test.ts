@@ -60,6 +60,9 @@ const emptyLabels = (): PilotLabelFigures => ({
   labelCoverage: { kind: "unavailable", reason: "no_interventions" },
 });
 
+/** The closed month a hub reports outcomes for (07 §13.9, review #4). */
+const JULY = { periodStartIso: "2026-07-01T00:00:00.000Z", periodEndIso: "2026-08-01T00:00:00.000Z" };
+
 const report = (overrides: Partial<PilotReport> = {}): PilotReport => ({
   repo: "github.com/acme/api",
   enrolled: true,
@@ -86,7 +89,14 @@ const report = (overrides: Partial<PilotReport> = {}): PilotReport => ({
     surfaced: 312,
     opened: 74,
     converged: 31,
-    byChannel: { unknown: 0, briefing: 208, prompt_hint: 96, tripwire: 8, suspect: 0 },
+    byChannel: {
+      unknown: 0,
+      briefing: 208,
+      prompt_hint: 96,
+      prompt_substance: 0,
+      tripwire: 8,
+      suspect: 0,
+    },
     priorWork: [
       { workContextId: "wc_8f21", title: "Widen the filter row", openedBySessions: 2 },
     ],
@@ -189,13 +199,99 @@ describe("renderPilot", () => {
     expect(out).not.toContain("per 100");
   });
 
+  test("review M-2: a repo that left still prints the closed month it was enrolled for", () => {
+    // Arrange — not enrolled now; July was counted, from its intervals
+    const outcomes = {
+      ...JULY,
+      recordableSinceIso: "2026-06-03T09:00:00.000Z",
+      countedFromIso: JULY.periodStartIso,
+      pausedInPeriod: false,
+      withheld: null,
+      figures: { interventions: 20, followed: 10, overrode: 2, notRelevantNow: 2, noise: 2, unmarked: 4 },
+    };
+
+    // Act
+    const out = renderPilot(view({ enrolled: false, outcomes }));
+
+    // Assert — never "none could be recorded" for a month the team was in the pilot for
+    expect(out).toContain("not enrolled");
+    expect(out).toContain("hint outcomes per 100 interventions, July 2026");
+    expect(out).not.toContain("none could be recorded");
+  });
+
+  const monthBlock = {
+    ...JULY,
+    recordableSinceIso: "2026-06-03T09:00:00.000Z",
+    countedFromIso: JULY.periodStartIso,
+    pausedInPeriod: false,
+  };
+  const OWN = { interventions: 20, followed: 10, overrode: 2, notRelevantNow: 2, noise: 2, unmarked: 4 };
+  const LATE = { followed: 2, overrode: 0, notRelevantNow: 0, noise: 1 };
+  const LATE_LINE =
+    "confirmed late in July 2026, about hints of earlier months (counted here, never there): followed 2 · overrode 0 · not relevant now 0 · noise 1";
+  const LATE_WITHHELD_LINE =
+    "confirmed late in July 2026, about hints of earlier months: no count — below the disclosure minimums";
+
+  test("review M6: words confirmed late are printed in the month they were confirmed, apart, never in the rates", () => {
+    // Arrange — the month's own figure and its late words, each past the minimums on its own
+    const outcomes = { ...monthBlock, withheld: null, figures: OWN, late: { withheld: null, figures: LATE } };
+
+    // Act
+    const out = renderPilot(view({ outcomes }));
+
+    // Assert
+    expect(out).toContain(LATE_LINE);
+    expect(out).toContain("followed 50.0");
+  });
+
+  test("round-2 R2-H2: late words below the minimums on their own print no count, beside a month's own figure", () => {
+    // Arrange
+    const outcomes = { ...monthBlock, withheld: null, figures: OWN, late: { withheld: "below_minimums", figures: null } };
+
+    // Act
+    const out = renderPilot(view({ outcomes }));
+
+    // Assert
+    expect(out).toContain(LATE_WITHHELD_LINE);
+    expect(out).not.toContain("counted here, never there");
+  });
+
+  test("round-2 R2-H2: a month's own figure withheld still prints its late words when they pass on their own", () => {
+    // Arrange
+    const outcomes = { ...monthBlock, withheld: "below_minimums", figures: null, late: { withheld: null, figures: LATE } };
+
+    // Act
+    const out = renderPilot(view({ outcomes }));
+
+    // Assert
+    expect(out).toContain(LATE_LINE);
+    expect(out).not.toContain("followed 50.0");
+  });
+
+  test("round-2 R2-H1: a later compromise prints a correction line beneath the month, which stands as it closed", () => {
+    // Arrange — one person's words, then the same with a count that passes
+    const one = { ...monthBlock, withheld: null, figures: OWN, laterRetracted: { count: null, withheld: "below_minimums" } };
+    const many = { ...monthBlock, withheld: null, figures: OWN, laterRetracted: { count: 12, withheld: null } };
+
+    // Act
+    const [withheld, counted] = [renderPilot(view({ outcomes: one })), renderPilot(view({ outcomes: many }))];
+
+    // Assert
+    expect(withheld).toContain(
+      "correction: some of July 2026's counted words were later retracted — their passkey was declared compromised; the figures above stand as the month closed — no count: below the disclosure minimums",
+    );
+    expect(counted).toContain(
+      "correction: 12 of July 2026's counted words were later retracted — their passkey was declared compromised; the figures above stand as the month closed",
+    );
+  });
+
   test("every channel prints, the empty ones and `unknown` included (PIL-1)", () => {
     // Arrange & Act
     const out = renderPilot(view());
 
     // Assert
     expect(out).toContain(
-      "by channel: briefing 208 · prompt_hint 96 · tripwire 8 · suspect 0 · unknown 0",
+      "by channel: briefing 208 · prompt_hint 96 · prompt_substance 0 · tripwire 8 · suspect 0 · unknown 0",
     );
   });
 
@@ -358,17 +454,39 @@ describe("renderPilot", () => {
     expect(out).toContain("3 repaired break(s) recorded no commit at the break");
   });
 
-  test("proof 4 says plainly that the hub cannot tell a person's label from an agent's", () => {
-    // Arrange & Act — the second review's "Can an agent label?": the hub's
-    // only check is a presence literal any client can send, the key is a
-    // file on disk, and a pty passes the terminal check. A report that
-    // calls the labels a person's must say what that rests on.
+  test("review H1: proof 4 shows labels confirmed with a passkey still cooling off, from when they count, and the retracted ones", () => {
+    // Arrange
+    const base = report();
+    const out = renderPilot(
+      view({
+        precision: {
+          ...base.precision,
+          notHuman: { atTerminal: 0, byAgent: 0, legacy: 0, coolingOff: 2, countingFrom: "2026-08-02T10:00:00.000Z", retracted: 1 },
+        },
+      }),
+    );
+
+    // Assert — beside the figures, never in them
+    const proof4 = out.slice(out.indexOf("4. proactive precision"), out.indexOf("5. coverage"));
+    // Round-2 R2-L2: exact about which instant (the first of them), and about what a revoke then does
+    expect(proof4).toContain(
+      "2 confirmed, still in the cool-off of the passkey that confirmed them — the first counts from 2026-08-02T10:00:00.000Z; revoked before then, that passkey never counts, and what it confirmed comes back to your confirm page",
+    );
+    expect(proof4).toContain("1 retracted — the passkey that confirmed them was declared compromised, so they count nowhere");
+  });
+
+  test("proof 4 says plainly what makes a label a person's: their passkey, never the key", () => {
+    // Arrange & Act — the second review's "Can an agent label?": the key is a
+    // file on disk and a pty passes the terminal check. Since human
+    // provenance (0.11) the hub CAN tell: a label counts only once its
+    // person confirmed it with their passkey. A report that calls the
+    // labels a person's must say what that rests on.
     const out = renderPilot(view());
 
     // Assert — on proof 4, where the labels are presented as a person's
     const proof4 = out.slice(out.indexOf("4. proactive precision"), out.indexOf("5. coverage"));
     expect(proof4).toContain(
-      "labels are attributed to a developer's key: nothing at the hub can tell a person's label from an agent's acting with that key",
+      "labels count only once the person confirmed them with their passkey; a key — an agent's or a terminal's — only drafts one",
     );
   });
 
@@ -534,6 +652,240 @@ describe("renderPilot", () => {
 
     // Assert
     expect(out).toContain("· 30 recorded before labels, in neither cohort");
+  });
+
+  test("D-O5: one per-repo outcomes line for the last whole month, per 100 interventions, no target", () => {
+    // Arrange
+    const outcomes = {
+      ...JULY,
+      recordableSinceIso: "2026-06-03T09:00:00.000Z",
+      countedFromIso: JULY.periodStartIso,
+      withheld: null,
+      figures: { interventions: 8, followed: 4, overrode: 1, notRelevantNow: 1, noise: 1, unmarked: 1 },
+    };
+
+    // Act
+    const out = renderPilot(view({ outcomes }));
+
+    // Assert — one line, descriptive, the fixed month named, nobody named
+    const lines = out.split("\n").filter((line) => line.includes("hint outcomes"));
+    expect(lines).toEqual([
+      "   hint outcomes per 100 interventions, July 2026 — the last whole month, fixed (8 reached someone): followed 50.0 · overrode 12.5 · not relevant now 12.5 · noise 12.5 (FLOORS: only what agents and people chose to record) · unmarked 12.5 (a CEILING: some of it was acted on and never recorded) — no target, nobody named",
+    ]);
+  });
+
+  test("review #4, M1: below the disclosure minimums the line prints no figure and never names which minimum", () => {
+    // Arrange
+    const outcomes = {
+      ...JULY,
+      recordableSinceIso: "2026-06-03T09:00:00.000Z",
+      countedFromIso: JULY.periodStartIso,
+      withheld: "below_minimums",
+      figures: null,
+    };
+
+    // Act
+    const out = renderPilot(view({ outcomes }));
+
+    // Assert
+    expect(out).toContain("   hint outcomes, July 2026: withheld — below the disclosure minimums; a team of three never meets them");
+    expect(out).not.toContain("per 100 interventions, July");
+  });
+
+  test("review M1: an older hub's named minimum prints as the generic sentence — never which one", () => {
+    // Arrange — a hub from before M1 named the minimum that failed
+    const outcomes = {
+      ...JULY,
+      recordableSinceIso: "2026-06-03T09:00:00.000Z",
+      countedFromIso: JULY.periodStartIso,
+      withheld: "too_few_recorded",
+      figures: null,
+    };
+
+    // Act
+    const out = renderPilot(view({ outcomes }));
+
+    // Assert
+    const lines = out.split("\n").filter((line) => line.includes("hint outcomes"));
+    expect(lines).toEqual(["   hint outcomes, July 2026: withheld — below the disclosure minimums; a team of three never meets them"]);
+  });
+
+  test("review #4: figures sent over no intervention still print no per-100, never NaN", () => {
+    // Arrange — a hub that forgot to withhold an empty month
+    const outcomes = {
+      ...JULY,
+      recordableSinceIso: "2026-06-03T09:00:00.000Z",
+      countedFromIso: JULY.periodStartIso,
+      withheld: null,
+      figures: { interventions: 0, followed: 0, overrode: 0, notRelevantNow: 0, noise: 0, unmarked: 0 },
+    };
+
+    // Act
+    const out = renderPilot(view({ outcomes }));
+
+    // Assert
+    const lines = out.split("\n").filter((line) => line.includes("hint outcomes"));
+    expect(lines).toEqual(["   hint outcomes, July 2026: withheld — below the disclosure minimums; a team of three never meets them"]);
+  });
+
+  test("review #13: an empty month names no date when enrolment came before it — never the window start", () => {
+    // Arrange — the review's repo: enrolled 2026-07-24, the line once said "since 2026-08-07, when outcomes became recordable"
+    const outcomes = {
+      periodStartIso: "2026-09-01T00:00:00.000Z",
+      periodEndIso: "2026-10-01T00:00:00.000Z",
+      recordableSinceIso: "2026-07-24T09:00:00.000Z",
+      countedFromIso: "2026-09-01T00:00:00.000Z",
+      withheld: "below_minimums",
+      figures: null,
+    };
+
+    // Act
+    const out = renderPilot(view({ outcomes }));
+
+    // Assert
+    const lines = out.split("\n").filter((line) => line.includes("hint outcomes"));
+    expect(lines).toEqual(["   hint outcomes, September 2026: withheld — below the disclosure minimums; a team of three never meets them"]);
+  });
+
+  test("review #13: a month enrolment clipped names the enrolment instant as where counting starts", () => {
+    // Arrange
+    const outcomes = {
+      ...JULY,
+      recordableSinceIso: "2026-07-24T09:00:00.000Z",
+      countedFromIso: "2026-07-24T09:00:00.000Z",
+      withheld: "below_minimums",
+      figures: null,
+    };
+
+    // Act
+    const out = renderPilot(view({ outcomes }));
+
+    // Assert
+    const lines = out.split("\n").filter((line) => line.includes("hint outcomes"));
+    expect(lines).toEqual([
+      "   hint outcomes, July 2026: withheld — below the disclosure minimums, counted from 2026-07-24, when outcomes became recordable here; a team of three never meets them",
+    ]);
+  });
+
+  test("review #13: a month that ended before enrolment names the enrolment day, not the month", () => {
+    // Arrange
+    const outcomes = {
+      periodStartIso: "2026-09-01T00:00:00.000Z",
+      periodEndIso: "2026-10-01T00:00:00.000Z",
+      recordableSinceIso: "2026-10-05T09:00:00.000Z",
+      countedFromIso: null,
+      withheld: "not_recordable",
+      figures: null,
+    };
+
+    // Act
+    const out = renderPilot(view({ outcomes }));
+
+    // Assert
+    const lines = out.split("\n").filter((line) => line.includes("hint outcomes"));
+    expect(lines).toEqual([
+      "   hint outcomes, September 2026: none could be recorded — outcomes became recordable here on 2026-10-05",
+    ]);
+  });
+
+  test("review M3: a month the pilot paused in says only its enrolled time was counted", () => {
+    // Arrange
+    const outcomes = {
+      ...JULY,
+      recordableSinceIso: "2026-06-03T09:00:00.000Z",
+      countedFromIso: JULY.periodStartIso,
+      pausedInPeriod: true,
+      withheld: "below_minimums",
+      figures: null,
+    };
+
+    // Act
+    const out = renderPilot(view({ outcomes }));
+
+    // Assert
+    const lines = out.split("\n").filter((line) => line.includes("hint outcomes"));
+    expect(lines).toEqual([
+      "   hint outcomes, July 2026: withheld — below the disclosure minimums, counted only while the pilot was enrolled here; a team of three never meets them",
+    ]);
+  });
+
+  test("review M-3: a month counted over an enrolment an upgrade reconstructed says so on the line", () => {
+    // Arrange
+    const outcomes = {
+      ...JULY,
+      recordableSinceIso: "2026-06-03T09:00:00.000Z",
+      countedFromIso: JULY.periodStartIso,
+      pausedInPeriod: false,
+      reconstructed: true,
+      withheld: "below_minimums",
+      figures: null,
+    };
+
+    // Act
+    const out = renderPilot(view({ outcomes }));
+
+    // Assert
+    const lines = out.split("\n").filter((line) => line.includes("hint outcomes"));
+    expect(lines).toEqual([
+      "   hint outcomes, July 2026: withheld — below the disclosure minimums, its enrolment reconstructed from recorded outcomes; a team of three never meets them",
+    ]);
+  });
+
+  test("review M3: a month counted from a re-enrolment never calls it when outcomes became recordable", () => {
+    // Arrange — first enrolled in June, paused, enrolled again on 2026-07-20
+    const outcomes = {
+      ...JULY,
+      recordableSinceIso: "2026-06-03T09:00:00.000Z",
+      countedFromIso: "2026-07-20T09:00:00.000Z",
+      pausedInPeriod: false,
+      withheld: "below_minimums",
+      figures: null,
+    };
+
+    // Act
+    const out = renderPilot(view({ outcomes }));
+
+    // Assert
+    const lines = out.split("\n").filter((line) => line.includes("hint outcomes"));
+    expect(lines).toEqual([
+      "   hint outcomes, July 2026: withheld — below the disclosure minimums, counted from 2026-07-20, when the pilot was enrolled here again; a team of three never meets them",
+    ]);
+  });
+
+  test("review M3: a month the pilot was paused through says so, not that outcomes became recordable later", () => {
+    // Arrange
+    const outcomes = {
+      ...JULY,
+      recordableSinceIso: "2026-06-03T09:00:00.000Z",
+      countedFromIso: null,
+      pausedInPeriod: false,
+      withheld: "not_recordable",
+      figures: null,
+    };
+
+    // Act
+    const out = renderPilot(view({ outcomes }));
+
+    // Assert
+    const lines = out.split("\n").filter((line) => line.includes("hint outcomes"));
+    expect(lines).toEqual(["   hint outcomes, July 2026: none could be recorded — the pilot was paused here for the whole month"]);
+  });
+
+  test("round 3: an outcomes block this client cannot read is one line, and the rest of the report prints", () => {
+    // Arrange
+    const out = renderPilot(view({ outcomes: { unreadable: true } }));
+
+    // Assert
+    expect(out).toContain("   hint outcomes: this hub sent an outcomes block this client cannot read — nothing is shown from it");
+    expect(out).toContain("crosscheck pilot:");
+  });
+
+  test("D-O5: a hub that predates outcomes says so instead of printing a figure", () => {
+    // Arrange & Act — the builder carries no outcomes block, as an older hub's report does
+    const out = renderPilot(view());
+
+    // Assert
+    expect(out).toContain("   hint outcomes: this hub does not record them");
   });
 
   test("the header says 0.10's refusals and the pre-labels sessions apart from the set's own (M2, M4)", () => {

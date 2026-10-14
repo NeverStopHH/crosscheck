@@ -6,6 +6,7 @@
  * (capture-hardening.test.ts) needed the same harness — one implementation,
  * two suites, zero assertion changes (the flow-extraction rule).
  */
+import { serveLoopback } from "../../../connector-core/test/fixtures/loopback-serve.ts";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -39,7 +40,7 @@ export const bootCaptureHub = async (label: string): Promise<CaptureHub> => {
   const db = await createDb();
   const adminToken = `${label}-admin`;
   const app = createServer({ db, adminToken });
-  const server = Bun.serve({ port: 0, fetch: app.fetch });
+  const server = serveLoopback({ port: 0, fetch: app.fetch });
   const hubUrl = `http://127.0.0.1:${server.port}`;
   const response = await fetch(`${hubUrl}/api/developers`, {
     method: "POST",
@@ -136,6 +137,7 @@ export const createHarness = async (
     hub: {
       hubUrl: hub.hubUrl,
       apiKey: hub.apiKey,
+      keyOrigin: hub.hubUrl,
       timeoutMs: Number(TIMEOUT_MS),
       home,
       repoKey: repoKey(hub.hubUrl, REPO_ID),

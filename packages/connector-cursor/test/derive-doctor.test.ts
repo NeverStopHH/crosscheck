@@ -275,6 +275,26 @@ describe("the cursor doctor section says what is inferred and what is refused", 
     }
   });
 
+  test("a refused intent answer WARNs the intent rung; a skipped run does not", async () => {
+    const { repo, home } = await installed("doctor-refused");
+    try {
+      const refused = await seed(home, { intentFireCount: 1, intentRefusedCount: 1, intentLastDrop: "dropped: secret-like text" });
+      const checksFor = (state: typeof refused) =>
+        cursorDoctorChecks({ repoRoot: repo, env: {}, home, repoKey: "k", liveStates: [state] });
+      const line = (checks: Awaited<ReturnType<typeof checksFor>>) =>
+        checks.find((entry) => entry.name === "intent (cursor)");
+
+      const refusedLine = line(await checksFor(refused));
+      const skippedLine = line(await checksFor({ ...refused, intentRefusedCount: 0, intentSkippedCount: 1, intentLastDrop: "dropped: empty prompt" }));
+
+      expect(refusedLine?.level).toBe("WARN");
+      expect(refusedLine?.detail).toContain("secret-like text");
+      expect(skippedLine?.level).toBe("PASS");
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("a booked runner failure WARNs on its own capability and names it", async () => {
     const { repo, home } = await installed("doctor-warn");
     try {
@@ -437,5 +457,22 @@ describe("the cursor doctor section says what is inferred and what is refused", 
     } finally {
       await cleanup();
     }
+  });
+});
+
+describe("the person-facing collision notice refusal (pilot, 2026-10-07)", () => {
+  test("Cursor's doctor says the person is never told of a collision here, and names the one field that could and why it cannot", async () => {
+    // Arrange
+    const { repo, home } = await installed("cursor-doctor-person-notice");
+
+    // Act
+    const checks = await cursorDoctorChecks({ repoRoot: repo, env: {}, home, repoKey: "k" });
+    const line = checks.find((entry) => entry.name === "person-facing collision notice (cursor)");
+
+    // Assert — a refusal is a decision working, never a fault: printed, PASS,
+    // and the sentence is the platform fact, not a code
+    expect(line?.level).toBe("PASS");
+    expect(line?.detail).toContain("user_message appears only when an action is denied or a prompt blocked");
+    expect(line?.detail).toContain("the person learns of it when the agent says so");
   });
 });

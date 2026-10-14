@@ -25,9 +25,23 @@
 | `permission_mode` | Current permission mode                        |
 | `hook_event_name` | Name of the event that fired                   |
 
+Inside a subagent, two additional fields are included:
+
+| Field        | Description                                              |
+| :----------- | :------------------------------------------------------- |
+| `agent_id`   | Unique identifier for the subagent                       |
+| `agent_type` | Agent name                                               |
+
 ### Exit code output
 
 Exit 0 means success.
+
+### JSON output
+
+| Field           | Default | Description                                 |
+| :-------------- | :------ | :------------------------------------------ |
+| `continue`      | `true`  | If `false`, Claude stops processing         |
+| `systemMessage` | none    | Warning message shown to the user           |
 
 ## Hook events
 
@@ -127,6 +141,21 @@ Runs immediately after a tool completes successfully.
     "success": true
   },
   "tool_use_id": "toolu_01ABC123"
+}
+```
+
+#### PostToolUse decision control
+
+| Field               | Description                                                  |
+| :------------------ | :----------------------------------------------------------- |
+| `additionalContext` | String added to Claude's context alongside the tool result   |
+
+```json
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PostToolUse",
+    "additionalContext": "Additional information for Claude"
+  }
 }
 ```
 
@@ -242,5 +271,30 @@ Runs when the main Claude Code agent has finished responding.
   "hook_event_name": "Stop",
   "transcript_path": "/home/dev/.claude/projects/acme-api/abc123.jsonl",
   "stop_hook_active": false
+}
+```
+
+### SubagentStop
+
+Runs when a Claude Code subagent has finished responding. Matches on agent type, same values as SubagentStart.
+
+#### SubagentStop input
+
+| Field                   | Description                                             |
+| :---------------------- | :------------------------------------------------------ |
+| `stop_hook_active`      | True when Claude is already continuing from a stop hook |
+| `agent_id`              | The subagent's identifier                               |
+| `agent_type`            | The subagent's type                                     |
+| `agent_transcript_path` | Path to the subagent's own transcript                   |
+
+```json
+{
+  "session_id": "abc123",
+  "cwd": "/home/dev/acme/api",
+  "hook_event_name": "SubagentStop",
+  "stop_hook_active": false,
+  "agent_id": "agent-1",
+  "agent_type": "general-purpose",
+  "agent_transcript_path": "/home/dev/.claude/projects/acme-api/abc123/subagents/agent-1.jsonl"
 }
 ```

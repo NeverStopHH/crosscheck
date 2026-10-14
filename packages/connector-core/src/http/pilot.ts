@@ -90,6 +90,86 @@ const LabelFiguresSchema = z.looseObject({
 export type PilotLabelFigures = z.infer<typeof LabelFiguresSchema>;
 
 /**
+ * THE CORRECTION LINE beneath a closed month (round-2 R2-H1): how many of its
+ * counted words were later declared compromised — a count only beside no
+ * "withheld", or this client reads none of it.
+ */
+export const CorrectionSchema = z
+  .looseObject({ count: CountSchema.nullable(), withheld: z.string().min(1).nullable() })
+  .refine((line) => (line.withheld === null) === (line.count !== null), {
+    message: "a correction is either withheld or counted",
+  });
+
+export type Correction = z.infer<typeof CorrectionSchema>;
+
+/**
+ * THE WORDS CONFIRMED LATE in the month (review M6), withheld ON THEIR OWN
+ * (round-2 R2-H2): figures only beside no "withheld", or this client reads
+ * none of them.
+ */
+const LateBlockSchema = z
+  .looseObject({
+    withheld: z.string().min(1).nullable(),
+    figures: z
+      .looseObject({ followed: CountSchema, overrode: CountSchema, notRelevantNow: CountSchema, noise: CountSchema })
+      .nullable(),
+  })
+  .refine((late) => (late.withheld === null) === (late.figures !== null), {
+    message: "a late figure is either withheld or shown",
+  });
+
+/**
+ * THE OUTCOMES BLOCK (07 §13.9–§13.11). Strict inside — a count that did not
+ * arrive is not zero, and figures beside "withheld" are not printed — but
+ * strict about ITSELF only: a block this client cannot read is answered as
+ * unreadable, and the rest of the report is still read (round 3).
+ */
+const OutcomeBlockSchema = z
+  .looseObject({
+    periodStartIso: z.string().min(1),
+    periodEndIso: z.string().min(1),
+    recordableSinceIso: z.string().nullable(),
+    countedFromIso: z.string().nullable(),
+    /** 07 §13.11 (review M3): the pilot paused inside the counted part. Absent from an older hub, which never paused. */
+    pausedInPeriod: z.boolean().optional(),
+    /** 07 §13.12 (review M-3): counted over an enrolment an upgrade reconstructed. Absent from an older hub. */
+    reconstructed: z.boolean().optional(),
+    withheld: z.string().min(1).nullable(),
+    // 07 §13.11 (review M1): every count, the interventions too, rides only inside the figures.
+    figures: z
+      .looseObject({
+        interventions: CountSchema,
+        followed: CountSchema,
+        overrode: CountSchema,
+        notRelevantNow: CountSchema,
+        noise: CountSchema,
+        unmarked: CountSchema,
+      })
+      .nullable(),
+    /** Round-2 R2-H2: the month's late words, withheld on their own. Absent from an older hub. */
+    late: LateBlockSchema.optional().catch(undefined),
+    /** Round-2 R2-H1: the correction line; null when none. Absent from an older hub. */
+    laterRetracted: CorrectionSchema.nullable().optional().catch(undefined),
+  })
+  .refine((block) => (block.withheld === null) === (block.figures !== null), {
+    message: "an outcome figure is either withheld or shown",
+  });
+
+export type OutcomeBlock = z.infer<typeof OutcomeBlockSchema>;
+
+/** A block this client could not read — said as such, never read as anything. */
+export interface UnreadableBlock {
+  readonly unreadable: true;
+}
+
+export const UNREADABLE_BLOCK: UnreadableBlock = { unreadable: true };
+
+const readOutcomeBlock = (raw: unknown): OutcomeBlock | UnreadableBlock => {
+  const parsed = OutcomeBlockSchema.safeParse(raw);
+  return parsed.success ? parsed.data : UNREADABLE_BLOCK;
+};
+
+/**
  * One sentence somebody typed beside a label. The LABEL is an open string:
  * the vocabulary is `PILOT_INTERVENTION_LABELS`, and a word this client has
  * no sentence for is printed as the word, cleaned, like a reason word.
@@ -159,12 +239,31 @@ export const PilotReportSchema = z.looseObject({
     repairedWithoutBreakCommit: CountSchema,
     supersededAnswers: CountSchema,
     answersAfterRepair: CountSchema,
+    /** Human provenance §5: repaired breaks no passkey confirmed. Absent from an older hub. */
+    notHumanConfirmed: CountSchema.optional(),
   }),
   precision: LabelFiguresSchema.extend({
     /** Where the labelled figures start; null when nothing is measured. */
     labelledSinceIso: z.string().nullable(),
     /** 0.10 `off_target` marks, outside precision (second review, H1). */
     legacyNoise: CountSchema,
+    /**
+     * Human provenance §5: labels that are no person's judgement yet, by class.
+     * Absent from an older hub; a block this client cannot read is dropped.
+     */
+    notHuman: z
+      .looseObject({
+        atTerminal: CountSchema,
+        byAgent: CountSchema,
+        legacy: CountSchema,
+        /** Review H1: confirmed with a passkey still cooling off — counted from `countingFrom`. */
+        coolingOff: CountSchema.optional().catch(undefined),
+        countingFrom: z.string().nullable().optional().catch(undefined),
+        /** Confirmed with a passkey since revoked: retracted. */
+        retracted: CountSchema.optional().catch(undefined),
+      })
+      .optional()
+      .catch(undefined),
     precisionTarget: z.number().finite().min(0).max(1),
     openedPer100: PilotFigureSchema,
     openedTargetPer100: z.number().finite().min(0),
@@ -174,6 +273,16 @@ export const PilotReportSchema = z.looseObject({
     reasons: z.array(LabelReasonSchema),
     reasonsBeyondList: CountSchema,
   }),
+  // 07 §13.9 (D-O5). OPTIONAL, unlike every count inside it: an older hub
+  // sends no block at all and the report says "this hub does not record
+  // them"; a hub that sends one sends every count, none defaulted, because
+  // "followed 0" read from a missing count is the AT-9 failure again.
+  // Review #4: ONE CLOSED MONTH, and figures only above the disclosure
+  // minimums — `withheld` says why not, as an open word. 07 §13.11 (round 3):
+  // parsed LENIENTLY as a block — one this client cannot read, figures and
+  // withholding disagreeing included, is an "unreadable" block, never a
+  // report rejected whole, and never zeros.
+  outcomes: z.unknown().transform(readOutcomeBlock).optional(),
   // THE LIST MUST ARRIVE: a list that did not is a report this client cannot
   // read, for the same reason as a missing count. Its ENTRIES are printed as
   // the hub sent them — the hub sends both cohorts; this parse does not
@@ -187,6 +296,8 @@ export const PilotReportSchema = z.looseObject({
       counters: z.record(z.string(), CountSchema).nullable(),
     }),
   ),
+  /** Human provenance §9: where a passkey can confirm anything on this hub. Absent from an older hub. */
+  humanConfirmation: z.enum(["https", "hub_machine_only", "none"]).optional().catch(undefined),
 });
 
 export type PilotReport = z.infer<typeof PilotReportSchema>;
@@ -216,6 +327,15 @@ const MarkResultSchema = z.looseObject({
   id: z.string().min(1),
   /** The person had said this already; it still counts once. */
   repeated: z.boolean(),
+  /** 07 §13.11 (H2), a noise label on a delivery: what the pointer stands at now. Absent from an older hub. */
+  stands: z.string().min(1).nullable().optional(),
+  /** What stood before the label — an outcome it now stands over, the label itself, or nothing. */
+  replaced: z.string().min(1).nullable().optional(),
+  /**
+   * Human provenance §3: the label was DRAFTED — it counts once the person
+   * confirms it with their passkey. Absent from an older hub, where it counted at once.
+   */
+  draft: z.boolean().optional(),
 });
 
 export type MarkResult = z.infer<typeof MarkResultSchema>;

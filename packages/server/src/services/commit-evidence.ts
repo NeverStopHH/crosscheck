@@ -106,6 +106,11 @@ export const ingestCommitEvidence = async (
             collectedAt: sql`excluded.collected_at`,
             reportedBy: sql`excluded.reported_by`,
           },
+          // AN OPTED-OUT COLLECTOR'S REPORT IS STORED LIKE ANYONE'S (review
+          // round 5, C1): it counts toward the rung and the findings for every
+          // reader, and only its collected_at — when her SessionStart ran — is
+          // withheld from viewers she is hidden from (coverage.ts,
+          // absences.ts). Missing evidence may never make coverage look better.
           setWhere: sql`${commitEvidence.collectedAt} <= excluded.collected_at`,
         });
     }

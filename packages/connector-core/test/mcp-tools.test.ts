@@ -11,6 +11,7 @@
  * half lives in test/mcp-injection.test.ts, and the wire framing in
  * test/mcp-protocol.test.ts.
  */
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -190,7 +191,7 @@ const call = async (
 beforeAll(async () => {
   db = await createDb();
   app = createServer({ db, adminToken: ADMIN_TOKEN });
-  server = Bun.serve({ port: 0, fetch: app.fetch });
+  server = serveLoopback({ port: 0, fetch: app.fetch });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
 
   alice = await setUpDeveloper(
@@ -1002,7 +1003,7 @@ describe("search_related_work runs on the hub's search block", () => {
       adminToken: ADMIN_TOKEN,
       embedder,
     });
-    const semanticServer = Bun.serve({ port: 0, fetch: semanticApp.fetch });
+    const semanticServer = serveLoopback({ port: 0, fetch: semanticApp.fetch });
     const semanticHubUrl = `http://127.0.0.1:${String(semanticServer.port)}`;
     try {
       const response = await fetch(`${semanticHubUrl}/api/developers`, {
@@ -1107,5 +1108,36 @@ describe("search_related_work runs on the hub's search block", () => {
     } finally {
       semanticServer.stop(true);
     }
+  });
+});
+
+/**
+ * NO AGE FOR AN OWNER WHO OPTED OUT (batch-2 integration review, M5): the hub
+ * withholds her last touch and marks the row, and the tool used to fall back
+ * to the creation — "2s ago" about a teammate who turned presence off. Her
+ * line keeps her name, the status and the title, and says nothing of when.
+ */
+describe("search_related_work and an owner who opted out of presence", () => {
+  const lineOf = (text: string, id: string): string => text.split("\n").find((line) => line.startsWith(`- ${id}`)) ?? "";
+
+  test("her result line carries no age; a teammate's still does", async () => {
+    // Arrange: Carol, with work the query finds, opts out as `crosscheck presence off` does
+    const carol = await setUpDeveloper("mcp-carol", "Carol", "carol@example.com", "Quiet mode for the mapping grid");
+    const optedOut = await fetch(`${hubUrl}/api/settings/presence`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${carol.apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ optOut: true }),
+    });
+    expect(optedOut.ok).toBe(true);
+
+    // Act
+    const quiet = await call(bob, "search_related_work", { query: "mapping grid" });
+    const login = await call(bob, "search_related_work", { query: "login" });
+
+    // Assert
+    expect(quiet.isError).toBe(false);
+    expect(lineOf(quiet.text, carol.workContextId)).toContain("Carol · status analyzing");
+    expect(lineOf(quiet.text, carol.workContextId)).not.toMatch(/\b\d+[smhd] ago\b/);
+    expect(lineOf(login.text, alice.workContextId)).toMatch(/· \d+[smhd] ago · status analyzing/);
   });
 });

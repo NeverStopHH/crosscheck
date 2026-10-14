@@ -14,6 +14,8 @@
  * hide (task item 4).
  */
 import { describe, expect, test } from "bun:test";
+import { sql } from "drizzle-orm";
+import { LOCATION_WITHHELD } from "@crosscheck/schema";
 
 import {
   TEST_START_ISO,
@@ -301,12 +303,14 @@ describe("presence opt-out: the whole attributed event feed", () => {
       attributedTo(own, robin.developerId).map((event) => event.kind),
     ).toEqual(ROBIN_FEED_KINDS);
 
-    // Act + Assert: live switch — opting back in restores every hidden row.
+    // Act + Assert: live switch — opting back in restores every hidden row,
+    // and is itself recorded: switching an opt-out off is never silent (hub
+    // hardening, item 6; presence-reenable.test.ts).
     await setOptOut(harness, robin, false);
     const restored = await fetchEvents(harness, nick.apiKey);
     expect(
       attributedTo(restored, robin.developerId).map((event) => event.kind),
-    ).toEqual(ROBIN_FEED_KINDS);
+    ).toEqual([...ROBIN_FEED_KINDS, "presence_reenabled"]);
   });
 });
 
@@ -359,5 +363,63 @@ describe("presence opt-out does NOT retract published knowledge", () => {
       data: { results: readonly { id: string }[] };
     };
     expect(searchBody.data.results.map((row) => row.id)).toEqual(["wc_robin"]);
+  });
+});
+
+describe("presence opt-out: live location on the suspect and open-session reads", () => {
+  test("suspect keeps an opted-out developer's row but withholds their branch and last-active time", async () => {
+    // The row is the collision — who touched the pinned file — and stays.
+    // Where its author is now, and when they last were, does not.
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");
+    await registerTestSession(harness, nick.apiKey, { id: "ses_nick" });
+    const robin = await seedRobinSession(harness);
+    await setOptOut(harness, robin, true);
+    const read = async (developer: TestDeveloper) => {
+      const params = new URLSearchParams({ repo: REPO, path: TARGET_FILE });
+      const response = await harness.app.request(
+        `/api/suspect?${params.toString()}`,
+        jsonRequest("GET", developer.apiKey),
+      );
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        data: { candidates: readonly { sessionId: string; branch: string; lastActiveAt: string }[] };
+      };
+      return body.data.candidates.find((candidate) => candidate.sessionId === "ses_robin");
+    };
+
+    const forNick = await read(nick);
+    const forRobin = await read(robin);
+
+    expect(forNick?.branch).toBe(LOCATION_WITHHELD);
+    expect(forNick?.lastActiveAt).toBe(LOCATION_WITHHELD);
+    expect(forRobin?.branch).toBe(VALID_SESSION_BODY.branch);
+    expect(forRobin?.lastActiveAt).not.toBe(LOCATION_WITHHELD);
+  });
+
+  test("an opted-out developer's open sessions are not listed to others; their own read still lists them", async () => {
+    // A stale open session reduced to no branch, no commit and no heartbeat
+    // carries nothing a colleague can use — except that it exists, which is
+    // presence. So the row goes for others, and stays for its owner.
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");
+    const robin = await seedRobinSession(harness);
+    const staleAt = new Date(new Date(TEST_START_ISO).getTime() - 30 * 3_600_000);
+    await harness.db.execute(
+      sql`UPDATE agent_sessions SET last_heartbeat_at = ${staleAt.toISOString()} WHERE id = 'ses_robin'`,
+    );
+    await setOptOut(harness, robin, true);
+    const openFor = async (developer: TestDeveloper, query: string) => {
+      const response = await harness.app.request(
+        `/api/sessions?${query}`,
+        jsonRequest("GET", developer.apiKey),
+      );
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as { data: { sessions: readonly { id: string }[] } };
+      return body.data.sessions.map((session) => session.id);
+    };
+
+    expect(await openFor(nick, "open=1")).not.toContain("ses_robin");
+    expect(await openFor(robin, "open=1&mine=1")).toEqual(["ses_robin"]);
   });
 });

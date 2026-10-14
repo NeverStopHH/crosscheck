@@ -22,6 +22,7 @@
  * cases make the fallback refuse what it cannot read and make the decoder it
  * used reach session state and the doctor line.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -40,10 +41,9 @@ import {
 import { runCursorHook } from "../src/index.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
-/** A throwaway hub on this task's own port range, never 7100. */
-const HUB_PORT = 7621;
-const server = Bun.serve({
-  port: HUB_PORT,
+/** A throwaway hub on an ephemeral loopback port, never 7100. */
+const server = serveLoopback({
+  port: 0,
   fetch: () => new Response("not found", { status: 404 }),
 });
 const HUB_URL = `http://127.0.0.1:${String(server.port)}`;

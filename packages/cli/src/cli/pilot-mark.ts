@@ -20,15 +20,24 @@ import { formatAge } from "@crosscheck/connector-core/briefing/render.ts";
 import {
   bareUntrusted,
   safeId,
+  sanitizeUntrusted,
 } from "@crosscheck/connector-core/briefing/sanitize.ts";
 import { MAX_HUB_MESSAGE_CHARS } from "@crosscheck/connector-core/constants.ts";
 import type { MarkCandidate } from "@crosscheck/connector-core/http/pilot.ts";
+import type { HubFailureKind } from "@crosscheck/connector-core/http/client.ts";
 import type { PilotMarkRefKind } from "@crosscheck/schema";
+
+import { ALREADY_DRAFTED, NOT_YOURS_YET } from "./draft-lines.ts";
+import { outcomeWord } from "./outcome-render.ts";
 
 const INDENT = "  ";
 
-/** The two one-word label shortcuts (07 §12, second review M6), each printed as itself. */
-export type ShortcutCommand = "noise" | "helpful";
+/**
+ * The two one-word label shortcuts (07 §12, second review M6) and the two
+ * outcome commands that resolve a delivery the same way (07 §13), each
+ * printed as itself.
+ */
+export type ShortcutCommand = "noise" | "helpful" | "followed" | "overrode";
 
 /** What to type when this command cannot tell which delivery was meant. */
 const nameItInstead = (command: ShortcutCommand): string =>
@@ -58,6 +67,50 @@ export const markRecordedLine = (
     ? `already recorded: you had labelled ${shown} — a label counts once, and a second one changes nothing\n`
     : `recorded: ${shown} is ${word}. It counts once toward this repo's pilot figures, and it names nobody\n`;
 };
+
+/**
+ * THE SAME GESTURES, ON A HUB THAT ONLY DRAFTS THEM (human provenance §5): a
+ * label or a passed check typed with the key is a draft until the person
+ * confirms it with their passkey — the line says so, and never "recorded".
+ */
+export const markDraftedLine = (
+  refKind: PilotMarkRefKind,
+  id: string,
+  repeated: boolean,
+  word: ShortcutCommand = "noise",
+): string => {
+  const shown = safeId(id);
+  if (repeated) {
+    return `already drafted: you had said that of ${shown} — ${ALREADY_DRAFTED}\n`;
+  }
+  return refKind === "pin"
+    ? `drafted: you ran ${shown}'s check and watched it pass — ${NOT_YOURS_YET}\n`
+    : `drafted: ${shown} is ${word} — ${NOT_YOURS_YET}; once it is, it counts once toward this repo's pilot figures, and it names nobody\n`;
+};
+
+/** The hub's answer to a label, as its line: drafted (a hub since 0.11) or recorded (one before). */
+export const markAnswerLine = (
+  refKind: PilotMarkRefKind,
+  id: string,
+  answer: { readonly repeated: boolean; readonly draft?: boolean | undefined },
+  word: ShortcutCommand = "noise",
+): string =>
+  answer.draft === true
+    ? markDraftedLine(refKind, id, answer.repeated, word)
+    : markRecordedLine(refKind, id, answer.repeated, word);
+
+/**
+ * WHAT NOW STANDS (07 §13.11, review H2): a noise label said over an outcome —
+ * fresh, or said again over a word recorded since — stands over it now, and
+ * the person is told which word it stands over. Every other answer adds nothing.
+ */
+export const labelStandsLine = (result: {
+  readonly stands?: string | null | undefined;
+  readonly replaced?: string | null | undefined;
+}): string =>
+  result.stands === "noise" && typeof result.replaced === "string" && result.replaced !== "noise"
+    ? `noise now stands over the earlier ${outcomeWord(result.replaced)}, which stays in the history\n`
+    : "";
 
 /**
  * MORE THAN ONE — LISTED, NEVER GUESSED. "The most recent" of several is a
@@ -95,11 +148,25 @@ export const refNeverReachedLine = (ref: string): string =>
  * and the person needs to know the gesture did not land.
  */
 export const markFailureLine = (
-  kind: "network" | "http" | "malformed",
+  kind: HubFailureKind,
   message: string,
 ): string => {
-  const said = bareUntrusted(message, MAX_HUB_MESSAGE_CHARS);
+  // Never sent (http/client.ts key-origin check): the client's own sentence
+  // of two canonical origins, whole — the sanitizer would strip their `:`.
+  if (kind === "refused") {
+    return `${message} — nothing was recorded\n`;
+  }
   return kind === "network"
-    ? `hub unreachable: ${said} — nothing was recorded\n`
-    : `${said}\n`;
+    ? `hub unreachable: ${bareUntrusted(message, MAX_HUB_MESSAGE_CHARS)} — nothing was recorded\n`
+    : `${hubSentence(message)}\n`;
 };
+
+/**
+ * A HUB'S SENTENCE, PRINTED AS THE WHOLE LINE (round-6 LOW-5): the prose class — invisibles,
+ * renderer-owned characters and instruction-shaped text go, bounded — and its ordinary punctuation
+ * stays. The bare class strips "—", ":" and "·" because a FIELD inside a line must not mint another
+ * field; a sentence that is the whole line has none to mint, and the strip ran its clauses together
+ * ("nothing was recorded say it again"). An unreachable hub's error sits inside this CLI's own line,
+ * so it stays bare.
+ */
+const hubSentence = (message: string): string => sanitizeUntrusted(message, MAX_HUB_MESSAGE_CHARS);

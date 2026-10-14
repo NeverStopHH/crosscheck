@@ -255,7 +255,7 @@ describe("who may revoke a passkey, and when (04a §4.4)", () => {
     });
 
     // Assert — it signed no grant, so no fence closes with it (04a D-PK-1)
-    expect(outcome).toEqual({ revoked: true, terminated: 0 });
+    expect(outcome).toMatchObject({ revoked: true, terminated: 0 });
   });
 
   test("after the cool-off the api key alone may no longer revoke it", async () => {
@@ -304,7 +304,7 @@ describe("who may revoke a passkey, and when (04a §4.4)", () => {
     const second = await revokePasskey({ db: harness.db, passkeyId, by: { kind: "admin" }, now: later });
 
     // Assert
-    expect(first).toEqual({ revoked: true, terminated: 0 });
+    expect(first).toMatchObject({ revoked: true, terminated: 0 });
     expect(second).toEqual({ refusal: "already_revoked" });
   });
 });

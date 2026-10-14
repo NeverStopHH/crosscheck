@@ -24,7 +24,7 @@ import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 /** Every generator the simulation has (test/simulation/sim-world.ts GENERATORS; pinned by spool-simulation.test.ts). */
-export const SWEEP_GENERATORS = ["shipped", "io", "sleep", "focus", "all"] as const;
+export const SWEEP_GENERATORS = ["shipped", "io", "sleep", "focus", "all", "topics"] as const;
 
 /** Seeds per generator a sweep runs when it is not told: the nightly's. */
 const NIGHTLY_SEEDS = 2000;

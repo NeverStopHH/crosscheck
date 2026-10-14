@@ -20,6 +20,7 @@
  *   - `delivered` on the line is the LOCAL seen-set count, not the hub's; the
  *     hub's own delivered/pulled ride inside the window clause.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -53,7 +54,7 @@ interface Stats {
 }
 
 const hubWithStats = (stats: Stats | null): string => {
-  const server = Bun.serve({
+  const server = serveLoopback({
     port: 0,
     fetch: (request) => {
       const { pathname } = new URL(request.url);

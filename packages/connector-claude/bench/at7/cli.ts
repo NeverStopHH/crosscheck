@@ -207,6 +207,10 @@ const main = async (): Promise<void> => {
   // A2.2 residue: the Bash tool sources the user's shell profile, which the
   // env allowlist does not bound. Refuse to measure on a machine whose profile
   // sets a CROSSCHECK_/CLAUDE_/ANTHROPIC_ name; the check rides in the manifest.
+  // `homedir()`, not config/paths.ts `userHomeOf`, on purpose: this bench tool
+  // is not shipped, is run by hand on the developer's machine, and must read
+  // the REAL profiles the Bash tool will source, which the test home guard
+  // exists to refuse.
   const shellProfileCheck = await checkShellProfiles(
     profilePaths(homedir(), process.env["ZDOTDIR"]),
   );

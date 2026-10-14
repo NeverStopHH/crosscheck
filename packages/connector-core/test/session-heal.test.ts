@@ -46,6 +46,7 @@ import type { SessionHealer } from "../src/spool/flush.ts";
 import { readRefusedLives, recordRefusedLife } from "../src/spool/refused-lives.ts";
 import { readSessionState, updateSessionState } from "../src/state/session-state.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
+import { serveLoopback } from "./fixtures/loopback-serve.ts";
 
 const ADMIN_TOKEN = "heal-admin";
 const REPO_ID = "github.com/acme/api";
@@ -112,7 +113,7 @@ const fixture = async (label: string, url: string = hubUrl): Promise<Fixture> =>
     repo,
     key,
     hostSessionKey: `acp-test--${label}`,
-    hub: { hubUrl: url, apiKey, timeoutMs: TIMEOUT_MS, home, repoKey: key, now: () => new Date() },
+    hub: { hubUrl: url, keyOrigin: url, apiKey, timeoutMs: TIMEOUT_MS, home, repoKey: key, now: () => new Date() },
   };
 };
 
@@ -130,6 +131,7 @@ const register = (fx: Fixture, hostSessionKey: string = fx.hostSessionKey) =>
     hubUrl: fx.hub.hubUrl,
     fallbackDeveloperId: developerId,
     title: fallbackWorkContextTitle(BRANCH, REPO_ID),
+    titleSource: "fallback",
     status: "analyzing",
     now: new Date(),
     guarantees: guaranteeDeclarationFor(ACP_CONNECTOR),
@@ -191,6 +193,10 @@ const targetsOf = async (workContextId: string): Promise<readonly string[]> => {
   return rows.map((row) => row.value);
 };
 
+const titleSourceOf = async (workContextId: string): Promise<string | null | undefined> =>
+  (await raw<{ title_source: string | null }>("select title_source from work_contexts where id = $1", [workContextId]))[0]
+    ?.title_source;
+
 const sessionRow = async (id: string): Promise<{ ended: boolean } | undefined> => {
   const rows = await raw<{ ended: boolean }>(
     "select ended_at is not null as ended from agent_sessions where id = $1",
@@ -204,9 +210,9 @@ const stateId = async (fx: Fixture): Promise<string | undefined> =>
 
 beforeAll(async () => {
   db = await createDb();
-  server = Bun.serve({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
+  server = serveLoopback({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
   hubUrl = `http://127.0.0.1:${server.port}`;
-  proxy = Bun.serve({
+  proxy = serveLoopback({
     port: 0,
     fetch: async (request) => {
       const { pathname, search } = new URL(request.url);
@@ -291,6 +297,9 @@ describe("a flush whose own session the hub ended", () => {
     // ...the edit after the end is NOT filed into the ended life
     expect(await targetsOf(life.workContextId)).toEqual([]);
     expect(await targetsOf(`wc_${life.crosscheckSessionId}~r1`)).toEqual(["src/next-life.ts"]);
+    // ...its work context went with its title's marker — a NEW row on the hub,
+    // which an unmarked title would leave to the shape rule (topic review H4)
+    expect(await titleSourceOf(`wc_${life.crosscheckSessionId}~r1`)).toBe("fallback");
     // ...and its loss is counted under the cause it had
     const drops = await readDropDetail(fx.home, fx.key);
     expect(drops.byReason["rejected"]).toBe(1);

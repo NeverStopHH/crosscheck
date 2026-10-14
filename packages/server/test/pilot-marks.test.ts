@@ -146,6 +146,23 @@ describe("POST /api/pilot-marks", () => {
     expect(await rows(harness)).toHaveLength(1);
   });
 
+  test("a label that is not noise, given twice, is one mark too, and SAYS so", async () => {
+    // Arrange — noise on a delivery is decided under the pointer's lock
+    // (services/noise-label.ts); every other word takes the plain insert,
+    // whose repeat is the unique key's to answer
+    const { harness, developer } = await setup();
+    await mark(harness, developer, { mark: "helpful" });
+
+    // Act
+    const again = await mark(harness, developer, { mark: "helpful" });
+    const body = (await again.json()) as { data: { repeated: boolean } };
+
+    // Assert
+    expect(again.status).toBe(200);
+    expect(body.data.repeated).toBe(true);
+    expect(await rows(harness)).toHaveLength(1);
+  });
+
   test("a body with no presence is refused at the boundary", async () => {
     // Arrange — the literal makes the gate fail CLOSED: absent is a parse
     // failure, never a default. Nothing reaches the database.

@@ -95,10 +95,12 @@ export const gitLaneWarning = (cost: GitLaneCost): string | null =>
 /**
  * The one spelling both CLI surfaces print.
  *
- * THE BLIND SPOTS ARE IN THE SENTENCE, not in a document nobody opens: the
- * lane reads uncommitted changes only, so work already committed during the
- * turn and untracked new files are invisible to it — `git diff` reports
- * neither. A reader deciding how far to trust a `suspect` answer needs that
+ * THE BLIND SPOTS ARE IN THE SENTENCE, not in a document nobody opens. The
+ * lane reads the working tree's changes, new untracked files and this
+ * developer's own commits, in every worktree the session touched
+ * (flows/git-lane.ts); what it still cannot see is a file changed and changed
+ * back inside one turn, and a commit on a branch the worktree has since
+ * left. A reader deciding how far to trust a `suspect` answer needs that
  * beside the count, not two screens away.
  */
 export const formatGitLaneCost = (cost: GitLaneCost): string => {
@@ -112,6 +114,6 @@ export const formatGitLaneCost = (cost: GitLaneCost): string => {
     `${String(cost.recorded)} file(s) no Edit tool reported · ` +
     `${String(cost.ran)} turn(s) ran · ` +
     `${String(cost.skipped)} turn(s) skipped (no budget, or git did not answer) ${sessions}` +
-    " — uncommitted changes only: commits made during the turn, and untracked files, are invisible to it"
+    " — changes, new files and your own commits in every worktree the session touched; a file changed and changed back inside one turn, and a commit on a branch the worktree has since left, are invisible to it"
   );
 };

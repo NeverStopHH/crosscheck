@@ -126,6 +126,95 @@ export const SESSION_EVENT_RETENTION_DAYS = 30;
 export const SKELETON_BACKFILL_BATCH = 500;
 
 /**
+ * Work contexts per page of the start-up doc rebuild (services/doc-upgrade.ts).
+ * PGlite runs every statement synchronously and awaited queries settle
+ * through microtasks, so requests run only where the pass yields to the event
+ * loop. It yields after every rebuilt context (doc-upgrade.ts upgradePage), so
+ * a request that arrives during the pass waits for one rebuild, not the page:
+ * with a turn per page only, it waited out the page, about 70 ms on a laptop
+ * and 390 ms on a slow CI runner (2026-10-13). Before any yield, one request
+ * waited 18 873 ms on a 30 000-context pass (review round 4). The page sets
+ * how many contexts one stale-page query and one embed call cover.
+ */
+export const DOC_UPGRADE_BATCH = 100;
+
+/**
+ * How many pages of the doc upgrade go by between its progress lines: 10
+ * pages of DOC_UPGRADE_BATCH is a line per 1 000 contexts — about one every
+ * second on the review's 30 000-context hub — enough to show a long pass is
+ * moving without a line per page (review round 4, M2).
+ */
+export const DOC_UPGRADE_PROGRESS_PAGES = 10;
+
+/**
+ * Declared-only contexts the doc upgrade stamps current per UPDATE, with a
+ * turn of the event loop between pages (services/doc-upgrade.ts stampFrom).
+ * As one UPDATE, the review's 20 000 declared-only contexts held every
+ * request for ~400 ms, past the connector's 400 ms hook timeout; 1 000 keeps
+ * one page to a few tens of milliseconds (round 5).
+ */
+export const DOC_UPGRADE_STAMP_BATCH = 1000;
+
+/**
+ * Offending edges per page of the start-up draft-link cleanup
+ * (services/draft-link-cleanup.ts), one transaction each with a turn of the
+ * event loop between pages. As one statement over the whole table, the
+ * batch-2 integration review measured every request held 9–86 s on a
+ * pilot-scale hub (H6). A page of 500 archived edges still held one 817 ms
+ * on a machine at load 40; 100 keeps a page to tens of milliseconds at
+ * ordinary load.
+ */
+export const DRAFT_LINK_CLEANUP_BATCH = 100;
+
+/**
+ * Work contexts per chunk of the start-up words backfill
+ * (services/words-index.ts), one UPDATE each with a turn of the event loop
+ * between chunks. A row's words cost ~0.3 ms to compute plus its index
+ * entries, so a chunk of 50 keeps a request's wait to tens of milliseconds.
+ */
+export const WORDS_INDEX_BACKFILL_BATCH = 50;
+
+/**
+ * Claims per chunk of the same backfill. Smaller: on a hub with an embedder a
+ * filled claim re-enters the HNSW graph of claim vectors, ~3 ms a row on the
+ * pilot-scale synthetic hub (load 28): a chunk of 50 took 160 ms at the
+ * median and up to 607 ms, a chunk of 10 took 26 ms. 20 keeps the median
+ * near 60 ms and 10 000 claims to about 30 s.
+ */
+export const WORDS_INDEX_CLAIMS_BATCH = 20;
+
+/** Chunks of the words backfill between its progress lines: one per 5 000 rows. */
+export const WORDS_INDEX_PROGRESS_CHUNKS = 100;
+
+/**
+ * Chunks of a pass between two VACUUMs of the table it deletes from or fills
+ * (services/words-index.ts, services/record-receipts.ts; db/vacuum.ts), and
+ * one more after its last chunk: often enough that the next chunks reuse the
+ * space the last ones freed, rarely enough that the VACUUMs cost less than
+ * the growth they save. Measured on the words backfill of the review's
+ * synthetic hub: every 10 chunks, 38 s and +185 MB; once at the end, 67 s
+ * and +346 MB; every chunk, 47 s and +180 MB for ten times the VACUUMs.
+ */
+export const CHUNKS_PER_VACUUM = 10;
+
+/**
+ * An opted-out developer's location-titled docs rebuilt per page, re-embedded
+ * in one embedder call per page, with a turn of the event loop between pages
+ * (services/developer-settings.ts; batch-2 integration review, M11). A doc's
+ * rebuild is ~2 ms on a pilot-scale hub, so a page is a few hundred ms at
+ * most; one call per page is 100 times fewer embedder round trips than one
+ * per doc.
+ */
+export const LOCATION_INDEX_REBUILD_BATCH = 100;
+
+/**
+ * Docs of a LOCATION_INDEX_REBUILD_BATCH page rebuilt between two turns of
+ * the event loop: a page of 100 rebuilt in one go held a request 2.6 s on a
+ * machine at load 40 (pilot-scale synthetic hub); 10 keeps it to a tenth.
+ */
+export const LOCATION_INDEX_REBUILD_TURN = 10;
+
+/**
  * THE RETENTION THIS HUB APPLIES TO `session_events`, declared on
  * `GET /api/sessions/order` so that `doctor` prints the hub's own statement
  * rather than a connector's assumption about it (schema session-event.ts says
@@ -388,19 +477,51 @@ export const GHOST_ACTIVE_WINDOW_DAYS = 7;
 export const GHOST_MAX_OWN_CONTEXTS = 3;
 
 /**
- * A work context carrying more target values than this is EXCLUDED from both
- * sides of the SHARED-TARGET tier — mine and theirs alike. The INTENT tier is
- * deliberately untouched by it: that tier shares no value, so the argument
- * below does not reach it (services/ghost-overlap.ts listIntentHits).
+ * A work context that TOUCHED more FILES than this inside the surface's window
+ * is a LARGE CHANGE — a mass rename, a formatter run, a long implementation —
+ * and an overlap with it is QUALIFIED, NEVER DROPPED: the row says how many
+ * files the change touched and ranks after the focused rows
+ * (services/ghost-overlap.ts listLargeChanges), but every file it shares with
+ * the reader still produces it. The INTENT tier is untouched by it: that tier
+ * shares no file, so the argument below does not reach it.
  *
- * It is a sweep, not a plan: a mass rename, a formatter run, a dependency
- * bump. Sharing a file with a sweep says nothing about whether two designs
- * collide, and a sweep shares files with everybody, so admitting one would
- * make every session on the repo collide with it. This is ConE's own filter
- * (pull requests touching more than 50 files are dropped, their 90th
- * percentile of change size) applied to the unit we have.
+ * QUALIFIED, NOT EXCLUDED (owner's reviewer, 2026-10-07: "a large surface must
+ * never mean not collision-relevant"). This number was ConE's filter — pull
+ * requests touching more than 50 files, their 90th percentile of change size,
+ * are dropped — and applied as a filter it hid the pilot owner's 180-file
+ * worktree context from every ghost check and conference while a teammate
+ * edited two of its files. Sharing a file with a rename IS weaker evidence
+ * that two designs collide than sharing one with a focused plan, which is
+ * what the ranking keeps; it is not NO evidence, and the reader is the one who
+ * decides whether a rename through their files matters.
+ *
+ * Inside the window, because a ConE pull request is one change and a work
+ * context is not (pilot finding, 2026-10-05): a long-lived worktree session
+ * touches hundreds of files over weeks, and only what it touches now says
+ * whether it is a large change now. A file counts when it was first seen or
+ * touched again in the window; an opted-out owner is counted by all her
+ * files, her times unread.
+ *
+ * The name is the one this line has always had — tests, reviews and other
+ * branches spell it — and it is a LINE now, not a max anything is cut at.
  */
 export const GHOST_MAX_CONTEXT_TARGETS = 50;
+
+/**
+ * The values of ONE context a comparison reads from its own side, newest
+ * touch first — the reader's own contexts on a ghost check, each context of
+ * the page on a conference. The other side is never read whole: it is LOOKED
+ * UP by these values (work_context_targets_kind_value_idx), so what an
+ * overlap costs is this side's values times GHOST_HOT_TARGET_MAX_CONTEXTS,
+ * whatever the size of the change on the other side.
+ *
+ * Per context, so one renaming worktree of the reader's cannot spend the
+ * probe their other worktree's plan needs; newest first, so what a cut drops
+ * is the reader's oldest touches and never today's. Four times the
+ * large-change line, so the pilot incident's 180-file context is compared
+ * whole from either side.
+ */
+export const GHOST_MAX_PROBE_VALUES = 200;
 
 /**
  * A target value shared by more work contexts than this is dropped before
@@ -423,7 +544,7 @@ export const GHOST_MAX_CONTEXT_TARGETS = 50;
  * It is also the fan-out bound, and the honest statement of it is a PRODUCT
  * rather than a sentence about one value: every surviving value is shared by
  * at most this many contexts, and the reader holds at most
- * GHOST_MAX_OWN_CONTEXTS x GHOST_MAX_CONTEXT_TARGETS of them, so the pair
+ * GHOST_MAX_OWN_CONTEXTS x GHOST_MAX_PROBE_VALUES of them, so the pair
  * query's whole answer is bounded by the three together (GHOST_MAX_PAIR_ROWS,
  * which says what that costs when the bound is read as a budget instead). The
  * defect measured on the solved surface at 1.2 s
@@ -473,11 +594,14 @@ export const GHOST_MAX_INTENT_CANDIDATES = 20;
 /**
  * Read bound on shared-target pair rows — ARITHMETIC rather than a budget,
  * and it has to be. The reader holds at most GHOST_MAX_OWN_CONTEXTS x
- * GHOST_MAX_CONTEXT_TARGETS distinct values (the sweep rule makes that a
- * ceiling rather than a hope), and every value that survives the hot rule is
- * carried by at most GHOST_HOT_TARGET_MAX_CONTEXTS foreign contexts the
- * reader may be told about. Their product is the most rows the pair query can
- * return, so this window cannot cut.
+ * GHOST_MAX_PROBE_VALUES distinct values (the probe is ranked within each
+ * context, which makes that a ceiling rather than a hope), and every value
+ * that survives the hot rule is carried by at most
+ * GHOST_HOT_TARGET_MAX_CONTEXTS foreign contexts the reader may be told
+ * about. Their product is the most rows the pair query can return, so this
+ * window cannot cut — and no factor of it is the size of anybody else's
+ * change: a teammate's 180-file context costs the rows it shares with the
+ * reader, never its 180.
  *
  * A SMALLER NUMBER IS NOT A SAFE ONE, and the 400 that stood here was not.
  * The reasoning it rested on was about ONE hot value, and no single value can
@@ -490,12 +614,12 @@ export const GHOST_MAX_INTENT_CANDIDATES = 20;
  * is not a short list but an EMPTY one. That shape is pinned by "a crowd of
  * warm values never empties the pair window" in test/ghost-overlap.test.ts.
  *
- * VERIFY: bun -e 'const s=await import("./packages/server/src/constants.ts");console.log(s.GHOST_MAX_PAIR_ROWS === s.GHOST_MAX_OWN_CONTEXTS * s.GHOST_MAX_CONTEXT_TARGETS * s.GHOST_HOT_TARGET_MAX_CONTEXTS, s.GHOST_MAX_PAIR_ROWS)'
- * PRINTS: true 3000
+ * VERIFY: bun -e 'const s=await import("./packages/server/src/constants.ts");console.log(s.GHOST_MAX_PAIR_ROWS === s.GHOST_MAX_OWN_CONTEXTS * s.GHOST_MAX_PROBE_VALUES * s.GHOST_HOT_TARGET_MAX_CONTEXTS, s.GHOST_MAX_PAIR_ROWS)'
+ * PRINTS: true 12000
  */
 export const GHOST_MAX_PAIR_ROWS =
   GHOST_MAX_OWN_CONTEXTS *
-  GHOST_MAX_CONTEXT_TARGETS *
+  GHOST_MAX_PROBE_VALUES *
   GHOST_HOT_TARGET_MAX_CONTEXTS;
 
 /** Findings one response carries, strongest reason first. */
@@ -532,6 +656,10 @@ export const EVENT_KINDS = {
   // Ids and who did it only — never key material. A rotation is a team-level
   // security fact (a leaked key was retired), so it belongs in the feed.
   DEVELOPER_KEY_ROTATED: "developer_key_rotated",
+  // A presence opt-out switched back OFF (services/developer-settings.ts).
+  // The hub cannot tell the person from an agent holding the key, so the
+  // less private direction is never silent. Ids only.
+  PRESENCE_REENABLED: "presence_reenabled",
   SESSION_STARTED: "session_started",
   SESSION_ENDED: "session_ended",
   WORK_CONTEXT_CREATED: "work_context_created",
@@ -548,6 +676,48 @@ export const EVENT_KINDS = {
 } as const;
 
 export type EventKind = (typeof EVENT_KINDS)[keyof typeof EVENT_KINDS];
+
+/**
+ * THE SECURITY EVENTS: rare changes to a member's credentials, which every
+ * member keeps seeing in the feed even after the subject opts out of presence
+ * (services/events.ts). Without this, an agent holding a person's API key
+ * could switch the person's presence off and so hide its own key rotation
+ * from the team.
+ *
+ * ONLY credential and authority changes belong here, never work activity:
+ * waiver approvals, artifact releases and claims stay filtered, or an
+ * opted-out person's feed rows would be an activity timeline again. Each
+ * kind listed must carry no live-location field (no branch, HEAD, base
+ * commit or heartbeat); `developer_key_rotated` carries the developer id and
+ * `by`, `presence_reenabled` the developer id alone. Their instants are the
+ * residual visibility.ts names «security».
+ *
+ *   - developer_key_rotated: a credential changed. A leaked key retired, or
+ *     a key the person did not rotate replaced, is what the team must see.
+ *   - presence_reenabled: a works-council opt-out undone. It is the one
+ *     settings change an agent holding the key could make to expose its
+ *     person, so it is a credential act in effect, and it must outlive the
+ *     next opt-out too.
+ *
+ * Passkey enrolment and revocation, suspension and reinstatement, and other
+ * credential revocations belong here too the day they become feed events.
+ * Today they are not events: passkey enrolments are announced on
+ * /api/passkeys/announcements and /ui/passkeys, which apply no presence
+ * filter at all.
+ */
+export const SECURITY_EVENT_KINDS: readonly EventKind[] = [
+  EVENT_KINDS.DEVELOPER_KEY_ROTATED,
+  EVENT_KINDS.PRESENCE_REENABLED,
+];
+
+/**
+ * How long the person is told that their presence opt-out was switched back
+ * off (`presenceReenabledAt` on GET /api/settings: the SessionStart briefing,
+ * `crosscheck status` and doctor). The passkey announcement's window
+ * (PASSKEY_ANNOUNCEMENT_DAYS), for the same reason: a person away for days
+ * still finds it waiting. Switching presence off again ends it at once.
+ */
+export const PRESENCE_REENABLE_NOTICE_DAYS = 7;
 // ── Agent conferences (VISION.md §2) ────────────────────────────────────────
 
 /**
@@ -558,6 +728,23 @@ export type EventKind = (typeof EVENT_KINDS)[keyof typeof EVENT_KINDS];
  * a weekend is exactly the kind a synthesis is supposed to find again.
  */
 export const CONFERENCE_ACTIVE_WINDOW_DAYS = 14;
+
+/**
+ * How long work whose session ENDED stays in a conference, and it ranks
+ * after every open session's (pilot finding, 2026-10-07). The window holds
+ * ended work on purpose — VISION §2's conference runs overnight, when nobody
+ * is live — but with landed rarely firing, ended contexts filled it: 19 to
+ * 246 on a copy of the pilot hub, and ranked by activity alone they pushed
+ * live collisions off a twelve-context page.
+ *
+ * SEVENTY-TWO HOURS, from the purpose: the overnight run reads yesterday's
+ * work, and an investigation paused over a weekend — the case the
+ * fourteen-day window above exists for — ended Friday evening and is read
+ * Monday morning, about 64 hours on. Older ended work is history that
+ * `search` still finds; the window keeps holding OPEN work for the full
+ * fortnight.
+ */
+export const CONFERENCE_ENDED_GRACE_HOURS = 72;
 
 /**
  * Work contexts one conference may read, freshest first.
@@ -776,6 +963,43 @@ export const LANDED_NOTICE_GROUPS_LISTED = 3;
  * a row still waiting only refreshes it and is never held back.
  */
 export const LANDED_NOTICE_MAX_PER_PAIR = 20;
+
+/**
+ * HOW OLD A BASE MAY BE WHEN ITS WORK CONTEXT OPENS and still count as the
+ * session's own branch tip, for a session whose connector never said whether
+ * its base was already on the default branch (services/landed.ts). A base
+ * committed more than this before the context opened is a checkout — a stale
+ * worktree, a branch cut from an old main — and its reaching main says
+ * nothing about this session's work. The diagnosed one was six weeks old.
+ *
+ * SMALL, BECAUSE THE TWO ERRORS COST DIFFERENT THINGS. Too small refuses a
+ * real landing (a branch resumed after a weekend), and the context stays in
+ * ghost checks only while its session is still open — they drop ended
+ * sessions anyway — and in the conference's fortnight with its age printed.
+ * Too large stamps a stale checkout landed, and that hides a LIVE session's
+ * files from every collision check, which is the pilot incident. A day keeps
+ * a same-day or overnight branch tip and refuses anything older; committer
+ * dates come from laptops, and clock skew is minutes against it.
+ */
+export const LANDED_STALE_BASE_HOURS = 24;
+
+/**
+ * WHEN THE DATE FALLBACK ENDS. After this instant (the hub's clock) a session
+ * whose connector never said whether its base was already on the default
+ * branch does not land by base ancestry at all; before it, it lands on a
+ * dated base no older than LANDED_STALE_BASE_HOURS (services/landed.ts).
+ *
+ * WHY A CUT AT ALL: the fallback guesses. On the pilot hub 9 of 16
+ * fresh-dated stamps it would have made were still false — a base that was
+ * fresh AND already on main — so it is a bridge for connectors from before
+ * `baseOnDefault` (0.10.x and older), not a rule to keep.
+ *
+ * WHY 2026-11-04: four weeks after the fix (2026-10-07). The pilot team takes
+ * connector releases within days; a connector still not sending the field a
+ * month on is an install nobody updates, and its sessions then stay unlanded
+ * — visible to every collision check, the safe direction.
+ */
+export const LANDED_UNFLAGGED_FALLBACK_ENDS_AT = "2026-11-04T00:00:00.000Z";
 // ── Claim ↔ code binding (1.0 spec 02) ──────────────────────────────────────
 
 /**
@@ -1061,4 +1285,36 @@ export const NOISE_MARK_MAX_CANDIDATES = 5;
  * PRINTS: true
  */
 export const NOISE_MARK_MAX_SESSIONS = 50;
+
+/**
+ * How many teammates one person's outcome view lists by name (07 §13). The
+ * view is the caller's own, so it is bounded by how many people's work can
+ * reach one reader, not by the team; past ten the count beside the list says
+ * how many were left out, and the totals above it still count them.
+ */
+export const HINT_OUTCOME_MAX_SOURCES = 10;
+
+/**
+ * How many outcome reasons the view prints — the label reasons' screenful,
+ * derived so the two lists of one person's sentences stop at the same place.
+ */
+export const HINT_OUTCOME_MAX_REASONS = PILOT_REPORT_MAX_LABEL_REASONS;
+
+// ── Human provenance (0.11, ~/worktrees/.cx-workflows/designs/human-provenance.md) ──
+
+/**
+ * HOW MANY UNDECIDED SUBJECTS ONE PERSON'S DRAFTS MAY HOLD (§4). Every key on
+ * the person's machine can draft, and a confirmation batch covers EVERY
+ * pending draft, so the page a person reviews must stay a page. A new subject
+ * past this is refused; a newer version of one already pending never is, so
+ * an agent correcting its own word is never locked out. Two hundred: about a
+ * pilot week of hints at the rate the first fortnight measured (157 in 14 days).
+ */
+export const MAX_PENDING_DRAFT_SUBJECTS = 200;
+
+/**
+ * HOW LONG A FORMED BATCH WAITS FOR ITS PASSKEY (§6): the ceremony's own five
+ * minutes, so a batch never outlives the prompt that would confirm it.
+ */
+export const CONFIRM_BATCH_TTL_MS = 5 * 60_000;
 

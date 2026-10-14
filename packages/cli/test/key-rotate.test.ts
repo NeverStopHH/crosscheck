@@ -8,6 +8,7 @@
  * which it cannot update, and an agent with no person at the terminal, which
  * must never see a live key.
  */
+import { serveLoopback } from "../../connector-core/test/fixtures/loopback-serve.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
@@ -26,7 +27,7 @@ const cleanups: string[] = [];
 
 beforeAll(async () => {
   const db = await createDb();
-  server = Bun.serve({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
+  server = serveLoopback({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
 });
 
@@ -58,7 +59,7 @@ const home = async (label: string): Promise<string> => {
 /** A server that counts what it is sent — another hub, or a proxy. */
 const recordingHub = (answer: () => Response = () => Response.json({ ok: true })) => {
   let count = 0;
-  const recorder = Bun.serve({
+  const recorder = serveLoopback({
     port: 0,
     fetch: () => {
       count += 1;
@@ -203,6 +204,23 @@ describe("crosscheck key rotate", () => {
 
     // Assert
     expect(out.exitCode).toBe(EXIT_USAGE);
+    expect(out.stdout).toContain("needs a person at a terminal");
+    expect((await readStoredConfig(dir))?.apiKey).toBe(oldKey);
+    expect(await works(oldKey)).toBe(true);
+  });
+
+  test("round-6 follow-up: at a pty inside an agent host, rotation is refused as with no terminal, naming the marker", async () => {
+    // Arrange
+    const oldKey = await newDeveloper();
+    const dir = await home("key-rotate-agent-host");
+    await saveConfig(dir, { version: 1, hubUrl, apiKey: oldKey });
+
+    // Act — the TTY probe says yes; Claude Code set its marker
+    const out = await rotate({ CROSSCHECK_HOME: dir, HOME: dir, CLAUDECODE: "1" }, [], true);
+
+    // Assert
+    expect(out.exitCode).toBe(EXIT_USAGE);
+    expect(out.stdout).toStartWith("this command ran inside an agent's tool (CLAUDECODE is set)");
     expect(out.stdout).toContain("needs a person at a terminal");
     expect((await readStoredConfig(dir))?.apiKey).toBe(oldKey);
     expect(await works(oldKey)).toBe(true);

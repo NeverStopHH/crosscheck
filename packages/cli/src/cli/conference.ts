@@ -43,7 +43,9 @@ import {
   EXIT_UNREACHABLE,
   EXIT_USAGE,
 } from "@crosscheck/connector-core/constants.ts";
-import { loadReportableConfig } from "@crosscheck/connector-core/config/config.ts";
+import { resolveReportableConfig } from "@crosscheck/connector-core/config/config.ts";
+import { readForeignHubRefusals } from "@crosscheck/connector-core/state/foreign-hub.ts";
+import { foreignHubLines } from "./foreign-hub.ts";
 import {
   conferenceReportPath,
   repoKey,
@@ -793,7 +795,17 @@ export const runConference = async (
       exitCode: EXIT_USAGE,
     };
   }
-  const config = await loadReportableConfig({ env, repoRoot: identity.root });
+  const resolved = await resolveReportableConfig({ env, repoRoot: identity.root });
+  // Connected to another hub than the key's (core config/key-binding.ts): no
+  // corpus is asked for and no model runs — the WARN, both origins, the fix.
+  if (resolved.kind === "foreign_hub") {
+    const ledger = await readForeignHubRefusals(resolved.home, new Date());
+    return {
+      stdout: `${foreignHubLines(resolved.foreignHub, ledger, identity.repoId).join("\n")}\n`,
+      exitCode: EXIT_FAIL,
+    };
+  }
+  const config = resolved.kind === "reportable" ? resolved.config : null;
   if (config === null) {
     return {
       stdout:
@@ -807,6 +819,7 @@ export const runConference = async (
   const hub: HubContext = {
     hubUrl: config.hubUrl,
     apiKey: config.apiKey,
+    keyOrigin: config.keyOrigin,
     timeoutMs: config.timeoutMs,
     home: config.home,
     repoKey: key,
