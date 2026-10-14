@@ -28,12 +28,12 @@
  * because the head-versus-merge-sha decision lives there and nowhere else.)
  *
  *   bun run packages/connector-core/scripts/mutation-check.ts
- *   ... --shard 3/8                      # one of CI's shards (scripts/mutation-shards.ts)
+ *   ... --shard 3/10                     # one of CI's shards (scripts/mutation-shards.ts)
  *   ... --label "<label>" --label "..."  # the anchors a change added or touched
  */
 import { resolve } from "node:path";
 
-import { selectMutations } from "./mutation-shards.ts";
+import { readGuardSeconds, selectMutations } from "./mutation-shards.ts";
 
 const REPO_ROOT = resolve(import.meta.dir, "..", "..", "..");
 const CONNECTOR = "packages/connector-claude";
@@ -38319,10 +38319,11 @@ const applyAndRun = async (mutation: Mutation): Promise<Outcome> => {
 const main = async (): Promise<number> => {
   const outcomes: Outcome[] = [];
   // The whole list, one CI shard of it, or the anchors named by --label
-  // (scripts/mutation-shards.ts): a refused argument ends the run here.
+  // (scripts/mutation-shards.ts): a refused argument, or a guard-seconds
+  // table that does not parse, ends the run here.
   let selected: readonly Mutation[];
   try {
-    selected = selectMutations(MUTATIONS, process.argv.slice(2));
+    selected = selectMutations(MUTATIONS, process.argv.slice(2), readGuardSeconds());
   } catch (error) {
     process.stdout.write(`::error::${error instanceof Error ? error.message : String(error)}\n`);
     return 1;

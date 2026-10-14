@@ -1154,25 +1154,29 @@ jobs:
     # PRINTS: working-days.ts 3
     # PRINTS: yield-to-requests.ts 2
     #
-    # IN EIGHT SHARDS (scripts/mutation-shards.ts). One after another, the
+    # IN TEN SHARDS (scripts/mutation-shards.ts). One after another, the
     # base branch's 1,825 anchors took 3 h 19 min on a hosted runner, and the
     # list above at that pace is about seven hours against GitHub's six-hour
-    # job limit. A shard is whole guards, dealt evenly and the same on every
-    # runner, so each anchor still runs once and each guard's unmutated run is
-    # paid once; a red shard is a red proof (fail-fast off, so every shard
-    # still says what it caught).
-    name: Mutation proof (${{ matrix.shard }}/8)
+    # job limit. A shard is whole guards, the same on every runner, so each
+    # anchor still runs once and each guard's unmutated run is paid once; a
+    # red shard is a red proof (fail-fast off, so every shard still says what
+    # it caught). Guards are dealt by their measured seconds per run
+    # (scripts/mutation-guard-seconds.json), not by anchor count: dealt by
+    # count, eight shards ran 37 to more than 85 minutes. The timeout is
+    # twice the 60 minutes no shard may be predicted past
+    # (connector-core/test/mutation-shards.test.ts).
+    name: Mutation proof (${{ matrix.shard }}/10)
     runs-on: ubuntu-latest
     timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     steps:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
-      - run: bun run packages/connector-core/scripts/mutation-check.ts --shard ${{ matrix.shard }}/8
+      - run: bun run packages/connector-core/scripts/mutation-check.ts --shard ${{ matrix.shard }}/10
 
   cpu-starved:
     # The ACP proxy wedged deterministically on Linux hosts with <= 2
