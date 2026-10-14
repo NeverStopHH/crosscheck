@@ -151,10 +151,22 @@ const rebuildLocked = (db: Db, id: string): Promise<void> =>
 
 const NO_EMBEDS: EmbedOutcome = { embedded: 0, failed: 0 };
 
-/** Rebuilds one page, one context at a time, then (with an embedder) embeds it in one call. */
+/**
+ * Rebuilds one page, one context at a time, then (with an embedder) embeds it
+ * in one call.
+ *
+ * A TURN OF THE EVENT LOOP AFTER EVERY REBUILD, NOT EVERY PAGE (CI,
+ * 2026-10-13). A request that arrives while the pass runs waits for the next
+ * turn: with one per page that was the rest of the page, about 70 ms on a
+ * laptop and 390 ms for 100 contexts on a slow macos-latest runner, where a
+ * teammate's request waited 624 ms. One per rebuild bounds the wait by one
+ * context's rebuild, and costs next to nothing: 30,000 turns took 22 ms on
+ * my laptop, where the pass rebuilt 3,000 contexts in 3.5 s.
+ */
 const upgradePage = async (deps: Deps, ids: readonly string[]): Promise<EmbedOutcome> => {
   for (const id of ids) {
     await rebuildLocked(deps.db, id);
+    await yieldToEventLoop();
   }
   return deps.embedder === null ? NO_EMBEDS : embedContextDocs(deps.db, deps.embedder, ids);
 };
@@ -185,7 +197,8 @@ const upgradeFrom = async (run: Run, after: string, pages: number, done: DocUpgr
   if ((pages + 1) % run.progressEveryPages === 0) {
     run.progress(`${String(next.contexts)} of ${String(run.pending)} rebuilt`);
   }
-  await yieldToEventLoop();
+  // No turn of its own between pages: the page's rebuilds each took one
+  // (upgradePage), and an embed call is network I/O.
   return upgradeFrom(run, last, pages + 1, next);
 };
 

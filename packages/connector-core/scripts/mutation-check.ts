@@ -22001,10 +22001,19 @@ export const MUTATIONS: readonly Mutation[
   {
     label: "the start-up doc upgrade never yields to the event loop",
     file: `${SERVER}/src/services/doc-upgrade.ts`,
-    from: "  await yieldToEventLoop();\n  return upgradeFrom(run, last, pages + 1, next);\n",
-    to: "  return upgradeFrom(run, last, pages + 1, next);\n",
+    // RETARGETED (CI, 2026-10-13): the turn moved from between pages to after every rebuild.
+    from: "    await rebuildLocked(deps.db, id);\n    await yieldToEventLoop();\n",
+    to: "    await rebuildLocked(deps.db, id);\n",
     test: `${SERVER}/test/doc-upgrade-load.test.ts`,
     because: "the hub answers no request for the whole pass — 18 873 ms on a 30 000-context hub",
+  },
+  {
+    label: "the start-up doc upgrade takes its turn once a page, not after every rebuild",
+    file: `${SERVER}/src/services/doc-upgrade.ts`,
+    from: "    await rebuildLocked(deps.db, id);\n    await yieldToEventLoop();\n  }\n",
+    to: "    await rebuildLocked(deps.db, id);\n  }\n  await yieldToEventLoop();\n",
+    test: `${SERVER}/test/doc-upgrade-load.test.ts`,
+    because: "a request waits out the page it lands in — 624 ms on a slow macos-latest runner (CI, 2026-10-13)",
   },
   {
     label: "the doc upgrade leaves declared-only contexts at version 0 for every start to re-scan",
@@ -38092,7 +38101,7 @@ interface Outcome {
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/developer-settings.test.ts 1
  * PRINTS: packages/server/test/doc-upgrade-downgrade.test.ts 1
- * PRINTS: packages/server/test/doc-upgrade-load.test.ts 2
+ * PRINTS: packages/server/test/doc-upgrade-load.test.ts 3
  * PRINTS: packages/server/test/doc-upgrade-race.test.ts 1
  * PRINTS: packages/server/test/doc-upgrade-stamp.test.ts 2
  * PRINTS: packages/server/test/doc-upgrade-vectors.test.ts 5

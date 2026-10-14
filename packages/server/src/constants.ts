@@ -127,13 +127,14 @@ export const SKELETON_BACKFILL_BATCH = 500;
 
 /**
  * Work contexts per page of the start-up doc rebuild (services/doc-upgrade.ts).
- * A request that arrives during the pass waits for the PAGE it lands in, not
- * the pass: PGlite runs every statement synchronously and awaited queries
- * settle through microtasks, so requests run only where the pass yields to
- * the event loop, which it does between pages (doc-upgrade.ts
- * yieldToEventLoop). At ~0.7 ms per rebuilt context, a page is ~70 ms — the
- * wait a request may see. Before the yield, "interleave between pages" was
- * false: one request waited 18 873 ms on a 30 000-context pass (review round 4).
+ * PGlite runs every statement synchronously and awaited queries settle
+ * through microtasks, so requests run only where the pass yields to the event
+ * loop. It yields after every rebuilt context (doc-upgrade.ts upgradePage), so
+ * a request that arrives during the pass waits for one rebuild, not the page:
+ * with a turn per page only, it waited out the page, about 70 ms on a laptop
+ * and 390 ms on a slow CI runner (2026-10-13). Before any yield, one request
+ * waited 18 873 ms on a 30 000-context pass (review round 4). The page sets
+ * how many contexts one stale-page query and one embed call cover.
  */
 export const DOC_UPGRADE_BATCH = 100;
 
